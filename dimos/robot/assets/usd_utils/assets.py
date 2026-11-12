@@ -32,6 +32,15 @@ _HASH_ALGORITHM = "sha256"
 _ASSET_ROOT_PREFIX = "/dimos/assets/"
 
 
+def is_published_asset(path: str) -> bool:
+    """Whether this asset name is one publish_usd_assets minted for the bus, not a file path.
+
+    A published name says nothing about where the file is; only the module that published it
+    can still hand over the bytes.
+    """
+    return path.startswith(_ASSET_ROOT_PREFIX)
+
+
 def resolve_usd_assets(usd: str, root: str) -> str:
     if not root:
         return usd
@@ -189,7 +198,7 @@ def unopenable_assets(usd: str, root: Path | str | None) -> dict[str, str]:
     unopenable: dict[str, str] = {}
     base = Path(root) if root else None
     for asset in referenced_asset_paths(usd, root):
-        if asset.startswith(_ASSET_ROOT_PREFIX):
+        if is_published_asset(asset):
             continue
         path = Path(asset)
         if not path.is_absolute():
