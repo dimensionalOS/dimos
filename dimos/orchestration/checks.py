@@ -269,11 +269,9 @@ def _fallback_problems(tree: Tree) -> Iterator[str]:
             reported |= reached
 
 
-def _activity_needs(tree: Tree, node: Node) -> set[str]:
+def _activity_needs(tree: Tree, node: Node) -> frozenset[str]:
     activity = tree.activity(node)
-    if activity is None:
-        return set()
-    return {*activity.uses, *([activity.cancel] if activity.cancel is not None else [])}
+    return activity.resources if activity is not None else frozenset()
 
 
 def _needs(tree: Tree, name: str) -> set[str]:
@@ -296,7 +294,7 @@ def _resource_problems(tree: Tree) -> Iterator[str]:
                         f"can both need {_listed(shared)}"
                     )
         inner = {need for name in node.inside for need in _needs(tree, name)}
-        shared = _activity_needs(tree, node) & inner
+        shared = inner & _activity_needs(tree, node)
         if shared:
             yield f"node `{node.name}`: its activity shares {_listed(shared)} with a node inside it"
 

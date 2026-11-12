@@ -52,6 +52,11 @@ class Activity(_Struct):
     cancel: str | None = None
     uses: tuple[str, ...] = ()
 
+    @property
+    def resources(self) -> frozenset[str]:
+        """What it uses. Its cancel RPC counts as a resource."""
+        return frozenset(self.uses if self.cancel is None else (*self.uses, self.cancel))
+
 
 class Check(_Struct):
     expect: tuple[str, ...]

@@ -416,7 +416,7 @@ class _Step:
         activity = self.tree.activity(node)
         if activity is None or activity.cancel is None:
             return
-        call = self.call(node, "cancel", "sent", frozenset(activity.uses), activity.cancel, {})
+        call = self.call(node, "cancel", "sent", activity.resources, activity.cancel, {})
         self.effects.append(SendCancel(call))
         due = self.now + self.limits.cancel_deadline_s
         self.set_timer(CancelDeadline(node.name, due, call.id))
@@ -438,7 +438,7 @@ class _Step:
         args = {name: self.evaluate(node, source) for name, source in node.args.items()}
         if node.result is not None:
             self.blackboard.pop(node.result, None)
-        uses = frozenset(activity.uses)
+        uses = activity.resources
         phase: Literal["held", "sent"] = "held" if self.held_back(uses) else "sent"
         call = self.call(node, "start", phase, uses, activity.start, args)
         if phase == "sent":

@@ -359,7 +359,7 @@ CASES = [
         ],
     ),
     Case(
-        "a failed walks up to the first node that handles it",
+        "a failed walks up, and the start of power waits for its own cancel",
         WORK,
         ["start Base.enable()"],
         [
@@ -373,9 +373,9 @@ CASES = [
                     "set deadline Move 4.0",
                     "cancel Base.disable",
                     "set deadline Work 4.0",
-                    "start Base.enable()",
                 ],
             ),
+            (2.5, ("canceled", "Work"), ["clear deadline Work 4.0", "start Base.enable()"]),
         ],
     ),
     Case(
