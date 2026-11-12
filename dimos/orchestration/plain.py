@@ -15,7 +15,7 @@
 """Plain data from messages, messages from plain data, and the shape of a type."""
 
 from collections.abc import Mapping
-from typing import ClassVar, Protocol, TypeGuard
+from typing import ClassVar, Protocol, TypeGuard, cast
 
 from dimos.msgs.protocol import DimosMsg
 from dimos.orchestration.expressions import UNKNOWN, Plain, Shape
@@ -57,18 +57,32 @@ def to_plain(value: object, path: str = "") -> Plain:
     if isinstance(value, dict) and all(isinstance(key, str) for key in value):
         return {key: to_plain(item, f"{path}.{key}".lstrip(".")) for key, item in value.items()}
     if isinstance(value, DimosMsg):
-        try:
-            generated: type[_Generated] = schema_class_for(type(value))
-        except ValueError as error:
-            raise TypeError(str(error)) from None
-        # A wrapper is read through its LCM bytes, so its fields are the message's own.
-        message = value if type(value) is generated else generated.lcm_decode(value.lcm_encode())
+        message = _generated(value)
         return {
             slot: to_plain(getattr(message, slot), f"{path}.{slot}".lstrip("."))
-            for slot in generated.__slots__
+            for slot in message.__slots__
         }
     what = f"`{path}`" if path else "the value"
     raise TypeError(f"{what} is {type(value).__name__}, which is not plain data")
+
+
+def field_to_plain(message: object, field: str, path: str = "") -> Plain:
+    """Plain data from one LCM field of a message. The other fields are not converted."""
+    if isinstance(message, DimosMsg):
+        message = _generated(message)
+    return to_plain(getattr(message, field), f"{path}.{field}".lstrip("."))
+
+
+def _generated(message: DimosMsg) -> _Generated:
+    """A message as its generated class, whose fields are the LCM ones."""
+    try:
+        generated: type[_Generated] = schema_class_for(type(message))
+    except ValueError as error:
+        raise TypeError(str(error)) from None
+    if type(message) is generated:
+        return message
+    # A wrapper is read through its LCM bytes, so its fields are the message's own.
+    return cast("_Generated", generated.lcm_decode(message.lcm_encode()))
 
 
 def from_plain(value: Plain, annotation: object) -> object:
@@ -99,6 +113,13 @@ def _message(generated: type[_Generated], fields: Mapping[str, Plain]) -> _Gener
             setattr(message, name, [_message(inner, _map(item, name)) for item in value])
         else:
             setattr(message, name, [])
+        # A list of no fixed length has its length in a field of its own.
+        counted = dims[0] if dims is not None and len(dims) == 1 else None
+        if isinstance(counted, str):
+            length = len(getattr(message, name))
+            if fields.get(counted, length) != length:
+                raise TypeError(f"`{counted}` is {fields[counted]}, and `{name}` holds {length}")
+            setattr(message, counted, length)
     return message
 
 

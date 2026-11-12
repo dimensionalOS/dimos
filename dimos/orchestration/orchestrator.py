@@ -16,7 +16,7 @@
 
 from collections import deque
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 import threading
@@ -31,6 +31,7 @@ from dimos.orchestration import engine
 from dimos.orchestration.checks import CheckedDefinition, check
 from dimos.orchestration.definition import OrchestratorDefinition, Signal
 from dimos.orchestration.engine import (
+    DEFAULT_LIMITS,
     Call,
     ClearTimer,
     Effect,
@@ -48,12 +49,11 @@ from dimos.orchestration.engine import (
 )
 from dimos.orchestration.expressions import UNKNOWN, Shape
 from dimos.orchestration.loader import LoadError, load_and_check
-from dimos.orchestration.plain import from_plain, shape_of, to_plain
+from dimos.orchestration.plain import field_to_plain, from_plain, shape_of, to_plain
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_DESCRIBE_TIMEOUT_S = 10.0
 # A start may run for as long as its node is active, so its RPC gets no practical deadline.
 _START_TIMEOUT_S = 365 * 24 * 3600.0
 _VARIADIC = ("VAR_POSITIONAL", "VAR_KEYWORD")
@@ -71,10 +71,8 @@ class Deployed:
     """Message types by `Module.stream`."""
 
 
-def bind(
-    definition: OrchestratorDefinition, deployed: Deployed
-) -> tuple[CheckedDefinition, list[str]]:
-    """Check a definition against the running blueprint. Returns it checked, and every problem."""
+def bind(definition: OrchestratorDefinition, deployed: Deployed) -> CheckedDefinition:
+    """Check a definition against the running blueprint. Its problems hold every one found."""
     shapes, shape_problems = _shapes(definition, deployed)
     parameters = {
         activity.name: {
@@ -90,7 +88,12 @@ def bind(
         *shape_problems,
         *checked.problems,
     ]
-    return checked, problems
+    return replace(checked, problems=tuple(dict.fromkeys(problems)))
+
+
+def _topic(target: str) -> str:
+    """The RPC name of a target written `Module.rpc`."""
+    return target.replace(".", "/", 1)
 
 
 def _missing(deployed: Deployed, target: str, offered: Mapping[str, object], kind: str) -> str:
@@ -182,8 +185,8 @@ def _shapes(
 
 class OrchestratorConfig(ModuleConfig):
     file: Path
-    cancel_deadline_s: float = 2.0
-    transition_cap: int = 100
+    cancel_deadline_s: float = DEFAULT_LIMITS.cancel_deadline_s
+    transition_cap: int = DEFAULT_LIMITS.transition_cap
 
 
 class Orchestrator(Module):
@@ -218,17 +221,15 @@ class Orchestrator(Module):
         if definition is None or self._checked is not None:
             logger.info("Orchestrator ignores a change to the system's modules")
             return
-        deployed, descriptors = self._describe(
-            definition, frozenset(module.remote_name for module in modules)
-        )
-        checked, problems = bind(definition, deployed)
-        if problems:
-            raise LoadError(self.config.file, problems)
+        deployed, descriptors = self._describe(definition, modules)
+        checked = bind(definition, deployed)
+        if checked.problems:
+            raise LoadError(self.config.file, checked.problems)
 
         self._checked = checked
         self._rpcs = deployed.rpcs
         for activity in definition.activities:
-            self.rpc.rpc_timeouts[activity.start.replace(".", "/", 1)] = _START_TIMEOUT_S
+            self.rpc.rpc_timeouts[_topic(activity.start)] = _START_TIMEOUT_S
         with self._wake:
             self._running = True
         for signal in definition.signals:
@@ -243,35 +244,29 @@ class Orchestrator(Module):
     @rpc
     def stop(self) -> None:
         self._halt()
-        self._cancel_all()
+        # The engine thread ends first, so no start it is sending follows the cancels.
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+        self._cancel_all()
         super().stop()
 
     def _describe(
-        self, definition: OrchestratorDefinition, modules: frozenset[str]
+        self, definition: OrchestratorDefinition, modules: list[RPCClient]
     ) -> tuple[Deployed, dict[str, StreamDescriptor]]:
         """Ask each module the definition names for its RPCs or its streams."""
+        clients = {module.remote_name: module for module in modules}
         targets = [t for a in definition.activities for t in (a.start, a.cancel) if t]
         rpcs: dict[str, RpcInfo] = {}
-        for module in sorted({target.partition(".")[0] for target in targets} & modules):
-            infos: list[RpcInfo]
-            infos, done = self.rpc.call_sync(
-                f"{module}/get_rpc_signatures", ((), {}), rpc_timeout=_DESCRIBE_TIMEOUT_S
-            )
-            done()
+        for module in sorted({target.partition(".")[0] for target in targets} & clients.keys()):
+            infos: list[RpcInfo] = clients[module].get_rpc_signatures()
             rpcs.update({f"{module}.{info.name}": info for info in infos})
         descriptors: dict[str, StreamDescriptor] = {}
         streams = {signal.stream.partition(".")[0] for signal in definition.signals}
-        for module in sorted(streams & modules):
-            found: list[StreamDescriptor]
-            found, done = self.rpc.call_sync(
-                f"{module}/get_stream_descriptors", ((), {}), rpc_timeout=_DESCRIBE_TIMEOUT_S
-            )
-            done()
+        for module in sorted(streams & clients.keys()):
+            found: list[StreamDescriptor] = clients[module].get_stream_descriptors()
             descriptors.update({f"{module}.{descriptor.name}": descriptor for descriptor in found})
         message_types = {name: descriptor.type for name, descriptor in descriptors.items()}
-        return Deployed(modules, rpcs, message_types), descriptors
+        return Deployed(frozenset(clients), rpcs, message_types), descriptors
 
     def _run(self, checked: CheckedDefinition) -> None:
         limits = Limits(self.config.cancel_deadline_s, self.config.transition_cap)
@@ -331,7 +326,10 @@ class Orchestrator(Module):
                     self._halt()
 
     def _send(self, call: Call) -> None:
-        name = call.rpc.replace(".", "/", 1)
+        with self._wake:
+            if call.kind == "start" and not self._running:
+                return
+        name = _topic(call.rpc)
         annotations = {param.name: param.annotation for param in self._rpcs[call.rpc].params}
         try:
             arguments = {
@@ -369,8 +367,11 @@ class Orchestrator(Module):
 
     def _on_message(self, signal: Signal, message: object) -> None:
         try:
-            value = message if signal.field is None else getattr(message, signal.field)
-            item = SignalItem(signal.name, to_plain(value, signal.name))
+            if signal.field is None:
+                value = to_plain(message, signal.name)
+            else:
+                value = field_to_plain(message, signal.field, signal.name)
+            item = SignalItem(signal.name, value)
         except (AttributeError, TypeError) as error:
             if signal.name not in self._unreadable:
                 self._unreadable.add(signal.name)
@@ -400,4 +401,4 @@ class Orchestrator(Module):
             return
         cancels = [activity.cancel for activity in checked.tree.activities.values()]
         for target in dict.fromkeys(cancel for cancel in cancels if cancel is not None):
-            self.rpc.call_nowait(target.replace(".", "/", 1), ((), {}))
+            self.rpc.call_nowait(_topic(target), ((), {}))

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
+from dimos_lcm.nav_msgs import Path
 from dimos_lcm.sensor_msgs import Image
 from dimos_lcm.std_msgs import Time
 import pytest
@@ -20,7 +21,7 @@ import pytest
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.protocol import DimosMsg
 from dimos.orchestration.expressions import UNKNOWN, Plain, Shape
-from dimos.orchestration.plain import from_plain, shape_of, to_plain
+from dimos.orchestration.plain import field_to_plain, from_plain, shape_of, to_plain
 
 STATUS: dict[str, Plain] = {
     "goal_id": {"stamp": {"sec": 1000, "nsec": 25}, "id": "goal-1"},
@@ -86,3 +87,17 @@ def test_a_field_left_out_is_the_default_of_its_type() -> None:
 def test_a_field_that_is_not_plain_data_is_an_error() -> None:
     with pytest.raises(TypeError, match="`camera.data` is bytes"):
         to_plain(Image(), "camera")
+
+
+def test_a_field_is_read_by_its_lcm_name() -> None:
+    # The wrapper has position and orientation, and the LCM message it encodes to has pose.
+    message = PoseStamped(position=(1.0, 2.0, 3.0), frame_id="map", ts=1000.25)
+    assert field_to_plain(message, "pose") == POSE["pose"]
+
+
+def test_a_list_of_messages_keeps_its_length() -> None:
+    built = from_plain({"poses": [{}, {}]}, Path)
+    assert isinstance(built, Path)
+    assert len(Path.lcm_decode(built.lcm_encode()).poses) == 2
+    with pytest.raises(TypeError, match="`poses_length` is 5, and `poses` holds 2"):
+        from_plain({"poses_length": 5, "poses": [{}, {}]}, Path)

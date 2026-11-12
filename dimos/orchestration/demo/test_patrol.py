@@ -72,8 +72,8 @@ def _deployed() -> Deployed:
 
 
 def test_the_patrol_file_runs_one_loop_of_its_route() -> None:
-    checked, problems = bind(load_and_check(PATROL), _deployed())
-    assert problems == []
+    checked = bind(load_and_check(PATROL), _deployed())
+    assert checked.problems == ()
 
     # The world answers as the fake modules do, on a clock the test owns.
     limits = Limits(cancel_deadline_s=2.0, transition_cap=100)

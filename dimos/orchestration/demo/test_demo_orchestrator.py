@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
 import time
@@ -19,7 +20,6 @@ import time
 from dimos_lcm.actionlib_msgs import GoalStatus
 from reactivex.disposable import Disposable
 
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -27,6 +27,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.orchestration.demo.demo_orchestrator import demo_orchestrator
+from dimos.orchestration.loader import load_and_check
 
 PATROL = Path(__file__).parent / "patrol.toml"
 
@@ -70,35 +71,35 @@ class Recorder(Module):
         return list(self._levels)
 
 
-def _charge_cycle(levels: list[float]) -> bool:
+def _charge_cycle(levels: list[float], low_battery: float, full_battery: float) -> bool:
     """Whether the battery ran low, was charged to full, and is draining again."""
-    low = next((i for i, level in enumerate(levels) if level < 20.0), None)
+    low = next((i for i, level in enumerate(levels) if level < low_battery), None)
     if low is None:
         return False
-    full = next((i for i in range(low, len(levels)) if levels[i] >= 95.0), None)
+    full = next((i for i in range(low, len(levels)) if levels[i] >= full_battery), None)
     return full is not None and any(later < earlier for earlier, later in pairwise(levels[full:]))
 
 
-def test_the_demo_runs_a_route_loop_and_a_charge_cycle(tmp_path: Path) -> None:
+def test_the_demo_runs_a_route_loop_and_a_charge_cycle(
+    tmp_path: Path, build: Callable[..., ModuleCoordinator]
+) -> None:
+    constants = load_and_check(PATROL).constants
+    low, full = constants["low_battery"], constants["full_battery"]
+    assert isinstance(low, float) and isinstance(full, float)
     text = PATROL.read_text()
     assert text.count("dwell_s = 2.0") == 1
     patrol = tmp_path / "patrol.toml"
     patrol.write_text(text.replace("dwell_s = 2.0", "dwell_s = 0.15"))
 
     blueprint = autoconnect(demo_orchestrator, Recorder.blueprint())
-    overrides = {"g": {"viewer": "none"}, "orchestrator": {"file": str(patrol)}, **FAST}
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=overrides)
-    coordinator = ModuleCoordinator.build(blueprint, parsed)
-    try:
-        recorder = coordinator.get_instance(Recorder)
-        deadline = time.monotonic() + 30.0
-        while not _charge_cycle(recorder.levels()) and time.monotonic() < deadline:
-            time.sleep(0.1)
-        arrived: list[str] = recorder.arrived()
-        levels: list[float] = recorder.levels()
-    finally:
-        coordinator.stop()
+    coordinator = build(blueprint, {"orchestrator": {"file": str(patrol)}, **FAST})
+    recorder = coordinator.get_instance(Recorder)
+    deadline = time.monotonic() + 30.0
+    while not _charge_cycle(recorder.levels(), low, full) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    arrived: list[str] = recorder.arrived()
+    levels: list[float] = recorder.levels()
 
     # The second goal raises, so no status carries its id, and the patrol carries on.
     assert arrived[:3] == ["goal-1", "goal-3", "goal-4"]
-    assert _charge_cycle(levels)
+    assert _charge_cycle(levels, low, full)
