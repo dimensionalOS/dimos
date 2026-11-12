@@ -199,7 +199,7 @@ def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
     if named is None:
         # Welded to the world: the child's own transform is where it sits, and the joint
         # carries no offset of its own.
-        origin_xyz, origin_rpy = _placement_of(_body_prim(prim, "physics:body1"))
+        origin_xyz, origin_rpy = _placement_of(pxr, _body_prim(prim, "physics:body1"))
     return _Joint(
         name=prim.GetDisplayName() or prim.GetName(),
         kind=kind,
@@ -280,7 +280,7 @@ def _write_geometry(pxr: Pxr, link: ET.Element, prim: Prim) -> None:
         return
     tag = "collision" if prim.HasAPI(pxr.UsdPhysics.CollisionAPI) else "visual"
     element = ET.SubElement(link, tag)
-    xyz, rpy = _placement_of(prim)
+    xyz, rpy = _placement_of(pxr, prim)
     if np.any(xyz) or np.any(rpy):
         ET.SubElement(element, "origin", xyz=_triple(xyz), rpy=_triple(rpy))
     geometry = ET.SubElement(element, "geometry")
@@ -353,22 +353,40 @@ def _axis_of(prim: Prim) -> NDArray[np.float64]:
     joint about z -- a waist that pitches drawn as a waist that twists.
     """
     attribute = prim.GetAttribute("physics:axis")
-    token = str(attribute.Get()) if attribute and attribute.Get() is not None else "X"
+    if not attribute or not attribute.IsDefined():
+        # A multi-DOF joint has no axis attribute at all, and for one of those the direction
+        # is whatever localRot1 does to z -- which is how urdf_to_usd writes a planar normal.
+        return np.asarray(_AXIS_TOKENS["Z"], dtype=np.float64)
+    token = str(attribute.Get())
     if token not in _AXIS_TOKENS:
         logger.warning(f"{prim.GetPath()} turns about {token!r}, which is no axis; taking X")
     return np.asarray(_AXIS_TOKENS.get(token, _AXIS_TOKENS["X"]), dtype=np.float64)
 
 
-def _placement_of(prim: Prim) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    transform = prim.GetAttribute("xformOp:transform")
-    if not transform or transform.Get() is None:
+def _placement_of(pxr: Pxr, prim: Prim) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Where a prim sits in its parent, however the layer spells it.
+
+    One layer says it as a single matrix and the next as an ordered translate/orient/rotate
+    stack -- the vendored robots use the latter throughout -- so compose the ops rather than
+    insisting on one attribute spelling. The scale op is skipped, not divided back out: the
+    shapes carry scale in their own sizes via _scale_of, and a scale that sits before the
+    offset in xformOpOrder would otherwise multiply the offset too.
+    """
+    xformable = pxr.UsdGeom.Xformable(prim)
+    if not xformable:
         return np.zeros(3), np.zeros(3)
-    matrix = np.asarray(transform.Get(), dtype=np.float64).T
-    rotation = Rotation.from_matrix(matrix[:3, :3])
+    composed = pxr.Gf.Matrix4d(1.0)
+    for op in xformable.GetOrderedXformOps():
+        if op.GetOpType() == pxr.UsdGeom.XformOp.TypeScale:
+            continue
+        composed = op.GetOpTransform(pxr.Usd.TimeCode.Default()) * composed
+    placement = pxr.Gf.Transform(composed)
+    translation = placement.GetTranslation()
+    rotation = _quat_rotation(placement.GetRotation().GetQuat())
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Gimbal lock detected")
         rpy = np.asarray(rotation.as_euler("xyz"), dtype=np.float64)
-    return matrix[:3, 3], rpy
+    return np.asarray([translation[0], translation[1], translation[2]], dtype=np.float64), rpy
 
 
 def _scale_of(prim: Prim) -> NDArray[np.float64]:
@@ -423,7 +441,7 @@ def _welds_of(pxr: Pxr, links: dict[str, Any], joints: list[_Joint]) -> list[_Jo
         ancestor = _link_ancestor(pxr, prim)
         if ancestor is None:
             continue
-        xyz, rpy = _placement_of(prim)
+        xyz, rpy = _placement_of(pxr, prim)
         parent = str(ancestor.GetDisplayName() or ancestor.GetName())
         joint_name = f"{name}_weld"
         kind = "fixed"

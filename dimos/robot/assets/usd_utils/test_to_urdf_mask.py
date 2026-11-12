@@ -389,6 +389,96 @@ def Xform "room"
 """
 
 
+_VENDORED_USDA = """#usda 1.0
+(
+    defaultPrim = "walker"
+)
+
+def Xform "walker" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+)
+{
+    def Xform "shin" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        float3 xformOp:translate = (0, 0, -0.3)
+        quatf xformOp:orient = (0.70710678, 0.70710678, 0, 0)
+        float3 xformOp:scale = (1, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+        def Cube "shell"
+        {
+            double size = 1
+            float3 xformOp:translate = (0, 0, 0.02)
+            float3 xformOp:scale = (0.1, 0.1, 0.4)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        }
+
+        def Xform "foot" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            float3 xformOp:translate = (0, 0, -0.4)
+            quatf xformOp:orient = (0.70710678, 0, 0.70710678, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def PhysicsRevoluteJoint "knee"
+        {
+            uniform token physics:axis = "Y"
+            rel physics:body0 = </walker>
+            rel physics:body1 = </walker/shin>
+            point3f physics:localPos0 = (0, 0, -0.3)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -90
+            float physics:upperLimit = 0
+        }
+    }
+}
+"""
+
+
+def test_a_native_joint_turns_about_the_axis_it_names() -> None:
+    """A vendored layer says the direction in physics:axis, not in localRot1 the way we do."""
+    joint = ET.fromstring(usd_to_urdf(_VENDORED_USDA)).findall("joint")[0]
+    axis = joint.find("axis")
+
+    assert axis is not None
+    np.testing.assert_allclose(
+        [float(value) for value in (axis.get("xyz") or "").split()], [0, 1, 0], atol=1e-6
+    )
+
+
+def test_a_native_prim_keeps_the_pose_its_xform_ops_state() -> None:
+    """translate + orient is how the vendored robots place every prim; transform is ours."""
+    links = {link.get("name"): link for link in ET.fromstring(usd_to_urdf(_VENDORED_USDA))}
+    origin = links["shin"].findall("visual")[0].find("origin")
+
+    assert origin is not None, "a geometry placed by translate kept no origin at all"
+    np.testing.assert_allclose(
+        [float(value) for value in (origin.get("xyz") or "").split()], [0, 0, 0.02], atol=1e-6
+    )
+
+
+def test_a_native_prim_keeps_the_rotation_its_orient_op_states() -> None:
+    """An orient op is a quaternion, not a matrix; the inferred weld has to read it as one."""
+    joints = {joint.get("name"): joint for joint in ET.fromstring(usd_to_urdf(_VENDORED_USDA))}
+    origin = joints["foot_weld"].find("origin")
+
+    assert origin is not None, "the nested link was welded with no pose at all"
+    np.testing.assert_allclose(
+        [float(value) for value in (origin.get("xyz") or "").split()], [0, 0, -0.4], atol=1e-6
+    )
+    np.testing.assert_allclose(
+        [float(value) for value in (origin.get("rpy") or "").split()],
+        [0, np.pi / 2, 0],
+        atol=1e-6,
+    )
+
+
 def test_a_scene_is_rooted_at_the_prim_every_joint_hangs_off() -> None:
     from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
