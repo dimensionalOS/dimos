@@ -81,6 +81,29 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     store.stop()
 
 
+@pytest.mark.parametrize("ts", [10, 10.0])
+def test_records_tf_with_numeric_timestamp(tmp_path: Path, ts: float) -> None:
+    path = tmp_path / "memory.db"
+    transform = Transform(ts=ts, frame_id="world", child_frame_id="base")
+    transport = _Transport()
+    with SqliteStore(path=str(path)) as store:
+        with closing(TransportRecorder(store)) as recorder, ExitStack() as subscriptions:
+            unsubscribe = recorder.tap("tf", TFMessage, transport)
+            assert unsubscribe is not None
+            subscriptions.callback(unsubscribe)
+            transport.publish(TFMessage(transform))
+        assert recorder.dropped == 0
+
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        rows = store.stream("tf", TFMessage).to_list()
+        assert len(rows) == 1
+        decoded = rows[0].data.transforms
+        assert decoded == [transform]
+        assert decoded[0].ts == ts
+        assert decoded[0].frame_id == "world"
+        assert decoded[0].child_frame_id == "base"
+
+
 def test_depth_is_recorded_losslessly_and_colour_as_jpeg(tmp_path: Path) -> None:
     pytest.importorskip("turbojpeg")
     path = tmp_path / "memory.db"

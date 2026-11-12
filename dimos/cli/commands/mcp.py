@@ -69,7 +69,12 @@ def _validate_key_value_args(values: list[str]) -> list[str]:
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
     args: list[str] = typer.Option(
-        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
+        [],
+        "--arg",
+        "-a",
+        # Avoid Typer's inspection of list[str] callback annotations on Python 3.10.
+        callback=lambda values: _validate_key_value_args(values),
+        help="Arguments as key=value",
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
     timeout: int = typer.Option(

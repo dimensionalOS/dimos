@@ -18,19 +18,20 @@ from collections.abc import Sequence
 import subprocess
 import time
 
-from dimos.agents.mcp.mcp_adapter import McpAdapter
-from dimos.core.run_registry import list_runs
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.run_registry import RunEntry, list_runs
 
 _REGISTRY_POLL_S = 0.5
 
 
-def default_mcp_url() -> str:
-    """The MCP endpoint of the newest running dimos, for attaching to one."""
-    return McpAdapter.from_run_entry().url
+def attached_mcp_url() -> str:
+    """The MCP endpoint of the newest running dimos, the one an attach drives; "" without one."""
+    runs = list_runs(alive_only=True)  # oldest first: run IDs start with a timestamp
+    return (runs[-1].mcp_url or "") if runs else ""
 
 
-def launched_mcp_url(process: subprocess.Popen[bytes], deadline: float) -> str:
-    """The MCP endpoint a launched ``dimos run`` registered for itself.
+def launched_run(process: subprocess.Popen[bytes], deadline: float) -> RunEntry:
+    """The run entry a launched ``dimos run`` registered for itself.
 
     The run entry is written once the blueprint is up, so this also waits out
     startup. Fails when the process exits first or the deadline passes.
@@ -38,9 +39,7 @@ def launched_mcp_url(process: subprocess.Popen[bytes], deadline: float) -> str:
     while True:
         entry = next((run for run in list_runs(alive_only=True) if run.pid == process.pid), None)
         if entry is not None:
-            if entry.mcp_url is None:
-                raise RuntimeError(f"dimos run {entry.run_id} has no McpServer in its blueprint")
-            return entry.mcp_url
+            return entry
         if process.poll() is not None:
             raise RuntimeError(
                 f"dimos exited with code {process.returncode} before registering its run"
@@ -48,6 +47,34 @@ def launched_mcp_url(process: subprocess.Popen[bytes], deadline: float) -> str:
         if time.monotonic() >= deadline:
             raise TimeoutError("dimos did not register its run before the launch deadline")
         time.sleep(_REGISTRY_POLL_S)
+
+
+def launched_mcp_url(process: subprocess.Popen[bytes], deadline: float) -> str:
+    """The MCP endpoint a launched ``dimos run`` registered for itself."""
+    entry = launched_run(process, deadline)
+    if entry.mcp_url is None:
+        raise RuntimeError(f"dimos run {entry.run_id} has no McpServer in its blueprint")
+    return entry.mcp_url
+
+
+def wait_connectable(deadline: float, process: subprocess.Popen[bytes] | None = None) -> None:
+    """Wait until the coordinator answers the ping a ``Dimos.connect()`` client starts with.
+
+    The coordinator answers only after every module has started.
+    """
+    while True:
+        try:
+            CoordinatorRPC.connect(timeout=max(1.0, min(5.0, deadline - time.monotonic()))).stop()
+            return
+        except TimeoutError:
+            if process is not None and process.poll() is not None:
+                raise RuntimeError(
+                    f"dimos exited with code {process.returncode} before it could be reached"
+                ) from None
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "no dimos coordinator answered before the launch deadline"
+                ) from None
 
 
 def validate_blueprints(names: Sequence[str]) -> None:
