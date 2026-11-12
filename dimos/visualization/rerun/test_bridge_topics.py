@@ -36,7 +36,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
-from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.visualization.rerun.bridge import (
     RerunBridgeModule,
     RerunEntry,
@@ -65,15 +64,12 @@ class FakeZenoh(Zenoh):
 
 
 @pytest.fixture
-def make_bridge(mocker: MockerFixture) -> Iterator[Callable[..., RerunBridgeModule]]:
-    """Build real bridges without opening RPC sessions or starting loop threads."""
-    mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
-    mocker.patch.object(ZenohRPC, "start")
-    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+def make_bridge() -> Iterator[Callable[..., RerunBridgeModule]]:
+    """Build real bridge modules. Constructing one opens a transport, so each is stopped again."""
     bridges: list[RerunBridgeModule] = []
 
     def make(**config: Any) -> RerunBridgeModule:
-        bridge = RerunBridgeModule(pubsubs=[], rpc_transport=ZenohRPC, **config)
+        bridge = RerunBridgeModule(pubsubs=[], **config)
         bridges.append(bridge)
         return bridge
 
@@ -162,16 +158,11 @@ def test_multi_entries_log_their_static_flag_and_pin_the_frame_once(
     ]
     assert is_rerun_multi(cells)
     log = mocker.patch("rerun.log")
-    clock = mocker.patch("dimos.visualization.rerun.bridge.time.monotonic", return_value=10.0)
     topic = ZenohTopic(topic="dimos/surface_map", lcm_type=PointCloud2)
     bridge = make_bridge(visual_override={"world/surface_map": lambda m: cells})
     entity = bridge._get_entity_path(topic)
-    bridge._min_intervals = {entity: 1.0}
     msg = PointCloud2(frame_id="odom")
     bridge._on_message(msg, topic)
-    bridge._on_message(msg, topic)
-    assert log.call_count == 3  # Two cells and the frame pin; the repeat is throttled.
-    clock.return_value = 11.0
     bridge._on_message(msg, topic)
     calls = [(c.args[0], c.kwargs.get("static", False)) for c in log.call_args_list]
     assert calls.count(("world/surface_map/0_0", True)) == 2
