@@ -96,11 +96,11 @@ class DescriptorPublisher:
         for module in modules:
             if self._stopped.is_set():
                 break
-            if module.remote_name == self._own_name or "get_stream_descriptors" not in module.rpcs:
+            if module.rpc_address == self._own_name or "get_stream_descriptors" not in module.rpcs:
                 continue
             try:
                 streams, release = module.rpc.call_sync(
-                    f"{module.remote_name}/get_stream_descriptors", ((), {}), rpc_timeout=1
+                    f"{module.rpc_address}/get_stream_descriptors", ((), {}), rpc_timeout=1
                 )
                 try:
                     for stream in streams:

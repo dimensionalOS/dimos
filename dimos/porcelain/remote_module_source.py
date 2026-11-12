@@ -120,6 +120,7 @@ class RemoteModuleSource(ModuleSource):
                     cls,
                     remote_name,
                     rpc=self._coord.rpc,
+                    rpc_address=descriptor.rpc_address or remote_name,
                     stream_lookup=functools.partial(self._get_stream, remote_name),
                 )
             except (ImportError, AttributeError):
@@ -128,6 +129,7 @@ class RemoteModuleSource(ModuleSource):
                     remote_name,
                     set(descriptor.rpc_names),
                     functools.partial(self._get_stream, remote_name),
+                    rpc_address=descriptor.rpc_address or remote_name,
                 )
             self._cache[remote_name] = proxy
             return proxy

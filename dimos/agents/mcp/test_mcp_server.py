@@ -17,12 +17,30 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from dimos.agents.capabilities import CapabilityRegistry
-from dimos.agents.mcp.mcp_server import app, handle_request
+from dimos.agents.mcp.mcp_server import McpServer, app, handle_request
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import SkillInfo
+
+
+def test_skill_calls_use_the_deployed_module_address(mocker):
+    mocker.patch.object(app, "state", SimpleNamespace(sse_queues=set()))
+    skills = [SkillInfo(class_name="TestSkills", func_name="add", args_schema="{}")]
+    module = mocker.Mock(remote_name="TestSkills", rpc_address="runs/one/modules/TestSkills")
+    module.get_skills.return_value = skills
+    server = McpServer()
+    try:
+        call = mocker.patch.object(server.rpc, "call_sync", return_value=(5, lambda: None))
+        server.on_system_modules([module])
+
+        assert app.state.rpc_calls["add"](2, 3) == 5
+        call.assert_called_once_with("runs/one/modules/TestSkills/add", ((2, 3), {}))
+        assert app.state.skills == skills
+    finally:
+        server.stop()
 
 
 def _make_rpc_calls(
