@@ -73,7 +73,6 @@ class LiveEnvironmentConfig(EnvironmentConfig):
     graceful_stop: bool = False
     graceful_stop_s: float = 30.0
     agent_artifacts: tuple[str, ...] = ("recording",)
-    # The robot section DIMOS.md adds to the general Python API guide; None adds none.
     robot_guide: RobotGuide | None = None
 
 
