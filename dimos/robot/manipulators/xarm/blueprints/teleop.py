@@ -320,7 +320,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 
 def _teleop(arm: XArmType) -> Blueprint:
     """Jog an xArm's end and open and close its xArm Gripper from the Desktop
-    Manipulation app, through ``XArmConnection``. ``UrdfManager`` serves the
+    Manipulation app, through ``XArmConnection``. ``UsdManager`` serves the
     arm's URDF and puts its joints on tf, so the app can draw it.
 
     Wire it up with ``.remappings(_ARM_REMAPS)``. The arm's address is given at
