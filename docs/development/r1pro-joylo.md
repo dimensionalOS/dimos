@@ -164,8 +164,18 @@ dimos run r1pro-openarm-joylo-left-sim2 --daemon \
   --leaderteleopmodule.calibration-root <calibration-root>
 ```
 
-Open Controller in DimOS Desktop with fixed frame `world`. This blueprint
-requires only the left leader and left Joy-Con. It starts paused, holds the
+Open Controller in DimOS Desktop with fixed frame `world`. A direct native
+view is also available if Controller's browser connection is unavailable:
+
+```bash
+mjpython -m dimos.robot.galaxea.r1pro.sim.demo_live_view
+```
+
+The native view subscribes to the same simulation state; it sends no robot
+commands and runs no separate dynamics. Closing it leaves the stack running.
+On Linux use `python` instead of `mjpython`.
+
+This blueprint requires only the left leader and left Joy-Con. It starts paused, holds the
 right arm, right jaw, torso and base, and ignores sticks and D-pad movement.
 
 | Left Joy-Con | Effect |
@@ -227,6 +237,9 @@ tests with `-m native_e2e` (16), and blueprint registry checks (5). Mypy passed
 for the twelve integration source files. This validates the software path;
 physical calibration and two-host timing still need testing with the actual
 leaders. The Mac bring-up read the paired left Joy-Con over HID and completed
-100/100 full seven-motor leader reads over USB, then ran the left-only sim2
-blueprint with fresh physical input streams. Direction/range checks and the
-first operator-driven following trial remain interactive checks.
+100/100 full seven-motor leader reads over USB. A physical Minus press enabled
+the left-only sim2 profile and operator movement produced up to 0.68 rad of
+measured simulated left-arm movement during the observed trial. The native
+viewer received all 28 simulated joints; Controller's browser view remained
+unresolved on that installation. Exhaustive direction/range checks, gripper
+and wrist-lock checks remain interactive validation.
