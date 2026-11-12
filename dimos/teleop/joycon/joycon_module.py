@@ -40,6 +40,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.joycon.mapping import (
     DEFAULT_AXIS_INDEX,
@@ -56,6 +57,7 @@ from dimos.teleop.joycon.mapping import (
     step_gripper,
     stick_to_base_velocity,
 )
+from dimos.teleop.joycon.raw import encode_readings
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
@@ -92,6 +94,8 @@ class JoyConTeleopModuleConfig(ModuleConfig):
     publish_cmd_vel: bool = False
     max_linear_m_s: float = Field(default=0.3, gt=0.0)
     max_angular_rad_s: float = Field(default=0.6, gt=0.0)
+    # Robot-specific profiles consume the full sample and own all output mapping.
+    publish_legacy_commands: bool = True
 
     def button_index(self, side: JoyConSide) -> dict[str, int]:
         return self.left_buttons if side == "left" else self.right_buttons
@@ -222,6 +226,7 @@ class JoyConTeleopModule(Module):
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
     cmd_vel: Out[Twist]
+    joycon_sample: Out[Joy]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -275,6 +280,9 @@ class JoyConTeleopModule(Module):
         self._last_tick = now
         readings = self._backend.read()
         self._note_presence(readings)
+        self.joycon_sample.publish(encode_readings(readings["left"], readings["right"]))
+        if not self.joycon_config.publish_legacy_commands:
+            return
         self.teleop_buttons.publish(buttons_message(readings["left"], readings["right"]))
         config = self.joycon_config
         outputs: dict[JoyConSide, Out[Float32]] = {

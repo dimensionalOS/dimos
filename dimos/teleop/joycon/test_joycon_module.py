@@ -25,6 +25,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.joycon.joycon_module import JoyConTeleopModule, JoyConTeleopModuleConfig
 from dimos.teleop.joycon.mapping import JoyConReading, JoyConSide
+from dimos.teleop.joycon.raw import decode_readings
 from dimos.teleop.webxr.controller_types import Buttons
 
 
@@ -56,7 +57,13 @@ def _module(
     module.use_backend(backend)
     published = {
         name: mocker.patch.object(getattr(module, name), "publish")
-        for name in ("teleop_buttons", "left_gripper_command", "right_gripper_command", "cmd_vel")
+        for name in (
+            "teleop_buttons",
+            "left_gripper_command",
+            "right_gripper_command",
+            "cmd_vel",
+            "joycon_sample",
+        )
     }
     backend.open()
     try:
@@ -135,3 +142,19 @@ def test_config_validates_mode_and_rates() -> None:
         JoyConTeleopModuleConfig(gripper_slew_per_s=0.0)
     with pytest.raises(ValueError):
         JoyConTeleopModuleConfig(deadzone=1.0)
+
+
+def test_raw_profile_keeps_all_controls_without_legacy_command_writers(
+    mocker: MockerFixture,
+) -> None:
+    with _module(mocker, publish_legacy_commands=False, publish_cmd_vel=True) as (
+        module,
+        backend,
+        published,
+    ):
+        backend.readings["left"] = JoyConReading(frozenset({"minus", "L", "down"}), (0.3, -0.4))
+        backend.readings["right"] = JoyConReading(frozenset({"X", "ZR", "R"}), (-0.2, 0.5))
+        module.tick(now=0)
+        assert decode_readings(published["joycon_sample"].call_args.args[0]) == backend.readings
+        for name in ("teleop_buttons", "left_gripper_command", "right_gripper_command", "cmd_vel"):
+            published[name].assert_not_called()
