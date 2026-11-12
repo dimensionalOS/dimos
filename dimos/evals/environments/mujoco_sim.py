@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 class MujocoEnvironmentConfig(SimConfig):
-    robot_guide: RobotGuide | None = "manipulation"
+    robot_guides: tuple[RobotGuide, ...] = ("manipulation",)
     tracked_bodies: tuple[str, ...] = ()
     settle_on_joints: bool = True
     module_env: dict[str, str] = Field(default_factory=dict)

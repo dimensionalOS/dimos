@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 class DimSimEnvironmentConfig(SimConfig):
-    robot_guide: RobotGuide | None = "navigation"
+    robot_guides: tuple[RobotGuide, ...] = ("navigation",)
     scene: str = "apartment"
     # Pinned on the launched dimos too, so scene setup reaches that simulator.
     port: int = DIMSIM_PORT

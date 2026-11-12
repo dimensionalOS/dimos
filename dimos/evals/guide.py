@@ -15,7 +15,7 @@
 """The Python API guide an eval agent gets as DIMOS.md.
 
 In an eval, dimOS is already running when the agent starts, so the guide covers
-connecting to it. ``python_guide`` adds the section for the robot's kind. When the
+connecting to it. ``python_guide`` adds the sections for the robot's kinds. When the
 API changes, update these and the matching docs together: docs/usage/python-api.md
 and docs/capabilities/manipulation/python_api.md.
 """
@@ -141,7 +141,7 @@ pose = app.peek_stream("odometry", 2.0)  # repeat until x, y stop changing
 """
 
 
-def python_guide(robot: RobotGuide | None) -> str:
-    """The general guide, followed by the section for this kind of robot, if any."""
+def python_guide(*robots: RobotGuide) -> str:
+    """The general guide, followed by the section for each kind of robot, in order."""
     sections = {"manipulation": MANIPULATION_GUIDE, "navigation": NAVIGATION_GUIDE}
-    return PYTHON_API_GUIDE if robot is None else f"{PYTHON_API_GUIDE}\n{sections[robot]}"
+    return "\n".join([PYTHON_API_GUIDE, *(sections[robot] for robot in robots)])

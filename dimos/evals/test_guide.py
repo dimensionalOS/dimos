@@ -46,7 +46,14 @@ def test_each_robot_gets_the_general_guide_and_only_its_own_section(
 
 def test_hardware_names_its_section() -> None:
     bare = HardwareEnvironment(blueprint=["unitree-go2"], task="walk")
-    go2 = HardwareEnvironment(blueprint=["unitree-go2"], task="walk", robot_guide="navigation")
+    go2 = HardwareEnvironment(blueprint=["unitree-go2"], task="walk", robot_guides=("navigation",))
 
     assert bare.python_guide == PYTHON_API_GUIDE
     assert go2.python_guide == python_guide("navigation")
+
+
+def test_a_mobile_arm_gets_both_sections_in_order() -> None:
+    guide = python_guide("navigation", "manipulation")
+
+    assert guide.startswith(PYTHON_API_GUIDE)
+    assert guide.index(NAVIGATION_GUIDE) < guide.index(MANIPULATION_GUIDE)

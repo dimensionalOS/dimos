@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 
 class HabitatEnvironmentConfig(SimConfig):
-    robot_guide: RobotGuide | None = "navigation"
+    robot_guides: tuple[RobotGuide, ...] = ("navigation",)
     # Dataset configuration path, resolved before launching Habitat.
     scene_dataset_config: str | None = None
     # Dataset scene handle or supported asset path in the Habitat subprocess.

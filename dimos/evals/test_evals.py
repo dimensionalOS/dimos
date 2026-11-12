@@ -427,7 +427,7 @@ def test_the_environment_adds_mcp_server_for_agents_that_need_it(
 ) -> None:
     assert environment._launch_modules(agent.config.modules, agent.requires_mcp) == added
     assert environment.python_guide == (
-        None if environment.serves_mcp else python_guide(environment.config.robot_guide)
+        None if environment.serves_mcp else python_guide(*environment.config.robot_guides)
     )
 
 
