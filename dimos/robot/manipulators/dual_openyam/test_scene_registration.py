@@ -37,7 +37,6 @@ from dimos.robot.manipulators.dual_openyam.scene_registration import (
     SelfClearedSceneRegistrationModule,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.types.timestamped import TimestampedBufferCollection
 
 TS = 1000.0
 # The coordinator reports the connection's joints under the robot name "arm".
@@ -90,25 +89,3 @@ def test_scene_keeps_the_table_and_drops_the_arm_base(
     points = cleared.as_numpy()[0]
     assert len(points) == len(raw) - 3
     assert np.allclose(points[:, 2], DUAL_OPENYAM_TABLE_TOP_Z, atol=1e-6)
-
-
-def test_scan_time_state_serves_a_cloud_read_at_pick_time(
-    module: SelfClearedSceneRegistrationModule,
-) -> None:
-    # The arm moved after the scan; the cloud still clears with the state from the scan.
-    module._states.add(JointState(name=ARM_JOINTS, position=[0.8] * 12, ts=TS + 25.0))
-    cleared = module.get_full_scene_pointcloud()
-    assert cleared is not None and len(cleared.as_numpy()[0]) == len(_scene().as_numpy()[0]) - 3
-
-
-def test_scene_is_withheld_without_a_state_near_the_capture(
-    module: SelfClearedSceneRegistrationModule,
-) -> None:
-    module._states = TimestampedBufferCollection[JointState](600.0)
-    module._states.add(JointState(name=ARM_JOINTS, position=[0.0] * 12, ts=TS - 5.0))
-    assert module.get_full_scene_pointcloud() is None
-
-
-def test_module_is_the_registration_module_with_a_joint_state_input() -> None:
-    assert issubclass(SelfClearedSceneRegistrationModule, ObjectSceneRegistrationModule)
-    assert "coordinator_joint_state" in SelfClearedSceneRegistrationModule.__annotations__

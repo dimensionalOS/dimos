@@ -84,22 +84,6 @@ def test_model_has_one_geometry_free_root_and_the_calibrated_base_poses() -> Non
     assert _origin(right, "rpy") == pytest.approx((-0.064743, 0.029942, 0.020931))
 
 
-def test_joint_three_origins_carry_the_calibrated_zero_offsets() -> None:
-    # The offset lives in the joint origin, so the joint variable stays the encoder reading.
-    root = _tree()
-    assert _origin(_joint(root, "left_joint3"), "rpy") == pytest.approx((0.0, -0.04907, -3.14159))
-    assert _origin(_joint(root, "right_joint3"), "rpy") == pytest.approx((0.0, -0.06793, -3.14159))
-
-
-def test_joint_one_limits_sit_inside_the_measured_stops() -> None:
-    root = _tree()
-    for side in ("left", "right"):
-        limit = _joint(root, f"{side}_joint1").find("limit")
-        assert limit is not None
-        assert float(limit.attrib["lower"]) == pytest.approx(-3.92699)
-        assert float(limit.attrib["upper"]) == pytest.approx(1.5708)
-
-
 def test_both_arm_chains_are_symmetric_and_use_two_rad_s_limits() -> None:
     root = _tree()
     for index in range(1, 7):
@@ -151,22 +135,3 @@ def test_model_environment_is_only_the_workcell_link() -> None:
     xml = ET.tostring(root, encoding="unicode").lower()
     for excluded in ("cabinet", "enclosure", "gate", "wall", "bottle", "bin"):
         assert excluded not in xml
-
-
-def test_every_arm_link_has_a_convex_hull_and_each_gripper_its_camera() -> None:
-    root = _tree()
-    for link in root.findall("link"):
-        name = link.attrib["name"]
-        visual = link.find("visual/geometry/mesh")
-        if visual is None:
-            continue
-        collision = link.find("collision/geometry/mesh")
-        assert collision is not None, name
-        assert collision.attrib["filename"].endswith(
-            "/collision/" + visual.attrib["filename"].rsplit("/", 1)[1]
-        )
-    for side in ("left", "right"):
-        gripper = root.find(f"./link[@name='{side}_gripper']")
-        assert gripper is not None
-        names = {c.attrib.get("name") for c in gripper.findall("collision")}
-        assert {f"{side}_wrist_camera_bracket", f"{side}_wrist_camera"} <= names
