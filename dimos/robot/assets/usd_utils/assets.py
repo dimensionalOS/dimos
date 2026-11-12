@@ -19,6 +19,7 @@ from collections.abc import Mapping
 import hashlib
 import itertools
 from pathlib import Path
+import re
 from typing import Any
 
 from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Spec, layer_from, load_pxr
@@ -148,6 +149,19 @@ def asset_hash(data: bytes) -> str:
     return f"{_HASH_ALGORITHM}:{hashlib.new(_HASH_ALGORITHM, data).hexdigest()}"
 
 
+_HASH_PATTERN = re.compile(rf"^{_HASH_ALGORITHM}:[0-9a-f]{{64}}$")
+
+
+def is_asset_hash(version: object) -> bool:
+    """Whether an assetInfo version is the digest this API promises its consumers.
+
+    USD's `version` is free-form, so a layer authored elsewhere may carry a release number
+    like "1.0" there. Accepting that would let an asset through the hash check without giving
+    anyone a way to tell the file they fetched from the file that was meant.
+    """
+    return bool(version) and _HASH_PATTERN.match(str(version)) is not None
+
+
 def hash_of_file(path: str, base_dir: Path | None = None) -> str | None:
     resolved = Path(path)
     if not resolved.is_absolute() and base_dir is not None:
@@ -256,7 +270,7 @@ def unhashed_assets(usd: str, root: Path | str | None = None) -> dict[str, str]:
     for prim in stage.Traverse():
         info = prim.GetAssetInfo() or {}
         for asset in _referenced_assets(pxr, prim):
-            if not info.get("version"):
+            if not is_asset_hash(info.get("version")):
                 missing[asset] = str(prim.GetPath())
     return missing
 
@@ -291,7 +305,8 @@ def require_asset_hashes(usd: str, *, what: str, root: Path | str | None = None)
         )
     listed = "\n".join(lines)
     raise ValueError(
-        f"{what} references {len(missing)} asset(s) with no hash. Every asset needs one: a "
-        f"path alone cannot say whether the file fetched is the file meant. Set "
-        f'assetInfo["version"] on each prim below (urdf_to_usd does this for you):\n{listed}'
+        f"{what} references {len(missing)} asset(s) with no usable hash. Every asset needs "
+        f"one: a path alone cannot say whether the file fetched is the file meant. Set "
+        f'assetInfo["version"] on each prim below to "{_HASH_ALGORITHM}:<64 hex digits>" '
+        f"(urdf_to_usd does this for you):\n{listed}"
     )
