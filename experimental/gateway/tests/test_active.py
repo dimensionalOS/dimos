@@ -209,6 +209,14 @@ def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) ->
     assert client.get("/active").json()["runId"] not in (first, second)
 
 
+def test_a_launch_stopped_while_starting_is_stopped_not_failed(client: TestClient) -> None:
+    client.post("/active/launch", json={"blueprint": "slow"})
+    until(output_has(client, "args"))
+    assert client.post("/active/stop").status_code == 200
+    launch = launch_of(client)
+    assert launch["phase"] == "stopped" and launch["error"] is None
+
+
 def test_relaunch_restarts_a_launch_stuck_starting(client: TestClient) -> None:
     started = client.post("/active/launch", json={"blueprint": "slow"})
     assert started.status_code == 200, started.text
