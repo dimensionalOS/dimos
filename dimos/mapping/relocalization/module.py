@@ -72,7 +72,7 @@ class Config(ModuleConfig):
     map_frame: str = "map"
     # Seconds between tf republishes of the accepted fix (tf is not latched)
     tf_interval: float = 10.0
-    # Seconds between `loaded_map` republishes; 0 publishes once per fix
+    # Seconds between `loaded_map` republishes after the first fix; 0 publishes it once
     republish_loaded_map: float = 0.0
     # Stop attempting once a fix is accepted.
     relocalize_once: bool = True
@@ -89,6 +89,8 @@ class RelocalizationModule(Module):
         super().__init__(**kwargs)
         self.fixes: Subject[Transform] = Subject()
         self.premap: PointCloud2 | None = None
+        # The last accepted world_frame -> map fix.
+        self.fix: Transform | None = None
 
     @rpc
     def start(self) -> None:
@@ -111,8 +113,9 @@ class RelocalizationModule(Module):
         premap.frame_id = self.config.map_frame
         self.premap = premap
 
+        # Only the first fix places the premap: later ones move world -> map, and the map moves with it.
         self.register_disposable(
-            fix_stream(self.fixes, self.config.republish_loaded_map).subscribe(
+            fix_stream(self.fixes.pipe(ops.take(1)), self.config.republish_loaded_map).subscribe(
                 lambda _: self.loaded_map.publish(premap)
             )
         )
@@ -141,6 +144,7 @@ class RelocalizationModule(Module):
             translation=str(tf.translation),
             yaw_deg=round(yaw_deg(tf), 1),
         )
+        self.fix = tf
         self.fixes.on_next(tf)
         if not self._placed and self.config.relocalize_once:
             logger.info(f"relocalize {source}: placed, no further attempts (relocalize_once)")

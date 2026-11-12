@@ -139,7 +139,7 @@ def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
     placement[:3, 3] = [3.0, -1.0, 0.0]  # the map is 3 m +x of where the robot thought
     result = SimpleNamespace(transformation=placement, fitness=0.4, inlier_rmse=0.1)
     monkeypatch.setattr(lidar.LidarRelocalizer, "_prepare", lambda self, cloud: None)
-    monkeypatch.setattr(lidar.LidarRelocalizer, "align", lambda self, cloud: result)
+    monkeypatch.setattr(lidar.LidarRelocalizer, "align", lambda self, cloud, initial=None: result)
 
     def relocalizer(threshold):
         return lidar.LidarRelocalizer(
