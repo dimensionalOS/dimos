@@ -17,8 +17,10 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import socket
 import subprocess
+import sys
 import threading
 from typing import Any
 from urllib.parse import urlparse
@@ -40,10 +42,13 @@ def spawn_viewer(
     server_uri: str, memory_limit: str, websocket_url: str = RERUN_WEBSOCKET_URL
 ) -> bool:
     """Launch our custom viewer directly, falling back to stock Rerun if unavailable."""
+    # A launch that did not activate the venv has no dimos-viewer on PATH;
+    # the one installed with this interpreter sits beside it.
+    viewer = Path(sys.executable).with_name("dimos-viewer")
     try:
         process = subprocess.Popen(
             [
-                "dimos-viewer",
+                str(viewer) if viewer.exists() else "dimos-viewer",
                 "--connect",
                 server_uri,
                 "--ws-url",
