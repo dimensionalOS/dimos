@@ -29,7 +29,7 @@ import traceback
 from typing import Any, Literal, TypeAlias, get_type_hints
 
 import numpy as np
-from pydantic import Field, model_validator
+from pydantic import Field, TypeAdapter, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import TaskName
@@ -217,13 +217,33 @@ class ManipulationModule(Module):
 
     @classmethod
     def check_dependencies(cls, **kwargs: Any) -> None:
-        default_backend = get_type_hints(cls)["config"].model_fields["world_backend"].default
-        if kwargs.get("world_backend", default_backend) == "roboplan":
+        fields = get_type_hints(cls)["config"].model_fields
+        if kwargs.get("world_backend", fields["world_backend"].default) != "roboplan":
+            return
+
+        planner: ManipulationPlannerConfig = TypeAdapter(ManipulationPlannerConfig).validate_python(
+            kwargs.get("planner", fields["planner"].get_default(call_default_factory=True))
+        )
+        parametrization: TrajectoryParametrizationConfig | None = TypeAdapter(
+            TrajectoryParametrizationConfig | None
+        ).validate_python(
+            kwargs.get(
+                "trajectory_parametrization",
+                fields["trajectory_parametrization"].get_default(call_default_factory=True),
+            )
+        )
+        dependencies = ["roboplan.core"]
+        if planner.backend == "roboplan":
+            dependencies.extend(("roboplan.rrt", "roboplan.cartesian_planning"))
+        if parametrization is None or parametrization.backend == "roboplan_toppra":
+            dependencies.append("roboplan.toppra")
+
+        for dependency in dependencies:
             try:
-                import_module("roboplan.core")
+                import_module(dependency)
             except ImportError as exc:
                 raise ImportError(
-                    "RoboPlanWorld requires the optional roboplan dependency. "
+                    f"Failed to import {dependency}: {exc}. "
                     "Install the manipulation extra before selecting the roboplan backend."
                 ) from exc
 

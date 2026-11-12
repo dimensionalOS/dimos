@@ -48,6 +48,8 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
+from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.joint_space import (
@@ -82,11 +84,45 @@ from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
-def test_default_backend_requires_roboplan_with_install_hint(monkeypatch) -> None:
-    monkeypatch.setitem(sys.modules, "roboplan.core", None)
+@pytest.mark.parametrize(
+    "missing", ["roboplan.core", "roboplan.rrt", "roboplan.cartesian_planning", "roboplan.toppra"]
+)
+def test_default_backend_requires_roboplan_with_install_hint(mocker, missing) -> None:
+    def import_backend(name: str) -> None:
+        if name == missing:
+            raise ModuleNotFoundError(f"No module named '{name}'", name=name)
 
-    with pytest.raises(ImportError, match="Install the manipulation extra"):
+    mocker.patch("dimos.manipulation.manipulation_module.import_module", side_effect=import_backend)
+
+    with pytest.raises(ImportError, match="Install the manipulation extra") as error:
         ManipulationModule.check_dependencies()
+
+    assert f"Failed to import {missing}: No module named '{missing}'" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("planner", "parametrization", "dependencies"),
+    [
+        (RRTConnectPlannerConfig(), SimpleTrapezoidParametrizationConfig(), ["roboplan.core"]),
+        ({"backend": "rrt_connect"}, {"backend": "simple_trapezoid"}, ["roboplan.core"]),
+        (RRTConnectPlannerConfig(), None, ["roboplan.core", "roboplan.toppra"]),
+        (
+            RoboPlanPlannerConfig(),
+            SimpleTrapezoidParametrizationConfig(),
+            ["roboplan.core", "roboplan.rrt", "roboplan.cartesian_planning"],
+        ),
+    ],
+)
+def test_dependency_checks_only_require_selected_components(
+    mocker, planner, parametrization, dependencies
+) -> None:
+    import_backend = mocker.patch("dimos.manipulation.manipulation_module.import_module")
+
+    ManipulationModule.check_dependencies(
+        planner=planner, trajectory_parametrization=parametrization
+    )
+
+    assert import_backend.call_args_list == [call(name) for name in dependencies]
 
 
 def test_drake_backend_does_not_require_roboplan(monkeypatch) -> None:

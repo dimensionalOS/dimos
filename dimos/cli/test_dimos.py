@@ -34,6 +34,7 @@ import dimos.core.daemon as core_daemon
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 import dimos.core.run_registry as run_registry
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
 import dimos.utils.cache as cache_utils
@@ -361,16 +362,27 @@ def stubbed_run(
 
 
 @pytest.mark.parametrize("run_options", [[], ["--daemon"]])
+@pytest.mark.parametrize(
+    "import_error",
+    ["No module named roboplan", "libroboplan_core.so: undefined symbol: example"],
+)
 def test_run_reports_missing_dependency_before_starting(
     stubbed_run: dict[str, Any],
     mocker: MockerFixture,
     run_options: list[str],
+    import_error: str,
 ) -> None:
     hint = (
-        "RoboPlanWorld requires the optional roboplan dependency. "
+        f"Failed to import roboplan.core: {import_error}. "
         "Install the manipulation extra before selecting the roboplan backend."
     )
-    mocker.patch.object(RunModuleA, "check_dependencies", side_effect=ImportError(hint))
+    mocker.patch.object(
+        RunModuleA, "check_dependencies", side_effect=ManipulationModule.check_dependencies
+    )
+    mocker.patch(
+        "dimos.manipulation.manipulation_module.import_module",
+        side_effect=ImportError(import_error),
+    )
     fork_daemon = mocker.patch.object(lifecycle, "fork_daemon")
 
     result = CliRunner().invoke(main, ["run", "alpha", "beta", *run_options])
