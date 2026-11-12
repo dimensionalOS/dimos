@@ -58,12 +58,14 @@ def _message_configuration(project: Path) -> dict[str, Any]:
         raise MessagePackageError(str(error)) from error
 
 
-def installed_providers() -> tuple[Dependency, ...]:
+def installed_providers(*, exclude: tuple[str, ...] = ()) -> tuple[Dependency, ...]:
     """Message packages installed in the build environment, read from their manifests.
 
     The build depends on the provider that owns every imported type (the built-in
     ``dimos_messages`` package for ``std_msgs/Header``), so the versions are taken
     from the environment that builds the wheel instead of a project-maintained pin.
+    The project's own provider is skipped: its entry point is declared in the
+    metadata being built, but its generated module does not exist yet.
     """
     from importlib.metadata import entry_points
     from importlib.util import find_spec
@@ -71,6 +73,8 @@ def installed_providers() -> tuple[Dependency, ...]:
     providers: list[Dependency] = []
     for entry in entry_points(group=PROVIDER_GROUP):
         module = entry.value.split(":", 1)[0]
+        if entry.name in exclude or module.split(".")[0] in exclude:
+            continue
         spec = find_spec(module)
         if spec is None or spec.origin is None:
             raise MessagePackageError(
@@ -89,7 +93,8 @@ def generate_sources(project: Path) -> tuple[dict[str, Any], Path]:
     """Regenerate the message packages and return the configuration and output root."""
     project = project.resolve()
     config = _message_configuration(project)
-    dependencies = config["dependencies"] or installed_providers()
+    own = (config["module"], config["python_module"], config["python_module"] + "_schemas")
+    dependencies = config["dependencies"] or installed_providers(exclude=own)
     output = project / OUTPUT
     # A definition deleted from interfaces/ must not survive in the build output.
     if output.exists():
