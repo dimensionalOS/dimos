@@ -687,7 +687,7 @@ class PointCloud2(Timestamped):
                 pointcloud=pc,
                 frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
                 ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-                if hasattr(msg, "header") and msg.header.stamp.sec > 0
+                if hasattr(msg, "header") and (msg.header.stamp.sec or msg.header.stamp.nsec)
                 else None,
                 seq=msg.header.seq if hasattr(msg, "header") else 0,
             )
@@ -849,7 +849,7 @@ class PointCloud2(Timestamped):
             pointcloud=pcd_t,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-            if hasattr(msg, "header") and msg.header.stamp.sec > 0
+            if hasattr(msg, "header") and (msg.header.stamp.sec or msg.header.stamp.nsec)
             else None,
             seq=msg.header.seq if hasattr(msg, "header") else 0,
         )
