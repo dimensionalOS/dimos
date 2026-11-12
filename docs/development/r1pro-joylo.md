@@ -149,6 +149,12 @@ and flips; select that root with `--leaderteleopmodule.calibration-root`.
 Joint flips depend on the actual assembled
 leaders and should be verified against one R1 sim joint at a time.
 
+Capturing encoder zero offsets does **not** determine rotation directions.
+The calibration's per-motor `flip` sets the direction before the R1 mapping;
+engagement subtracts the leader's starting angle but preserves that sign.
+An all-positive calibration can therefore align without jumping and still
+move individual follower joints backwards. Verify direction as well as motion.
+
 ### Left arm only on this Mac
 
 Pair the left Joy-Con in macOS Bluetooth settings and connect the seven-motor
@@ -189,6 +195,29 @@ Move one leader joint at a time to verify direction before larger movements.
 The initial Mac trial uses encoder offsets saved in a separate local calibration
 root; engagement aligns the current leader pose to the current simulated arm.
 Those trial offsets do not establish mechanical joint zero or verify joint signs.
+The initial zero-only calibration left every `flip` false. The operator's
+direction check required the following correction for the attached left leader
+(numbered from shoulder to wrist):
+
+| Leader motor / R1 arm joint | Motion | Calibration `flip` |
+|---|---|---|
+| 1 | Shoulder forward/backward | `true` |
+| 2 | Shoulder outward/inward | `true` |
+| 3 | Upper arm below shoulder | `false` |
+| 4 | Elbow | `false` |
+| 5 | Wrist nearest elbow | `false` |
+| 6 | Middle wrist | `true` |
+| 7 | Wrist nearest hand | `true` |
+
+These signs belong to this assembled leader's separate calibration, not a
+universal OpenArm default or the right arm. When calibrating this same setup
+again, use `--left-flips joint_1,joint_2,joint_6,joint_7` with the calibration
+CLI. To correct an existing calibration, preserve its IDs and homing offsets,
+change only the relevant `flip` fields while following is paused, and restart
+the operator to reload it. Do not also negate the mapping's `scale`: that
+would apply the same direction correction twice. Re-engage after the reload
+and check each joint individually.
+
 Missing/stale input pauses following and requires release and a fresh Minus
 press after reconnection. HID silence is detected after 200 ms, in addition to
 the profile's 250 ms stream timeout. `dimos shell` exposes `R1ProJoylo.status()`
