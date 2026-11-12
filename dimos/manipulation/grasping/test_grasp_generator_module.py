@@ -13,12 +13,15 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+from contextlib import ExitStack
 import json
 import math
 
 import numpy as np
 import pytest
 
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.global_config import GlobalConfig
 from dimos.manipulation.grasping.grasp_generator_module import (
     GraspGeneratorModule,
     _approach_angle,
@@ -60,6 +63,23 @@ def _cloud(points: list[list[float]]) -> PointCloud2:
 
 
 CUP = _cloud([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]])
+
+
+@pytest.mark.parametrize("instance_name", [None, "arm/grasps"])
+def test_deployed_grasps_report_the_public_generator_name(instance_name):
+    config = GlobalConfig(n_workers=1, viewer="none")
+    cup = _cloud([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22], [0.1, 0.0, 0.2]])
+    with ExitStack() as cleanup:
+        manager = WorkerManagerPython(g=config)
+        cleanup.callback(manager.stop)
+        generator = manager.deploy(HeuristicGraspModule, config, {"instance_name": instance_name})
+        cleanup.callback(generator.stop_rpc_client)
+
+        proposed = generator.propose_grasps_for(cup)
+
+        name = instance_name or "HeuristicGraspModule"
+        assert proposed["generator"] == name
+        assert [grasp["generator"] for grasp in proposed["grasps"]] == [name]
 
 
 @pytest.fixture

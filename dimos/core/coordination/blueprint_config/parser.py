@@ -333,7 +333,7 @@ class BlueprintConfigParser:
         for module in modules:
             for path, annotation in leaf_fields(
                 module.config_cls,
-                excluded={"g", "instance_name", "rpc_name"},
+                excluded={"g", "instance_name", "rpc_name", "rpc_address"},
             ):
                 target_annotations[("module", module.atom.name, path)].append(annotation)
         for path, annotation in leaf_fields(GlobalConfig):
@@ -444,6 +444,7 @@ class BlueprintConfigParser:
             dumped.pop("g", None)
             dumped.pop("instance_name", None)
             dumped.pop("rpc_name", None)
+            dumped.pop("rpc_address", None)
             parsed[module.atom.name] = dumped
         return parsed
 

@@ -129,6 +129,8 @@ class ModuleConfig(BaseConfig):
     # Optional RPC-only address. Unlike instance_name, this does not change the
     # module's Blueprint identity, configuration key, or stream namespace.
     rpc_name: str | None = None
+    # Assigned by the worker manager without replacing the public RPC name.
+    rpc_address: str | None = None
     g: GlobalConfig = global_config
 
 
@@ -188,7 +190,7 @@ class ModuleBase(Configurable, CompositeResource):
             self.rpc.start()  # type: ignore[attr-defined]
             self.rpc.serve_module_rpc(
                 self,
-                name=self.config.rpc_name or self.config.instance_name,
+                name=self.rpc_address,
             )
         except ValueError:
             ...
@@ -197,6 +199,16 @@ class ModuleBase(Configurable, CompositeResource):
     def name(self) -> str:
         """Name for this module to be used for blueprint configs."""
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
+
+    @property
+    def rpc_address(self) -> str:
+        """The deployed RPC endpoint, separate from the module's public name."""
+        return (
+            self.config.rpc_address
+            or self.config.rpc_name
+            or self.config.instance_name
+            or type(self).__name__
+        )
 
     @property
     def frame_id(self) -> str:
