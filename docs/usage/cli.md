@@ -95,7 +95,8 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
-# Record every stream of a run, then replay it
+# Record every stream of a run, then replay it. recordings/ is under a Git checkout;
+# an installed package writes to ~/.local/state/dimos/recordings/<run-id>/memory.db
 dimos --record --simulation run unitree-go2
 dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 
@@ -278,14 +279,22 @@ dimos log [OPTIONS]
 | `--lines`, `-n` | Number of lines to show (default: 50) |
 | `--all`, `-a` | Show full log |
 | `--json` | Raw JSONL output (for piping to `jq`) |
-| `--run`, `-r` | Specific run ID (defaults to most recent) |
+| `--run`, `-r` | Run ID of a running instance (defaults to the most recent) |
 
 ```bash
 dimos log                    # last 50 lines, human-readable
 dimos log -f                 # follow in real time
 dimos log -n 100             # last 100 lines
 dimos log --json | jq .event # raw JSONL, extract events
-dimos log -r 20260306-143022-a3f1-unitree-go2  # specific run
+dimos log -r 20260306-143022-a3f1-unitree-go2  # a specific running instance
+```
+
+`dimos log` finds a run only while it is running. After a run has stopped, or when a start
+failed, it prints `No log files found`. The log is still on disk, so read the file:
+
+```bash
+# logs/ is under a Git checkout; an installed package writes to ~/.local/state/dimos/logs/
+jq -r .event logs/<run-id>/main.jsonl
 ```
 
 All processes (main + workers) write to the same `main.jsonl`. Filter by module:
