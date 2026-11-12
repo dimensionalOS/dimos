@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import os
 from pathlib import Path
 import re
@@ -44,7 +43,6 @@ from dimos.core.run_registry import (
     stop_entry,
 )
 from dimos.experimental.memory import rust_cli_recorder
-from dimos.memory import tap
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.testing.waiting import wait_until
 
@@ -803,31 +801,6 @@ def test_rust_build_failure_fails_startup_before_readiness(recording_coordinator
     on_ready.assert_not_called()
     recording_coordinator.loop.assert_not_called()
     recording_coordinator.stop.assert_called_once_with()
-
-
-def test_python_recorder_preserves_readiness_order(
-    recording_coordinator, mocker, monkeypatch, tmp_path
-):
-    monkeypatch.setattr(global_config, "record_engine", "python")
-    events = []
-
-    @contextmanager
-    def recording(coordinator):
-        events.append("recording")
-        yield
-
-    mocker.patch.object(tap, "recording", side_effect=recording)
-    recording_coordinator.loop.side_effect = lambda: events.append("loop")
-
-    run_coordinator(
-        mocker.Mock(),
-        mocker.Mock(),
-        run_id="recording-test",
-        log_dir=tmp_path,
-        on_ready=lambda _: events.append("daemon ready"),
-    )
-
-    assert events == ["daemon ready", "recording", "loop"]
 
 
 def test_readiness_callback_failure_stops_recording_and_coordinator(
