@@ -14,7 +14,7 @@
 
 """All 33 ABC Sim tasks (amazon-far/abc, abc_sim/task_specs.py) with both OpenYAM arms.
 
-    dimos evals run dimos.evals.suites.abc_sim --agent dimos.evals.agents.pi --tags count
+    dimos evals run dimos.evals.suites.abc_sim --agent dimos.evals.agents.dimos_agent --tags count
 
 One case per ABC task spec, ``abc_<spec name>``, tagged with its ABC scene (``env_task``)
 and with ``dual_arm`` when it needs both arms (they hold, hand over or work both sides of
@@ -53,7 +53,6 @@ from dimos.evals.scorers import (
     tower,
     upright,
 )
-from dimos.evals.suites.mujoco_xarm import PERCEPTION_MODULES
 from dimos.evals.types import EvalCase, Outcome, Suite
 from dimos.robot.manipulators.dual_openyam.abc_sim import (
     DUAL_OPENYAM_SIM_BASE_XY,
@@ -62,13 +61,9 @@ from dimos.robot.manipulators.dual_openyam.abc_sim import (
 
 TABLE_Z = 0.75
 GUIDANCE = (
-    "You control two YAM arms, each with a parallel gripper that opens about 9.5 cm, "
-    "mounted side by side at the near edge of the table and facing +x. dimOS plans each "
-    "arm as its own planning group: left_manipulator (base at world y=+0.31) and "
-    "right_manipulator (y=-0.31); pick one with Arm.from_app(app, group=...). The table top "
-    "is at z=0.75 m in the world frame; +y is the robot's left. Locate objects with the "
-    "fixed overhead camera and the perception skills. Release what you hold and move the "
-    "grippers clear when done."
+    "You control two YAM arms with parallel grippers, and a fixed overhead RGB-D camera. "
+    "Find objects with the localize module, get grasps for an object from the grasp module, "
+    "and move the arms and grippers through the manipulation module."
 )
 # The arm bases stand on the table top in some ABC scenes and 1 cm above it in the rest.
 _BASE_Z = {
@@ -84,14 +79,15 @@ _BASE_Z = {
 def environment(env_task: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
     base = [*DUAL_OPENYAM_SIM_BASE_XY, _BASE_Z.get(env_task, 0.76)]
     return MujocoEnvironment(
-        blueprint=["dual-openyam-abc-sim", "perception-localize", "observe-skill"],
-        disable=PERCEPTION_MODULES,
+        blueprint=["dual-openyam-abc-sim", "perception-localize"],
         scene=abc_scene(f"abc_{env_task}"),
         tracked_bodies=bodies,
         module_env={
             "MANIPULATIONMODULE__MODEL__BASE_POSE": json.dumps(
                 {"frame_id": "world", "position": base}
-            )
+            ),
+            # The overhead camera never moves, so one view must confirm an object.
+            "PERCEPTIONLOCALIZE__PARAMS__MIN_VIEWS": "1",
         },
     )
 
@@ -272,8 +268,7 @@ SUITE: Suite = [
     case(
         "put_relative",
         "put_relative",
-        "Put the orange cube to the left of the green cube, from the robot's point of view "
-        "(world +y is left).",
+        "Put the orange cube to the left of the green cube, from the robot's point of view.",
         ("relative_obj_06", "relative_obj_04"),
         placed_beside("relative_obj_06", "relative_obj_04", (0.0, 1.0)),
         arms="single_arm",

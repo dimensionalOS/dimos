@@ -14,7 +14,7 @@
 
 """Three ABC Sim tasks for one OpenYAM arm, the other parked in place.
 
-    dimos evals run dimos.evals.suites.abc_sim_single_arm --agent <agent>
+    dimos evals run dimos.evals.suites.abc_sim_single_arm --agent dimos.evals.agents.dimos_agent
 
 Scenes come from amazon-far/abc (data/abc_count, abc_clutter, abc_relative; see
 data/abc_yam/SOURCE.md); graders follow abc_sim/task_eval. ``dimos.evals.suites.abc_sim``
@@ -25,7 +25,6 @@ import json
 
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import count_inside, placed_beside
-from dimos.evals.suites.mujoco_xarm import PERCEPTION_MODULES
 from dimos.evals.types import EvalCase, Suite
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_SIM_LEFT_BASE,
@@ -34,9 +33,9 @@ from dimos.robot.manipulators.openyam.config import (
 from dimos.utils.data import LfsPath
 
 GUIDANCE = (
-    "You control one YAM arm with a parallel gripper (about 9.5 cm wide when open). "
-    "Locate objects with the perception and camera skills, and move the arm through dimOS. "
-    "Release the object and move the gripper away when done."
+    "You control one YAM arm with a parallel gripper, and a fixed overhead RGB-D camera. "
+    "Find objects with the localize module, get grasps for an object from the grasp module, "
+    "and move the arm and gripper through the manipulation module."
 )
 
 
@@ -47,15 +46,15 @@ def environment(
         blueprint=[
             "openyam-manipulation-sim",
             "perception-localize",
-            "observe-skill",
         ],
-        disable=PERCEPTION_MODULES,
         scene=LfsPath(f"{scene}/scene.xml"),
         tracked_bodies=bodies,
         module_env={
             "MANIPULATIONMODULE__MODEL__BASE_POSE": json.dumps(
                 {"frame_id": "world", "position": list(base)}
-            )
+            ),
+            # The overhead camera never moves, so one view must confirm an object.
+            "PERCEPTIONLOCALIZE__PARAMS__MIN_VIEWS": "1",
         },
     )
 
@@ -94,7 +93,7 @@ SUITE: Suite = [
         id="abc_put_relative",
         inputs=(
             "Put the orange cube to the left of the green cube, from the robot's point of "
-            "view (world +y is left). " + GUIDANCE
+            "view. " + GUIDANCE
         ),
         environment=environment(
             "abc_relative", ("relative_obj_06", "relative_obj_04"), OPENYAM_SIM_RIGHT_BASE

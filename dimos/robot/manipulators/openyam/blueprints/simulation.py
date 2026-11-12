@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
@@ -48,6 +49,8 @@ openyam_manipulation_sim = autoconnect(
         visualization={"backend": "viser"},
     ),
     ManipulationSkills.blueprint(),
+    # Grasps from an object's point cloud, e.g. localize's object_pointcloud.
+    HeuristicGraspModule.blueprint(),
     MujocoSimModule.blueprint(
         address=OPENYAM_SIM_SCENE,
         headless=False,
