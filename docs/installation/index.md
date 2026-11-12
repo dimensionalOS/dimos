@@ -70,19 +70,30 @@ Select the checkout explicitly with a build constraint. The
 ```sh
 python -m pip --version   # 25.3 or newer
 
-# 1. Build one wheel from the checkout (same prerequisites as the source install).
-python -m pip wheel --no-deps --wheel-dir /tmp/dimos-wheel /path/to/dimos
-
-# 2. Point a build constraint at that exact wheel.
+# 1. Build one wheel from the checkout (gcc or clang; same prerequisites as the
+#    source install above, including DIMOS_ALLOW_MISSING_COCKPIT=1 when the
+#    checkout has no built web bundles).
+DIMOS_ALLOW_MISSING_COCKPIT=1 \
+  python -m pip wheel --no-deps --wheel-dir /tmp/dimos-wheel /path/to/dimos
 wheel=$(ls /tmp/dimos-wheel/dimos-*.whl | head -n 1)
+
+# 2. Install that wheel in the environment you run your project from.
+python -m pip install "$wheel"
+
+# 3. Point a build constraint at the same wheel for the isolated build.
 echo "dimos @ file://$wheel" > /tmp/dimos-build-constraint.txt
 
-# 3. Install your project; `-e` for an editable install.
+# 4. Install your project; `-e` for an editable install.
 python -m pip install --build-constraint /tmp/dimos-build-constraint.txt .
 python -m pip install --build-constraint /tmp/dimos-build-constraint.txt -e .
 ```
 
 A build constraint only affects the isolated environment used to build the
-project; the packages already installed in your environment are not changed.
-Once a release contains the backend, plain `pip install .` works and the
-constraint can be dropped.
+project; it does not install anything, which is why step 2 installs the wheel in
+your own environment separately. For a checkout you are working on, `python -m
+pip install -e /path/to/dimos` replaces step 2. Once a release contains the
+backend, plain `pip install .` works and the constraint can be dropped.
+
+[the external message example](/examples/external-messages/README.md) is a
+complete runnable project that follows this recipe, including the expected
+output.

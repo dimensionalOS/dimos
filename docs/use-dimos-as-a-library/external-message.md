@@ -15,6 +15,8 @@ dimOS.
   builds in an isolated environment. Until it is released, pass the checkout's
   wheel as a build constraint: [Use the checkout in your own pip
   builds](/docs/installation/index.md#use-the-checkout-in-your-own-pip-builds).
+  [the external message example](/examples/external-messages/README.md) is the
+  same recipe as a runnable project in this repository.
 - Your own project already has a `pyproject.toml` with a `[project]` table, a
   release version such as `0.1.0`, and its own Python modules.
 
@@ -117,8 +119,13 @@ wheel for the build (pip 25.3 or newer):
 python -m pip install --build-constraint /tmp/dimos-build-constraint.txt .
 ```
 
-[Use the checkout in your own pip builds](/docs/installation/index.md#use-the-checkout-in-your-own-pip-builds)
-builds that wheel and constraint file, and shows the editable variant.
+[Use the checkout in your own pip
+builds](/docs/installation/index.md#use-the-checkout-in-your-own-pip-builds)
+builds that wheel, installs it in your environment and writes the constraint
+file, and shows the editable variant. The `DIMOS_ALLOW_MISSING_COCKPIT=1` flag on
+that wheel build is required for a checkout whose web bundles are not built;
+[the external message example](/examples/external-messages/README.md) runs the
+same recipe end to end with the expected output.
 
 Every build regenerates the Python message packages under
 `build/message-source` from `interfaces/`, packages them with the project's own
