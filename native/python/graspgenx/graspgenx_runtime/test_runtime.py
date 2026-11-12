@@ -232,7 +232,7 @@ def test_proposals_by_object_id_name_the_host_module(runtime: Any, mocker: Mocke
         **{**module_args(), "instance_name": "__isolated_python__/GraspGenXModule/abc123"},
     )
     module._scene = mocker.MagicMock()
-    module._scene.get_object_pointcloud_by_object_id.return_value = cloud()
+    module._scene.get_pointcloud.return_value = cloud()
     try:
         module.start()
         proposed = module.propose_grasps_for("cup-1")

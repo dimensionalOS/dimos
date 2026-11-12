@@ -12,21 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""What pick and place and the grasp generators read from localize.
+
+A spec rather than the module class: the GraspGenX runtime imports the grasp
+generators in its own environment, which does not carry localize's dependencies.
+"""
+
 from typing import Protocol
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.localize.types import Localization
 from dimos.spec.utils import Spec
 
 
-class LocalizationSpec(Spec, Protocol):
-    """Objects a localize call found, and the scene around them, as world-frame clouds."""
-
-    def get_object(self, instance_id: str) -> Localization | None: ...
+class LocalizeSpec(Spec, Protocol):
+    def get_pointcloud(self, target: str) -> PointCloud2: ...
 
     def scene_cloud(
-        self,
-        exclude_instance_id: str | None = None,
-        start: float = -5.0,
-        duration: float = 5.0,
+        self, exclude: str | None = None, start: float = -5.0, duration: float = 5.0
     ) -> PointCloud2 | None: ...

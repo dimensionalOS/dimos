@@ -23,7 +23,7 @@ from dimos.core.module import Module
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.localize.spec import LocalizationSpec
+from dimos.perception.localize.spec import LocalizeSpec
 
 
 def _approach_angle(pose: Pose, approach: Vector3 | None) -> float:
@@ -50,7 +50,7 @@ class GraspGeneratorModule(Module, GraspGenSpec):
     """
 
     # Looks up a localized object's points; a stack without localize has none.
-    _scene: LocalizationSpec | None = None
+    _scene: LocalizeSpec | None = None
 
     def _propose_for(
         self, object_id: str, approach: list[float] | None, max_angle_deg: float, limit: int
@@ -61,7 +61,7 @@ class GraspGeneratorModule(Module, GraspGenSpec):
         the path when it runs one.
 
         Args:
-            object_id: An object id a localize call returned.
+            object_id: An id from the last localize scan, or a label only one object has.
             approach: Unit vector [x, y, z] in the object point cloud's frame, the
                 direction the gripper moves into the object. None keeps every grasp.
             max_angle_deg: Half-angle of the cone around ``approach``, degrees.
@@ -84,12 +84,12 @@ class GraspGeneratorModule(Module, GraspGenSpec):
         direction = None if approach is None else Vector3(*approach).normalize()
         if direction is not None and not direction.length() > 0.0:
             raise ValueError(f"approach must be a direction, got {approach}")
-        localization = self._scene.get_object(object_id)
-        cloud = None if localization is None else localization.point_cloud
-        if cloud is None or len(cloud) == 0:
-            raise ValueError(
-                f"No points for object {object_id}; use an id a localize call returned"
-            )
+        try:
+            cloud = self._scene.get_pointcloud(object_id)
+        except LookupError as exc:
+            raise ValueError(str(exc)) from exc
+        if len(cloud) == 0:
+            raise ValueError(f"No points for object {object_id}; localize it from another view")
         candidates = self.propose_grasps(cloud).candidates
         angles = [_approach_angle(c.pose, direction) for c in candidates]
         in_cone = [(c, a) for c, a in zip(candidates, angles, strict=True) if a <= max_angle_deg]

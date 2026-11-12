@@ -151,13 +151,14 @@ print(localize.state())
 print(localize.localize(",".join(XARM_GRASP_PROMPTS), -30.0, 30.0))
 ```
 
-Each answer line carries an `id`. To pick, hand `pick_object` one of them. Choose
-the target by where its point cloud actually is rather than by name:
+`scan` returns the same answer as data, one entry per object: `id`, `label`,
+`position`, `size`, `score`, `views` and `seen_s_ago`. To pick, hand `pick_object`
+an `id`, or a label only one object has. Choose the target by where it actually is
+rather than by name:
 
 ```python skip
-for hits in localize.localize_objects(XARM_GRASP_PROMPTS, -30.0, 30.0):
-    for hit in hits:
-        print(hit.instance_id, hit.position_world_xyz)
+for obj in localize.scan(XARM_GRASP_PROMPTS, window_s=30.0):
+    print(obj["id"], obj["label"], obj["position"])
 
 # the can sits at roughly (0.57, 0.00). Pick whichever id landed there
 pick = app.PickAndPlaceModule.pick_object("<object_id>")
@@ -174,7 +175,7 @@ candidate count. To inspect grasps without moving the arm, call `propose_grasps`
 on the provider directly:
 
 ```python skip
-cloud = localize.get_object("<object_id>").point_cloud
+cloud = localize.get_pointcloud("<object_id>")
 candidates = app.GraspGenXModule.propose_grasps(cloud)   # HeuristicGraspModule in the base blueprint
 print(len(candidates.candidates), [c.score for c in candidates.candidates[:5]])
 ```

@@ -77,11 +77,9 @@ def test_launch_flags(monkeypatch):
 
     monkeypatch.setenv("MUJOCOSIMMODULE__HEADLESS", "false")
     proc = DimosCliCall()
-    environment(
-        module_env={"OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "yoloe"}
-    ).configure_launch(proc)
+    environment(module_env={"PERCEPTIONLOCALIZE__DETECTOR": "yoloe"}).configure_launch(proc)
     assert proc.extra_env["MUJOCOSIMMODULE__HEADLESS"] == "false"
-    assert proc.extra_env["OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND"] == "yoloe"
+    assert proc.extra_env["PERCEPTIONLOCALIZE__DETECTOR"] == "yoloe"
 
 
 def test_module_env_reaches_blueprint_parser(monkeypatch):
@@ -94,14 +92,14 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
         tracked_bodies=("apple", "cup"),
         base_height=0.912,
         module_env={
-            "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
-            "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
+            "PERCEPTIONLOCALIZE__DETECTOR": "yoloe",
+            "PERCEPTIONLOCALIZE__SEGMENTER": "yolo",
         },
     ).configure_launch(proc)
     parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
-    perception = parsed.module_kwargs("objectsceneregistrationmodule")
-    assert perception["detector_backend"] == "owlv2"
-    assert perception["segmentation_backend"] == "yolo"
+    perception = parsed.module_kwargs("perceptionlocalize")
+    assert perception["detector"] == "yoloe"
+    assert perception["segmenter"] == "yolo"
     sim = parsed.module_kwargs("mujocosimmodule")
     assert sim["headless"] is True
     assert sim["tracked_bodies"] == ["apple", "cup"]

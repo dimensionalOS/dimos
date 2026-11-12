@@ -123,23 +123,38 @@ def _ready(module, mocker, views):
     module.rig.backdrop.side_effect = lambda ts, frame, trunc: views[int(ts)]
 
 
-def test_get_object_answers_what_a_localize_call_returned(localizer, mocker):
-    _ready(localizer, mocker, [])
-    cup = SimpleNamespace(instance_id="cup-1", point_cloud=_cloud([[0.0, 0.0, 0.0]]))
-    localizer._objects["cup-1"] = cup
+def _hit(instance_id, points, position=(0.0, 0.0, 0.0)):
+    return SimpleNamespace(
+        instance_id=instance_id, point_cloud=_cloud(points), position_world_xyz=position
+    )
 
-    assert localizer.get_object("cup-1") is cup
-    assert localizer.get_object("cup-2") is None
+
+def test_objects_of_the_last_scan_are_found_by_id_or_unique_label(localizer, mocker):
+    _ready(localizer, mocker, [])
+    cup = _hit("cup-1", [[0.0, 0.0, 0.0]], (0.4, 0.1, 0.2))
+    localizer._objects = {
+        "cup-1": ("cup", cup),
+        "block-1": ("block", _hit("block-1", [[1.0, 0.0, 0.0]])),
+        "block-2": ("block", _hit("block-2", [[2.0, 0.0, 0.0]])),
+    }
+
+    assert localizer.get_pointcloud("cup-1") is cup.point_cloud
+    assert localizer.get_pointcloud("cup") is cup.point_cloud
+    assert localizer.get_position("cup").x == pytest.approx(0.4)
+    with pytest.raises(ValueError, match="block-1, block-2"):
+        localizer.get_pointcloud("block")
+    with pytest.raises(LookupError, match="No 'bowl'"):
+        localizer.get_pointcloud("bowl")
 
 
 def test_scene_cloud_merges_the_window_and_leaves_out_the_excluded_object(localizer, mocker):
     table = [[x, y, 0.0] for x in (0.0, 0.5, 1.0) for y in (0.0, 0.5, 1.0)]
     _ready(localizer, mocker, [_cloud(table), _cloud([[0.5, 0.5, 0.05]])])
-    localizer._objects["cup-1"] = SimpleNamespace(point_cloud=_cloud([[0.5, 0.5, 0.05]]))
+    localizer._objects = {"cup-1": ("cup", _hit("cup-1", [[0.5, 0.5, 0.05]]))}
     localizer.config.scene_voxel_m = 0.001
 
     full = localizer.scene_cloud(start=-5.0, duration=5.0)
-    without_cup = localizer.scene_cloud("cup-1", start=-5.0, duration=5.0)
+    without_cup = localizer.scene_cloud("cup", start=-5.0, duration=5.0)
 
     assert len(full) == 10
     # Only the cup goes: the table 5 cm under it is outside its box grown by 2 cm.
@@ -155,9 +170,42 @@ def test_scene_cloud_is_none_before_ready_or_without_depth(localizer, mocker):
     assert localizer.scene_cloud() is None
 
 
-def test_localize_objects_refuses_until_ready(localizer):
+def test_scan_refuses_until_ready(localizer):
     localizer._ready = threading.Event()
     localizer._stage = "loading weights"
 
     with pytest.raises(RuntimeError, match="loading weights"):
-        localizer.localize_objects(["cup"])
+        localizer.scan(["cup"])
+
+
+def test_scan_reports_each_instance_and_replaces_the_last_answer(localizer, mocker):
+    _ready(localizer, mocker, [])
+    localizer._memento = mocker.Mock()
+    localizer._color_feed = mocker.Mock()
+    localizer.rig.lidar = None
+    localizer.rig.cameras = {}
+    localizer.index.time_range.return_value = mocker.Mock(count=mocker.Mock(return_value=4))
+    localizer.detections = mocker.Mock()
+    mocker.patch("dimos.perception.localize.module.as_detection_array")
+    localizer._objects = {"old-1": ("old", _hit("old-1", [[0.0, 0.0, 0.0]]))}
+    cup = _hit("cup-1", [[0.4, 0.1, 0.2], [0.5, 0.2, 0.3]], (0.45, 0.15, 0.25))
+    cup.semantic_score, cup.n_views, cup.last_seen_timestamp = 0.8, 3, 9.0
+    localizer.detector = mocker.Mock()
+    localizer.detector.localize.return_value = [[cup], []]
+
+    found = localizer.scan(["cup", "bowl"], window_s=4.0)
+
+    assert found == [
+        {
+            "id": "cup-1",
+            "label": "cup",
+            "position": [0.45, 0.15, 0.25],
+            "size": pytest.approx([0.1, 0.1, 0.1]),
+            "score": 0.8,
+            "views": 3,
+            "seen_s_ago": 1.0,
+        }
+    ]
+    assert localizer.detector.localize.call_args.kwargs["window"] == (6.0, 10.0)
+    with pytest.raises(LookupError):
+        localizer.get_pointcloud("old-1")

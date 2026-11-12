@@ -50,7 +50,7 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
-from dimos.perception.localize.spec import LocalizationSpec
+from dimos.perception.localize.spec import LocalizeSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -129,7 +129,7 @@ class PickAndPlaceModule(Module):
     dedicated_worker = True
 
     config: PickAndPlaceModuleConfig
-    _scene: LocalizationSpec
+    _scene: LocalizeSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
     # Leaves boxes out of the planner's map; a stack without a map has none.
@@ -173,7 +173,7 @@ class PickAndPlaceModule(Module):
         of ``grasps`` to pick_object as ``grasp``.
 
         Args:
-            object_id: An object id a localize call returned.
+            object_id: An id from the last localize scan, or a label only one object has.
             generator: Name of the grasp generator to ask, such as GraspGenXModule.
             approach: Unit vector [x, y, z] in the arm's base frame: the direction
                 the gripper moves in, from the operator's hand into the object.
@@ -215,7 +215,7 @@ class PickAndPlaceModule(Module):
         the planner found no path to any grasp tried.
 
         Args:
-            object_id: An object id a localize call returned.
+            object_id: An id from the last localize scan, or a label only one object has.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
             grasp: One entry of propose_grasps's ``grasps``; only ``position``
                 and ``orientation`` are needed.
@@ -226,13 +226,10 @@ class PickAndPlaceModule(Module):
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_selection()
-        localization = self._scene.get_object(object_id)
-        if localization is None:
-            return SkillResult(
-                f"No object with id {object_id}. Use localize to find objects, and pass an id "
-                "it returned."
-            )
-        pointcloud = localization.point_cloud
+        try:
+            pointcloud = self._scene.get_pointcloud(object_id)
+        except (LookupError, ValueError) as exc:
+            return SkillResult(f"{exc} Use localize to find objects, then pass an id it returned.")
         group = self._gripper_group(planning_group)
         if grasp is None:
             source = "provider"
@@ -306,7 +303,7 @@ class PickAndPlaceModule(Module):
         """Drop the grasps the arm cannot reach, that touch the target off the pads, or hit the scene.
 
         Args:
-            object_id: The object to grasp, an id a localize call returned.
+            object_id: The object to grasp, as pick_object takes it.
             pointcloud: The target's points, planning frame, metres.
             candidates: The provider's grasps, same frame.
             group: Planning group whose tool tip the grasps pose.
@@ -321,7 +318,7 @@ class PickAndPlaceModule(Module):
         robot = self.config.robot
         if robot is None or robot.gripper is None or not candidates.candidates:
             return candidates, {}
-        scene = self._scene.scene_cloud(exclude_instance_id=object_id)
+        scene = self._scene.scene_cloud(exclude=object_id)
         if scene is None or not scene.frame_id == pointcloud.frame_id == candidates.header.frame_id:
             return candidates, {
                 "contact_check_skipped": "no scene point cloud in the grasps' frame"

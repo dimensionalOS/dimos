@@ -72,7 +72,7 @@ from dimos.perception.localize.rig import (
     RigCamera,
     camera_hz,
 )
-from dimos.perception.localize.spec import LocalizationSpec
+from dimos.perception.localize.spec import LocalizeSpec
 from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
@@ -108,7 +108,7 @@ class PerceptionLocalizeConfig(ModuleConfig):
     scene_exclude_margin_m: float = 0.02
 
 
-class PerceptionLocalize(Module, LocalizationSpec):
+class PerceptionLocalize(Module, LocalizeSpec):
     """Embed the colour feed and answer ``localize`` from the paired depth or lidar.
 
     ``camera_info`` must be stamped in the colour frame, and ``tf`` must reach
@@ -136,8 +136,7 @@ class PerceptionLocalize(Module, LocalizationSpec):
         self._camera_seen = threading.Event()
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
-        # Every instance a localize call answered, by instance_id; the newest answer wins.
-        self._objects: dict[str, Localization] = {}
+        self._objects: dict[str, tuple[str, Localization]] = {}
         # Unsubscribe inputs before closing the stores they write to.
         subscriptions = self.register_disposable(CompositeDisposable())
         self._memento = Memento()
@@ -317,40 +316,57 @@ class PerceptionLocalize(Module, LocalizationSpec):
         return "\n".join(lines)
 
     @rpc
-    def localize_objects(
-        self,
-        queries: list[str],
-        start: float = -10.0,
-        duration: float = 10.0,
-        params: dict[str, Any] | None = None,
-    ) -> list[list[Localization]]:
-        """The ``localize`` skill's answer as data: every verified instance per query.
+    def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
+        """Find every instance of each name in the last ``window_s`` seconds of memory.
 
-        Each instance stays answerable by ``get_object`` under its ``instance_id``.
-        Raises RuntimeError until ``state`` reads ready.
+        The answer replaces the previous one; ``get_pointcloud``, ``get_position``
+        and ``scene_cloud`` read from it. Each entry has ``id``, ``label``,
+        ``position`` and ``size`` (world frame, metres), ``score``, ``views`` and
+        ``seen_s_ago``. Raises RuntimeError until ``state`` reads ready.
         """
         if not self._ready.is_set():
             raise RuntimeError(f"localize cannot answer yet: {self._stage}")
-        return self._localize(queries, start, duration, params)[0]
+        _, (_, _, _, head, _) = self._localize(names, -window_s, window_s, None)
+        found = []
+        for instance_id, (label, hit) in self._objects.items():
+            points = hit.point_cloud.points_f32()
+            size = (points.max(axis=0) - points.min(axis=0)) if len(points) else np.zeros(3)
+            found.append(
+                {
+                    "id": instance_id,
+                    "label": label,
+                    "position": [float(v) for v in hit.position_world_xyz],
+                    "size": [float(v) for v in size],
+                    "score": float(hit.semantic_score),
+                    "views": hit.n_views,
+                    "seen_s_ago": max(0.0, head - hit.last_seen_timestamp),
+                }
+            )
+        return found
 
     @rpc
-    def get_object(self, instance_id: str) -> Localization | None:
-        """The newest answer for an instance a localize call returned, cloud included."""
-        return getattr(self, "_objects", {}).get(instance_id)
+    def get_pointcloud(self, target: str) -> PointCloud2:
+        """The world-frame cloud of one object from the last scan: an id, or a label only one has."""
+        return self._resolve(target).point_cloud
+
+    @rpc
+    def get_position(self, target: str) -> Vector3:
+        """The world-frame position of one object from the last scan, found as in ``get_pointcloud``."""
+        return Vector3(*self._resolve(target).position_world_xyz)
 
     @rpc
     def scene_cloud(
         self,
-        exclude_instance_id: str | None = None,
+        exclude: str | None = None,
         start: float = -5.0,
         duration: float = 5.0,
     ) -> PointCloud2 | None:
         """Every embedded depth view in a window of memory, merged into one world-frame cloud.
 
         ``start`` and ``duration`` name the window as in ``localize``. The
-        cloud is ``scene_voxel_m`` cells, cut at ``scene_depth_trunc_m``. An
-        ``exclude_instance_id`` leaves out that object's box, grown by
-        ``scene_exclude_margin_m``. None when nothing in the window has depth.
+        cloud is ``scene_voxel_m`` cells, cut at ``scene_depth_trunc_m``.
+        ``exclude``, found as in ``get_pointcloud``, leaves out that object's box,
+        grown by ``scene_exclude_margin_m``. None when nothing in the window has depth.
         """
         ready = getattr(self, "_ready", None)
         if ready is None or not ready.is_set() or self.config.geometry != "depth":
@@ -370,10 +386,9 @@ class PerceptionLocalize(Module, LocalizationSpec):
             frame_id=self.rig.world_frame,
             timestamp=max((view.ts or 0.0) for view in views),
         ).voxel_downsample(self.config.scene_voxel_m)
-        excluded = self._objects.get(exclude_instance_id) if exclude_instance_id else None
-        if excluded is None:
+        if exclude is None:
             return merged
-        target = excluded.point_cloud.points_f32()
+        target = self._resolve(exclude).point_cloud.points_f32()
         if not len(target):
             return merged
         margin = self.config.scene_exclude_margin_m
@@ -415,10 +430,26 @@ class PerceptionLocalize(Module, LocalizationSpec):
             memento=self._memento,
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
-        for hits in results:
-            for hit in hits:
-                self._objects[hit.instance_id] = hit
+        self._objects = {
+            hit.instance_id: (query, hit)
+            for query, hits in zip(queries, results, strict=True)
+            for hit in hits
+        }
         return results, (lo, hi, first, head, index.count())
+
+    def _resolve(self, target: str) -> Localization:
+        """An object of the last scan by id, or by a label exactly one of them answers."""
+        objects: dict[str, tuple[str, Localization]] = getattr(self, "_objects", {})
+        if target in objects:
+            return objects[target][1]
+        matches = [hit for label, hit in objects.values() if label == target]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            ids = ", ".join(hit.instance_id for hit in matches)
+            raise ValueError(f"The last scan found {len(matches)} {target!r}: {ids}. Pass one id.")
+        scanned = ", ".join(f"{label} {i}" for i, (label, _) in objects.items()) or "nothing"
+        raise LookupError(f"No {target!r} in the last scan, which found: {scanned}")
 
 
 def as_detection_array(

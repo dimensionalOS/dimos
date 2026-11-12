@@ -77,7 +77,7 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.move_linear.return_value = _linear_move()
     instance._manipulation.set_gripper_position.return_value = ACCEPTED
     # The cup's points: a 4 cm cube centred on the grasp at (0.1, 0.0, 0.2).
-    instance._scene.get_object.side_effect = _localized(
+    instance._scene.get_pointcloud.side_effect = _localized(
         "cup-1",
         PointCloud2.from_numpy(
             np.asarray([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]], dtype=np.float32),
@@ -102,12 +102,14 @@ def settled_gripper(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _localized(instance_id: str, cloud: PointCloud2) -> Any:
-    """A localize get_object that knows one instance, with this cloud."""
+    """A localize get_pointcloud that knows one instance, with this cloud."""
 
-    def get_object(asked: str) -> Any:
-        return SimpleNamespace(point_cloud=cloud) if asked == instance_id else None
+    def get_pointcloud(asked: str) -> PointCloud2:
+        if asked != instance_id:
+            raise LookupError(f"No {asked!r} in the last scan, which found: cup {instance_id}")
+        return cloud
 
-    return get_object
+    return get_pointcloud
 
 
 def _candidate(x: float, score: float = 1.0) -> GraspCandidate:
@@ -259,7 +261,8 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
     result = module.pick_object("missing")
 
     assert result.message == (
-        "No object with id missing. Use localize to find objects, and pass an id it returned."
+        "No 'missing' in the last scan, which found: cup cup-1 "
+        "Use localize to find objects, then pass an id it returned."
     )
     assert module._selected_grasp is None
 
@@ -522,7 +525,7 @@ def test_a_release_whose_retract_stops_still_clears_the_box(module: PickAndPlace
 def test_an_empty_target_cloud_sets_no_box(module: PickAndPlaceModule) -> None:
     box_filter: Any = module._box_filter
     scene: Any = module._scene
-    scene.get_object.side_effect = _localized(
+    scene.get_pointcloud.side_effect = _localized(
         "cup-1",
         PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32), frame_id="world", timestamp=1.0),
     )

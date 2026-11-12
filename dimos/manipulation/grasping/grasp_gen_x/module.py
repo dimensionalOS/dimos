@@ -120,7 +120,7 @@ class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
         entry of ``grasps`` to pick_object as ``grasp``.
 
         Args:
-            object_id: An object id a localize call returned.
+            object_id: An id from the last localize scan, or a label only one object has.
             approach: Unit vector [x, y, z] in the arm's base frame: the direction
                 the gripper moves in, from the operator's hand into the object.
                 [0, 0, -1] is straight down. None accepts any direction.

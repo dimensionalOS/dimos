@@ -15,7 +15,6 @@
 from collections.abc import Iterator
 import json
 import math
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -58,17 +57,12 @@ class FakeGenerator(GraspGeneratorModule):
 def _scene(points: list[list[float]] | None) -> Any:
     """A localize whose every object has these points, in the world frame; None knows no object."""
     scene = MagicMock()
-    scene.get_object.return_value = (
-        None
-        if points is None
-        else SimpleNamespace(
-            point_cloud=PointCloud2.from_numpy(
-                np.asarray(points, dtype=np.float32).reshape((-1, 3)),
-                frame_id="world",
-                timestamp=1.0,
-            )
+    if points is None:
+        scene.get_pointcloud.side_effect = LookupError("No 'cup-9' in the last scan")
+    else:
+        scene.get_pointcloud.return_value = PointCloud2.from_numpy(
+            np.asarray(points, dtype=np.float32).reshape((-1, 3)), frame_id="world", timestamp=1.0
         )
-    )
     return scene
 
 
@@ -171,7 +165,7 @@ def test_an_object_without_points_is_refused(
 ) -> None:
     generator._scene = _scene(points)
 
-    with pytest.raises(ValueError, match="No points for object cup-9"):
+    with pytest.raises(ValueError, match="cup-9"):
         generator._propose_for("cup-9", None, 30.0, 3)
 
 
