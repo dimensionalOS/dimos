@@ -49,6 +49,15 @@ outputs are disabled only in this profile so there is one writer for base,
 jaws and arm authority. Its defaults remain compatible with Krishna's OpenArm
 blueprints.
 
+For JoyLo, the leader module publishes complete, unsmoothed readings and delegates
+jump rejection to `R1ProJoylo`. The generic reader's default jump guard compares
+against its last accepted sample: after a serial dropout and a large operator
+movement it can otherwise reject every later sample, preventing Minus/X from
+recovering. JoyLo retains the current reading while latching a pause, so a fresh
+enable press can re-align without a restart. Input errors still drop samples;
+timeouts, discontinuity stopping, joint limits and rate limits remain enforced.
+Generic OpenArm blueprints retain their reader-side jump guard.
+
 The coordinator owns one trajectory task covering both arms and torso, two
 gripper tasks and one base velocity task. The sim connection uses CC's same
 joint/interface declarations. It converts canonical 0–0.1 m jaw opening into

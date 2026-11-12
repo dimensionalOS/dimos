@@ -88,7 +88,8 @@ class LeaderTeleopModuleConfig(ModuleConfig):
     calibration_root: Path = LEADER_STATE_DIR
     left_calibration_path: Path | None = None
     right_calibration_path: Path | None = None
-    max_joint_jump_radians: float = Field(default=0.75, gt=0.0)
+    # None is for raw input to a downstream authority/realignment guard.
+    max_joint_jump_radians: float | None = Field(default=0.75, gt=0.0, allow_inf_nan=False)
     authority_active: bool = True
     # Unset: the sides whose serial port is configured drive the follower.
     enabled_sides: Annotated[tuple[LeaderSide, ...], Field(min_length=1)] | None = None

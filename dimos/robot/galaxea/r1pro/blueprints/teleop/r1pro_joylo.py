@@ -77,7 +77,11 @@ def _operator_blueprint(left_only: bool = False) -> Blueprint:
         LeaderTeleopModule.blueprint(
             mappings=OPENARM_R1PRO_MAPPINGS,
             tick_period_s=0.01,
-            command_filter_cutoff_hz=6.0,
+            # JoyLo must see the current, unsmoothed readings to detect jumps
+            # and re-align after input loss. The generic reader's rejection
+            # against its last accepted pose otherwise makes recovery impossible.
+            max_joint_jump_radians=None,
+            command_filter_cutoff_hz=None,
             enabled_sides=("left",) if left_only else None,
         ).remappings(
             [

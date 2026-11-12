@@ -155,7 +155,13 @@ class JoyloController:
             self.pause("Incomplete leader sample")
             self.receipts["leader"] = -math.inf
             return
-        if (
+        if self.active and now - self.receipts["leader"] > self.config.input_timeout_s:
+            # A new sample can arrive before the watchdog tick notices the gap.
+            # Recover the reading, but require a fresh enable press to align it.
+            self.pause(
+                f"Leader input resumed after timeout; release {self.enable_button} and re-align"
+            )
+        elif (
             self.leader
             and self.active
             and any(
