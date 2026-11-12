@@ -169,6 +169,49 @@ def _carry_outside_references(
                 ]
                 if moved != arcs:
                     setattr(spec.referenceList, field, moved)
+            _carry_outside_connections(
+                pxr, spec, sub_layer, root_layer, inside, landed, carried, pending
+            )
+
+
+def _carry_outside_connections(
+    pxr: Pxr,
+    spec: Any,
+    sub_layer: Layer,
+    root_layer: Layer,
+    inside: Any,
+    landed: Any,
+    carried: dict[str, str],
+    pending: list[str],
+) -> None:
+    """Carry what a shader connection reaches outside the subtree, as its arcs already are.
+
+    Sdf.CopySpec repoints a connection that names a prim inside the copy, but one that names a
+    prim beside it -- the shape a converted asset's shader network takes when it is wired
+    directly rather than through a reference -- keeps its absolute path, which in the scene
+    belongs to whatever already sits there. Same failure as a stale arc: the graft wears the
+    room's materials.
+    """
+    for prop in spec.properties:
+        if not isinstance(prop, pxr.Sdf.AttributeSpec):
+            continue
+        targets = list(prop.connectionPathList.explicitItems)
+        moved = []
+        for target in targets:
+            prim_path = target.GetPrimPath()
+            if target.HasPrefix(inside) or target.HasPrefix(landed):
+                moved.append(target)
+                continue
+            at = carried.get(str(prim_path))
+            if at is None:
+                at = _carry_one(pxr, sub_layer, prim_path, root_layer)
+                carried[str(prim_path)] = at
+                pending.append(at)
+            moved.append(
+                pxr.Sdf.Path(at).AppendProperty(target.name) if target.IsPropertyPath() else at
+            )
+        if moved != targets:
+            prop.connectionPathList.explicitItems = moved
 
 
 def _moved_reference(
