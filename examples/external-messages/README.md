@@ -23,9 +23,8 @@ the environment that runs the example, and point a build constraint at it
 
 ```sh
 # Only for a checkout without the built web bundles; see below.
-export DIMOS_ALLOW_MISSING_COCKPIT=1
-
-python -m pip wheel --no-deps --wheel-dir /tmp/dimos-wheel /path/to/dimos
+DIMOS_ALLOW_MISSING_COCKPIT=1 \
+  python -m pip wheel --no-deps --wheel-dir /tmp/dimos-wheel /path/to/dimos
 
 wheel=$(ls /tmp/dimos-wheel/dimos-*.whl | head -n 1)
 python -m pip install "$wheel"

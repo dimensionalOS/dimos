@@ -94,6 +94,6 @@ your own environment separately. For a checkout you are working on, `python -m
 pip install -e /path/to/dimos` replaces step 2. Once a release contains the
 backend, plain `pip install .` works and the constraint can be dropped.
 
-[the external message example](/examples/external-messages/README.md) is a
+The [external message example](/examples/external-messages/README.md) is a
 complete runnable project that follows this recipe, including the expected
 output.
