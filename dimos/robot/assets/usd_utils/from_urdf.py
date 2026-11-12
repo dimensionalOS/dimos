@@ -24,8 +24,16 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.usd import Prim, Pxr, Quat, Stage, load_pxr, prim_identifier, usd_matrix
-from dimos.robot.assets.usd_assets import write_asset_info
+from dimos.robot.assets.usd_utils.assets import write_asset_info
+from dimos.robot.assets.usd_utils.pxr import (
+    Prim,
+    Pxr,
+    Quat,
+    Stage,
+    load_pxr,
+    prim_identifier,
+    usd_matrix,
+)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -38,7 +46,7 @@ logger = setup_logger()
 
 
 _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
-_OUT_OF_PLANE = ("transZ", "rotX", "rotY")
+OUT_OF_PLANE = ("transZ", "rotX", "rotY")
 PASSTHROUGH_KEY = "urdf:unconverted"
 
 
@@ -293,7 +301,7 @@ def _define_joint(pxr: Pxr, stage: Stage, path: str, joint: JointDescription) ->
     if joint.type in _MULTI_DOF_JOINT_TYPES:
         prim = pxr.UsdPhysics.Joint.Define(stage, path)
         if joint.type == "planar":
-            for axis in _OUT_OF_PLANE:
+            for axis in OUT_OF_PLANE:
                 locked = pxr.UsdPhysics.LimitAPI.Apply(prim.GetPrim(), axis)
                 locked.CreateLowAttr(0.0)
                 locked.CreateHighAttr(0.0)
