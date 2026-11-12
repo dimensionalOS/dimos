@@ -64,6 +64,10 @@ pub fn iw_link(text: &str) -> Map<String, Value> {
         link.insert("connected".into(), json!(false));
         return link;
     }
+    // a failed or timed-out `iw` gives "", which stays unknown rather than connected
+    if !text.starts_with("Connected to") {
+        return link;
+    }
     link.insert("connected".into(), json!(true));
     for line in text.lines() {
         let line = line.trim();
@@ -460,6 +464,7 @@ mod tests {
             Value::Object(iw_link("Not connected.")),
             json!({ "connected": false })
         );
+        assert_eq!(Value::Object(iw_link("")), json!({}));
         let route = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\nwlan0\t00000000\t010CA8C0\t0003\t0\t0\t600\t00000000\nwlan0\t000CA8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF\n";
         assert_eq!(
             proc_net_route(route),

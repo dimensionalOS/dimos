@@ -100,6 +100,13 @@ impl JsonlTail {
                 let Ok(file) = File::open(&path) else {
                     continue;
                 };
+                // rotation can swap the path between read_dir and open: key by what was opened
+                let Ok(opened_inode) = file.metadata().map(|m| m.ino()) else {
+                    continue;
+                };
+                if opened_inode != inode {
+                    continue;
+                }
                 self.followed.insert(
                     inode,
                     Followed {
