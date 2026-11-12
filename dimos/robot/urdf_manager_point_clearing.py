@@ -30,7 +30,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import LoadedRobotModel
-from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
 from dimos.robot.joint_tf import MULTI_DOF_JOINT_TYPES
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.urdf_manager import UrdfManager, UrdfManagerConfig

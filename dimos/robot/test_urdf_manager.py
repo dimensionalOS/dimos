@@ -41,7 +41,7 @@ from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel, UsdModel
-from dimos.robot.assets.usd import usd_frame_names
+from dimos.robot.assets.usd_utils.frames import usd_frame_names
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REF,
@@ -1649,7 +1649,7 @@ def test_a_manager_needs_no_usd_until_a_layer_is_asked_for(
     def refuse(*args: Any, **kwargs: Any) -> str:
         raise AssertionError("the layer was built before anything asked for it")
 
-    monkeypatch.setattr("dimos.robot.assets.urdf_to_usd.urdf_to_usd", refuse)
+    monkeypatch.setattr("dimos.robot.assets.usd_utils.from_urdf.urdf_to_usd", refuse)
     module = make_manager(tf_renames={"arm": "gripper"})
 
     (transform,) = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.0]))
