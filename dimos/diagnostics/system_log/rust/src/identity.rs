@@ -49,13 +49,17 @@ pub fn read(timeout: Duration) -> Value {
             "distribution": System::distribution_id(),
             "arch": System::cpu_arch(),
             "boot_time": System::boot_time(),
-            "timezone": std::fs::read_link("/etc/localtime").ok().map(|p| p.display().to_string()).or_else(|| env("TZ")),
+            "timezone": std::fs::read_link("/etc/localtime").ok().map(|p| parse::zone_name(&p.display().to_string())).or_else(|| env("TZ")),
             "locale": env("LANG"),
         },
         "hardware": hardware(&run),
         "interfaces": interfaces(),
         "dns": parse::resolv_conf(&parse::read(Path::new("/etc/resolv.conf")).unwrap_or_default()),
-        "neighbours": parse::arp(&run("arp", &["-an"])),
+        // SteamOS and other minimal Linux images have no `arp`; the kernel's table is always there
+        "neighbours": match parse::read(Path::new("/proc/net/arp")) {
+            Some(table) => parse::proc_net_arp(&table),
+            None => parse::arp(&run("arp", &["-an"])),
+        },
         "accounts": Users::new_with_refreshed_list().iter().map(|u| json!({
             "name": u.name(),
             "uid": u.id().to_string(),

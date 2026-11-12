@@ -394,6 +394,27 @@ pub fn arp(text: &str) -> Vec<Value> {
         .collect()
 }
 
+/// /proc/net/arp → the same records as `arp -an`, skipping incomplete (flags 0x0) entries
+pub fn proc_net_arp(text: &str) -> Vec<Value> {
+    text.lines()
+        .skip(1)
+        .filter_map(|line| {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let [ip, _, flags, mac, _, iface] = f[..] else {
+                return None;
+            };
+            (flags != "0x0").then(|| json!({ "ip": ip, "mac": mac, "iface": iface }))
+        })
+        .collect()
+}
+
+/// /etc/localtime's link target → its zone, "../usr/share/zoneinfo/America/Los_Angeles" → "America/Los_Angeles"
+pub fn zone_name(link: &str) -> String {
+    link.split_once("zoneinfo/")
+        .map_or(link, |(_, zone)| zone)
+        .to_string()
+}
+
 /// The value of `key` in ioreg's `"key" = "value"` / `<"value">` lines, or ipconfig's and lscpu's `key : value` ones.
 pub fn key_value(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|line| {
@@ -465,6 +486,19 @@ mod tests {
             json!({ "connected": false })
         );
         assert_eq!(Value::Object(iw_link("")), json!({}));
+        let arp = "IP address       HW type     Flags       HW address            Mask     Device\n10.10.128.1      0x1         0x2         aa:9c:6c:9c:56:f1     *        wlan0\n10.10.204.17     0x1         0x0         c4:13:75:37:b6:ff     *        wlan0\n";
+        assert_eq!(
+            proc_net_arp(arp),
+            vec![json!({ "ip": "10.10.128.1", "mac": "aa:9c:6c:9c:56:f1", "iface": "wlan0" })]
+        );
+        assert_eq!(
+            zone_name("../usr/share/zoneinfo/America/Los_Angeles"),
+            "America/Los_Angeles"
+        );
+        assert_eq!(
+            zone_name("/var/db/timezone/zoneinfo/America/Los_Angeles"),
+            "America/Los_Angeles"
+        );
         let route = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\nwlan0\t00000000\t010CA8C0\t0003\t0\t0\t600\t00000000\nwlan0\t000CA8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF\n";
         assert_eq!(
             proc_net_route(route),

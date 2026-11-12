@@ -235,6 +235,7 @@ impl Sampler {
     /// One sample; rates (CPU %, network and disk throughput) are since the previous call.
     pub fn sample(&mut self) -> Value {
         self.system.refresh_cpu_usage();
+        self.system.refresh_cpu_frequency();
         self.system.refresh_memory();
         self.networks.refresh(true);
         self.components.refresh(true);
