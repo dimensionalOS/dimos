@@ -1,3 +1,4 @@
+import type { LoadedSkill } from "#dimos/agents/shared/protocol/skills.ts";
 import type { CallId } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { EntryId, TaskId } from "@earendil-works/pi-durable";
 import type { HarnessEvent } from "#dimos/agents/shared/protocol/runtime/event.ts";
@@ -28,8 +29,10 @@ export type InputSource =
 /** The data of every input the harness places. One kind for all sources, so one fold, one view and one step mapping cover them. */
 export type DimosInput = {
   readonly source: InputSource;
-  /** The text the model received, after the limit. */
+  /** The original input text after the limit, without loaded skill instructions. */
   readonly text: string;
+  /** Absent on ordinary inputs and entries stored before explicit skill loading. */
+  readonly skill?: LoadedSkill;
   readonly change: RuntimeChange | null;
   /** Exports and files rendered into the input's images. */
   readonly render: RenderDetails | null;

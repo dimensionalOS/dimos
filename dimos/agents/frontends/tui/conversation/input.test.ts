@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { ChatInput, PromptEditor } from "#dimos/agents/frontends/tui/conversation/input.ts";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import { slashCommands } from "#dimos/agents/frontends/tui/commands.ts";
 import { test } from "node:test";
 
 test("Pi editor preserves multiline submissions and never puts credentials into chat history", () => {
@@ -44,4 +45,37 @@ test("credentials cannot return through input undo after auth", () => {
   input.handleInput("\x1f");
   input.handleInput("\x19");
   assert.equal(input.getValue(), "");
+});
+
+test("skill completion and terminal commands share the real editor without changing submitted requests", async () => {
+  initTheme("dark", false);
+  const commands = slashCommands();
+  const editor = new PromptEditor(
+    new TuiMainScreen(new ProcessTerminal()),
+    [...commands.map((command) => command.name), "skill:help", "skill:dimensional"],
+    process.cwd(),
+  );
+  let submitted = "";
+  editor.onSubmit = (value) => {
+    submitted = value;
+  };
+  for (const [prefix, expected] of [
+    ["/skill:dim", "/skill:dimensional"],
+    ["/dimensional", "/skill:dimensional"],
+    ["/help", "/help"],
+  ] as const) {
+    editor.setValue(prefix);
+    editor.handleInput("\t");
+    await new Promise((resolve) => setImmediate(resolve));
+    if (editor.isShowingAutocomplete()) editor.handleInput("\t");
+    assert.equal(editor.getValue().trimEnd(), expected);
+    editor.handleInput("\x1b");
+  }
+  const request = "/skill:help  explain this\nwith details";
+  editor.setValue(request);
+  editor.handleInput("\r");
+  assert.equal(submitted, request);
+  assert.ok(commands.some((command) => command.name === "help"));
+  assert.ok(commands.some((command) => command.name === "image"));
+  assert.ok(commands.some((command) => command.name === "follow"));
 });

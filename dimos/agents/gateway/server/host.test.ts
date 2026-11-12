@@ -16,9 +16,9 @@ import { createHost, webSocketLink } from "@earendil-works/chord";
 import { createServer } from "node:net";
 import { unixSocket } from "#dimos/agents/sdk/node.ts";
 import { dirname, join } from "node:path";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { gatewayState, stopGateway } from "#dimos/agents/cli/process.ts";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
 import { once } from "node:events";
 import { parseJobName } from "#dimos/agents/harness/jobs/registry.ts";
@@ -59,6 +59,7 @@ async function scratch(): Promise<{ readonly root: string; readonly paths: Agent
   const paths = agentPaths({
     HOME: root,
     XDG_CONFIG_HOME: join(root, "config"),
+    XDG_DATA_HOME: join(root, "data"),
     XDG_STATE_HOME: join(root, "state"),
     XDG_CACHE_HOME: join(root, "cache"),
     XDG_RUNTIME_DIR: join(root, "run"),
@@ -378,3 +379,108 @@ test("status answers within its limit for a stale socket file and for a socket n
   assert.equal(await stopGateway(paths), "not_running");
   await assert.rejects(stat(paths.socket), { code: "ENOENT" }, "stop removes the stale socket file");
 });
+
+test(
+  "the gateway loads the full selected skill before the first model call and preserves its snapshot",
+  { timeout: 60_000 },
+  async (t) => {
+    const { root, paths, remove } = await scratch();
+    t.after(remove);
+    assert.equal(paths.userSkillsDir, join(root, "data", "dimos", "agent", "skills"));
+    const skillDir = join(paths.userSkillsDir, "dimensional");
+    await mkdir(join(skillDir, "references"), { recursive: true });
+    const path = join(skillDir, "SKILL.md");
+    const reference = join(skillDir, "references", "guide.txt");
+    const body = `---\nname: dimensional\ndescription: User override\n---\nRead references/guide.txt.\n${"Complete instructions. ".repeat(200)}END OF SKILL`;
+    await writeFile(path, body);
+    await writeFile(reference, "Supporting reference from the selected skill.");
+    const scripted = scriptedModel();
+    const faux = scripted.models.getProvider("faux");
+    assert.ok(faux);
+    const raw = "/skill:dimensional  explain this\nusing the reference";
+    let modelCalls = 0;
+    let receivedSkillBody = false;
+    scripted.script([
+      (request) => {
+        modelCalls += 1;
+        const text = JSON.stringify(request);
+        assert.ok(text.includes(path), "the prompt and explicit instruction use the custom skill");
+        const message = request.messages.find((message) => message.role === "user");
+        assert.ok(message && typeof message.content !== "string");
+        assert.ok(message.content.some((block) => block.type === "text" && block.text === raw));
+        receivedSkillBody = message.content.some((block) => block.type === "text" && block.text.includes(body));
+        assert.ok(text.includes(skillDir), "relative references have the skill base directory");
+        assert.ok(!text.includes("Read and follow"), "the harness does not ask the model to load the skill");
+        return fauxAssistantMessage([fauxToolCall("read", { path: reference }, { id: "call_reference" })], {
+          stopReason: "toolUse",
+        });
+      },
+      (request) => {
+        modelCalls += 1;
+        const results = request.messages.filter((message) => message.role === "toolResult");
+        assert.equal(results.length, 1);
+        const text = JSON.stringify(results);
+        assert.ok(text.includes("Supporting reference from the selected skill."));
+        return fauxAssistantMessage("Used the loaded skill and read its supporting reference.");
+      },
+    ]);
+    const gateway = await startGateway(t, root, paths, faux, scripted.model);
+    const client = await connect(paths, randomUUID() as TerminalId, "skill-client");
+    t.after(() => client.host.close());
+    const gw = await client.host.get(GatewayContract, {});
+    assert.equal(gw.variant, "owner");
+    if (gw.variant !== "owner") return;
+    assert.deepEqual(
+      gw.skills.value.find((skill) => skill.name === "dimensional"),
+      { name: "dimensional", description: "User override" },
+    );
+    assert.equal(gw.skills.value.filter((skill) => skill.name === "dimensional").length, 1);
+    assert.ok(gw.skills.value.some((skill) => skill.name === "dimos-runtime"));
+    const created = await gw.createConversation({ request: newActionRequest(), cwd: root });
+    assert.ok(created.ok);
+    const conversation = await client.host.get(ConversationContract, {
+      conversation: created.value.conversation,
+      role: "owner",
+    });
+    assert.equal(conversation.variant, "owner");
+    if (conversation.variant !== "owner") return;
+    const args = { request: newUserRequest(), text: raw, images: [], whenBusy: "followUp" as const };
+    const sent = await conversation.send(args);
+    assert.ok(sent.ok);
+    const outcome = await until(conversation.outcomes, (rows) =>
+      rows.find((row) => row.submission === sent.value.submission),
+    );
+    assert.equal(receivedSkillBody, true, "the first model call receives the full skill body beyond the input limit");
+    assert.equal(outcome.status, "done");
+    assert.equal(modelCalls, 2);
+    const input = conversation.transcript.value.items.find((item) => item.kind === "input");
+    assert.ok(input?.kind === "input");
+    assert.equal(input.input.text, raw);
+    assert.deepEqual(input.input.skill, { name: "dimensional", path, content: body });
+    await rm(path);
+    assert.deepEqual(
+      await conversation.send({ ...args, text: "/skill:missing" }),
+      sent,
+      "duplicate lookup precedes skill resolution",
+    );
+    assert.equal(modelCalls, 2);
+    const unknown = await conversation.send({ ...args, request: newUserRequest(), text: "/skill:missing" });
+    assert.deepEqual(unknown, {
+      ok: false,
+      refusal: { code: "invalid", field: "text", problem: 'Unknown skill "missing".' },
+    });
+    const unreadable = await conversation.send({ ...args, request: newUserRequest() });
+    assert.ok(!unreadable.ok && unreadable.refusal.code === "invalid");
+    assert.ok(unreadable.refusal.problem.includes(path));
+    assert.deepEqual(
+      await conversation.edit({ request: newUserRequest(), message: input.entry, text: "/skill:missing", images: [] }),
+      unknown,
+      "edited skill failures use the same visible refusal",
+    );
+    assert.equal(modelCalls, 2, "failed skill resolution starts no model turn");
+    const lifecycle = await client.host.get(LifecycleContract, {});
+    assert.equal(lifecycle.variant, "owner");
+    if (lifecycle.variant === "owner") await lifecycle.stop({});
+    await gateway.stopped;
+  },
+);
