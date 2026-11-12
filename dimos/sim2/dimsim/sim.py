@@ -43,14 +43,16 @@ class DimSimSim(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        # Before validate, because stop() reads both: a duplicate robot id would otherwise come
+        # out as an AttributeError from the cleanup and say nothing about the configuration.
+        self._backend: DimSimBackend | None = None
+        self._all_started = Event()
         try:
             validate(self.config.robots)
         except Exception:
             self.stop()
             raise
         self.simulated = self.config.robots
-        self._backend: DimSimBackend | None = None
-        self._all_started = Event()
 
     async def main(self) -> AsyncIterator[None]:
         self.actions.subscribe(self._on_actions)
@@ -107,6 +109,11 @@ class DimSimSim(Module):
     @rpc
     def stop(self) -> None:
         super().stop()
+        # _run waits on this in a worker thread before it steps anything, and cancelling the
+        # task does not reach a thread already blocked in Event.wait -- so a world stopped
+        # before on_system_modules arrives would keep that thread, and the Python worker it
+        # belongs to, alive forever.
+        self._all_started.set()
         if self._backend is not None:
             self._backend.close()
             self._backend = None

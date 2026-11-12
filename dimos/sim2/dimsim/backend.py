@@ -15,6 +15,7 @@
 
 from collections.abc import Iterable, Sequence
 import json
+import os
 from pathlib import Path
 import subprocess
 from threading import Lock
@@ -35,7 +36,28 @@ from dimos.utils.deno import ensure_deno
 if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
 
+# The Deno world dimsim steps. It lives in the repo and not in the package, so an installed
+# dimos does not have it: setuptools takes `dimos*` alone (see pyproject's packages.find), and
+# this path then resolves under site-packages, where there is no misc/. `DIMOS_DIMSIM_WORLD`
+# points at a checkout's copy; without one, _world_dir says so rather than letting Deno exit
+# with nothing to read.
+_WORLD_ENV = "DIMOS_DIMSIM_WORLD"
 _WORLD = Path(__file__).parents[3] / "misc" / "DimSim" / "cli"
+
+
+def _world_dir() -> Path:
+    named = os.environ.get(_WORLD_ENV)
+    found = Path(named).expanduser() if named else _WORLD
+    if (found / "sim2" / "world.ts").is_file():
+        return found
+    raise FileNotFoundError(
+        f"the dimsim world is not at {found}: no sim2/world.ts there. It ships with the repo "
+        f"(misc/DimSim/cli) and not with the dimos package, so an installed dimos has to be "
+        f"told where a checkout is -- set {_WORLD_ENV} to that cli directory"
+        + (f" (read from {_WORLD_ENV})" if named else "")
+    )
+
+
 TIMESTEP = 0.02
 # Seconds of world time between repeats of the entity table.
 _ANNOUNCE_PERIOD = 1.0
@@ -75,6 +97,7 @@ class DimSimBackend:
         self._layers = {robot.robot_id: usd_layer(robot.model) for robot in self._robots}
         self._base_sent: set[str] = set()
         self._refusals: list[tuple[str, str]] = []
+        world = _world_dir()
         self._world = subprocess.Popen(
             [
                 ensure_deno(),
@@ -83,8 +106,8 @@ class DimSimBackend:
                 "--allow-read",
                 "--allow-env",
                 "--config",
-                str(_WORLD / "deno.json"),
-                str(_WORLD / "sim2" / "world.ts"),
+                str(world / "deno.json"),
+                str(world / "sim2" / "world.ts"),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

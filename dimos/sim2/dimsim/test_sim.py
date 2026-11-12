@@ -129,6 +129,36 @@ def test_what_a_kinematic_base_cannot_do_is_refused(backend):
     assert any(key == REFUSED for _, key, _ in backend.received)
 
 
+def test_two_robots_with_one_id_say_so_rather_than_fail_cleaning_up(scene):
+    """stop() reads _backend, so initialising it after validate hid the real error."""
+    with pytest.raises(ValueError, match="duplicate simulated robot ids"):
+        DimSimSim(
+            scene=scene,
+            robots=[SimulatedRobot("bot", toy_robot()), SimulatedRobot("bot", toy_robot())],
+        )
+
+
+def test_stopping_before_the_modules_report_ends_the_wait(scene):
+    """_run waits on this in a thread, and cancelling the task cannot reach a blocked wait."""
+    sim = DimSimSim(scene=scene, robots=[SimulatedRobot("bot", toy_robot())])
+
+    sim.stop()
+
+    assert sim._all_started.is_set(), "a thread in _all_started.wait would never return"
+
+
+def test_a_world_that_is_not_where_the_package_is_says_where_to_point_it(
+    scene, tmp_path, monkeypatch
+):
+    """misc/ is not in the wheel, so an installed dimos has to be told where a checkout is."""
+    from dimos.sim2.dimsim.backend import _WORLD_ENV
+
+    monkeypatch.setenv(_WORLD_ENV, str(tmp_path))
+
+    with pytest.raises(FileNotFoundError, match=_WORLD_ENV):
+        DimSimBackend(scene, [SimulatedRobot("bot", toy_robot())])
+
+
 def test_a_robot_with_a_controller_is_refused_outright(scene):
     with pytest.raises(ValueError, match="control_period"):
         DimSimBackend(scene, [SimulatedRobot("bot", toy_robot(), control_period=0.02)])
