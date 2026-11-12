@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from pathlib import Path
 import threading
 import time
@@ -19,7 +20,6 @@ import time
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
 import pytest
 
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -75,6 +75,8 @@ activity = "mark"
 after = 60.0
 goto = "Going"
 """
+
+Build = Callable[..., ModuleCoordinator]
 
 GO_TO_ARGS = "args = { name = \"'lobby'\" }"
 
@@ -186,16 +188,12 @@ def _written(tmp_path: Path, text: str) -> Path:
     return path
 
 
-def _build(job: Path) -> ModuleCoordinator:
-    blueprint: Blueprint = autoconnect(FakeBase.blueprint(), Orchestrator.blueprint(file=job))
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
-    return ModuleCoordinator.build(blueprint, parsed)
+def _blueprint(job: Path) -> Blueprint:
+    return autoconnect(FakeBase.blueprint(), Orchestrator.blueprint(file=job))
 
 
 def test_the_job_file_fits_the_blueprint(tmp_path: Path) -> None:
-    checked, problems = bind(load_and_check(_written(tmp_path, JOB)), _deployed())
-    assert problems == []
-    assert checked.problems == ()
+    assert bind(load_and_check(_written(tmp_path, JOB)), _deployed()).problems == ()
 
 
 @pytest.mark.parametrize(("old", "new", "problem"), UNBOUND)
@@ -203,7 +201,7 @@ def test_a_file_that_does_not_fit_the_blueprint(
     tmp_path: Path, old: str, new: str, problem: str
 ) -> None:
     assert JOB.count(old) == 1
-    _, problems = bind(load_and_check(_written(tmp_path, JOB.replace(old, new))), _deployed())
+    problems = bind(load_and_check(_written(tmp_path, JOB.replace(old, new))), _deployed()).problems
     assert any(problem in found for found in problems), problems
 
 
@@ -218,29 +216,39 @@ def _calls_with(coordinator: ModuleCoordinator, wanted: set[str]) -> list[str]:
     return calls
 
 
-def test_the_orchestrator_reaches_a_node_that_needs_a_message_and_a_return(tmp_path: Path) -> None:
-    coordinator = _build(_written(tmp_path, JOB))
-    try:
-        calls = _calls_with(coordinator, {"halt", "mark"})
-    finally:
-        coordinator.stop()
+def test_the_orchestrator_reaches_a_node_that_needs_a_message_and_a_return(
+    tmp_path: Path, build: Build
+) -> None:
+    coordinator = build(_blueprint(_written(tmp_path, JOB)))
+    calls = _calls_with(coordinator, {"halt", "mark"})
     # Arrived starts mark, and it is entered only once go_to returned and a status matched it.
     assert calls[0] == "go_to lobby"
-    assert set(calls[1:]) == {"halt", "mark"}
+    assert sorted(calls[1:]) == ["halt", "mark"]
 
 
-def test_a_fault_cancels_every_activity_once(tmp_path: Path) -> None:
+def test_a_fault_cancels_every_activity_once(tmp_path: Path, build: Build) -> None:
     job = _written(tmp_path, JOB.replace('start = "FakeBase.go_to"', 'start = "FakeBase.boom"'))
-    coordinator = _build(job)
-    try:
-        calls = _calls_with(coordinator, {"halt"})
-    finally:
-        coordinator.stop()
+    calls = _calls_with(build(_blueprint(job)), {"halt"})
     # Nothing handles the failed start, so the fault sends the one cancel in the file.
     assert calls == ["boom lobby", "halt"]
 
 
-def test_a_file_that_does_not_fit_the_blueprint_fails_the_build(tmp_path: Path) -> None:
+def test_stopping_the_orchestrator_cancels_the_activity_under_way(
+    tmp_path: Path, build: Build
+) -> None:
+    # No status ever matches, so Going stays active with go_to under way.
+    assert JOB.count("SUCCEEDED = 3") == 1
+    coordinator = build(
+        _blueprint(_written(tmp_path, JOB.replace("SUCCEEDED = 3", "SUCCEEDED = 99")))
+    )
+    assert _calls_with(coordinator, {"go_to lobby"}) == ["go_to lobby"]
+    coordinator.get_instance(Orchestrator).stop()
+    assert _calls_with(coordinator, {"halt"}) == ["go_to lobby", "halt"]
+
+
+def test_a_file_that_does_not_fit_the_blueprint_fails_the_build(
+    tmp_path: Path, build: Build
+) -> None:
     job = _written(tmp_path, JOB.replace('start = "FakeBase.go_to"', 'start = "FakeBase.goto"'))
     with pytest.raises(Exception, match="`FakeBase` has no RPC `goto`"):
-        _build(job)
+        build(_blueprint(job))
