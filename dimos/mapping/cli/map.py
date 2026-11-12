@@ -575,7 +575,7 @@ def main(
     pgo_map = None
     pgo_path: list[tuple[float, float, float]] = []
     graph: PoseGraph | None = None
-    if pgo:
+    if pgo and total:
         print("running PGO twopass map...")
         with progress(total, "pgo pass 1 (optimizing)") as bar:
             # keyframe like the live mapper, so a premap and a live run are one kind of graph
@@ -600,7 +600,7 @@ def main(
             )
 
     full_pgo_map = None
-    if full_pgo:
+    if full_pgo and total:
         assert graph is not None
         with progress(total, "full pgo (rebuilding)") as bar:
             full_pgo_map = _accumulate(
