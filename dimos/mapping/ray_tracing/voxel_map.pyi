@@ -97,6 +97,14 @@ class VoxelRayMapper:
         """Return the centers of all healthy voxels as (M, 3) float32."""
         ...
 
+    def global_keyframe(self) -> NDArray[np.float32]:
+        """The global map as (M, 4) float32 (x, y, z, premap), made the baseline global_diff is taken against."""
+        ...
+
+    def global_diff(self) -> NDArray[np.float32]:
+        """What changed since the last keyframe or diff as (M, 5) float32 (x, y, z, premap, change), change 1 added, 0 removed."""
+        ...
+
     def start_seed(
         self,
         points: NDArray[np.float32],
