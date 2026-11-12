@@ -231,13 +231,26 @@ class Stream(CompositeResource, Generic[T, O]):
         return self._with_filter(BeforeFilter(t))
 
     def time_range(self, t1: float, t2: float) -> Stream[T, O]:
+        """Select observations between absolute epoch seconds, including both bounds.
+
+        Returns a query stream, not an observation. Use ``range_time`` for
+        offsets relative to this stream's first observation.
+        """
         return self._with_filter(TimeRangeFilter(t1, t2))
 
     def at(self, t: float, tolerance: float = 1.0) -> Stream[T, O]:
+        """Select every observation within ``tolerance`` seconds of epoch time ``t``.
+
+        Both tolerance bounds are inclusive. Returns a query stream rather
+        than the nearest observation; ``first()`` selects its first match.
+        """
         return self._with_filter(AtFilter(t, tolerance))
 
     def at_relative(self, t: float, tolerance: float = 1.0) -> Stream[T, O]:
-        """Like `at` but ``t`` is seconds from the first observation."""
+        """Like ``at``, with seconds from this stream's current first observation.
+
+        Existing filters affect the origin. The result is a query stream.
+        """
         t0 = self.first().ts
         return self.at(t0 + t, tolerance=tolerance)
 
@@ -297,7 +310,12 @@ class Stream(CompositeResource, Generic[T, O]):
         return self.before(t0 + seconds)
 
     def range_time(self, start: float | None, stop: float | None) -> Stream[T, O]:
-        """Window by time: ``[start, stop)`` seconds from the first observation."""
+        """Select observations strictly between offsets from this stream's first.
+
+        Offsets are seconds, not epoch timestamps. Each provided bound is
+        exclusive. Existing filters affect the first observation and hence
+        the origin. Returns a query stream; use ``time_range`` for epoch bounds.
+        """
         if start is None and stop is None:
             return self
         try:
@@ -544,7 +562,10 @@ class Stream(CompositeResource, Generic[T, O]):
         """Materialize into memory and return a replayable stream.
 
         Useful when you need to iterate the same results multiple times
-        without re-running the upstream query.
+        without re-running the upstream query. Payloads are loaded eagerly.
+        Saving assigns destination IDs and data types to the observations,
+        including references held by the caller. Copy source identity metadata
+        before this call when provenance matters.
         """
         from dimos.memory.store.memory import MemoryStore
 

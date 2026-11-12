@@ -225,10 +225,16 @@ class Image(Timestamped):
         raise ValueError(f"Unsupported format: {self.format}")
 
     def as_numpy(self) -> np.ndarray:
-        """Get image data as numpy array."""
+        """Return the stored array without changing its pixel format or color order."""
         return self.data
 
     def to_rgb(self) -> Image:
+        """Return a DimOS Image with supported color and grayscale formats in RGB.
+
+        Read the returned image's ``data`` or ``as_numpy()`` for its array.
+        Alpha is dropped. GRAY16 and DEPTH16 are scaled to 8-bit grayscale
+        before conversion; other unsupported formats are copied unchanged.
+        """
         import cv2
 
         if self.format == ImageFormat.RGB:
@@ -433,6 +439,10 @@ class Image(Timestamped):
         return float(np.clip((np.log10(lap_var + 1) - 1.0) / 3.0, 0.0, 1.0))
 
     def save(self, filepath: str) -> bool:
+        """Write the image using the filename's format and return the success flag.
+
+        Color images are converted to OpenCV's BGR order before encoding.
+        """
         import cv2
 
         arr = self.to_opencv()
