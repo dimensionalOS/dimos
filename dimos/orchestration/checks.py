@@ -48,10 +48,7 @@ class CheckedDefinition:
 def check(
     definition: OrchestratorDefinition, shapes: Mapping[str, Shape] | None = None
 ) -> CheckedDefinition:
-    """Run every static check. `shapes` gives the shape of signals and results.
-
-    Problems with names or nesting are returned alone, since the other checks need a sound tree.
-    """
+    """Run every static check. Name and nesting problems are returned alone."""
     problems = [*_name_problems(definition), *_nesting_problems(definition)]
     expressions: dict[str, Expression] = {}
     tree = Tree(definition)

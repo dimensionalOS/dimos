@@ -26,7 +26,6 @@ from dimos.orchestration.definition import (
 
 @pytest.fixture
 def patrol() -> OrchestratorDefinition:
-    """The toy patrol definition."""
     return OrchestratorDefinition(
         root="Demo",
         resources=["base"],

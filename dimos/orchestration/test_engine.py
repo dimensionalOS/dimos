@@ -14,6 +14,7 @@
 
 from dataclasses import dataclass
 import sys
+from typing import Literal
 
 import pytest
 
@@ -53,17 +54,16 @@ from dimos.orchestration.engine import (
 )
 from dimos.orchestration.expressions import Plain
 
+HappeningKind = Literal[
+    "signal", "returns", "raises", "canceled", "cancel raises", "timer", "deadline"
+]
 # What happens outside the engine: a kind, a signal or node name, and a value if it has one.
-# The kinds are signal, returns, raises, canceled, cancel raises, timer and deadline.
-Happening = tuple[str, str] | tuple[str, str, Plain]
+Happening = tuple[HappeningKind, str] | tuple[HappeningKind, str, Plain]
 
 
 @dataclass
 class Case:
-    """A definition, the effects of starting it, and the effects of each happening in turn.
-
-    A definition of None stands for the patrol fixture.
-    """
+    """A scripted run of a definition, where None stands for the patrol fixture."""
 
     name: str
     definition: OrchestratorDefinition | None
@@ -76,7 +76,6 @@ def signals(*names: str) -> list[Signal]:
     return [Signal(name=name, stream=f"Panel.{name}") for name in names]
 
 
-# Work runs power and holds a switch node, Pick, and a node that runs drive, Move.
 WORK = OrchestratorDefinition(
     root="Work",
     constants={"top_speed": 0.5},
@@ -193,7 +192,7 @@ CHECKS = OrchestratorDefinition(
     ],
 )
 
-# Job is inside Work. Its ensures has no fallback and nothing handles its failed.
+# The ensures of Job has no fallback and nothing handles its failed.
 INNER = OrchestratorDefinition(
     root="Top",
     vars={"tidy": False},
