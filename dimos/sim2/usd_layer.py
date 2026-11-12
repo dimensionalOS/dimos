@@ -29,7 +29,7 @@ _ASSETS = Path(tempfile.gettempdir()) / "dimos-usd-assets"
 
 
 def usd_layer(model: UsdModel) -> Path:
-    from dimos.robot.assets.usd_assets import resolve_usd_assets
+    from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 
     source = model.source_path
     layer = resolve_usd_assets(model.usd, str(source.parent) if source is not None else "")
@@ -52,8 +52,8 @@ def _name_of(model: UsdModel) -> str:
 
 
 def scene_as_files(usd: str, fetch: Callable[[str], bytes]) -> Path:
-    from dimos.robot.assets.usd import layer_from, load_pxr
-    from dimos.robot.assets.usd_assets import asset_attributes
+    from dimos.robot.assets.usd_utils.assets import asset_attributes
+    from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a scene", None)
@@ -102,7 +102,7 @@ def _cached(name: str, digest: str | None, fetch: Callable[[str], bytes]) -> Pat
         if promised.exists():
             return promised
     data = fetch(name)
-    from dimos.robot.assets.usd_assets import asset_hash
+    from dimos.robot.assets.usd_utils.assets import asset_hash
 
     out = _ASSETS / f"{asset_hash(data)}{suffix}"
     if not out.exists():
