@@ -274,6 +274,20 @@ LOOP = OrchestratorDefinition(
     ],
 )
 
+WAITING = OrchestratorDefinition(
+    root="Top",
+    signals=signals("ok"),
+    events=[Event(name="ready", when="ok")],
+    nodes=[
+        Node(name="Top", children=["Wait", "Go"], initial="Wait"),
+        Node(
+            name="Wait",
+            transitions=[Transition(after=2, goto="Go"), Transition(trigger="ready", goto="Go")],
+        ),
+        Node(name="Go", transitions=[Transition(trigger="ok", goto="Wait")]),
+    ],
+)
+
 PATROL_STARTUP = ["NextWaypoint --> Navigating", "start FakeBase.go_to(name='lobby')"]
 
 
@@ -344,7 +358,7 @@ CASES = [
                 ("raises", "Navigating"),
                 [
                     "cancel FakeBase.stop",
-                    "fault at Navigating: a `failed` that no node handles",
+                    "fault at Navigating on start_return: a `failed` that no node handles",
                 ],
             ),
         ],
@@ -390,7 +404,7 @@ CASES = [
                 [
                     "cancel Base.disable",
                     "cancel Base.stop",
-                    "fault at Move: a `cancel` that has not returned by its deadline",
+                    "fault at Move on timer: a `cancel` that has not returned by its deadline",
                 ],
             ),
         ],
@@ -408,7 +422,7 @@ CASES = [
                     "clear deadline Move 4.0",
                     "cancel Base.disable",
                     "cancel Base.stop",
-                    "fault at Move: a `cancel` that raised",
+                    "fault at Move on cancel_return: a `cancel` that raised",
                 ],
             ),
         ],
@@ -476,7 +490,7 @@ CASES = [
                     "cancel Arm.release",
                     "cancel Arm.release",
                     "cancel Base.stop",
-                    "fault at Job: a failed `ensures` check on a node an outer node left",
+                    "fault at Job on leave: a failed `ensures` check on a node an outer node left",
                 ],
             ),
         ],
@@ -492,7 +506,7 @@ CASES = [
                 [
                     "cancel Arm.release",
                     "cancel Base.stop",
-                    "fault at Job: a `failed` that no node handles",
+                    "fault at Job on start_return: a `failed` that no node handles",
                 ],
             ),
         ],
@@ -535,7 +549,7 @@ CASES = [
                 [
                     "Idle -go-> Both",
                     "cancel Base.stop",
-                    "fault at Right: a failed `requires` check with no fallback",
+                    "fault at Right on go: a failed `requires` check with no fallback",
                 ],
             ),
         ],
@@ -547,10 +561,26 @@ CASES = [
             "Ping --> Pong",
             "Pong --> Ping",
             "Ping --> Pong",
-            "fault at Pong: too many transitions in a row with no outside event",
+            "fault at Pong on startup: too many transitions in a row with no outside event",
         ],
         [],
         Limits(transition_cap=3),
+    ),
+    Case(
+        "an expression error is a fault, and a fault clears the timers of earlier steps",
+        WAITING,
+        ["set timer Wait 2.0"],
+        [
+            (
+                1.0,
+                ("signal", "ok", "yes"),
+                [
+                    "clear timer Wait 2.0",
+                    "fault at Wait on ok: an expression error: "
+                    "`ok` gave 'yes', and true or false is needed",
+                ],
+            ),
+        ],
     ),
 ]
 
@@ -573,8 +603,8 @@ def render(effect: Effect) -> str:
             return f"set {label(timer)}"
         case ClearTimer(timer):
             return f"clear {label(timer)}"
-        case FaultReport(rule, node):
-            return f"fault at {node}: {rule}"
+        case FaultReport(rule, node, event):
+            return f"fault at {node} on {event}: {rule}"
 
 
 def queue_item(runtime: Runtime, happening: Happening) -> QueueItem:
