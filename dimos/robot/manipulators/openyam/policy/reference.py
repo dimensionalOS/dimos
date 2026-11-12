@@ -109,7 +109,7 @@ class ReferenceClip:
         self.file_hz = 1.0 / self.file_period_s
         self.policy_hz = float(policy_hz)
         ratio = self.file_hz / self.policy_hz
-        self.stride = int(round(ratio))
+        self.stride = round(ratio)
         if self.stride < 1 or abs(ratio - self.stride) > 1e-3:
             raise PolicyContractError(
                 f"reference clip rate {self.file_hz:.3f} Hz is not an integer multiple of the "

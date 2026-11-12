@@ -52,7 +52,6 @@ import mujoco
 import numpy as np
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.simulation.engines.mujoco_shm import ManipShmReader, shm_key_from_path
 from dimos.robot.manipulators.openyam.blueprints.policy import (
     ACTOR_EVERY_N_TICKS,
     COORDINATOR_TICK_RATE,
@@ -61,9 +60,9 @@ from dimos.robot.manipulators.openyam.blueprints.policy import (
     resolve_manifest_path,
     resolve_plant_path,
 )
-from dimos.robot.manipulators.openyam.policy.contract import JOINT_ORDER
 from dimos.robot.manipulators.openyam.policy.reference import ReferenceClip
 from dimos.robot.manipulators.openyam.policy.tcp import MjcfTcpFk
+from dimos.simulation.engines.mujoco_shm import ManipShmReader, shm_key_from_path
 
 PLANT_DT = 1.0 / 480.0
 POLICY_HZ = 30.0
@@ -78,7 +77,9 @@ def sha256(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def resolve_anchor(clip: ReferenceClip, q_measured: np.ndarray, tolerance: float) -> tuple[int, float]:
+def resolve_anchor(
+    clip: ReferenceClip, q_measured: np.ndarray, tolerance: float
+) -> tuple[int, float]:
     """Resolve the policy tick whose reference pose matches the measured reset pose."""
     index = clip.anchor(q_measured[:6], tolerance=tolerance)
     residual = float(np.abs(clip.row(index).q - np.asarray(q_measured[:6], dtype=np.float64)).max())
@@ -95,12 +96,14 @@ def open_loop_provenance(
     """Replay the recorded commands into the exported plant and compare to training."""
     model = mujoco.MjModel.from_xml_path(str(plant))
     data = mujoco.MjData(model)
-    names = [
-        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(model.njnt)
-    ]
-    if model.nq != 6 or model.nv != 6 or tuple(names) != tuple(f"arm_joint_{i}" for i in range(1, 7)):
+    names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(model.njnt)]
+    if (
+        model.nq != 6
+        or model.nv != 6
+        or tuple(names) != tuple(f"arm_joint_{i}" for i in range(1, 7))
+    ):
         raise SystemExit(f"unexpected plant joints: nq={model.nq} nv={model.nv} names={names}")
-    substeps = int(round((1.0 / POLICY_HZ) / model.opt.timestep))
+    substeps = round((1.0 / POLICY_HZ) / model.opt.timestep)
     data.qpos[:] = qpos0[:6]
     data.qvel[:] = qvel0[:6]
     mujoco.mj_forward(model, data)
@@ -169,12 +172,43 @@ def closed_loop(
         coordinator.stop()
         raise RuntimeError(f"task refused to engage: {engaged!r}")
 
-    samples: dict[str, list[float]] = {key: [] for key in (
-        "t", "q0", "q1", "q2", "q3", "q4", "q5", "dq0", "dq1", "dq2", "dq3", "dq4", "dq5",
-        "cmd0", "cmd1", "cmd2", "cmd3", "cmd4", "cmd5", "goal_x", "goal_y", "goal_z",
-        "exec_x", "exec_y", "exec_z", "exec_qw", "exec_qx", "exec_qy", "exec_qz",
-        "tick", "active", "shm_seq",
-    )}
+    samples: dict[str, list[float]] = {
+        key: []
+        for key in (
+            "t",
+            "q0",
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "q5",
+            "dq0",
+            "dq1",
+            "dq2",
+            "dq3",
+            "dq4",
+            "dq5",
+            "cmd0",
+            "cmd1",
+            "cmd2",
+            "cmd3",
+            "cmd4",
+            "cmd5",
+            "goal_x",
+            "goal_y",
+            "goal_z",
+            "exec_x",
+            "exec_y",
+            "exec_z",
+            "exec_qw",
+            "exec_qx",
+            "exec_qy",
+            "exec_qz",
+            "tick",
+            "active",
+            "shm_seq",
+        )
+    }
     fault_log: list[str] = []
     started = time.monotonic()
     was_active = False
@@ -182,7 +216,10 @@ def closed_loop(
     while time.monotonic() - started < timeout_s:
         q = np.asarray(reader.read_positions(6), dtype=np.float64)
         dq = np.asarray(reader.read_velocities(6), dtype=np.float64)
-        snapshot = control.task_invoke(task_name=POLICY_TASK_NAME, method="state_snapshot", kwargs={}) or {}
+        snapshot = (
+            control.task_invoke(task_name=POLICY_TASK_NAME, method="state_snapshot", kwargs={})
+            or {}
+        )
         executed, orientation = kinematics(q)
         command = snapshot.get("last_command") or [np.nan] * 6
         goal = snapshot.get("goal_position") or [np.nan] * 3
@@ -225,7 +262,9 @@ def closed_loop(
         "engaged": engaged,
         "active_samples": int(active.sum()),
         "actor_ticks": int(np.nanmax(arrays["tick"])) + 1 if arrays["tick"].size else 0,
-        "faults": sorted({fault for fault in fault_log if fault not in ("None", "nan", "none", "")}),
+        "faults": sorted(
+            {fault for fault in fault_log if fault not in ("None", "nan", "none", "")}
+        ),
         "cadence": {
             "coordinator_hz": COORDINATOR_TICK_RATE,
             "every_n_ticks": ACTOR_EVERY_N_TICKS,
@@ -239,7 +278,9 @@ def closed_loop(
         sequence = arrays["shm_seq"]
         info["physics"] = {
             "shm_state_sequence_delta": float(sequence[-1] - sequence[0]),
-            "implied_hz": float((sequence[-1] - sequence[0]) / elapsed) if elapsed > 0 else math.inf,
+            "implied_hz": float((sequence[-1] - sequence[0]) / elapsed)
+            if elapsed > 0
+            else math.inf,
         }
     return arrays, info
 
@@ -304,9 +345,7 @@ def compare(
             joint_errors.append(q_track[sample] - at(train_q, index))
             position_errors.append(np.linalg.norm(exec_track[sample] - at(train_exec, index)))
             orientation_errors.append(quat_angle_deg(exec_quat[sample], at(train_exec_quat, index)))
-            goal_errors.append(
-                np.linalg.norm(goal_track[sample] - at(train_goal, index)[:3])
-            )
+            goal_errors.append(np.linalg.norm(goal_track[sample] - at(train_goal, index)[:3]))
             tracking.append(np.linalg.norm(exec_track[sample] - goal_track[sample]))
         joint = np.asarray(joint_errors)
         result[label] = {
@@ -349,9 +388,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     anchor_index, anchor_residual = resolve_anchor(clip, qpos0[:6], args.anchor_tolerance)
     with np.load(args.training) as data:
         finger = np.asarray(data["finger_q"], dtype=np.float64)[:, env, :]
-    fingers_parked = bool(
-        np.abs(finger - finger[0]).max() <= FINGER_TOLERANCE
-    )
+    fingers_parked = bool(np.abs(finger - finger[0]).max() <= FINGER_TOLERANCE)
     initial_q_error = float(np.abs(qpos0[:6] - np.asarray(training["full_q"])[0, env, :6]).max())
 
     summary: dict[str, Any] = {
@@ -408,9 +445,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         return summary
 
     summary["open_loop_provenance"] = open_loop_provenance(plant, training, qpos0, qvel0)
-    max_ticks = int(
-        min(180, clip.length - anchor_index - 1, np.asarray(training["q"]).shape[0])
-    )
+    max_ticks = int(min(180, clip.length - anchor_index - 1, np.asarray(training["q"]).shape[0]))
     arrays, loop = closed_loop(
         plant=plant,
         manifest=manifest,

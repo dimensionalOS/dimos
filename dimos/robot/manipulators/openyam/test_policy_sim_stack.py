@@ -42,7 +42,6 @@ from dimos.robot.manipulators.openyam.policy.quest_reference import (
     ReferenceRefusedError,
 )
 from dimos.robot.manipulators.openyam.policy.reference import ClipReference, ReferenceClip
-from dimos.teleop.webxr.replay import WebXRReplayModule
 from dimos.utils.transform_utils import matrix_to_pose
 
 PERIOD = 1.0 / 30.0
@@ -97,9 +96,9 @@ class _StubFk:
         return position, np.array([1.0, 0.0, 0.0, 0.0])
 
 
-def _generator(delta_per_s: np.ndarray, **kwargs: object) -> tuple[
-    QuestReferenceGenerator, _StubSolver, _StubFk
-]:
+def _generator(
+    delta_per_s: np.ndarray, **kwargs: object
+) -> tuple[QuestReferenceGenerator, _StubSolver, _StubFk]:
     solver = _StubSolver(delta_per_s)
     fk = _StubFk()
     generator = QuestReferenceGenerator(
@@ -129,7 +128,9 @@ def test_blueprint_can_only_build_a_simulated_adapter() -> None:
     assert component.hardware_type.value == "manipulator"
     assert tuple(component.joints) == tuple(blueprint.policy_joint_names())
 
-    names = {atom.module.__name__ for atom in blueprint.openyam_policy_sim_replay_blueprint.blueprints}
+    names = {
+        atom.module.__name__ for atom in blueprint.openyam_policy_sim_replay_blueprint.blueprints
+    }
     assert "MujocoSimModule" in names
     assert "WebXRReplayModule" in names
     assert not {name for name in names if "damiao" in name.lower() or "can" == name.lower()}
@@ -241,7 +242,7 @@ def test_reference_clip_decimates_a_faster_recorded_clip(tmp_path: Path) -> None
     assert clip.rows == 400
     assert clip.length == 200
     assert clip.row(50).time_s == pytest.approx(50.0 / 30.0)
-    np.testing.assert_allclose(clip.row(50).q, clip._q[100])  # noqa: SLF001 - row mapping
+    np.testing.assert_allclose(clip.row(50).q, clip._q[100])
 
     with pytest.raises(PolicyContractError):
         ReferenceClip(path, policy_hz=25.0, episode_ticks=180)
