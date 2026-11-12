@@ -279,23 +279,18 @@ dimos log [OPTIONS]
 | `--lines`, `-n` | Number of lines to show (default: 50) |
 | `--all`, `-a` | Show full log |
 | `--json` | Raw JSONL output (for piping to `jq`) |
-| `--run`, `-r` | Run ID of a running instance (defaults to the most recent) |
+| `--run`, `-r` | Specific run ID (defaults to most recent) |
 
 ```bash
 dimos log                    # last 50 lines, human-readable
 dimos log -f                 # follow in real time
 dimos log -n 100             # last 100 lines
 dimos log --json | jq .event # raw JSONL, extract events
-dimos log -r 20260306-143022-a3f1-unitree-go2  # a specific running instance
+dimos log -r 20260306-143022-a3f1-unitree-go2  # specific run
 ```
 
-`dimos log` finds a run only while it is running. After a run has stopped, or when a start
-failed, it prints `No log files found`. The log is still on disk, so read the file:
-
-```bash
-# logs/ is under a Git checkout; an installed package writes to ~/.local/state/dimos/logs/
-jq -r .event logs/<run-id>/main.jsonl
-```
+`dimos log` shows the running instance. When nothing is running it shows the most recently started run,
+so the log of a stopped run or of a failed start can still be read.
 
 All processes (main + workers) write to the same `main.jsonl`. Filter by module:
 
