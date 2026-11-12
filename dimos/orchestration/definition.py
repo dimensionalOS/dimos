@@ -29,6 +29,7 @@ def _source(value: JsonValue) -> str:
 
 
 Source = Annotated[str, BeforeValidator(_source)]
+Outcome = Literal["done", "failed"]
 
 
 class _Struct(BaseModel):
@@ -92,7 +93,7 @@ class Node(_Struct):
     children: tuple[str, ...] = ()
     parallel: tuple[str, ...] = ()
     initial: str | None = None
-    outcomes: tuple[Literal["done", "failed"], ...] = ()
+    outcomes: tuple[Outcome, ...] = ()
 
     @model_validator(mode="after")
     def _at_most_one_kind(self) -> "Node":

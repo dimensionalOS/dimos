@@ -73,7 +73,7 @@ def signals(*names: str) -> list[Signal]:
     return [Signal(name=name, stream=f"Panel.{name}") for name in names]
 
 
-# Work runs `power` and holds a switch node, Pick, and a node that runs `drive`, Move.
+# Work runs power and holds a switch node, Pick, and a node that runs drive, Move.
 WORK = OrchestratorDefinition(
     root="Work",
     constants={"top_speed": 0.5},
@@ -190,7 +190,7 @@ CHECKS = OrchestratorDefinition(
     ],
 )
 
-# Job is inside Work. Its `ensures` has no fallback and nothing handles its `failed`.
+# Job is inside Work. Its ensures has no fallback and nothing handles its failed.
 INNER = OrchestratorDefinition(
     root="Top",
     vars={"tidy": False},
@@ -278,7 +278,7 @@ PATROL_STARTUP = ["NextWaypoint --> Navigating", "start FakeBase.go_to(name='lob
 
 
 def waypoint(now: float, goal: str, then: str) -> list[tuple[float, Happening, list[str]]]:
-    """One waypoint of the patrol: `go_to` returns a goal, the goal is reached, `stop` returns."""
+    """One waypoint of the patrol: go_to returns a goal, the goal is reached, stop returns."""
     reached: Plain = {"status": 3, "goal_id": {"id": goal}}
     return [
         (now, ("returns", "Navigating", goal), []),
