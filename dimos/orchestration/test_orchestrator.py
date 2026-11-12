@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 import threading
 import time
+from unittest.mock import Mock
 
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -26,8 +28,12 @@ from dimos.core.core import rpc
 from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.orchestration import engine
+from dimos.orchestration.binding import Deployed, bind
+from dimos.orchestration.engine import Call, SendCancel, SendStart, SignalItem
 from dimos.orchestration.loader import load_and_check
-from dimos.orchestration.orchestrator import Deployed, Orchestrator, bind
+from dimos.orchestration.orchestrator import Orchestrator
+from dimos.utils.testing.waiting import wait_until
 
 JOB = """\
 root = "Job"
@@ -208,9 +214,13 @@ def test_a_file_that_does_not_fit_the_blueprint(
 def _calls_with(coordinator: ModuleCoordinator, wanted: set[str]) -> list[str]:
     """The fake's calls, read a moment after it has had every wanted one."""
     base = coordinator.get_instance(FakeBase)
-    deadline = time.monotonic() + 10.0
-    while not wanted <= set(base.calls()) and time.monotonic() < deadline:
-        time.sleep(0.05)
+    wait_until(
+        lambda: wanted <= set(base.calls()),
+        timeout=10.0,
+        interval=0.05,
+        message=f"FakeBase never had {sorted(wanted)}",
+    )
+    # A call sent twice would come from another process, so there is nothing to wait on.
     time.sleep(0.2)
     calls: list[str] = base.calls()
     return calls
@@ -252,3 +262,40 @@ def test_a_file_that_does_not_fit_the_blueprint_fails_the_build(
     job = _written(tmp_path, JOB.replace('start = "FakeBase.go_to"', 'start = "FakeBase.goto"'))
     with pytest.raises(Exception, match="`FakeBase` has no RPC `goto`"):
         build(_blueprint(job))
+
+
+@pytest.fixture
+def bound(tmp_path: Path) -> Iterator[tuple[Orchestrator, Mock]]:
+    """An Orchestrator bound to the job file and running, with a mock for its RPC client."""
+    orchestrator = Orchestrator(file=_written(tmp_path, JOB))
+    client, sent = orchestrator.rpc, Mock()
+    orchestrator.rpc = sent
+    orchestrator._checked = bind(load_and_check(orchestrator.config.file), _deployed())
+    orchestrator._rpcs = _deployed().rpcs
+    orchestrator._running = True
+    yield orchestrator, sent
+    orchestrator.rpc = client
+    orchestrator._close_module()
+
+
+def test_no_start_is_sent_once_the_orchestrator_has_stopped(
+    bound: tuple[Orchestrator, Mock],
+) -> None:
+    orchestrator, sent = bound
+    go = Call(1, "Going", "start", "sent", frozenset(), "FakeBase.go_to", {"name": "lobby"})
+    halt = Call(2, "Going", "cancel", "sent", frozenset(), "FakeBase.halt", {})
+    orchestrator._halt()
+    orchestrator._perform([SendStart(go), SendCancel(halt)])
+    assert [call.args[0] for call in sent.call.call_args_list] == ["FakeBase/halt"]
+
+
+def test_an_engine_error_cancels_every_activity(
+    bound: tuple[Orchestrator, Mock], mocker: MockerFixture
+) -> None:
+    orchestrator, sent = bound
+    assert orchestrator._checked is not None
+    mocker.patch.object(engine, "step", side_effect=RuntimeError("broken"))
+    orchestrator._add(SignalItem("status"))
+    orchestrator._run(orchestrator._checked)
+    assert [call.args[0] for call in sent.call.call_args_list] == ["FakeBase/go_to"]
+    assert [call.args[0] for call in sent.call_nowait.call_args_list] == ["FakeBase/halt"]
