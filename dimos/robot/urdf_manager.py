@@ -36,14 +36,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import JointDescription, RobotModel, UsdModel
-from dimos.robot.assets.usd import (
-    graft_usd,
-    prefix_usd_frames,
-    rename_usd_frames,
-    usd_frame_names,
-    warm_usd,
-)
-from dimos.robot.assets.usd_assets import (
+from dimos.robot.assets.usd_utils.assets import (
     describe_unopenable_assets,
     publish_usd_assets,
     require_asset_hashes,
@@ -51,6 +44,13 @@ from dimos.robot.assets.usd_assets import (
     resolve_usd_assets,
     unopenable_assets,
 )
+from dimos.robot.assets.usd_utils.frames import (
+    prefix_usd_frames,
+    rename_usd_frames,
+    usd_frame_names,
+)
+from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.pxr import warm_usd
 from dimos.robot.joint_tf import JointTf
 from dimos.utils.logging_config import setup_logger
 
