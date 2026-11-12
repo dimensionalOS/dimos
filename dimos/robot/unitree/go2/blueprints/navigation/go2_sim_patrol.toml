@@ -1,0 +1,81 @@
+root = "Patrol"
+resources = ["base"]
+
+[constants]
+route = [{ x = 2.0, y = 0.0 }, { x = 2.0, y = 2.0 }, { x = 0.0, y = 0.0 }]
+pause_s = 3.0
+retry_s = 1.0
+PREEMPTED = 2
+SUCCEEDED = 3
+ABORTED = 4
+
+[vars]
+"patrol.index" = 0
+
+[[signal]]
+name = "nav_status"
+stream = "MLSPlannerNative.nav_status"
+
+[[event]]
+name = "arrived"
+when = "nav_status.status == SUCCEEDED && nav_status.goal_id.stamp == nav.goal"
+
+[[event]]
+name = "gave_up"
+when = "(nav_status.status == ABORTED || nav_status.status == PREEMPTED) && nav_status.goal_id.stamp == nav.goal"
+
+[[activity]]
+name = "navigate"
+start = "MLSPlannerNative.go_to"
+cancel = "MLSPlannerNative.stop_navigation"
+uses = ["base"]
+
+[[node]]
+name = "Patrol"
+children = ["NextWaypoint", "Navigating", "Retrying", "Pausing"]
+initial = "NextWaypoint"
+
+[[node]]
+name = "NextWaypoint"
+
+[[node.transition]]
+if = "patrol.index < size(route)"
+goto = "Navigating"
+
+[[node.transition]]
+goto = "Navigating"
+set = { "patrol.index" = 0 }
+
+[[node]]
+name = "Navigating"
+activity = "navigate"
+args = { x = "route[patrol.index].x", y = "route[patrol.index].y" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "Pausing"
+set = { "patrol.index" = "patrol.index + 1" }
+
+[[node.transition]]
+trigger = "gave_up"
+goto = "NextWaypoint"
+set = { "patrol.index" = "patrol.index + 1" }
+
+[[node.transition]]
+trigger = "failed"
+goto = "Retrying"
+
+[[node]]
+name = "Retrying"
+
+[[node.transition]]
+after = "retry_s"
+goto = "Navigating"
+
+[[node]]
+name = "Pausing"
+
+[[node.transition]]
+after = "pause_s"
+goto = "NextWaypoint"
