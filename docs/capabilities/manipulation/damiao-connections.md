@@ -91,13 +91,15 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 q = app.ControlCoordinator.get_joint_positions()["arm/joint2"]
-app.ControlCoordinator.execute_trajectory(JointTrajectory(
-    joint_names=["arm/joint2"],
-    points=[
-        TrajectoryPoint(time_from_start=0.0, positions=[q]),
-        TrajectoryPoint(time_from_start=0.5, positions=[q - 0.02]),
-    ],
-))
+app.ControlCoordinator.execute_trajectory(
+    JointTrajectory(
+        joint_names=["arm/joint2"],
+        points=[
+            TrajectoryPoint(time_from_start=0.0, positions=[q]),
+            TrajectoryPoint(time_from_start=0.5, positions=[q - 0.02]),
+        ],
+    )
+)
 app.ControlCoordinator.get_joint_positions()
 ```
 

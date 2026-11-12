@@ -17,15 +17,22 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 
 joints = ["arm/joint1", "arm/gripper"]
 state = FeatureSpec(
-    stream="measured", message_type=JointState, field="position",
-    dtype="float32", shape=(2,), names=joints,
+    stream="measured",
+    message_type=JointState,
+    field="position",
+    dtype="float32",
+    shape=(2,),
+    names=joints,
 )
 profile = CollectionProfile(
     observations={
         "observation.state": state,
         "observation.images.wrist": FeatureSpec(
-            stream="wrist_image", message_type=Image, field="data",
-            dtype="video", shape=(480, 640, 3),
+            stream="wrist_image",
+            message_type=Image,
+            field="data",
+            dtype="video",
+            shape=(480, 640, 3),
             names=["height", "width", "channels"],
         ),
     },
@@ -99,26 +106,33 @@ from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 
-usb = autoconnect(*(
-    WebcamModule.blueprint(
-        instance_name=name,
-        hardware=WebcamConfig(camera_index=index, width=640, height=480, fps=30),
+usb = autoconnect(
+    *(
+        WebcamModule.blueprint(
+            instance_name=name,
+            hardware=WebcamConfig(camera_index=index, width=640, height=480, fps=30),
+        )
+        for index, name in enumerate(("left_wrist", "right_wrist", "overhead"))
     )
-    for index, name in enumerate(("left_wrist", "right_wrist", "overhead"))
-))
-realsense = autoconnect(*(
-    RealSenseCamera.blueprint(
-        instance_name=name, serial_number=serial, width=640, height=480, fps=30,
+)
+realsense = autoconnect(
+    *(
+        RealSenseCamera.blueprint(
+            instance_name=name,
+            serial_number=serial,
+            width=640,
+            height=480,
+            fps=30,
+        )
+        for name, serial in {
+            "left_wrist": "LEFT_DEVICE_SERIAL",
+            "right_wrist": "RIGHT_DEVICE_SERIAL",
+            "overhead": "OVERHEAD_DEVICE_SERIAL",
+        }.items()
     )
-    for name, serial in {
-        "left_wrist": "LEFT_DEVICE_SERIAL",
-        "right_wrist": "RIGHT_DEVICE_SERIAL",
-        "overhead": "OVERHEAD_DEVICE_SERIAL",
-    }.items()
-))
+)
 remappings = [
-    (name, "color_image", f"{name}_image")
-    for name in ("left_wrist", "right_wrist", "overhead")
+    (name, "color_image", f"{name}_image") for name in ("left_wrist", "right_wrist", "overhead")
 ]
 usb = usb.remappings(remappings)
 realsense = realsense.remappings(remappings)

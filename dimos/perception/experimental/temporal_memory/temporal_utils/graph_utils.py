@@ -30,24 +30,24 @@ logger = setup_logger()
 
 _KEYWORD_MAP: list[tuple[re.Pattern[str], float]] = [
     # Exact phrases
-    (re.compile(r"\bjust now\b", re.I), 60),
-    (re.compile(r"\bfew seconds? ago\b", re.I), 30),
-    (re.compile(r"\bfew minutes? ago\b", re.I), 300),
-    (re.compile(r"\brecently\b|\brecent\b", re.I), 600),
-    (re.compile(r"\blast hour\b|\bpast hour\b", re.I), 3600),
-    (re.compile(r"\btoday\b", re.I), 3600),
-    (re.compile(r"\byesterday\b", re.I), 86400),
-    (re.compile(r"\blast night\b", re.I), 43200),
-    (re.compile(r"\bthis morning\b", re.I), 21600),
-    (re.compile(r"\blast week\b|\bpast week\b", re.I), 7 * 86400),
-    (re.compile(r"\blast month\b|\bpast month\b", re.I), 30 * 86400),
-    (re.compile(r"\blast year\b|\bpast year\b", re.I), 365 * 86400),
+    (re.compile(r"\bjust now\b", re.IGNORECASE), 60),
+    (re.compile(r"\bfew seconds? ago\b", re.IGNORECASE), 30),
+    (re.compile(r"\bfew minutes? ago\b", re.IGNORECASE), 300),
+    (re.compile(r"\brecently\b|\brecent\b", re.IGNORECASE), 600),
+    (re.compile(r"\blast hour\b|\bpast hour\b", re.IGNORECASE), 3600),
+    (re.compile(r"\btoday\b", re.IGNORECASE), 3600),
+    (re.compile(r"\byesterday\b", re.IGNORECASE), 86400),
+    (re.compile(r"\blast night\b", re.IGNORECASE), 43200),
+    (re.compile(r"\bthis morning\b", re.IGNORECASE), 21600),
+    (re.compile(r"\blast week\b|\bpast week\b", re.IGNORECASE), 7 * 86400),
+    (re.compile(r"\blast month\b|\bpast month\b", re.IGNORECASE), 30 * 86400),
+    (re.compile(r"\blast year\b|\bpast year\b", re.IGNORECASE), 365 * 86400),
 ]
 
 _QUANTITY_PAT = re.compile(
     r"(?:(?:last|past|previous)\s+)?(\d+)\s+"
     r"(seconds?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s*(?:ago)?",
-    re.I,
+    re.IGNORECASE,
 )
 
 _UNIT_TO_SECONDS: dict[str, float] = {

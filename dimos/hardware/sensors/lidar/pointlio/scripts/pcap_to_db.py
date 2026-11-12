@@ -316,7 +316,7 @@ def _build_blueprint(
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 
-    pointlio_kwargs: dict[str, Any] = dict(odom_freq=args.odom_freq)
+    pointlio_kwargs: dict[str, Any] = {"odom_freq": args.odom_freq}
     pointlio_kwargs.update(overrides)
 
     return (

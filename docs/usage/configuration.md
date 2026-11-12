@@ -10,12 +10,15 @@ from pydantic import ValidationError
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from rich import print
 
+
 class Config(BaseConfig):
     x: int = 3
     hello: str = "world"
 
+
 class MyClass(Configurable):
     config: Config
+
 
 myclass1 = MyClass()
 print(myclass1.config)
@@ -29,7 +32,6 @@ try:
     myclass3 = MyClass(something="else")
 except (TypeError, ValidationError) as e:
     print(f"Error: {e}")
-
 ```
 
 ```results

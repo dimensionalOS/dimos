@@ -19,7 +19,7 @@ from typing import TypeAlias
 
 from dimos.constants import HARNESS_STATE_DIR
 
-JSON: TypeAlias = "str | int | float | bool | None | list[JSON] | dict[str, JSON]"
+JSON: TypeAlias = "str | int | float | bool | list[JSON] | dict[str, JSON] | None"
 
 HARNESS_EVENT_METHOD = "dimos/harness_event"
 HARNESS_STATUS_METHOD = "dimos/harness_status"

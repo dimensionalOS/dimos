@@ -576,9 +576,11 @@ class M20Connection(Module):
         """Restore navigation mode once the robot is idle, because idle switches it to Basic."""
         with self._state_condition:
             self._state_condition.wait_for(
-                lambda: self._charge_job is not job
-                or self._stopping.is_set()
-                or self._fresh_charge_status() == CHARGE_IDLE,
+                lambda: (
+                    self._charge_job is not job
+                    or self._stopping.is_set()
+                    or self._fresh_charge_status() == CHARGE_IDLE
+                ),
                 timeout=self.config.undock_timeout_s,
             )
             if self._charge_job is not job:

@@ -185,6 +185,7 @@ Tasks output commands in one of three modes:
 ```python
 from dimos.control.task import ControlTask, ResourceClaim, JointCommandOutput, ControlMode
 
+
 class PIDController:
     def __init__(self, joints: list[str], priority: int = 10):
         self._name = "pid_controller"
@@ -212,8 +213,10 @@ class PIDController:
         # PID
         self._integral = [i + e * state.dt for i, e in zip(self._integral, error)]
         derivative = [(e - le) / state.dt for e, le in zip(error, self._last_error)]
-        output = [self.Kp*e + self.Ki*i + self.Kd*d
-                  for e, i, d in zip(error, self._integral, derivative)]
+        output = [
+            self.Kp * e + self.Ki * i + self.Kd * d
+            for e, i, d in zip(error, self._integral, derivative)
+        ]
         self._last_error = error
 
         return JointCommandOutput(
@@ -253,7 +256,8 @@ For a body-frame Twist input, explicitly configure its consuming task:
 
 ```python
 TaskConfig(
-    name="drive", type="twist_velocity",
+    name="drive",
+    type="twist_velocity",
     joint_names=["r1pro/base_forward", "r1pro/base_lateral", "r1pro/base_turn"],
     params={"axes": ["linear.x", "linear.y", "angular.z"]},
 )
@@ -318,6 +322,7 @@ to this scale before publishing.
 class _Go2Coordinator(PathFollowingCoordinator):
     go2_joints: Out[JointState]
 
+
 blueprint = _Go2Coordinator.blueprint(
     instance_name="ControlCoordinator",  # RPC clients look the coordinator up by class name
     publish_robot_joint_states=True,
@@ -334,8 +339,9 @@ dual-arm teleop coordinator declares `left_cartesian` / `right_cartesian` and
 binds each arm's `teleop_ik` task to its side:
 
 ```python
-TaskConfig(name="teleop_xarm", type="teleop_ik",
-           stream_bind={"cartesian_command": "left_cartesian"})
+TaskConfig(
+    name="teleop_xarm", type="teleop_ik", stream_bind={"cartesian_command": "left_cartesian"}
+)
 ```
 
 ## Joint State Views

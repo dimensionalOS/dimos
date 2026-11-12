@@ -184,7 +184,7 @@ class GuardedPublishers:
             guard.pending = sequence, bytes(payload), deadline
             self._condition.notify()
 
-    def stop(self, handle: str, generation: int | float, code: str = "released") -> None:
+    def stop(self, handle: str, generation: float, code: str = "released") -> None:
         with self._condition:
             guard = self._guards.get(handle)
             if guard is not None and guard.spec.gen == generation:

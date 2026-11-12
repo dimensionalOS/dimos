@@ -80,7 +80,7 @@ continuing. Allow space for a small joint offset and a 1 cm vertical translation
 Save the initial joints before moving:
 
 ```python skip
-print(arm.info)   # Group ID, joint order, and capabilities.
+print(arm.info)  # Group ID, joint order, and capabilities.
 print(arm.state())
 initial = arm.joints()  # Fresh NumPy array in arm.info.joint_names order.
 q = initial.copy()
@@ -174,9 +174,12 @@ cancellation. Use `app.find_module_by_spec(ManipulationSpec)` for direct typed d
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 motion = arm.rpc
-planned = motion.plan_to_joints({
-    arm.info.id: JointState(position=arm.joints() + 0.01),
-}, speed_scale=0.2)
+planned = motion.plan_to_joints(
+    {
+        arm.info.id: JointState(position=arm.joints() + 0.01),
+    },
+    speed_scale=0.2,
+)
 if planned.succeeded and planned.plan is not None:
     print(motion.preview_plan(planned.plan))
     print(motion.get_visualization_url())
@@ -243,8 +246,8 @@ depth = app.peek_stream("depth_image", 2.0)
 info = app.peek_stream("depth_camera_info", 2.0)
 if color is None or depth is None or info is None:
     raise RuntimeError("no camera frame within 2 s")
-color.save("view.jpg")             # RGB, saved for viewing
-depth = depth.as_numpy()           # float32 metres
+color.save("view.jpg")  # RGB, saved for viewing
+depth = depth.as_numpy()  # float32 metres
 fx, _, cx, _, fy, cy, _, _, _ = info.K  # depth intrinsics, 3x3 row-major
 ```
 

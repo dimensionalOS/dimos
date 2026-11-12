@@ -25,7 +25,6 @@ from dimos.robot.manipulators.damiao.connection import (
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM,
-    OPENYAM_TEACH_DAMPING as OPENYAM_TEACH_DAMPING,
 )
 
 
