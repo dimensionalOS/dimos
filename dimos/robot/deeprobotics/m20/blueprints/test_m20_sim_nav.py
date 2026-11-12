@@ -73,7 +73,7 @@ def test_the_sim_plans_only_steps_its_policy_climbs() -> None:
     assert replace(SIM_M20, steppable=M20.steppable) == M20
 
 
-def test_the_world_feeds_the_streams_the_vendor_lio_and_the_urdf_manager_read() -> None:
+def test_the_world_feeds_the_streams_the_vendor_lio_and_the_usd_manager_read() -> None:
     assert _remappings(m20_sim_nav, "simm20world") == {
         ("simm20world", "lidar"): "slam_body_points",
         ("simm20world", "odometry"): "slam_odom",

@@ -115,7 +115,7 @@ from .adapter import MyArmAdapter
 class MyArm(Module[MyArmConfig]):
     joint_state: Out[JointState]
     robot_state: Out[RobotState]
-    joint_position_command: In[JointCommand]
+    joint_position_command: In[JointCommand]  # dimos_lcm.control_msgs; interface_name="position"
 
     def __init__(self, adapter=None, **kwargs):
         super().__init__(**kwargs)

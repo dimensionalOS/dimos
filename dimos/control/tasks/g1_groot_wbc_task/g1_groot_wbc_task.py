@@ -276,7 +276,7 @@ class G1GrootWBCTask(BaseControlTask):
         self,
         name: str,
         config: G1GrootWBCTaskConfig,
-        adapter: WholeBodyAdapter,
+        adapter: WholeBodyAdapter | None = None,
     ) -> None:
         if len(config.joint_names) != _NUM_ACTIONS:
             raise ValueError(
@@ -498,8 +498,10 @@ class G1GrootWBCTask(BaseControlTask):
         if state.imu:
             # Single whole-body adapter is the common case - take any.
             imu = next(iter(state.imu.values()))
-        else:
+        elif self._adapter is not None:
             imu = self._adapter.read_imu()
+        else:
+            raise ValueError("GR00T requires an IMU sample in CoordinatorState")
         gyro = np.asarray(imu.gyroscope, dtype=np.float32)
         gravity = self._projected_gravity(imu.quaternion)
 
