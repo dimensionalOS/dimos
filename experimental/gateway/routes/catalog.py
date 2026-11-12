@@ -138,6 +138,8 @@ async def everything(
 async def scan_all(
     state: GatewayState, timeout: float = constants.SCAN_ITEM_TIMEOUT_S
 ) -> dict[str, Any]:
+    # an asked-for rescan also rereads what was introspected (a blueprint's config defaults)
+    state.cache = introspect.Cache()
     return {"job": state.scanner.start("requested", timeout).id}
 
 
@@ -146,6 +148,7 @@ async def scan_blueprint(
     state: GatewayState, name: str, timeout: float = constants.SCAN_ITEM_TIMEOUT_S
 ) -> dict[str, Any]:
     await check_blueprint(state, name)
+    state.cache = introspect.Cache()
     return {"job": state.scanner.start_one(name, timeout).id}
 
 
