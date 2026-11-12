@@ -166,12 +166,6 @@ class ObjectTracking(Module):
     @rpc
     def stop(self) -> None:
         self.stop_track()
-
-        self.stop_tracking.set()
-
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-
         super().stop()
 
     @rpc
@@ -324,21 +318,21 @@ class ObjectTracking(Module):
         This resets the tracker and all tracking state.
 
         Returns:
-            bool: True if tracking was successfully stopped
+            bool: True if tracking stopped, False if the worker is still running.
         """
-        # Reset tracking state first
-        self._reset_tracking_state()
+        self.stop_tracking.set()
+        thread = self.tracking_thread
+        if thread is not None and thread.is_alive():
+            if thread is threading.current_thread():
+                return False
+            thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if thread.is_alive():
+                logger.warning("Tracking worker did not stop. Retaining tracking state.")
+                return False
 
-        # Stop tracking thread if running (only if called from outside the thread)
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            # Check if we're being called from within the tracking thread
-            if threading.current_thread() != self.tracking_thread:
-                self.stop_tracking.set()
-                self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                self.tracking_thread = None
-            else:
-                # If called from within thread, just set the stop flag
-                self.stop_tracking.set()
+        # The worker must finish using the tracker before its state is cleared.
+        self.tracking_thread = None
+        self._reset_tracking_state()
 
         logger.info("Tracking stopped")
         return True

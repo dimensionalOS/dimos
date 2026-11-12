@@ -101,10 +101,6 @@ class ObjectTracker2D(Module):
     @rpc
     def stop(self) -> None:
         self.stop_track()
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            self.stop_tracking_event.set()
-            self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-
         super().stop()
 
     @rpc
@@ -187,18 +183,21 @@ class ObjectTracker2D(Module):
         Stop tracking the current object.
 
         Returns:
-            bool: True if tracking was successfully stopped
+            bool: True if tracking stopped, False if the worker is still running.
         """
-        self._reset_tracking_state()
+        self.stop_tracking_event.set()
+        thread = self.tracking_thread
+        if thread is not None and thread.is_alive():
+            if thread is threading.current_thread():
+                return False
+            thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if thread.is_alive():
+                logger.warning("Tracking worker did not stop. Retaining tracking state.")
+                return False
 
-        # Stop tracking thread if running
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            if threading.current_thread() != self.tracking_thread:
-                self.stop_tracking_event.set()
-                self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                self.tracking_thread = None
-            else:
-                self.stop_tracking_event.set()
+        # The worker must finish using the tracker before its state is cleared.
+        self.tracking_thread = None
+        self._reset_tracking_state()
 
         logger.info("Tracking stopped")
         return True
