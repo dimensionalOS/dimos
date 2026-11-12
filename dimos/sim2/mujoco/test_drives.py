@@ -15,11 +15,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 pytest.importorskip("pxr")
 
-from dimos.sim2.mujoco.drives import usd_drives
+from dimos.sim2.mujoco.drives import usd_drives, usd_with_mjc_servos
 
 _DRIVEN_USDA = """#usda 1.0
 (
@@ -83,3 +85,49 @@ def test_a_prismatic_joint_is_read_as_a_linear_drive() -> None:
 
 def test_a_joint_with_no_drive_is_not_reported() -> None:
     assert "idler" not in usd_drives(_DRIVEN_USDA)
+
+
+_ACTUATED_USDA = (
+    _DRIVEN_USDA.rstrip()[: -len("}")]
+    + """
+    def Scope "Physics"
+    {
+        def MjcActuator "elbow"
+        {
+            rel mjc:target = </arm/base/hand/elbow>
+        }
+    }
+}
+"""
+)
+
+
+def _servo_of(usd: str) -> dict[str, Any]:
+    """The MuJoCo-side gains of the layer's one actuator, read out while its stage is still open."""
+    from pxr import Sdf, Usd
+
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    assert layer.ImportFromString(usd)
+    stage = Usd.Stage.Open(layer)
+    actuator = next(prim for prim in stage.Traverse() if prim.GetTypeName() == "MjcActuator")
+    return {
+        name: actuator.GetAttribute(f"mjc:{name}").Get()
+        for name in ("biasType", "gainPrm", "biasPrm")
+    }
+
+
+def test_a_usd_drive_becomes_the_affine_bias_mujoco_servos_on() -> None:
+    """MuJoCo ignores DriveAPI, so the gains have to be restated in its own attributes."""
+    servo = _servo_of(usd_with_mjc_servos(_ACTUATED_USDA))
+
+    assert str(servo["biasType"]) == "affine"
+    assert list(servo["gainPrm"])[:1] == pytest.approx([40.0])
+    assert list(servo["biasPrm"])[1:3] == pytest.approx([-40.0, -2.0])
+
+
+def test_an_actuator_whose_joint_has_no_drive_keeps_being_a_torque_motor() -> None:
+    """A joint with no drive is a motor the backend pushes by effort; converting must not steal that."""
+    plain = "\n".join(line for line in _ACTUATED_USDA.splitlines() if "drive:" not in line)
+    plain = plain.replace('            prepend apiSchemas = ["PhysicsDriveAPI:angular"]\n', "")
+
+    assert usd_with_mjc_servos(plain) is plain
