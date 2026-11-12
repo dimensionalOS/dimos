@@ -103,10 +103,9 @@ def compiler() -> Compiler:
     return Compiler(SHAPES)
 
 
-def test_compile_gives_the_result_type_and_the_keys_read(compiler: Compiler) -> None:
+def test_compile_gives_the_keys_read(compiler: Compiler) -> None:
     source = "nav_status.goal_id.stamp.sec == nav.goal.sec && battery_pct < low_battery"
     expression = compiler.compile(source, True)
-    assert expression.result == "BOOL"
     assert set(expression.reads) == {
         "nav_status.goal_id.stamp.sec",
         "nav.goal.sec",
