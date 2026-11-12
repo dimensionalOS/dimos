@@ -36,14 +36,13 @@ from dimos.core.coordination.process_lifecycle import is_pid_alive
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
 from experimental.gateway import constants, shared_config, store
 from experimental.gateway.errors import ApiError, StatusError
+from experimental.gateway.introspect import is_secret_name
 
 ModuleValues = dict[str, dict[str, Any]]
 
 HIDDEN = "•••"
 STRUCTURED = ("global", "modules", "secrets")
 
-# GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
-DTOP_ENV = "DTOP"
 # held across every change to what runs (start, stop, relaunch), so none sees another half done
 _lock = threading.RLock()
 # the gateway's own children, by pid: set once reaped, which is when the gateway stops counting it as running
@@ -131,15 +130,6 @@ def parse(raw: Any) -> LaunchConfig:
         raise LaunchConfigError("overrides.secrets must be a list of paths")
     return LaunchConfig(
         dict(global_), {module: dict(fields) for module, fields in modules.items()}, secrets
-    )
-
-
-def is_secret_name(path: str) -> bool:
-    name = path.rsplit(".", 1)[-1].lower()
-    return (
-        name == "key"
-        or name.endswith("_key")
-        or any(word in name for word in ("secret", "token", "password", "passwd"))
     )
 
 
@@ -400,7 +390,8 @@ def current_launch() -> dict[str, Any] | None:
     pid = int(record["pid"])
     entry = next((run for run in registry_runs() if int(run["pid"]) == pid), None)
     if entry and not record.get("run_id"):
-        record.update(run_id=str(entry["run_id"]), ever_ran=True)
+        # where the run logs is its own dimos's to say: the served checkout's logs/, not this gateway's
+        record.update(run_id=str(entry["run_id"]), log_dir=entry.get("log_dir"), ever_ran=True)
         _save(record)
     running = is_launched_process(record)
     stopping = bool(record.get("stopping"))
@@ -415,7 +406,9 @@ def current_launch() -> dict[str, Any] | None:
     else:
         phase = "failed"
     run_id = record.get("run_id")
-    log_dir = LOG_DIR / run_id if run_id else None
+    log_dir = (
+        Path(record["log_dir"]) if record.get("log_dir") else LOG_DIR / run_id if run_id else None
+    )
     output = _tail(launch_log(), constants.LAUNCH_OUTPUT_TAIL_BYTES)
     launch: dict[str, Any] = {
         "blueprint": record["blueprint"],
@@ -447,11 +440,6 @@ def active() -> dict[str, Any]:
         "logDir": entry.log_dir if entry else None,
         "launch": launch,
     }
-
-
-def gossip_env() -> dict[str, str]:
-    gossip = shared_config.shared_config().zenoh_gossip
-    return {} if gossip is None else {"ZENOH_GOSSIP": "true" if gossip else "false"}
 
 
 def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
@@ -538,10 +526,6 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
             **launch_env_defaults(),
-            # dtop's stats for GET /active/stats; a --no-dtop flag still wins
-            DTOP_ENV: os.environ.get(DTOP_ENV, "1"),
-            # Desktop's zenoh gossip setting, which dimos's GlobalConfig.zenoh_gossip reads from the env
-            **gossip_env(),
             **secret_vars,
         }
         pid = _spawn(
