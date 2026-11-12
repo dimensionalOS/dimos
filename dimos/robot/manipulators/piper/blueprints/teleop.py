@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -195,7 +198,13 @@ def _teleop() -> Blueprint:
     return autoconnect(
         PiperTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=model,
+            connections=[
+                ConnectionConfig(
+                    source="arm",
+                    model=model,
+                    joint_commands={j.name: (Interface.POSITION,) for j in movable_joints(model)},
+                )
+            ],
             tasks=[
                 TaskConfig(
                     name=EEF_TWIST_TASK_NAME,

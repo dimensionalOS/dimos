@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -101,10 +104,17 @@ def xarm_coordinator(arm: XArmType) -> Blueprint:
         arm: Which arm, e.g. "xarm7".
     """
     dof = XARM_ARMS[arm][0]
+    model = xarm_model(arm, gripper="xarm", robot="arm")
     return autoconnect(
         XArmCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=xarm_model(arm, gripper="xarm", robot="arm"),
+            connections=[
+                ConnectionConfig(
+                    source="arm",
+                    model=model,
+                    joint_commands={j.name: (Interface.POSITION,) for j in movable_joints(model)},
+                )
+            ],
             tasks=[
                 joint_trajectory_task(joint_names(dof, prefix="arm/joint")),
                 # drive_joint is open at 0 rad.
