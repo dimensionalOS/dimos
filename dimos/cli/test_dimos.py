@@ -25,6 +25,7 @@ from typer.testing import CliRunner
 import dimos.cli.commands.info as info
 import dimos.cli.commands.lifecycle as lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
+import dimos.cli.commands.mcp as mcp
 from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
 import dimos.core.coordination.module_coordinator as module_coordinator
@@ -83,6 +84,54 @@ class RunModuleB(Module):
 )
 def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
     assert normalize_argv(argv) == expected
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ([], {}),
+        (
+            [
+                "--arg",
+                "x=0.5",
+                "--arg",
+                "enabled=true",
+                "-a",
+                "n=3",
+                "-a",
+                "name=sample",
+                "-a",
+                "missing=null",
+            ],
+            {"x": 0.5, "enabled": True, "n": 3, "name": "sample", "missing": None},
+        ),
+    ],
+)
+def test_mcp_values_reach_adapter(
+    monkeypatch: pytest.MonkeyPatch, args: list[str], expected: dict[str, Any]
+) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class Adapter:
+        def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            calls.append((name, arguments))
+            return {"content": [{"text": "fixture result"}]}
+
+    monkeypatch.setattr(mcp, "_get_adapter", lambda timeout: Adapter())
+    result = CliRunner().invoke(main, ["mcp", "call", "inspect", *args])
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert calls == [("inspect", expected)]
+    assert "fixture result" in result.output
+
+
+def test_mcp_malformed_argument_rejected_before_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: Any) -> None:
+        raise AssertionError("invalid argument reached adapter")
+
+    monkeypatch.setattr(mcp, "_get_adapter", forbidden)
+    result = CliRunner().invoke(main, ["mcp", "call", "inspect", "--arg", "invalid"])
+    assert result.exit_code == 2, result.output + repr(result.exception)
+    assert "expected KEY=VALUE" in result.output
 
 
 def test_global_config_flag_applies_before_subcommand():

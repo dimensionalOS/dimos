@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MakerMods Metal planning, coordinator control, and interactive Viser UI."""
+"""The main Metal planning entry over the direct connection."""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.makermods_metal.blueprints.basic import coordinator_makermods_metal
-from dimos.robot.manipulators.makermods_metal.model import make_metal_model_config
+from dimos.robot.manipulators.makermods_metal.blueprints.basic import (
+    coordinator_makermods_metal,
+)
+from dimos.robot.manipulators.makermods_metal.config import make_metal_model_config
 
 makermods_metal_planner_coordinator = autoconnect(
     coordinator_makermods_metal,
     ManipulationModule.blueprint(
+        model=make_metal_model_config(robot="arm"),
         gripper_tasks={"arm": "metal_gripper"},
-        model=make_metal_model_config(),
         visualization={"backend": "viser"},
         default_speed_scale=0.2,
     ),

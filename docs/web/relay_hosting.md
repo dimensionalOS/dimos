@@ -109,7 +109,7 @@ The same relay under systemd: the pinned Deno, a checkout owned by a service use
 
 ```bash
 sudo apt install -y git unzip
-curl -fsSLo /tmp/deno.zip https://github.com/denoland/deno/releases/download/v2.6.10/deno-x86_64-unknown-linux-gnu.zip
+curl -fsSLo /tmp/deno.zip https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip
 sudo unzip -o -d /usr/local/bin /tmp/deno.zip
 sudo useradd --system --create-home --home /srv/relay relay
 sudo -u relay git clone https://github.com/dimensionalOS/dimos /srv/relay/dimos
@@ -157,14 +157,15 @@ uv run dimos --simulation run unitree-go2-agentic-cockpit --relay-url https://19
   --relay-ca "$(mkcert -CAROOT)/rootCA.pem" --relay-key <key> --robot-id go2-lab
 ```
 
-Browsers are the catch. Firefox trusts the certificate for the page but drops QUIC through a root that is not built in. In `about:config` set `network.http.http3.disable_when_third_party_roots_found` to `false` and restart Firefox. Then open `https://192.168.1.20/` and enter the viewer token. Chromium refuses a private root for QUIC by default (`QUIC_CERT_ROOT_NOT_KNOWN`): the page loads over HTTPS and never connects. Its `--webtransport-developer-mode` switch turns that check off, which is fine for a development machine. Anyone else on Chromium needs a publicly trusted certificate, which a domain you own provides without any inbound port: point a name at the LAN address and use certbot's DNS challenge (`certbot certonly --manual --preferred-challenges dns -d relay.lan.example.com`).
+Browsers are the catch. Firefox trusts the certificate for the page but drops QUIC through a root that is not built in. In `about:config` set `network.http.http3.disable_when_third_party_roots_found` to `false` and restart Firefox. Then open `https://192.168.1.20/` and enter the viewer token. Chromium refuses a private root for QUIC by default (`QUIC_TLS_CERTIFICATE_UNKNOWN` in its console): the page loads over HTTPS and never connects. Its `--webtransport-developer-mode` switch turns that check off, which is fine for a development machine. Anyone else on Chromium needs a publicly trusted certificate, which a domain you own provides without any inbound port: point a name at the LAN address and use certbot's DNS challenge (`certbot certonly --manual --preferred-challenges dns -d relay.lan.example.com`).
 
 Without Docker, the command from [Without Docker](#without-docker) works with the mkcert files in place of the certbot ones.
 
 ## Troubleshooting
 
 - **`auth_failed`.** The relay's message says `missing` (the client sent no secret: the robot started without `--relay-key` or `RELAYBRIDGEMODULE__RELAY_KEY`, no token stored in the browser) or `invalid` (wrong secret, or a robot key used with another robot id). It is terminal: the bridge stops and the page shows the token form. Fix the secret and start the client again. The relay log names the rejected robot id or viewer.
-- **`accept failed: aborted by peer: the application or application protocol caused the connection to be closed during the handshake`**, repeating every 8 s, with no `viewer N authenticated` line. A browser is retrying and closing the connection itself after the TLS check: with a private CA, Firefox without the `about:config` pref from [LAN without a domain](#lan-without-a-domain), or Chromium. The page shows "Waiting for a robot to register..." meanwhile, which also covers a page still connecting. The status bar shows the real state. The robot and `/api/stats` are unaffected.
+- **`accept failed: aborted by peer: the application or application protocol caused the connection to be closed during the handshake`**, repeating every 8 s, with no `viewer N authenticated` line. Firefox is retrying and closing the connection itself after the TLS check: the certificate comes from a private CA and the `about:config` pref from [LAN without a domain](#lan-without-a-domain) is not set. The page shows "Waiting for a robot to register..." meanwhile, which also covers a page still connecting. The status bar shows the real state. The robot and `/api/stats` are unaffected.
+- **`accept failed: aborted by peer: the cryptographic handshake failed: error 46`**, ending in `certificate unknown`, on every retry. This is Chromium with a private CA. Its console says `net::ERR_QUIC_PROTOCOL_ERROR.QUIC_TLS_CERTIFICATE_UNKNOWN` with `CERTIFICATE_VERIFY_FAILED`, and the page stays on "reconnecting" and never shows the token form. Start Chromium with `--webtransport-developer-mode` on a machine that trusts the CA (the switch alone is not enough), or use a publicly trusted certificate.
 - **Certificate errors.** Check the VM clock (`timedatectl`). The robot fails with `CERTIFICATE_VERIFY_FAILED` when the relay serves `cert.pem` instead of `fullchain.pem` (browsers fetch the missing intermediate, OpenSSL does not) or when `--relay-ca` points at the wrong CA.
 - **UDP 443 blocked.** HTTPS works, the page loads and stays "reconnecting", the robot's startup attempts time out (`relay startup connection attempt N failed`) and it gives up. Check both firewalls for UDP. `sudo ss -ulnp | grep 443` on the VM shows the published UDP port.
 - **Robot behind NAT.** Fine: it dials out, and the QUIC session sends keepalives every 4 s.

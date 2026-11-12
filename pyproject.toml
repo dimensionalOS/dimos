@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-    "setuptools>=70",
+    "setuptools>=77.0.3",
     "wheel",
     "pybind11>=2.12",
     "tomli>=2.0; python_version < '3.11'",
@@ -49,6 +49,7 @@ exclude = [
     "**/*.tcss",
     "**/*.pyi",
     "robot/galaxea/r1pro/vendor_setup.sh",
+    "robot/manipulators/piper/can_setup.sh",
     # Native modules must build from the same release as their Python wrappers.
     # Include nested workspaces, C shims, vendored licenses and Cargo config.
     "**/rust/**/*.rs",
@@ -64,7 +65,7 @@ exclude = [
     "**/rust/**/*.cdr",
 ]
 
-"experimental.gateway" = ["annotations.yaml"]
+"experimental.gateway" = ["annotations.yaml", "assets/**/*"]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures,
@@ -96,15 +97,15 @@ authors = [
 ]
 version = "0.0.15"
 description = "Powering agentive generalist robotics"
-requires-python = ">=3.10,<3.13"
+# tarfile's data extraction filter was backported in 3.10.12 and 3.11.4.
+requires-python = ">=3.10.12,<3.13,!=3.11.0,!=3.11.1,!=3.11.2,!=3.11.3"
 readme = {file = "README.md", content-type = "text/markdown"}
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
@@ -245,7 +246,7 @@ agents = [
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
     "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
-    "langgraph>=1.0",  # agents/mcp/mcp_client.py
+    "langgraph>=1.0",  # agents/agent.py
     "httpx>=0.28",  # LLM trace (agents/llm_trace.py)
 
     # Audio
@@ -265,7 +266,8 @@ web = [
     "jinja2>=3.1.6",
     "av>=16.1",  # browser audio decode (stream/audio/decode.py)
     "soundfile",
-    "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
+    "aioquic==1.3.0",  # Ordered stream credit/pacing use the tested QUIC internals
+    "uvloop>=0.21",  # the topic provider's event loop (topic_service.py)
 ]
 
 perception = [
@@ -346,6 +348,7 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
+    "mjcf-to-urdf>=0.1.1",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
@@ -483,6 +486,7 @@ tests = [
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core>=0.7.0,<0.8.0",
     "mujoco>=3.3.4",
+    "mjcf-to-urdf>=0.1.1",
     "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
@@ -559,7 +563,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -731,6 +735,7 @@ ignore = [
 # Wire-protocol/manifest mirrors: model field names are the wire names
 # (camelCase, pinned to the TS side by the golden fixtures).
 "dimos/web/relay_bridge/protocol.py" = ["N815"]
+"dimos/web/relay_bridge/topic_protocol.py" = ["N815"]
 "dimos/web/relay_bridge/manifest.py" = ["N815"]
 "experimental/gateway/routes/*.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
@@ -863,6 +868,10 @@ asyncio_default_fixture_loop_scope = "function"
 branch = true
 source = ["dimos"]
 concurrency = ["multiprocessing", "thread"]
+# Outside the repo root "dimos" in source is a package name, not a directory.
+# A forked child never runs dimos/__init__.py again, so coverage would report
+# the package as unmeasured on the child's stderr.
+disable_warnings = ["module-not-measured"]
 
 [tool.coverage.report]
 exclude_also = [

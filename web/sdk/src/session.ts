@@ -20,6 +20,10 @@ import {
   PROTOCOL_VERSION,
   type RobotInfo,
   type RtcOfferMsg,
+  TOPIC_GUARD_STREAM_MAGIC,
+  TOPIC_PUBLISH_STREAM_MAGIC,
+  TOPIC_ROUTE_PREFIX,
+  type TopicMsg,
 } from "@dimos/shared";
 import {
   type Manifest,
@@ -32,6 +36,7 @@ import { PublishError, WatchRejectedError } from "./errors.ts";
 import { registerTeleopHooks, type TeleopHooks } from "./internal/teleopMachine.ts";
 import { createPeerConnection, type PeerConnectionFactory, ViewerRtc } from "./rtc.ts";
 import { type ChannelSnapshot, ChannelStore, StatusStore } from "./store.ts";
+import { TopicClient, type Topics } from "./topics.ts";
 import {
   backoffDelayMs,
   fetchRelayInfo,
@@ -73,6 +78,8 @@ export interface ConnectOptions {
   /** Viewer token for a relay started with --auth-file; sent in hello. A
    * rejected token fails the transport for good (code auth_failed). */
   token?: string;
+  /** Default source for raw topics; independent of the watched robot. */
+  topicSource?: string;
   /** Period of the UI snapshot tick that feeds subscribe() callbacks. */
   uiTickMs?: number;
   /** Period of the liveness ping on the control stream. */
@@ -94,6 +101,7 @@ export interface PublishOptions {
 }
 
 export interface Session {
+  readonly topics: Topics;
   readonly status: StatusStore;
   readonly store: ChannelStore;
   /**
@@ -247,6 +255,7 @@ export const EMPTY_MANIFEST: Manifest = {
 };
 
 class SessionImpl implements Session {
+  readonly topics: TopicClient;
   readonly status = new StatusStore();
   readonly store = new ChannelStore();
   readonly transport: ReconnectingTransport;
@@ -301,6 +310,8 @@ class SessionImpl implements Session {
   // a send racing a reconnect lands on the dead connection and is dropped
   // (desired subscriptions are replayed after the next adoption).
   #send: ((msg: Msg) => void) | null = null;
+  #drainClose: (() => void) | null = null;
+  #closePong: (() => void) | null = null;
 
   // Per-connection teleop senders, swapped in #runSession. Fire-and-forget:
   // a send racing a reconnect lands on the dead connection and is dropped
@@ -338,6 +349,7 @@ class SessionImpl implements Session {
   };
 
   constructor(options: ConnectOptions, deps: TransportDeps) {
+    this.topics = new TopicClient(options.topicSource);
     registerTeleopHooks(this, this.#teleop);
     this.#registry = options.decoders ?? createDecoderRegistry();
     this.#token = options.token;
@@ -364,12 +376,20 @@ class SessionImpl implements Session {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#teleopControl = null;
+    this.#teleopDatagram = null;
+    this.topics.close();
+    for (const ch of [...this.#wire]) this.#unsub(ch);
     this.#rejectWaiter(new WatchRejectedError("closed"));
     // A publish already sent may have been delivered; close cannot know.
     this.#sweepPendingPublishes(null, "closed", "the session was closed");
     clearInterval(this.#ticker);
     this.#clearRtcRetry();
-    this.transport.stop();
+    // Closing WebTransport immediately can discard the queued unsubscriptions
+    // and stops. An ordered ping acknowledges them, then FIN the control
+    // stream before closing the session. A dead link still has a fixed bound.
+    if (this.#drainClose !== null) this.#drainClose();
+    else this.transport.stop();
   }
 
   watch(robotId: string): Promise<Manifest> {
@@ -700,7 +720,7 @@ class SessionImpl implements Session {
     this.#iceServers = null;
     this.#rtcSeq = 0;
     this.#rtcFailures = 0;
-    const control = await wt.createBidirectionalStream();
+    const control = await wt.createBidirectionalStream({ sendOrder: 2 });
     const writer = control.writable.getWriter();
     const send = async (msg: Msg) => {
       await writer.write(encodeControlFrame(msg));
@@ -708,17 +728,73 @@ class SessionImpl implements Session {
     this.#send = (msg) => {
       if (runId === this.#runId) void send(msg).catch(() => {});
     };
+    this.#drainClose = () => {
+      const finish = () => {
+        clearTimeout(timeout);
+        this.#closePong = null;
+        this.transport.stop();
+      };
+      const timeout = setTimeout(finish, 1000);
+      this.#closePong = () => {
+        this.#closePong = null;
+        void writer.close().catch(() => {}).finally(finish);
+      };
+      void send({ t: "ping", n: Number.MAX_SAFE_INTEGER, ts: Date.now() / 1000 }).catch(finish);
+    };
+    const binarySender = (magic: number, sendOrder: number) => {
+      let bulkWriter: Promise<WritableStreamDefaultWriter<Uint8Array>> | null = null;
+      let bulkWrites: Promise<void> = Promise.resolve();
+      return (bytes: Uint8Array): Promise<void> => {
+        // Writes stay ordered, but one failure retires only its own caller:
+        // the failed stream is abandoned and the next write opens a fresh one.
+        const write = bulkWrites.catch(() => {}).then(async () => {
+          if (runId !== this.#runId) {
+            throw new Error("topic transport unavailable");
+          }
+          const opened = bulkWriter ??= wt.createBidirectionalStream({ sendOrder }).then(
+            async (stream) => {
+              stream.readable.cancel().catch(() => {}); // receipts use control, never this half
+              const writer = stream.writable.getWriter();
+              const prefix = new Uint8Array(4);
+              new DataView(prefix.buffer).setUint32(0, magic, true);
+              await writer.write(prefix);
+              return writer;
+            },
+          );
+          try {
+            const writer = await opened;
+            if (runId !== this.#runId) throw new Error("connection changed");
+            await writer.write(bytes);
+          } catch (error) {
+            if (bulkWriter === opened) bulkWriter = null;
+            void opened.then((writer) => writer.abort()).catch(() => {});
+            throw error;
+          }
+        });
+        bulkWrites = write;
+        return write;
+      };
+    };
+    this.topics.connected(
+      this.#send,
+      () => wt.close(),
+      binarySender(TOPIC_PUBLISH_STREAM_MAGIC, 0),
+      binarySender(TOPIC_GUARD_STREAM_MAGIC, 1),
+    );
     const datagrams = wt.datagrams.writable.getWriter();
     this.#teleopControl = (msg) => {
-      if (runId === this.#runId) void send(msg).catch(() => {});
+      if (!this.#closed && runId === this.#runId) void send(msg).catch(() => {});
     };
     this.#teleopDatagram = (msg) => {
-      if (runId === this.#runId) void datagrams.write(encodeDatagram(msg)).catch(() => {});
+      if (!this.#closed && runId === this.#runId) {
+        void datagrams.write(encodeDatagram(msg)).catch(() => {});
+      }
     };
     await send({
       t: "hello",
       v: PROTOCOL_VERSION,
       role: "viewer",
+      topicsVersion: 1,
       ...(this.#token !== undefined ? { token: this.#token } : {}),
     });
     void this.#readUniStreams(wt, runId);
@@ -744,6 +820,11 @@ class SessionImpl implements Session {
         const { value, done } = await reader.read();
         if (done) break;
         for (const msg of frames.push(value)) {
+          if (runId !== this.#runId) continue;
+          if (msg.t.startsWith("topic_")) {
+            this.topics.onMessage(msg as TopicMsg);
+            continue;
+          }
           switch (msg.t) {
             case "welcome":
               // Session-level success: only now is the page usable, so only
@@ -753,6 +834,7 @@ class SessionImpl implements Session {
               break;
             case "pong":
               unanswered = 0;
+              if (this.#closed && msg.n === Number.MAX_SAFE_INTEGER) this.#closePong?.();
               break;
             case "robots":
               this.#applyWatchTarget(msg.robots);
@@ -875,6 +957,8 @@ class SessionImpl implements Session {
       // control stream died with the connection; the transport reconnects
     } finally {
       clearInterval(pinger);
+      this.#drainClose = null;
+      this.topics.disconnected();
       // This connection can never answer its publishes; the commands may
       // have been delivered before it died, so the outcome is unknown and
       // nothing is ever resent.
@@ -924,11 +1008,18 @@ class SessionImpl implements Session {
 
   async #readUniStreams(wt: WebTransportLike, runId: number): Promise<void> {
     const streams = wt.incomingUnidirectionalStreams.getReader();
+    const budget = { bytes: 0, readers: 0 };
     try {
       while (true) {
         const { value, done } = await streams.read();
         if (done) break;
-        void this.#readStreamFrames(value, runId);
+        if (budget.readers >= 256) {
+          value.cancel().catch(() => {});
+          wt.close();
+          break;
+        }
+        budget.readers++;
+        void this.#readStreamFrames(value, runId, budget, () => wt.close());
       }
     } catch {
       // connection died; the transport reconnects
@@ -939,28 +1030,57 @@ class SessionImpl implements Session {
   // carries them back to back. Frames dispatch on byte count (the relay's FIN
   // can be seconds late); the stream is never cancelled - reading to its end
   // costs nothing and a cancel would reset the persistent stream.
-  async #readStreamFrames(stream: ReadableStream<Uint8Array>, runId: number): Promise<void> {
+  async #readStreamFrames(
+    stream: ReadableStream<Uint8Array>,
+    runId: number,
+    budget: { bytes: number; readers: number },
+    disconnect: () => void,
+  ): Promise<void> {
     const reader = stream.getReader();
     const frames = new DataFrameStreamReader();
+    let retained = 0;
+    let reliableTopic: string | null = null;
+    const ingest = (frame: DataFrame) => {
+      if (frame.header.ch.startsWith(TOPIC_ROUTE_PREFIX) && frame.header.delivery === "reliable") {
+        reliableTopic = frame.header.ch;
+      }
+      if (runId === this.#runId) this.#ingest(frame);
+    };
     try {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        for (const frame of frames.push(value)) {
-          if (runId === this.#runId) this.#ingest(frame);
+        if (budget.bytes + value.byteLength > 64 * 1024 * 1024) {
+          disconnect();
+          break;
         }
+        budget.bytes -= retained;
+        retained = 0;
+        for (const frame of frames.push(value)) ingest(frame);
+        retained = frames.bufferedBytes;
+        budget.bytes += retained;
       }
     } catch (e) {
       // reset/aborted stream: a partial latest-wins frame is dropped by
       // design. Framing corruption still delivers the frames decoded before
       // it; only the corrupt stream is abandoned.
       if (e instanceof DataFrameStreamError && runId === this.#runId) {
-        for (const frame of e.frames) this.#ingest(frame);
+        for (const frame of e.frames) ingest(frame);
       }
+    } finally {
+      budget.bytes -= retained;
+      budget.readers--;
+      reader.cancel().catch(() => {});
+      reader.releaseLock();
+      if (reliableTopic !== null && runId === this.#runId) this.topics.streamClosed(reliableTopic);
     }
   }
 
   #ingest(frame: DataFrame): void {
+    if (frame.header.ch.startsWith(TOPIC_ROUTE_PREFIX)) {
+      this.topics.ingest(frame);
+      return;
+    }
     // No adopted manifest means no confirmed producer: anything arriving is
     // stale drain from a dead robot session and must not re-dirty the store.
     if (this.#manifest === null) return;

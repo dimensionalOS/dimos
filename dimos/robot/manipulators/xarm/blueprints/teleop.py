@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -335,10 +338,15 @@ def _teleop(arm: XArmType) -> Blueprint:
     dof, robot_type = XARM_ARMS[arm]
     ik_model = make_xarm_model_config(dof, robot_type=robot_type, robot="arm", add_gripper=False)
     model = xarm_model(arm, gripper="xarm", robot="arm")
+    declaration = ConnectionConfig(
+        source="arm",
+        model=model,
+        joint_commands={joint.name: (Interface.POSITION,) for joint in movable_joints(model)},
+    )
     return autoconnect(
         XArmTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=model,
+            connections=[declaration],
             tasks=[
                 TaskConfig(
                     name=EEF_TWIST_TASK_NAME,
@@ -364,7 +372,7 @@ def _teleop(arm: XArmType) -> Blueprint:
                 ),
             ],
         ),
-        XArmConnection.blueprint(arm=arm, gripper="xarm"),
+        XArmConnection.blueprint(arm=arm, gripper="xarm", **declaration.model_dump()),
         UrdfManager.blueprint(model=model),
     )
 

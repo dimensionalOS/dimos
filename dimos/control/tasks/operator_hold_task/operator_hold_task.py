@@ -15,9 +15,9 @@
 """Operator hold: freeze every joint where it is and wait for a person.
 
 A hold is not an e-stop. An e-stop cuts motion; a hold keeps commanding
-each joint's current position (zero velocity for a wheeled base) from a
-priority above every other task, so nothing moves until someone
-acknowledges the hold.
+each position-capable joint's current position from a priority above every
+other task, until someone acknowledges the hold. Velocity-only joints
+are commanded to zero speed at the same priority.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
-from dimos.control.components import TWIST_SUFFIX_MAP
+from dimos.control.contract.keys import Interface
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -84,33 +84,36 @@ class OperatorHoldStatus:
     estopped: bool = False
 
 
-def operator_hold_task(priority: int = OPERATOR_HOLD_PRIORITY) -> TaskConfig:
+def operator_hold_task(
+    priority: int = OPERATOR_HOLD_PRIORITY, joint_names: list[str] | None = None
+) -> TaskConfig:
     """Blueprint entry for the coordinator's one operator-hold task.
 
     Args:
         priority: Arbitration priority. Keep it above every other task
             (teleop is 50, autonomy 10-20) or the hold cannot take the joints.
+        joint_names: Optional restriction of the automatically discovered
+            joints. Applies to both position holds and zero-velocity commands.
     """
     # The coordinator imports task modules, so import it lazily here.
     from dimos.control.coordinator import TaskConfig
 
-    return TaskConfig(name=OPERATOR_HOLD_TASK_NAME, type="operator_hold", priority=priority)
-
-
-def _hold_value(joint_name: str, measured_position: float) -> float:
-    # A wheeled base's "joints" are velocities (base/vx, base/vy, base/wz), so
-    # freezing one means commanding zero, not repeating its odometry reading.
-    suffix = joint_name.rsplit("/", 1)[-1]
-    return 0.0 if suffix in TWIST_SUFFIX_MAP else measured_position
+    return TaskConfig(
+        name=OPERATOR_HOLD_TASK_NAME,
+        type="operator_hold",
+        priority=priority,
+        joint_names=joint_names or [],
+    )
 
 
 class OperatorHoldTask(BaseControlTask):
-    """Hold every joint at the position it had when the hold was requested.
+    """Hold positions and stop velocity-only joints until a person acknowledges.
 
     Idle until ``request()``. Then, each tick, it learns the joints from the
     coordinator's joint-state snapshot: a joint seen for the first time is
-    frozen at its measured position (zero for a base's velocity joints), and
-    the whole set is commanded every tick until ``acknowledge()``. A joint
+    frozen at its measured position if it accepts position commands, otherwise
+    commanded to zero if it accepts velocity commands. Both groups are commanded
+    every tick until ``acknowledge()``. A joint
     that appears later, e.g. hardware added during a hold, is frozen when
     first seen. A joint with no valid reading waits in ``unheld``.
 
@@ -128,18 +131,21 @@ class OperatorHoldTask(BaseControlTask):
         name: str = OPERATOR_HOLD_TASK_NAME,
         priority: int = OPERATOR_HOLD_PRIORITY,
         status_interval: float = 1.0,
+        joint_names: frozenset[str] | None = None,
     ) -> None:
         """
         Args:
             name: Task name; callers address request/acknowledge to it.
             priority: Arbitration priority. Must exceed every other task's.
             status_interval: Seconds between repeated status messages while on.
+            joint_names: Optional subset; None learns all position/velocity-capable joints.
         """
         if not math.isfinite(status_interval) or status_interval <= 0.0:
             raise ValueError(f"status_interval must be positive seconds, got {status_interval}")
         self._name = name
         self._priority = priority
         self._status_interval = status_interval
+        self._joint_names = joint_names
         self._publish: Callable[[OperatorHoldStatus], None] | None = None
 
         self._lock = threading.Lock()
@@ -147,7 +153,8 @@ class OperatorHoldTask(BaseControlTask):
         self._route = ""
         self._reason = ""
         self._started_at = 0.0
-        self._held: dict[str, float] = {}  # joint -> value commanded while on
+        self._held: dict[str, float] = {}  # position joint -> frozen target
+        self._velocity_joints: set[str] = set()
         self._unheld: set[str] = set()  # joints seen without a finite reading
         self._last_status_t: float | None = None  # coordinator time of the last status
         self._estopped = False
@@ -160,7 +167,7 @@ class OperatorHoldTask(BaseControlTask):
         """Every joint frozen so far; empty until the first tick after a request."""
         with self._lock:
             return ResourceClaim(
-                joints=frozenset(self._held),
+                joints=frozenset(self._held) | self._velocity_joints,
                 priority=self._priority,
                 mode=ControlMode.SERVO_POSITION,
             )
@@ -168,20 +175,43 @@ class OperatorHoldTask(BaseControlTask):
     def is_active(self) -> bool:
         return self._on
 
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        """Command the frozen value of every joint; freeze joints seen for the first time."""
+    def compute(
+        self, state: CoordinatorState
+    ) -> JointCommandOutput | list[JointCommandOutput] | None:
+        """Hold measured positions and stop velocity-only joints, without name heuristics."""
         status: OperatorHoldStatus | None = None
         newly_unheld: list[str] = []
         with self._lock:
             if not self._on:
                 return None
+            interfaces_by_joint = {
+                name: interfaces
+                for name, interfaces in state.joints.joint_command_interfaces.items()
+                if self._joint_names is None or name in self._joint_names
+            }
+            eligible = {
+                name
+                for name, interfaces in interfaces_by_joint.items()
+                if Interface.POSITION in interfaces
+            }
+            self._velocity_joints = (
+                {
+                    name
+                    for name, interfaces in interfaces_by_joint.items()
+                    if Interface.POSITION not in interfaces and Interface.VELOCITY in interfaces
+                }
+                if not self._estopped
+                else set()
+            )
+            self._held = {name: value for name, value in self._held.items() if name in eligible}
+            self._unheld.intersection_update(eligible)
             # Freeze nothing while e-stopped, so after the clear the hold
             # takes each joint where it is then. _held is empty until then.
             for name, position in state.joints.joint_positions.items():
-                if self._estopped or name in self._held:
+                if self._estopped or name in self._held or name not in eligible:
                     continue
                 if math.isfinite(position):
-                    self._held[name] = _hold_value(name, position)
+                    self._held[name] = position
                     self._unheld.discard(name)
                 elif name not in self._unheld:
                     self._unheld.add(name)
@@ -194,6 +224,7 @@ class OperatorHoldTask(BaseControlTask):
                 status = self._status_locked()
             names = list(self._held)
             values = [self._held[name] for name in names]
+            velocity_names = sorted(self._velocity_joints)
         if newly_unheld:
             logger.warning(
                 "Operator hold cannot hold joints without a valid position reading",
@@ -201,11 +232,24 @@ class OperatorHoldTask(BaseControlTask):
             )
         if status is not None:
             self._emit(status)
-        if not names:
-            return None
-        return JointCommandOutput(
-            joint_names=names, positions=values, mode=ControlMode.SERVO_POSITION
-        )
+        outputs: list[JointCommandOutput] = []
+        if names:
+            outputs.append(
+                JointCommandOutput(
+                    joint_names=names, positions=values, mode=ControlMode.SERVO_POSITION
+                )
+            )
+        if velocity_names:
+            outputs.append(
+                JointCommandOutput(
+                    joint_names=velocity_names,
+                    velocities=[0.0] * len(velocity_names),
+                    mode=ControlMode.VELOCITY,
+                )
+            )
+        if len(outputs) == 1:
+            return outputs[0]
+        return outputs or None
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Nothing should outrank a hold; losing joints means a priority misconfiguration."""
@@ -231,6 +275,7 @@ class OperatorHoldTask(BaseControlTask):
             if not self._on:
                 self._on = True
                 self._held = {}
+                self._velocity_joints.clear()
                 self._unheld = set()
                 # Wall clock, for people reading the status; never used for control.
                 self._started_at = time.time()
@@ -256,6 +301,7 @@ class OperatorHoldTask(BaseControlTask):
             was_on = self._on
             self._on = False
             self._held = {}
+            self._velocity_joints.clear()
             self._unheld = set()
             self._route = ""
             self._reason = ""
@@ -284,6 +330,7 @@ class OperatorHoldTask(BaseControlTask):
                 self._estopped = estopped
                 if estopped:
                     self._held = {}
+                    self._velocity_joints.clear()
                     self._unheld = set()
             if estopped:
                 self.request(HoldRoute.FAILSAFE.value, "e-stop")
@@ -327,9 +374,9 @@ def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
         raise ValueError(
             f"operator hold task must be named {OPERATOR_HOLD_TASK_NAME!r}, got {cfg.name!r}"
         )
-    if cfg.joint_names:
-        raise ValueError(
-            "operator hold claims every joint the coordinator reads; leave joint_names empty"
-        )
     params = OperatorHoldTaskParams.model_validate(cfg.params)
-    return OperatorHoldTask(priority=cfg.priority, status_interval=params.status_interval)
+    return OperatorHoldTask(
+        priority=cfg.priority,
+        status_interval=params.status_interval,
+        joint_names=frozenset(cfg.joint_names) if cfg.joint_names else None,
+    )
