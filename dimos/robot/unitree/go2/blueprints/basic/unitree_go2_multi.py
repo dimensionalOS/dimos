@@ -29,11 +29,15 @@ Usage:
 """
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
+from dimos.core.global_config import global_config, require_robot_ips
 from dimos.robot.unitree.go2.connection import GO2Connection
 
-_ips = global_config.processed_robot_ips
+_ips = global_config.parsed_robot_ips
 
-unitree_go2_multi = autoconnect(
-    *[GO2Connection.blueprint(ip=ip).namespace(f"robot{i}") for i, ip in enumerate(_ips)],
-).global_config(n_workers=max(2, 2 * len(_ips)), robot_model="unitree_go2")
+unitree_go2_multi = (
+    autoconnect(
+        *[GO2Connection.blueprint(ip=ip).namespace(f"robot{i}") for i, ip in enumerate(_ips)],
+    )
+    .global_config(n_workers=max(2, 2 * len(_ips)), robot_model="unitree_go2")
+    .requirements(require_robot_ips)
+)
