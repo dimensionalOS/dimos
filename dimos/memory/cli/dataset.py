@@ -15,7 +15,7 @@
 """Central dispatcher for opening a recorded memory dataset as a read store.
 
 One entry point for every CLI that opens a recording. :func:`open_dataset`
-resolves a dataset name/path (bare names look up the cwd / repo ``data/`` dir)
+resolves a dataset name/path (including local recordings and cloud downloads)
 and picks the store by file extension: ``.db`` -> SqliteStore, ``.mcap`` ->
 McapStore (with a legacy Go2 codec preset when needed). Use :func:`open_store`
 when the path is already resolved.
@@ -24,12 +24,18 @@ when the path is already resolved.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING
 
-from dimos.utils.data import resolve_named_path
+from dimos import constants
+from dimos.utils import data
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
+
+
+class AmbiguousDatasetError(RuntimeError):
+    """More than one local recording matches a dataset name."""
 
 
 def open_store(path: str | Path, *, decode_metadata: bool = False) -> Store:
@@ -85,8 +91,44 @@ def open_store(path: str | Path, *, decode_metadata: bool = False) -> Store:
 
 
 def resolve_dataset(dataset: str | Path) -> Path:
-    """Resolve a dataset name/path to a file (bare names -> ``.db``, cwd / data/)."""
-    return resolve_named_path(dataset, Path(dataset).suffix or ".db")
+    """Resolve a path, existing LFS name, recording folder, or downloaded dataset name."""
+    name = str(dataset)
+    try:
+        return data.resolve_named_path(dataset, Path(dataset).suffix or ".db")
+    except FileNotFoundError:
+        if Path(name).name != name:
+            raise
+
+    matches = [
+        p
+        for p in (constants.RECORDINGS_DIR / name).glob("*")
+        if p.is_file() and p.suffix in (".db", ".mcap")
+    ]
+    for p in constants.DOWNLOADS_DIR.glob("*"):
+        if not p.is_file() or p.suffix not in (".db", ".mcap"):
+            continue
+        aliases = {p.name, p.stem}
+        # cloud.data._tag prefixes the filename with an optional timestamp and an ID.
+        tagged = re.fullmatch(r"((?:\d{8}-\d{6}-)?([^-]+))-(.+)", p.name)
+        if tagged:
+            tag, upload_id, filename = tagged.groups()
+            aliases.update((tag, filename, Path(filename).stem))
+            if upload_id.startswith(name):
+                aliases.add(name)
+        if name in aliases:
+            matches.append(p)
+    if len(matches) > 1:
+        raise AmbiguousDatasetError(
+            f"Ambiguous dataset {name!r}; use an explicit path: "
+            + ", ".join(str(p) for p in sorted(matches))
+        )
+    if matches:
+        return matches[0]
+    raise FileNotFoundError(
+        f"Dataset {name!r} not found. Searched {Path.cwd()}, {constants.DIMOS_PROJECT_ROOT}, "
+        f"{data.get_data_dir()} (including LFS), {constants.RECORDINGS_DIR}, "
+        f"and {constants.DOWNLOADS_DIR}."
+    )
 
 
 def open_dataset(dataset: str | Path) -> Store:
