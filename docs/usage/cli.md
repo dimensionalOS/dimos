@@ -95,7 +95,8 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
-# Record every stream of a run, then replay it
+# Record every stream of a run, then replay it. recordings/ is under a Git checkout;
+# an installed package writes to ~/.local/state/dimos/recordings/<run-id>/memory.db
 dimos --record --simulation run unitree-go2
 dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 
@@ -287,6 +288,9 @@ dimos log -n 100             # last 100 lines
 dimos log --json | jq .event # raw JSONL, extract events
 dimos log -r 20260306-143022-a3f1-unitree-go2  # specific run
 ```
+
+`dimos log` shows the running instance. When nothing is running it shows the most recently started run,
+so the log of a stopped run or of a failed start can still be read.
 
 All processes (main + workers) write to the same `main.jsonl`. Filter by module:
 
