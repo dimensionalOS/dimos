@@ -280,6 +280,11 @@ def test_ambiguous_download_name_lists_candidates(dataset_dirs):
     with pytest.raises(RuntimeError, match="Ambiguous dataset"):
         dataset_path("memory.db")
 
+    for args in (["summary", "memory.db"], ["rerun", "memory.db", "--no-gui"]):
+        result = CliRunner().invoke(mem_app, args)
+        assert result.exit_code == 2
+        assert "Ambiguous" in result.output
+
 
 def test_unknown_dataset_lists_search_locations(dataset_dirs):
     recordings, downloads = dataset_dirs

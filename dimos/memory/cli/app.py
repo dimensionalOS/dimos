@@ -35,11 +35,11 @@ def rerun(
     ),
 ) -> None:
     """Render a memory store into rerun (writes a .rrd, then opens the viewer)."""
-    from dimos.memory.cli.dataset import open_dataset
+    from dimos.memory.cli.dataset import AmbiguousDatasetError, open_dataset
     from dimos.memory.cli.render import render_store
 
     try:
         store = open_dataset(path)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, AmbiguousDatasetError) as exc:
         raise typer.BadParameter(str(exc), param_hint="PATH") from exc
     render_store(store, out=out, seconds=seconds, no_gui=no_gui, root=root)
