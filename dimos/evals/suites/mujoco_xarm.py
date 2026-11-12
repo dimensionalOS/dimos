@@ -35,13 +35,9 @@ PERCEPTION_MODULES = (
 )
 
 SCENE = (
-    "The arm stands on the table, whose top is at z=0.12 m in the world frame. About "
-    "x=0.35 to 0.55 m ahead of the arm base are gripper-sized shapes: a 4 cm red cube, a "
-    "3 cm blue cube, a standing green block, a yellow bar, an orange cylinder 4 cm wide and "
-    "6 cm tall and two small balls. A basket is on the +y side; a round red bowl and a "
-    "rectangular blue bowl are on the -y side. Find where things are by looking through the "
-    "wrist camera. The gripper starts pointing straight down: for top-down moves omit the "
-    "orientation in arm.move_pose to keep it."
+    "The arm stands on a table with a few small objects and some containers to put them "
+    "in. Find them through the wrist camera. The gripper starts pointing straight down: "
+    "for top-down moves omit the orientation in arm.move_pose to keep it."
 )
 
 
