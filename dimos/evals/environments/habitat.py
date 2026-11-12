@@ -26,7 +26,6 @@ from pydantic import model_validator
 
 from dimos.core.global_config import global_config
 from dimos.evals.environments.sim import Sim, SimConfig
-from dimos.evals.guide import NAVIGATION_GUIDE, PYTHON_API_GUIDE
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.habitat.server import HabitatProp
 
@@ -38,7 +37,6 @@ if TYPE_CHECKING:
 
 
 class HabitatEnvironmentConfig(SimConfig):
-    python_guide: str = PYTHON_API_GUIDE + NAVIGATION_GUIDE
     # Dataset configuration path, resolved before launching Habitat.
     scene_dataset_config: str | None = None
     # Dataset scene handle or supported asset path in the Habitat subprocess.
@@ -97,7 +95,7 @@ class HabitatEnvironment(Sim):
                 raise FileNotFoundError(path)
         if self.config.executable is not None and not Path(self.config.executable).is_file():
             raise FileNotFoundError(self.config.executable)
-        if global_config.transport != "zenoh":
+        if not agent.requires_mcp and global_config.transport != "zenoh":
             raise ValueError(
                 f"Habitat runs on Zenoh only; start the eval with DIMOS_TRANSPORT=zenoh, "
                 f"not {global_config.transport}"

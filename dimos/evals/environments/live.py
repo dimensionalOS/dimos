@@ -73,7 +73,6 @@ class LiveEnvironmentConfig(EnvironmentConfig):
     graceful_stop: bool = False
     graceful_stop_s: float = 30.0
     agent_artifacts: tuple[str, ...] = ("recording",)
-    python_guide: str = PYTHON_API_GUIDE
 
 
 class LiveEnvironment(Environment):
@@ -103,7 +102,7 @@ class LiveEnvironment(Environment):
     @property
     def python_guide(self) -> str | None:
         """DIMOS.md, when agents drive the robot through the Python API."""
-        return None if self.serves_mcp else self.config.python_guide
+        return None if self.serves_mcp else PYTHON_API_GUIDE
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

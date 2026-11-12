@@ -186,10 +186,12 @@ def test_a_launch_without_mcp_waits_for_the_coordinator(tmp_path, mocker):
         env.stop()
 
 
-def test_preflight_refuses_a_transport_other_than_zenoh(mocker):
+def test_preflight_refuses_a_transport_other_than_zenoh_without_mcp(mocker):
     mocker.patch("dimos.evals.environments.habitat.global_config", transport="lcm")
     with pytest.raises(ValueError, match="DIMOS_TRANSPORT=zenoh"):
-        environment().preflight(Mock())
+        environment().preflight(Mock(requires_mcp=False))
+    mocker.patch("dimos.evals.environments.sim.Sim.preflight")
+    environment().preflight(Mock(requires_mcp=True))
 
 
 def test_readiness_failure_releases_resources(tmp_path, mocker):
