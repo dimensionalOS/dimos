@@ -202,7 +202,12 @@ class UsdModel:
 
     @property
     def joints(self) -> tuple[JointDescription, ...]:
-        return self._urdf.joints if self._urdf is not None else self._poseable.joints
+        if self._urdf is None:
+            return self._poseable.joints
+        # The URDF knows nothing of frames added to the USD, and reading them back out of the
+        # layer would mean putting the whole description through USD and back for an answer we
+        # already hold: usd_with_frames welds each one exactly here.
+        return self._urdf.joints + self._added_frame_joints()
 
     @property
     def root_link(self) -> str:
@@ -224,9 +229,23 @@ class UsdModel:
 
             return usd_frame_names(self.usd, self._asset_root())
         names = {self._urdf.root_link}
-        for joint in self._urdf.joints:
+        for joint in (*self._urdf.joints, *self._added_frame_joints()):
             names |= {joint.name, joint.parent_link, joint.child_link}
         return names
+
+    def _added_frame_joints(self) -> tuple[JointDescription, ...]:
+        """The frames with_frames added, as the fixed joints the layer welds them on."""
+        return tuple(
+            JointDescription(
+                name=_FixedFrame(name, parent, xyz, rpy).joint_name,
+                type="fixed",
+                parent_link=parent,
+                child_link=name,
+                origin_xyz=xyz,
+                origin_rpy=rpy,
+            )
+            for name, parent, xyz, rpy in self._added_frames
+        )
 
     def referenced_files(self) -> set[str]:
         if self._urdf is None:
