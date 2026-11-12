@@ -314,9 +314,12 @@ class KeyboardTeleop(Module):
         assert self._window is not None and self._window.stdout is not None
         for line in self._window.stdout:
             name, _, data = line.strip().partition(" ")
-            if name in _OUTPUTS:
+            # Once stop() has been asked for, what the window still sends is dropped.
+            if name in _OUTPUTS and not self._stop_event.is_set():
                 output = getattr(self, name)
                 output.publish(output.type.lcm_decode(bytes.fromhex(data)))
+        # The window has ended: whatever it sent last, the last command is a stop.
+        self.cmd_vel.publish(Twist())
 
     def _font(self, size: int, bold: bool = False) -> pygame.font.Font:
         if self._fonts is None:
