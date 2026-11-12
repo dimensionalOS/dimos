@@ -94,6 +94,11 @@ class SelfClearedSceneRegistrationModule(ObjectSceneRegistrationModule):
         The cloud is the scan's snapshot, read at pick time, so the joint state is the
         one from the capture, not the latest. None when that pose is unknown: the check
         then reports itself skipped rather than running against the robot's own image.
+
+        Args:
+            exclude_object_id: Object from the latest scan whose points are left out.
+            depth_trunc: Depth past which points are dropped, metres.
+            voxel_size: Edge of the cell the cloud is thinned to, metres.
         """
         scene = super().get_full_scene_pointcloud(exclude_object_id, depth_trunc, voxel_size)
         if scene is None or self._body_filter is None:
