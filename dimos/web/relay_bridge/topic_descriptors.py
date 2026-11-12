@@ -186,8 +186,7 @@ class TopicMetadataModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        name = self.config.rpc_name or self.config.instance_name or type(self).__name__
-        self._publisher = DescriptorPublisher(name)
+        self._publisher = DescriptorPublisher(self.rpc_address)
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:

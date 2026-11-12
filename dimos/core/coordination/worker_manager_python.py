@@ -124,11 +124,13 @@ class WorkerManagerPython:
         # run needs its own address, including named instances and restarts.
         # Hosted fragments already supply an address shared with remote peers.
         name = kwargs.get("rpc_name") or kwargs.get("instance_name") or module_class.__name__
-        rpc_name = kwargs.get("rpc_name") or f"{self._rpc_namespace}/{name}"
-        actor = worker.deploy_module(
-            module_class, global_config, kwargs={**kwargs, "rpc_name": rpc_name}
+        rpc_address = (
+            kwargs.get("rpc_address") or kwargs.get("rpc_name") or f"{self._rpc_namespace}/{name}"
         )
-        return RPCClient(actor, module_class, name, rpc_address=rpc_name)
+        actor = worker.deploy_module(
+            module_class, global_config, kwargs={**kwargs, "rpc_address": rpc_address}
+        )
+        return RPCClient(actor, module_class, name, rpc_address=rpc_address)
 
     def undeploy(self, proxy: ModuleProxyProtocol) -> None:
         """Undeploy a module and shut down its worker if it is now empty."""
