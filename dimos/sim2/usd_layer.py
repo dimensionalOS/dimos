@@ -28,11 +28,14 @@ _CACHE = Path(tempfile.gettempdir()) / "dimos-sim2-usd"
 _ASSETS = Path(tempfile.gettempdir()) / "dimos-usd-assets"
 
 
-def usd_layer(model: UsdModel) -> Path:
+def usd_layer(model: UsdModel, transform: Callable[[str], str] | None = None) -> Path:
+    """Write the model out as a layer file, optionally rewritten for whoever is about to read it."""
     from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 
     source = model.source_path
     layer = resolve_usd_assets(model.usd, str(source.parent) if source is not None else "")
+    if transform is not None:
+        layer = transform(layer)
     return layer_file(layer, called=_name_of(model))
 
 
