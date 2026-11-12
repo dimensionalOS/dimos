@@ -318,11 +318,14 @@ impl Worker {
             self.ring.push(sample.clone());
 
             let mut reasons: Vec<String> = self.dumps.try_iter().collect();
-            let link = link_key(&sample);
-            if !last_link.is_empty() && link != last_link {
-                reasons.push(format!("network changed: {link}"));
+            // routes arrive from the slow thread: until the first reading, there's nothing to compare
+            if !sample["routes"].is_null() {
+                let link = link_key(&sample);
+                if !last_link.is_empty() && link != last_link {
+                    reasons.push(format!("network changed: {link}"));
+                }
+                last_link = link;
             }
-            last_link = link;
             let now_wrong = alerts(&sample, &self.config);
             for (condition, message) in &now_wrong {
                 if !active.contains_key(condition) {
