@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import socket
+from types import SimpleNamespace
+
 import pytest
 
 from dimos.web.fastapi_server import FastAPIServer
@@ -24,12 +27,29 @@ from dimos.web.fastapi_server import FastAPIServer
         ("127.0.0.1", ["127.0.0.1"]),
         ("192.168.1.2", ["192.168.1.2"]),
         ("::1", ["[::1]"]),
+        ("::", ["localhost", "[2001:db8::2]", "[fd00::2]"]),
+        ("fd00::2", ["[fd00::2]"]),
     ],
 )
 def test_browser_urls_respect_bind_address_and_include_page(host, expected, mocker):
     mocker.patch(
-        "dimos.web.fastapi_server.get_local_ips",
-        return_value=[("192.168.1.2", "eth0"), ("10.0.0.2", "wlan0")],
+        "dimos.utils.generic.psutil.net_if_addrs",
+        return_value={
+            "lo": [
+                SimpleNamespace(family=socket.AF_INET, address="127.0.0.1"),
+                SimpleNamespace(family=socket.AF_INET6, address="::1"),
+            ],
+            "eth0": [
+                SimpleNamespace(family=socket.AF_INET, address="192.168.1.2"),
+                SimpleNamespace(family=socket.AF_INET6, address="2001:db8::2"),
+                SimpleNamespace(family=socket.AF_INET6, address="fd00::2"),
+                SimpleNamespace(family=socket.AF_INET6, address="fe80::2%eth0"),
+            ],
+            "wlan0": [
+                SimpleNamespace(family=socket.AF_INET, address="10.0.0.2"),
+                SimpleNamespace(family=socket.AF_INET6, address="fd00::2"),
+            ],
+        },
     )
     server = FastAPIServer(host=host, port=9443)
 

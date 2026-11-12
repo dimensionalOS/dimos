@@ -27,6 +27,7 @@
 import asyncio
 from pathlib import Path
 from queue import Empty, Queue
+import socket
 import subprocess
 from threading import Lock
 
@@ -310,8 +311,9 @@ class FastAPIServer(EdgeIO):
     def get_urls(self, path: str = "/", *, ssl: bool = False) -> list[str]:
         """Return browser URLs for the bound host, including LAN interfaces."""
         hosts = [connect_host(self.host)]
-        if self.host == "0.0.0.0":
-            hosts.extend(ip for ip, _ in get_local_ips())
+        if self.host in ("0.0.0.0", "::"):
+            family = socket.AF_INET6 if self.host == "::" else socket.AF_INET
+            hosts.extend(connect_host(ip) for ip, _ in get_local_ips(family=family))
         scheme = "https" if ssl else "http"
         return [f"{scheme}://{host}:{self.port}{path}" for host in dict.fromkeys(hosts)]
 
