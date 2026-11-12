@@ -24,9 +24,11 @@ threads = 2
 lidar = "sensor_msgs.PointCloud2"
 loaded_map = "sensor_msgs.PointCloud2"
 tf = "tf2_msgs.TFMessage"
+cloud_keyframe_request = "std_msgs.Bool"
 
 [package.metadata.dimos.module.ray_tracing.outputs]
 global_map = "sensor_msgs.PointCloud2"
+map_update = "sensor_msgs.PointCloud2"
 local_map = "sensor_msgs.PointCloud2"
 local_map_fine = "sensor_msgs.PointCloud2"
 seed_map = "sensor_msgs.PointCloud2"

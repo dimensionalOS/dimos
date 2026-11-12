@@ -54,6 +54,7 @@ fn basic_config() -> Config {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        diff: false,
     }
 }
 
@@ -376,6 +377,7 @@ fn ground_clipping_single_ray() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        diff: false,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
     let max_x = 25.0_f32;
@@ -537,6 +539,7 @@ fn stair_clipping_ray_fan() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        diff: false,
     };
 
     // Staircase
@@ -624,6 +627,7 @@ fn landing_floor_ray_fan() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        diff: false,
     };
 
     // Flat floor from the sensor out to a vertical wall.
@@ -699,6 +703,7 @@ fn landing_grazed_from_below() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        diff: false,
     };
 
     // Staircase topped by a flat landing and a back wall.
@@ -843,6 +848,7 @@ fn grazing_ray_spares_planar_floor() {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        diff: false,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
     let row: Vec<VoxelKey> = map.voxels.keys().filter(|k| k.1 == 0 && k.2 == 0).collect();

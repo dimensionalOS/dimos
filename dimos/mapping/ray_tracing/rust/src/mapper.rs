@@ -14,14 +14,15 @@
 
 use std::sync::Arc;
 
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
     emit_points_ungated_premap, global_normal_fits, global_normals, seed_points, seed_tile,
-    update_map, ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelKey, VoxelMap,
+    update_map, voxel_center, world_to_voxel, ChunkKey, Config, Cylinder, FrameHits, LocalBounds,
+    VoxelKey, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -47,6 +48,8 @@ pub struct Mapper {
     last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
+    /// The global map as subscribers last heard it, voxel -> premap, which the next diff is taken against.
+    published: AHashMap<VoxelKey, bool>,
 }
 
 impl Mapper {
@@ -62,6 +65,7 @@ impl Mapper {
             last_registered: Vec::new(),
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
+            published: AHashMap::new(),
         }
     }
 
@@ -209,6 +213,43 @@ impl Mapper {
         })
     }
 
+    /// `global_points_premap`, made the baseline the next `global_diff` is taken against.
+    pub fn global_keyframe(&mut self) -> Vec<f32> {
+        let points = self.global_points_premap();
+        self.published = premap_voxels(&points, self.config.voxel_size);
+        points
+    }
+
+    /// Voxels added (or whose premap flag changed) and removed since the last keyframe or diff,
+    /// as flat (x, y, z, premap, change) quintuples, change 1.0 for added and 0.0 for removed.
+    pub fn global_diff(&mut self) -> Vec<f32> {
+        let voxel_size = self.config.voxel_size;
+        let current = premap_voxels(&self.global_points_premap(), voxel_size);
+        let mut out = Vec::new();
+        let mut push = |key: VoxelKey, premap: bool, added: bool| {
+            let (x, y, z) = voxel_center(key, voxel_size);
+            out.extend_from_slice(&[
+                x,
+                y,
+                z,
+                f32::from(u8::from(premap)),
+                f32::from(u8::from(added)),
+            ]);
+        };
+        for (&key, &premap) in &current {
+            if self.published.get(&key) != Some(&premap) {
+                push(key, premap, true);
+            }
+        }
+        for (&key, &premap) in &self.published {
+            if !current.contains_key(&key) {
+                push(key, premap, false);
+            }
+        }
+        self.published = current;
+        out
+    }
+
     /// Support-gated healthy voxel centers within `bounds`, plus live voxels,
     /// flat triples.
     pub fn local_points(&self, bounds: &LocalBounds) -> Vec<f32> {
@@ -260,7 +301,19 @@ impl Mapper {
         self.last_registered.clear();
         self.last_origin = (0.0, 0.0, 0.0);
         self.frame_count = 0;
+        self.published.clear();
     }
+}
+
+/// The voxels of flat (x, y, z, premap) quads of voxel centers, with their premap flags.
+fn premap_voxels(quads: &[f32], voxel_size: f32) -> AHashMap<VoxelKey, bool> {
+    let inv = 1.0 / voxel_size;
+    quads
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|q| (world_to_voxel(q[0], q[1], q[2], inv), q[3] != 0.0))
+        .collect()
 }
 
 /// Map points into the world frame by the pose, in place.
@@ -313,6 +366,7 @@ mod tests {
             viz_cell_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
+            diff: false,
         }
     }
 
@@ -417,6 +471,44 @@ mod tests {
             mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
             assert_eq!((mapper.local_due(), mapper.global_due()), (false, false));
         }
+    }
+
+    /// A keyframe plus every diff after it, applied in order, is the global map: adds, removals,
+    /// and a premap voxel a live hit turns live.
+    #[test]
+    fn keyframe_and_diffs_rebuild_the_global_map() {
+        let mut mapper = Mapper::new(config());
+        mapper.seed_points(&[(6.5, 0.5, 0.5), (0.5, 6.5, 0.5)]);
+        let mut replica = premap_voxels(&mapper.global_keyframe(), 1.0);
+        assert_eq!(replica.len(), 2);
+        let pose = Pose {
+            position: (0.0, 0.0, 0.0),
+            orientation: IDENTITY,
+        };
+        let (mut removed, mut turned_live) = (0, 0);
+        // Hit 3, then a ray through 3 to 5 clears it, then a live hit on the premap voxel up y.
+        for hit in [(3.5, 0.5, 0.5), (5.2, 0.2, 0.2), (0.2, 6.2, 0.2)] {
+            mapper.add_frame(vec![hit], pose);
+            for q in mapper.global_diff().as_chunks::<5>().0 {
+                let key = world_to_voxel(q[0], q[1], q[2], 1.0);
+                if q[4] != 0.0 {
+                    turned_live += usize::from(replica.get(&key) == Some(&true) && q[3] == 0.0);
+                    replica.insert(key, q[3] != 0.0);
+                } else {
+                    removed += 1;
+                    replica.remove(&key);
+                }
+            }
+            assert_eq!(replica, premap_voxels(&mapper.global_points_premap(), 1.0));
+        }
+        assert!(
+            removed >= 1 && turned_live == 1,
+            "removed {removed}, turned live {turned_live}"
+        );
+        assert!(
+            mapper.global_diff().is_empty(),
+            "nothing changed since the last diff"
+        );
     }
 
     #[test]
