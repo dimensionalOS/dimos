@@ -63,12 +63,12 @@ def main(
     dataset: str = typer.Argument(..., help="Dataset .db/.mcap: bare name (cwd or data/) or path"),
 ) -> None:
     """Print per-stream counts, time ranges, and payload sizes for a recorded dataset."""
-    from dimos.memory.cli.dataset import open_store, resolve_dataset
+    from dimos.memory.cli.dataset import AmbiguousDatasetError, open_store, resolve_dataset
 
     try:
         db_path = resolve_dataset(dataset)
         store = open_store(db_path)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, AmbiguousDatasetError) as exc:
         raise typer.BadParameter(str(exc), param_hint="DATASET") from exc
     if db_path.suffix == ".mcap":
         # mcap stores don't speak the sqlite _streams table; print the store's own

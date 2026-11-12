@@ -34,6 +34,10 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
 
+class AmbiguousDatasetError(RuntimeError):
+    """More than one local recording matches a dataset name."""
+
+
 def open_store(path: str | Path, *, decode_metadata: bool = False) -> Store:
     """Open an already-resolved dataset *path*, dispatching on its extension.
 
@@ -114,7 +118,7 @@ def resolve_dataset(dataset: str | Path) -> Path:
         if name in aliases:
             matches.append(p)
     if len(matches) > 1:
-        raise RuntimeError(
+        raise AmbiguousDatasetError(
             f"Ambiguous dataset {name!r}; use an explicit path: "
             + ", ".join(str(p) for p in sorted(matches))
         )
