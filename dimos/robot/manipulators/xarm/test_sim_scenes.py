@@ -24,9 +24,7 @@ pytestmark = pytest.mark.self_hosted
 
 SCENES = [
     "xarm6/scene.xml",
-    "xarm6/scene_shapes.xml",
     "xarm7/scene.xml",
-    "xarm7/scene_shapes.xml",
     "xarm_grasp_sim/scene.xml",
     "robosuite/lift/scene.xml",
 ]
@@ -46,7 +44,7 @@ def test_arm_gravity_compensation_is_force_limited(scene: str) -> None:
         np.testing.assert_allclose(model.jnt_actfrcrange[joint], model.actuator_forcerange[a])
 
 
-@pytest.mark.parametrize("scene", ["xarm6/scene_shapes.xml", "xarm7/scene_shapes.xml"])
+@pytest.mark.parametrize("scene", ["xarm6/scene.xml", "xarm7/scene.xml"])
 def test_shapes_stay_on_the_table(scene: str) -> None:
     model = mujoco.MjModel.from_xml_path(str(LfsPath(scene)))
     data = mujoco.MjData(model)

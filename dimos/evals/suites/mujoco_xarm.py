@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""xArm7 at a table with a red ball (``apple``) and a cylinder (``cup``): two picks,
+"""xArm7 on a table with gripper-sized shapes and bowls: a pick and a pick-and-place,
 driven through the Python API with the planner and the wrist camera only, graded on the
 bodies' recorded poses.
 
@@ -26,7 +26,7 @@ from dimos.evals.scorers import lifted, stacked_on
 from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 
-TRACKED = ("apple", "cup")
+TRACKED = ("orange_cylinder", "red_cube", "blue_bowl")
 
 PERCEPTION_MODULES = (
     "object-scene-registration-module",
@@ -35,11 +35,13 @@ PERCEPTION_MODULES = (
 )
 
 SCENE = (
-    "The table top is at z=0.13 m in the world frame and spans roughly x=0.30 to 0.60 m "
-    "ahead of the arm base. On it are a red ball about 8 cm wide, an orange ball about 9 cm "
-    "wide and a cylinder about 7 cm wide and 12 cm tall; find where they are by looking "
-    "through the wrist camera. The gripper starts pointing straight down: for top-down moves "
-    "omit the orientation in arm.move_pose to keep it."
+    "The arm stands on the table, whose top is at z=0.12 m in the world frame. About "
+    "x=0.35 to 0.55 m ahead of the arm base are gripper-sized shapes: a 4 cm red cube, a "
+    "3 cm blue cube, a standing green block, a yellow bar, an orange cylinder 4 cm wide and "
+    "6 cm tall and two small balls. A basket is on the +y side; a round red bowl and a "
+    "rectangular blue bowl are on the -y side. Find where things are by looking through the "
+    "wrist camera. The gripper starts pointing straight down: for top-down moves omit the "
+    "orientation in arm.move_pose to keep it."
 )
 
 
@@ -55,17 +57,18 @@ def environment() -> MujocoEnvironment:
 SUITE: Suite = [
     EvalCase(
         id="xarm_pick_cylinder",
-        inputs=f"Pick up the cylinder from the table and hold it in the air. {SCENE}",
+        inputs=f"Pick up the orange cylinder from the table and hold it in the air. {SCENE}",
         environment=environment(),
-        grade=lifted("cup", by_m=0.05),
+        grade=lifted("orange_cylinder", by_m=0.05),
         timeout_s=600.0,
         tags=frozenset({"mujoco", "manipulation", "pick"}),
     ),
     EvalCase(
-        id="xarm_ball_on_cylinder",
-        inputs=f"Pick up the red ball and place it on top of the cylinder. {SCENE}",
+        id="xarm_cube_in_bowl",
+        inputs=f"Pick up the red cube and put it in the blue bowl. {SCENE}",
         environment=environment(),
-        grade=stacked_on("apple", "cup", rise_m=(0.08, 0.12), band_m=0.07),
+        # Resting on the bowl's floor puts the cube's centre 2.8 cm above the bowl's origin.
+        grade=stacked_on("red_cube", "blue_bowl", rise_m=(0.02, 0.04), band_m=0.05),
         timeout_s=900.0,
         threshold=0.5,
         tags=frozenset({"mujoco", "manipulation", "pick", "place"}),

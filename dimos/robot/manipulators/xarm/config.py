@@ -188,10 +188,8 @@ def xarm_model(
     return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
 
 
-# Gripper-sized cubes, cuboids, a cylinder and small balls on the table.
-# scene.xml (apple, orange, cup) stays for the evals that name those bodies.
-XARM6_SIM_PATH = LfsPath("xarm6/scene_shapes.xml")
-XARM7_SIM_PATH = LfsPath("xarm7/scene_shapes.xml")
+XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
+XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 # The sim scene stands the arm on a pedestal: xarm7.xml mounts link_base at
 # z=0.12. Place the planning model to match, or the planner solves poses 12cm
