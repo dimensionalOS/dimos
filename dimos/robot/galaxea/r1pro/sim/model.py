@@ -12,31 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simulation adaptation of the pinned vendor R1 Pro description.
+"""R1 Pro 2025 physical model, matching WIM's on-robot r1_pro.urdf.
 
-Ledger: preserve all vendor link frames, joint axes, visual meshes and inertias
-in metres/kg/radians (X forward, Y left, Z up). The three wheels turn about +Y;
-positive wheel speed rolls toward +X at zero steering. Steering is about +Z.
-Wheel collision cylinders use the measured vendor mesh bounds: radius .070 m,
-Y extent [-.03785, .04220] m. Visuals remain the vendor meshes. Other mesh
-collisions are MuJoCo convex hulls, with known structural overlaps excluded by
-scene configuration. The G1Z fingers keep the vendor origins and +Y axes:
-finger 1 opens toward +Y, finger 2 toward -Y (verified on the fingertip meshes).
-Zero is closed. Replace the vendor's zero limits with symmetric 52 mm travel
-per finger: G1Z's published aperture is 104 mm and aperture speed 108 mm/s.
-Source: https://galaxea-dynamics.com/products/galaxea-g1z-gripper
-Use two driven fingers with equal/opposite targets, not an unsupported mimic.
-The 30 N per-finger effort cap and PD gains are conservative simulation tuning,
-not a calibrated model of the published 150 N clamping force.
-The vendor omits wheel effort/speed limits; the demo assumptions below are NOT
-hardware specifications. Servo gains likewise are simulation tuning only.
-Wrist variant: retain the vendor D405 mount, mesh and inertia unchanged. The
-co-located alternative GMSL fisheye cameras are absent on this depth-camera
-configuration: their links remain frame-only (no visual, collision or inertia).
-This prevents the alternative housing from occluding the D405 lens. The D405
-link origin is used as an ideal optical center (+X right, +Y down, +Z forward);
-mesh ray checks place the lens at z=0 with the housing behind it. Factory
-optical-center corrections and distortion remain unavailable.
+Ledger: metres/kg/radians, X forward/Y left/Z up. Preserve the 2025 vendor
+joint frames, axes, limits, masses, centres of mass and inertia tensors exactly.
+In particular the torso folding links are 0.40/0.30 m, not the 2026 0.35/0.35 m.
+WIM d2594a1's URDF is identical to this pinned public vendor description.
+
+The vendor URDF repository omits the 2025 meshes. Arm, torso, chassis and jaw
+meshes come from Galaxea's pinned older simulator. They are visual/collision
+approximations: that simulator has small chassis revisions and different
+sensor housings. Missing sensor/head meshes are omitted, retaining their mass
+and frames; no 2026 geometry is silently substituted. MuJoCo uses convex hulls
+for mesh collisions, with structural intersections excluded in scene config.
+Wheel collision cylinders retain the 70 mm radius and existing contact model.
+Wheel effort/speed and servo gains remain simulation assumptions, not measured
+motor characteristics. The 2025 fingers retain vendor +/-50 mm travel, 0.25 m/s
+speed and 100 N effort limits, with equal/opposite commands (no mimic).
 """
 
 import argparse
@@ -45,9 +37,36 @@ import xml.etree.ElementTree as ET
 
 from dimos.constants import CACHE_DIR
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL_PATH, R1PRO_PACKAGE_ROOT
+from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.robot.galaxea.r1pro.config import R1PRO_DESCRIPTION_SOURCE
 
-MODEL_PATH = CACHE_DIR / "sim2/r1pro-joylo/r1pro.urdf"
+MODEL_PATH = CACHE_DIR / "sim2/r1pro-joylo-2025/r1pro.urdf"
+VENDOR_MODEL_PATH = R1PRO_DESCRIPTION_SOURCE / "R1Pro" / "urdf_r1pro_2025.urdf"
+MESH_SOURCE = RobotDescriptionSource(
+    "https://github.com/OpenGalaxea/GalaxeaManipSim",
+    "abe7f5161eeaa150e6eaffdf443af5df7f23f356",
+)
+MESH_ROOT = MESH_SOURCE / "galaxea_sim" / "assets" / "r1_pro" / "meshes"
+# These sensor/head meshes are absent from the older public simulator. Keep
+# their physical inertias and transforms; never silently omit a required mesh.
+MESHLESS_LINKS = frozenset(
+    (
+        "camera_chassis_front_left_link",
+        "camera_chassis_front_right_link",
+        "camera_chassis_left_link",
+        "camera_chassis_right_link",
+        "camera_chassis_rear_link",
+        "lidar_chassis_left_link",
+        "imu_chassis_link",
+        "imu_torso_link",
+        "head_link",
+        "camera_head_left_link",
+        "camera_head_right_link",
+        "left_D405_link",
+        "right_D405_link",
+    )
+)
+TORSO_LINK_LENGTHS = (0.4, 0.3)
 WHEEL_RADIUS = 0.070
 WHEEL_WIDTH = 0.08005
 WHEEL_CENTER_Y = 0.002175
@@ -55,37 +74,35 @@ ASSUMED_WHEEL_EFFORT = 30.0
 ASSUMED_WHEEL_SPEED = 20.0
 STEER_JOINTS = tuple(f"r1pro/steer_motor_joint{i}" for i in range(1, 4))
 WHEEL_JOINTS = tuple(f"r1pro/wheel_motor_joint{i}" for i in range(1, 4))
-FINGER_TRAVEL_M = 0.052
-FINGER_SPEED_M_S = 0.054
-ASSUMED_FINGER_EFFORT_N = 30.0
+FINGER_TRAVEL_M = 0.05
+FINGER_SPEED_M_S = 0.25
 FINGER_JOINTS = tuple(
     f"r1pro/{side}_gripper_finger_joint{i}" for side in ("left", "right") for i in (1, 2)
 )
 
 
 def gen_urdf() -> str:
-    source = (
-        RobotModel.from_file(R1PRO_MODEL_PATH, package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT})
+    root = ET.fromstring(Path(VENDOR_MODEL_PATH).read_text())
+    for source_link in root.findall("link"):
+        for tag in ("visual", "collision"):
+            for element in source_link.findall(tag):
+                mesh = element.find("geometry/mesh")
+                if mesh is None:
+                    continue
+                path = Path(MESH_ROOT / Path(mesh.attrib["filename"]).name)
+                if source_link.attrib["name"] in MESHLESS_LINKS:
+                    source_link.remove(element)
+                elif path.is_file():
+                    mesh.set("filename", str(path))
+                else:
+                    raise FileNotFoundError(f"Required R1 Pro mesh missing: {path}")
+    # Prefix after resolving vendor package:// paths explicitly.
+    root = ET.fromstring(
+        RobotModel.from_urdf_string(ET.tostring(root, encoding="unicode"))
         .with_prefix("r1pro/")
         .load()
+        .xml
     )
-    root = ET.fromstring(source.xml)
-    for index, name in enumerate(FINGER_JOINTS):
-        joint = root.find(f"joint[@name='{name}']")
-        assert joint is not None
-        limit = joint.find("limit")
-        assert limit is not None
-        limit.attrib.update(
-            lower=str(0 if index % 2 == 0 else -FINGER_TRAVEL_M),
-            upper=str(FINGER_TRAVEL_M if index % 2 == 0 else 0),
-            effort=str(ASSUMED_FINGER_EFFORT_N),
-            velocity=str(FINGER_SPEED_M_S),
-        )
-    for side in ("left", "right"):
-        link = root.find(f"link[@name='r1pro/{side}_gmsl_link']")
-        assert link is not None
-        for element in list(link):
-            link.remove(element)
     for name in WHEEL_JOINTS:
         joint = root.find(f"joint[@name='{name}']")
         assert joint is not None

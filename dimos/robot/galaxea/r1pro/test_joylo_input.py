@@ -87,7 +87,7 @@ def test_read_loss_then_large_operator_movement_can_realign_with_minus(pipeline)
 
     read.return_value = {**read.return_value, "joint_1": 1.21}
     _, moved = tick(reader, profile, 0.5)
-    assert moved.positions[ARMS[0]] == pytest.approx(0.205)
+    assert moved.positions[ARMS[0]] == pytest.approx(0.21)
     assert {n: q for n, q in moved.positions.items() if n != ARMS[0]} == dict.fromkeys(
         (n for n in UPPER if n != ARMS[0]), 0.2
     )

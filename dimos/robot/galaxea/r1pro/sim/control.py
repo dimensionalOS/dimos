@@ -34,6 +34,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.robot.galaxea.r1pro.joylo import JoyloConfig, torso_step
 from dimos.robot.galaxea.r1pro.sim.config import (
     CONTROL,
     HOME,
@@ -42,12 +43,15 @@ from dimos.robot.galaxea.r1pro.sim.config import (
     KP,
     SERVO_JOINTS,
     UPPER_JOINTS,
+    UPPER_RATES,
 )
+from dimos.robot.galaxea.r1pro.sim.dynamics import UpperBodyServo
 from dimos.robot.galaxea.r1pro.sim.model import (
     FINGER_JOINTS,
     FINGER_SPEED_M_S,
     FINGER_TRAVEL_M,
     STEER_JOINTS,
+    TORSO_LINK_LENGTHS,
     WHEEL_RADIUS,
 )
 
@@ -95,11 +99,12 @@ class R1ProSimControl(SharedConfigModule):
         self._torso_axis = 0.0
         self._torso_until = 0.0
         self._torso_active = False
-        self._max_torso_fold = 0.8
         self._targets = np.array((*HOME, 0.0, 0.0, 0.0, 0.0))
         self._ramped_targets = self._targets.copy()
-        self._target_rates = np.array((0.5,) * len(UPPER_JOINTS) + (FINGER_SPEED_M_S,) * 4)
+        self._target_rates = np.array(UPPER_RATES + (FINGER_SPEED_M_S,) * 4)
         self._limits: dict[str, tuple[float, float]] = {}
+        self._servo: UpperBodyServo | None = None
+        self._height_config = JoyloConfig(torso_link_lengths=TORSO_LINK_LENGTHS, torso_rate=0.5)
         self._wheel_positions: list[tuple[float, float]] = []
         self._steer_limits: dict[str, tuple[float, float]] = {}
 
@@ -125,14 +130,15 @@ class R1ProSimControl(SharedConfigModule):
             joint = joints[name]
             assert joint.lower is not None and joint.upper is not None
             self._steer_limits[name] = (joint.lower, joint.upper)
-        # Equal 0.35 m links: q=(a,-2a,-a,0) keeps the shoulders
-        # upright and at the same fore/aft position. a=0.8 lowers them 0.212 m.
-        self._max_torso_fold = min(
-            0.8,
-            self._limits[UPPER_JOINTS[0]][1],
-            -self._limits[UPPER_JOINTS[1]][0] / 2,
-            -self._limits[UPPER_JOINTS[2]][0],
-        )
+        models = [
+            model
+            for _, config in config_senders
+            for model in config.get("robot_models", {}).values()
+            if set(UPPER_JOINTS).issubset({j.name for j in model.joints})
+        ]
+        if len(models) != 1:
+            raise ValueError("R1 Pro servo requires one matching upper-body model")
+        self._servo = UpperBodyServo(models[0])
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.3) -> None:
@@ -223,20 +229,26 @@ class R1ProSimControl(SharedConfigModule):
             dt = period / 1e9
             if self._torso_active:
                 axis = self._torso_axis if time.monotonic() < self._torso_until else 0.0
-                # Bound the folding rate to 0.2 rad/s (joint 2: 0.4 rad/s).
-                # Update all three together, including on release, so independent
-                # joint ramps cannot tilt the body or continue toward a stale target.
-                fold = float(
-                    np.clip(self._ramped_targets[0] - axis * 0.2 * dt, 0, self._max_torso_fold)
+                self._targets[:4] = torso_step(
+                    self._targets[:4].tolist(),
+                    axis,
+                    0.0,
+                    dt,
+                    [self._limits[n] for n in UPPER_JOINTS[:4]],
+                    self._height_config,
                 )
-                self._targets[:4] = self._ramped_targets[:4] = (fold, -2 * fold, -fold, 0)
             desired = self._velocity if time.monotonic() < self._until else np.zeros(3)
             self._ramped_velocity += np.clip(desired - self._ramped_velocity, -0.4 * dt, 0.4 * dt)
-            self._ramped_targets += np.clip(
-                self._targets - self._ramped_targets,
-                -self._target_rates * dt,
-                self._target_rates * dt,
+            assert self._servo is not None
+            measured_upper = np.array([measured[name] for name in UPPER_JOINTS])
+            upper_positions, upper_velocity = self._servo.step(self._targets[:18], measured_upper)
+            self._ramped_targets[:18] = upper_positions
+            self._ramped_targets[18:] += np.clip(
+                self._targets[18:] - self._ramped_targets[18:],
+                -self._target_rates[18:] * dt,
+                self._target_rates[18:] * dt,
             )
+            gravity = self._servo.gravity(upper_positions, measured_upper)
             steering, wheels = [], []
             for name, (x, y) in zip(STEER_JOINTS, self._wheel_positions, strict=True):
                 target, velocity = steer_targets(
@@ -253,13 +265,13 @@ class R1ProSimControl(SharedConfigModule):
                 steering.append(min(upper, max(lower, target)))
                 wheels.append(velocity)
             positions = [*self._ramped_targets, *steering, 0.0, 0.0, 0.0]
-            velocities = [0.0] * (len(JOINTS) - len(wheels)) + wheels
+            velocities = [*upper_velocity, *([0.0] * 7), *wheels]
             rows = [
                 ("position", positions),
                 ("velocity", velocities),
                 ("kp", KP),
                 ("kd", KD),
-                ("effort", [0.0] * len(JOINTS)),
+                ("effort", [*gravity, *([0.0] * (len(JOINTS) - 18))]),
             ]
             action = ActionCommand(
                 header=SampleHeader(

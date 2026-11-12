@@ -23,7 +23,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.assets.model import LoadedRobotModel
-from dimos.robot.galaxea.r1pro.sim.config import JOINTS, SERVO_JOINTS, UPPER_JOINTS
+from dimos.robot.galaxea.r1pro.sim.config import CONTROL, JOINTS, SERVO_JOINTS, UPPER_JOINTS
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl, steer_targets
 from dimos.robot.galaxea.r1pro.sim.model import (
     FINGER_JOINTS,
@@ -91,15 +91,15 @@ def test_deadman_brakes_and_duplicate_samples_keep_original_action(controller, m
     assert first is not None
     assert controller.compute(sample(0)) is first
     for i in range(1, 50):
-        action = controller.compute(sample(i * 0.02))
+        action = controller.compute(sample(i * 0.004))
     assert action.joint_commands[1].values[-1] > 0
     clock.return_value = 1
     for i in range(50, 100):
-        action = controller.compute(sample(i * 0.02))
+        action = controller.compute(sample(i * 0.004))
     assert action.joint_commands[1].values[-3:] == [0, 0, 0]
-    assert controller.compute(sample(0.5)) is None
+    assert controller.compute(sample(0.1)) is None
     assert action.header.clock_id == "test"
-    assert action.valid_until_ns - action.apply_at_ns == 20_000_000
+    assert action.valid_until_ns - action.apply_at_ns == CONTROL.period_ns
 
 
 def test_upper_body_targets_are_bounded_and_rate_limited(controller):
@@ -107,7 +107,7 @@ def test_upper_body_targets_are_bounded_and_rate_limited(controller):
         controller.set_joint(UPPER_JOINTS[4], 4)
     controller.set_joint(UPPER_JOINTS[4], -1)
     action = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
-    assert action.joint_commands[0].values[4] == pytest.approx(-0.01)
+    assert -0.5 * 2.25 * 0.004**2 <= action.joint_commands[0].values[4] < 0
     assert action.joint_commands[0].values[:4] == [0, 0, 0, 0]
 
 
@@ -128,7 +128,7 @@ async def test_arm_teleop_does_not_recapture_torso_sag(controller, mocker):
     )
     action = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
     assert action.joint_commands[0].values[:4] == [0.0] * 4
-    assert action.joint_commands[0].values[4:18] == [0.01] * 14
+    assert all(0 < q <= 0.5 * 2.25 * 0.004**2 for q in action.joint_commands[0].values[4:18])
 
 
 async def test_grippers_move_opposite_fingers_independently_and_ignore_arm_holds(controller):
@@ -138,11 +138,11 @@ async def test_grippers_move_opposite_fingers_independently_and_ignore_arm_holds
     await controller.handle_upper_command(JointState(name=list(FINGER_JOINTS), position=[0] * 4))
     first = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
     assert first.joint_commands[0].values[18:22] == pytest.approx(
-        [FINGER_SPEED_M_S * 0.02, -FINGER_SPEED_M_S * 0.02] * 2
+        [FINGER_SPEED_M_S * 0.004, -FINGER_SPEED_M_S * 0.004] * 2
     )
     for i in range(1, 60):
         action = controller.compute(
-            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.02)
+            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.004)
         )
     assert action.joint_commands[0].values[18:22] == pytest.approx(
         [FINGER_TRAVEL_M, -FINGER_TRAVEL_M, FINGER_TRAVEL_M / 2, -FINGER_TRAVEL_M / 2]
@@ -151,7 +151,7 @@ async def test_grippers_move_opposite_fingers_independently_and_ignore_arm_holds
     await controller.handle_left_gripper_command(Float32(data=0))
     for i in range(60, 120):
         action = controller.compute(
-            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.02)
+            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.004)
         )
     assert action.joint_commands[0].values[18:22] == pytest.approx(
         [0, 0, FINGER_TRAVEL_M / 2, -FINGER_TRAVEL_M / 2]
@@ -164,31 +164,35 @@ async def test_invalid_gripper_command_is_rejected(controller, opening):
         await controller.handle_left_gripper_command(Float32(data=opening))
 
 
-async def test_torso_folds_together_and_release_or_timeout_holds(controller, mocker):
+async def test_torso_height_uses_unequal_links_and_release_stops_advancing_target(
+    controller, mocker
+):
     clock = mocker.patch("dimos.robot.galaxea.r1pro.sim.control.time.monotonic", return_value=0)
     await controller.handle_torso_height_command(Float32(data=-1))
 
     def tick(i):
         return (
             controller.compute(
-                JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.02)
+                JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.004)
             )
             .joint_commands[0]
             .values[:4]
         )
 
-    for i in range(250):
-        q = tick(i)
-        assert q == pytest.approx([q[0], -2 * q[0], -q[0], 0])
-    assert q == pytest.approx([0.8, -1.6, -0.8, 0])
-    await controller.handle_torso_height_command(Float32(data=1))
-    raised = tick(250)
-    assert raised[0] < q[0]
+    for i in range(1000):
+        tick(i)
     await controller.handle_torso_height_command(Float32(data=0))
-    assert tick(251) == raised
+    for i in range(1000, 2000):
+        q = tick(i)
+    x = 0.4 * math.sin(q[0]) + 0.3 * math.sin(q[0] + q[1])
+    z = 0.4 * math.cos(q[0]) + 0.3 * math.cos(q[0] + q[1])
+    assert abs(x) < 2e-4
+    assert 0.5 < z < 0.65
+    assert abs(q[0] + q[1] - q[2]) < 1e-5
+    assert tick(2000) == pytest.approx(q)
     await controller.handle_torso_height_command(Float32(data=1))
     clock.return_value = 1
-    assert tick(252) == raised
+    assert tick(2001) == pytest.approx(q)
 
 
 @pytest.mark.parametrize("axis", [float("nan"), -1.1, 1.1])
@@ -202,9 +206,9 @@ async def test_coordinator_owns_torso_without_the_old_height_servo_overwriting_i
     await controller.handle_torso_height_command(Float32(data=-1))
     targets = [0.2, -0.4, -0.1, 0.3]
     await controller.handle_upper_command(JointState(name=list(UPPER_JOINTS[:4]), position=targets))
-    for i in range(300):
+    for i in range(600):
         action = controller.compute(
-            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.02)
+            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.004)
         )
     assert action is not None
     positions = next(c.values for c in action.joint_commands if c.interface_name == "position")

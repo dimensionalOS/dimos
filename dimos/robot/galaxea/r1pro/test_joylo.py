@@ -214,3 +214,13 @@ def test_left_only_capture_pauses_even_with_minus_held(controller):
     feed(solo, 0.02, leader=leader, left=JoyConReading(frozenset({"minus"})), right=None)
     feed(solo, 0.04, leader=leader, left=JoyConReading(frozenset({"capture", "minus"})), right=None)
     assert not solo.active
+
+
+def test_2025_torso_height_preserves_reach_and_pitch():
+    config = JoyloConfig(torso_link_lengths=(0.4, 0.3), torso_rate=0.5)
+    q = [0.0, 0.0, 0.0, 0.0]
+    for _ in range(1000):
+        q = torso_step(q, -1, 0, 0.01, [(-3.0, 3.0)] * 4, config)
+    assert 0.4 * math.sin(q[0]) + 0.3 * math.sin(q[0] + q[1]) == pytest.approx(0, abs=2e-4)
+    assert q[0] + q[1] - q[2] == pytest.approx(0, abs=1e-10)
+    assert 0.4 * math.cos(q[0]) + 0.3 * math.cos(q[0] + q[1]) == pytest.approx(0.45, abs=1e-3)

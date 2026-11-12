@@ -25,7 +25,8 @@ import math
 from pydantic import Field, model_validator
 
 from dimos.core.module import ModuleConfig
-from dimos.robot.galaxea.r1pro.config import R1PRO_GRIPPER_OPENING_RANGE
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.galaxea.r1pro.config import R1PRO_GRIPPER_OPENING_RANGE, R1PRO_MODEL
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS
 from dimos.teleop.joycon.mapping import (
     GripperState,
@@ -40,16 +41,17 @@ UPPER = tuple(f"r1pro/{name}" for name in UPPER_BODY_JOINTS)
 ARMS = UPPER[4:]
 TORSO = UPPER[:4]
 JAWS = tuple(f"r1pro/{side}_gripper" for side in SIDES)
-TORSO_LINK_M = 0.35
 
 
 class JoyloConfig(ModuleConfig):
+    model: RobotModel = R1PRO_MODEL
+    torso_link_lengths: tuple[float, float] = (0.35, 0.35)
     enabled_sides: tuple[JoyConSide, ...] = ("left", "right")
     arm_only: bool = False
     input_timeout_s: float = Field(default=0.25, gt=0, allow_inf_nan=False)
     tick_period_s: float = Field(default=0.01, gt=0, le=0.05)
-    arm_rate: float = Field(default=0.25, gt=0, le=0.5)
-    torso_rate: float = Field(default=0.15, gt=0, le=0.3)
+    arm_rate: float = Field(default=0.25, gt=0, le=3.0)
+    torso_rate: float = Field(default=0.15, gt=0, le=1.5)
     height_rate: float = Field(default=0.03, gt=0, le=0.05)
     pitch_rate: float = Field(default=0.1, gt=0, le=0.2)
     base_speed: float = Field(default=0.1, gt=0, le=0.2)
@@ -61,6 +63,8 @@ class JoyloConfig(ModuleConfig):
     def _validate_sides(self) -> "JoyloConfig":
         if not self.enabled_sides or len(set(self.enabled_sides)) != len(self.enabled_sides):
             raise ValueError("enabled_sides must name one or two distinct sides")
+        if not all(math.isfinite(v) and v > 0 for v in self.torso_link_lengths):
+            raise ValueError("torso link lengths must be finite and positive")
         return self
 
 
@@ -74,21 +78,24 @@ def torso_step(
 ) -> list[float]:
     """Height at fixed fore/aft reach, upper pitch trim, and retained yaw.
 
-    The pinned 2026 model has two +Y folding axes and a -Y third pitch axis.
+    Both vendor variants have two +Y folding axes and a -Y third pitch axis.
     q1 + q2 - q3 is the upper pitch. Bounds apply to the coordinated step.
     """
     if not lift and not pitch:
         return q.copy()
     a, b, c, yaw = q
-    x = TORSO_LINK_M * (math.sin(a) + math.sin(a + b))
-    z = TORSO_LINK_M * (math.cos(a) + math.cos(a + b))
-    ceiling = math.sqrt(max(0.0, (2 * TORSO_LINK_M) ** 2 - x * x))
+    l1, l2 = config.torso_link_lengths
+    x = l1 * math.sin(a) + l2 * math.sin(a + b)
+    z = l1 * math.cos(a) + l2 * math.cos(a + b)
+    ceiling = math.sqrt(max(0.0, (l1 + l2) ** 2 - x * x))
     target_a, target_b = a, b
     if lift and 0.45 <= z <= ceiling + 1e-6:
         height = min(ceiling, max(0.45, z + lift * config.height_rate * dt))
-        cosine = (x * x + height * height - 2 * TORSO_LINK_M**2) / (2 * TORSO_LINK_M**2)
+        cosine = (x * x + height * height - l1 * l1 - l2 * l2) / (2 * l1 * l2)
         target_b = (1 if b > 0 else -1) * math.acos(max(-1, min(1, cosine)))
-        target_a = math.atan2(x, height) - math.atan2(math.sin(target_b), 1 + math.cos(target_b))
+        target_a = math.atan2(x, height) - math.atan2(
+            l2 * math.sin(target_b), l1 + l2 * math.cos(target_b)
+        )
     target_c = c + target_a + target_b - a - b - pitch * config.pitch_rate * dt
     target = [target_a, target_b, target_c, yaw]
     delta = [new - old for new, old in zip(target, q, strict=True)]

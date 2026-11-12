@@ -84,10 +84,16 @@ def main() -> None:
 
         def height(q: dict[str, float]) -> float:
             a, b = q["r1pro/torso_joint1"], q["r1pro/torso_joint2"]
-            return 0.35 * (math.cos(a) + math.cos(a + b))
+            return 0.4 * math.cos(a) + 0.3 * math.cos(a + b)
 
         lowered = height(start) - height(moved)
-        assert lowered > 0.005, (height(start), height(moved))
+        assert lowered > 0.005, (
+            height(start),
+            height(moved),
+            {k: v for k, v in moved.items() if "torso" in k},
+            sim.status(),
+            profile.status(),
+        )
 
         def base_pose() -> list[float]:
             body = next(b for b in sim.inspect().bodies if b.body_id == "r1pro/base_link")

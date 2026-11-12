@@ -55,10 +55,10 @@ async def test_opposing_fingers_become_canonical_jaw_openings_and_halt_clamps(co
     positions[UPPER[0]] = 2.01  # Physics can overshoot a joint limit slightly.
     positions.update(
         {
-            "r1pro/left_gripper_finger_joint1": 0.026,
-            "r1pro/left_gripper_finger_joint2": -0.026,
-            "r1pro/right_gripper_finger_joint1": 0.052,
-            "r1pro/right_gripper_finger_joint2": -0.052,
+            "r1pro/left_gripper_finger_joint1": 0.025,
+            "r1pro/left_gripper_finger_joint2": -0.025,
+            "r1pro/right_gripper_finger_joint1": 0.05,
+            "r1pro/right_gripper_finger_joint2": -0.05,
         }
     )
     await module.handle_encoder(

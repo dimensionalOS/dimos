@@ -335,6 +335,7 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
+    "ruckig==0.12.2",  # Offline R1 Pro trajectory interpolation (WIM semantics).
     "mjcf-to-urdf>=0.1.1",
     "playground>=0.0.5",
     "pygame>=2.6.1",

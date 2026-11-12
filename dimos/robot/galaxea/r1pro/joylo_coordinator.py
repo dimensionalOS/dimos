@@ -35,10 +35,10 @@ class R1ProJoyloCoordinator(ControlCoordinator):
     r1pro_joint_state: In[JointState]
 
 
-def joylo_tasks() -> list[TaskConfig]:
+def joylo_tasks(velocity_limits: dict[str, float] | None = None) -> list[TaskConfig]:
     # One canonical trajectory owner: the profile composes the arms and torso.
     return [
-        leader_task(UPPER, velocity_limits=dict.fromkeys(UPPER, 0.3)),
+        leader_task(UPPER, velocity_limits=velocity_limits or dict.fromkeys(UPPER, 0.3)),
         TaskConfig(
             name="vel_chassis",
             type="twist_velocity",

@@ -15,7 +15,7 @@
 """CC's R1 Pro command contract connected to sim2's physical servo.
 
 Canonical jaw opening is 0..0.1 m. The simulation has two opposing fingers
-with 0.052 m travel each; normalize at this boundary, preserving CC's API.
+with 0.050 m travel each; normalize at this boundary, preserving CC's API.
 """
 
 import threading

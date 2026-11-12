@@ -21,7 +21,7 @@ merges, with the robot-specific adapter and profile added above them:
 The R1 sim files are ported from that committed snapshot; uncommitted work in
 the existing sim worktrees is not part of this branch. Its older control and VR
 integration are not prerequisites. The model uses a separate
-`~/.cache/dimos/sim2/r1pro-joylo/` directory.
+`~/.cache/dimos/sim2/r1pro-joylo-2025/` directory.
 
 This is a draft integration branch targeting main. Before making a small
 mergeable feature PR, land the CC, Krishna and sim2 dependencies, then carry
@@ -61,7 +61,7 @@ Generic OpenArm blueprints retain their reader-side jump guard.
 The coordinator owns one trajectory task covering both arms and torso, two
 gripper tasks and one base velocity task. The sim connection uses CC's same
 joint/interface declarations. It converts canonical 0–0.1 m jaw opening into
-the simulated fingers' 0–0.104 m aperture, and converts measured world-frame
+the simulated fingers' 0–0.100 m aperture, and converts measured world-frame
 base velocity into body-frame feedback. The servo handles the physical wheel
 steering and wheel speeds.
 
@@ -102,9 +102,66 @@ over 0.75 rad also requires re-engagement. Initial arm targets and jaw openings
 come from measured feedback, with no automatic home movement.
 
 The base defaults to 0.1 m/s (0.2 with boost), yaw to 0.25 rad/s, arms to
-0.25 rad/s and torso joints to 0.15 rad/s. A/B/Y, capture and rail buttons
+1.5 rad/s and torso joints to 0.5 rad/s in the simulation blueprints. The
+generic profile retains conservative 0.25/0.15 rad/s hardware defaults. A/B/Y, capture and rail buttons
 do not start/save/discard episodes in this profile. Recording workflow and
 physical-robot deployment remain follow-up work.
+
+
+## WIM model and controller alignment (2026-11-12)
+
+The recovered WIM source snapshot is **d2594a1**; its distributed controller
+binary was built from **235e224**. This integration is a source-guided simulation
+change, not deployment or a benchmark of that binary.
+
+Our previous arm path stacked 0.25 rad/s (JoyLo), 0.3 rad/s (coordinator), and
+0.5 rad/s (servo) limits. A 90-degree leader move therefore required at least
+6.28 seconds. The sim now uses 1.5 rad/s throughout; torso is 0.5 rad/s.
+These are simulation tracking settings, not measured hardware maxima. WIM's
+`robots/r1pro/r1pro.yaml` limits arm speed to 3/3/3/5/5/5/5 rad/s, and its
+`demo-motion-big.yaml` proposes 1.5 rad/s. That demo file is not proof of a
+successful physical run.
+
+The public vendor `R1Pro/urdf_r1pro_2025.urdf` at `2e5d31e` matches WIM's
+on-robot URDF joint frames, axes, limits and link inertias. We use that model
+instead of the 2026 G1Z variant: 0.40/0.30 m torso links, vendor masses/COMs/
+inertias, and +/-50 mm finger travel. JoyLo's torso solver and the coordinator's
+joint limits use the same selected model. This establishes agreement with their
+URDF; physical dimensions still need confirming against our particular robot.
+
+The 2025 mesh package is missing from the vendor URDF repository. Available
+arm/torso/chassis/jaw meshes come from the official
+[Galaxea simulator at abe7f516](https://github.com/OpenGalaxea/GalaxeaManipSim/tree/abe7f5161eeaa150e6eaffdf443af5df7f23f356/galaxea_sim/assets/r1_pro).
+Those visuals/collisions are approximate for chassis revisions; unavailable
+head/sensor geometry is explicitly omitted while retaining its inertia and
+frames. Contacts use convex mesh hulls and the existing wheel cylinders.
+Do not treat camera images or head/sensor collision clearance as validated.
+
+The servo follows WIM's outer-loop structure:
+
+- Three independent Ruckig groups (torso, left, right), updated every 4 ms.
+  Acceleration is 1.5 times the speed setting; jerk is 10,000 rad/s^3. Positions
+  and velocities go to the simulated PD drive, initialized from measured pose.
+- Pinocchio gravity uses measured torso angles and commanded arm angles, with
+  the vendor URDF inertias. Sim torso gravity compensation approximates the
+  hidden firmware position loop; WIM itself sends no torso feedforward torque.
+- The vendor's coupled J6/J7 polynomial bounds are applied, as well as URDF
+  limits. Clipping a moving bound resets the trajectory at the bounded state.
+- Tiny, already-stationary retargets are normalized to avoid Ruckig's observed
+  zero-duration synchronization failure. Other solver failures surface as errors.
+
+WIM's `kp=2`, `kd=25` are raw firmware fields, not MuJoCo SI torque gains. They
+are deliberately not copied. Servo gains, reflected inertia, friction/contact
+behavior and the gripper/base drive remain approximations. WIM's board emulator
+copies targets to feedback; it is not a measured dynamic plant. There is no
+identified friction, backlash, actuator latency or closed-loop motor response
+in the reviewed runtime model. Real recordings are needed to calibrate those.
+
+A local headless 0.6 rad shoulder step reached 90% in 0.77 s versus 1.22 s with
+the old servo, and final static error fell from 0.0473 rad to about 0.000003 rad.
+This compares simulated servos, excludes the old 0.25 rad/s JoyLo cap, and is
+not a real-robot accuracy measurement. `demo_joylo` exercises the full module
+path, including torso height, jaws, chassis and input-loss pause.
 
 ## Run the simulation check on this Mac
 

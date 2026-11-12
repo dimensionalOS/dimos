@@ -27,7 +27,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.galaxea.r1pro.joylo import UPPER, JoyloConfig, JoyloController
 from dimos.teleop.joycon.raw import decode_readings
 from dimos.teleop.leader.module import GUARDED_JOINT_FRAME_ID
@@ -54,7 +53,7 @@ class R1ProJoylo(Module):
     @rpc
     def start(self) -> None:
         limits = {}
-        for joint in R1PRO_MODEL.load().joints:
+        for joint in self.config.model.load().joints:
             if joint.name in UPPER:
                 assert joint.lower is not None and joint.upper is not None
                 limits[joint.name] = (joint.lower, joint.upper)
