@@ -848,7 +848,7 @@ def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
 def test_to_usd_does_not_convert_until_the_layer_is_asked_for(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    import dimos.robot.assets.urdf_to_usd as conversion
+    import dimos.robot.assets.usd_utils.from_urdf as conversion
 
     convert = mocker.patch.object(conversion, "urdf_to_usd", return_value="#usda 1.0\n")
 
@@ -929,7 +929,7 @@ def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
 def test_a_usd_model_converted_from_a_urdf_never_reads_the_layer_to_pose(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    import dimos.robot.assets.usd_to_urdf as usd_to_urdf_module
+    import dimos.robot.assets.usd_utils.to_urdf_mask as usd_to_urdf_module
 
     convert = mocker.patch.object(usd_to_urdf_module, "usd_to_urdf")
     model = _urdf(tmp_path).to_usd()
