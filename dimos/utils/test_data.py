@@ -660,6 +660,7 @@ def test_lfs_path_multiple_instances() -> None:
 
 def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
     data_dir = tmp_path / "data"
+    (data_dir / "repo" / ".git").mkdir(parents=True)  # what a clone killed part-way leaves behind
     barrier = Barrier(4)
     mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path / "installed")
 
@@ -671,6 +672,7 @@ def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
         with pytest.raises(Timeout), FileLock(data_dir / "repo.lock", timeout=0):
             pass
         (data_dir / "repo" / ".git").mkdir(parents=True)
+        (data_dir / "repo" / ".git" / "index").touch()
 
     mocker.patch.object(data, "_get_user_data_dir", side_effect=user_data_dir)
     run = mocker.patch.object(data.subprocess, "run", side_effect=clone)

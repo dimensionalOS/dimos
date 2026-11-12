@@ -81,8 +81,10 @@ def get_project_root() -> Path:
     repo_dir = data_dir / "repo"
 
     with FileLock(data_dir / "repo.lock"):
-        # Clone if not already cloned
-        if not (repo_dir / ".git").exists():
+        # Clone if not already cloned. git writes .git/index last, so a clone that was
+        # killed part-way has none: remove what it left, or git refuses to clone into it.
+        if not (repo_dir / ".git" / "index").exists():
+            shutil.rmtree(repo_dir, ignore_errors=True)
             logger.info("Cloning the DimOS repository for its data files", path=str(repo_dir))
             started = time.monotonic()
             try:
