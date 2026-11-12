@@ -117,10 +117,15 @@ def build(store: Store) -> dict[str, Any] | None:
         poses
     ):  # denser than the LiDAR poses, or the only path
         poses = [(o.ts, o.data) for o in odom]
-    sticks = []
+    sticks: list[tuple[float, list[float], list[int]]] = []
     if joy is not None:
-        picked = _evenly(joy.count(), PREVIEW_JOY_SAMPLES)
-        sticks = [o for i, o in enumerate(joy) if i in picked]
+        # only changes: keyboard teleop repeats the held keys at 50 Hz and sends a release
+        # once, so sampling the raw stream drops releases and keys look stuck
+        for o in joy:
+            axes, buttons = [round(a, 2) for a in o.data.axes], list(o.data.buttons)
+            if not sticks or sticks[-1][1:] != (axes, buttons):
+                sticks.append((o.ts, axes, buttons))
+        sticks = [sticks[i] for i in sorted(_evenly(len(sticks), PREVIEW_JOY_SAMPLES))]
     shots = []
     if camera is not None:
         picked = _evenly(camera.count(), PREVIEW_FRAMES)
@@ -170,10 +175,7 @@ def build(store: Store) -> dict[str, Any] | None:
             for o in shots
         ],
         "thumb": int(np.argmax([o.data.brightness for o in shots])) if shots else None,
-        "joy": [
-            [round(o.ts - t0, 3), [round(a, 2) for a in o.data.axes], list(o.data.buttons)]
-            for o in sticks
-        ],
+        "joy": [[round(t - t0, 3), axes, buttons] for t, axes, buttons in sticks],
     }
 
 

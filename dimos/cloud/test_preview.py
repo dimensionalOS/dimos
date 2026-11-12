@@ -136,6 +136,16 @@ def test_joystick_samples_ride_along() -> None:
     assert bare is not None and bare["joy"] == [] and "joystick" not in bare["streams"]
 
 
+def test_joystick_keeps_every_change() -> None:
+    odom = [(100.0, PoseStamped(position=[0, 0, 0.3], frame_id="world"), None)]
+    w, none = [1, 0, 0], [0, 0, 0]
+    sticks = [(100.0 + i / 50, Joy(buttons=w), None) for i in range(5000)]  # held at 50 Hz
+    sticks += [(200.0, Joy(buttons=none), None), (201.0, Joy(buttons=w), None)]
+    doc = preview.build(store(odom=odom, joystick=sticks))
+    assert doc is not None and doc["streams"]["joystick"]["count"] == 5002
+    assert doc["joy"] == [[0.0, [], w], [100.0, [], none], [101.0, [], w]]
+
+
 def test_joystick_is_capped_evenly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(preview, "PREVIEW_JOY_SAMPLES", 3)
     odom = [(100.0, PoseStamped(position=[0, 0, 0.3], frame_id="world"), None)]
