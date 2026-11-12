@@ -1103,6 +1103,34 @@ def test_a_grafted_material_wired_by_connection_keeps_its_own_shader() -> None:
     )
 
 
+_SUBTREE_WIRED_TO_WHAT_IT_DOES_NOT_STATE = """#usda 1.0
+(
+    defaultPrim = "arm_sub"
+)
+
+def Xform "arm_sub"
+{
+    def Material "paint"
+    {
+        token outputs:surface.connect = </Flattened_Prototype_1.outputs:surface>
+    }
+}
+"""
+
+
+def test_a_graft_leaves_alone_a_connection_to_a_prim_the_layer_does_not_state() -> None:
+    """An instancing prototype is composed, not authored, so Sdf.CopySpec cannot carry it."""
+    grafted = graft_usd(
+        _SCENE_WIRED_BY_CONNECTION, {"room": _SUBTREE_WIRED_TO_WHAT_IT_DOES_NOT_STATE}
+    )
+
+    stage = _stage(grafted)
+    paint = stage.GetPrimAtPath("/room/arm_sub/paint").GetAttribute("outputs:surface")
+    assert [str(path) for path in paint.GetConnections()] == [
+        "/Flattened_Prototype_1.outputs:surface"
+    ]
+
+
 _SCENE_WITH_TWO_SHADERS = """#usda 1.0
 (
     defaultPrim = "room"
