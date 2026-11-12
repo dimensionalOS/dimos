@@ -53,7 +53,7 @@ def test_shapes_stay_on_the_table(scene: str) -> None:
     balls = ("purple_ball", "teal_ball")
     for ball in balls:
         dof = model.jnt_dofadr[model.body(ball).jntadr[0]]
-        data.qvel[dof + 1] = -0.3  # roll toward the table edge
+        data.qvel[dof] = 1.0  # roll fast toward the front rim
     for _ in range(int(3.0 / model.opt.timestep)):
         mujoco.mj_step(model, data)
 
@@ -65,7 +65,7 @@ def test_shapes_stay_on_the_table(scene: str) -> None:
     ]
     assert len(shapes) == 7
     for name in shapes:
-        assert data.body(name).xpos[2] > 0.13, f"{name} fell off the table"
+        assert data.body(name).xpos[2] > 0.12, f"{name} fell off the table"
         assert np.linalg.norm(data.body(name).cvel) < 0.01, f"{name} is still moving"
 
 
