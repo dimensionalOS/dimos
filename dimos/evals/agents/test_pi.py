@@ -20,6 +20,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from typing import IO
 from unittest.mock import MagicMock
 
@@ -30,6 +31,7 @@ from pytest_mock import MockerFixture
 from dimos.agents.llm_trace import request_path, response_path
 from dimos.evals.agents import pi
 from dimos.evals.agents.blind import Blind
+from dimos.evals.agents.dimos_agent import DimosAgentAdapter
 from dimos.evals.agents.lib.pi_config import Provider, RunPaths, RuntimeConfig
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -294,6 +296,59 @@ def test_pi_offline_setting_reaches_subprocess(
     env = PiAdapter()._build_process_env(RunPaths.for_run(tmp_path))
 
     assert env.get("PI_OFFLINE") == offline
+
+
+@pytest.mark.parametrize("adapter", [PiAdapter, DimosAgentAdapter])
+@pytest.mark.parametrize("library_path", [None, "/opt/native/lib:/opt/vendor/lib:/usr/local/lib"])
+def test_native_library_path_reaches_eval_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    adapter: type[PiAdapter],
+    library_path: str | None,
+) -> None:
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    if library_path is not None:
+        monkeypatch.setenv("LD_LIBRARY_PATH", library_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "unrelated-host-secret")
+    agent = adapter()
+    paths = RunPaths.for_run(tmp_path)
+    agent._configure(
+        RunningEnvironment(mcp_url="http://robot.test:4321/mcp", streams=(), artifacts={}),
+        paths,
+        "http://provider.test",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json, os, sys; sys.stdout.write(json.dumps({"
+            "name: os.environ.get(name) for name in ('LD_LIBRARY_PATH', 'AWS_SECRET_ACCESS_KEY')}))",
+        ],
+        env=agent._build_process_env(paths),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+
+    assert json.loads(result.stdout) == {
+        "LD_LIBRARY_PATH": library_path,
+        "AWS_SECRET_ACCESS_KEY": None,
+    }
+
+
+def test_explicit_passthrough_can_exclude_native_library_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/native/lib:/opt/vendor/lib")
+    agent = PiAdapter(passthrough_env=("PATH",))
+
+    env = agent._build_process_env(RunPaths.for_run(tmp_path))
+
+    assert "LD_LIBRARY_PATH" not in env
 
 
 def test_anthropic_sse_usage_and_trace_matching(tmp_path: Path) -> None:
