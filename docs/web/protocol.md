@@ -164,8 +164,9 @@ execution. Disconnect/timeouts are unknown outcomes and are never retried.
 
 Fixed media profiles are `image.jpeg.{low,balanced,high}.v1`,
 `depth.lossless.v1`, and `cloud.q16.{low,balanced,full}.v1`. They require latest
-delivery. Identical subscriptions share the provider's conversion; two global
-worker permits are acquired before selecting from the newest raw mailbox.
+delivery. Subscriptions with the same settings share the provider's
+conversion; two global worker permits are held one per encode, never across
+a route's variants, and the newest raw sample is selected with the permit.
 Color uses JPEG; depth uses zlib-compressed little-endian numeric samples with
 shape, original encoding and units; clouds use zlib-compressed int16 xyz with
 origin/scale, optional float32 intensity and RGB bytes. LCM acquisition time
