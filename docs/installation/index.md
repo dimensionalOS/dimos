@@ -41,3 +41,19 @@ For all options:
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --help
 ```
+
+## Install from a source checkout
+
+`--mode dev` builds the checkout, including its C++ extension, so it needs `gcc`
+or `clang`. Web bundles are large binary assets and are not present in a plain
+git checkout. A checkout without them installs a UI-less wheel; set
+`DIMOS_ALLOW_MISSING_COCKPIT=1` to allow that build instead of failing on the
+missing cockpit and SDK assets:
+
+```sh
+DIMOS_ALLOW_MISSING_COCKPIT=1 pip install /path/to/dimos
+```
+
+The flag only skips the web UI bundle; messages, native code and the Python API
+are installed as usual. Build the web bundles with `deno task build` in
+`web/sdk` and `web/cockpit` when you need the local relay UI.

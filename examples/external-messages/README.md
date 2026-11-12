@@ -2,24 +2,21 @@
 
 `demo_msgs/msg/Reading` reuses the built-in `std_msgs/Header` from an installed
 dimOS instead of redeclaring it, so one `Header` identity exists at runtime.
-`pyproject.toml` and `setup.py` are the ordinary setuptools files for a package
-that defines messages.
+`pyproject.toml` is the configuration `dimos package add messages` writes for an
+existing project: the `.msg` definitions live in `interfaces/`, and every build
+generates, packages and registers the Python message code.
 
 ```sh
 pip install .
 python demo_external.py
 ```
 
-`pip install .` builds the package and its generated message artifacts from the
-committed `interfaces/` definitions.
+`pip install .` runs the generation as part of the normal pip build. There is no
+`setup.py`, no separate `dimos-cdrgen` step and no message-version pin to
+maintain: the build reads the message providers installed in the environment.
 
-Against a DimOS checkout that is not published yet, use the local install so the
-build cannot download a different PyPI release:
-
-```sh
-pip install --no-build-isolation --no-deps .
-python demo_external.py
-```
+During development, `pip install -e .` installs the same package in editable
+mode.
 
 `demo_external.py` round-trips a `Reading` message and checks that its nested
 `Header` is the same class as the installed `dimos_messages` type.
@@ -33,5 +30,3 @@ PASS: external Reading message shares the installed dimos_messages Header identi
 
 To build your own package with these files, follow
 [Add a message in your own project](/docs/use%20dimos%20as%20a%20library/external-message.md).
-It also explains the exact message-version entry that `dimos-cdrgen` checks
-against the installed manifest.

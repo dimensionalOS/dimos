@@ -22,11 +22,9 @@ follow the module tutorial first if you want to run them in order.
 ## Before you start
 
 - Python 3.12 and `pip`.
-- An environment with dimOS installed. A released dimOS follows its normal
-  install instructions. To work against a checkout that is not published yet,
-  install that checkout into your own environment first; its build compiles one
-  existing C++ extension, so it needs `gcc` or `clang`, and a checkout without
-  built web bundles also needs `DIMOS_ALLOW_MISSING_COCKPIT=1`.
+- An environment with dimOS installed. Follow
+  [installation](/docs/installation/index.md) for a released dimOS or for a
+  source checkout.
 
 Check the installed versions:
 

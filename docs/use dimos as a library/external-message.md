@@ -1,72 +1,82 @@
 # Add a message in your own project
 
 A garden sensor needs to publish soil readings from a package that is not part
-of this repository. This tutorial creates the `plant-telemetry` package with a
-`plant_msgs/msg/SoilReading` message that reuses the built-in `Header` from an
-installed dimOS.
+of this repository. This tutorial adds a `plant_msgs/msg/SoilReading` message to
+an existing Python project and reuses the built-in `Header` from an installed
+dimOS.
 
 ## Before you start
 
 - Python 3.12 and `pip`.
-- An environment with `dimos` and `dimos-cdrgen==0.1.2` installed. For a released
-  dimOS, follow its install instructions. This tutorial assumes the installed
-  `dimos_messages` manifest reports version `0.0.15`; check the installed
-  versions after installing:
+- dimOS installed in the environment you build with. Follow
+  [installation](/docs/installation/index.md); against a source checkout, use
+  the checkout install described there.
+- Your own project already has a `pyproject.toml` with a `[project]` table, a
+  release version such as `0.1.0`, and its own Python modules.
+
+Check the installed versions:
 
 ```sh
 python -c "from importlib.metadata import version; print(version('dimos'), version('dimos-cdrgen'))"
 ```
 
-The build in step 4 reads the `dimos_messages` manifest from that installation
-and compares its version with `[tool.dimos.messages.dependencies]`.
+Building the message package needs no C++ compiler, ROS, robot or transport.
 
-If you are working against a dimOS checkout that is not published yet, install
-that checkout into your own environment so the external build uses it instead of
-a PyPI release. A fresh checkout has no built web bundles and ships a C++
-extension, so the checkout build needs `DIMOS_ALLOW_MISSING_COCKPIT=1` and a C++
-compiler (`gcc` or `clang`):
+## 1. Add message packaging
+
+From the project directory:
 
 ```sh
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-DIMOS_ALLOW_MISSING_COCKPIT=1 pip install /path/to/dimos
+dimos package add messages
 ```
 
-The flag builds a UI-less wheel; it does not change the messages. Installing the
-checkout also installs its `dimos-cdrgen==0.1.2` dependency.
+The command creates `interfaces/` and makes the smallest edit to
+`pyproject.toml` that turns every `pip install` into a message build. For a
+project called `plant-telemetry` the added configuration is:
 
-Building `plant-telemetry` itself generates Python only. It does not need a C++
-compiler, ROS, a robot or a transport; the compiler above is for the dimOS
-checkout install.
+```toml
+[build-system]
+requires = ["setuptools>=70", "wheel", "dimos>=0.0.15"]
+build-backend = "dimos.message_codegen.backend"
 
-## 1. Create the project
+[project]
+# unchanged: name, version, description, your own dependencies ...
+dependencies = [
+    # your existing dependencies ...
+    "dimos>=0.0.15",
+]
+
+[tool.dimos.messages]
+source = "interfaces"
+
+[tool.setuptools.package-data]
+plant_telemetry = ["py.typed", "*.pyi", "**/*.pyi"]
+plant_telemetry_schemas = ["schemas.json", "schemas/**/*", "package/**/*"]
+
+[project.entry-points."dimos.messages"]
+plant_telemetry = "plant_telemetry_schemas.provider"
+```
+
+You do not choose a Python module: generated messages land in the project name
+with `-` replaced by `_`, so `plant-telemetry` generates `plant_telemetry`.
+Existing metadata, dependencies, package data and comments are preserved.
+
+Running the command again changes nothing. It refuses, before touching any
+file, projects that have a `setup.py`/`setup.cfg`, a build backend other than
+setuptools, or explicit `[tool.setuptools] packages`/`package-dir`/`py-modules`
+configuration.
+
+## 2. Write the message
 
 ```text
 plant-telemetry/
   pyproject.toml
-  setup.py
   interfaces/
     plant_msgs/
       msg/
         SoilReading.msg
   demo.py
 ```
-
-Three names describe the package and have to line up:
-
-- `plant-telemetry` is the pip distribution name, set in `[project] name`.
-- `plant_telemetry` is the Python package that receives the generated code, set
-  by `[tool.dimos.messages] python-module`.
-- `plant_msgs` is the schema package, taken from the directory below
-  `interfaces`.
-
-The generated import follows those names:
-`from plant_telemetry.plant_msgs.msg import SoilReading`. The generated schemas
-install as `plant_telemetry_schemas`, and the package registers itself in the
-`dimos.messages` entry point group so `dimos-cdrgen` can find it.
-
-## 2. Add the message
 
 Create `interfaces/plant_msgs/msg/SoilReading.msg`:
 
@@ -81,80 +91,42 @@ float32 temperature_c
 bool pump_on
 ```
 
-`std_msgs/Header` is not defined in this project. It resolves to the class in the
-installed `dimos_messages` package, whose exact message version is declared in
-the next step.
+`std_msgs/Header` is not defined in this project. It resolves to the class in
+the installed `dimos_messages` package, and that exact built-in schema is
+packaged alongside the new one, so importing and decoding uses one `Header`
+class.
 
-## 3. Describe the package
+## 3. Build and install
 
-Create `pyproject.toml`. It is an ordinary setuptools project file:
-
-```toml
-[build-system]
-requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.2", "dimos>=0.0.15"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "plant-telemetry"
-version = "0.1.0"
-description = "Garden soil readings that reuse the installed DimOS Header"
-requires-python = ">=3.12"
-dependencies = ["dimos>=0.0.15", "dimos-cdrgen==0.1.2"]
-
-[tool.dimos.messages]
-python-module = "plant_telemetry"
-
-[tool.dimos.messages.dependencies]
-"dimos_messages" = "0.0.15"
-```
-
-Create `setup.py`. It hands the project directory to the generator:
-
-```python
-from pathlib import Path
-
-from dimos_cdrgen.source_package import setup_arguments
-from setuptools import setup
-
-setup(**setup_arguments(Path(__file__).resolve().parent))
-```
-
-The two version declarations are different contracts:
-
-- `dimos>=0.0.15` in `[build-system]` and `[project] dependencies` is a pip
-  requirement. It sets the oldest DimOS release this package installs with.
-- `[tool.dimos.messages.dependencies]` is a message identity, not a pip
-  requirement. `dimos-cdrgen` matches each entry against the installed message
-  manifest and requires the exact version string. `"dimos_messages" = "0.0.15"`
-  matches the manifest that dimOS 0.0.15 ships. `dimos-cdrgen==0.1.2` currently
-  requires that exact value: a specifier such as `">=0.0.15"` is rejected, and a
-  newer installed manifest is not accepted automatically. Change the literal
-  when you deliberately build against a newer message package and a generator
-  release that supports it.
-
-## 4. Build and install
-
-With the DimOS environment active, from `plant-telemetry/`:
+With the dimOS environment active, from `plant-telemetry/`:
 
 ```sh
-pip install --no-build-isolation --no-deps .
+pip install .
 ```
 
-`--no-build-isolation` builds with the `dimos-cdrgen` and DimOS already in the
-environment. An isolated build resolves its own dependencies, so it can fetch a
-DimOS release that does not contain these message packages. `--no-deps` leaves
-the installed DimOS alone; the generated schemas were already built against it.
+Every build regenerates the Python message packages under
+`build/message-source` from `interfaces/`, packages them with the project's own
+modules, and registers the schemas. There is no `setup.py`, no manual
+`dimos-cdrgen` step and no version pin to maintain: the build reads the message
+providers installed in its environment.
+
+During development use an editable install instead:
+
+```sh
+pip install -e .
+```
+
+`build/message-source` is build output. Do not commit it; `interfaces/` is the
+source of truth.
 
 To build a wheel without installing it:
 
 ```sh
-pip wheel --no-build-isolation --no-deps --wheel-dir dist .
+pip wheel --no-deps --wheel-dir dist .
+pip install --no-deps dist/plant_telemetry-0.1.0-py3-none-any.whl
 ```
 
-The result is `dist/plant_telemetry-0.1.0-py3-none-any.whl`. Install it with
-`pip install --no-deps dist/plant_telemetry-0.1.0-py3-none-any.whl`.
-
-## 5. Read a value back
+## 4. Read a value back
 
 Create `demo.py`:
 
@@ -182,7 +154,7 @@ print(f"same value: {restored == reading}")
 print(f"same Header class: {type(restored.header) is Header}")
 ```
 
-Run it from `plant-telemetry/` with the same environment:
+Run it with the environment that installed the package:
 
 ```sh
 python demo.py
@@ -200,16 +172,22 @@ same Header class: True
 ```
 
 `type(restored.header) is Header` is `True` because both names refer to the
-class installed by `dimos_messages`. The external package does not generate a
-second `Header`.
+class installed by `dimos_messages`; the project does not generate a second
+`Header`.
 
 `float32` values are rounded to 32 bits on decode. This example uses values that
 fit exactly, so `restored == reading` is `True`. When a value does not fit,
 compare with a tolerance instead of equality.
 
-## 6. Change the definition
+## 5. Change or remove a definition
 
-Edit `interfaces/plant_msgs/msg/SoilReading.msg`, then rerun the install command
-from step 4. The build regenerates the classes and installs the package again.
-Restart any Python process that already imported `plant_telemetry`; the message
-registry is initialized once per process.
+Edit `interfaces/plant_msgs/msg/SoilReading.msg`, then rerun `pip install .` (or
+`pip install -e .`). The build regenerates the classes, so new or changed fields
+appear and a type whose `.msg` file was deleted or renamed disappears on the
+next install. Restart any Python process that already imported
+`plant_telemetry`; the message registry is initialized once per process.
+
+If one of your project files has the same path as a generated file, for example
+`plant_telemetry/_types.py`, the build stops with an error naming both paths
+instead of dropping your file. Rename the project file, or move the schemas to
+another module with `[tool.dimos.messages] module = ...`.
