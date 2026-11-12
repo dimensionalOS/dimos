@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.urdf_to_usd import urdf_to_usd
-from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+from dimos.robot.assets.usd_utils.from_urdf import urdf_to_usd
+from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
 
 pytest.importorskip("pxr")
 
@@ -244,7 +244,7 @@ def test_a_layer_with_no_joints_is_still_a_robot(tmp_path: Path) -> None:
 def test_the_root_link_is_found_in_the_layer_not_taken_from_the_default_prim(
     probe: Any, tmp_path: Path
 ) -> None:
-    from dimos.robot.assets.usd_to_urdf import usd_root_link
+    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
     usd = urdf_to_usd(probe)
 
@@ -317,41 +317,6 @@ def test_a_capsule_becomes_a_cylinder_that_covers_it() -> None:
     assert float(cylinder.get("length") or 0) == pytest.approx(0.38)
 
 
-_MJC_GROUPED_USDA = """#usda 1.0
-(
-    defaultPrim = "leg"
-)
-
-def Xform "leg"
-{
-    def Xform "thigh" (
-        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
-    )
-    {
-        def Capsule "left_thigh"
-        {
-            double height = 0.2
-            double radius = 0.06
-            uniform int mjc:group = 3
-        }
-
-        def Mesh "thigh_visual"
-        {
-            uniform int mjc:group = 2
-        }
-    }
-}
-"""
-
-
-def test_a_layer_that_marks_no_collision_falls_back_to_mujocos_grouping() -> None:
-    root = ET.fromstring(usd_to_urdf(_MJC_GROUPED_USDA))
-    (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
-
-    assert link.find("collision/geometry/cylinder") is not None, "group 3 was not read as collision"
-    assert link.find("visual/geometry/cylinder") is None
-
-
 _MARKED_AND_GROUPED_USDA = """#usda 1.0
 (
     defaultPrim = "leg"
@@ -381,13 +346,13 @@ def Xform "leg"
 """
 
 
-def test_a_layer_that_marks_collision_is_not_second_guessed() -> None:
+def test_mujocos_grouping_is_not_read_as_collision() -> None:
     root = ET.fromstring(usd_to_urdf(_MARKED_AND_GROUPED_USDA))
     (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
 
     assert link.find("collision/geometry/box") is not None
     assert link.find("visual/geometry/cylinder") is not None, (
-        "the group was read despite CollisionAPI"
+        "mjc:group was read as collision; only UsdPhysics.CollisionAPI marks collision"
     )
     assert link.find("collision/geometry/cylinder") is None
 
@@ -425,7 +390,7 @@ def Xform "room"
 
 
 def test_a_scene_is_rooted_at_the_prim_every_joint_hangs_off() -> None:
-    from dimos.robot.assets.usd_to_urdf import usd_root_link
+    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
     assert usd_root_link(_SCENE_USDA) == "room"
 
@@ -440,7 +405,7 @@ _TWO_PARENTS_USDA = _SCENE_USDA.replace(
 
 
 def test_two_candidate_roots_are_not_guessed_between() -> None:
-    from dimos.robot.assets.usd_to_urdf import usd_root_link
+    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
     assert usd_root_link(_TWO_PARENTS_USDA) in {"desk", "chair"}
 
@@ -469,7 +434,7 @@ def test_an_inferred_weld_keeps_the_nested_prim_s_pose() -> None:
 
 
 def test_a_nested_layer_names_its_root_link() -> None:
-    from dimos.robot.assets.usd_to_urdf import usd_root_link
+    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
     assert usd_root_link(_NESTED_USDA) == "chassis"
 

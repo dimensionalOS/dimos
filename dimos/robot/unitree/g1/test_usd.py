@@ -19,8 +19,8 @@ pytest.importorskip("pxr")
 
 
 def test_the_layer_carries_the_gains_the_controller_runs_on() -> None:
-    from dimos.robot.assets.usd import usd_drives
     from dimos.robot.unitree.g1.sim2 import G1Sim, g1_drives
+    from dimos.sim2.mujoco.drives import usd_drives
 
     assert usd_drives(G1Sim.usd.usd) == {
         joint: pytest.approx(gains) for joint, gains in g1_drives().items()

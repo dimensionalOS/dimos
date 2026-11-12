@@ -28,13 +28,8 @@ def frame_usd(frame_id: str, *, name: str) -> list[str]:
 
 
 def camera_usd(frame_id: str, *, name: str, fovy: float) -> list[str]:
-    from dimos.robot.assets.usd import (
-        layer_from,
-        link_prim_paths,
-        load_pxr,
-        prim_identifier,
-        usd_matrix,
-    )
+    from dimos.robot.assets.usd_utils.frames import link_prim_paths
+    from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr, prim_identifier, usd_matrix
 
     pxr = load_pxr()
     root, usd = frame_usd(frame_id, name=name)
