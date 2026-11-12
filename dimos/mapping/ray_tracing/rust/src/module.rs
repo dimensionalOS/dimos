@@ -381,10 +381,24 @@ impl Worker {
             }
             Job::Keyframe => {
                 let mapper = &mut state.mapper;
-                let points = tokio::task::block_in_place(|| mapper.global_keyframe());
+                let diff = self.config.diff;
+                // In diff mode the changes not yet sent go out first, so the diffs a
+                // subscriber applied add up to exactly the keyframe that follows.
+                let (pending, points) = tokio::task::block_in_place(|| {
+                    (diff.then(|| mapper.global_diff()), mapper.global_keyframe())
+                });
+                let frame = self.config.world_frame.as_str();
                 let stamp = state.last_frame_stamp.clone();
-                let cloud =
-                    points_to_cloud(&points, &[PREMAP_FIELD], &self.config.world_frame, stamp);
+                if let Some(pending) = pending.filter(|p| !p.is_empty()) {
+                    let update = points_to_cloud(
+                        &pending,
+                        &[PREMAP_FIELD, CHANGE_FIELD],
+                        frame,
+                        stamp.clone(),
+                    );
+                    publish_cloud(&self.map_update, &update).await;
+                }
+                let cloud = points_to_cloud(&points, &[PREMAP_FIELD], frame, stamp);
                 publish_cloud(&self.global_map, &cloud).await;
             }
         }
