@@ -38,8 +38,9 @@ SUITE: Suite = [
     EvalCase(
         id="xarm_pick_cylinder_twist",
         inputs=(
-            "Pick up the orange cylinder from the table and hold it in the air, at least 5 cm above "
-            "its initial position. Use the robot interface described in ROBOT.md."
+            "Pick up the orange cylinder from the table and hold it in the air, "
+            "at least 5 cm above its initial position. "
+            "Use the robot interface described in ROBOT.md."
         ),
         environment=MujocoEnvironment(
             blueprint=["xarm-sim"],

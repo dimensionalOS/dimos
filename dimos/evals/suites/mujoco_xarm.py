@@ -22,7 +22,7 @@ bodies' recorded poses.
 from __future__ import annotations
 
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.scorers import lifted, stacked_on
+from dimos.evals.scorers import inside, lifted
 from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 
@@ -63,8 +63,9 @@ SUITE: Suite = [
         id="xarm_cube_in_bowl",
         inputs=f"Pick up the red cube and put it in the blue bowl. {SCENE}",
         environment=environment(),
-        # Resting on the bowl's floor puts the cube's centre 2.8 cm above the bowl's origin.
-        grade=stacked_on("red_cube", "blue_bowl", rise_m=(0.02, 0.04), band_m=0.05),
+        # The blue bowl's floor is 10.4 x 14.4 cm inside; a cube resting on it has its
+        # centre 2.8 cm above the bowl's origin.
+        grade=inside("red_cube", "blue_bowl", half_extents_m=(0.052, 0.072), rise_m=(0.02, 0.04)),
         timeout_s=900.0,
         threshold=0.5,
         tags=frozenset({"mujoco", "manipulation", "pick", "place"}),
