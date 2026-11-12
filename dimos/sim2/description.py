@@ -43,6 +43,7 @@ class Instance:
     floating: bool = False
     drives: tuple[Drive, ...] = ()
     rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    collision_exclusions: tuple[tuple[str, str], ...] = ()
 
     @property
     def description(self) -> LoadedRobotModel:
@@ -94,6 +95,7 @@ class SceneConfig:
                     "rpy": i.rpy,
                     "floating": i.floating,
                     "drives": [asdict(d) for d in i.drives],
+                    "collision_exclusions": i.collision_exclusions,
                 }
                 for i in self.instances
             ],
