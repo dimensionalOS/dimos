@@ -751,10 +751,8 @@ def build_coordinator():
 
 
 @pytest.fixture
-def dynamic_coordinator(monkeypatch, tmp_path):
-    monkeypatch.setattr("dimos.core.coordination.module_coordinator.RUNTIME_MODULES_DIR", tmp_path)
-    monkeypatch.setattr(sys, "path", list(sys.path))
-    mc = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none", dtop=False))
+def dynamic_coordinator():
+    mc = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
     mc.start()
     yield mc
     mc.stop()
