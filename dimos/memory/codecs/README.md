@@ -23,7 +23,7 @@ class Codec(Protocol[T]):
 `codec_for(payload_type)` picks the right codec:
 
 ```python
-from dimos.memory.codecs import codec_for
+from dimos.memory.codecs.base import codec_for
 
 codec_for(Image)        # → JpegCodec(quality=50)
 codec_for(Image, sample=depth_image)  # → Lz4Codec(LcmCodec(Image))  (DEPTH, DEPTH16, GRAY16)

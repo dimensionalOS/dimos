@@ -14,7 +14,7 @@ recording, adapt the feature shapes and names to your robot, and set
 make that data an commanded command.
 
 `inspect_recording` accepts a `DataPrepConfig` to report saved-episode quality
-before export. The CLI command `dimos dataprep inspect data/recordings/session.db`
+before export. The CLI command `dimos imitation inspect data/recordings/session.db`
 reports stream counts, saved/discarded episodes, and unfinished episodes. Use
 your actual path; `.mcap` recordings are supported too. The CLI's recording
 inspection does not accept a feature config, so use the Python API for quality
@@ -152,11 +152,14 @@ excludes invalid saved episodes and raises an error if none remain.
 
 ## Export and provenance
 
-Use `dimos dataprep build --source data/recordings/session.db --config
-dimos/imitation/dataprep/example_config.json --format hdf5 --output
-data/datasets/session.hdf5` with your recording and adapted config. The source,
-format and output flags override the corresponding config values. The Python
-API is `run_dataprep(config)` in [build.py](/dimos/imitation/dataprep/build.py).
+Build with the Python API, `run_dataprep(config)` in
+[build.py](/dimos/imitation/dataprep/build.py): copy
+`dimos/imitation/dataprep/example_config.json`, set `source`, `output.format`
+(`hdf5` or `lerobot`) and `output.path` to your recording and dataset, then run
+`run_dataprep(DataPrepConfig.model_validate_json(Path("my_config.json").read_text()))`
+(`DataPrepConfig` is in `dimos.imitation.dataprep.schema`). A collection
+directory with a `schema.json` builds a LeRobot dataset with
+`dimos imitation prepare <directory>`.
 
 HDF5 export requires `h5py` and a nonempty task label on every exported episode.
 It stores each episode under `/episodes/episode_NNNNNN`, with `observation/`,
@@ -171,7 +174,7 @@ feature schemas, synchronization and quality settings, quality reports,
 exported episode boundaries/task labels, output format and metadata.
 `fps` defaults to `sync.rate_hz` unless explicitly supplied in output metadata.
 
-`dimos dataprep inspect data/datasets/session.hdf5` inspects the built dataset.
+`dimos imitation inspect data/datasets/session.hdf5` inspects the built dataset.
 LeRobot output remains supported through the format-specific writer; choosing
 a writer does not change the source feature or alignment contract.
 

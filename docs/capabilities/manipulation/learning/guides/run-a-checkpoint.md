@@ -9,7 +9,7 @@ with a compatible pretrained-model directory, such as
 
 ```bash skip
 dimos run openyam-lerobot-rollout --daemon \
-  --controlcoordinator.can-port follower_l \
+  --can-port follower_l \
   --policy.policy-path CHECKPOINT_DIR \
   --policy.task "pick up the red block" \
   --policy.device cuda \

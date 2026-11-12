@@ -69,9 +69,9 @@ manual motion and explicit planning, preview, and execution through `arm.rpc`.
 ## Using ManipulationModule
 
 ```python skip
-from dimos.manipulation import ManipulationModule
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -241,7 +241,7 @@ not the collision-checked geometric path.
 `roboplan_toppra` can parametrize a geometric path from any planner, but only
 when `world_backend="roboplan"`: it reuses the finalized `RoboPlanWorld` model
 and planning groups. Selecting it with another world fails during startup.
-DimOS supports RoboPlan `0.6.x` for this integration.
+DimOS supports RoboPlan `0.7.x` for this integration.
 
 For every selected movable joint, the materialized URDF must provide a finite,
 positive velocity and acceleration limit. Standard URDF has no acceleration
@@ -365,5 +365,5 @@ planning/
 pytest dimos/manipulation/test_manipulation_unit.py -v
 
 # Integration tests (requires Drake)
-pytest dimos/e2e_tests/test_manipulation_module.py -v
+pytest dimos/manipulation/test_manipulation_module.py -v
 ```

@@ -62,7 +62,7 @@ All VLM frequency knobs are exposed via `TemporalMemoryConfig` so you can
 tune cost / latency / accuracy without touching code:
 
 ```python
-from dimos.perception.experimental.temporal_memory import TemporalMemory, TemporalMemoryConfig
+from dimos.perception.experimental.temporal_memory.temporal_memory import TemporalMemory, TemporalMemoryConfig
 
 config = TemporalMemoryConfig(
     # Frame processing

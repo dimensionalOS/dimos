@@ -1,16 +1,16 @@
 # Manipulator Drivers
 
-This module provides manipulator arm drivers: Protocol-only with injectable adapters.
+This module provides manipulator arm adapters: Protocol-only, run by the `ControlCoordinator`.
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Driver (Module)                        │
-│  - Owns threading (control loop, monitor loop)              │
-│  - Publishes joint_state, robot_state                       │
-│  - Subscribes to joint_position_command, joint_velocity_cmd │
-│  - Exposes RPC methods (move_joint, enable_servos, etc.)    │
+│                ControlCoordinator (Module)                  │
+│  - Runs the control loop                                    │
+│  - Creates one adapter per HardwareComponent of a blueprint │
+│  - Runs tasks (trajectory, velocity, gripper, ...)          │
+│  - Publishes coordinator_joint_state                        │
 └─────────────────────┬───────────────────────────────────────┘
                       │ uses
 ┌─────────────────────▼───────────────────────────────────────┐
@@ -24,7 +24,7 @@ This module provides manipulator arm drivers: Protocol-only with injectable adap
 ## Key Benefits
 
 - **Testable**: Inject `MockAdapter` for unit tests without hardware
-- **Flexible**: Each arm controls its own threading/timing
+- **Flexible**: One coordinator can run several arms, each with its own adapter
 - **Simple**: No ABC inheritance required - just implement the Protocol
 - **Type-safe**: Full type checking via `ManipulatorAdapter` Protocol
 
@@ -47,36 +47,28 @@ manipulators/
 
 ## Quick Start
 
-### Using a Driver Directly
+### Running an Arm
 
-```python
-from dimos.hardware.manipulators.xarm import XArm
-
-arm = XArm(ip="192.168.1.185", dof=6)
-arm.start()
-arm.enable_servos()
-arm.move_joint([0, 0, 0, 0, 0, 0])
-arm.stop()
+```bash
+dimos run coordinator-mock    # A mock arm, no hardware needed
+dimos run coordinator-xarm7 --controlcoordinator.addresses '{"arm": "192.168.1.185"}'
 ```
 
-### Using Blueprints
+### Using an Adapter Directly
+
+The mock adapter shows the API without hardware. Drive real arms through the coordinator, which streams small steps
+to them.
 
 ```python
-from dimos.hardware.manipulators.xarm.blueprints import xarm_trajectory
+from dimos.hardware.manipulators.registry import adapter_registry
 
-coordinator = xarm_trajectory.build()
-coordinator.loop()
-```
-
-### Testing Without Hardware
-
-```python
-from dimos.hardware.manipulators.mock import MockAdapter
-from dimos.hardware.manipulators.xarm import XArm
-
-arm = XArm(adapter=MockAdapter(dof=6))
-arm.start()  # No hardware needed!
-arm.move_joint([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+arm = adapter_registry.create("mock", dof=6)
+arm.connect()
+arm.activate()
+arm.write_joint_positions([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+print(arm.read_joint_positions())
+arm.deactivate()
+arm.disconnect()
 ```
 
 ## Adding a New Arm
@@ -85,8 +77,8 @@ arm.move_joint([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
 
 ```python
 class MyArmAdapter:  # No inheritance needed - just match the Protocol
-    def __init__(self, ip: str = "192.168.1.100", dof: int = 6) -> None:
-        self._ip = ip
+    def __init__(self, address: str, dof: int = 6, **_: object) -> None:
+        self._address = address
         self._dof = dof
 
     def connect(self) -> bool: ...
@@ -104,29 +96,21 @@ ADAPTER_FACTORIES = {
 }
 ```
 
-3. **Create the driver** (`arm.py`):
+3. **Add it to a blueprint** with a `HardwareComponent` whose `adapter_type` is the manifest name. The coordinator
+   creates the adapter with `address`, `dof` (the number of joints), `hardware_id` and the component's
+   `adapter_kwargs`:
 
 ```python
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
-from .adapter import MyArmAdapter
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.coordinator import ControlCoordinator
 
-class MyArm(Module[MyArmConfig]):
-    joint_state: Out[JointState]
-    robot_state: Out[RobotState]
-    joint_position_command: In[JointCommand]
-
-    def __init__(self, adapter=None, **kwargs):
-        super().__init__(**kwargs)
-        self.adapter = adapter or MyArmAdapter(
-            ip=self.config.ip,
-            dof=self.config.dof,
-        )
-        # ... setup control loops
+coordinator_myarm = ControlCoordinator.blueprint(
+    hardware=[HardwareComponent(hardware_id="arm", hardware_type=HardwareType.MANIPULATOR,
+                                joints=make_joints("arm", 6), adapter_type="myarm", address="192.168.1.100")],
+)
 ```
 
-3. **Create blueprints** (`blueprints.py`) for common configurations.
+See [Adding a Custom Arm](/docs/capabilities/manipulation/adding_a_custom_arm.md) for the full guide.
 
 ## ManipulatorAdapter Protocol
 
@@ -137,15 +121,16 @@ All adapters must implement these core methods:
 | Connection | `connect()`, `disconnect()`, `is_connected()` |
 | Lifecycle | `activate()`, `deactivate()` |
 | Info | `get_info()`, `get_dof()`, `get_limits()` |
-| State | `read_joint_positions()`, `read_joint_velocities()`, `read_joint_efforts()` |
+| State | `read_state()`, `read_error()`, `read_joint_positions()`, `read_joint_velocities()`, `read_joint_efforts()` |
 | Motion | `write_joint_positions()`, `write_joint_velocities()`, `write_stop()` |
 | Servo | `write_enable()`, `read_enabled()`, `write_clear_errors()` |
 | Mode | `set_control_mode()`, `get_control_mode()` |
 
 Optional methods (return `None`/`False` if unsupported):
 - `read_cartesian_position()`, `write_cartesian_position()`
-- `read_gripper_position()`, `write_gripper_position()`
 - `read_force_torque()`
+
+A gripper has no methods of its own: it is the last entry of the joint arrays (`read_joint_positions()`, `write_joint_positions()`, ...), in the adapter's own gripper unit, the one `get_limits()` declares.
 
 ## Unit Conventions
 
