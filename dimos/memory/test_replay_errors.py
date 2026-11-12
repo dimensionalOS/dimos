@@ -14,6 +14,7 @@
 
 from collections.abc import Iterator
 from contextlib import closing
+import gc
 from pathlib import Path
 import sqlite3
 import threading
@@ -35,13 +36,14 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(params=["sqlite", "mcap"])
+@pytest.fixture(params=["sqlite", "sqlite-eager", "mcap"])
 def corrupt_recording(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Store]:
     poses = [PoseStamped(ts=1.0 + i * 0.01, frame_id="map") for i in range(3)]
-    if request.param == "sqlite":
+    if request.param in {"sqlite", "sqlite-eager"}:
         path = tmp_path / "poses.db"
         with SqliteStore(path=path, page_size=1) as store:
-            observations = [store.stream("pose", PoseStamped).append(pose) for pose in poses]
+            stream = store.stream("pose", PoseStamped, eager_blobs=request.param == "sqlite-eager")
+            observations = [stream.append(pose) for pose in poses]
         with closing(sqlite3.connect(path)) as conn, conn:
             conn.execute(
                 "UPDATE pose_blob SET data = ? WHERE id = ?", (b"bad-lcm", observations[1].id)
@@ -107,6 +109,10 @@ def test_corrupt_payload_closes_iterator_and_reports_one_error(
     assert isinstance(errors[0], ValueError)
     assert str(errors[0]) == "Decode error"
     completed.assert_not_called()
+    # A retained exception must not keep a cursor alive past store shutdown.
+    # Collect it here so late cursor cleanup failures are caught by pytest.
+    errors.clear()
+    gc.collect()
 
 
 @pytest.mark.parametrize("phase", ["initial", "skip", "scheduled"])
