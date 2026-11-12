@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -222,6 +223,25 @@ def test_start_waits_on_the_process_launched_at_construction(monkeypatch: Monkey
     second_shm.seq = 1  # the new simulator counts frames from zero again
     assert _delivered_sensors(connection) == 3
     connection.stop()
+
+
+def test_macos_launches_the_mjpython_beside_the_interpreter(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """A launch that did not activate the venv has no mjpython on PATH."""
+    mjpython = tmp_path / "mjpython"
+    mjpython.touch()
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+    commands: list[list[str]] = []
+
+    def popen(command: list[str], **_kwargs: Any) -> _QuietProcess:
+        commands.append(command)
+        return _QuietProcess()
+
+    _bare_connection(monkeypatch, popen).stop()
+
+    assert commands[0][0] == str(mjpython)
 
 
 def _delivered_sensors(connection: MujocoConnection) -> int:

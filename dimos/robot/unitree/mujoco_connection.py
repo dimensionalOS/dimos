@@ -143,6 +143,11 @@ class MujocoConnection:
             executable = sys.executable if sys.platform != "darwin" else "mjpython"
             env = os.environ.copy()
             if sys.platform == "darwin":
+                # A launch that did not activate the venv has no mjpython on PATH;
+                # the one installed with this interpreter sits beside it.
+                mjpython = Path(sys.executable).with_name("mjpython")
+                if mjpython.exists():
+                    executable = str(mjpython)
                 # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
                 libdir = Path(sysconfig.get_config_var("LIBDIR") or "")
                 if libdir.is_dir():
