@@ -963,7 +963,7 @@ def test_a_scene_whose_mesh_is_an_unfetched_pointer_is_refused(
 
 
 def test_a_mesh_a_mounted_scene_already_published_is_fetched_from_it(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """A mount answering get_scene hands back published names; no such file exists here."""
     pytest.importorskip("pxr")
@@ -1424,7 +1424,7 @@ def test_a_pre_namespace_rename_also_reaches_this_robots_own_frames(
 
 
 def test_a_post_namespace_rename_reaches_this_robots_own_frames_too(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """tf_renames names a frame as the rest of the system sees it, mounted or not."""
     module = make_manager(frame_id_prefix="left", tf_renames={"left/arm": "gripper"})
@@ -1435,7 +1435,7 @@ def test_a_post_namespace_rename_reaches_this_robots_own_frames_too(
 
 
 def test_a_rename_of_an_own_frame_by_its_bare_name_under_a_prefix_is_refused(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """The bare name is the pre-namespace spelling, and that is the other option's job."""
     with pytest.raises(ValueError, match="which is neither a link or joint of this robot"):
@@ -1507,7 +1507,7 @@ def test_an_ordinary_rpc_failure_is_not_mistaken_for_a_cycle() -> None:
 
 
 def test_a_cycle_stays_a_cycle_over_a_second_process_boundary(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """A -> B -> A is recognised at B, and the manager past B has to hear a cycle, not a retry."""
     from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
@@ -1724,7 +1724,7 @@ def test_point_clearing_resolves_a_usd_models_meshes_before_the_filter(tmp_path:
     scene = tmp_path / "robot.usda"
     scene.write_text(RobotModel.from_file(urdf).to_usd().usd)
 
-    module = UrdfManagerPointClearing(model=UsdModel.from_file(scene))
+    module = UsdManagerPointClearing(model=UsdModel.from_file(scene))
     try:
         named = re.findall(r'filename="([^"]+)"', module._filter_description().xml)
     finally:
