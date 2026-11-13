@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
-from dimos_lcm.std_msgs import Time
+from dimos_lcm.foxglove_msgs import Grid
+from dimos_lcm.std_msgs import Float32MultiArray, Time
 import pytest
 from pytest_mock import MockerFixture
 import typer
@@ -64,6 +65,16 @@ def test_format_message_lists_fields_of_messages_without_str() -> None:
     assert _format_message(status) == (
         "GoalStatus(goal_id=GoalID(stamp=Time(sec=1, nsec=2), id='goal'), status=3, text='done')"
     )
+
+
+def test_format_message_shortens_long_lists_and_bytes() -> None:
+    array = Float32MultiArray(data_length=10, data=[float(i) for i in range(10)])
+    grid = Grid(data_length=4096, data=bytes(4096))
+
+    assert _format_message(array).endswith(
+        "data=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, ... (2 more)])"
+    )
+    assert _format_message(grid).endswith("data=<4096 bytes>)")
 
 
 def test_build_eval_context_maps_message_names_to_classes() -> None:

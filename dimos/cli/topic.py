@@ -30,6 +30,8 @@ from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
+_MAX_LIST_ITEMS = 8
+
 _modules_to_try = [
     "dimos.msgs.geometry_msgs",
     "dimos.msgs.nav_msgs",
@@ -107,8 +109,13 @@ def _format_message(msg: object) -> str:
 
 def _format_field(value: object) -> str:
     if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(_format_field(item) for item in value) + "]"
-    if isinstance(value, (str, bytes)):
+        items = [_format_field(item) for item in value[:_MAX_LIST_ITEMS]]
+        if len(value) > _MAX_LIST_ITEMS:
+            items.append(f"... ({len(value) - _MAX_LIST_ITEMS} more)")
+        return "[" + ", ".join(items) + "]"
+    if isinstance(value, bytes):
+        return f"<{len(value)} bytes>"
+    if isinstance(value, str):
         return repr(value)
     return _format_message(value)
 
