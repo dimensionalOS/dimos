@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import os
 import time
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 import jwt
@@ -18,11 +20,24 @@ SECRET = "test-only-dedicated-secret-abcdefghijklmnopqrstuvwxyz"
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("DIMOS_LEARNING_DELEGATION_SECRET", SECRET)
-    store = Store(tmp_path / "state.sqlite3")
+    dsn = os.environ.get("DIMOS_LEARNING_TEST_POSTGRES_DSN")
+    if dsn:
+        from dimos.imitation.learning.postgres import PostgresStore
+
+        store = PostgresStore(dsn, "dimos_learning_test_" + uuid4().hex, tmp_path)
+    else:
+        store = Store(tmp_path / "state.sqlite3")
     store.migrate()
     app = create_app(store)
-    with TestClient(app) as client:
-        yield client, app.state.service, store
+    try:
+        with TestClient(app) as client:
+            yield client, app.state.service, store
+    finally:
+        if dsn:
+            from psycopg import sql
+
+            with store._connect() as db:
+                db.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(store.schema)))
 
 
 def headers(method="GET", path="/v1/jobs", **changes):

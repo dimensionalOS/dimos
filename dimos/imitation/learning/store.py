@@ -17,7 +17,7 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self) -> Iterator[Any]:
         db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         db.execute("PRAGMA busy_timeout=30000")
         db.execute("PRAGMA foreign_keys=ON")
@@ -32,7 +32,7 @@ class Store:
             db.close()
 
     @contextmanager
-    def read(self) -> Iterator[sqlite3.Connection]:
+    def read(self) -> Iterator[Any]:
         db = sqlite3.connect(self.path, timeout=30)
         try:
             yield db
@@ -60,19 +60,19 @@ class Store:
             db.execute("PRAGMA journal_mode=WAL")
 
     @staticmethod
-    def get(db: sqlite3.Connection, kind: str, key: str) -> dict[str, Any] | None:
+    def get(db: Any, kind: str, key: str) -> dict[str, Any] | None:
         row = db.execute("SELECT body FROM documents WHERE kind=? AND id=?", (kind, key)).fetchone()
         return json.loads(row[0]) if row else None
 
     @staticmethod
-    def put(db: sqlite3.Connection, kind: str, key: str, body: dict[str, Any]) -> None:
+    def put(db: Any, kind: str, key: str, body: dict[str, Any]) -> None:
         db.execute(
             "INSERT INTO documents(kind,id,body) VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",
             (kind, key, json.dumps(body, allow_nan=False)),
         )
 
     @staticmethod
-    def all(db: sqlite3.Connection, kind: str) -> list[dict[str, Any]]:
+    def all(db: Any, kind: str) -> list[dict[str, Any]]:
         return [
             json.loads(row[0])
             for row in db.execute("SELECT body FROM documents WHERE kind=? ORDER BY rowid", (kind,))
@@ -80,9 +80,16 @@ class Store:
 
 
 def default_store() -> Store:
-    return Store(
-        Path(os.environ.get("DIMOS_LEARNING_STATE_DIR", ".learning-state")) / "learning.sqlite3"
-    )
+    state = Path(os.environ.get("DIMOS_LEARNING_STATE_DIR", ".learning-state"))
+    if os.environ.get("DIMOS_LEARNING_POSTGRES_DSN"):
+        from dimos.imitation.learning.postgres import PostgresStore
+
+        return PostgresStore(
+            os.environ["DIMOS_LEARNING_POSTGRES_DSN"],
+            os.environ.get("DIMOS_LEARNING_POSTGRES_SCHEMA", ""),
+            state,
+        )
+    return Store(state / "learning.sqlite3")
 
 
 if __name__ == "__main__":

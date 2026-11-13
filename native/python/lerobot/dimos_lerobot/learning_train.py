@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from importlib.metadata import version
 import json
 from pathlib import Path
 import sys
 from typing import Any
 
 from dimos_lerobot.dataprep import inspect_dataset, write
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
@@ -19,12 +22,17 @@ import torch
 from torch.utils.data import DataLoader
 
 from dimos.imitation.dataprep.core import inspect_episode_quality, iter_episode_samples
+from dimos.imitation.dataprep.formats.lerobot.features import canonical_feature_names
 from dimos.imitation.dataprep.schema import Episode, OutputConfig, RecordingSchema
 from dimos.memory.store.mcap import McapStore
 
 
 def emit(message: str, **extra: Any) -> None:
     print(json.dumps({"message": message, **extra}), flush=True)
+
+
+class EmptySplitError(ValueError):
+    """A native split with no usable training or requested evaluation set."""
 
 
 def convert(request: dict[str, Any]) -> dict[str, Any]:
@@ -108,6 +116,9 @@ def convert(request: dict[str, Any]) -> dict[str, Any]:
             {
                 "observation": {k: v.model_dump() for k, v in schema.observation.items()},
                 "action": {k: v.model_dump() for k, v in schema.action.items()},
+                "feature_names": canonical_feature_names(
+                    {k: v.dtype for k, v in schema.observation.items()}, schema.action
+                ),
                 "episodes": lineage,
             },
             default=str,
@@ -117,7 +128,58 @@ def convert(request: dict[str, Any]) -> dict[str, Any]:
     return inspect_dataset(output.path)
 
 
+def feature_metadata(root: Path, info: dict[str, Any], config: ACTConfig) -> dict[str, Any]:
+    """Bind the actual policy inputs to capture schema; unknown units stay unknown."""
+    sidecar = json.loads((root / "dimos_meta.json").read_text())
+    names = sidecar.get("feature_names") or canonical_feature_names(
+        {k: v["dtype"] for k, v in sidecar["observation"].items()}, sidecar["action"]
+    )
+    inputs = set(config.input_features)
+    expected_cameras = {
+        names[k] for k, v in sidecar["observation"].items() if v["dtype"] in ("image", "video")
+    }
+    actual_cameras = {k for k, v in config.input_features.items() if v.type == FeatureType.VISUAL}
+    if expected_cameras != actual_cameras:
+        raise ValueError(
+            f"Camera features omitted or unexpected: {expected_cameras} != {actual_cameras}"
+        )
+    records = []
+    for role in ("observation", "action"):
+        for key, definition in sidecar[role].items():
+            canonical = names[key]
+            if canonical not in inputs | set(config.output_features):
+                raise ValueError(f"Source feature silently omitted by policy: {key}")
+            records.append(
+                {
+                    "source_key": key,
+                    "policy_key": canonical,
+                    "role": role,
+                    "source_schema": definition,
+                    "dataset_feature": info["features"][canonical],
+                    "component_order": definition.get("names"),
+                    "units": definition.get("units", definition.get("unit")),
+                    "units_status": "declared"
+                    if definition.get("units", definition.get("unit"))
+                    else "unknown_not_declared_in_capture_schema",
+                }
+            )
+    return {
+        "fps": info["fps"],
+        "features": records,
+        "policy_input_order": list(config.input_features),
+        "policy_output_order": list(config.output_features),
+        "camera_order": [k for k in config.input_features if k in actual_cameras],
+        "camera_coverage_verified": True,
+        "versions": {
+            k: version(k) for k in ("lerobot", "torch", "torchvision", "numpy", "datasets")
+        },
+        "episode_lineage": sidecar["episodes"],
+    }
+
+
 def train(request: dict[str, Any]) -> dict[str, Any]:
+    if version("lerobot") != "0.6.0":
+        raise ValueError("Learning training requires the pinned LeRobot 0.6.0 environment")
     torch.set_num_threads(int(request.get("cpu_threads", 2)))
     torch.manual_seed(0)
     root = Path(request["dataset_path"])
@@ -137,16 +199,41 @@ def train(request: dict[str, Any]) -> dict[str, Any]:
         input_features={k: v for k, v in features.items() if v.type != FeatureType.ACTION},
         output_features={k: v for k, v in features.items() if v.type == FeatureType.ACTION},
     )
-    delta = {"action": [i / info["fps"] for i in range(config.chunk_size)]}
     run = request["run"]
-    train_indices = run["train_indices"]
-    eval_indices = run["eval_indices"]
-    dataset = LeRobotDataset(
-        "local/learning",
-        root=root,
-        episodes=train_indices,
-        delta_timestamps=delta,
-        video_backend="pyav",
+    pipeline = TrainPipelineConfig(
+        dataset=DatasetConfig(
+            repo_id="local/learning",
+            root=str(root),
+            video_backend="pyav",
+            eval_split=run.get("eval_split", 0),
+            use_imagenet_stats=False,
+        ),
+        policy=config,
+    )
+    try:
+        dataset, evaluation_dataset = make_train_eval_datasets(pipeline)
+    except ValueError as error:
+        if "0 training episodes" in str(error):
+            raise EmptySplitError(str(error)) from error
+        raise
+    train_indices = dataset.episodes
+    if train_indices is None:
+        train_indices = list(range(dataset.num_episodes))
+    eval_indices = evaluation_dataset.episodes if evaluation_dataset is not None else []
+    if not train_indices or (run.get("eval_split", 0) and not eval_indices):
+        raise EmptySplitError("Requested native train/evaluation split is empty")
+    tasks = dataset.meta.episodes["tasks"]
+    per_task = {}
+    for kind, indices in (("train_indices", train_indices), ("eval_indices", eval_indices)):
+        for index in indices:
+            task = tasks[index][0] if tasks[index] else ""
+            per_task.setdefault(task, {"train_indices": [], "eval_indices": []})[kind].append(index)
+    metadata = feature_metadata(root, info, config)
+    emit(
+        "Native per-task split",
+        train_indices=train_indices,
+        eval_indices=eval_indices,
+        split_per_task=per_task,
     )
     pre, post = make_pre_post_processors(config, dataset_stats=dataset.meta.stats)
     policy = ACTPolicy(config)
@@ -178,14 +265,7 @@ def train(request: dict[str, Any]) -> dict[str, Any]:
             loss=losses[-1],
         )
     evaluation = None
-    if eval_indices:
-        evaluation_dataset = LeRobotDataset(
-            "local/learning",
-            root=root,
-            episodes=eval_indices,
-            delta_timestamps=delta,
-            video_backend="pyav",
-        )
+    if evaluation_dataset is not None:
         policy.eval()
         values = []
         with torch.no_grad():
@@ -198,35 +278,35 @@ def train(request: dict[str, Any]) -> dict[str, Any]:
     policy.save_pretrained(output / "pretrained_model")
     pre.save_pretrained(output / "pretrained_model")
     post.save_pretrained(output / "pretrained_model")
-    torch.save(
-        {
-            "optimizer": optimizer.state_dict(),
-            "step": run["steps"],
-            "torch_rng_state": torch.get_rng_state(),
-        },
-        output / "training_state.pt",
-    )
+
     result = {
         "steps": run["steps"],
         "losses": losses,
         "evaluation": evaluation,
         "train_indices": train_indices,
         "eval_indices": eval_indices,
+        "split_per_task": per_task,
+        "split_implementation": "lerobot.datasets.factory.make_train_eval_datasets",
+        "metadata": metadata,
         "device": "cpu",
         "policy_type": "act",
-        "lerobot_version": "0.6.0",
+        "lerobot_version": version("lerobot"),
         "inference_ready": True,
-        "resumable_ready": True,
+        "resumable_ready": False,
+        "checkpoint_kind": "inference_only",
+        "resume_limitation": "No resume entrypoint or sampler/loader/RNG continuation state is saved",
         "archive_ready": True,
         "load_ready": False,
         "rollout_ready": False,
     }
-    (output / "training.json").write_text(json.dumps(result, indent=2))
+
     # A real load check, never an action selection or robot graph.
     loaded = ACTPolicy.from_pretrained(output / "pretrained_model")
     loaded.eval()
-    result["load_ready"] = True
+    result["load_ready"] = load_check({"path": str(output)})["load_ready"]
     result["parameters"] = sum(p.numel() for p in loaded.parameters())
+    result["policy_config"] = json.loads((output / "pretrained_model/config.json").read_text())
+    (output / "training.json").write_text(json.dumps(result, indent=2))
     return result
 
 
@@ -247,9 +327,13 @@ def load_check(request: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> None:
     request = json.loads(sys.stdin.read())
-    result = {"convert": convert, "train": train, "load-check": load_check}[request["command"]](
-        request
-    )
+    try:
+        result = {"convert": convert, "train": train, "load-check": load_check}[request["command"]](
+            request
+        )
+    except EmptySplitError as error:
+        emit("Native split blocked", error={"code": "empty_split", "message": str(error)})
+        return
     emit("result", result=result)
 
 

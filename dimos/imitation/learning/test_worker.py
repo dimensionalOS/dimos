@@ -11,6 +11,47 @@ def queued(service, store, kind="media", identity=None):
         return service.new_job(db, identity or who(), kind, {"recording_id": "source"})
 
 
+def test_native_empty_split_error_is_blocked(monkeypatch):
+    import io
+    import sys
+    from types import SimpleNamespace
+
+    from dimos.imitation.learning.worker import native
+
+    monkeypatch.setenv("DIMOS_LEARNING_NATIVE_PYTHON", sys.executable)
+    process = SimpleNamespace(
+        stdin=io.StringIO(),
+        stdout=io.StringIO(
+            '{"message":"Native split blocked","error":{"code":"empty_split","message":"0 training episodes"}}\n'
+        ),
+        wait=lambda: 0,
+    )
+    monkeypatch.setattr(
+        "dimos.imitation.learning.worker.subprocess.Popen", lambda *a, **kw: process
+    )
+    with pytest.raises(LearningError) as error:
+        native({"command": "train"})
+    assert error.value.code == "empty_split" and error.value.status == 422
+
+
+def test_concurrent_claim_is_single_winner(setup):
+    from concurrent.futures import ThreadPoolExecutor
+
+    _, service, store = setup
+    job = queued(service, store)
+    workers = [pair(service), pair(service)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(
+            pool.map(lambda w: service.claim(w["token"], {"kinds": ["media"]})["job"], workers)
+        )
+    winners = [claim for claim in claims if claim is not None]
+    assert len(winners) == 1 and winners[0]["id"] == job["id"]
+    with store.read() as db:
+        saved = store.get(db, "job", job["id"])
+        assert saved["attempt"] == 1
+        assert saved["lease_token"] == winners[0]["lease_token"]
+
+
 def test_claim_scope_capability_and_single_active(setup):
     _, service, store = setup
     foreign = queued(service, store, identity=who(org_id="org-b"))

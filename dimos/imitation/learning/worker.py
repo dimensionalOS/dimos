@@ -58,16 +58,22 @@ def native(request: dict[str, Any]) -> dict[str, Any]:
     process.stdin.write(json.dumps(request))
     process.stdin.close()
     result = None
+    native_error = None
     for line in process.stdout:
         try:
             item = json.loads(line)
             if "result" in item:
                 result = item["result"]
+            elif "error" in item:
+                native_error = item["error"]
             else:
                 print(line.strip(), flush=True)
         except ValueError:
             emit(line.strip())
-    if process.wait() or result is None:
+    returncode = process.wait()
+    if native_error and native_error.get("code") == "empty_split":
+        raise LearningError(422, "empty_split", native_error["message"])
+    if returncode or result is None:
         raise LearningError(503, "native_failed", "Native LeRobot adapter failed; see worker logs")
     return result
 
@@ -327,7 +333,7 @@ def main() -> None:
                 "status": "blocked" if error.status in (422, 503) else "failed",
                 "error": {"code": error.code, "message": error.message},
             }
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- offline executor must persist failure for owner
             import traceback
 
             traceback.print_exc()

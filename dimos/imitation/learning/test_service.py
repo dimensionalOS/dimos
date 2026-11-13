@@ -136,6 +136,7 @@ def test_explicit_run_splits(setup, split, expected):
             "steps": 1,
         },
     )
-    assert run["eval_indices"] == expected
-    assert set(run["train_indices"]).isdisjoint(run["eval_indices"])
-    assert sorted(run["train_indices"] + run["eval_indices"]) == list(range(10))
+    # Effective indices are deliberately unresolved until native training reads tasks.
+    assert run["eval_indices"] is None
+    assert run["train_indices"] is None
+    assert run["eval_split"] == split

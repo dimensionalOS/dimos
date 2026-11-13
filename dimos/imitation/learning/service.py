@@ -313,16 +313,9 @@ class Service:
             raise LearningError(422, "invalid_steps", "steps must be a positive bounded integer")
         with self.store.transaction() as db:
             key = uid()
-            count = dataset["episodes"]
-            eval_count = int(count * body.get("eval_split", 0))
-            train_indices, eval_indices = (
-                list(range(count - eval_count)),
-                list(range(count - eval_count, count)),
-            )
-            if not train_indices or (body.get("eval_split", 0) and not eval_indices):
-                raise LearningError(
-                    422, "empty_split", "Requested train/evaluation split has no episodes"
-                )
+            # Only native metadata knows task membership. Resolve at training time
+            # with pinned LeRobot's per-task last-ceil split, never global slicing.
+            train_indices, eval_indices = None, None
             item = {
                 "id": key,
                 "org_id": who["org_id"],
