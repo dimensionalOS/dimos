@@ -19,6 +19,7 @@ import platform
 
 import pytest
 
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
     PlanarBaseTrajectoryTaskConfig,
@@ -109,7 +110,7 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         coordinator.stop()
 
 
-def test_real_control_declares_planar_velocity_joints_without_position_commands() -> None:
+def test_real_control_declares_native_body_velocities_without_position_commands() -> None:
     """Measured planar joints are ordinary velocity-only hardware interfaces."""
     coordinator = _coordinator_config(r1pro_control())
 
@@ -117,10 +118,7 @@ def test_real_control_declares_planar_velocity_joints_without_position_commands(
     assert coordinator.hardware == []
     claimed = {joint for task in coordinator.tasks for joint in task.joint_names}
     assert claimed == {*R1PRO_UPPER_BODY_JOINTS, *R1PRO_BASE_JOINTS}
-    from dimos.control.contract.keys import Interface
-
     (declaration,) = coordinator.connections
     assert all(
-        declaration.joint_commands[joint] == (Interface.VELOCITY,)
-        for joint in R1PRO_PLANAR_BASE.joint_names
+        declaration.joint_commands[joint] == (Interface.VELOCITY,) for joint in R1PRO_BASE_JOINTS
     )

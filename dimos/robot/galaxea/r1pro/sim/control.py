@@ -110,7 +110,7 @@ class R1ProSimControl(Module):
         self._target_rates = np.array(UPPER_RATES + (FINGER_SPEED_M_S,) * 4)
         self._limits: dict[str, tuple[float, float]] = {}
         self._servo: UpperBodyServo | None = None
-        self._height_config = JoyloConfig(torso_link_lengths=TORSO_LINK_LENGTHS, torso_rate=0.5)
+        self._height_config = JoyloConfig(torso_link_lengths=TORSO_LINK_LENGTHS)
         self._wheel_positions: list[tuple[float, float]] = []
         self._steer_limits: dict[str, tuple[float, float]] = {}
 
