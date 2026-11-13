@@ -28,9 +28,11 @@ from dimos.robot.manipulators.openarm.blueprints.mini_collection import (
     openarm_mini_collection,
     openarm_mini_follower_collection,
 )
-from dimos.robot.manipulators.openarm.blueprints.mini_teleop import OPENARM_ROUTER
+from dimos.robot.manipulators.openarm.blueprints.mini_teleop import (
+    OPENARM_ROUTER,
+    OpenArmLeaderCoordinator,
+)
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
-from dimos.teleop.leader.coordinator import LeaderCoordinator
 from dimos.teleop.leader.module import LeaderTeleopModule
 
 
@@ -93,7 +95,7 @@ def test_one_machine_collection_wraps_the_one_machine_teleop_stack() -> None:
     assert modules[1:] == [
         EpisodeMonitorModule,
         LeaderTeleopModule,
-        LeaderCoordinator,
+        OpenArmLeaderCoordinator,
         OpenArmConnection,
         ManipulationModule,
         WebcamModule,
@@ -119,7 +121,7 @@ def test_one_machine_collection_wraps_the_one_machine_teleop_stack() -> None:
 def test_follower_collection_has_no_leader_and_dials_the_robot_router() -> None:
     modules = [atom.module for atom in openarm_mini_follower_collection.active_blueprints]
     assert LeaderTeleopModule not in modules
-    assert LeaderCoordinator in modules
+    assert OpenArmLeaderCoordinator in modules
     assert OpenArmConnection in modules
     assert openarm_mini_follower_collection.global_config_overrides["zenoh_connect"] == (
         OPENARM_ROUTER

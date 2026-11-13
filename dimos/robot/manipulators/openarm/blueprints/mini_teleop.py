@@ -17,11 +17,19 @@
 from __future__ import annotations
 
 import os
+from typing import ClassVar
 
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.stream import In
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection, arm_remaps
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
+    arm_connection,
+    arm_remaps,
+)
 from dimos.robot.manipulators.openarm.config import (
     openarm_bimanual_model_config,
     openarm_urdf_joints,
@@ -33,13 +41,9 @@ from dimos.teleop.leader.calibration import (
     LEADER_SIDES,
     LeaderSide,
 )
-from dimos.teleop.leader.coordinator import (
-    LeaderCoordinator,
-    leader_gripper_tasks,
-    leader_task,
-)
 from dimos.teleop.leader.mapping import GripperMapping, JointMapping, SideMapping
 from dimos.teleop.leader.module import LeaderTeleopModule
+from dimos.teleop.leader.tasks import leader_gripper_task, leader_task
 
 # Leader-follower needs human arm speeds, well above the WebXR IK profile.
 _ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)
@@ -107,6 +111,28 @@ _VELOCITY_LIMITS = {
 }
 
 
+class OpenArmLeaderCoordinator(DamiaoCoordinator):
+    """The OpenArm coordinator, plus the port the leader arms' joint targets arrive on."""
+
+    # The 100 Hz tick loop must not share a Python process with cameras, Viser
+    # and recorders: on a Jetson that cost a quarter of its ticks and the arm
+    # moved in steps.
+    dedicated_worker: ClassVar[bool] = True
+
+    leader_joint_command: In[JointState]
+
+
+def _gripper_tasks() -> list[TaskConfig]:
+    """One task per follower jaw, driven by the trigger on the same side's leader."""
+    jaws = {jaw.name: jaw for jaw in OpenArmConnection.robot.grippers}
+    return [
+        leader_gripper_task(
+            side, f"arm/{jaws[f'{side}_gripper'].joint}", open_at=jaws[f"{side}_gripper"].open_at
+        )
+        for side in LEADER_SIDES
+    ]
+
+
 def _leader() -> Blueprint:
     return LeaderTeleopModule.blueprint(
         mappings=MAPPINGS,
@@ -118,12 +144,12 @@ def _leader() -> Blueprint:
 def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:
     """The leader's targets over the OpenArm connection; --simulation swaps in a mock."""
     return autoconnect(
-        LeaderCoordinator.blueprint(
+        OpenArmLeaderCoordinator.blueprint(
             instance_name="ControlCoordinator",
             model=_MODEL.model,
             tasks=[
                 leader_task(_MODEL.joint_names, velocity_limits=_VELOCITY_LIMITS),
-                *leader_gripper_tasks(OpenArmConnection.robot.grippers),
+                *_gripper_tasks(),
             ],
             zero_stiffness_joints=[],
         ),
@@ -133,7 +159,7 @@ def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprin
             visualization=visualization if visualization is not None else {"backend": "viser"},
             gripper_tasks={f"{side}_arm": f"{side}_arm_gripper" for side in LEADER_SIDES},
         ),
-    ).remappings(arm_remaps(OpenArmConnection, LeaderCoordinator))
+    ).remappings(arm_remaps(OpenArmConnection, OpenArmLeaderCoordinator))
 
 
 teleop_openarm_mini = autoconnect(_leader(), _follower())

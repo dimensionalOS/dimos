@@ -30,9 +30,9 @@ from dimos.robot.manipulators.openarm.config import (
     openarm_urdf_joints,
 )
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
-from dimos.teleop.leader.coordinator import LEADER_JOINT_COMMAND, LeaderCoordinator
 from dimos.teleop.leader.feetech import FEETECH_DEFAULT_BAUDRATE
 from dimos.teleop.leader.module import LeaderTeleopModule, LeaderTeleopModuleConfig
+from dimos.teleop.leader.tasks import LEADER_JOINT_COMMAND
 
 _MODEL = openarm_bimanual_model_config(robot="arm")
 _BOTH_ARMS = list(_MODEL.joint_names)
@@ -62,7 +62,7 @@ def _leader_config_after_cli_override(
 
 
 def _tasks_of(blueprint: Blueprint) -> list[TaskConfig]:
-    tasks = _module_kwargs(blueprint, LeaderCoordinator)["tasks"]
+    tasks = _module_kwargs(blueprint, mini_teleop.OpenArmLeaderCoordinator)["tasks"]
     assert all(isinstance(task, TaskConfig) for task in tasks)
     return list(tasks)
 
@@ -104,7 +104,7 @@ def _assert_gripper_tasks(blueprint: Blueprint) -> None:
 
 
 def _assert_follower_wiring(blueprint: Blueprint) -> None:
-    coordinator_kwargs = _module_kwargs(blueprint, LeaderCoordinator)
+    coordinator_kwargs = _module_kwargs(blueprint, mini_teleop.OpenArmLeaderCoordinator)
     assert coordinator_kwargs["instance_name"] == "ControlCoordinator"
     assert coordinator_kwargs["model"] is mini_teleop._MODEL.model
     assert _module_kwargs(blueprint, OpenArmConnection)["source"] == "arm"
@@ -143,7 +143,7 @@ def test_combined_blueprint_streams_leader_targets_into_the_leader_task() -> Non
     blueprint = mini_teleop.teleop_openarm_mini
     assert _module_types(blueprint) == [
         LeaderTeleopModule,
-        LeaderCoordinator,
+        mini_teleop.OpenArmLeaderCoordinator,
         OpenArmConnection,
         ManipulationModule,
     ]
@@ -191,7 +191,11 @@ def test_leader_blueprint_joins_the_robot_bus_as_a_client() -> None:
 
 def test_follower_blueprint_reads_the_leader_port_for_both_arms() -> None:
     blueprint = mini_teleop.teleop_openarm_mini_follower
-    assert _module_types(blueprint) == [LeaderCoordinator, OpenArmConnection, ManipulationModule]
+    assert _module_types(blueprint) == [
+        mini_teleop.OpenArmLeaderCoordinator,
+        OpenArmConnection,
+        ManipulationModule,
+    ]
     assert _is_name_unique(blueprint, LEADER_JOINT_COMMAND)
     _assert_follower_wiring(blueprint)
     _assert_leader_task(blueprint)
