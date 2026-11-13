@@ -32,6 +32,7 @@ from dimos.memory.utils.progress import progress
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
+from dimos.utils.executable import find_executable
 
 
 def main(
@@ -96,12 +97,12 @@ def main(
     db = dataset if dataset.endswith(".db") else str(get_data(f"{dataset}.db"))
     rr.init("mesh")
     if out is not None and live:
-        rr.spawn(connect=False)
+        rr.spawn(connect=False, executable_path=find_executable("rerun"))
         rr.set_sinks(rr.GrpcSink(), rr.FileSink(out))
     elif out is not None:
         rr.save(out)
     else:
-        rr.spawn()
+        rr.spawn(executable_path=find_executable("rerun"))
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
 
     with SqliteStore(path=db) as store:

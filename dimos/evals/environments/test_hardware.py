@@ -25,9 +25,7 @@ from dimos.evals.scorers import human
 
 
 def environment(**kwargs):
-    return HardwareEnvironment(
-        blueprint=["xarm-grasp", "mcp-server"], task="pick the cup", **kwargs
-    )
+    return HardwareEnvironment(blueprint=["xarm-grasp"], task="pick the cup", **kwargs)
 
 
 def test_robot_does_not_start_until_the_operator_confirms(mocker):
@@ -44,31 +42,39 @@ def test_robot_does_not_start_until_the_operator_confirms(mocker):
 
 def test_stop_halts_the_robot_before_releasing_it(mocker):
     calls = []
-    adapter = MagicMock()
-    adapter.call_tool.side_effect = lambda name: calls.append(("halt", name)) or {"content": []}
-    mocker.patch("dimos.evals.environments.hardware.McpAdapter", return_value=adapter)
+    app = MagicMock()
+    app.skills.cancel.side_effect = lambda: calls.append(("halt", "cancel"))
+    mocker.patch("dimos.porcelain.dimos.Dimos.connect", return_value=app)
     mocker.patch.object(LiveEnvironment, "stop", side_effect=lambda: calls.append(("release",)))
     env = environment(stop_tool="cancel")
-    env._mcp_url = "http://localhost:9990/mcp"
+    env._recording = MagicMock()
 
     env.stop()
 
     assert calls == [("halt", "cancel"), ("release",)]
+    app.stop.assert_called_once()
 
 
 def test_a_failed_halt_warns_the_operator_and_still_stops_dimos(mocker):
-    adapter = MagicMock()
-    adapter.call_tool.return_value = {"isError": True, "content": [{"text": "not confirmed"}]}
-    mocker.patch("dimos.evals.environments.hardware.McpAdapter", return_value=adapter)
+    app = MagicMock()
+    app.skills.cancel.side_effect = RuntimeError("Stop was not confirmed by the coordinator")
+    mocker.patch("dimos.porcelain.dimos.Dimos.connect", return_value=app)
     release = mocker.patch.object(LiveEnvironment, "stop")
     error = mocker.patch("dimos.evals.environments.hardware.logger.error")
     env = environment(stop_tool="cancel")
-    env._mcp_url = "http://localhost:9990/mcp"
+    env._recording = MagicMock()
 
     env.stop()
 
     assert "HALT FAILED" in error.call_args.args[0]
     release.assert_called_once()
+
+
+def test_a_case_that_never_started_is_not_halted(mocker):
+    connect = mocker.patch("dimos.porcelain.dimos.Dimos.connect")
+    mocker.patch.object(LiveEnvironment, "stop")
+    environment(stop_tool="cancel").stop()
+    connect.assert_not_called()
 
 
 def test_the_real_robot_is_launched_without_simulation():

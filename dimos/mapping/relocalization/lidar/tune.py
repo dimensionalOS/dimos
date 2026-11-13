@@ -41,8 +41,10 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.lidar.replay import main as replay_main
+from dimos.mapping.relocalization.module import load_premap
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
+from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -140,7 +142,7 @@ DATASETS = {
     # ~780 s loop walk; premap built from the scans after 400 s.
     "go2-sf-area1": Dataset(
         recording="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.db",
-        premap="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.pc2.lcm",
+        premap="go2_mid360_sf_office_outdoors_2026-05-29_map.db",
         # 0-250 s is revisited after 400 s (in the premap), 250-400 s is not.
         window=(0.0, 400.0),
     ),
@@ -208,7 +210,7 @@ def fixtures(name: str) -> tuple[PointCloud2, Any]:
     from dimos.memory.store.sqlite import SqliteStore
 
     ds = DATASETS[name]
-    premap = PointCloud2.lcm_decode(get_data(ds.premap).read_bytes())
+    premap = load_premap(ds.premap)
     store = SqliteStore(path=str(get_data(ds.recording)), must_exist=True)
     store.start()
     return premap, store
@@ -462,7 +464,7 @@ def view(name: str, probes: list[Probe], out: str | None) -> None:
     if out is not None:
         rr.save(out)
     else:
-        rr.spawn()
+        rr.spawn(executable_path=find_executable("rerun"))
     rr.log("world/premap/pointcloud", premap.to_rerun(voxel_size=0.05), static=True)
     for probe in probes:
         aligned = PointCloud2.from_numpy(
@@ -523,7 +525,11 @@ def _register(
 
 DatasetOpt = typer.Option(DEFAULT_DATASET, "--dataset", "-d", help="Registered dataset name")
 RecordingOpt = typer.Option(None, "--recording", help="Recording, resolved through get_data")
-PremapOpt = typer.Option(None, "--premap", help="Premap .pc2.lcm, resolved through get_data")
+PremapOpt = typer.Option(
+    None,
+    "--premap",
+    help="Premap .db/.mcap whose last map_cloud is the map, resolved through get_data",
+)
 LidarOpt = typer.Option(None, "--lidar", help="Lidar stream in the recording")
 FromOpt = typer.Option(None, "--from", help="Earliest second probes may come from")
 ToOpt = typer.Option(None, "--to", help="Latest second probes may come from")
