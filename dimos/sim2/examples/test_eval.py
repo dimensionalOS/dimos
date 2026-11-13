@@ -55,8 +55,8 @@ class PushEnvironment(Environment):
         self._sim: ModuleProxy | None = None
         self._rows: list[list[float]] = []
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
-        if modules:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
+        if modules or requires_mcp:
             raise ValueError("this evaluation uses a scripted subject and its simulation blueprint")
         blueprint = SimModule.blueprint(
             scene=self._world,
