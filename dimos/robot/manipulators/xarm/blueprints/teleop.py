@@ -94,7 +94,6 @@ keyboard_teleop_xarm6 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
-    # dof is the arm joints alone, so the sim drives the gripper through its own range.
     *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
@@ -277,7 +276,7 @@ coordinator_teleop_xarm7 = autoconnect(
     ),
     # Serves the URDF and its meshes to viewers; the planner already puts the links on tf.
     UrdfManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_xarm7_teleop_hw.joints)),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
 coordinator_teleop_xarm6 = autoconnect(
@@ -318,7 +317,7 @@ coordinator_teleop_xarm6 = autoconnect(
         model=_xarm6_teleop_model,
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_xarm6_teleop_hw.joints)),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 
