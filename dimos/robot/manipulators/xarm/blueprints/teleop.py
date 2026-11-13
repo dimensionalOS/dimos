@@ -56,7 +56,7 @@ from dimos.robot.manipulators.xarm.config import (
     xarm_wrist_camera_transform,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
@@ -225,11 +225,10 @@ _xarm7_teleop_model = make_xarm7_model_config(
     home_joints=XARM7_TELEOP_READY_JOINTS,
 )
 
+
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
 # The dedicated gripper task consumes normalized trigger commands independently.
-
-
 coordinator_teleop_xarm7 = autoconnect(
     TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
@@ -275,7 +274,7 @@ coordinator_teleop_xarm7 = autoconnect(
         static_transforms=[] if global_config.simulation else [xarm_wrist_camera_transform(7)],
     ),
     # Serves the URDF and its meshes to viewers; the planner already puts the links on tf.
-    UrdfManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
+    UsdManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
     *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
@@ -341,7 +340,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 
 def _teleop(arm: XArmType) -> Blueprint:
     """Jog an xArm's end and open and close its xArm Gripper from the Desktop
-    Manipulation app, through ``XArmConnection``. ``UrdfManager`` serves the
+    Manipulation app, through ``XArmConnection``. ``UsdManager`` serves the
     arm's URDF and puts its joints on tf, so the app can draw it.
 
     Wire it up with ``.remappings(_ARM_REMAPS)``. The arm's address is given at
@@ -390,7 +389,7 @@ def _teleop(arm: XArmType) -> Blueprint:
             ],
         ),
         XArmConnection.blueprint(arm=arm, gripper="xarm", **declaration.model_dump()),
-        UrdfManager.blueprint(model=model),
+        UsdManager.blueprint(model=model),
     )
 
 

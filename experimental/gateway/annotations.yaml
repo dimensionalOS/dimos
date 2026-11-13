@@ -460,6 +460,10 @@ robots:
           title: G1 agent in simulation
           description: 'The G1 agent against a simulated G1: no robot needed.'
           recommended_config: []
+        unitree-g1-sim2:
+          title: G1 GR00T in sim2
+          description: A G1 beside a desk with independent sensors and a truth-registered point cloud.
+          recommended_config: []
         unitree-g1-sim:
           title: G1 perception in simulation
           description: G1 perception and memory against a simulated G1.
@@ -994,6 +998,21 @@ robots:
         teleop-webxr-openarm:
           title: OpenArm VR teleop
           description: Both VR controllers drive the bimanual OpenArm; requires both CAN selectors, or simulation for a mock connection.
+        teleop-openarm-mini:
+          title: OpenArm Mini leader teleop
+          description: Two OpenArm Mini leader arms drive the bimanual OpenArm joint for joint, on one machine.
+        teleop-openarm-mini-leader:
+          title: OpenArm Mini leaders (operator machine)
+          description: The leader half of a split OpenArm Mini setup; joins the robot's network as a client.
+        teleop-openarm-mini-follower:
+          title: OpenArm Mini follower (robot machine)
+          description: The OpenArm half of a split OpenArm Mini setup; follows leaders on another machine.
+        openarm-mini-collection:
+          title: OpenArm Mini demonstration recording
+          description: Drive the OpenArm from the Mini leaders and record demonstrations, on one machine.
+        openarm-mini-follower-collection:
+          title: OpenArm Mini follower recording
+          description: Record demonstrations on the robot machine while the Mini leaders run on another.
     seeed_b601_dm:
       name: Seeed reBot B601-DM
       description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
@@ -1193,6 +1212,10 @@ robots:
       manufacturer: null
       dirs: []
       blueprints:
+        sim2-basic:
+          title: Sim2 sensor example
+          description: A small physical scene with independent camera, lidar, IMU and joint encoders.
+          recommended_config: []
         demo-agent:
           title: Agent demo
           description: 'An AI agent with no robot: try MCP skills and the chat.'

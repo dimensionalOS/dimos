@@ -309,7 +309,6 @@ class UnitreeWebRTCConnection(Resource):
                 ops.map(
                     Odometry.from_msg,
                 ),
-                ops.map(time_is_now),
             )
         )
 

@@ -422,12 +422,15 @@ class TestPublisherQoS:
     def test_publisher_qos_from_topic(self, pubsub) -> None:
         topic = Topic(
             "dimos/test/qos/stream",
-            qos=ZenohQoS(reliability="best_effort", congestion_control="drop"),
+            qos=ZenohQoS(
+                reliability="best_effort", congestion_control="drop", priority="interactive_high"
+            ),
         )
         pubsub.publish(topic, b"x")
         pub = pubsub._publishers["dimos/test/qos/stream"]
         assert pub.reliability == zenoh.Reliability.BEST_EFFORT
         assert pub.congestion_control == zenoh.CongestionControl.DROP
+        assert pub.priority == zenoh.Priority.INTERACTIVE_HIGH
 
     def test_publisher_default_qos_without_topic_qos(self, pubsub) -> None:
         # Pins zenoh's publisher defaults: reliable, drop under congestion.
@@ -454,8 +457,14 @@ class TestZenohQoSToWire:
     """QoS serialization sent to native modules over stdin."""
 
     def test_full_qos(self) -> None:
-        qos = ZenohQoS(reliability="best_effort", congestion_control="drop")
-        assert qos.to_wire() == {"reliability": "best_effort", "congestion_control": "drop"}
+        qos = ZenohQoS(
+            reliability="best_effort", congestion_control="drop", priority="interactive_high"
+        )
+        assert qos.to_wire() == {
+            "reliability": "best_effort",
+            "congestion_control": "drop",
+            "priority": "interactive_high",
+        }
 
     def test_partial_qos_omits_unset(self) -> None:
         assert ZenohQoS(congestion_control="block").to_wire() == {"congestion_control": "block"}

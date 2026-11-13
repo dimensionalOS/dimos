@@ -37,7 +37,7 @@ from dimos.protocol.service.spec import BaseConfig
 Writer = Callable[[Iterator["Sample"], "OutputConfig"], Path]
 Inspector = Callable[[Path], dict[str, Any]]
 
-SourceKind = Literal["snapshot", "joint_position_updates"]
+SourceKind = Literal["snapshot", "joint_position_updates", "joint_velocity_updates"]
 
 DEFAULT_FPS = 30.0  # resample rate == written video/timestamp rate
 
@@ -87,6 +87,8 @@ class FeatureSpec(BaseConfig):
         ),
     )
 
+    max_age_ms: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
     @model_validator(mode="after")
     def validate_schema(self) -> FeatureSpec:
         if self.dtype == "video":
@@ -94,14 +96,18 @@ class FeatureSpec(BaseConfig):
                 raise ValueError("video feature names must name every axis")
         elif len(self.shape) == 1 and len(self.names) != self.shape[0]:
             raise ValueError("vector feature names must match its length")
-        if self.source_kind == "joint_position_updates" and (
-            self.field != "position"
+        update_field = {
+            "joint_position_updates": "position",
+            "joint_velocity_updates": "velocity",
+        }.get(self.source_kind)
+        if update_field is not None and (
+            self.field != update_field
             or self.dtype == "video"
             or len(self.shape) != 1
             or len(self.names) != len(set(self.names))
         ):
             raise ValueError(
-                "joint_position_updates requires a position vector with unique joint names"
+                f"{self.source_kind} requires a {update_field} vector with unique joint names"
             )
         return self
 
@@ -136,12 +142,28 @@ class RecordingSchema(BaseConfig):
     episodes: EpisodeExtractor = EpisodeExtractor()
     observation: dict[str, FeatureSpec] = Field(default_factory=dict)
     action: dict[str, FeatureSpec] = Field(default_factory=dict)
+    # Explicit ordering when a policy needs one vector from multiple command streams.
+    action_vector: tuple[str, ...] | None = None
     sync: SyncConfig = SyncConfig(anchor="image", rate_hz=DEFAULT_FPS, tolerance_ms=50.0)
     quality: QualityConfig = QualityConfig()
 
     @model_validator(mode="after")
     def validate_sources(self) -> RecordingSchema:
         validate_source_kinds((*self.observation.values(), *self.action.values()))
+        if self.action_vector is not None:
+            if (
+                not self.action_vector
+                or len(set(self.action_vector)) != len(self.action_vector)
+                or set(self.action_vector) != set(self.action)
+            ):
+                raise ValueError("action_vector must name each action feature exactly once")
+            if any(
+                len(spec.shape) != 1
+                or spec.dtype == "video"
+                or not np.issubdtype(np.dtype(spec.dtype), np.number)
+                for spec in self.action.values()
+            ):
+                raise ValueError("action_vector requires numeric vector features")
         return self
 
     @classmethod

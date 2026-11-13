@@ -161,6 +161,17 @@ def test_different_modes_produce_different_keys() -> None:
     assert peer.session_key != client.session_key
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_compression_reaches_zenoh_and_uses_a_separate_session(enabled: bool) -> None:
+    config = ZenohConfig(compression=enabled)
+    other = ZenohConfig(compression=not enabled)
+    native = json.loads(str(zenohservice._zenoh_config(config)))
+    assert native["transport"]["unicast"]["compression"]["enabled"] is enabled
+    assert config.session_key != other.session_key
+    # Host link compression must not require rebuilding native camera modules.
+    assert config.to_wire() == other.to_wire()
+
+
 def test_codec_round_trip_sheds_the_session(session_pool) -> None:
     """A service travels to its worker over the codec and re-acquires on the far side."""
     svc = ZenohService(session_pool=session_pool)

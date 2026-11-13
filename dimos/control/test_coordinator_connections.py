@@ -26,6 +26,7 @@ worker processes.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from itertools import pairwise
 import math
 import os
 from pathlib import Path
@@ -50,6 +51,7 @@ from dimos.control.contract.convert import (
 )
 from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.motion_limits import MotionGroup
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -1042,3 +1044,61 @@ def test_an_estop_leaves_the_fake_robots_to_their_deadmen_and_a_clear_drives_the
         lambda: not arm.status().deadman_fired and not base.status().deadman_fired, timeout=10.0
     )
     assert positions(system) == pytest.approx(TARGET, abs=1e-6)
+
+
+def test_shared_motion_finishes_slow_goal_and_records_dispatched_values(rig, mocker):
+    clock = [10.0]
+    mocker.patch.object(tick_mod.time, "perf_counter", side_effect=lambda: clock[0])
+    arm = rig(
+        ArmCoordinator,
+        tasks=[joint_trajectory_task(MOCK_JOINTS)],
+        motion_limits={"arm": MotionGroup(joints=tuple(MOCK_JOINTS), rate=0.1, ceiling=1)},
+    )
+    sent = []
+    arm.coordinator.set_transport("coordinator_joint_command", Recorder("action", sent))
+    arm.report_arm(*AT_REST)
+    result = arm.coordinator.execute_trajectory(
+        JointTrajectory(
+            joint_names=MOCK_JOINTS, points=[TrajectoryPoint(positions=[0.05] * len(MOCK_JOINTS))]
+        )
+    )
+    assert result.status is TrajectoryExecutionStatus.ACCEPTED
+    for _ in range(60):
+        clock[0] += 0.01
+        arm.report_arm(*AT_REST)  # Measured state deliberately differs from commands.
+        arm.tick()
+    values = [positions[0] for positions in arm.positions_sent()]
+    assert values[-1] == pytest.approx(0.05)
+    assert values[0] <= 0.002 + 1e-9
+    assert all(b - a <= 0.001 + 1e-9 for a, b in pairwise(values))
+    assert [list(msg.position) for _, msg in sent] == arm.positions_sent()
+    assert arm.coordinator.get_joint_positions()[MOCK_JOINTS[0]] == 0.0
+    assert not arm.coordinator._trajectory_task.is_active()
+    arm.coordinator.set_estop(True)
+    count = len(sent)
+    arm.tick()
+    assert len(sent) == count
+
+
+def test_shared_limit_caps_stalled_ticks_and_resets_after_stale_feedback(rig, mocker):
+    clock = [10.0]
+    mocker.patch.object(tick_mod.time, "perf_counter", side_effect=lambda: clock[0])
+    mocker.patch.object(tick_mod.time, "monotonic", side_effect=lambda: clock[0])
+    arm = rig(
+        ArmCoordinator,
+        motion_limits={"arm": MotionGroup(joints=tuple(MOCK_JOINTS), rate=0.5, ceiling=1)},
+    )
+    arm.coordinator.add_task(SendsPositions(dict.fromkeys(MOCK_JOINTS, 1.0)))
+    arm.report_arm(*AT_REST)
+    clock[0] += 1
+    arm.report_arm(*AT_REST)
+    arm.tick()
+    assert arm.positions_sent()[-1][0] == pytest.approx(0.01)
+    clock[0] += 1
+    arm.tick()  # No command and no retained ramp through a feedback outage.
+    count = len(arm.positions_sent())
+    clock[0] += 0.01
+    arm.report_arm(*([0.7] * len(MOCK_JOINTS)))
+    arm.tick()
+    assert len(arm.positions_sent()) == count + 1
+    assert arm.positions_sent()[-1][0] == pytest.approx(0.705)

@@ -222,10 +222,24 @@ class JointTrajectoryTask(BaseControlTask):
             ):
                 raise ValueError("velocity_limits must be finite and positive")
             self._velocity_limits = dict(configured_limits)
+        self._velocity_ceilings = self._velocity_limits.copy()
 
         logger.info(
             f"JointTrajectoryTask {self._name} initialized for joints: {config.joint_names}"
         )
+
+    def set_velocity_limits(self, limits: dict[str, float]) -> None:
+        """Set live slew limits for every command source, within configured ceilings.
+
+        The coordinator must hold its task lock. Zero holds the current commanded
+        position; changing a limit does not replace or enable a motion.
+        """
+        if set(limits) != self._joint_names or any(
+            not math.isfinite(value) or not 0 <= value <= self._velocity_ceilings[name]
+            for name, value in limits.items()
+        ):
+            raise ValueError("limits must name every joint and stay within configured ceilings")
+        self._velocity_limits = dict(limits)
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
@@ -282,6 +296,7 @@ class JointTrajectoryTask(BaseControlTask):
             return None
 
         output_names = [name for name in self._joint_names_list if name in self._motions]
+        targets: dict[str, float] = {}
         all_complete = bool(self._motions)
         for joint_name, (run, index) in list(self._motions.items()):
             deadline = self._stream_deadlines.get(joint_name)
@@ -290,6 +305,7 @@ class JointTrajectoryTask(BaseControlTask):
                 position = state.joints.get_position(joint_name)
                 if position is not None and math.isfinite(position):
                     self._commanded_positions[joint_name] = position
+                    targets[joint_name] = position
                 del self._motions[joint_name]
                 del self._stream_deadlines[joint_name]
                 continue
@@ -307,14 +323,25 @@ class JointTrajectoryTask(BaseControlTask):
                 if current is None or not math.isfinite(current):
                     all_complete = False
                     continue
-            max_delta = self._velocity_limits[joint_name] * max(0.0, state.dt)
-            delta = max(-max_delta, min(max_delta, desired - current))
-            commanded = current + delta
+            if joint_name in state.commanded_positions:
+                # The shared conditioner owns slew, including across task handoffs.
+                # Remain active until its dispatched command reaches our endpoint.
+                applied = state.commanded_positions[joint_name]
+                commanded = current if applied is None else applied
+                targets[joint_name] = desired
+                reached = applied is not None and math.isclose(
+                    applied, run.trajectory.points[-1].positions[index], abs_tol=1e-9
+                )
+            else:
+                max_delta = self._velocity_limits[joint_name] * max(0.0, state.dt)
+                delta = max(-max_delta, min(max_delta, desired - current))
+                commanded = current + delta
+                targets[joint_name] = commanded
+                reached = math.isclose(
+                    commanded, run.trajectory.points[-1].positions[index], abs_tol=1e-9
+                )
             self._commanded_positions[joint_name] = commanded
-
-            final_position = run.trajectory.points[-1].positions[index]
             nominal_complete = elapsed >= run.trajectory.duration
-            reached = math.isclose(commanded, final_position, abs_tol=1e-9)
             if nominal_complete and reached:
                 del self._motions[joint_name]
                 self._stream_deadlines.pop(joint_name, None)
@@ -327,12 +354,12 @@ class JointTrajectoryTask(BaseControlTask):
             self._pending_start = False
             logger.info("Trajectory completed", task_name=self._name)
 
-        emitted_names = [name for name in output_names if name in self._commanded_positions]
+        emitted_names = [name for name in output_names if name in targets]
         if not emitted_names:
             return None
         output = JointCommandOutput(
             joint_names=emitted_names,
-            positions=[self._commanded_positions[name] for name in emitted_names],
+            positions=[targets[name] for name in emitted_names],
             mode=ControlMode.SERVO_POSITION,
         )
         # Emit the final command, then forget joints we no longer control.

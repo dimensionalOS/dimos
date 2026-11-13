@@ -14,17 +14,19 @@
 
 """Live G1 sensor-mount tf: mounts from g1.urdf, the base_link edge from the waist joints.
 
-The Mid-360 ships mounted upside down, so the torso edge composes the URDF
-mount with a 180 degree roll. The rt/lowstate subscriber is read-only.
+The Mid-360's upside-down orientation is defined in the URDF itself.
+The rt/lowstate subscriber is read-only.
 """
 
 from __future__ import annotations
 
 import asyncio
-import math
+from functools import lru_cache
+from pathlib import Path
 import threading
 import time
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from pydantic import Field
 
@@ -40,23 +42,25 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-MID360_PITCH = 0.04014257279586953
 D435_PITCH = 0.8307767239493009
 
 # g1.urdf fixed sensor mount origins on torso_link.
-_TORSO_MID360_XYZ = (0.0002835, 0.00003, 0.41618)
 _TORSO_D435_XYZ = (0.0576235, 0.01753, 0.42987)
 
 # waist_roll_joint origin, the only nonzero offset in the pelvis -> torso chain.
 _WAIST_ROLL_ORIGIN = (-0.0039635, 0.0, 0.044)
 
 
+@lru_cache(maxsize=1)
 def torso_to_mid360() -> Transform:
-    """torso_link -> the Mid-360's own frame: URDF mount pitch plus the upside-down roll."""
+    """Read the same native-axis mount used by simulation and UsdManager."""
+    root = ET.parse(Path(__file__).with_name("g1.urdf")).getroot()
+    origin = root.find("joint[@name='mid360_joint']/origin")
+    if origin is None:
+        raise ValueError("G1 URDF is missing the Mid360 mount")
     return Transform(
-        translation=Vector3(*_TORSO_MID360_XYZ),
-        rotation=Quaternion.from_euler(Vector3(0.0, MID360_PITCH, 0.0))
-        * Quaternion.from_euler(Vector3(math.pi, 0.0, 0.0)),
+        translation=Vector3(*(float(v) for v in origin.attrib["xyz"].split())),
+        rotation=Quaternion.from_euler(Vector3(*(float(v) for v in origin.attrib["rpy"].split()))),
         frame_id="torso_link",
         child_frame_id="mid360_link",
     )

@@ -172,6 +172,8 @@ class TestFlagOff:
         assert sorted(coordinator.outputs) == [
             "coordinator_joint_command",
             "coordinator_joint_state",
+            "coordinator_joint_velocity",
+            "motion_settings",
         ]
 
 

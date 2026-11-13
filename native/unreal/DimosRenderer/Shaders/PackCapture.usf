@@ -1,0 +1,28 @@
+#include "/Engine/Public/Platform.ush"
+
+int2 ImageSize;
+uint ColorIsSRGB;
+Texture2D<float4> ColorTexture;
+Texture2D<float> DepthTexture;
+RWStructuredBuffer<uint> PackedPixels;
+
+// Texture loads decode sRGB when the capture target has an sRGB view. Restore
+// its original display bytes; do not gamma-transform a linear target twice.
+float3 EncodeSRGB(float3 Value)
+{
+    return select(Value <= 0.0031308, Value * 12.92,
+        1.055 * pow(max(Value, 0.0), 1.0 / 2.4) - 0.055);
+}
+
+[numthreads(8, 8, 1)]
+void MainCS(uint3 ThreadId : SV_DispatchThreadID)
+{
+    uint2 Pixel = ThreadId.xy;
+    if (any(Pixel >= uint2(ImageSize))) return;
+    uint Index = Pixel.y * ImageSize.x + Pixel.x;
+    float3 Color = ColorTexture.Load(int3(Pixel, 0)).rgb;
+    if (ColorIsSRGB != 0) Color = EncodeSRGB(Color);
+    uint3 Bytes = uint3(round(saturate(Color) * 255.0));
+    PackedPixels[Index] = Bytes.r | (Bytes.g << 8) | (Bytes.b << 16) | (255u << 24);
+    PackedPixels[ImageSize.x * ImageSize.y + Index] = asuint(DepthTexture.Load(int3(Pixel, 0)));
+}

@@ -43,6 +43,15 @@ _CONGESTION_CONTROL = {
     "drop": zenoh.CongestionControl.DROP,
     "block": zenoh.CongestionControl.BLOCK,
 }
+_PRIORITY = {
+    "real_time": zenoh.Priority.REAL_TIME,
+    "interactive_high": zenoh.Priority.INTERACTIVE_HIGH,
+    "interactive_low": zenoh.Priority.INTERACTIVE_LOW,
+    "data_high": zenoh.Priority.DATA_HIGH,
+    "data": zenoh.Priority.DATA,
+    "data_low": zenoh.Priority.DATA_LOW,
+    "background": zenoh.Priority.BACKGROUND,
+}
 
 
 @dataclass(frozen=True)
@@ -51,6 +60,18 @@ class ZenohQoS:
 
     reliability: Literal["reliable", "best_effort"] | None = None
     congestion_control: Literal["drop", "block"] | None = None
+    priority: (
+        Literal[
+            "real_time",
+            "interactive_high",
+            "interactive_low",
+            "data_high",
+            "data",
+            "data_low",
+            "background",
+        ]
+        | None
+    ) = None
 
     def publisher_kwargs(self) -> dict[str, Any]:
         """`declare_publisher` kwargs for this QoS."""
@@ -59,6 +80,8 @@ class ZenohQoS:
             kwargs["reliability"] = _RELIABILITY[self.reliability]
         if self.congestion_control is not None:
             kwargs["congestion_control"] = _CONGESTION_CONTROL[self.congestion_control]
+        if self.priority is not None:
+            kwargs["priority"] = _PRIORITY[self.priority]
         return kwargs
 
     def to_wire(self) -> dict[str, str]:
@@ -68,6 +91,8 @@ class ZenohQoS:
             wire["reliability"] = self.reliability
         if self.congestion_control is not None:
             wire["congestion_control"] = self.congestion_control
+        if self.priority is not None:
+            wire["priority"] = self.priority
         return wire
 
 
@@ -75,6 +100,9 @@ class ZenohQoS:
 # publisher defaults (reliable, drop under congestion).
 QOS_NEVER_DROP = ZenohQoS(reliability="reliable", congestion_control="block")
 QOS_LATEST_WINS = ZenohQoS(reliability="best_effort", congestion_control="drop")
+QOS_CONTROL = ZenohQoS(
+    reliability="best_effort", congestion_control="drop", priority="interactive_high"
+)
 
 
 @dataclass

@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
 from dimos.control.contract.keys import Interface
+from dimos.control.motion_limits import MotionLimiter
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -90,7 +91,7 @@ class TickLoop:
         task_lock: Lock protecting tasks dict
         joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
-        publish_command_callback: Optional callback for intended position-command updates
+        publish_command_callback: Optional callback for dispatched position-command updates
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
         publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
         frame_pose_hz: Maximum rate for publish_tf_callback
@@ -118,9 +119,11 @@ class TickLoop:
         log_ticks: bool = False,
         publish_command_callback: Callable[[JointState], None] | None = None,
         connections: dict[str, ConnectionSource] | None = None,
-        connection_command_callback: Callable[[str, dict[str, float]], None] | None = None,
+        connection_command_callback: Callable[[str, dict[str, float]], bool | None] | None = None,
+        motion_limiter: MotionLimiter | None = None,
     ) -> None:
         self._tick_rate = tick_rate
+        self._motion_limiter = motion_limiter
         self._hardware = hardware
         self._connections: dict[str, ConnectionSource] = (
             connections if connections is not None else {}
@@ -219,12 +222,21 @@ class TickLoop:
 
         joint_states, per_hardware = self._read_all_hardware()
         imu_states = self._read_all_imu()
+        control_positions = joint_states.joint_positions.copy()
+        with self._hardware_lock:
+            for source in self._connections.values():
+                if not source.ready_for_control():
+                    for joint in source.joint_names:
+                        control_positions.pop(joint, None)
         state = CoordinatorState(
             joints=joint_states,
             imu=imu_states,
             t_now=t_now,
             dt=dt,
             sensors=self._read_all_sensors(),
+            commanded_positions=(
+                self._motion_limiter.snapshot(control_positions) if self._motion_limiter else {}
+            ),
         )
 
         commands = self._compute_all_tasks(state)
@@ -232,6 +244,12 @@ class TickLoop:
         joint_commands, preemptions = self._arbitrate(commands)
 
         self._notify_preemptions(preemptions)
+
+        if self._motion_limiter is not None:
+            # Missed ticks must not accumulate permission for a large position step.
+            joint_commands = self._motion_limiter.apply(
+                joint_commands, control_positions, min(dt, 2.0 / self._tick_rate)
+            )
 
         hw_commands = self._route_to_hardware(joint_commands)
 
@@ -501,22 +519,22 @@ class TickLoop:
                 if hw_id in hardware:
                     if not hardware[hw_id].ready_for_control():
                         continue
-                    if (
-                        self._publish_command_callback is not None
-                        and mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
-                        and hardware[hw_id].component.hardware_type != HardwareType.BASE
-                    ):
-                        joint_commands.update(
-                            (name, positions[name])
-                            for name in hardware[hw_id].joint_names
-                            if name in positions
-                        )
                     try:
                         accepted = hardware[hw_id].write_command(positions, mode)
                         if not accepted:
                             logger.error(
                                 f"Hardware {hw_id} rejected {mode.name} command from control task"
                             )
+                            continue
+                        if mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
+                            if self._motion_limiter:
+                                self._motion_limiter.commit(positions)
+                            if hardware[hw_id].component.hardware_type != HardwareType.BASE:
+                                joint_commands.update(
+                                    (joint, positions[joint])
+                                    for joint in hardware[hw_id].joint_names
+                                    if joint in positions
+                                )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
         if joint_commands and self._publish_command_callback is not None:
@@ -559,7 +577,19 @@ class TickLoop:
                     if self._joint_to_hardware.get(joint) == name
                 }
                 try:
-                    publish(name, source.command(winners))
+                    values = source.command(winners)
+                    if publish(name, values) is not False and self._motion_limiter:
+                        for message in source.command_messages(values, time.time()):
+                            if message.port == "position_command":
+                                self._motion_limiter.commit(
+                                    dict(
+                                        zip(
+                                            message.message.name,
+                                            message.message.position,
+                                            strict=True,
+                                        )
+                                    )
+                                )
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
 
@@ -585,8 +615,8 @@ class TickLoop:
         )
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
-        """Publish an aggregate only after every connection's initial readings are complete."""
-        if any(source.unreported() for source in self._connections.values()):
+        """Publish an aggregate only while every connection has complete, fresh readings."""
+        if any(not source.ready_for_control() for source in self._connections.values()):
             return
         reported = (
             snapshot.joint_positions.keys()

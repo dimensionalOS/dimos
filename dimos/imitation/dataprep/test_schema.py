@@ -19,7 +19,7 @@ import json
 from pydantic import ValidationError
 import pytest
 
-from dimos.imitation.dataprep.schema import FeatureSpec
+from dimos.imitation.dataprep.schema import FeatureSpec, RecordingSchema
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
@@ -107,3 +107,16 @@ def test_cross_field_feature_constraints_remain_enforced(changes, reason):
 
     with pytest.raises(ValidationError, match=reason):
         FeatureSpec.model_validate_json(json.dumps(declaration | changes))
+
+
+@pytest.mark.parametrize("order", [(), ("joint", "joint"), ("unknown",)])
+def test_action_vector_must_cover_exactly_the_declared_actions(order):
+    with pytest.raises(ValidationError, match="each action feature exactly once"):
+        RecordingSchema(
+            action={
+                "joint": FeatureSpec(
+                    stream="joints", field="position", dtype="float32", shape=(1,), names=["joint"]
+                )
+            },
+            action_vector=order,
+        )

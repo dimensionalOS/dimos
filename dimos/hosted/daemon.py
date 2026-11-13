@@ -126,6 +126,7 @@ class HostDaemon:
             mode="router",
             listen=self.listen,
             connect=self.connect,
+            compression=self.config.compression,
             multicast=self.config.autodiscovery,
             scouting=self.config.autodiscovery,
             scouting_interface=self.config.scout_interface,

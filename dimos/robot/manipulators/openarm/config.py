@@ -27,6 +27,12 @@ from dimos.robot.manipulators.damiao.robot import (
     DamiaoMotor,
     DamiaoRobot,
 )
+from dimos.robot.manipulators.feetech.robot import (
+    FeetechBus,
+    FeetechMotor,
+    FeetechRobot,
+    FeetechTrigger,
+)
 
 OPENARM_DESCRIPTION_URL = "https://github.com/enactic/openarm_description"
 OPENARM_DESCRIPTION_REF = "1fba2cbc05001f05b4514120b70130b4ac06f409"
@@ -162,3 +168,49 @@ OPENARM = DamiaoRobot(
     gravity=True,
     home_joints=list(OPENARM_HOME_JOINTS),
 )
+
+# Inside the OpenArm URDF limits, which the connection enforces by refusing
+# the whole command; clamping keeps a leader resting on a stop from stalling
+# every joint. Joint 4 (elbow) has no negative range.
+OPENARM_MINI_JOINT_LIMITS: dict[str, tuple[tuple[float, float], ...]] = {
+    "left": (
+        (-3.45, 1.35),
+        (-3.30, 0.15),
+        (-1.50, 1.50),
+        (0.0, 2.40),
+        (-1.50, 1.50),
+        (-0.75, 0.75),
+        (-1.50, 1.50),
+    ),
+    "right": (
+        (-1.35, 3.45),
+        (-0.15, 3.30),
+        (-1.50, 1.50),
+        (0.0, 2.40),
+        (-1.50, 1.50),
+        (-0.75, 0.75),
+        (-1.50, 1.50),
+    ),
+}
+# Squeezing the trigger this far closes the jaw fully.
+OPENARM_MINI_TRIGGER_TRAVEL_RADIANS = 1.0
+
+
+def _mini_bus(side: str) -> FeetechBus:
+    # Leader servos joint_1 to joint_7 (IDs 1 to 7) drive the arm joints in
+    # order; the gripper trigger is at ID 8.
+    return FeetechBus(
+        side,
+        tuple(
+            FeetechMotor(f"joint_{index}", joint, lower=lower, upper=upper)
+            for index, (joint, (lower, upper)) in enumerate(
+                zip(openarm_urdf_joints(side), OPENARM_MINI_JOINT_LIMITS[side], strict=True),
+                start=1,
+            )
+        ),
+        trigger=FeetechTrigger("gripper", OPENARM_MINI_TRIGGER_TRAVEL_RADIANS),
+    )
+
+
+#: The two OpenArm Mini leader arms, one Feetech bus each.
+OPENARM_MINI_LEADERS = FeetechRobot(buses=tuple(_mini_bus(side) for side in OPENARM_SIDES))

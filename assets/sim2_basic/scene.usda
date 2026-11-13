@@ -1,0 +1,328 @@
+#usda 1.0
+(
+    defaultPrim = "sim2_basic"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "sim2_basic"
+{
+    uniform token[] xformOpOrder = []
+
+    def Xform "assets" (
+        delete apiSchemas = ["PhysicsRigidBodyAPI"]
+        displayName = "world"
+    )
+    {
+        uniform token[] xformOpOrder = []
+
+        def Xform "base" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+            customData = {
+                dictionary urdf = {
+                    string[] unconverted = ['''<inertial>
+      <origin xyz="-.55 0 .05" />
+      <mass value="2.0" />
+      <inertia ixx="0.016666666666666666" iyy="0.004066666666666667" izz="0.0174" ixy="0" ixz="0" iyz="0" />
+    </inertial>''']
+                }
+            }
+            displayName = "base"
+        )
+        {
+            point3f physics:centerOfMass = (-0.55, 0, 0.05)
+            float3 physics:diagonalInertia = (0.0040666666, 0.016666668, 0.0174)
+            float physics:mass = 2
+            quatf physics:principalAxes = (-0.70710677, 0, 0, 0.70710677)
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+
+            def Cube "visual_0"
+            {
+                color3f[] primvars:displayColor = [(0.25, 0.3, 0.4)]
+                double size = 1
+                float3 xformOp:scale = (0.12, 0.3, 0.1)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-0.55, 0, 0.05, 1) )
+                uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:scale"]
+            }
+
+            def Cube "collision_1" (
+                prepend apiSchemas = ["PhysicsCollisionAPI"]
+            )
+            {
+                double size = 1
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.12, 0.3, 0.1)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-0.55, 0, 0.05, 1) )
+                uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:scale"]
+            }
+
+            def Xform "wall" (
+                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                customData = {
+                    dictionary urdf = {
+                        string[] unconverted = ['''<inertial>
+      <origin xyz="1 0 .4" />
+      <mass value="5.0" />
+      <inertia ixx="1.3333333333333337" iyy="0.26933333333333337" izz="1.0693333333333337" ixy="0" ixz="0" iyz="0" />
+    </inertial>''']
+                    }
+                }
+                displayName = "wall"
+            )
+            {
+                point3f physics:centerOfMass = (1, 0, 0.4)
+                float3 physics:diagonalInertia = (0.26933333, 1.0693333, 1.3333334)
+                float physics:mass = 5
+                quatf physics:principalAxes = (0.5, 0.5, 0.5, 0.5)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:transform"]
+
+                def Cube "visual_0"
+                {
+                    color3f[] primvars:displayColor = [(0.75, 0.7, 0.6)]
+                    double size = 1
+                    float3 xformOp:scale = (0.08, 1.6, 0.8)
+                    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0, 0.4, 1) )
+                    uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:scale"]
+                }
+
+                def Cube "collision_1" (
+                    prepend apiSchemas = ["PhysicsCollisionAPI"]
+                )
+                {
+                    double size = 1
+                    token visibility = "invisible"
+                    float3 xformOp:scale = (0.08, 1.6, 0.8)
+                    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0, 0.4, 1) )
+                    uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:scale"]
+                }
+            }
+
+            def Xform "tool" (
+                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                customData = {
+                    dictionary urdf = {
+                        string[] unconverted = ['''<inertial>
+      <origin xyz="0 0 0" />
+      <mass value="0.3" />
+      <inertia ixx="0.0005000000000000001" iyy="0.0005000000000000001" izz="0.0005000000000000001" ixy="0" ixz="0" iyz="0" />
+    </inertial>''']
+                    }
+                }
+                displayName = "tool"
+            )
+            {
+                point3f physics:centerOfMass = (0, 0, 0)
+                float3 physics:diagonalInertia = (0.0005, 0.0005, 0.0005)
+                float physics:mass = 0.3
+                quatf physics:principalAxes = (1, 0, 0, 0)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-0.4, 0, 0.08, 1) )
+                uniform token[] xformOpOrder = ["xformOp:transform"]
+
+                def Cube "visual_0"
+                {
+                    color3f[] primvars:displayColor = [(0.1, 0.7, 0.9)]
+                    double size = 1
+                    float3 xformOp:scale = (0.1, 0.1, 0.1)
+                    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                    uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:scale"]
+                }
+
+                def Cube "collision_1" (
+                    prepend apiSchemas = ["PhysicsCollisionAPI"]
+                )
+                {
+                    double size = 1
+                    token visibility = "invisible"
+                    float3 xformOp:scale = (0.1, 0.1, 0.1)
+                    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                    uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:scale"]
+                }
+
+                def Xform "camera_mount" (
+                    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+                    displayName = "camera_mount"
+                )
+                {
+                    matrix4d xformOp:transform = ( (2.0816681711721685e-16, -1, 0, 0), (-0.7071067811865475, -1.249000902703301e-16, -0.7071067811865476, 0), (0.7071067811865476, 1.1102230246251565e-16, -0.7071067811865475, 0), (-0.25, 0, 0.6, 1) )
+                    uniform token[] xformOpOrder = ["xformOp:transform"]
+                }
+
+                def Xform "lidar_mount" (
+                    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+                    displayName = "lidar_mount"
+                )
+                {
+                    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0.12, 1) )
+                    uniform token[] xformOpOrder = ["xformOp:transform"]
+                }
+
+                def Xform "imu_mount" (
+                    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+                    displayName = "imu_mount"
+                )
+                {
+                    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                    uniform token[] xformOpOrder = ["xformOp:transform"]
+                }
+            }
+        }
+
+        def Xform "box" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+            customData = {
+                dictionary urdf = {
+                    string[] unconverted = ['''<inertial>
+      <origin xyz="0 0 0" />
+      <mass value="0.3" />
+      <inertia ixx="0.0009800000000000002" iyy="0.0009800000000000002" izz="0.0009800000000000002" ixy="0" ixz="0" iyz="0" />
+    </inertial>''']
+                }
+            }
+            displayName = "box"
+        )
+        {
+            point3f physics:centerOfMass = (0, 0, 0)
+            float3 physics:diagonalInertia = (0.00098, 0.00098, 0.00098)
+            float physics:mass = 0.3
+            quatf physics:principalAxes = (1, 0, 0, 0)
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+            double3 xformOp:translate = (0.1, 0, 0.075)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Cube "visual_0"
+            {
+                color3f[] primvars:displayColor = [(0.95, 0.45, 0.1)]
+                double size = 1
+                float3 xformOp:scale = (0.14, 0.14, 0.14)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:scale"]
+            }
+
+            def Cube "collision_1" (
+                prepend apiSchemas = ["PhysicsCollisionAPI"]
+            )
+            {
+                double size = 1
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.14, 0.14, 0.14)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:transform", "xformOp:scale"]
+            }
+        }
+    }
+
+    def Scope "joints"
+    {
+        def PhysicsFixedJoint "base_joint" (
+            displayName = "base_joint"
+        )
+        {
+            rel physics:body1 = </sim2_basic/assets/base>
+            point3f physics:localPos0 = (0, 0, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "wall_joint" (
+            displayName = "wall_joint"
+        )
+        {
+            rel physics:body0 = </sim2_basic/assets/base>
+            rel physics:body1 = </sim2_basic/assets/base/wall>
+            point3f physics:localPos0 = (0, 0, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsPrismaticJoint "tool_joint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:linear"]
+            customData = {
+                dictionary urdf = {
+                    string[] unconverted = ['<dynamics damping="2" />']
+                }
+            }
+            displayName = "tool_joint"
+        )
+        {
+            float drive:linear:physics:damping = 20
+            float drive:linear:physics:stiffness = 200
+            float drive:linear:physics:targetPosition = 0
+            uniform token physics:axis = "Z"
+            rel physics:body0 = </sim2_basic/assets/base>
+            rel physics:body1 = </sim2_basic/assets/base/tool>
+            point3f physics:localPos0 = (-0.4, 0, 0.08)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0.70710677, 0, 0.70710677, 0)
+            quatf physics:localRot1 = (0.70710677, 0, 0.70710677, 0)
+            float physics:lowerLimit = 0
+            float physics:upperLimit = 1
+        }
+
+        def PhysicsFixedJoint "camera_mount_joint" (
+            displayName = "camera_mount_joint"
+        )
+        {
+            rel physics:body0 = </sim2_basic/assets/base/tool>
+            rel physics:body1 = </sim2_basic/assets/base/tool/camera_mount>
+            point3f physics:localPos0 = (-0.25, 0, 0.6)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0.27059805, -0.6532815, 0.6532815, -0.27059805)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "lidar_mount_joint" (
+            displayName = "lidar_mount_joint"
+        )
+        {
+            rel physics:body0 = </sim2_basic/assets/base/tool>
+            rel physics:body1 = </sim2_basic/assets/base/tool/lidar_mount>
+            point3f physics:localPos0 = (0, 0, 0.12)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "imu_mount_joint" (
+            displayName = "imu_mount_joint"
+        )
+        {
+            rel physics:body0 = </sim2_basic/assets/base/tool>
+            rel physics:body1 = </sim2_basic/assets/base/tool/imu_mount>
+            point3f physics:localPos0 = (0, 0, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+    }
+
+    def MjcActuator "actuator"
+    {
+        uniform double[] mjc:biasPrm = [0, -200, -20, 0, 0, 0, 0, 0, 0, 0]
+        uniform token mjc:biasType = "affine"
+        uniform token mjc:ctrlLimited = "false"
+        uniform token mjc:forceLimited = "true"
+        uniform double mjc:forceRange:max = 80
+        uniform double mjc:forceRange:min = -80
+        uniform double[] mjc:gainPrm = [200, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        rel mjc:target = </sim2_basic/joints/tool_joint>
+    }
+
+    def Plane "floor" (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        double length = 8
+        color3f[] primvars:displayColor = [(0.25, 0.3, 0.35)]
+        double width = 8
+    }
+
+    def DistantLight "light"
+    {
+        float inputs:intensity = 1
+    }
+}

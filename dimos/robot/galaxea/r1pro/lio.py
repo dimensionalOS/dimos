@@ -28,11 +28,12 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
-from dimos.robot.assets.model import LoadedRobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 
 
 class R1ProLioConfig(StaticTfPublisherConfig):
+    model: RobotModel = R1PRO_MODEL
     base_frame: str = "base_link"
     # Point-LIO's moving sensor frame (its sensor_frame_id).
     lidar_frame: str = "lidar_pointlio_link"
@@ -41,9 +42,11 @@ class R1ProLioConfig(StaticTfPublisherConfig):
 
 
 @cache
-def lio_model(lidar_frame: str, chassis_lidar_frame: str) -> LoadedRobotModel:
+def lio_model(
+    lidar_frame: str, chassis_lidar_frame: str, model: RobotModel = R1PRO_MODEL
+) -> LoadedRobotModel:
     """The R1 URDF with Point-LIO's frame added at the chassis lidar, loaded on first use so importing a blueprint needs no robot assets."""
-    return R1PRO_MODEL.with_fixed_frame(lidar_frame, chassis_lidar_frame).load()
+    return model.with_fixed_frame(lidar_frame, chassis_lidar_frame).load()
 
 
 def joint_transform(model: LoadedRobotModel, child_link: str) -> Transform:
@@ -59,7 +62,7 @@ def joint_transform(model: LoadedRobotModel, child_link: str) -> Transform:
 
 def mount_transforms(config: R1ProLioConfig) -> list[Transform]:
     """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
-    model = lio_model(config.lidar_frame, config.chassis_lidar_frame)
+    model = lio_model(config.lidar_frame, config.chassis_lidar_frame, config.model)
     base_to_chassis_lidar = joint_transform(model, config.chassis_lidar_frame)
     assert base_to_chassis_lidar.frame_id == config.base_frame
     base_to_lidar = base_to_chassis_lidar + joint_transform(model, config.lidar_frame)

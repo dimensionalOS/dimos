@@ -20,6 +20,7 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 
 from collections.abc import Callable, Iterator
 import json
+import math
 from pathlib import Path
 import threading
 import time
@@ -36,7 +37,9 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.global_config import GlobalConfig
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.simulation.mujoco.config import MujocoConfig
@@ -47,7 +50,7 @@ def stub_webrtc(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Replace UnitreeWebRTCConnection in go2.connection so the webrtc branch
     runs without dialing out."""
     stub = MagicMock(name="UnitreeWebRTCConnection")
-    monkeypatch.setattr(go2_conn, "UnitreeWebRTCConnection", stub)
+    monkeypatch.setattr("dimos.robot.unitree.connection.UnitreeWebRTCConnection", stub)
     return stub
 
 
@@ -213,6 +216,75 @@ def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 1
     assert conn.odom.publish.call_count == 1
+
+
+def test_body_command_and_pose_derived_feedback(connection):
+    conn = connection(publish_tf=False)
+    conn.joint_state = MagicMock()
+    conn.odometry = MagicMock()
+    values = {
+        f"{name}/velocity": v
+        for name, v in zip(go2_conn.GO2_BASE_JOINTS, (0.4, 0.1, 0.2), strict=True)
+    }
+    conn.write(values)  # No pose prerequisite.
+    q = Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
+    conn._publish_tf(PoseStamped(ts=10.0, position=[2.0, 3.0, 0.0], orientation=q))
+    conn.joint_state.publish.assert_not_called()  # No invented first rate.
+    conn.odometry.publish.assert_not_called()
+    conn._publish_tf(PoseStamped(ts=10.1, position=[1.99, 3.04, 0.0], orientation=q))
+    state = conn.joint_state.publish.call_args.args[0]
+    odom = conn.odometry.publish.call_args.args[0]
+    assert state.name == list(go2_conn.GO2_BASE_JOINTS)
+    assert list(state.position) == []
+    assert state.frame_id == odom.child_frame_id == "base_link"
+    assert state.ts == odom.ts == 10.1
+    assert state.velocity == pytest.approx([0.4, 0.1, 0.0])
+    assert [odom.twist.linear.x, odom.twist.linear.y] == pytest.approx([0.4, 0.1])
+    assert odom.pose.position.y == 3.04
+    conn.write(values)  # Measured nonzero yaw cannot change body commands.
+    twist = conn.connection.move.call_args.args[0]
+    assert [twist.linear.x, twist.linear.y, twist.angular.z] == pytest.approx([0.4, 0.1, 0.2])
+    conn._publish_tf(PoseStamped(ts=10.1, orientation=q))  # duplicate time: no rate
+    conn._publish_tf(PoseStamped(ts=12.0, orientation=q))  # missing interval
+    assert conn.joint_state.publish.call_count == 1
+    half_yaw = math.pi / 4 + 0.01
+    turning = Quaternion(0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+    conn._publish_tf(PoseStamped(ts=12.1, orientation=turning))
+    assert conn.joint_state.publish.call_args.args[0].velocity[2] == pytest.approx(0.2)
+    assert conn.odometry.publish.call_args.args[0].twist.angular.z == pytest.approx(0.2)
+    conn.halt()
+    conn.connection.stop_movement.assert_called_once()
+
+
+def test_canonical_lifecycle_deadman_and_post_stop_no_replay(monkeypatch):
+    from dimos.control.test_coordinator_connections import LocalTransport
+
+    backend = MagicMock()
+    backend.odom_stream.return_value = Subject()
+    backend.lowstate_stream.return_value = Subject()
+    backend.move.return_value = True
+    monkeypatch.setattr(go2_conn, "make_connection", lambda *args, **kwargs: backend)
+    conn = GO2Connection(ip="replay", camera=False, lidar=False, deadman_timeout_s=0.03)
+    commands = LocalTransport()
+    conn.set_transport("velocity_command", commands)
+    conn.set_transport("cmd_vel", LocalTransport())
+    try:
+        conn.start()
+        backend.odom_stream.return_value.on_next(PoseStamped())
+        command = JointState(name=list(go2_conn.GO2_BASE_JOINTS), velocity=[0.2, 0.0, 0.0])
+        commands.publish(command)
+        assert backend.move.call_count == 1
+        deadline = time.monotonic() + 2.0
+        while not conn.status().deadman_fired and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert conn.status().deadman_fired
+        assert backend.stop_movement.call_count == 1
+        conn.stop()
+        commands.publish(command)
+        assert backend.move.call_count == 1
+        assert not conn.status().connected
+    finally:
+        conn.stop()
 
 
 def test_stop_disposes_stream_readers_before_closing_connection(connection, mocker) -> None:

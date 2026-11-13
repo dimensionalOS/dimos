@@ -138,6 +138,9 @@ class CoordinatorState:
     t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
     dt: float = 0.0  # Time since last tick
     sensors: SensorStateSnapshot = field(default_factory=SensorStateSnapshot)
+    # Presence delegates position slew to the coordinator. Values are previously
+    # dispatched commands, not task intent; None means no command has been sent.
+    commanded_positions: dict[str, float | None] = field(default_factory=dict)
 
 
 @dataclass

@@ -29,6 +29,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from dimos.imitation.dataprep.core import (
     extract_episodes,
     get_writer,
@@ -76,6 +78,7 @@ def _write_dimos_meta(
         "source": config.source,
         "observation": {k: v.model_dump() for k, v in config.recording_schema.observation.items()},
         "action": {k: v.model_dump() for k, v in config.recording_schema.action.items()},
+        "action_vector": config.recording_schema.action_vector,
         "sync": config.recording_schema.sync.model_dump(),
         "quality": config.recording_schema.quality.model_dump(),
         "quality_reports": [report.model_dump() for report in quality_reports],
@@ -95,7 +98,9 @@ def _write_dimos_meta(
     if config.output.format == "lerobot":
         meta["feature_names"] = canonical_feature_names(
             {key: spec.dtype for key, spec in config.recording_schema.observation.items()},
-            config.recording_schema.action.keys(),
+            ["action"]
+            if config.recording_schema.action_vector
+            else config.recording_schema.action.keys(),
         )
     # Writers return a directory (lerobot) or a file (hdf5). Put the sidecar
     # *inside* a directory, or *beside* a file (`<name>.dimos_meta.json`).
@@ -193,6 +198,15 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                 "names": ["is_filled"],
             },
         }
+        if config.recording_schema.action_vector:
+            vector_names: list[str] = []
+            for key in config.recording_schema.action_vector:
+                vector_names.extend(feature_schema.pop(key)["names"])
+            feature_schema["action"] = {
+                "dtype": "float32",
+                "shape": [len(vector_names)],
+                "names": vector_names,
+            }
         output = config.output.model_copy(
             update={
                 "metadata": {
@@ -235,6 +249,19 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                             samples_seen,
                             episodes_done,
                             total,
+                        )
+                    if config.recording_schema.action_vector:
+                        sample = sample.model_copy(
+                            update={
+                                "action": {
+                                    "action": np.concatenate(
+                                        [
+                                            sample.action[key]
+                                            for key in config.recording_schema.action_vector
+                                        ]
+                                    ).astype(np.float32)
+                                }
+                            }
                         )
                     yield sample
                 if samples_seen > before:

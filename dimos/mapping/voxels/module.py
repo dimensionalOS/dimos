@@ -100,7 +100,8 @@ class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):
 
     def pipeline(self, stream: Stream[PointCloud2]) -> Stream[PointCloud2]:
         cfg = self.config.model_dump(
-            include=set(VoxelGridMapperConfig.model_fields) - set(ModuleConfig.model_fields)
+            include=(set(VoxelGridMapperConfig.model_fields) - set(ModuleConfig.model_fields))
+            | {"frame_id"}
         )
         return stream.transform(VoxelMapTransformer(**cfg))
 

@@ -29,6 +29,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 import functools
 import inspect
+import json
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,7 @@ from dimos.control.hardware_interface import (
     ConnectedTwistBase,
     ConnectedWholeBody,
 )
+from dimos.control.motion_limits import MotionGroup, MotionLimiter
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -70,6 +72,7 @@ from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.simulation.engines.spec import MujocoSimSpec
@@ -119,6 +122,7 @@ class ControlCoordinatorConfig(ModuleConfig):
     # How old a robot's newest reading may be, in seconds, before it is no
     # longer commanded.
     reading_timeout_s: float = 0.2
+    motion_limits: dict[str, MotionGroup] = field(default_factory=dict)
     # Joints, named "<robot>/<joint>", whose connection commands zero
     # stiffness. The connection keeps those gains; this declaration only
     # lets tasks that require zero stiffness (hand guiding) accept the robot.
@@ -201,8 +205,10 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
-    # Intended position-command updates for recording.
+    # Dispatched position/velocity commands for recording.
     coordinator_joint_command: Out[JointState]
+    coordinator_joint_velocity: Out[JointState]
+    motion_settings: Out[String]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -245,6 +251,8 @@ class ControlCoordinator(Module):
         self._command_ports: dict[str, dict[str, Out[Any]]] = {}
         # While set, robots behind connection modules are sent nothing.
         # Guarded by _hardware_lock.
+        self._motion_limiter = MotionLimiter(self.config.motion_limits)
+        self._motion_settings_lock = threading.Lock()
         self._estopped = False
         # While set, a task added is emergency-stopped too. Guarded by _task_lock.
         self._tasks_estopped = False
@@ -471,15 +479,22 @@ class ControlCoordinator(Module):
                 self.register_disposable(Disposable(port.subscribe(handler)))
         logger.info(f"Driving robots through connection modules: {robots}")
 
-    def _publish_command(self, robot: str, values: dict[str, float]) -> None:
+    def _publish_command(self, robot: str, values: dict[str, float]) -> bool:
         """Send one robot its command for this tick. Called by the tick loop,
         which holds ``_hardware_lock``."""
         if self._estopped:
-            return
+            return False
         source = self._connections[robot]
         ports = self._command_ports[robot]
         for out in source.command_messages(values, time.time()):
             ports[out.port].publish(out.message)
+            # Record the complete dispatched command, including holds, after
+            # arbitration, motion conditioning and connection limit validation.
+            if out.port == "position_command":
+                self.coordinator_joint_command.publish(out.message)
+            elif out.port == "velocity_command":
+                self.coordinator_joint_velocity.publish(out.message)
+        return True
 
     @rpc
     def add_hardware(
@@ -829,6 +844,20 @@ class ControlCoordinator(Module):
                     )
 
     @rpc
+    def get_motion_limits(self) -> dict[str, dict[str, Any]]:
+        """Read deployment ceilings and live rates shared by every input task."""
+        return {name: group.model_dump() for name, group in self._motion_limiter.settings().items()}
+
+    @rpc
+    def set_motion_limits(self, rates: dict[str, float]) -> dict[str, dict[str, Any]]:
+        """Atomically set group rates within deployment ceilings; never enables motion."""
+        with self._motion_settings_lock:
+            groups = self._motion_limiter.set_rates(rates)
+            settings = {name: group.model_dump() for name, group in groups.items()}
+            self.motion_settings.publish(String(json.dumps(settings)))
+            return settings
+
+    @rpc
     def set_estop(self, estopped: bool) -> bool:
         """Emergency-stop every task and robot this coordinator drives, or clear the stop.
 
@@ -848,12 +877,14 @@ class ControlCoordinator(Module):
                 # already sending finishes first, and none sends after.
                 with self._hardware_lock:
                     self._estopped = True
+                    self._motion_limiter.reset()
                 self._set_tasks_estop(True)
             else:
                 self._set_tasks_estop(False)
                 with self._hardware_lock:
                     for connection in self._connections.values():
                         connection.drop_holds()
+                    self._motion_limiter.reset()
                     self._estopped = False
                 logger.warning("E-STOP cleared at coordinator")
         return True
@@ -1041,6 +1072,16 @@ class ControlCoordinator(Module):
         if self.config.hardware or self.config.tasks:
             self._setup_from_config()
 
+        unknown_limits = {
+            joint
+            for group in self._motion_limiter.settings().values()
+            for joint in group.joints
+            if joint not in self._joint_to_hardware
+        }
+        if unknown_limits:
+            raise ValueError(f"Motion groups reference undeclared joints: {sorted(unknown_limits)}")
+        self._motion_limiter.reset()
+
         # Create and start tick loop
         publish_cb = (
             self.coordinator_joint_state.publish if self.config.publish_joint_state else None
@@ -1066,7 +1107,9 @@ class ControlCoordinator(Module):
             log_ticks=self.config.log_ticks,
             connections=self._connections,
             connection_command_callback=self._publish_command,
+            motion_limiter=self._motion_limiter,
         )
+        self.set_motion_limits({})
         self._tick_loop.start()
 
         # Subscribe only streams that registered tasks' cards consume.

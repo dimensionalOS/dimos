@@ -295,3 +295,30 @@ def test_connect_uses_the_active_runs_transport_not_the_last_launchs(
     assert live.connect_dimos() == "lcm"
     registered(terminal_run.pid, original_argv=["dimos", "--transport=lcm", "run", "demo"])
     assert live.connect_dimos() == "lcm"
+
+
+def test_connect_follows_remote_endpoint_and_resets_it_for_next_run(terminal_run, monkeypatch):
+    for name in ("robot_ip", "robot_ips", "zenoh_connect", "zenoh_mode", "zenoh_domain"):
+        monkeypatch.setattr(global_config, name, getattr(global_config, name))
+    registered(
+        terminal_run.pid,
+        config_overrides={
+            "zenoh_connect": "tcp/robot:7447",
+            "zenoh_mode": "client",
+            "zenoh_domain": "remote",
+        },
+    )
+    live.connect_dimos()
+    assert (global_config.zenoh_connect, global_config.zenoh_mode, global_config.zenoh_domain) == (
+        "tcp/robot:7447",
+        "client",
+        "remote",
+    )
+    registered(terminal_run.pid)
+    live.connect_dimos()
+    defaults = GlobalConfig()
+    assert (global_config.zenoh_connect, global_config.zenoh_mode, global_config.zenoh_domain) == (
+        defaults.zenoh_connect,
+        defaults.zenoh_mode,
+        defaults.zenoh_domain,
+    )

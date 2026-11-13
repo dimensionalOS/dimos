@@ -15,9 +15,10 @@
 
 """R1 Pro ControlCoordinator, ROS connection, and Point-LIO on the chassis Mid-360.
 
-Mirrors ``unitree_g1_coordinator.py``: the 18-DOF upper body goes through
-the generic whole-body transport adapter, the holonomic chassis through the
-twist-base transport adapter. ``base_link`` is placed by Point-LIO, not wheel odometry.
+The R1 Pro is driven through ``R1ProConnection`` alone: the 18-DOF upper body
+takes positions and the holonomic chassis takes speeds, both through the
+coordinator's per-robot ports — no transport adapters in between.
+``base_link`` is placed by Point-LIO, not wheel odometry.
 
 Usage:
     dimos run r1pro-coordinator
@@ -28,12 +29,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import TransportSpec
+from dimos.core.stream import In, Out, TransportSpec
 from dimos.core.transport import ZenohTransport
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
@@ -45,13 +46,18 @@ from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
     R1PRO_CHASSIS_LIDAR_IP,
 )
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
+from dimos.robot.galaxea.r1pro.connection import (
+    R1PRO_BASE_JOINTS,
+    R1PRO_UPPER_BODY_JOINTS,
+    R1ProConnection,
+    R1ProConnectionConfig,
+)
 from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadCameraInfo,
     HeadLeftCamera,
@@ -61,7 +67,23 @@ from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
-_chassis_joints = make_twist_base_joints("chassis")
+
+class R1ProCoordinator(ControlCoordinator):
+    """The R1 Pro driven through ``R1ProConnection``, robot name "r1pro".
+
+    ``r1pro_position_command`` carries the 18 upper-body joints' targets and
+    ``r1pro_velocity_command`` the native body forward/lateral/turn velocities;
+    ``r1pro_joint_state`` is the joint
+    feedback and ``r1pro_imu`` the chassis IMU (the torso IMU stays on the
+    bus, as before).
+    """
+
+    r1pro_position_command: Out[JointState]
+    r1pro_velocity_command: Out[JointState]
+    r1pro_joint_state: In[JointState]
+    r1pro_imu: In[Imu]
+    left_gripper_command: In[Float32]
+    right_gripper_command: In[Float32]
 
 
 def _r1pro_rerun_blueprint() -> Any:
@@ -179,7 +201,7 @@ def r1pro_control(
     tasks: Sequence[TaskConfig] | None = None,
     **connection: Any,
 ) -> Blueprint:
-    """R1ProConnection, ControlCoordinator and the head cameras.
+    """R1ProConnection, R1ProCoordinator and the head cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
@@ -193,40 +215,47 @@ def r1pro_control(
             TaskConfig(
                 name="vel_chassis",
                 type="twist_velocity",
-                joint_names=_chassis_joints,
-                params={"axes": ["linear.x", "linear.y", "angular.z"]},
+                joint_names=R1PRO_BASE_JOINTS,
+                params={
+                    "axes": ["linear.x", "linear.y", "angular.z"],
+                    "timeout": 0.2,
+                },
                 priority=10,
             ),
         ]
     )
 
+    declaration = R1ProConnectionConfig(**connection)
     return (
         autoconnect(
-            R1ProConnection.blueprint(**connection),
+            R1ProConnection.blueprint(**declaration.model_dump()),
             *_head_cameras(),
-            ControlCoordinator.blueprint(
+            R1ProCoordinator.blueprint(
+                instance_name="ControlCoordinator",
                 tick_rate=100,
-                hardware=[
-                    HardwareComponent(
-                        hardware_id="r1pro",
-                        hardware_type=HardwareType.WHOLE_BODY,
-                        joints=R1PRO_UPPER_BODY_JOINTS,
-                        adapter_type="transport_lcm",
-                    ),
-                    HardwareComponent(
-                        hardware_id="chassis",
-                        hardware_type=HardwareType.BASE,
-                        joints=_chassis_joints,
-                        adapter_type="transport_lcm",
-                    ),
+                connections=[
+                    ConnectionConfig(
+                        source=declaration.source,
+                        model=declaration.model,
+                        joint_commands=declaration.joint_commands,
+                        deadman_timeout_s=declaration.deadman_timeout_s,
+                    )
                 ],
                 tasks=resolved_tasks,
             ),
         )
-        # Rename so the chassis adapter owns the canonical /chassis/* names.
+        # The connection's ports onto the coordinator's per-robot ports, and
+        # the head cameras onto their public names.
         .remappings(
             [
-                (R1ProConnection, "cmd_vel", "chassis_cmd_vel"),
+                (R1ProConnection, "position_command", "r1pro_position_command"),
+                (R1ProConnection, "velocity_command", "r1pro_velocity_command"),
+                (R1ProCoordinator, "r1pro_joint_state", "joint_state"),
+                # The chassis IMU feeds the coordinator's sensor state, as it
+                # did through the whole-body adapter; the torso IMU stays a
+                # plain bus stream.
+                (R1ProCoordinator, "r1pro_imu", "imu_chassis"),
+                # Keeps its name for the navigation consumers that read it.
                 (R1ProConnection, "odom", "chassis_odom"),
                 (HeadLeftCamera, "jpeg_out", "head_left_color"),
                 (HeadRightCamera, "jpeg_out", "head_right_color"),
@@ -236,23 +265,15 @@ def r1pro_control(
         )
         .transports(
             {
-                # WholeBody bridge (hw_id="r1pro"). TransportWholeBodyAdapter
-                # builds /{hw}/motor_states|imu|motor_command itself, so these
-                # three topics are fixed by hardware_id, not a naming choice.
-                # Only one IMU goes to /r1pro/imu.
-                ("motor_states", JointState): _zenoh_transport("/r1pro/motor_states", JointState),
+                # Both IMUs stay on the bus under their old topics.
                 ("imu_chassis", Imu): _zenoh_transport("/r1pro/imu", Imu),
                 ("imu_torso", Imu): _zenoh_transport("/imu_torso", Imu),
-                ("motor_command", MotorCommandArray): _zenoh_transport(
-                    "/r1pro/motor_command", MotorCommandArray
-                ),
-                # Twist bridge (hw_id="chassis").
-                ("chassis_cmd_vel", Twist): _zenoh_transport("/chassis/cmd_vel", Twist),
-                ("chassis_odom", PoseStamped): _zenoh_transport("/chassis/odom", PoseStamped),
                 # Wheel odometry (pose + twist) for navigation consumers.
                 ("odometry", Odometry): _zenoh_transport("/odometry", Odometry),
+                ("chassis_odom", PoseStamped): _zenoh_transport("/chassis/odom", PoseStamped),
                 # Public Twist bus: any module's cmd_vel Out drives the
-                # coordinator's twist_command In.
+                # coordinator's twist_command In, which the chassis velocity
+                # task claims.
                 ("cmd_vel", Twist): _zenoh_transport("/cmd_vel", Twist),
                 ("twist_command", Twist): _zenoh_transport("/cmd_vel", Twist),
                 # Sensor pass-throughs.
@@ -281,7 +302,6 @@ def r1pro_control(
                 ("coordinator_joint_state", JointState): _zenoh_transport(
                     "/coordinator/joint_state", JointState
                 ),
-                ("joint_command", JointState): _zenoh_transport("/r1pro/joint_command", JointState),
             }
         )
         .global_config(transport="zenoh")
