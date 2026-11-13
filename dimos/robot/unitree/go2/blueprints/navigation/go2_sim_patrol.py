@@ -19,9 +19,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.orchestration.demo.fake_robot import FakeBattery
 from dimos.orchestration.orchestrator import Orchestrator
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
+from dimos.simulation.go2_sim.fake_battery import FakeBattery
 
 # One worker per module.
 go2_sim_patrol = autoconnect(

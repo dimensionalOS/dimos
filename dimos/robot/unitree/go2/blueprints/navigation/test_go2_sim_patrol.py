@@ -28,7 +28,6 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPl
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind
 from dimos.orchestration.checks import CheckedDefinition
-from dimos.orchestration.demo.fake_robot import FakeBattery
 from dimos.orchestration.engine import (
     Effect,
     FaultReport,
@@ -41,6 +40,7 @@ from dimos.orchestration.engine import (
 )
 from dimos.orchestration.loader import load_and_check
 from dimos.orchestration.plain import to_plain
+from dimos.simulation.go2_sim.fake_battery import FakeBattery
 
 PATROL = Path(__file__).parent / "go2_sim_patrol.toml"
 MODULES = (MLSPlannerNative, FakeBattery)

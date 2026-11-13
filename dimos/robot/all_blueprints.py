@@ -62,7 +62,6 @@ all_blueprints = {
     "demo-gps-nav": "dimos.agents.skills.demo_gps_nav:demo_gps_nav",
     "demo-mcp-stress-test": "dimos.core.demos.stress_test_blueprint:demo_mcp_stress_test",
     "demo-mid360-pcap-replay": "dimos.hardware.sensors.lidar.livox.livox_blueprints:demo_mid360_pcap_replay",
-    "demo-orchestrator": "dimos.orchestration.demo.demo_orchestrator:demo_orchestrator",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-pico-body-tracking": "dimos.teleop.webxr.blueprints:demo_pico_body_tracking",
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
