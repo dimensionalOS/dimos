@@ -812,9 +812,6 @@ robots:
       defaults:
         recommended_config: *can_arm_config
       blueprints:
-        keyboard-teleop-a1z:
-          title: A1Z keyboard driving
-          description: Move a Galaxea A1Z arm with this computer's keyboard.
         a1z-planner-coordinator:
           title: A1Z motion planning
           description: Motion planning and execution for a real Galaxea A1Z arm, through A1ZConnection.
@@ -834,10 +831,12 @@ robots:
           recommended_config: *a1z_connection_config
         coordinator-teleop-a1z:
           title: A1Z teleop coordinator
-          description: The A1Z teleop coordinator (a building block).
+          description: A real A1Z behind the VR teleop coordinator, through A1ZConnection (a building block).
+          recommended_config: *a1z_connection_config
         teleop-webxr-a1z:
           title: A1Z VR teleop
-          description: Move an A1Z with a VR headset's left controller.
+          description: Move a real A1Z with a VR headset's left controller, through A1ZConnection.
+          recommended_config: *a1z_connection_config
     a750:
       name: A-750
       description: The A-750 arm, over a serial port.

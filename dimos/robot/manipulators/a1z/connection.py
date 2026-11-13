@@ -42,16 +42,18 @@ from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import model_limit, movable_joints
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.hardware.manipulators.galaxea_a1z.config import A1ZConfig, A1ZGripperConfig
-from dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus import gs_usb_can_bus
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.a1z.config import A1Z_DOF, A1Z_GRIPPER_OPENING_M, a1z_model
+from dimos.robot.manipulators.a1z.gs_usb_bus import gs_usb_can_bus
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# The device's gains, gravity compensation and gripper torque, as Galaxea tunes them.
-_DEVICE = A1ZConfig(gripper=A1ZGripperConfig())
+# The joints' gains, gravity compensation (0 to 1) and gripper torque (N·m), as Galaxea tunes them.
+_DEFAULT_KP = (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)
+_DEFAULT_KD = (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)
+_GRAVITY_COMP_FACTOR = 1.0
+_GRIPPER_MAX_TORQUE_NM = 0.5
 _SDK_CONTROL_HZ = 250
 # Motor error codes 0x0 (off) and 0x1 (normal) are healthy; any other is a fault.
 _HEALTHY_MOTOR_CODES = (0, 1)
@@ -119,7 +121,7 @@ class A1ZConnectionConfig(ConnectionConfig):
     gripper: bool = True
     source: str = "arm"
     joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
-    gravity_comp_factor: float = Field(default=_DEVICE.gravity_comp_factor, ge=0.0, le=1.0)
+    gravity_comp_factor: float = Field(default=_GRAVITY_COMP_FACTOR, ge=0.0, le=1.0)
     home: tuple[float, ...] | None = (0.0,) * A1Z_DOF
     jump_limit_s: float = 0.1
 
@@ -566,17 +568,16 @@ def _make_robot(
     get_a1z_robot: Callable[..., Any], port: str, gripper: bool, gravity_comp_factor: float
 ) -> Any:
     """Build the SDK's robot, with Galaxea's gains and the SDK's own dynamics model."""
-    assert _DEVICE.gripper is not None
     return get_a1z_robot(
         can_channel=port,
         gravity_comp_factor=gravity_comp_factor,
         zero_gravity_mode=False,
         control_freq_hz=_SDK_CONTROL_HZ,
         urdf_path=None,
-        default_kp=np.asarray(_DEVICE.default_kp, dtype=float),
-        default_kd=np.asarray(_DEVICE.default_kd, dtype=float),
+        default_kp=np.asarray(_DEFAULT_KP, dtype=float),
+        default_kd=np.asarray(_DEFAULT_KD, dtype=float),
         with_gripper=gripper,
-        gripper_max_torque=_DEVICE.gripper.max_torque,
+        gripper_max_torque=_GRIPPER_MAX_TORQUE_NM,
     )
 
 

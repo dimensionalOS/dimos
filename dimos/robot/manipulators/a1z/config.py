@@ -16,17 +16,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-import math
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
-from dimos.hardware.manipulators.galaxea_a1z.config import (
-    A1ZConfig,
-    A1ZGripperConfig,
-)
-from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import JointDescription, RobotModel
@@ -38,7 +29,7 @@ from dimos.robot.manipulators._modeling import (
 
 A1Z_DOF = 6
 #: How far the G1Z gripper's jaw opens, in metres.
-A1Z_GRIPPER_OPENING_M = A1ZGripperConfig().max_opening_m
+A1Z_GRIPPER_OPENING_M = 0.1
 
 A1Z_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("arm_link2", "arm_link5"),
@@ -60,52 +51,6 @@ A1Z_PACKAGE_PATHS: dict[str, Path] = {
     "A1Z_G1Z": A1Z_G1Z_PACKAGE,
     "A1Z_Flange": A1Z_FLANGE_PACKAGE,
 }
-
-
-def a1z_hardware(
-    hw_id: str = "arm",
-    *,
-    has_gripper: bool = True,
-    address: str | None = None,
-    dynamics_urdf_path: Path | None = None,
-    adapter_config: A1ZConfig | None = None,
-) -> HardwareComponent:
-    """The A1Z on a CAN interface; a mock stands in until an address is configured, and in simulation."""
-    gripper_joints = [f"{hw_id}/gripper"] if has_gripper else []
-    joints = [*joint_names(A1Z_DOF, prefix="arm_joint"), *gripper_joints]
-    mock_limits = JointLimits(
-        position_lower=[*([-math.pi] * A1Z_DOF), *([0.0] * len(gripper_joints))],
-        position_upper=[*([math.pi] * A1Z_DOF), *([0.1] * len(gripper_joints))],
-        velocity_max=[*([math.pi] * A1Z_DOF), *([0.0] * len(gripper_joints))],
-    )
-    if global_config.simulation:
-        return HardwareComponent(
-            hardware_id=hw_id,
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=joints,
-            adapter_type="mock",
-            auto_enable=True,
-            limits=mock_limits,
-        )
-    resolved_config = adapter_config or A1ZConfig(
-        gripper=A1ZGripperConfig() if has_gripper else None,
-    )
-    if (resolved_config.gripper is not None) != has_gripper:
-        raise ValueError("has_gripper must match adapter_config.gripper")
-    if dynamics_urdf_path is not None:
-        # Preserve LfsPath laziness: the adapter resolves the model only when
-        # connect() constructs the vendor robot.
-        resolved_config = replace(resolved_config, urdf_path=dynamics_urdf_path)
-    return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=joints,
-        adapter_type="galaxea_a1z",
-        address=address,
-        auto_enable=True,
-        adapter_kwargs={"config": resolved_config},
-        mock_limits=mock_limits,
-    )
 
 
 def a1z_model(gripper: bool = True, *, robot: str | None = None) -> RobotModel:
