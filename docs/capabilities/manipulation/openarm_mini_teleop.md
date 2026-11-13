@@ -1,7 +1,7 @@
 # OpenArm Mini Teleop
 
 Two Feetech leader arms drive the bimanual OpenArm. `OpenArmMiniConnection`
-(`dimos/robot/manipulators/openarm/connection.py`) reads the leaders. Each
+(`dimos/robot/manipulators/openarm/mini_connection.py`) reads the leaders. Each
 leader motor names the OpenArm joint it drives and that joint's limits
 (`OPENARM_MINI_LEADERS` in `dimos/robot/manipulators/openarm/config.py`), so the
 connection publishes the arms' joint targets and jaw openings directly.
