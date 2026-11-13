@@ -1,4 +1,8 @@
+import importlib
 import sys
+
+importlib.import_module("dimos.imitation.learning.app")
+assert "dimos.imitation.learning.app" in sys.modules
 
 banned = [
     key
