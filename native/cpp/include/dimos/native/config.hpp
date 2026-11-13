@@ -74,10 +74,8 @@ inline std::string quoted_list(const std::vector<std::string>& items) {
 /// The key Python sends on every native module's config, whatever the module.
 constexpr const char* FRAME_ID_PREFIX_KEY = "frame_id_prefix";
 
-/// `frame` under a TF namespace prefix, the rule `dimos_module::prefix_frame`
-/// applies in rust and the Python tf API applies to its own frames. A name that
-/// already carries the prefix is left alone, so a frame read off the stream can
-/// be handed straight back.
+/// `frame` under a TF namespace prefix, left alone if it already carries it.
+/// The rust and python tf APIs apply the same rule; the three must agree.
 inline std::string prefix_frame(const std::optional<std::string>& prefix,
                                 const std::string& frame) {
     if (!prefix.has_value() || prefix->empty() || frame.empty() ||
@@ -107,11 +105,9 @@ public:
             throw std::runtime_error(std::string("config must be a JSON object, got ") +
                                      obj_.type_name());
         }
-        // Python sends frame_id_prefix to every native module, so the SDK owns
-        // it rather than every config struct having to name it: it comes out of
-        // the object before the one-to-one key check ever sees it. Rust reaches
-        // the same place from the other side, by injecting the field into every
-        // config struct through the #[native_config] macro.
+        // The SDK owns this key rather than every config struct having to name
+        // it, so it comes out before the one-to-one check sees it. Rust reaches
+        // the same place by injecting the field into every config struct.
         auto prefix = obj_.find(FRAME_ID_PREFIX_KEY);
         if (prefix != obj_.end()) {
             if (!prefix->is_null()) {
@@ -130,9 +126,6 @@ public:
     }
 
     /// This module's TF namespace prefix, or nothing when it runs unnamespaced.
-    ///
-    /// Frames a namespaced module names on the wire belong under it; pass it to
-    /// [prefix_frame].
     const std::optional<std::string>& frame_id_prefix() const { return frame_id_prefix_; }
 
     /// `name` under this module's frame prefix.

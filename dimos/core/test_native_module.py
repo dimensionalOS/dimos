@@ -372,12 +372,7 @@ def test_a_pinned_session_is_not_a_module_config_field(monkeypatch) -> None:
 
 
 def test_the_frame_prefix_is_sent_only_once_there_is_one(monkeypatch) -> None:
-    """A module outside a namespace gets no key, and reads that as no prefix.
-
-    `#[native_config]` injects the field into every native config struct, so it
-    needs no opt-in through `base_fields`; it just is not worth a key when it
-    would say nothing.
-    """
+    """A module outside a namespace gets no key, and reads that as no prefix."""
     assert _launch(monkeypatch, "lcm")["config"] is None
     namespaced = _launch(monkeypatch, "lcm", frame_id_prefix="robot0")["config"]
     assert namespaced == {"frame_id_prefix": "robot0"}

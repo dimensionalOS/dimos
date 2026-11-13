@@ -18,8 +18,8 @@ use tokio::time::{interval, Duration};
 #[derive(Module)]
 #[module(setup = start_lookup)]
 struct TfListener {
-    // `handler = ...` also hands each incoming message to that method. A plain
-    // `#[tf]` just fills the graph for lookups.
+    // `handler = ...` also hands each message to that method; a plain `#[tf]`
+    // only fills the graph.
     #[tf(handler = handle_tf)]
     tf: Tf,
 }

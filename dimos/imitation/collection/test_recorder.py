@@ -390,12 +390,7 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
 
 
 def test_a_namespaced_collection_sends_its_frame_prefix(tmp_path):
-    """The native recorder stamps its frames under the namespace, so it needs it.
-
-    `to_config_dict` is hand-rolled here rather than inherited, which is how the
-    key went missing once: python agreed with itself and only the real binary
-    said no.
-    """
+    """`to_config_dict` is hand-rolled here, which is how the key went missing once."""
     plain = CollectionModuleConfig(recording=tmp_path / "session")
     assert "frame_id_prefix" not in plain.to_config_dict()
     namespaced = CollectionModuleConfig(recording=tmp_path / "ns", frame_id_prefix="robot0")
