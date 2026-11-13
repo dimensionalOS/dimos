@@ -261,6 +261,7 @@ all_modules = {
     "dual-metal-connection": "dimos.robot.manipulators.dual_makermods_metal.connection.DualMetalConnection",
     "dual-metal-manipulation-module": "dimos.robot.manipulators.dual_makermods_metal.blueprints.basic.DualMetalManipulationModule",
     "dual-open-yam-connection": "dimos.robot.manipulators.dual_openyam.connection.DualOpenYamConnection",
+    "dual-open-yam-leader-connection": "dimos.robot.manipulators.dual_openyam.connection.DualOpenYamLeaderConnection",
     "dual-open-yam-leader-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop.DualOpenYamLeaderCoordinator",
     "episode-driver": "dimos.navigation.bench.driver.EpisodeDriver",
     "episode-monitor-module": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",

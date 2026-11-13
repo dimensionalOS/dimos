@@ -2,10 +2,11 @@
 
 Two YAM leader arms (seven Feetech STS3215 servos each, IDs 1 to 6 on the
 joints and 7 on the gripper trigger) drive the two OpenYAM followers joint for
-joint. The robot side is a mapping table in
-`dimos/robot/manipulators/dual_openyam/blueprints/leader_teleop.py`; the reading,
-calibration and publishing live in the shared
-[leader teleop module](/dimos/teleop/README.md). The follower is the dual OpenYAM
+joint. The leaders are read by `DualOpenYamLeaderConnection`
+(`dimos/robot/manipulators/dual_openyam/connection.py`), a Feetech connection
+that publishes their joint angles; the shared
+[leader teleop module](/dimos/teleop/README.md) maps them onto the followers
+with the table in `dimos/robot/manipulators/dual_openyam/blueprints/leader_teleop.py`. The follower is the dual OpenYAM
 connection described in
 [connection testing and CAN selection](/docs/capabilities/manipulation/damiao-connections.md).
 
@@ -17,9 +18,9 @@ uv sync --extra manipulation --extra leader-teleop --inexact
 
 ## Calibration
 
-The module reads one calibration file per side from
+The leader connection reads one calibration file per side from
 `~/.local/state/dimos/teleop/leader/<side>/calibration.json`, or from the file
-given with `--leaderteleopmodule.left-calibration-path`. Each file holds every
+given with `--left-calibration-path` / `--right-calibration-path`. Each file holds every
 motor's zero offset, taken with the leader in the follower's zero pose (the
 folded rest pose on its supports), and the joints that read backwards. dimOS
 has no tool to write these files yet.
@@ -41,7 +42,7 @@ Real leaders, mock follower:
 
 ```bash
 dimos --simulation run dual-openyam-leader-teleop \
-  --leaderteleopmodule.port-left /dev/ttyACM1 --leaderteleopmodule.port-right /dev/ttyACM0
+  --left-serial-port /dev/ttyACM1 --right-serial-port /dev/ttyACM0
 ```
 
 Hardware (both CAN selectors are required; startup calibrates the grippers,
@@ -49,7 +50,7 @@ so clear the jaws):
 
 ```bash
 dimos run dual-openyam-leader-teleop \
-  --leaderteleopmodule.port-left /dev/ttyACM1 --leaderteleopmodule.port-right /dev/ttyACM0 \
+  --left-serial-port /dev/ttyACM1 --right-serial-port /dev/ttyACM0 \
   --left-can-port follower_l --right-can-port follower_r
 ```
 
@@ -66,7 +67,7 @@ serials and native binaries come from a run config, never from source.
 ```bash
 dimos run learning-collect-leader-dual-openyam --config workcell.json \
   --recorder.recording ~/recordings/leader_001 --episodes.task "stack the cups" \
-  --leaderteleopmodule.port-left /dev/ttyACM1 --leaderteleopmodule.port-right /dev/ttyACM0 \
+  --left-serial-port /dev/ttyACM1 --right-serial-port /dev/ttyACM0 \
   --left-can-port follower_l --right-can-port follower_r
 ```
 
@@ -102,5 +103,5 @@ worker and the command cadence is 10 ms flat, so what remains is the follower it
 The arm damping is the one change that moved the lag, so it ships. A stiffer wrist tracks faster
 but reproduces the 10 ms one-point jog restarts of the trajectory task as teeth, which the soft
 wrist blurs; that restart is a platform item, and the wrist gains stay at main's values until it
-lands. `--simulation` replaces the leaders with mock readers parked at the home pose; to drive the
-model from the real boards pass `--leaderteleopmodule.reader feetech` with the ports.
+lands. `--simulation` replaces the leaders with mock leaders parked at the home pose unless serial
+ports are given, so the real boards can drive the simulated arms.

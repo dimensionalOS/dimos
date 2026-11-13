@@ -31,6 +31,7 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_MODEL,
 )
+from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechRobot
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
 DUAL_OPENYAM_SIDES = ("left", "right")
@@ -143,4 +144,12 @@ DUAL_OPENYAM = DamiaoRobot(
     joint_names=[*DUAL_OPENYAM_ARM_JOINTS, *DUAL_OPENYAM_GRIPPER_JOINTS],
     gravity=True,
     home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
+)
+
+# Leader servo IDs 1 to 6 follow the arm joints, 7 is the gripper trigger.
+DUAL_OPENYAM_LEADER_MOTORS = tuple(f"joint_{index}" for index in range(1, 8))
+
+#: The two YAM leader arms, one Feetech bus each.
+DUAL_OPENYAM_LEADERS = FeetechRobot(
+    buses=tuple(FeetechBus(side, DUAL_OPENYAM_LEADER_MOTORS) for side in DUAL_OPENYAM_SIDES)
 )

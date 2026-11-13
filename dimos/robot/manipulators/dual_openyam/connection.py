@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual OpenYAM connection settings: two CAN buses and the robot data."""
+"""Dual OpenYAM connection settings: two CAN buses for the arms, two serial ports for the leaders."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from pydantic import model_validator
 from typing_extensions import Self
@@ -23,7 +25,11 @@ from dimos.robot.manipulators.damiao.connection import (
     DamiaoConnection,
     DamiaoConnectionConfig,
 )
-from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM, DUAL_OPENYAM_LEADERS
+from dimos.robot.manipulators.feetech.connection import (
+    FeetechConnection,
+    FeetechConnectionConfig,
+)
 
 
 class DualOpenYamConnectionConfig(DamiaoConnectionConfig):
@@ -51,3 +57,37 @@ class DualOpenYamConnection(DamiaoConnection):
 
     def can_ports(self) -> list[str]:
         return [self.config.left_can_port, self.config.right_can_port]
+
+
+class DualOpenYamLeaderConnectionConfig(FeetechConnectionConfig):
+    """Serial ports and calibration files of the two YAM leader arms.
+
+    Attributes:
+        left_serial_port: The left leader's serial port, e.g. "/dev/ttyACM1";
+            empty leaves that leader unread.
+        right_serial_port: The right leader's serial port; empty leaves it unread.
+        left_calibration_path: The left leader's calibration file, if not the default.
+        right_calibration_path: The right leader's calibration file, if not the default.
+    """
+
+    left_serial_port: str = ""
+    right_serial_port: str = ""
+    left_calibration_path: Path | None = None
+    right_calibration_path: Path | None = None
+
+
+class DualOpenYamLeaderConnection(FeetechConnection):
+    """The two YAM leader arms; the serial ports given select which are read."""
+
+    config: DualOpenYamLeaderConnectionConfig
+    robot = DUAL_OPENYAM_LEADERS
+
+    def serial_ports(self) -> dict[str, str]:
+        return {"left": self.config.left_serial_port, "right": self.config.right_serial_port}
+
+    def calibration_path(self, bus: str) -> Path:
+        explicit = {
+            "left": self.config.left_calibration_path,
+            "right": self.config.right_calibration_path,
+        }.get(bus)
+        return explicit if explicit is not None else super().calibration_path(bus)

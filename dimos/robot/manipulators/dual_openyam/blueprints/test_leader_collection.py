@@ -36,7 +36,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop import (
     dual_openyam_leader_teleop,
 )
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
-from dimos.teleop.leader.module import LeaderTeleopModule
+from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamLeaderConnection
 
 
 def test_profile_records_three_images_and_the_coordinator_joints_by_name() -> None:
@@ -112,7 +112,7 @@ def test_collection_composes_the_recorder_episodes_leader_teleop_and_cameras(
             "follower_l",
             "--right-can-port",
             "follower_r",
-            "--leaderteleopmodule.port-left",
+            "--left-serial-port",
             "/dev/ttyACM1",
             "--left-wrist-camera.serial-number",
             "000000000001",
@@ -120,7 +120,9 @@ def test_collection_composes_the_recorder_episodes_leader_teleop_and_cameras(
         environ={},
     )
     assert parsed.module_kwargs("episodes")["task"] == "stack the cups"
-    assert parsed.module_kwargs(LeaderTeleopModule.name)["port_left"] == "/dev/ttyACM1"
+    assert (
+        parsed.module_kwargs(DualOpenYamLeaderConnection.name)["left_serial_port"] == "/dev/ttyACM1"
+    )
     assert parsed.module_configs["left_wrist_camera"]["serial_number"] == "000000000001"
 
 
