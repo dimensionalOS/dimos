@@ -47,6 +47,27 @@ else:
 
 logger = setup_logger()
 
+# Streams that stay global: `.namespace()` never prefixes these, so every
+# namespaced copy of a module publishes onto the one shared topic. They are the
+# streams whose payloads already carry their own names (a TF message names its
+# frames, a JointState names its joints) and `.namespace()` prefixes those names
+# (via `frame_id_prefix`), so one stream still tells the robots apart. Splitting
+# them per namespace instead gives you N tf trees with no common root, which is
+# exactly what a consumer looking up `robot0/base_link -> map` cannot use.
+#
+# `actions`/`world_observations` are sim2's; they are named here so the rule is
+# stated in one place, and take effect when those modules land.
+GLOBAL_STREAMS = frozenset(
+    {
+        "tf",
+        "coordinator_joint_state",
+        "coordinator_joint_command",
+        "joint_command",
+        "actions",
+        "world_observations",
+    }
+)
+
 
 class DisabledModuleProxy:
     def __init__(self, spec_name: str) -> None:
@@ -350,6 +371,10 @@ class Blueprint:
                     for i, ip in enumerate(ips)
                 ],
             )
+
+        The streams in `GLOBAL_STREAMS` are exposed whether you ask for them or
+        not, because their payloads name what they carry and the namespace goes
+        into those names instead.
         """
         if not re.fullmatch(r"[A-Za-z0-9_]+", prefix):
             raise ValueError(
@@ -373,6 +398,11 @@ class Blueprint:
                 f"namespaced blueprint (available: {sorted(effective_names)})"
             )
 
+        # GLOBAL_STREAMS is not validated against effective_names: it is a
+        # repo-wide rule, not a per-call argument, and most blueprints have none
+        # of them.
+        global_set = expose_set | GLOBAL_STREAMS
+
         new_atoms = []
         new_remap: dict[tuple[str, str], str | type[ModuleBase] | type[Spec]] = {}
 
@@ -393,7 +423,7 @@ class Blueprint:
                 effective = self.remapping_map.get((atom.name, stream.name), stream.name)
                 if not isinstance(effective, str):
                     continue
-                if effective in expose_set:
+                if effective in global_set:
                     if (atom.name, stream.name) in self.remapping_map:
                         new_remap[new_name, stream.name] = effective
                 else:
@@ -406,7 +436,7 @@ class Blueprint:
 
         new_transports = {}
         for (name, type_), transport in self.transport_map.items():
-            if name in expose_set:
+            if name in global_set:
                 new_transports[name, type_] = transport
             else:
                 new_transports[f"{prefix}/{name}", type_] = _reprefix_transport(transport, prefix)

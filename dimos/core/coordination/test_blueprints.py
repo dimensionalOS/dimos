@@ -26,6 +26,7 @@ from dimos.core._test_future_annotations_helper import (
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
+    GLOBAL_STREAMS,
     Blueprint,
     BlueprintAtom,
     DisabledModuleProxy,
@@ -75,6 +76,24 @@ class ModuleA(Module):
     @rpc
     def get_name(self) -> str:
         return "A, Module A"
+
+
+class Tf:
+    pass
+
+
+class Joints:
+    pass
+
+
+class SharedModule(Module):
+    """Carries the streams `.namespace()` leaves global, plus one that it prefixes."""
+
+    tf: Out[Tf]
+    coordinator_joint_state: Out[Joints]
+    coordinator_joint_command: Out[Joints]
+    joint_command: In[Joints]
+    data1: Out[Data1]
 
 
 class ModuleB(Module):
@@ -378,6 +397,44 @@ def test_namespace_expose_keeps_names_global() -> None:
     blueprint = ModuleA.blueprint().namespace("robot0", expose={"data1"})
 
     assert ("robot0/modulea", "data1") not in blueprint.remapping_map
+    assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
+
+
+def test_namespace_keeps_global_streams_unprefixed() -> None:
+    """tf and the joint streams stay on one topic; the namespace lands in the
+    frame ids instead, so one tf tree still tells the robots apart."""
+    blueprint = SharedModule.blueprint().namespace("robot0")
+
+    for stream in ("tf", "coordinator_joint_state", "coordinator_joint_command", "joint_command"):
+        assert ("robot0/sharedmodule", stream) not in blueprint.remapping_map
+    assert blueprint.remapping_map[("robot0/sharedmodule", "data1")] == "robot0/data1"
+    assert blueprint.blueprints[0].kwargs["frame_id_prefix"] == "robot0"
+
+
+def test_namespace_keeps_global_streams_unprefixed_when_nested() -> None:
+    blueprint = SharedModule.blueprint().namespace("robot0").namespace("fleet")
+
+    assert ("fleet/robot0/sharedmodule", "tf") not in blueprint.remapping_map
+    assert blueprint.remapping_map[("fleet/robot0/sharedmodule", "data1")] == "fleet/robot0/data1"
+
+
+def test_namespace_keeps_global_stream_transports_unprefixed() -> None:
+    blueprint = (
+        SharedModule.blueprint()
+        .transports({("tf", Tf): LCMTransport("/tf", Tf)})
+        .namespace("robot0")
+    )
+
+    assert blueprint.transport_map[("tf", Tf)].topic.pattern == "/tf"
+    assert ("robot0/tf", Tf) not in blueprint.transport_map
+
+
+def test_global_streams_do_not_need_exposing() -> None:
+    """They are a repo-wide rule, so they are not checked against the blueprint's
+    own streams the way *expose* is."""
+    blueprint = ModuleA.blueprint().namespace("robot0", expose={"data1"})
+
+    assert "tf" in GLOBAL_STREAMS
     assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
 
 

@@ -297,6 +297,15 @@ Prefixed streams only connect within their namespace.
 Stream names listed in `expose` are left unprefixed, so they connect globally.
 That is how data crosses the boundary.
 
+A few streams are global whether you expose them or not: `tf`,
+`coordinator_joint_state`, `coordinator_joint_command`, `joint_command`, and the
+simulator's `actions` and `world_observations` (the list is `GLOBAL_STREAMS` in
+`dimos/core/coordination/blueprints.py`). Their payloads name what they carry, a
+TF message names its frames and a `JointState` names its joints, and the
+namespace goes into those names instead. Prefixing the stream too would give you
+one TF tree per robot with no shared root, which is no use to anything looking up
+a transform between two robots.
+
 In the above example, both `Sensor` modules can send `pointcloud` data to the `AggregateMapper` module.
 
 If you want to manually redirect to a namespaced name, you can use the namespaced prefix:  `.remappings([(FleetPlanner, "cmd_r0", "robot0/cmd_vel")])`

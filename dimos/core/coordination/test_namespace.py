@@ -73,6 +73,25 @@ class LocalMapper(Module):
         return self.sensor.whoami()
 
 
+class Tf:
+    pass
+
+
+class Tracker(Module):
+    """Publishes tf (global) alongside a stream the namespace does prefix."""
+
+    tf: Out[Tf]
+    local_status: Out[Status]
+
+    @rpc
+    def get_frame_id(self) -> str:
+        return self.frame_id
+
+
+class TfConsumer(Module):
+    tf: In[Tf]
+
+
 class Aggregator(Module):
     pointcloud: In[Cloud]
 
@@ -234,5 +253,33 @@ def test_load_blueprint_resolves_existing_provider_in_same_namespace():
 
         mapper0 = coordinator.get_instance("robot0/localmapper")
         assert mapper0.sensor_name() == "robot0/sensor"
+    finally:
+        coordinator.stop()
+
+
+def test_tf_is_one_topic_across_namespaces() -> None:
+    """Every robot's tf lands on the one `/tf`; they are told apart by their
+    frame ids, which the namespace does prefix."""
+    blueprint = autoconnect(
+        TfConsumer.blueprint(),
+        *[Tracker.blueprint().namespace(f"robot{i}") for i in range(2)],
+    )
+    coordinator = ModuleCoordinator.build(blueprint, _parsed_config(blueprint))
+    try:
+        tracker0 = coordinator.get_instance("robot0/tracker")
+        tracker1 = coordinator.get_instance("robot1/tracker")
+        consumer = coordinator.get_instance("tfconsumer")
+
+        assert (
+            tracker0.tf.transport.topic
+            == tracker1.tf.transport.topic
+            == consumer.tf.transport.topic
+            == transport_topic("/tf")
+        )
+        # The namespace is still there, in the frame ids.
+        assert tracker0.get_frame_id() == "robot0/Tracker"
+        assert tracker1.get_frame_id() == "robot1/Tracker"
+        # A stream that is not global still splits per namespace.
+        assert tracker0.local_status.transport.topic == transport_topic("/robot0/local_status")
     finally:
         coordinator.stop()
