@@ -1,0 +1,2 @@
+# Optional dedicated-schema PostgreSQL backend (SQLite needs no driver).
+psycopg[binary]==3.3.8

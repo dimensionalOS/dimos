@@ -63,6 +63,9 @@ data/*
 !data/.lfs/
 
 # Runtime output
+/.learning-state/
+/.learning-evidence/
+/.learning-worker.json
 /logs
 /recordings
 /downloads

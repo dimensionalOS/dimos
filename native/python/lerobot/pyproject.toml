@@ -14,6 +14,30 @@ dependencies = [
 ]
 
 [dependency-groups]
+learning = [
+    "pydantic>=2.12,<3",
+    "pydantic-settings>=2.12,<3",
+    "reactivex>=4,<7",
+    "dimos-lcm>=0.1.6",
+    "plum-dispatch>=2.5,<3",
+    "python-dotenv>=1,<2",
+    "structlog>=25,<27",
+    "lz4>=4,<5",
+    "scipy>=1.16,<2",
+    "sortedcontainers>=2.4,<3",
+    "PyTurboJPEG>=2,<3",
+    "typing-inspect>=0.9,<1",
+    "diskcache>=5,<6",
+    "cloudpickle>=3,<4",
+    "orjson>=3,<4",
+    "pycdr2>=1,<2",
+    "eclipse-zenoh>=1,<2",
+    "pint>=0.25,<1",
+    "loguru>=0.7,<1",
+    "pyquaternion>=0.9,<1",
+    "tenacity>=9,<10",
+    "msgpack>=1,<2",
+]
 tests = [
     "mypy==1.19.0",
     "pytest==8.3.5",
