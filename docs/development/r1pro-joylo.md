@@ -156,12 +156,28 @@ WIM. Use the two-host router instructions below, with domain
 The operator launch needs both serial ports and the existing calibration root.
 
 The profile starts paused, captures measured joint positions, and requires a
-fresh X press to follow the leaders. Home pauses. It uses 0.25 rad/s arm and
-0.15 rad/s torso target slews, the existing connection's 0.5 rad/s vendor
-tracking cap, and the same stick/gripper controls as sim. The configured torso
+fresh X press to follow the leaders. Home pauses JoyLo. It uses 0.75 rad/s arm
+and 0.3 rad/s torso target slews, a 1.0 rad/s vendor tracking cap, and the same
+stick/gripper controls as sim. Joy-Con translation starts at 0.3 m/s (0.6 with
+boost), and yaw at 0.6 rad/s. The configured torso
 lengths are 0.40/0.30 m for this robot's installed R1 Pro description. CC's
 control model supplies the joint limits; no model-based IK or dynamics runs
 in this hardware blueprint. Check the variant before using it on another robot.
+
+Spatial Desktop DRIVE publishes to `cmd_vel`; JoyLo writes `joylo_cmd_vel`.
+Separate coordinator tasks arbitrate these sources, so JoyLo's 100 Hz neutral
+commands cannot erase Desktop's commands. Fresh Desktop drive commands have
+priority; after 200 ms without one, control returns to JoyLo (zero if its sticks
+are centered or its profile is paused). Coordinator E-stop covers both sources.
+The DRIVE panel's Top speed/Top turn adjust its own driving commands.
+
+Control SET also exposes `arm_tracking_speed` and `torso_tracking_speed` in rad/s,
+plus `joycon_drive_speed` in m/s and `joycon_turn_speed` in rad/s. These are saved
+settings, not hold-to-send rates. `R1ProJoylo.set_motion_speeds` updates the same
+values atomically without enabling motion. Hardware ceilings are 1.0 rad/s for
+arm tracking, 0.5 rad/s for torso tracking, 0.5 m/s Joy-Con drive (1.0 with boost),
+and 2.0 rad/s turning. Invalid/nonfinite requests are rejected. Zero freezes that
+rate. Changes last for this run; `status()` reports the applied values.
 
 Hardware upper-body and jaw feedback arrive as separate packets. JoyLo merges
 those packets by joint and retains source timestamps; a fresh jaw cannot renew

@@ -102,6 +102,8 @@ def _robot_blueprint(
                 (R1ProSimControl, "left_gripper_command", "servo_left_gripper"),
                 (R1ProSimControl, "right_gripper_command", "servo_right_gripper"),
                 (R1ProJoyloCoordinator, "twist_command", "cmd_vel"),
+                (R1ProJoylo, "cmd_vel", "joylo_cmd_vel"),
+                (R1ProJoyloCoordinator, "joylo_twist_command", "joylo_cmd_vel"),
             ]
         )
         .transports(_transports)

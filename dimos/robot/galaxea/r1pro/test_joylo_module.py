@@ -17,6 +17,7 @@ import math
 import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER, JoyloController
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 
@@ -86,3 +87,27 @@ async def test_delayed_feedback_does_not_overwrite_new_pose_or_refresh_its_age(m
     output = module._controller.step(10, 0.01)
     assert output.positions == dict.fromkeys(UPPER, 0.1)
     assert module.status()["input_age_s"]["robot"] == pytest.approx(0.05)
+
+
+@pytest.mark.asyncio
+async def test_desktop_speed_input_changes_controller_without_enabling_it(module):
+    await module.handle_arm_tracking_speed(Float32(data=0.75))
+    await module.handle_joycon_drive_speed(Float32(data=0.3))
+    assert module._controller.config.arm_rate == 0.75
+    assert module._controller.config.base_speed == 0.3
+    assert not module.status()["active"]
+
+
+@pytest.mark.parametrize("bad", [-1, math.nan, math.inf, 4])
+def test_invalid_speed_request_changes_nothing(module, bad):
+    before = module.set_motion_speeds()
+    with pytest.raises(ValueError):
+        module.set_motion_speeds(base_speed=0.3, arm_rate=bad)
+    assert module.set_motion_speeds() == before
+
+
+def test_deployment_speed_ceiling_and_zero_rate(module):
+    module.config.max_arm_rate = 1.0
+    with pytest.raises(ValueError):
+        module.set_motion_speeds(arm_rate=1.1)
+    assert module.set_motion_speeds(arm_rate=0)["arm_rate"] == 0

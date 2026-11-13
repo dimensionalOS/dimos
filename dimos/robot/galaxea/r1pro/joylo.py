@@ -50,12 +50,14 @@ class JoyloConfig(ModuleConfig):
     arm_only: bool = False
     input_timeout_s: float = Field(default=0.25, gt=0, allow_inf_nan=False)
     tick_period_s: float = Field(default=0.01, gt=0, le=0.05)
-    arm_rate: float = Field(default=0.25, gt=0, le=3.0)
-    torso_rate: float = Field(default=0.15, gt=0, le=1.5)
+    arm_rate: float = Field(default=0.25, ge=0, le=3.0)
+    max_arm_rate: float = Field(default=3.0, gt=0, le=3.0)
+    torso_rate: float = Field(default=0.15, ge=0, le=1.5)
+    max_torso_rate: float = Field(default=1.5, gt=0, le=1.5)
     height_rate: float = Field(default=0.03, gt=0, le=0.05)
     pitch_rate: float = Field(default=0.1, gt=0, le=0.2)
-    base_speed: float = Field(default=0.1, gt=0, le=0.2)
-    yaw_speed: float = Field(default=0.25, gt=0, le=0.5)
+    base_speed: float = Field(default=0.1, ge=0, le=0.5)
+    yaw_speed: float = Field(default=0.25, ge=0, le=2.0)
     deadzone: float = Field(default=0.15, ge=0, lt=1)
     max_leader_jump: float = Field(default=0.75, gt=0)
     # Feetech calibrated readings wrap at +/-pi. Unwrap successive samples,
@@ -68,6 +70,8 @@ class JoyloConfig(ModuleConfig):
             raise ValueError("enabled_sides must name one or two distinct sides")
         if not all(math.isfinite(v) and v > 0 for v in self.torso_link_lengths):
             raise ValueError("torso link lengths must be finite and positive")
+        if self.arm_rate > self.max_arm_rate or self.torso_rate > self.max_torso_rate:
+            raise ValueError("tracking rates must not exceed the configured ceilings")
         return self
 
 

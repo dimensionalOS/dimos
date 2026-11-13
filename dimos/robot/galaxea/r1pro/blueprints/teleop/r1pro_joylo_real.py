@@ -30,12 +30,22 @@ from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 
 _declaration = R1ProConnectionConfig(
     boot_vendor_stack=False,
+    tracking_speed=1.0,
     enable_wrist_color=True,
     color_publish_hz=10.0,
     enable_wrist_depth=False,
     publish_odom_tf=True,
 )
-_profile = JoyloConfig(leader_angle_period=math.tau, torso_link_lengths=(0.4, 0.3))
+_profile = JoyloConfig(
+    leader_angle_period=math.tau,
+    torso_link_lengths=(0.4, 0.3),
+    arm_rate=0.75,
+    max_arm_rate=1.0,
+    torso_rate=0.3,
+    max_torso_rate=0.5,
+    base_speed=0.3,
+    yaw_speed=0.6,
+)
 
 r1pro_joylo_real = (
     autoconnect(
@@ -53,8 +63,8 @@ r1pro_joylo_real = (
             ],
             tasks=joylo_tasks(
                 {
-                    **dict.fromkeys(ARMS, _profile.arm_rate),
-                    **dict.fromkeys(TORSO, _profile.torso_rate),
+                    **dict.fromkeys(ARMS, _profile.max_arm_rate),
+                    **dict.fromkeys(TORSO, _profile.max_torso_rate),
                 }
             ),
         ),
@@ -66,6 +76,8 @@ r1pro_joylo_real = (
             (R1ProConnection, "position_command", "r1pro_position_command"),
             (R1ProConnection, "velocity_command", "r1pro_velocity_command"),
             (R1ProJoyloCoordinator, "twist_command", "cmd_vel"),
+            (R1ProJoylo, "cmd_vel", "joylo_cmd_vel"),
+            (R1ProJoyloCoordinator, "joylo_twist_command", "joylo_cmd_vel"),
         ]
     )
     .transports(_transports)
