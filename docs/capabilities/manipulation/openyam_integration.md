@@ -133,3 +133,42 @@ for focused tests, software-only checks and physical bring-up. The YAM tests
 cover deployed joint names, gripper routing, planner priority, Dual YAM hand
 isolation, model limits and the Quest profile. The native recorder test verifies
 Zenoh serialization and episode extraction with synthetic input streams.
+
+## Pick-and-place benchmark
+
+`dual-openyam-grasp` runs the xArm grasp stack on the dual OpenYAM workcell:
+the pick-and-place skills, scene registration from the overhead D405, and one
+gripper task per arm. `dual-openyam-grasp-graspgenx` uses GraspGenX instead of
+the top-down heuristic grasp. The `-agent` versions add an agent driven from
+`dimos humancli`; they need `OPENAI_API_KEY`.
+
+The three D405 serials are rig configuration. Put them in a file outside the
+checkout and pass it with `--config`; without it each camera opens the first
+D405 it finds:
+
+```json
+{
+  "realsensecamera": {"serial_number": "<overhead D405 serial>"},
+  "left_wrist_camera": {"serial_number": "<left wrist D405 serial>"},
+  "right_wrist_camera": {"serial_number": "<right wrist D405 serial>"}
+}
+```
+
+```bash
+dimos run dual-openyam-grasp --config ~/workcell.json --left-can-port follower_l --right-can-port follower_r
+```
+
+Every skill takes a planning group, `left_manipulator` or `right_manipulator`.
+A run records the joint states, the 100 Hz joint targets, the three cameras and
+TF to sqlite, for ACT and VLA training.
+
+The overhead camera sees both arms, so the robot is filtered out of both clouds
+it feeds: the planner's map through `manipulation_mapping`, padded 8 cm to
+cover the wrist camera cables the model lacks, and the scene the pick's grasp
+check reads through `SelfClearedSceneRegistrationModule`, padded 2 cm.
+
+Known limits: a pick runs as soon as it is planned, so keep a hand on the
+e-stop; grasp success is judged from the jaw reading alone; the planner does
+not see anything within 8 cm of an arm link. The workcell model is
+`dual_openyam_workcell_v7`; its `SOURCE.md` records where every number comes
+from.
