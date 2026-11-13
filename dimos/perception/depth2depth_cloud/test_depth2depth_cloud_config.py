@@ -31,8 +31,7 @@ def test_every_field_the_rust_config_requires_is_sent():
     # The Rust config has no defaults and rejects unknown keys, so the two field lists must match exactly.
     rust_config = RUST_MODULE.read_text().split("pub struct Config {")[1].split("\n}")[0]
     rust_fields = set(re.findall(r"^\s+(\w+):", rust_config, re.MULTILINE))
-    # native_config injects frame_id_prefix, so it is not in the struct's text.
-    assert set(Depth2DepthCloudConfig().to_config_dict()) == rust_fields | {"frame_id_prefix"}
+    assert set(Depth2DepthCloudConfig().to_config_dict()) == rust_fields
 
 
 @pytest.mark.parametrize("size", [100, 50, 1050])

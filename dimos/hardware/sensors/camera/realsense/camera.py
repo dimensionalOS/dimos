@@ -40,7 +40,7 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     # The frame stem and its namespace cross to rust like any other field.
-    base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
+    base_fields: frozenset[str] = frozenset({"frame_id"})
 
     width: int = 848
     height: int = 480

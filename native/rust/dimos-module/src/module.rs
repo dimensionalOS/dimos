@@ -51,13 +51,32 @@ impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send> M
 
 /// Default config type used by `#[derive(Module)]` when no `#[config]` field
 /// is used. Just a stand in for modules that don't use configurations.
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Default, Serialize)]
 pub struct NoConfig {
-    // Every module is sent a frame_id_prefix, including one with no config of
-    // its own, so the field is here too rather than rejected as unknown.
-    #[serde(default)]
+    // A namespaced module is sent a frame_id_prefix even with no config of its
+    // own, so the field is here too rather than rejected as unknown. Skipped on
+    // the way out so an unnamespaced module's empty config stays empty, which is
+    // what keeps `enforce_one_to_one` agreeing with a config that has no key.
+    #[serde(skip_serializing_if = "Option::is_none")]
     frame_id_prefix: Option<String>,
+}
+
+// A module with no config of its own is sent a null config unless it is
+// namespaced, so both that null and an object carrying only the prefix have to
+// land here.
+impl<'de> Deserialize<'de> for NoConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            #[serde(default)]
+            frame_id_prefix: Option<String>,
+        }
+        let fields = Option::<Fields>::deserialize(deserializer)?;
+        Ok(NoConfig {
+            frame_id_prefix: fields.and_then(|f| f.frame_id_prefix),
+        })
+    }
 }
 
 impl NativeConfig for NoConfig {
@@ -847,6 +866,29 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("missing 'config' field"));
+    }
+
+    // Python sends no frame_id_prefix for a module outside a namespace, and a
+    // module with no config of its own then gets a null config. Both have to
+    // read as "no prefix" rather than as a key the struct is missing.
+    #[test]
+    fn a_module_with_no_config_takes_a_null_as_no_prefix() {
+        let json = r#"{"topics": {}, "config": null}"#;
+        let (_topics, config) = parse_config_json::<NoConfig>(json).expect("null config is fine");
+        assert_eq!(config.frame_id_prefix(), None);
+    }
+
+    #[test]
+    fn a_module_with_no_config_still_gets_its_namespace() {
+        let json = r#"{"topics": {}, "config": {"frame_id_prefix": "robot0"}}"#;
+        let (_topics, config) = parse_config_json::<NoConfig>(json).expect("a prefix is fine");
+        assert_eq!(config.frame_id_prefix(), Some("robot0"));
+    }
+
+    #[test]
+    fn a_module_with_no_config_still_rejects_an_unknown_key() {
+        let json = r#"{"topics": {}, "config": {"typo": 1}}"#;
+        assert!(parse_config_json::<NoConfig>(json).is_err());
     }
 
     #[test]
