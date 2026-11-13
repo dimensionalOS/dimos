@@ -31,8 +31,10 @@ _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
 
 def _camera_fields() -> set[str]:
     own = set(RealSenseCameraConfig.model_fields) - set(NativeModuleConfig.model_fields)
-    # The frame stem and its namespace are base fields that cross the wire too.
-    return own | {"frame_id", "frame_id_prefix"}
+    # The frame stem is a base field that crosses the wire too. frame_id_prefix
+    # is not here: `#[native_config]` injects it into the rust struct, and it is
+    # sent only when the module is namespaced.
+    return own | {"frame_id"}
 
 
 def test_config_dict_is_the_camera_config() -> None:
@@ -49,8 +51,7 @@ def test_rust_struct_has_every_config_key() -> None:
     src = (_RUST_MANIFEST.parent / "src" / "main.rs").read_text()
     struct = src.split("struct Config {", 1)[1].split("}", 1)[0]
     declared = {line.split(":")[0].strip() for line in struct.splitlines() if ": " in line}
-    # native_config injects frame_id_prefix, so it is not in the struct's text.
-    assert declared | {"frame_id_prefix"} == _camera_fields()
+    assert declared == _camera_fields()
 
 
 def test_ports_match_registry() -> None:

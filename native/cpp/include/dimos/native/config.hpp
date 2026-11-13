@@ -11,6 +11,7 @@
 #include <pfr.hpp>
 
 #include <cstddef>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -70,6 +71,22 @@ inline std::string quoted_list(const std::vector<std::string>& items) {
     return out + "]";
 }
 
+/// The key Python sends on every native module's config, whatever the module.
+constexpr const char* FRAME_ID_PREFIX_KEY = "frame_id_prefix";
+
+/// `frame` under a TF namespace prefix, the rule `dimos_module::prefix_frame`
+/// applies in rust and the Python tf API applies to its own frames. A name that
+/// already carries the prefix is left alone, so a frame read off the stream can
+/// be handed straight back.
+inline std::string prefix_frame(const std::optional<std::string>& prefix,
+                                const std::string& frame) {
+    if (!prefix.has_value() || prefix->empty() || frame.empty() ||
+        frame.rfind(*prefix + "/", 0) == 0) {
+        return frame;
+    }
+    return *prefix + "/" + frame;
+}
+
 /// Throw unless `value` is greater than zero. For a rate a module divides by,
 /// where a zero or negative value yields an infinite or negative period.
 inline void require_positive(double value, const char* name) {
@@ -90,9 +107,37 @@ public:
             throw std::runtime_error(std::string("config must be a JSON object, got ") +
                                      obj_.type_name());
         }
+        // Python sends frame_id_prefix to every native module, so the SDK owns
+        // it rather than every config struct having to name it: it comes out of
+        // the object before the one-to-one key check ever sees it. Rust reaches
+        // the same place from the other side, by injecting the field into every
+        // config struct through the #[native_config] macro.
+        auto prefix = obj_.find(FRAME_ID_PREFIX_KEY);
+        if (prefix != obj_.end()) {
+            if (!prefix->is_null()) {
+                if (!prefix->is_string()) {
+                    throw std::runtime_error(
+                        std::string("failed to deserialize config: field '") +
+                        FRAME_ID_PREFIX_KEY + "': expected a string, got " + prefix->type_name());
+                }
+                frame_id_prefix_ = prefix->get<std::string>();
+            }
+            obj_.erase(prefix);
+        }
         for (auto it = obj_.begin(); it != obj_.end(); ++it) {
             keys_.insert(it.key());
         }
+    }
+
+    /// This module's TF namespace prefix, or nothing when it runs unnamespaced.
+    ///
+    /// Frames a namespaced module names on the wire belong under it; pass it to
+    /// [prefix_frame].
+    const std::optional<std::string>& frame_id_prefix() const { return frame_id_prefix_; }
+
+    /// `name` under this module's frame prefix.
+    std::string frame(const std::string& name) const {
+        return prefix_frame(frame_id_prefix_, name);
     }
 
     /// Throw if any field Python sent was never read. This is the deny-unknown
@@ -144,6 +189,7 @@ private:
     nlohmann::json obj_;
     std::set<std::string> keys_;
     std::set<std::string> consumed_;
+    std::optional<std::string> frame_id_prefix_;
 };
 
 }  // namespace dimos::native

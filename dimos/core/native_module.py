@@ -87,11 +87,12 @@ else:
 
 logger = setup_logger()
 
-# Base fields every native module is sent, whatever its own config declares.
-# `#[native_config]` injects `frame_id_prefix` into every Rust config struct, so
-# a native module is namespaced by the same `.namespace()` call as a Python one
-# without having to opt in through `base_fields`.
-ALWAYS_SENT_FIELDS = frozenset({"frame_id_prefix"})
+# A base field every native module may be sent, whatever its own config
+# declares. `#[native_config]` injects `frame_id_prefix` into every Rust config
+# struct, so a native module is namespaced by the same `.namespace()` call as a
+# Python one without having to opt in through `base_fields`. It is sent only
+# when there is a namespace: a module that gets no key reads it as no prefix.
+FRAME_PREFIX_FIELD = "frame_id_prefix"
 
 
 class LogFormat(enum.Enum):
@@ -202,7 +203,7 @@ class NativeModuleConfig(ModuleConfig):
         return self
 
     def _ignore_fields(self) -> set[str]:
-        return set(NativeModuleConfig.model_fields) - self.base_fields - ALWAYS_SENT_FIELDS
+        return set(NativeModuleConfig.model_fields) - self.base_fields - {FRAME_PREFIX_FIELD}
 
     def to_config_dict(self) -> dict[str, Any]:
         """Module-specific config fields as a plain dict, for the stdin JSON."""
@@ -212,8 +213,7 @@ class NativeModuleConfig(ModuleConfig):
         return {
             k: v
             for k, v in self.model_dump().items()
-            if k not in ignore_fields
-            and (v is not None or k in self.base_fields or k in ALWAYS_SENT_FIELDS)
+            if k not in ignore_fields and (v is not None or k in self.base_fields)
         }
 
     def to_cli_args(self) -> list[str]:

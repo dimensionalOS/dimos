@@ -114,8 +114,7 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
             "codec": "lcm",
         },
     ]
-    # frame_id_prefix rides along for every native module, namespaced or not.
-    assert set(config) == {"encoding_threads", "store", "streams", "frame_id_prefix"}
+    assert set(config) == {"encoding_threads", "store", "streams"}
 
 
 def test_json_options_cross_the_native_boundary_only_when_configured() -> None:

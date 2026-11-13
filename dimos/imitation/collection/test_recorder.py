@@ -317,8 +317,7 @@ def test_build_saves_portable_schema_before_native_capture(
     recorder.start()
     start.assert_called_once_with()
     native_config = recorder.config.to_config_dict()
-    # frame_id_prefix is on every native config struct, so it must be sent.
-    assert set(native_config) == {"store", "encoding_threads", "streams", "frame_id_prefix"}
+    assert set(native_config) == {"store", "encoding_threads", "streams"}
     assert native_config["store"] == {"kind": format, "path": str(directory / payload)}
     assert native_config["streams"] == [spec.model_dump() for spec in recorder._stream_specs()]
 
@@ -388,6 +387,19 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
     finally:
         sys.modules.pop("vendor_robot.collection", None)
         sys.modules.pop("vendor_robot", None)
+
+
+def test_a_namespaced_collection_sends_its_frame_prefix(tmp_path):
+    """The native recorder stamps its frames under the namespace, so it needs it.
+
+    `to_config_dict` is hand-rolled here rather than inherited, which is how the
+    key went missing once: python agreed with itself and only the real binary
+    said no.
+    """
+    plain = CollectionModuleConfig(recording=tmp_path / "session")
+    assert "frame_id_prefix" not in plain.to_config_dict()
+    namespaced = CollectionModuleConfig(recording=tmp_path / "ns", frame_id_prefix="robot0")
+    assert namespaced.to_config_dict()["frame_id_prefix"] == "robot0"
 
 
 @pytest.mark.parametrize("format,payload", [("mcap", "recording.mcap"), ("sqlite", "recording.db")])

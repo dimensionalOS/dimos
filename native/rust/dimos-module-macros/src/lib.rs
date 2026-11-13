@@ -97,9 +97,9 @@ pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Add `frame_id_prefix` to a named-field config. Returns whether it landed.
 ///
-/// `#[serde(default)]` so an older launcher that omits it still parses; the
-/// field serializes either way, which is what keeps `run()`'s one-to-one key
-/// check honest about what the module expects.
+/// `#[serde(default)]` so a module outside a namespace, which is sent no such
+/// key, still parses. It is skipped on the way back out so `run()`'s one-to-one
+/// key check agrees: no prefix, no key, on both sides of the line.
 fn inject_frame_id_prefix(input: &mut DeriveInput) -> bool {
     let Data::Struct(data) = &mut input.data else {
         return false;
@@ -119,7 +119,9 @@ fn inject_frame_id_prefix(input: &mut DeriveInput) -> bool {
         syn::Field::parse_named
             .parse2(quote! {
                 /// TF namespace this module publishes and looks up under.
-                #[serde(default)]
+                ///
+                /// Absent from the config of a module that is not namespaced.
+                #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
                 pub frame_id_prefix: ::core::option::Option<::std::string::String>
             })
             .expect("injected frame_id_prefix field parses"),

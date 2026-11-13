@@ -51,13 +51,32 @@ impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send> M
 
 /// Default config type used by `#[derive(Module)]` when no `#[config]` field
 /// is used. Just a stand in for modules that don't use configurations.
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Default, Serialize)]
 pub struct NoConfig {
-    // Every module is sent a frame_id_prefix, including one with no config of
-    // its own, so the field is here too rather than rejected as unknown.
-    #[serde(default)]
+    // A namespaced module is sent a frame_id_prefix even with no config of its
+    // own, so the field is here too rather than rejected as unknown. Skipped on
+    // the way out so an unnamespaced module's empty config stays empty, which is
+    // what keeps `enforce_one_to_one` agreeing with a config that has no key.
+    #[serde(skip_serializing_if = "Option::is_none")]
     frame_id_prefix: Option<String>,
+}
+
+// A module with no config of its own is sent a null config unless it is
+// namespaced, so both that null and an object carrying only the prefix have to
+// land here.
+impl<'de> Deserialize<'de> for NoConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            #[serde(default)]
+            frame_id_prefix: Option<String>,
+        }
+        let fields = Option::<Fields>::deserialize(deserializer)?;
+        Ok(NoConfig {
+            frame_id_prefix: fields.and_then(|f| f.frame_id_prefix),
+        })
+    }
 }
 
 impl NativeConfig for NoConfig {
@@ -464,21 +483,26 @@ impl Builder {
     }
 
     fn tf_port(&mut self, with_handler: bool) -> crate::tf::Tf {
-        if let Some(tf) = &self.tf {
-            return tf.clone();
+        if self.tf.is_none() {
+            let topic = self.topic_for("tf");
+            let sender = self.add_publisher(&topic);
+            let (tf, route) = crate::tf::tf_subscription(
+                topic.clone(),
+                crate::tf::DEFAULT_TF_WINDOW_SECS,
+                sender,
+                self.frame_prefix.clone(),
+            );
+            self.routes.entry(topic).or_default().push(route);
+            self.tf = Some(tf);
         }
-        let topic = self.topic_for("tf");
-        let sender = self.add_publisher(&topic);
-        let (tf, route) = crate::tf::tf_subscription(
-            topic.clone(),
-            crate::tf::DEFAULT_TF_WINDOW_SECS,
-            sender,
-            self.frame_prefix.clone(),
-            with_handler,
-        );
-        self.routes.entry(topic).or_default().push(route);
-        self.tf = Some(tf.clone());
-        tf
+        // The handler is installed on the shared handle rather than at
+        // construction, so a plain `#[tf]` field declared first does not cost
+        // a later `#[tf(handler = ...)]` field its messages.
+        let tf = self.tf.as_mut().expect("the handle was just built");
+        if with_handler {
+            tf.enable_handler();
+        }
+        tf.clone()
     }
 }
 
@@ -844,6 +868,29 @@ mod tests {
             .contains("missing 'config' field"));
     }
 
+    // Python sends no frame_id_prefix for a module outside a namespace, and a
+    // module with no config of its own then gets a null config. Both have to
+    // read as "no prefix" rather than as a key the struct is missing.
+    #[test]
+    fn a_module_with_no_config_takes_a_null_as_no_prefix() {
+        let json = r#"{"topics": {}, "config": null}"#;
+        let (_topics, config) = parse_config_json::<NoConfig>(json).expect("null config is fine");
+        assert_eq!(config.frame_id_prefix(), None);
+    }
+
+    #[test]
+    fn a_module_with_no_config_still_gets_its_namespace() {
+        let json = r#"{"topics": {}, "config": {"frame_id_prefix": "robot0"}}"#;
+        let (_topics, config) = parse_config_json::<NoConfig>(json).expect("a prefix is fine");
+        assert_eq!(config.frame_id_prefix(), Some("robot0"));
+    }
+
+    #[test]
+    fn a_module_with_no_config_still_rejects_an_unknown_key() {
+        let json = r#"{"topics": {}, "config": {"typo": 1}}"#;
+        assert!(parse_config_json::<NoConfig>(json).is_err());
+    }
+
     #[test]
     fn null_config_succeeds_for_unit_type() {
         let json = r#"{"topics": {}, "config": null}"#;
@@ -1112,6 +1159,34 @@ mod tests {
         builder.tf();
         assert_eq!(builder.outputs.len(), 1);
         assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
+    }
+
+    // A plain `#[tf]` field ahead of a `#[tf(handler = ...)]` one used to hand
+    // the handler the cached plain handle, whose recv() ended the dispatch loop
+    // at once.
+    #[tokio::test]
+    async fn a_handler_asked_for_after_a_plain_tf_port_still_receives() {
+        let mut builder = builder_with_topics(&[("tf", "/tf")]);
+        let plain = builder.tf();
+        let handled = builder.tf_with_handler();
+        assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
+
+        builder.routes["/tf"][0].dispatch(
+            &lcm_msgs::tf2_msgs::TFMessage {
+                transforms: vec![crate::tf::to_stamped(&crate::tf::Transform::new(
+                    "a",
+                    "b",
+                    1.0,
+                    nalgebra::Isometry3::identity(),
+                ))],
+            }
+            .encode(),
+        );
+
+        let got = handled.recv().await.expect("the handler receives it");
+        assert_eq!((got[0].parent.as_str(), got[0].child.as_str()), ("a", "b"));
+        // The plain handle still fills the same graph, it just does not consume.
+        assert!(plain.get_latest("a", "b").is_some());
     }
 
     // recv/publish concurrency
