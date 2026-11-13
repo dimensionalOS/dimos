@@ -692,7 +692,8 @@ jobs:
           - os: "ubuntu-24.04-arm"
             pyver: "3.12"
             experimental: false
-      fail-fast: true
+      # Let every platform finish so failed jobs can be rerun independently.
+      fail-fast: false
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
     env:
