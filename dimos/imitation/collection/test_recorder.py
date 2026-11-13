@@ -24,6 +24,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule
 from dimos.core.stream import Out, RemoteIn
+from dimos.experimental.memory.rust_recorder import RustRecorderConfig
 from dimos.imitation.collection import recorder as recorder_module
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import CollectionModuleConfig, collect
@@ -174,10 +175,12 @@ def test_invalid_ports_fail_at_factory_boundary(stream, tmp_path):
 
 
 def test_native_collection_uses_the_recorder_build_directory(recorder):
+    base_config = RustRecorderConfig()
     root = Path(__file__).parents[2] / "experimental" / "memory" / "rust"
     cwd, executable = recorder.config.resolve_paths()
     assert Path(cwd) == root
-    assert Path(executable) == root / "result/bin/dimos-memory-recorder"
+    assert Path(executable) == root / base_config.executable
+    assert recorder.config.build_command == base_config.build_command
 
 
 @pytest.fixture

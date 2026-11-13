@@ -23,6 +23,7 @@ import select
 import signal
 import socket
 import subprocess
+import threading
 import time
 from typing import cast
 import uuid
@@ -55,6 +56,7 @@ from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tap import TransportRecorder
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -65,6 +67,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 from dimos.teleop.webxr.module import WebXRTeleopModule
+from dimos.utils.testing.waiting import retry_until, wait_until
 
 pytestmark = pytest.mark.self_hosted
 
@@ -72,7 +75,7 @@ _RUST_PACKAGE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust
 _EXECUTABLE = Path(
     os.environ.get(
         "DIMOS_MEMORY_RECORDER_TEST_EXECUTABLE",
-        str(_RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"),
+        str(_RUST_PACKAGE / "result-registry-v1" / "bin" / "dimos-memory-recorder"),
     )
 )
 _MCAP_AVAILABLE = importlib.util.find_spec("mcap") is not None
@@ -104,6 +107,8 @@ def rust_recorder_executable() -> Path:
                 "build",
                 "-L",
                 "path:.#dimos-memory-recorder",
+                "--out-link",
+                "result-registry-v1",
                 "--no-write-lock-file",
             ],
             cwd=_RUST_PACKAGE,
@@ -422,11 +427,22 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     rust_recorder_executable: Path,
     store_kind: str,
     monkeypatch: pytest.MonkeyPatch,
+    mocker,
 ) -> None:
     suffix = "db" if store_kind == "sqlite" else "mcap"
     artifact = tmp_path / f"memory.{suffix}"
     lcm_url = f"udpm://239.255.76.67:{_free_port()}?ttl=0"
     monkeypatch.setenv("LCM_DEFAULT_URL", lcm_url)
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", "debug")
+    batch_written = threading.Event()
+    log_debug = rust_cli_recorder.logger.debug
+
+    def observe_batch(message, **fields):
+        log_debug(message, **fields)
+        if message == "memory recorder batch written":
+            batch_written.set()
+
+    mocker.patch.object(rust_cli_recorder.logger, "debug", side_effect=observe_batch)
     monkeypatch.setattr(global_config, "record_engine", "rust")
     monkeypatch.setattr(global_config, "record", store_kind)
     monkeypatch.setattr(global_config, "record_topics", "*")
@@ -439,17 +455,35 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     monkeypatch.setattr(rust_cli_recorder, "recording_dir", lambda: tmp_path)
     channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
     publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
-    session = RustRecordingSession(rust_cli_recorder.make_plan({("imu", Imu): publisher}))
+    idle: LCMTransport[Imu] = LCMTransport(channel + "-idle", Imu, url=lcm_url)
+    transports = {("imu", Imu): publisher, ("idle", Imu): idle}
+    session = RustRecordingSession(rust_cli_recorder.make_plan(transports))
     expected = Imu(ts=22.5, frame_id="imu_link", angular_velocity=Vector3(1.0, 2.0, 3.0))
-    try:
-        publisher.start()
+    python_path = tmp_path / "python.db"
+    with ExitStack() as stack:
+        python_store = stack.enter_context(SqliteStore(path=str(python_path)))
+        python_recorder = TransportRecorder(python_store)
+        stack.callback(python_recorder.close)
+        for (name, payload_type), transport in transports.items():
+            stack.callback(transport.stop)
+            transport.start()
+            unsubscribe = python_recorder.tap(name, payload_type, transport)
+            assert unsubscribe is not None
+            stack.callback(unsubscribe)
+        stack.callback(session.stop)
         session.start()
-        for _ in range(3):
-            publisher.broadcast(None, expected)
-            time.sleep(0.05)
-    finally:
-        session.stop()
-        publisher.stop()
+        # The recorder writes after 128 results or 100 ms without one: leave it that gap.
+        retry_until(
+            batch_written,
+            lambda: publisher.broadcast(None, expected),
+            timeout=5.0,
+            interval=0.2,
+        )
+        wait_until(
+            lambda: python_store.list_streams() == ["imu"]
+            and python_store.stream("imu").count() > 0,
+            timeout=5.0,
+        )
 
     memory: SqliteStore | McapStore
     if store_kind == "mcap" and not _MCAP_AVAILABLE:
@@ -461,7 +495,8 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
         memory = SqliteStore(path=str(artifact))
     else:
         memory = McapStore(path=str(artifact))
-    with memory:
+    with memory, SqliteStore(path=str(python_path), must_exist=True) as python_memory:
+        assert memory.list_streams() == python_memory.list_streams() == ["imu"]
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 22.5
         assert isinstance(observation.data, Imu)

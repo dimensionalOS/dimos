@@ -29,6 +29,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
+from dimos.memory.utils.validation import validate_identifier
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -99,13 +100,14 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 class RustRecorderConfig(NativeModuleConfig):
     """Configuration for :class:`RustRecorder`.
 
-    Python owns artifact lifecycle and stream registration. The native process
-    receives only ``store``, ``encoding_threads``, and the internally resolved
-    ``streams`` list over stdin.
+    Python owns artifact lifecycle; the native writer registers populated streams.
+    The native process receives only ``store``, ``encoding_threads``, and the
+    internally resolved ``streams`` list over stdin.
     """
 
-    executable: str = "result/bin/dimos-memory-recorder"
-    build_command: str | None = "nix build -L path:."
+    # Older managed binaries rely on Python to register streams before launch.
+    executable: str = "result-registry-v1/bin/dimos-memory-recorder"
+    build_command: str | None = "nix build -L path:. --out-link result-registry-v1"
     source_dir: str | None = "dimos/experimental/memory/rust"
     stdin_config: bool = True
 
@@ -247,6 +249,9 @@ class RustRecorder(NativeModule):
             )
 
         names = [spec.name for spec in specs]
+        if self.config.store.kind == "sqlite":
+            for name in names:
+                validate_identifier(name)
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
             raise ValueError(f"Duplicate recorded stream names: {duplicates}")
@@ -305,22 +310,13 @@ class RustRecorder(NativeModule):
                 raise FileExistsError(f"Recording already exists: {path}")
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        if self.config.store.kind == "mcap":
+        if self.config.store.kind != "sqlite" or self.config.on_existing is not OnExisting.APPEND:
             return
 
         with SqliteStore(path=str(path)) as store:
-            if self.config.on_existing is OnExisting.APPEND:
-                existing = set(store.list_streams())
-                for name in {spec.name for spec in specs}.intersection(existing):
-                    store.delete_stream(name)
-
-            ports = self.inputs
-            for spec in specs:
-                tf_payload_type = f"{TFMessage.__module__}.{TFMessage.__qualname__}"
-                payload_type = (
-                    TFMessage if spec.payload_type == tf_payload_type else ports[spec.port].type
-                )
-                store.stream(spec.name, payload_type, codec=spec.codec)
+            existing = set(store.list_streams())
+            for name in {spec.name for spec in specs}.intersection(existing):
+                store.delete_stream(name)
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
         """Launch the stdin-only recorder without topic or configuration arguments."""

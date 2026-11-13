@@ -157,7 +157,7 @@ def test_unconfigured_json_options_are_omitted_from_native_streams(codec: str) -
     ]
 
 
-def test_store_preparation_creates_a_python_readable_registry(
+def test_store_preparation_leaves_selected_streams_unregistered(
     tmp_path: Path, make_recorder: Any
 ) -> None:
     path = tmp_path / "recording.db"
@@ -169,14 +169,9 @@ def test_store_preparation_creates_a_python_readable_registry(
     connect(recorder, color_image="/camera", odometry="/odom")
     specs = recorder._stream_specs()
 
-    assert [spec.codec for spec in specs] == ["jpeg", "lcm"]
-
     recorder._prepare_store(specs)
 
-    with SqliteStore(path=str(path), must_exist=True) as store:
-        assert store.list_streams() == ["color_image", "odometry"]
-        assert store.stream("color_image").count() == 0
-        assert store.stream("odometry").count() == 0
+    assert not path.exists()
 
 
 def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder: Any) -> None:
@@ -196,7 +191,7 @@ def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder
 
     with SqliteStore(path=str(path), must_exist=True) as store:
         assert store.stream("keep").count() == 1
-        assert store.stream("odometry").count() == 0
+        assert store.list_streams() == ["keep"]
 
 
 def test_unsupported_python_payload_fails_before_native_process_starts(
@@ -230,8 +225,8 @@ def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
     config = RustRecorderConfig()
 
     assert config.source_dir == "dimos/experimental/memory/rust"
-    assert config.build_command == "nix build -L path:."
-    assert config.executable == "result/bin/dimos-memory-recorder"
+    assert config.build_command == "nix build -L path:. --out-link result-registry-v1"
+    assert config.executable == "result-registry-v1/bin/dimos-memory-recorder"
 
 
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:
@@ -245,6 +240,26 @@ def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any
 
     with pytest.raises(ValueError, match="Unsupported native codec"):
         recorder._stream_specs()
+
+
+def test_invalid_sqlite_name_fails_before_artifact_changes(tmp_path, make_recorder, mocker):
+    path = tmp_path / "recording.db"
+    path.write_bytes(b"existing recording")
+    recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustSqliteStoreConfig(path=str(path)),
+        on_existing=OnExisting.OVERWRITE,
+        record_tf=False,
+        stream_remapping={"odometry": "odom/path"},
+    )
+    connect(recorder, odometry="/odom")
+    spawn = mocker.patch("dimos.core.native_module.subprocess.Popen")
+
+    with pytest.raises(ValueError, match="Invalid stream name"):
+        recorder.start()
+
+    assert path.read_bytes() == b"existing recording"
+    spawn.assert_not_called()
 
 
 def test_jpeg_requires_an_image_stream(tmp_path: Path, make_recorder: Any) -> None:
@@ -280,6 +295,7 @@ def test_mcap_store_uses_python_codec_defaults_and_does_not_precreate_the_artifa
         SampleRustRecorder,
         store=RustMcapStoreConfig(path=str(path)),
         record_tf=False,
+        stream_remapping={"odometry": "odom/path"},
     )
     connect(recorder, color_image="/camera", odometry="/odom")
 
@@ -287,6 +303,7 @@ def test_mcap_store_uses_python_codec_defaults_and_does_not_precreate_the_artifa
     recorder._prepare_store(specs)
 
     assert [spec.codec for spec in specs] == ["jpeg", "lcm"]
+    assert [spec.name for spec in specs] == ["color_image", "odom/path"]
     assert not path.exists()
     recorder.config.streams = specs
     assert recorder.config.to_config_dict()["store"] == {

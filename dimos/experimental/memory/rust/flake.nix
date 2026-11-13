@@ -15,7 +15,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-memory-recorder";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "result-registry-v1" "__pycache__" ]; };
 
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
