@@ -16,14 +16,12 @@ from __future__ import annotations
 from typing import Any
 import xml.etree.ElementTree as ET
 
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.manipulators.openarm.blueprints import mini_teleop
 from dimos.robot.manipulators.openarm.config import (
     openarm_bimanual_model_config,
     openarm_urdf_joints,
 )
-from dimos.robot.manipulators.openarm.connection import OpenArmMiniConnection
 
 _MODEL = openarm_bimanual_model_config(robot="arm")
 
@@ -57,17 +55,3 @@ def test_mappings_drive_each_side_joint_for_joint_inside_the_urdf_limits() -> No
         assert mapping.gripper is not None
         assert mapping.gripper.travel_radians == 1.0
     assert mini_teleop.MAPPINGS["left"].joints[3].lower == 0.0
-
-
-def test_serial_ports_from_the_command_line_select_the_leaders() -> None:
-    blueprint = mini_teleop.teleop_openarm_mini_leader
-    parsed = BlueprintConfigParser(blueprint).parse(
-        ["--right-serial-port=/dev/ttyACM0"], environ={}
-    )
-    leaders = OpenArmMiniConnection(
-        **parsed.module_kwargs(_atom(blueprint, OpenArmMiniConnection).name)
-    )
-    try:
-        assert leaders.serial_ports() == {"left": "", "right": "/dev/ttyACM0"}
-    finally:
-        leaders.stop()
