@@ -17,7 +17,31 @@ export DIMOS_LEARNING_S3_BUCKET=learning
 # Ordinary membership or source read/write permission does not confer enrollment.
 # Pre-trusted-enrollment invitations/tokens fail closed after upgrade: an admin
 # must issue a new pairing; never mark old worker records trusted automatically.
-.venv/bin/python -m dimos.imitation.learning.worker --api http://127.0.0.1:8768 --pair CODE --name local-cpu --credentials /isolated/path/worker.json --state "$DIMOS_LEARNING_STATE_DIR"
+.venv/bin/python -m dimos.imitation.learning.worker --api http://127.0.0.1:8768 --pair CODE --name local-cpu --credentials /isolated/path/worker.json --state /isolated/worker/state
+
+# Separate worker/API filesystems
+
+The worker state directory need not be mounted on the API host. Configure the
+SAME S3 bucket/endpoint on both hosts with their own operator-managed storage
+credentials; pairing never transfers browser credentials or storage keys.
+Media preparation now requires that configured object store too. Workers seal
+and read-back publish media at `learning/ORG/JOB/attempt-N/media/`; camera paths
+in the terminal report are artifact-relative, never API-local paths. The API
+fences lease/organization/attempt, verifies the manifest, lineage, lengths and
+checksums, then restores into a unique API-owned `STATE/deliveries/` cache.
+Browser media URLs remain authenticated same-origin routes (including Range).
+
+Policy checkpoints retain their existing immutable run publication. The tar
+package is separately sealed as `policy-package`, bound to the checkpoint
+manifest digest and published at `learning/ORG/RUN/packages/JOB/N/`. The API
+verifies/restores that package and replaces the untrusted worker-local package
+path before committing readiness. Downloads recheck the API cached checksum;
+cache corruption is an error, not an unverified download. Object URLs/keys are
+not public download grants. Existing source ACL and policy ownership checks
+still authorize each media/package request. Local-only terminal results from
+older workers are rejected; upgrade API and worker together under operator
+control. Existing ready local caches remain readable if their hashes match.
+No co-location requirement or worker enrollment authority has been added.
 
 # Tests:
 .venv/bin/python -m pytest -o addopts='' --confcutdir=dimos/imitation/learning dimos/imitation/learning -q

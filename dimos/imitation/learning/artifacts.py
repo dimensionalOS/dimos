@@ -24,6 +24,9 @@ def inventory(root: Path) -> list[dict[str, Any]]:
 
 
 def seal(root: Path, lineage: dict[str, Any], kind: str = "dataset") -> dict[str, Any]:
+    path = root / "manifest.json"
+    if path.exists():
+        raise LearningError(409, "immutable_output", "Output is already sealed")
     if kind == "dataset":
         for directory in ("meta", "data", "videos"):
             if not any(p.is_file() for p in (root / directory).rglob("*")):
@@ -34,9 +37,6 @@ def seal(root: Path, lineage: dict[str, Any], kind: str = "dataset") -> dict[str
             raise LearningError(422, "incomplete_dataset", "Native dataset metadata missing")
     (root / "lineage.json").write_text(json.dumps(lineage, sort_keys=True, indent=2))
     manifest = {"version": 1, "kind": kind, "files": inventory(root), "lineage": lineage}
-    path = root / "manifest.json"
-    if path.exists():
-        raise LearningError(409, "immutable_output", "Output is already sealed")
     path.write_text(json.dumps(manifest, sort_keys=True, indent=2))
     verify(root)
     return manifest

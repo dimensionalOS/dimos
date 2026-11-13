@@ -9,12 +9,13 @@ import os
 from pathlib import Path
 import secrets
 import shlex
+import tempfile
 import time
 from typing import Any
 from uuid import uuid4
 
 from dimos.imitation.learning.artifacts import Artifacts
-from dimos.imitation.learning.media import capture, materialize, sha256
+from dimos.imitation.learning.media import capture, materialize
 from dimos.imitation.learning.protocol import LearningError, allowed, digest, source
 from dimos.imitation.learning.store import Store
 
@@ -547,20 +548,58 @@ class Service:
                 return {"job": job}
             return {"job": None}
 
+    def transfer_manifest(
+        self, publication: Any, prefix: str, kind: str, lineage: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not isinstance(publication, dict) or publication.get("prefix") != prefix:
+            raise LearningError(422, "publication_scope", "Job-scoped publication required")
+        manifest = Artifacts().verify_publication(publication)
+        if manifest.get("kind") != kind or manifest.get("lineage") != lineage:
+            raise LearningError(409, "publication_lineage", "Publication kind/lineage differs")
+        return manifest
+
+    def receive_artifact(self, publication: dict[str, Any]) -> Path:
+        # Never interpret worker-local paths on the API filesystem. Receive only
+        # the verified configured-store publication into an API-owned unique cache.
+        directory = self.state.resolve() / "deliveries"
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=directory) as temporary:
+            staged = Artifacts().restore(publication, Path(temporary) / "artifact")
+            target = directory / uid()
+            staged.rename(target)
+        return target
+
     def validate_result(self, job: dict[str, Any], result: dict[str, Any]) -> None:
         if job["kind"] == "media":
             if result.get("status") != "ready" or not result.get("cameras"):
                 raise LearningError(422, "incomplete_media", "Prepared cameras required")
+            publication = result.get("publication")
+            manifest = self.transfer_manifest(
+                publication,
+                f"learning/{job['org_id']}/{job['id']}/attempt-{job['attempt']}/media/",
+                "media",
+                {"job_id": job["id"], "attempt": job["attempt"]},
+            )
+            files = {entry["path"]: entry for entry in manifest["files"]}
+            ids = [camera.get("id") for camera in result["cameras"]]
+            if len(set(ids)) != len(ids):
+                raise LearningError(422, "incomplete_media", "Unique prepared cameras required")
             for camera in result["cameras"]:
-                path = (self.state / camera.get("path", "")).resolve()
+                name = camera.get("path", "")
+                entry = files.get(name)
                 if (
-                    not path.is_relative_to(self.state.resolve())
-                    or not path.is_file()
-                    or sha256(path) != camera.get("sha256")
+                    not entry
+                    or name != f"{camera.get('id')}.mp4"
+                    or Path(name).name != name
+                    or entry["sha256"] != camera.get("sha256")
                 ):
                     raise LearningError(
                         409, "media_checksum", "Prepared camera failed server verification"
                     )
+            assert isinstance(publication, dict)  # transfer_manifest validated the descriptor.
+            root = self.receive_artifact(publication)
+            for camera in result["cameras"]:
+                camera["path"] = str((root / camera["path"]).relative_to(self.state.resolve()))
         elif job["kind"] in ("dataset", "train"):
             publication = result.get("publication")
             resource_id = job.get("dataset_id") if job["kind"] == "dataset" else job.get("run_id")
@@ -588,15 +627,28 @@ class Service:
                         "Complete native dataset with real episode and frame counts required",
                     )
             else:
-                package = Path(result.get("package_path", "")).resolve()
-                if (
-                    not package.is_relative_to(self.state.resolve())
-                    or not package.is_file()
-                    or sha256(package) != result.get("package_sha256")
-                ):
+                package_publication = result.get("package_publication")
+                package_manifest = self.transfer_manifest(
+                    package_publication,
+                    f"learning/{job['org_id']}/{resource_id}/packages/{job['id']}/{job['attempt']}/",
+                    "policy-package",
+                    {"policy_manifest_sha256": publication["manifest_sha256"]},
+                )
+                entry = next(
+                    (
+                        entry
+                        for entry in package_manifest["files"]
+                        if entry["path"] == "policy.tar.gz"
+                    ),
+                    None,
+                )
+                if not entry or entry["sha256"] != result.get("package_sha256"):
                     raise LearningError(
                         409, "package_checksum", "Policy package failed server verification"
                     )
+                assert isinstance(package_publication, dict)
+                root = self.receive_artifact(package_publication)
+                result["package_path"] = str(root / "policy.tar.gz")
         elif job["kind"] == "load-check" and (
             result.get("no_action_executed") is not True or result.get("load_ready") is not True
         ):
@@ -672,7 +724,7 @@ class Service:
             if body.get("error"):
                 job["error"] = body["error"]
             if status in TERMINAL:
-                result = body.get("result", {}) if status == "succeeded" else {}
+                result = copy.deepcopy(body.get("result", {})) if status == "succeeded" else {}
                 if (
                     not isinstance(result, dict)
                     or set(result) & {"id", "org_id", "owner_id", "job_id", "dataset_id", "run_id"}

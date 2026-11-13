@@ -104,6 +104,10 @@ def create_app(store: Store | None = None) -> FastAPI:
         path = (service.state / entry["path"]).resolve()
         if not path.is_relative_to(service.state.resolve()) or not path.is_file():
             raise LearningError(404, "media_missing", "Prepared media missing")
+        from dimos.imitation.learning.media import sha256
+
+        if sha256(path) != entry.get("sha256"):
+            raise LearningError(409, "checksum_mismatch", "Prepared media failed verification")
         return FileResponse(path, media_type="video/mp4")
 
     @app.get("/v1/profiles")

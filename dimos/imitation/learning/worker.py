@@ -89,7 +89,11 @@ def execute(job: dict[str, Any], state: Path) -> dict[str, Any]:
         directory = materialize(payload["source"], state)
         result = prepare(directory, work / "media", emit)
         for camera in result["cameras"]:
-            camera["path"] = str((work / "media" / f"{camera['id']}.mp4").relative_to(state))
+            camera["path"] = f"{camera['id']}.mp4"
+        seal(work / "media", {"job_id": job["id"], "attempt": job["attempt"]}, "media")
+        result["publication"] = Artifacts().publish(
+            work / "media", job["org_id"], f"{job['id']}/attempt-{job['attempt']}/media"
+        )
         return result
     if job["kind"] == "dataset":
         snapshots = payload["snapshots"]
@@ -157,12 +161,25 @@ def execute(job: dict[str, Any], state: Path) -> dict[str, Any]:
             "policy",
         )
         publication = Artifacts().publish(root, job["org_id"], payload["run"]["id"])
-        package = work / "policy.tar.gz"
+        package_root = work / "package"
+        package_root.mkdir()
+        package = package_root / "policy.tar.gz"
         with tarfile.open(package, "w:gz") as archive:
             archive.add(root, arcname="policy")
+        seal(
+            package_root,
+            {"policy_manifest_sha256": publication["manifest_sha256"]},
+            "policy-package",
+        )
+        package_publication = Artifacts().publish(
+            package_root,
+            job["org_id"],
+            f"{payload['run']['id']}/packages/{job['id']}/{job['attempt']}",
+        )
         return {
             **result,
             "publication": publication,
+            "package_publication": package_publication,
             "package_path": str(package),
             "package_sha256": sha256(package),
             "checkpoint_path": str(root),
