@@ -19,7 +19,7 @@ whole-body joint control (18 DOF: torso 4 + left arm 7 + right arm 7) for
 the whole-body adapter, chassis ``cmd_vel``/``odom`` for the twist-base
 adapter, plus head depth and IMUs. The chassis lidar and the head and wrist
 cameras are ours, not the vendor's: see ``r1pro_lidar_odometry``,
-``head_cameras`` and ``wrist_cameras``.
+``head_cameras`` and ``r1pro_control``.
 
 Sensors run on a second RawROS node. Conversion happens on per-stream workers
 behind latest-wins queues.

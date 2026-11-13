@@ -35,6 +35,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import TransportSpec
 from dimos.core.transport import ZenohTransport
+from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -58,7 +59,6 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadRightCamera,
 )
 from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig
-from dimos.robot.galaxea.r1pro.wrist_cameras import WristLeftCamera, WristRightCamera
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -171,6 +171,31 @@ def _head_cameras() -> list[Blueprint]:
     return [HeadLeftCamera.blueprint(), HeadRightCamera.blueprint(), HeadCameraInfo.blueprint()]
 
 
+# The wrist D405s share one USB 3.0 controller, which cannot carry colour and depth from both at
+# 1280x720, what Galaxea's wrist driver opens (so vendor_setup.sh does not start it); colour alone
+# fits. by-path pins each wrist to its USB port; video-index4 is a D405's colour node.
+_WRIST_V4L2 = (
+    "/dev/v4l/by-path/platform-14160000.pcie-pci-0004:01:00.0-usb-0:{port}:1.0-video-index4"
+)
+
+
+def _wrist_cameras() -> list[Blueprint]:
+    """Both wrists' colour as 848x480 JPEG, encoded on the CPU.
+
+    The Jetson encoder path may pad a USB frame's rows past 848 px, which shears
+    the image without an error.
+    """
+    return [
+        V4L2Camera.blueprint(
+            instance_name=f"wrist_{side}",
+            device=_WRIST_V4L2.format(port=port),
+            frame_id=f"{side}_d405_link",
+            hardware=False,
+        )
+        for side, port in (("left", 2), ("right", 1))
+    ]
+
+
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
@@ -201,8 +226,7 @@ def r1pro_control(
         autoconnect(
             R1ProConnection.blueprint(**connection),
             *_head_cameras(),
-            WristLeftCamera.blueprint(),
-            WristRightCamera.blueprint(),
+            *_wrist_cameras(),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[
@@ -231,8 +255,8 @@ def r1pro_control(
                 (HeadRightCamera, "jpeg_out", "head_right_color"),
                 (HeadCameraInfo, "left_info", "head_left_info"),
                 (HeadCameraInfo, "right_info", "head_right_info"),
-                (WristLeftCamera, "jpeg_out", "wrist_left_color"),
-                (WristRightCamera, "jpeg_out", "wrist_right_color"),
+                ("wrist_left", "jpeg_out", "wrist_left_color"),
+                ("wrist_right", "jpeg_out", "wrist_right_color"),
             ]
         )
         .transports(
