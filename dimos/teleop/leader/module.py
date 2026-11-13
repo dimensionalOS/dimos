@@ -73,8 +73,7 @@ ReaderKind = Literal["feetech", "mock"]
 class LeaderTeleopModuleConfig(ModuleConfig):
     """What a leader pair reads and which follower joints it drives.
 
-    Startup is non-interactive: calibration directories must already exist, written
-    by ``dimos hardware feetech-leader calibrate``.
+    Startup is non-interactive: each side's calibration directory must already exist.
     """
 
     # Follower joints and gripper per leader side; the robot folder supplies these.
