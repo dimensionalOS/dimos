@@ -21,7 +21,7 @@ from reactivex import interval
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 
 
 class FakeBatteryConfig(ModuleConfig):
@@ -35,7 +35,7 @@ class FakeBattery(Module):
     """Drains at a fixed rate, and charges while it is told to."""
 
     config: FakeBatteryConfig
-    percent: Out[Float32]
+    battery: Out[BatteryState]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -58,4 +58,4 @@ class FakeBattery(Module):
     def _tick(self) -> None:
         rate = self.config.charge_per_s if self._charging.is_set() else -self.config.drain_per_s
         self._level = min(100.0, max(0.0, self._level + rate * self.config.period_s))
-        self.percent.publish(Float32(self._level))
+        self.battery.publish(BatteryState(percentage=self._level / 100.0))
