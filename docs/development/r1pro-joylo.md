@@ -54,16 +54,18 @@ jump rejection to `R1ProJoylo`. The generic reader's default jump guard compares
 against its last accepted sample: after a serial dropout and a large operator
 movement it can otherwise reject every later sample, preventing Minus/X from
 recovering. JoyLo retains the current reading while latching a pause, so a fresh
-enable press can re-align without a restart. Input errors still drop samples;
+enable press can resume tracking without a restart. Input errors still drop samples;
 timeouts, discontinuity stopping, joint limits and rate limits remain enforced.
 Generic OpenArm blueprints retain their reader-side jump guard.
 
 The Feetech reader reports calibrated angles in [-pi, pi]. The JoyLo blueprint
-sets `leader_angle_period=2*pi` so successive fresh samples are unwrapped before
-alignment and jump detection. A captured joint-3 crossing from -3.13392275 to
+sets `leader_angle_period=2*pi` so successive samples are unwrapped before
+absolute targeting and jump detection. A captured joint-3 crossing from -3.13392275 to
 +pi was only -0.0076699 rad of physical movement, but previously triggered the
 0.75 rad jump guard as a +6.2755 rad discontinuity. Input gaps over 250 ms still
-pause and require re-alignment; no winding is inferred across a missing interval.
+pause and require re-enabling; recovery preserves the nearest continuous angle
+branch instead of resetting it. A single-turn encoder cannot resolve extra full
+turns made while input is missing.
 `R1ProJoylo.status()` retains `pause_count` and `last_pause_reason` after recovery,
 and every active-to-paused transition is logged with input ages. Real jumps
 include the offending joint and delta in the reason.
@@ -91,7 +93,7 @@ for the R1 Pro profile.
 
 | Control | Effect |
 |---|---|
-| Release, then press X | Align the leaders to measured follower joints and enable |
+| Release, then press X | Enable following the fixed calibrated leader joint positions |
 | Home | Pause all following and zero base velocity |
 | Minus / plus | Toggle the left / right arm lock |
 | Hold L / R | Hold the corresponding three wrist joints |
@@ -104,11 +106,19 @@ for the R1 Pro profile.
 | D-pad up / down | Raise / lower the folding torso while preserving upper pitch |
 
 Locks hold follower targets in software. They do not energize the Feetech
-leaders or reproduce Dynamixel torque locks/haptics. Unlocking reanchors
-the joints so a leader moved while locked does not cause a catch-up jump.
-The leaders are not kinematic twins of R1 Pro: this first implementation maps
-corresponding calibrated joint deltas, with engagement alignment, joint limits
-and rate limits. It is not Cartesian retargeting or IK.
+leaders or reproduce Dynamixel torque locks/haptics. Unlocking resumes movement
+toward the same absolute leader targets, at the configured rate. Enabling,
+pausing, input recovery and unlocking never change the calibration or create
+a new joint offset. The follower starts its catch-up motion from measured
+feedback; it does not treat that feedback as the leader's new zero.
+
+The leaders are not kinematic twins of R1 Pro: corresponding calibrated joint
+angles map directly to follower joint targets. Saved encoder zeros and signs
+determine that mapping. Joint limits, coupled wrist limits and finite motion
+rates still apply; this is not Cartesian retargeting or IK.
+`R1ProJoylo.status()` exposes calibrated leader angles, outgoing arm targets,
+measured arm feedback, locked joints and URDF limit clipping. Coupled wrist
+clipping happens separately in the downstream servo.
 
 In the two-arm profile, both seven-joint leaders, both Joy-Cons and robot feedback must be fresh.
 Loss of any input for 250 ms latches a pause; reconnecting while X is held
@@ -177,7 +187,8 @@ A local headless 0.6 rad shoulder step reached 90% in 0.77 s versus 1.22 s with
 the old servo, and final static error fell from 0.0473 rad to about 0.000003 rad.
 This compares simulated servos, excludes the old 0.25 rad/s JoyLo cap, and is
 not a real-robot accuracy measurement. `demo_joylo` exercises the full module
-path, including torso height, jaws, chassis and input-loss pause.
+path, including torso height, jaws, chassis, input-loss pause and absolute
+pose recovery after moving the leader during two pause/enable cycles.
 
 ## Run the simulation check on this Mac
 
@@ -192,9 +203,9 @@ python -m dimos.robot.galaxea.r1pro.sim.demo_joylo
 
 The model command fetches the pinned vendor asset source on first use. The
 demo starts real module workers and MuJoCo on an isolated Zenoh domain, sends
-synthetic input, asserts measured arm/jaw/torso/base movement and timeout
-stopping, prints the result, and stops its workers. It never opens input
-hardware. Duplicate action rejections may appear in sim status because the
+synthetic input, asserts measured arm/jaw/torso/base movement, fixed pose
+tracking after re-enabling and timeout stopping, prints the result, and stops
+its workers. It never opens input hardware. Duplicate action rejections may appear in sim status because the
 servo retransmits the same command when sim2 repeats a barrier observation;
 the simulator rejects that duplicate without applying it twice.
 
@@ -233,9 +244,10 @@ leaders and should be verified against one R1 sim joint at a time.
 
 Capturing encoder zero offsets does **not** determine rotation directions.
 The calibration's per-motor `flip` sets the direction before the R1 mapping;
-engagement subtracts the leader's starting angle but preserves that sign.
-An all-positive calibration can therefore align without jumping and still
-move individual follower joints backwards. Verify direction as well as motion.
+enabling preserves both that sign and the saved encoder zero.
+A calibration with incorrect signs moves individual follower joints backwards;
+incorrect zeros cause a repeatable pose offset. Verify both against known
+reference joint poses. Do not use enable as a calibration operation.
 
 ### Left arm only on this Mac
 
@@ -268,15 +280,17 @@ right arm, right jaw, torso and base, and ignores sticks and D-pad movement.
 
 | Left Joy-Con | Effect |
 |---|---|
-| Release, then press Minus | Align and enable; press again to pause |
+| Release, then press Minus | Enable fixed calibrated tracking; press again to pause |
 | Capture (square button) | Pause |
 | ZL | Toggle the left gripper open/closed |
-| Hold L | Hold the three left wrist joints; release reanchors them |
+| Hold L | Hold the three left wrist joints; release resumes absolute tracking |
 
 Move one leader joint at a time to verify direction before larger movements.
 The initial Mac trial uses encoder offsets saved in a separate local calibration
-root; engagement aligns the current leader pose to the current simulated arm.
-Those trial offsets do not establish mechanical joint zero or verify joint signs.
+root. Those trial offsets were captured from the operator's then-current pose,
+so they do not establish mechanical joint zero. They now remain the fixed
+reference across every enable/pause cycle; a different zero requires an explicit
+calibration change. Joint signs were checked separately.
 The initial zero-only calibration left every `flip` false. The operator's
 direction check required the following correction for the attached left leader
 (numbered from shoulder to wrist):

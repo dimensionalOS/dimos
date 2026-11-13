@@ -105,7 +105,7 @@ class R1ProJoylo(Module):
             )
             reason = c.reason if c else "Not started"
             if c is not None and ready and not c.active and reason.startswith("Waiting for fresh "):
-                reason = f"Ready; release and press {c.enable_button} to align and enable"
+                reason = f"Ready; release and press {c.enable_button} to enable tracking"
             return {
                 "active": c.active if c else False,
                 "ready": ready,
@@ -117,6 +117,26 @@ class R1ProJoylo(Module):
                 "arm_only": self.config.arm_only,
                 "enable_button": c.enable_button if c else "",
                 "input_age_s": ages,
+                "leader_positions": c.leader.copy() if c else {},
+                "arm_targets": {name: c.target[name] for name in c.arm_names if name in c.target}
+                if c
+                else {},
+                "arm_feedback": {
+                    name: c.feedback[name] for name in c.arm_names if name in c.feedback
+                }
+                if c
+                else {},
+                "joint_limit_clamps": {
+                    name: {
+                        "requested": value,
+                        "limited": min(c.limits[name][1], max(c.limits[name][0], value)),
+                    }
+                    for name, value in c.leader.items()
+                    if not c.limits[name][0] <= value <= c.limits[name][1]
+                }
+                if c
+                else {},
+                "locked_joints": sorted(c.locked) if c else [],
             }
 
     def _fresh(self, source: str, stamp: float) -> bool:

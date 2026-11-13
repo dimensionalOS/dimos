@@ -95,6 +95,24 @@ def main() -> None:
             profile.status(),
         )
 
+        # Moving the leader while paused must not establish a new zero on enable.
+        resume_errors = []
+        for elbows in ((0.35, 0.32), (0.18, 0.15)):
+            send(0.15, target, right=["home"])
+            assert not profile.status()["active"], profile.status()
+            held = positions()
+            target[3], target[10] = elbows
+            send(0.3, target)
+            paused = positions()
+            assert max(abs(paused[n] - held[n]) for n in ARMS) < 0.02, (held, paused)
+            send(0.15, target, right=["X"])
+            send(2.0, target)
+            assert profile.status()["active"], profile.status()
+            resumed = positions()
+            error = max(abs(resumed[n] - q) for n, q in zip(ARMS, target, strict=True))
+            assert error < 0.02, (error, resumed, target)
+            resume_errors.append(error)
+
         def base_pose() -> list[float]:
             body = next(b for b in sim.inspect().bodies if b.body_id == "r1pro/base_link")
             return [body.pose.position.x, body.pose.position.y, body.pose.position.z]
@@ -125,6 +143,7 @@ def main() -> None:
             "base_distance_m": distance,
             "torso_lowered_m": lowered,
             "paused_base_drift_m": drift,
+            "resume_max_joint_error_rad": resume_errors,
             "timeout_latched": not profile.status()["active"],
             "sim": status,
         }

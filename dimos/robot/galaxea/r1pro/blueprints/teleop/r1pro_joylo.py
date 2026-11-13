@@ -53,7 +53,7 @@ from dimos.teleop.leader.calibration import DEFAULT_LEADER_MOTOR_NAMES, LEADER_S
 from dimos.teleop.leader.mapping import JointMapping, SideMapping
 from dimos.teleop.leader.module import LeaderTeleopModule
 
-# Preserve leader radians before relative alignment. Follower limits are applied
+# Preserve calibrated leader radians for absolute joint tracking. Follower limits are applied
 # by R1ProJoylo and again by the coordinator/connection, not in this reader.
 OPENARM_R1PRO_MAPPINGS = {
     side: SideMapping(
@@ -89,7 +89,7 @@ def _operator_blueprint(left_only: bool = False) -> Blueprint:
             mappings=OPENARM_R1PRO_MAPPINGS,
             tick_period_s=0.01,
             # JoyLo must see the current, unsmoothed readings to detect jumps
-            # and re-align after input loss. The generic reader's rejection
+            # after input loss. The generic reader's rejection
             # against its last accepted pose otherwise makes recovery impossible.
             max_joint_jump_radians=None,
             command_filter_cutoff_hz=None,

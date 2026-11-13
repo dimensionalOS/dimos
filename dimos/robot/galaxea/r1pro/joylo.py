@@ -15,7 +15,7 @@
 """OpenArm leaders with the seven-joint R1 Pro JoyLo control layout.
 
 Layout reference: StanfordVL/BEHAVIOR-1K joylo at b544acbbb76b.
-OpenArm is not a kinematic twin of R1 Pro: joint deltas are aligned at engagement.
+Calibrated leader angles set fixed joint targets; enabling never changes their origin.
 Locks hold follower targets in software; they do not energize leader motors.
 """
 
@@ -58,8 +58,8 @@ class JoyloConfig(ModuleConfig):
     yaw_speed: float = Field(default=0.25, gt=0, le=0.5)
     deadzone: float = Field(default=0.15, ge=0, lt=1)
     max_leader_jump: float = Field(default=0.75, gt=0)
-    # Feetech calibrated readings wrap at +/-pi. Unwrap only fresh samples,
-    # before relative alignment and the discontinuity guard; None is nonperiodic.
+    # Feetech calibrated readings wrap at +/-pi. Unwrap successive samples,
+    # before absolute targeting and the discontinuity guard; None is nonperiodic.
     leader_angle_period: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
@@ -140,14 +140,12 @@ class JoyloController:
         self.active = False
         self.pause_count = 0
         self.last_pause_reason: str | None = None
-        self.reason = f"Press {self.enable_button} to align and enable"
+        self.reason = f"Press {self.enable_button} to enable tracking"
         self.leader: dict[str, float] = {}
         self.feedback: dict[str, float] = {}
         self.readings: tuple[JoyConReading | None, JoyConReading | None] = (None, None)
         self.receipts = {name: -math.inf for name in ("leader", "robot", "joycon")}
         self.target: dict[str, float] = {}
-        self.anchor_leader: dict[str, float] = {}
-        self.anchor_robot: dict[str, float] = {}
         self.grippers = [GripperState(opening=0), GripperState(opening=0)]
         self.gripper_touched = [False, False]
         self.arm_locked = [False, False]
@@ -172,16 +170,18 @@ class JoyloController:
             return
         age = now - self.receipts["leader"]
         period = self.config.leader_angle_period
-        if self.leader and period is not None and age <= self.config.input_timeout_s:
+        # Preserve the angle branch across pauses and input gaps. The watchdog
+        # still pauses on a gap; it must not also change the absolute mapping.
+        if self.leader and period is not None:
             positions = {
                 name: self.leader[name] + math.remainder(value - self.leader[name], period)
                 for name, value in positions.items()
             }
         if self.active and age > self.config.input_timeout_s:
             # A new sample can arrive before the watchdog tick notices the gap.
-            # Recover the reading, but require a fresh enable press to align it.
+            # Recover the reading, but require a fresh enable press to resume following.
             self.pause(
-                f"Leader input resumed after timeout; release {self.enable_button} and re-align"
+                f"Leader input resumed after timeout; release {self.enable_button} and re-enable"
             )
         elif self.leader and self.active:
             joint = max(positions, key=lambda name: abs(positions[name] - self.leader[name]))
@@ -189,7 +189,7 @@ class JoyloController:
             if abs(delta) > self.config.max_leader_jump:
                 self.pause(
                     f"Leader discontinuity at {joint}: {delta:+.3f} rad; "
-                    f"release {self.enable_button} and re-align"
+                    f"release {self.enable_button} and re-enable"
                 )
         self.leader = positions.copy()
         self.receipts["leader"] = now
@@ -254,12 +254,10 @@ class JoyloController:
                     self._capture()
             elif enable_edge and not self.active:
                 self._capture()
-                self.anchor_leader = self.leader.copy()
-                self.anchor_robot = self.target.copy()
                 self.arm_locked = [False, False]
                 self.locked.clear()
                 self.active = True
-                self.reason = "Following aligned OpenArm joint deltas"
+                self.reason = "Following calibrated OpenArm joint positions"
                 # A held trigger at engagement must be released before it toggles a jaw.
                 for i, label in enumerate(("ZL", "ZR")):
                     self.grippers[i].trigger_was_down = label in buttons[i]
@@ -313,15 +311,10 @@ class JoyloController:
             else:
                 self.grippers[i].trigger_was_down = down
         for name in self.arm_names:
-            if name in self.locked and name not in next_locked:
-                self.anchor_leader[name] = self.leader[name]
-                self.anchor_robot[name] = self.target[name]
             if name in next_locked:
                 continue
             lo, hi = self.limits[name]
-            desired = min(
-                hi, max(lo, self.anchor_robot[name] + self.leader[name] - self.anchor_leader[name])
-            )
+            desired = min(hi, max(lo, self.leader[name]))
             delta = self.config.arm_rate * dt
             self.target[name] += max(-delta, min(delta, desired - self.target[name]))
         self.locked = next_locked
