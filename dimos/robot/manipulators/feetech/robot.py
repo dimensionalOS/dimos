@@ -23,6 +23,7 @@ connection publishes follower joint targets directly. The motor layer is
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 FEETECH_DEFAULT_BAUDRATE = 1_000_000
 # A trigger drives the jaw on its own side, through that side's gripper stream.
@@ -52,8 +53,19 @@ class FeetechMotor:
             raise ValueError(f"{self.joint}: lower {self.lower} must be below upper {self.upper}")
 
     def target(self, reading: float) -> float:
-        """The follower target for one reading, in radians, inside the joint's limits."""
-        return max(self.lower, min(self.upper, reading))
+        """The follower target for one reading, in radians, inside the joint's limits.
+
+        Args:
+            reading: The motor's angle in radians, within half a turn either
+                side of its zero, as the encoder reports it.
+        """
+        # The encoder wraps half a turn from the motor's zero, which is inside
+        # the range of a joint that reaches past +-pi. Move the reading by whole
+        # turns into the turn centred on the joint's range, so the wrap falls
+        # outside the range and the target stays continuous across +-pi.
+        middle = (self.lower + self.upper) / 2
+        angle = middle + math.remainder(reading - middle, math.tau)
+        return max(self.lower, min(self.upper, angle))
 
 
 @dataclass(frozen=True)
