@@ -11,11 +11,11 @@
       },
       "locked": {
         "dir": "native/cpp",
-        "lastModified": 1794608250,
-        "narHash": "sha256-Rv+OVpCcfvu3yZ1KbtabSctBqkLR0zIhanQ7f2ZaUac=",
+        "lastModified": 1794610528,
+        "narHash": "sha256-8m1dWYpWnC4C4gcnJQLNgkPdJRiwx1FzC6K1cw/pWHE=",
         "owner": "dimensionalOS",
         "repo": "dimos",
-        "rev": "c8684651249edcc76eb8ecb741b42fc368b62833",
+        "rev": "00791cd62f8a70fd6273d985fc9e0f848ac38a28",
         "type": "github"
       },
       "original": {
