@@ -179,6 +179,61 @@ def execute(job: dict[str, Any], state: Path) -> dict[str, Any]:
     raise LearningError(422, "unsupported_job", "Unknown worker job kind")
 
 
+EXECUTOR_STOP_GRACE = 5.0
+
+
+def _executor_group_running(pgid: int) -> bool:
+    """Linux can distinguish live members from zombies awaiting their parent's reap."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    if not sys.platform.startswith("linux"):
+        return True  # Other POSIX systems rely on normal orphan reaping.
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            # comm can contain spaces/parentheses; fields after its final ')' are stable.
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            # Disappearing processes and other users' private /proc entries are not ours.
+            continue
+        if int(fields[2]) == pgid and fields[0] not in ("Z", "X"):
+            return True
+    return False
+
+
+def _stop_executor_group(child: subprocess.Popen[Any]) -> None:
+    """Bounded cleanup of the dedicated start_new_session executor group.
+
+    Leader exit is NOT descendant exit. Reap the leader even on cleanup failure;
+    orphan zombies belong to init, and cannot execute or publish.
+    """
+    pgid = child.pid
+    if pgid <= 1 or pgid == os.getpgrp():
+        raise RuntimeError("Refusing to signal the worker/shared process group")
+    try:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            if not _executor_group_running(pgid):
+                break
+            try:
+                os.killpg(pgid, sig)
+            except ProcessLookupError:
+                break
+            deadline = time.monotonic() + EXECUTOR_STOP_GRACE
+            while _executor_group_running(pgid):
+                if not sys.platform.startswith("linux"):
+                    child.poll()  # Reap our own zombie before checking POSIX group disappearance.
+                if time.monotonic() >= deadline:
+                    if sig == signal.SIGKILL:
+                        raise TimeoutError("Executor group did not stop after SIGKILL")
+                    break
+                time.sleep(0.05)
+    finally:
+        child.wait(timeout=EXECUTOR_STOP_GRACE)
+
+
 class Worker:
     def __init__(self, api: str, token: str, state: Path):
         self.api = api.rstrip("/")
@@ -238,7 +293,6 @@ class Worker:
                         last_heartbeat = time.monotonic()
                         if job["id"] in heartbeat["cancelled_job_ids"]:
                             cancelled = True
-                            os.killpg(child.pid, signal.SIGTERM)
                             break
                     if time.monotonic() - last_report >= 2:
                         log.seek(position)
@@ -267,16 +321,8 @@ class Worker:
                         )
                         last_report = time.monotonic()
                     time.sleep(0.1)
-                try:
-                    child.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(child.pid, signal.SIGKILL)
-                    child.wait()
-            except BaseException:
-                if child.poll() is None:
-                    os.killpg(child.pid, signal.SIGTERM)
-                    child.wait(timeout=5)
-                raise
+            finally:
+                _stop_executor_group(child)
             log.seek(position)
             remaining = [{"message": line.strip()} for line in log.readlines()]
         result = (

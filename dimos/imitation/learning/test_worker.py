@@ -1,7 +1,14 @@
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
 import time
 
 import pytest
 
+from dimos.imitation.learning import worker as worker_module
 from dimos.imitation.learning.conftest import pair, who
 from dimos.imitation.learning.protocol import LearningError
 
@@ -156,3 +163,112 @@ def test_revoked_and_other_workers_cannot_report(setup):
     with pytest.raises(LearningError) as error:
         service.report(worker["token"], job["id"], report)
     assert error.value.status == 401
+
+
+def process_state(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        return None
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux /proc death-state regression"
+)
+@pytest.mark.parametrize(
+    ("mode", "stubborn_leader"),
+    [
+        ("cancel", False),
+        ("cancel", True),
+        ("heartbeat_error", False),
+        ("report_error", True),
+        ("success", False),
+        ("failure", False),
+        ("invalid_result", False),
+    ],
+)
+def test_once_real_executor_group_cleanup(tmp_path, monkeypatch, mode, stubborn_leader):
+    """Real OS descendants must be stopped BEFORE reporting, not just leader.wait()."""
+    real_popen = subprocess.Popen
+    processes = []
+    descendant_file = tmp_path / "descendant.pid"
+    leaf = (
+        "import os, signal, time; from pathlib import Path; "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        f"Path({str(descendant_file)!r}).write_text(str(os.getpid())); time.sleep(60)"
+    )
+
+    def spawn(argv, **kwargs):
+        assert kwargs["start_new_session"] is True
+        output = argv[argv.index("--result-file") + 1]
+        if mode in ("success", "failure", "invalid_result"):
+            result = {"status": "succeeded", "result": {"preserved": True}}
+            if mode == "failure":
+                result = {"status": "failed", "error": {"code": "expected_failure"}}
+            content = "not json" if mode == "invalid_result" else json.dumps(result)
+            script = f"from pathlib import Path; Path({output!r}).write_text({content!r})"
+        else:
+            script = (
+                "import signal, subprocess, sys, time; "
+                + ("signal.signal(signal.SIGTERM, signal.SIG_IGN); " if stubborn_leader else "")
+                + f"subprocess.Popen([sys.executable, '-c', {leaf!r}]); time.sleep(60)"
+            )
+        process = real_popen([sys.executable, "-c", script], **kwargs)
+        processes.append(process)
+        deadline = time.monotonic() + 5
+        while not descendant_file.exists() and mode not in ("success", "failure", "invalid_result"):
+            assert time.monotonic() < deadline, "Disposable descendant did not start"
+            time.sleep(0.01)
+        return process
+
+    def assert_stopped():
+        assert processes[0].returncode is not None  # leader was actually reaped
+        if descendant_file.exists():
+            # Orphan zombies cannot run; only init can reap them, not this worker.
+            assert process_state(int(descendant_file.read_text())) in (None, "Z", "X")
+
+    reports = []
+
+    def post(route, body):
+        if route == "worker/claim":
+            return {"job": {"id": "disposable", "attempt": 1, "lease_token": "synthetic"}}
+        if route == "worker/heartbeat":
+            if body.get("active_job_id") and mode == "heartbeat_error":
+                raise RuntimeError("synthetic heartbeat failure")
+            return {"cancelled_job_ids": ["disposable"] if mode == "cancel" else []}
+        if mode == "report_error":
+            raise RuntimeError("synthetic report failure")
+        if body["status"] != "running":
+            assert_stopped()
+            reports.append(body)
+        return {}
+
+    monkeypatch.setattr(worker_module.subprocess, "Popen", spawn)
+    monkeypatch.setattr(worker_module, "EXECUTOR_STOP_GRACE", 0.2)
+    worker = worker_module.Worker("http://unused.invalid", "synthetic", tmp_path)
+    monkeypatch.setattr(worker, "post", post)
+    started = time.monotonic()
+    try:
+        if mode in ("heartbeat_error", "report_error", "invalid_result"):
+            with pytest.raises((RuntimeError, json.JSONDecodeError)):
+                worker.once()
+            assert reports == []
+        else:
+            assert worker.once() is True
+            expected = {"cancel": "cancelled", "success": "succeeded", "failure": "failed"}
+            assert reports[0]["status"] == expected[mode]
+            if mode == "success":
+                assert reports[0]["result"] == {"preserved": True}
+            if mode == "failure":
+                assert reports[0]["error"] == {"code": "expected_failure"}
+        assert_stopped()
+        assert time.monotonic() - started < 5
+        assert os.getpgrp() != processes[0].pid
+    finally:
+        # Test-only fail-safe: signal ONLY the disposable executor group, never services.
+        for process in processes:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=5)
