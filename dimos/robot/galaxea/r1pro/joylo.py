@@ -50,10 +50,6 @@ class JoyloConfig(ModuleConfig):
     arm_only: bool = False
     input_timeout_s: float = Field(default=0.25, gt=0, allow_inf_nan=False)
     tick_period_s: float = Field(default=0.01, gt=0, le=0.05)
-    arm_rate: float = Field(default=0.25, ge=0, le=3.0)
-    max_arm_rate: float = Field(default=3.0, gt=0, le=3.0)
-    torso_rate: float = Field(default=0.15, ge=0, le=1.5)
-    max_torso_rate: float = Field(default=1.5, gt=0, le=1.5)
     height_rate: float = Field(default=0.03, gt=0, le=0.05)
     pitch_rate: float = Field(default=0.1, gt=0, le=0.2)
     base_speed: float = Field(default=0.1, ge=0, le=0.5)
@@ -70,8 +66,6 @@ class JoyloConfig(ModuleConfig):
             raise ValueError("enabled_sides must name one or two distinct sides")
         if not all(math.isfinite(v) and v > 0 for v in self.torso_link_lengths):
             raise ValueError("torso link lengths must be finite and positive")
-        if self.arm_rate > self.max_arm_rate or self.torso_rate > self.max_torso_rate:
-            raise ValueError("tracking rates must not exceed the configured ceilings")
         return self
 
 
@@ -105,9 +99,7 @@ def torso_step(
         )
     target_c = c + target_a + target_b - a - b - pitch * config.pitch_rate * dt
     target = [target_a, target_b, target_c, yaw]
-    delta = [new - old for new, old in zip(target, q, strict=True)]
-    scale = min(1.0, config.torso_rate * dt / max(1e-12, *map(abs, delta)))
-    result = [old + scale * d for old, d in zip(q, delta, strict=True)]
+    result = target
     return (
         result
         if all(lo <= value <= hi for value, (lo, hi) in zip(result, limits, strict=True))
@@ -276,7 +268,7 @@ class JoyloController:
             def axis(value: float) -> float:
                 return apply_deadzone(value, self.config.deadzone)
 
-            speed = self.config.base_speed * (2 if left.stick_pressed else 1)
+            speed = self.config.base_speed
             # Match the current R1 Pro reference: right click suppresses yaw and tilt.
             yaw = 0.0 if right.stick_pressed else -axis(right.stick[0]) * self.config.yaw_speed
             velocity = (-axis(left.stick[1]) * speed, -axis(left.stick[0]) * speed, yaw)
@@ -311,16 +303,17 @@ class JoyloController:
             down = ("ZL", "ZR")[i] in buttons[i]
             self.gripper_touched[i] |= down and not self.grippers[i].trigger_was_down
             if self.gripper_touched[i]:
-                step_gripper(self.grippers[i], down, mode="toggle", slew_per_s=3, dt=dt)
+                step_gripper(self.grippers[i], down, mode="toggle", slew_per_s=None, dt=dt)
             else:
                 self.grippers[i].trigger_was_down = down
         for name in self.arm_names:
             if name in next_locked:
+                if name not in self.locked:
+                    self.target[name] = self.feedback[name]
                 continue
             lo, hi = self.limits[name]
             desired = min(hi, max(lo, self.leader[name]))
-            delta = self.config.arm_rate * dt
-            self.target[name] += max(-delta, min(delta, desired - self.target[name]))
+            self.target[name] = desired
         self.locked = next_locked
         if self.config.arm_only:
             return

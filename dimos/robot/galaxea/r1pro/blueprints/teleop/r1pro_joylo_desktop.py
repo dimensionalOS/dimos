@@ -29,6 +29,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _operator_blueprint
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_real import make_joylo_real
+from dimos.robot.galaxea.r1pro.collection import r1pro_collection
 from dimos.robot.galaxea.r1pro.head_cameras import HeadCameraInfo, HeadLeftCamera, HeadRightCamera
 from dimos.robot.galaxea.r1pro.joylo import UPPER
 from dimos.robot.galaxea.r1pro.spatial_sensors import R1SpatialSensors
@@ -98,3 +99,14 @@ r1pro_openarm_joylo_real = autoconnect(
     _operator_blueprint().hosted(local=True),
     UsdManager.blueprint(model=_model, tf_source="joints", unchanged_tf_hz=15).hosted(local=True),
 ).global_config(viewer="none", transport="zenoh", n_workers=7)
+
+
+# The recorder lives beside control and cameras, so laptop/network loss cannot
+# remove the robot-side evidence. It starts first and shuts down last.
+r1pro_openarm_joylo_collect = autoconnect(
+    autoconnect(
+        r1pro_collection(), make_joylo_real(publish_odom_tf=True, enable_wrist_color=False), _vision
+    ).hosted(tags={"r1pro": True}),
+    _operator_blueprint().hosted(local=True),
+    UsdManager.blueprint(model=_model, tf_source="joints", unchanged_tf_hz=15).hosted(local=True),
+).global_config(viewer="none", transport="zenoh", n_workers=9)

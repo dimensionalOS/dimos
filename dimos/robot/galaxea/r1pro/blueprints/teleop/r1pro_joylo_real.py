@@ -27,6 +27,7 @@ from dimos.robot.galaxea.r1pro.connection import R1ProConnection, R1ProConnectio
 from dimos.robot.galaxea.r1pro.joylo import ARMS, TORSO, JoyloConfig
 from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
+from dimos.robot.galaxea.r1pro.motion import motion_groups
 
 _declaration = R1ProConnectionConfig(
     boot_vendor_stack=False,
@@ -39,10 +40,6 @@ _declaration = R1ProConnectionConfig(
 _profile = JoyloConfig(
     leader_angle_period=math.tau,
     torso_link_lengths=(0.4, 0.3),
-    arm_rate=0.75,
-    max_arm_rate=1.0,
-    torso_rate=0.3,
-    max_torso_rate=0.5,
     base_speed=0.3,
     yaw_speed=0.6,
 )
@@ -67,10 +64,11 @@ def make_joylo_real(*, publish_odom_tf: bool = True, enable_wrist_color: bool = 
                         deadman_timeout_s=_declaration.deadman_timeout_s,
                     )
                 ],
+                motion_limits=motion_groups(),
                 tasks=joylo_tasks(
                     {
-                        **dict.fromkeys(ARMS, _profile.max_arm_rate),
-                        **dict.fromkeys(TORSO, _profile.max_torso_rate),
+                        **dict.fromkeys(ARMS, 1.0),
+                        **dict.fromkeys(TORSO, 0.5),
                     }
                 ),
             ),

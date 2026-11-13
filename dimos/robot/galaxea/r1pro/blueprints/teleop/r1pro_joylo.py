@@ -27,6 +27,7 @@ from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
 from dimos.robot.galaxea.r1pro.connection import R1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
+from dimos.robot.galaxea.r1pro.motion import motion_groups
 from dimos.robot.galaxea.r1pro.sim.config import (
     ARM_RATE,
     CONTROL_MODEL,
@@ -73,10 +74,6 @@ def _robot_blueprint(
                 model=MODEL,
                 leader_angle_period=math.tau,
                 torso_link_lengths=TORSO_LINK_LENGTHS,
-                arm_rate=ARM_RATE,
-                torso_rate=TORSO_RATE,
-                max_arm_rate=ARM_RATE,
-                max_torso_rate=TORSO_RATE,
             ),
             R1ProJoyloCoordinator.blueprint(
                 instance_name="ControlCoordinator",
@@ -88,6 +85,14 @@ def _robot_blueprint(
                         deadman_timeout_s=_declaration.deadman_timeout_s,
                     )
                 ],
+                motion_limits=motion_groups(
+                    arm_rate=ARM_RATE,
+                    arm_ceiling=ARM_RATE,
+                    torso_rate=TORSO_RATE,
+                    torso_ceiling=TORSO_RATE,
+                    base_speed=0.1,
+                    yaw_speed=0.25,
+                ),
                 tasks=joylo_tasks(dict(zip(UPPER_JOINTS, UPPER_RATES, strict=True))),
             ),
         )

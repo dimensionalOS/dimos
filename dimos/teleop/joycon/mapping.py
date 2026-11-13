@@ -159,15 +159,16 @@ def step_gripper(
     trigger_down: bool,
     *,
     mode: GripperMode,
-    slew_per_s: float,
+    slew_per_s: float | None,
     dt: float,
 ) -> float:
     """Advance one side's opening toward closed or open and return it (1 = open).
 
     hold: the jaw is closed while the trigger is held. toggle: a press flips it.
-    The opening moves at most slew_per_s * dt per tick so the jaw never slams.
+    The opening moves at most slew_per_s * dt per tick. None delegates slew
+    to the downstream coordinator; this function then only maps trigger intent.
     """
-    if slew_per_s <= 0.0:
+    if slew_per_s is not None and slew_per_s <= 0.0:
         raise ValueError("slew_per_s must be positive")
     if mode == "hold":
         state.closed = trigger_down
@@ -175,7 +176,7 @@ def step_gripper(
         state.closed = not state.closed
     state.trigger_was_down = trigger_down
     target = 0.0 if state.closed else 1.0
-    step = slew_per_s * max(0.0, dt)
+    step = 1.0 if slew_per_s is None else slew_per_s * max(0.0, dt)
     state.opening += max(-step, min(step, target - state.opening))
     return state.opening
 

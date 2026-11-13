@@ -62,8 +62,8 @@ class CollectionProfile(BaseConfig):
             kind = feature.message_type
             if kind is None:
                 raise ValueError(f"Collection stream {feature.stream!r} requires message_type")
-            if feature.source_kind == "joint_position_updates" and not issubclass(kind, JointState):
-                raise ValueError("joint_position_updates requires JointState messages")
+            if feature.source_kind != "snapshot" and not issubclass(kind, JointState):
+                raise ValueError(f"{feature.source_kind} requires JointState messages")
             previous = inputs.setdefault(feature.stream, kind)
             if previous is not kind:
                 raise ValueError(f"stream {feature.stream!r} has conflicting message types")

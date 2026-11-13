@@ -58,7 +58,7 @@ def test_engagement_follows_calibrated_pose_without_rezeroing_and_keeps_jaws(con
     output = feed(controller, 0.02, leader=leader, right=JoyConReading(frozenset({"X"})))
     assert controller.active
     assert output.openings == (0.5, 0.5)
-    assert [output.positions[n] for n in ARMS] == pytest.approx([0.005] * 14)
+    assert [output.positions[n] for n in ARMS] == pytest.approx([0.2] * 14)
     for i in range(2, 80):
         output = feed(controller, i * 0.02, leader=leader)
     assert {n: output.positions[n] for n in ARMS} == pytest.approx(leader)
@@ -77,7 +77,7 @@ def test_both_sticks_match_r1pro_layout_and_right_click_suppresses_yaw(controlle
         left=JoyConReading(frozenset({"stick"}), (0, -1)),
         right=JoyConReading(frozenset({"stick"}), (-1, -1)),
     )
-    assert output.velocity == (0.2, 0.0, 0.0)
+    assert output.velocity == (0.1, 0.0, 0.0)
     assert [output.positions[n] for n in TORSO] == [0, 0, 0, 0]
 
 
@@ -110,21 +110,21 @@ def test_wrist_lock_release_returns_to_absolute_leader_target(controller):
     output = feed(controller, 0.04, leader=leader, left=JoyConReading(frozenset({"L"})))
     assert output.positions[ARMS[6]] == 0
     output = feed(controller, 0.06, leader=leader)
-    assert output.positions[ARMS[6]] == pytest.approx(0.005)
+    assert output.positions[ARMS[6]] == pytest.approx(0.3)
     leader[ARMS[6]] += 0.1
     output = feed(controller, 0.08, leader=leader)
-    assert output.positions[ARMS[6]] == pytest.approx(0.01)
+    assert output.positions[ARMS[6]] == pytest.approx(0.4)
     for i in range(5, 100):
         output = feed(controller, i * 0.02, leader=leader)
     assert output.positions[ARMS[6]] == pytest.approx(0.4)
 
 
-def test_trigger_toggles_once_and_release_keeps_closing(controller):
+def test_trigger_toggles_once_and_release_keeps_closed_target(controller):
     engage(controller)
     a = feed(controller, 0.04, left=JoyConReading(frozenset({"ZL"})))
     b = feed(controller, 0.06, left=JoyConReading(frozenset({"ZL"})))
     c = feed(controller, 0.08)
-    assert (a.openings[0], b.openings[0], c.openings[0]) == pytest.approx((0.44, 0.38, 0.32))
+    assert (a.openings[0], b.openings[0], c.openings[0]) == pytest.approx((0, 0, 0))
     assert c.openings[1] == 0.5
 
 
@@ -146,10 +146,10 @@ def test_arm_lock_release_returns_to_absolute_leader_targets(controller):
     assert [locked.positions[n] for n in ARMS[:7]] == [0] * 7
     assert locked.positions[ARMS[7]] > 0
     unlocked = feed(controller, 0.08, leader=leader, left=JoyConReading(frozenset({"minus"})))
-    assert [unlocked.positions[n] for n in ARMS[:7]] == pytest.approx([0.005] * 7)
+    assert [unlocked.positions[n] for n in ARMS[:7]] == pytest.approx([0.3] * 7)
     leader[ARMS[0]] += 0.1
     moved = feed(controller, 0.10, leader=leader)
-    assert moved.positions[ARMS[0]] == pytest.approx(0.01)
+    assert moved.positions[ARMS[0]] == pytest.approx(0.4)
     for i in range(6, 100):
         moved = feed(controller, i * 0.02, leader=leader)
     assert {n: moved.positions[n] for n in ARMS} == pytest.approx(leader)
@@ -190,7 +190,7 @@ def test_left_only_needs_no_right_input_and_holds_every_other_robot_joint(contro
         left=JoyConReading(frozenset({"down", "ZL"}), (1, -1)),
         right=None,
     )
-    assert output.positions[ARMS[0]] == pytest.approx(0.005)
+    assert output.positions[ARMS[0]] == pytest.approx(0.1)
     assert [output.positions[n] for n in (*TORSO, *ARMS[7:])] == [0] * 11
     assert output.openings[0] < 0.5 and output.openings[1] == 0.5
     assert output.velocity == (0, 0, 0)
@@ -224,7 +224,7 @@ def test_left_only_capture_pauses_even_with_minus_held(controller):
 
 
 def test_2025_torso_height_preserves_reach_and_pitch():
-    config = JoyloConfig(torso_link_lengths=(0.4, 0.3), torso_rate=0.5)
+    config = JoyloConfig(torso_link_lengths=(0.4, 0.3))
     q = [0.0, 0.0, 0.0, 0.0]
     for _ in range(1000):
         q = torso_step(q, -1, 0, 0.01, [(-3.0, 3.0)] * 4, config)
@@ -249,7 +249,7 @@ def test_reenable_converges_to_same_leader_pose_regardless_of_paused_robot_pose(
         controller, 0.08, leader=leader, feedback=feedback, right=JoyConReading(frozenset({"X"}))
     )
     first = output.positions[ARMS[10]]
-    assert abs(first - paused_feedback) <= 0.25 * 0.02 + 1e-12
+    assert first == leader[ARMS[10]]  # The coordinator owns physical slew.
     for i in range(5, 500):
         output = feed(controller, i * 0.02, leader=leader, feedback=feedback)
     assert controller.active

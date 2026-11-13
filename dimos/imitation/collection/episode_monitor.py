@@ -111,9 +111,12 @@ class EpisodeMonitorModule(Module):
     def start(self) -> None:
         super().start()
         # Registered so the base Module.stop() disposes them on shutdown.
-        self._input_subscriptions = [
-            self.register_disposable(Disposable(self.teleop_buttons.subscribe(self._on_buttons))),
-        ]
+        if self.config.button_map:
+            self._input_subscriptions = [
+                self.register_disposable(
+                    Disposable(self.teleop_buttons.subscribe(self._on_buttons))
+                ),
+            ]
         # Emit an initial idle status so subscribers (and recorders) have a
         # known starting point in the timeline.
         with self._lock:

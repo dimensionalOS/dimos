@@ -3,6 +3,8 @@
 18-DOF upper body (torso 4 + arm 7 + arm 7) over ROS 2 / FastDDS, holonomic
 chassis, head stereo + wrist cameras, chassis lidar, 2 IMUs.
 
+See the [teleoperation backend and frontend integration contract](/docs/development/r1pro-teleop-backend.md) for shared speed limits, episode RPCs, and policy-ready recording.
+
 ## Robot-side setup
 
 Everything in this section runs **on the robot's onboard computer**, over ssh,

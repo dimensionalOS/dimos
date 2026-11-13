@@ -52,6 +52,7 @@ from dimos.imitation.dataprep.schema import (
     validate_source_kinds,
 )
 from dimos.memory.store.mcap import McapStore
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 
@@ -87,6 +88,8 @@ def resolve_field(msg: Any, ref: FeatureSpec) -> NDArray[Any]:
         for dict payloads) then coerce.
     """
     value: Any
+    if isinstance(msg, CompressedImage) and ref.dtype == "video" and ref.field in (None, "data"):
+        return msg.decode().to_rgb().data
     if isinstance(msg, JointState) and ref.field in {"position", "velocity", "effort"}:
         by_name = _joint_values(msg, ref.field)
         missing = [name for name in ref.names if name not in by_name]
@@ -254,9 +257,12 @@ def _alignment_plan(
         for key, values in timestamps.items():
             if not values:
                 break
-            if features[key].source_kind == "joint_position_updates":
+            if features[key].source_kind != "snapshot":
                 previous = bisect.bisect_right(values, target) - 1
-                if previous < 0:
+                max_age = features[key].max_age_ms
+                if previous < 0 or (
+                    max_age is not None and (target - values[previous]) * 1000 > max_age
+                ):
                     break
                 indices[key] = previous
                 continue
@@ -300,13 +306,14 @@ class _FeatureSeries:
     timestamps: list[float]
     values: list[NDArray[Any] | None]
     errors: list[str | None]
+    max_age_ms: float | None = None
 
 
 def _source_messages(
     store: Store, episode: Episode, stream: str, source_kind: SourceKind
 ) -> Iterator[tuple[float, Any]]:
     """Read a recorded source once, independently of its feature projections."""
-    start = -math.inf if source_kind == "joint_position_updates" else episode.start_ts
+    start = -math.inf if source_kind != "snapshot" else episode.start_ts
     source: Stream[Any, Any] = store.stream(stream).time_range(start, episode.end_ts)
     # Release observations as we consume them so inspection does not retain images.
     pending = deque(sorted(source, key=lambda observation: observation.ts))
@@ -315,35 +322,55 @@ def _source_messages(
         yield observation.ts, observation.data
 
 
-def _joint_position_updates(
-    messages: Iterator[tuple[float, Any]], start_ts: float, stream: str
+def _joint_updates(
+    messages: Iterator[tuple[float, Any]], start_ts: float, stream: str, field: str
 ) -> Iterator[tuple[float, JointState]]:
     """Reconstruct effective targets; omitted joints retain their last command."""
     targets: dict[str, float] = {}
     seeded = False
+    last_timestamp = start_ts
     for timestamp, message in messages:
         if not seeded and timestamp >= start_ts:
             yield (
-                start_ts,
-                JointState(ts=start_ts, name=list(targets), position=list(targets.values())),
+                last_timestamp,
+                JointState(
+                    ts=last_timestamp,
+                    name=list(targets),
+                    position=list(targets.values()) if field == "position" else [],
+                    velocity=list(targets.values()) if field == "velocity" else [],
+                ),
             )
             seeded = True
         try:
             if not isinstance(message, JointState):
-                raise ValueError("joint_position_updates requires JointState messages")
-            update = _joint_values(message, "position")
+                raise ValueError("joint updates require JointState messages")
+            update = _joint_values(message, field)
             if not all(math.isfinite(value) for value in update.values()):
                 raise ValueError("JointState update contains non-finite values")
         except (TypeError, ValueError) as error:
             raise ValueError(f"{stream}: invalid update at {timestamp}: {error}") from error
         targets.update(update)
+        last_timestamp = timestamp
         if timestamp >= start_ts:
             yield (
                 timestamp,
-                JointState(ts=timestamp, name=list(targets), position=list(targets.values())),
+                JointState(
+                    ts=timestamp,
+                    name=list(targets),
+                    position=list(targets.values()) if field == "position" else [],
+                    velocity=list(targets.values()) if field == "velocity" else [],
+                ),
             )
     if not seeded:
-        yield start_ts, JointState(ts=start_ts, name=list(targets), position=list(targets.values()))
+        yield (
+            last_timestamp,
+            JointState(
+                ts=last_timestamp,
+                name=list(targets),
+                position=list(targets.values()) if field == "position" else [],
+                velocity=list(targets.values()) if field == "velocity" else [],
+            ),
+        )
 
 
 def _episode_features(
@@ -355,14 +382,18 @@ def _episode_features(
 ) -> dict[str, _FeatureSeries]:
     validate_source_kinds(streams.values())
     projections: dict[str, dict[str, FeatureSpec]] = {}
-    result = {key: _FeatureSeries(spec.source_kind, [], [], []) for key, spec in streams.items()}
+    result = {
+        key: _FeatureSeries(spec.source_kind, [], [], [], spec.max_age_ms)
+        for key, spec in streams.items()
+    }
     for key, spec in streams.items():
         projections.setdefault(spec.stream, {})[key] = spec
     for stream, specs in projections.items():
         source_kind = next(iter(specs.values())).source_kind
         messages = _source_messages(store, episode, stream, source_kind)
-        if source_kind == "joint_position_updates":
-            messages = _joint_position_updates(messages, episode.start_ts, stream)
+        if source_kind != "snapshot":
+            field = "position" if source_kind == "joint_position_updates" else "velocity"
+            messages = _joint_updates(messages, episode.start_ts, stream, field)
         for timestamp, message in messages:
             for key, spec in specs.items():
                 series = result[key]

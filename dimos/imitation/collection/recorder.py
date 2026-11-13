@@ -155,6 +155,9 @@ class CollectionModule(RustRecorder):
         for feature in (*schema.observation.values(), *schema.action.values()):
             feature.stream = streams[feature.stream]
         schema.episodes.status_stream = streams["status"]
+        # Preserve names of auxiliary channels such as live motion settings,
+        # including run namespaces and explicit transport remappings.
+        schema.metadata["recorded_streams"] = streams
         encoded = schema.model_dump_json(indent=2)
         self.config.recording.mkdir(parents=True, exist_ok=False)
         with (self.config.recording / "schema.json").open("x") as file:

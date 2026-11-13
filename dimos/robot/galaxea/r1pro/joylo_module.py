@@ -14,13 +14,15 @@
 
 """Robot-side JoyLo authority and mapping, shared by simulation and hardware."""
 
+import json
 import math
 import threading
 import time
-from typing import Any, Protocol
+from typing import Any
 
 from reactivex.disposable import Disposable
 
+from dimos.control.motion_limits import MotionLimitsSpec
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -29,8 +31,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.std_msgs.String import String
 from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER, JoyloConfig, JoyloController
-from dimos.spec.utils import Spec
 from dimos.teleop.joycon.raw import decode_readings
 from dimos.teleop.leader.module import GUARDED_JOINT_FRAME_ID
 from dimos.utils.logging_config import setup_logger
@@ -38,13 +40,10 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class TrackingLimitsSpec(Spec, Protocol):
-    def set_tracking_limits(self, arm_rate: float, torso_rate: float) -> None: ...
-
-
 class R1ProJoylo(Module):
     config: JoyloConfig
-    _motion_limits: TrackingLimitsSpec
+    _motion_limits: MotionLimitsSpec
+    motion_settings: In[String]
     leader_readings: In[JointState]
     joycon_sample: In[Joy]
     robot_feedback: In[JointState]
@@ -60,6 +59,7 @@ class R1ProJoylo(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._guard = threading.RLock()
+        self._speed_settings: dict[str, dict[str, Any]] = {}
         self._controller: JoyloController | None = None
         self._logged_pause_count = 0
         self._stamps = {"leader": -math.inf, "joycon": -math.inf}
@@ -85,7 +85,7 @@ class R1ProJoylo(Module):
         # LATEST async mailbox can replace an arm packet with a jaw/base packet,
         # falsely starving arm feedback. Merge immediately under the guard.
         self.register_disposable(Disposable(self.robot_feedback.subscribe(self._on_robot_feedback)))
-        self._motion_limits.set_tracking_limits(self.config.arm_rate, self.config.torso_rate)
+        self._apply_motion_settings(self._motion_limits.get_motion_limits())
         self._thread = threading.Thread(target=self._run, name="r1pro-joylo", daemon=True)
         self._thread.start()
 
@@ -120,76 +120,59 @@ class R1ProJoylo(Module):
         Args:
             arm_rate: Arm tracking in rad/s, up to this deployment's arm ceiling.
             torso_rate: Torso tracking in rad/s, up to its deployment ceiling.
-            base_speed: Shared drive speed in m/s (0..0.5; Joy-Con stick-click doubles it).
+            base_speed: Shared drive speed in m/s (0..0.5).
             yaw_speed: Shared turn speed in rad/s (0..2).
         """
-        with self._guard:
-            values = dict(
+        rates = {
+            name: value
+            for name, value in dict(
                 arm_rate=arm_rate, torso_rate=torso_rate, base_speed=base_speed, yaw_speed=yaw_speed
-            )
-            limits = dict(
-                arm_rate=self.config.max_arm_rate,
-                torso_rate=self.config.max_torso_rate,
-                base_speed=0.5,
-                yaw_speed=2.0,
-            )
-            for name, value in values.items():
-                if value is not None and (
-                    not math.isfinite(value) or not 0 <= value <= limits[name]
-                ):
-                    raise ValueError(f"{name} must be finite and between 0 and {limits[name]}")
-            # The trajectory owner limits browser/RPC goals as well as the leader.
-            # Apply before acknowledging, so a failed RPC cannot leave local-only settings.
-            if arm_rate is not None or torso_rate is not None:
-                self._motion_limits.set_tracking_limits(
-                    self.config.arm_rate if arm_rate is None else arm_rate,
-                    self.config.torso_rate if torso_rate is None else torso_rate,
-                )
-            for name, value in values.items():
-                if value is not None:
-                    setattr(self.config, name, value)
-            return {name: float(getattr(self.config, name)) for name in values}
+            ).items()
+            if value is not None
+        }
+        settings = self._motion_limits.set_motion_limits(rates)
+        self._apply_motion_settings(settings)
+        return {
+            name: settings[name]["rate"]
+            for name in ("arm_rate", "torso_rate", "base_speed", "yaw_speed")
+        }
+
+    def _apply_motion_settings(self, settings: dict[str, dict[str, Any]]) -> None:
+        with self._guard:
+            self._speed_settings = settings
+            # These two values convert normalized stick input into physical units.
+            # All physical command limits are enforced by the coordinator.
+            self.config.base_speed = settings["base_speed"]["rate"]
+            self.config.yaw_speed = settings["yaw_speed"]["rate"]
+
+    async def handle_motion_settings(self, sample: String) -> None:
+        self._apply_motion_settings(json.loads(sample.data))
 
     @rpc
     def get_motion_speeds(self) -> dict[str, Any]:
-        """Read shared speed settings and UI metadata; never changes motion.
-
-        Each setting names its setter argument, value, bounds, unit and optional
-        numeric input port. Drive-axis bindings tell a generic client which
-        settings scale its normalized linear and angular input.
-        """
-        with self._guard:
-            return {
-                "settings": {
-                    name: {
-                        "value": float(getattr(self.config, name)),
-                        "min": 0.0,
-                        "max": maximum,
-                        "label": label,
-                        "unit": unit,
-                        "port": port,
-                    }
-                    for name, maximum, label, unit, port in (
-                        (
-                            "arm_rate",
-                            self.config.max_arm_rate,
-                            "Arm tracking",
-                            "rad/s",
-                            "arm_tracking_speed",
-                        ),
-                        (
-                            "torso_rate",
-                            self.config.max_torso_rate,
-                            "Torso tracking",
-                            "rad/s",
-                            "torso_tracking_speed",
-                        ),
-                        ("base_speed", 0.5, "Drive speed", "m/s", "drive_speed"),
-                        ("yaw_speed", 2.0, "Turn speed", "rad/s", "turn_speed"),
-                    )
-                },
-                "drive": {"linear": "base_speed", "angular": "yaw_speed"},
-            }
+        """Compatibility API for existing apps; the coordinator owns the values."""
+        settings = self._motion_limits.get_motion_limits()
+        self._apply_motion_settings(settings)
+        ports = dict(
+            arm_rate="arm_tracking_speed",
+            torso_rate="torso_tracking_speed",
+            base_speed="drive_speed",
+            yaw_speed="turn_speed",
+        )
+        return {
+            "settings": {
+                name: dict(
+                    value=settings[name]["rate"],
+                    min=0.0,
+                    max=settings[name]["ceiling"],
+                    unit=settings[name]["unit"],
+                    label=settings[name]["label"],
+                    port=port,
+                )
+                for name, port in ports.items()
+            },
+            "drive": {"linear": "base_speed", "angular": "yaw_speed"},
+        }
 
     async def handle_arm_tracking_speed(self, sample: Float32) -> None:
         """Desktop SET: arm tracking rate in rad/s."""
@@ -200,7 +183,7 @@ class R1ProJoylo(Module):
         self.set_motion_speeds(torso_rate=sample.data)
 
     async def handle_drive_speed(self, sample: Float32) -> None:
-        """Shared translation speed in m/s (Joy-Con stick-click doubles it)."""
+        """Shared translation speed in m/s."""
         self.set_motion_speeds(base_speed=sample.data)
 
     async def handle_turn_speed(self, sample: Float32) -> None:
@@ -227,8 +210,8 @@ class R1ProJoylo(Module):
                 reason = f"Ready; release and press {c.enable_button} to enable tracking"
             return {
                 "active": c.active if c else False,
-                "arm_speed_rad_s": self.config.arm_rate,
-                "torso_speed_rad_s": self.config.torso_rate,
+                "arm_speed_rad_s": self._speed_settings.get("arm_rate", {}).get("rate"),
+                "torso_speed_rad_s": self._speed_settings.get("torso_rate", {}).get("rate"),
                 "drive_speed_m_s": self.config.base_speed,
                 "turn_speed_rad_s": self.config.yaw_speed,
                 "ready": ready,
