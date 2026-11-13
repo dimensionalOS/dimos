@@ -120,7 +120,7 @@ class A1ZConnectionConfig(ConnectionConfig):
     can_port: str
     gripper: bool = True
     source: str = "arm"
-    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
+    joint_commands: dict[str, tuple[Interface, ...]] = {}
     gravity_comp_factor: float = Field(default=_GRAVITY_COMP_FACTOR, ge=0.0, le=1.0)
     home: tuple[float, ...] | None = (0.0,) * A1Z_DOF
     jump_limit_s: float = 0.1
@@ -131,6 +131,11 @@ class A1ZConnectionConfig(ConnectionConfig):
             raise ValueError(f"home gives {len(self.home)} joint angles; the A1Z has {A1Z_DOF}")
         if self.model is None:
             self.model = a1z_model(self.gripper)
+        if not self.joint_commands:
+            # Every joint, gripper included, takes positions only.
+            self.joint_commands = {
+                joint.name: (Interface.POSITION,) for joint in movable_joints(self.model)
+            }
         return self
 
 

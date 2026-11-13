@@ -18,6 +18,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import JointDescription, RobotModel
@@ -83,6 +86,17 @@ def a1z_model(gripper: bool = True, *, robot: str | None = None) -> RobotModel:
         return model
     moving = [*joint_names(A1Z_DOF, prefix="arm_joint"), *(["gripper"] if gripper else [])]
     return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
+
+
+def a1z_coordinator_connection(source: str = "arm") -> ConnectionConfig:
+    """What a coordinator needs to know about the A1Z connection named ``source``:
+    its model, with every joint (the gripper too) taking positions."""
+    model = a1z_model(robot=source)
+    return ConnectionConfig(
+        source=source,
+        model=model,
+        joint_commands={joint.name: (Interface.POSITION,) for joint in movable_joints(model)},
+    )
 
 
 def make_a1z_model_config(

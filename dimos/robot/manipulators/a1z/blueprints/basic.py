@@ -23,7 +23,11 @@ from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators._modeling import joint_names
-from dimos.robot.manipulators.a1z.config import A1Z_DOF, a1z_model, make_a1z_model_config
+from dimos.robot.manipulators.a1z.config import (
+    A1Z_DOF,
+    a1z_coordinator_connection,
+    make_a1z_model_config,
+)
 from dimos.robot.manipulators.a1z.connection import A1ZConnection
 from dimos.robot.manipulators.common.blueprints import planner
 
@@ -57,7 +61,7 @@ def a1z_coordinator() -> Blueprint:
     return autoconnect(
         A1ZCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=a1z_model(robot="arm"),
+            connections=[a1z_coordinator_connection()],
             tasks=[
                 joint_trajectory_task(joint_names(A1Z_DOF, prefix="arm/arm_joint")),
                 # arm/gripper is open at its upper end, the task's default.

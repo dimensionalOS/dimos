@@ -23,7 +23,11 @@ from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.manipulators.a1z.config import a1z_model, make_a1z_model_config
+from dimos.robot.manipulators.a1z.config import (
+    a1z_coordinator_connection,
+    a1z_model,
+    make_a1z_model_config,
+)
 from dimos.robot.manipulators.a1z.connection import A1ZConnection
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
@@ -121,7 +125,7 @@ def _teleop(
         *inputs,
         coordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=model,
+            connections=[a1z_coordinator_connection()],
             tasks=[
                 arm_task,
                 # arm/gripper is open at its upper end, the task's default.
