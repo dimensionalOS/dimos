@@ -347,35 +347,57 @@ class Service:
             self.store.put(db, "run", key, item)
             return item
 
+    def project_terminal(self, db: Any, job: dict[str, Any]) -> None:
+        """Project unsuccessful terminal state inside the caller's job transaction.
+
+        Cancellation never publishes a late executor result. Lease recovery and
+        reports use the same projection; transaction serialization fences races.
+        Successful publications retain their separately validated result path.
+        """
+        status = job["status"]
+        if status not in TERMINAL - {"succeeded"}:
+            raise ValueError("Unsuccessful terminal job required")
+        kind = {"dataset": "dataset", "train": "run"}.get(job["kind"])
+        if kind:
+            resource = self.store.get(db, kind, job[kind + "_id"])
+            if resource is not None:
+                resource["status"] = status
+                self.store.put(db, kind, resource["id"], resource)
+        elif job["kind"] == "media":
+            self.store.put(
+                db,
+                "media",
+                f"{job['org_id']}:{job['payload']['recording_id']}",
+                {"status": status, "cameras": [], "duration_s": None, "error": job.get("error")},
+            )
+        elif job["kind"] == "load-check":
+            policy = self.store.get(db, "policy", job["payload"]["policy"]["id"])
+            if policy is not None:
+                policy["load_check"] = {"status": status, "error": job.get("error")}
+                self.store.put(db, "policy", policy["id"], policy)
+
     def cancel(self, who: dict[str, Any], key: str) -> dict[str, Any]:
         with self.store.transaction() as db:
             job = allowed(self.store.get(db, "job", key), who, True)
             if job["status"] not in TERMINAL:
                 job["status"] = "cancelling" if job["status"] == "running" else "cancelled"
-                self.store.put(db, "job", key, job)
                 if job["status"] == "cancelled":
-                    kind = {"dataset": "dataset", "train": "run"}.get(job["kind"])
-                    if kind:
-                        resource = self.store.get(db, kind, job[kind + "_id"])
-                        if resource is not None:
-                            resource["status"] = "cancelled"
-                            self.store.put(db, kind, resource["id"], resource)
-                    elif job["kind"] == "media":
-                        self.store.put(
-                            db,
-                            "media",
-                            f"{job['org_id']}:{job['payload']['recording_id']}",
-                            {"status": "cancelled", "cameras": [], "duration_s": None},
-                        )
+                    self.project_terminal(db, job)
+                self.store.put(db, "job", key, job)
             return self.public_job(job)
 
     def pairing(self, who: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         if body.get("org_id") != who["org_id"]:
             raise LearningError(403, "forbidden", "Organization mismatch")
+        if who.get("role") != "admin" and who.get("platform_admin") is not True:
+            raise LearningError(
+                403, "forbidden", "Organization worker enrollment requires administrator authority"
+            )
         code = secrets.token_urlsafe(18)
         item = {
             "org_id": who["org_id"],
             "owner_id": who["sub"],
+            "trusted_org_worker": True,
             "name": body.get("name", "worker"),
             "expires_at": time.time() + 300,
         }
@@ -406,7 +428,12 @@ class Service:
         with self.store.transaction() as db:
             hashed = digest(str(body.get("code", "")))
             item = self.store.get(db, "pairing", hashed)
-            if not item or item["expires_at"] < time.time() or item.get("used"):
+            if (
+                not item
+                or item["expires_at"] < time.time()
+                or item.get("used")
+                or item.get("trusted_org_worker") is not True
+            ):
                 raise LearningError(401, "pairing_invalid", "Pairing code expired or already used")
             capabilities = body.get("capabilities", [])
             if not isinstance(capabilities, list) or not set(capabilities) <= KINDS:
@@ -431,7 +458,9 @@ class Service:
             (
                 x
                 for x in self.store.all(db, "worker")
-                if secrets.compare_digest(x["token_hash"], digest(token)) and not x["revoked"]
+                if secrets.compare_digest(x["token_hash"], digest(token))
+                and not x["revoked"]
+                and x.get("trusted_org_worker") is True
             ),
             None,
         )
@@ -481,10 +510,13 @@ class Service:
                     continue
                 if job["status"] == "cancelling" and job.get("lease_expires_at", 0) < now:
                     job["status"] = "cancelled"
+                    self.project_terminal(db, job)
                     self.store.put(db, "job", job["id"], job)
                 if job["status"] == "running" and job.get("lease_expires_at", 0) < now:
                     job["status"] = "queued" if job["attempt"] < 3 else "failed"
                     job["error"] = {"code": "lease_expired", "message": "Worker lease expired"}
+                    if job["status"] in TERMINAL:
+                        self.project_terminal(db, job)
                     self.store.put(db, "job", job["id"], job)
                 if (
                     job.get("worker_id") == worker["id"]
@@ -640,7 +672,7 @@ class Service:
             if body.get("error"):
                 job["error"] = body["error"]
             if status in TERMINAL:
-                result = body.get("result", {})
+                result = body.get("result", {}) if status == "succeeded" else {}
                 if (
                     not isinstance(result, dict)
                     or set(result) & {"id", "org_id", "owner_id", "job_id", "dataset_id", "run_id"}
@@ -653,26 +685,21 @@ class Service:
                     )
                 if status == "succeeded":
                     self.validate_result(job, result)
-                if job["kind"] == "media":
+                else:
+                    self.project_terminal(db, job)
+                if status == "succeeded" and job["kind"] == "media":
                     self.store.put(
                         db,
                         "media",
                         f"{job['org_id']}:{job['payload']['recording_id']}",
-                        result
-                        if status == "succeeded"
-                        else {
-                            "status": status,
-                            "cameras": [],
-                            "duration_s": None,
-                            "error": job.get("error"),
-                        },
+                        result,
                     )
                 resource_kind = {"dataset": "dataset", "train": "run"}.get(job["kind"])
-                if resource_kind:
+                if status == "succeeded" and resource_kind:
                     resource = self.store.get(db, resource_kind, job[resource_kind + "_id"])
-                    resource.update(status="ready" if status == "succeeded" else status, **result)
+                    resource.update(status="ready", **result)
                     self.store.put(db, resource_kind, resource["id"], resource)
-                    if job["kind"] == "train" and status == "succeeded":
+                    if job["kind"] == "train":
                         policy = {
                             **result,
                             "id": uid(),
@@ -687,7 +714,7 @@ class Service:
                         self.store.put(db, "policy", policy["id"], policy)
                         resource["policy_id"] = policy["id"]
                         self.store.put(db, resource_kind, resource["id"], resource)
-                if job["kind"] == "load-check":
+                if status == "succeeded" and job["kind"] == "load-check":
                     checked_policy = self.store.get(db, "policy", job["payload"]["policy"]["id"])
                     if checked_policy is None:
                         raise LearningError(

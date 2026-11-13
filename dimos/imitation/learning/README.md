@@ -12,6 +12,11 @@ export DIMOS_LEARNING_S3_BUCKET=learning
 .venv/bin/python -m uvicorn dimos.imitation.learning.app:app --host 127.0.0.1 --port 8768
 
 # Worker pairing is returned by POST /v1/workers/pairing:
+# Requires selected-org admin (or platform admin with selected-org membership).
+# Workers are explicitly trusted for ALL org jobs, including owners' private shares.
+# Ordinary membership or source read/write permission does not confer enrollment.
+# Pre-trusted-enrollment invitations/tokens fail closed after upgrade: an admin
+# must issue a new pairing; never mark old worker records trusted automatically.
 .venv/bin/python -m dimos.imitation.learning.worker --api http://127.0.0.1:8768 --pair CODE --name local-cpu --credentials /isolated/path/worker.json --state "$DIMOS_LEARNING_STATE_DIR"
 
 # Tests:

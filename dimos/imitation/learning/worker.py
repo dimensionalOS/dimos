@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
 import signal
@@ -19,6 +20,8 @@ from dimos.imitation.learning.annotation_adapter import preflight
 from dimos.imitation.learning.artifacts import Artifacts, seal, verify
 from dimos.imitation.learning.media import materialize, prepare, sha256
 from dimos.imitation.learning.protocol import LearningError
+
+logger = logging.getLogger(__name__)
 
 
 def emit(message: str, **fields: Any) -> None:
@@ -334,9 +337,7 @@ def main() -> None:
                 "error": {"code": error.code, "message": error.message},
             }
         except Exception as error:
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("Offline Learning executor failed")
             result = {
                 "status": "failed",
                 "error": {"code": "execution_failed", "message": str(error)},

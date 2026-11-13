@@ -47,7 +47,7 @@ def test_envelope_restores_original_post_body(setup):
         path,
         json={"sources": [], "body_base64": base64.b64encode(raw).decode()},
         headers={
-            **headers("POST", path, source_digest=sources_digest([])),
+            **headers("POST", path, role="admin", source_digest=sources_digest([])),
             "X-Learning-Envelope": "1",
         },
     )
@@ -90,7 +90,7 @@ def test_pair_command_quotes_worker_name(setup, monkeypatch):
     _, service, _ = setup
     monkeypatch.setenv("DIMOS_LEARNING_PUBLIC_API_URL", "https://worker.example.invalid")
     name = "worker; not-a-shell-command"
-    paired = service.pairing(who(), {"org_id": "org-a", "name": name})
+    paired = service.pairing(who(role="admin"), {"org_id": "org-a", "name": name})
     args = shlex.split(paired["command"])
     assert args[-1] == name
     assert args[args.index("--api") + 1] == "https://worker.example.invalid"

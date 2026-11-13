@@ -109,7 +109,7 @@ def indexed(service, monkeypatch):
 
 def pair(service, identity=None, capabilities=None):
     pairing = service.pairing(
-        identity or who(), {"org_id": (identity or who())["org_id"], "name": "test"}
+        identity or who(role="admin"), {"org_id": (identity or who())["org_id"], "name": "test"}
     )
     return service.pair(
         {

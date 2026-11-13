@@ -86,7 +86,9 @@ def test_pair_reuse_worker_not_user(setup):
     client, _, _ = setup
     path = "/v1/workers/pairing"
     pairing = client.post(
-        path, headers=headers("POST", path), json={"org_id": "org-a", "name": "worker"}
+        path,
+        headers=headers("POST", path, role="admin"),
+        json={"org_id": "org-a", "name": "worker"},
     ).json()
     body = {"code": pairing["code"], "capabilities": ["media"], "name": "worker"}
     result = client.post("/v1/workers/pair", json=body)
