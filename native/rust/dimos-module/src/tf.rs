@@ -39,8 +39,8 @@ pub(crate) const DEFAULT_TF_WINDOW_SECS: f64 = 10.0;
 /// `frame` under a TF namespace prefix (the module's `frame_id_prefix`).
 ///
 /// A name that already carries the prefix is left alone, so a frame read off
-/// the stream can be handed straight back. The Python side spells the same rule
-/// in `dimos.protocol.tf.tf.prefix_frame`; the two must agree.
+/// the stream can be handed straight back. The Python tf API applies the same
+/// rule to its own frames; the two must agree.
 pub fn prefix_frame(prefix: Option<&str>, frame: &str) -> String {
     match prefix {
         Some(p) if !p.is_empty() && !frame.is_empty() && !frame.starts_with(&format!("{p}/")) => {
