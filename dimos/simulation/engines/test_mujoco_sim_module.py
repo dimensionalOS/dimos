@@ -15,11 +15,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import mujoco.viewer as viewer
 import numpy as np
 import pytest
 
@@ -255,6 +257,27 @@ def test_respawn_at_uses_ground_height_plus_initial_root_clearance() -> None:
         assert hooks.cleared is True
     finally:
         module.stop()
+
+
+def test_sim_steps_on_macos_without_mjpython(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    robot_xml = tmp_path / "freejoint.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(
+        config_path=robot_xml,
+        headless=False,
+        on_after_step=lambda engine: engine._stop_event.set(),
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(viewer, "_MJPYTHON", None)
+
+    try:
+        engine._sim_loop()
+
+        assert engine.data.time == pytest.approx(0.01)
+    finally:
+        engine.disconnect()
 
 
 def test_reset_waiters_are_released_when_reset_requests_are_coalesced(tmp_path: Path) -> None:
