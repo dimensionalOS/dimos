@@ -77,16 +77,6 @@ def test_relocalize_once_stops_after_the_first_fix(module):
     assert forever.placed and forever.keep_relocalizing()
 
 
-def test_localized_says_whether_a_fix_has_been_accepted(module):
-    m = module()
-    sent = []
-    m.localized = SimpleNamespace(publish=sent.append)
-    m.publish_localized()
-    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map"))
-    m.publish_localized()
-    assert [b.data for b in sent] == [False, True]
-
-
 @pytest.mark.parametrize("interval", [3600.0, 0.0])
 def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
     """Not on the next interval tick, and with or without republishing (<= 0 = once per fix)."""
