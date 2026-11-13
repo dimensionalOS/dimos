@@ -63,7 +63,9 @@ TABLE_Z = 0.75
 GUIDANCE = (
     "You control two YAM arms with parallel grippers, and a fixed overhead RGB-D camera. "
     "Find objects with the localize module, get grasps for an object's point cloud from the grasp "
-    "module, and move the arms and grippers through the manipulation module."
+    "module, and move the arms and grippers through the manipulation module. "
+    "Use only the cameras and these modules. Do not read the body_poses stream, the "
+    "recordings (memory.db), the scene files under data/, or the MuJoCo model."
 )
 # The arm bases stand on the table top in some ABC scenes and 1 cm above it in the rest.
 _BASE_Z = {

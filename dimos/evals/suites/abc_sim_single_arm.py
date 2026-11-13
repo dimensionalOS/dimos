@@ -35,7 +35,9 @@ from dimos.utils.data import LfsPath
 GUIDANCE = (
     "You control one YAM arm with a parallel gripper, and a fixed overhead RGB-D camera. "
     "Find objects with the localize module, get grasps for an object's point cloud from the grasp "
-    "module, and move the arm and gripper through the manipulation module."
+    "module, and move the arm and gripper through the manipulation module. "
+    "Use only the cameras and these modules. Do not read the body_poses stream, the "
+    "recordings (memory.db), the scene files under data/, or the MuJoCo model."
 )
 
 
