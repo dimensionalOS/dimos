@@ -36,6 +36,7 @@ from dimos.manipulation.grasp_verification import (
     open_failure,
 )
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
 from dimos.manipulation.planning.gripper_contact import GraspContactChecker
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -50,7 +51,6 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
-from dimos.perception.localize.module import PerceptionLocalize
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -82,10 +82,28 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_contact_margin: float = Field(default=0.005, gt=0.0)
     # Nothing may come within about this distance (metres) of another scene point.
     grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
+    # The check leaves the target's box out of the scene, grown by this much
+    # (metres) to the sides and above. The box starts grasp_exclude_floor above
+    # the target's lowest point, so the surface it stands on stays in the scene.
+    grasp_exclude_margin: float = Field(default=0.01, ge=0.0)
+    grasp_exclude_floor: float = Field(default=0.005, ge=0.0)
     # When no grasp passes the check where it is, slide the grasps up to this
     # far (metres) along their approach and try the nearest depth where any
     # passes. 0 is off.
     grasp_depth_search: float = Field(default=0.0, ge=0.0)
+
+
+def _without(scene: PointCloud2, target: PointCloud2, margin: float, floor: float) -> PointCloud2:
+    """The scene without the target's box, grown by ``margin`` to the sides and
+    above and starting ``floor`` above the target's lowest point."""
+    bounds = target.points_f32()
+    if not len(bounds):
+        return scene
+    low, high = bounds.min(axis=0) - margin, bounds.max(axis=0) + margin
+    low[2] = bounds[:, 2].min() + floor
+    points = scene.points_f32()
+    outside = ~np.all((points >= low) & (points <= high), axis=1)
+    return PointCloud2.from_numpy(points[outside], frame_id=scene.frame_id, timestamp=scene.ts)
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -129,7 +147,7 @@ class PickAndPlaceModule(Module):
     dedicated_worker = True
 
     config: PickAndPlaceModuleConfig
-    _scene: PerceptionLocalize
+    _scene: ManipulationLocalize
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
     # Leaves boxes out of the planner's map; a stack without a map has none.
@@ -254,9 +272,7 @@ class PickAndPlaceModule(Module):
             )
         # A chosen grasp is checked where it is, never slid to another depth.
         depth_search = self.config.grasp_depth_search if grasp is None else 0.0
-        candidates, facts = self._drop_touching(
-            object_id, pointcloud, candidates, group, depth_search
-        )
+        candidates, facts = self._drop_touching(pointcloud, candidates, group, depth_search)
         facts["source"] = source
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
@@ -295,7 +311,6 @@ class PickAndPlaceModule(Module):
 
     def _drop_touching(
         self,
-        object_id: str,
         pointcloud: PointCloud2,
         candidates: GraspCandidateArray,
         group: PlanningGroupID,
@@ -304,7 +319,6 @@ class PickAndPlaceModule(Module):
         """Drop the grasps the arm cannot reach, that touch the target off the pads, or hit the scene.
 
         Args:
-            object_id: The object to grasp, as pick_object takes it.
             pointcloud: The target's points, planning frame, metres.
             candidates: The provider's grasps, same frame.
             group: Planning group whose tool tip the grasps pose.
@@ -320,7 +334,7 @@ class PickAndPlaceModule(Module):
         if robot is None or robot.gripper is None or not candidates.candidates:
             return candidates, {}
         try:
-            scene = self._scene.scene_cloud(exclude=object_id)
+            scene = self._scene.scene_cloud()
         except Exception as exc:
             logger.warning("No scene point cloud; keeping every grasp", error=str(exc))
             return candidates, {"contact_check_skipped": f"{type(exc).__name__}: {exc}"}
@@ -328,6 +342,9 @@ class PickAndPlaceModule(Module):
             return candidates, {
                 "contact_check_skipped": "no scene point cloud in the grasps' frame"
             }
+        scene = _without(
+            scene, pointcloud, self.config.grasp_exclude_margin, self.config.grasp_exclude_floor
+        )
         states = self._manipulation.get_state().groups.values()
         tips = [s.end_effector_pose.position for s in states if s.end_effector_pose is not None]
         joints = {

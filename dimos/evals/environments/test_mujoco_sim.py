@@ -92,12 +92,12 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
         tracked_bodies=("apple", "cup"),
         base_height=0.912,
         module_env={
-            "PERCEPTIONLOCALIZE__DETECTOR": "yoloe",
-            "PERCEPTIONLOCALIZE__SEGMENTER": "yolo",
+            "MANIPULATIONLOCALIZE__DETECTOR": "yoloe",
+            "MANIPULATIONLOCALIZE__SEGMENTER": "yolo",
         },
     ).configure_launch(proc)
     parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
-    perception = parsed.module_kwargs("perceptionlocalize")
+    perception = parsed.module_kwargs("manipulationlocalize")
     assert perception["detector"] == "yoloe"
     assert perception["segmenter"] == "yolo"
     sim = parsed.module_kwargs("mujocosimmodule")

@@ -52,13 +52,13 @@ from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import DEFAULT_FPS, FeatureSpec
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.perception.localize.module import PerceptionLocalize
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     eef_twist_task,
@@ -219,7 +219,7 @@ hybrid_teleop_sim = autoconnect(
         mujoco_lidar_raycast_height=60,
         mujoco_lidar_voxel_size=0.01,
     ).remappings([(MujocoSimModule, "pointcloud", "scene_pointcloud")]),
-    PerceptionLocalize.blueprint(world_frame="world"),
+    ManipulationLocalize.blueprint(world_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[

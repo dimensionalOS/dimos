@@ -80,7 +80,7 @@ class GraspGeneratorModule(Module, GraspGenSpec):
         if direction is not None and not direction.length() > 0.0:
             raise ValueError(f"approach must be a direction, got {approach}")
         if len(cloud) == 0:
-            raise ValueError("The object's cloud has no points; localize it from another view")
+            raise ValueError("The object's cloud has no points")
         candidates = self.propose_grasps(cloud).candidates
         angles = [_approach_angle(c.pose, direction) for c in candidates]
         in_cone = [(c, a) for c, a in zip(candidates, angles, strict=True) if a <= max_angle_deg]

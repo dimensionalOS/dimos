@@ -37,11 +37,11 @@ from dimos.core.module import ModuleBase
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.perception.localize.module import PerceptionLocalize
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     manipulation_mapping,
@@ -199,7 +199,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
         PickAndPlaceModule.blueprint(planning_frame="world", robot=model),
         *_sensing(simulated),
         # Finds the objects pick_object takes by id, and the dense scene its contact check needs.
-        PerceptionLocalize.blueprint(world_frame="world"),
+        ManipulationLocalize.blueprint(world_frame="world"),
         manipulation_mapping(
             # Filter only the arm; gripper returns may remain in the map.
             self_filter_model=self_filter_model,

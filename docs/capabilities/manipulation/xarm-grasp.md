@@ -138,14 +138,15 @@ In a second terminal, connect to the running blueprint:
 dimos shell
 ```
 
-`PerceptionLocalize` embeds the wrist camera's feed into memory and finds objects
-in it. It verifies an object from two or more camera positions, so look at the
-table from a second arm pose before asking. Wait until `state()` reads ready:
+`ManipulationLocalize` is `PerceptionLocalize` that keeps the objects it found, for
+picks. It embeds the wrist camera's feed into memory and finds objects in it. It
+verifies an object from two or more camera positions, so look at the table from a
+second arm pose before asking. Wait until `state()` reads ready:
 
 ```python skip
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
 
-localize = app.PerceptionLocalize
+localize = app.ManipulationLocalize
 app.ManipulationSkills.go_init()
 print(localize.state())
 print(localize.localize(",".join(XARM_GRASP_PROMPTS), -30.0, 30.0))

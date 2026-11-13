@@ -43,7 +43,6 @@ from typing import Any, Literal
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
-import numpy as np
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
@@ -100,14 +99,6 @@ class PerceptionLocalizeConfig(ModuleConfig):
     segmenter: str = "edgetam"
     # the rig's params, set on the blueprint; localize() can override fields per call
     params: LocalizeParams = LocalizeParams()
-    # scene_cloud: cell size of the merged cloud, and the farthest depth it keeps, metres
-    scene_voxel_m: float = 0.01
-    scene_depth_trunc_m: float = 2.0
-    # scene_cloud: what an excluded object's box grows by to the sides and above, metres
-    scene_exclude_margin_m: float = 0.01
-    # scene_cloud: the box starts this far above the object's lowest point, metres,
-    # so the surface the object stands on stays in the scene
-    scene_exclude_floor_m: float = 0.005
 
 
 class PerceptionLocalize(Module):
@@ -138,7 +129,6 @@ class PerceptionLocalize(Module):
         self._camera_seen = threading.Event()
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
-        self._objects: dict[str, tuple[str, Localization]] = {}
         # Unsubscribe inputs before closing the stores they write to.
         subscriptions = self.register_disposable(CompositeDisposable())
         self._memento = Memento()
@@ -317,103 +307,6 @@ class PerceptionLocalize(Module):
                 )
         return "\n".join(lines)
 
-    @rpc
-    def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
-        """Find every instance of each name in the last ``window_s`` seconds of memory.
-
-        The answer replaces the earlier one for these names and leaves other
-        names' objects as they are; ``get_pointcloud``, ``get_position`` and
-        ``scene_cloud`` read from all of them. Each entry has ``id``, ``label``,
-        ``position`` and ``size`` (world frame, metres), ``score``, ``views`` and
-        ``seen_s_ago``. Raises RuntimeError until ``state`` reads ready.
-        """
-        if not self._ready.is_set():
-            raise RuntimeError(f"localize cannot answer yet: {self._stage}")
-        _, (_, _, _, head, _) = self._localize(names, -window_s, window_s, None)
-        found = []
-        for instance_id, (label, hit) in self._objects.items():
-            if label not in names:
-                continue
-            points = hit.point_cloud.points_f32()
-            size = (points.max(axis=0) - points.min(axis=0)) if len(points) else np.zeros(3)
-            found.append(
-                {
-                    "id": instance_id,
-                    "label": label,
-                    "position": [float(v) for v in hit.position_world_xyz],
-                    "size": [float(v) for v in size],
-                    "score": float(hit.semantic_score),
-                    "views": hit.n_views,
-                    "seen_s_ago": max(0.0, head - hit.last_seen_timestamp),
-                }
-            )
-        return found
-
-    @rpc
-    def get_pointcloud(self, target: str) -> PointCloud2:
-        """The world-frame cloud of one object from the last scan: an id, or a label only one has."""
-        return self._resolve(target).point_cloud
-
-    @rpc
-    def get_position(self, target: str) -> Vector3:
-        """The world-frame position of one object from the last scan, found as in ``get_pointcloud``."""
-        return Vector3(*self._resolve(target).position_world_xyz)
-
-    @rpc
-    def forget(self, target: str) -> None:
-        """Drop the object with this id or label: it is no longer where it was seen."""
-        self._objects = {
-            i: (label, hit) for i, (label, hit) in self._objects.items() if target not in (i, label)
-        }
-
-    @rpc
-    def scene_cloud(
-        self,
-        exclude: str | None = None,
-        start: float = -5.0,
-        duration: float = 5.0,
-    ) -> PointCloud2 | None:
-        """Every embedded depth view in a window of memory, merged into one world-frame cloud.
-
-        ``start`` and ``duration`` name the window as in ``localize``. The
-        cloud is ``scene_voxel_m`` cells, cut at ``scene_depth_trunc_m``.
-        ``exclude``, found as in ``get_pointcloud``, leaves out that object's box,
-        grown by ``scene_exclude_margin_m`` to the sides and above. The box starts
-        ``scene_exclude_floor_m`` above the object's lowest point, so what the
-        object stands on stays. None when nothing in the window has depth.
-        """
-        ready = getattr(self, "_ready", None)
-        if ready is None or not ready.is_set() or self.config.geometry != "depth":
-            return None
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        views = []
-        for obs in self.index.time_range(lo, lo + duration):
-            for frame in self.rig.cameras:
-                cloud = self.rig.backdrop(obs.ts, frame, self.config.scene_depth_trunc_m)
-                if cloud is not None and len(cloud):
-                    views.append(cloud)
-        if not views:
-            return None
-        merged = PointCloud2.from_numpy(
-            np.concatenate([view.points_f32() for view in views]),
-            frame_id=self.rig.world_frame,
-            timestamp=max((view.ts or 0.0) for view in views),
-        ).voxel_downsample(self.config.scene_voxel_m)
-        if exclude is None:
-            return merged
-        target = self._resolve(exclude).point_cloud.points_f32()
-        if not len(target):
-            return merged
-        margin = self.config.scene_exclude_margin_m
-        low, high = target.min(axis=0) - margin, target.max(axis=0) + margin
-        low[2] = target[:, 2].min() + self.config.scene_exclude_floor_m
-        points = merged.points_f32()
-        outside = ~np.all((points >= low) & (points <= high), axis=1)
-        return PointCloud2.from_numpy(
-            points[outside], frame_id=merged.frame_id, timestamp=merged.ts
-        )
-
     def _localize(
         self,
         queries: list[str],
@@ -445,32 +338,7 @@ class PerceptionLocalize(Module):
             memento=self._memento,
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
-        # An id names an object in one window only, so a label asked again starts over.
-        kept = {i: entry for i, entry in self._objects.items() if entry[0] not in queries}
-        self._objects = kept | {
-            hit.instance_id: (query, hit)
-            for query, hits in zip(queries, results, strict=True)
-            for hit in hits
-        }
         return results, (lo, hi, first, head, index.count())
-
-    def _resolve(self, target: str) -> Localization:
-        """An object of the last scan by id, or by a label exactly one of them answers."""
-        objects: dict[str, tuple[str, Localization]] = getattr(self, "_objects", {})
-        if target in objects:
-            return objects[target][1]
-        matches = [hit for label, hit in objects.values() if label == target]
-        if len(matches) == 1:
-            return matches[0]
-        if matches:
-            ids = ", ".join(hit.instance_id for hit in matches)
-            raise ValueError(
-                f"The last scan found {len(matches)} {target!r}: {ids}. Pass one of these ids."
-            )
-        scanned = ", ".join(f"{label} {i}" for i, (label, _) in objects.items())
-        if not scanned:
-            raise LookupError(f"No {target!r}: nothing has been scanned yet. Scan for it first.")
-        raise LookupError(f"No {target!r} in the last scan. It found: {scanned}.")
 
 
 def as_detection_array(
