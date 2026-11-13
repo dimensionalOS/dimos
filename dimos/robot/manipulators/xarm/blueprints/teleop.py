@@ -16,9 +16,13 @@
 
 from __future__ import annotations
 
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -47,7 +51,9 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm_model_config,
     xarm6_hardware,
     xarm7_hardware,
+    xarm_link_frames,
     xarm_model,
+    xarm_wrist_camera_transform,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
 from dimos.robot.urdf_manager import UrdfManager
@@ -88,6 +94,7 @@ keyboard_teleop_xarm6 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 keyboard_teleop_xarm7 = autoconnect(
@@ -120,6 +127,7 @@ keyboard_teleop_xarm7 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
 _lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
@@ -208,8 +216,13 @@ _xarm6_teleop_hw = xarm6_hardware(
 _xarm6_teleop_model = make_xarm6_model_config(
     add_gripper=True,
 )
+# The xArm7's ready pose for teleop (the planner's "home"), joint angles in radians:
+# the gripper tip 0.40 m in front of the base, 0.23 m above it, pointing down.
+XARM7_TELEOP_READY_JOINTS = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 _xarm7_teleop_model = make_xarm7_model_config(
     add_gripper=True,
+    tf_extra_links=xarm_link_frames(7),
+    home_joints=XARM7_TELEOP_READY_JOINTS,
 )
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
@@ -234,12 +247,14 @@ coordinator_teleop_xarm7 = autoconnect(
                 name="teleop_xarm",
                 priority=20,
             ),
+            # A browser jog streams twists while a button is held; one that stops
+            # arriving for 0.3 s is dropped, so a lost page cannot keep the arm moving.
             eef_twist_task(
                 _xarm7_teleop_hw,
                 robot_model=_xarm7_control_model,
                 target_frame="link7",
                 priority=10,
-                timeout=0.0,
+                timeout=0.3,
             ),
             TaskConfig(
                 name="arm_gripper",
@@ -248,15 +263,20 @@ coordinator_teleop_xarm7 = autoconnect(
                 priority=20,
                 stream_bind={"gripper_command": "right_gripper_command"},
             ),
-            trajectory_task(_xarm7_teleop_hw),
+            # Above eef_twist, which always holds the arm, so a planned motion runs;
+            # below VR, which takes over and aborts it.
+            trajectory_task(_xarm7_teleop_hw, priority=15),
         ],
     ),
     ManipulationModule.blueprint(
         gripper_tasks={"manipulator": "arm_gripper"},
         model=_xarm7_teleop_model,
         visualization={"backend": "viser"},
+        static_transforms=[] if global_config.simulation else [xarm_wrist_camera_transform(7)],
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_xarm7_teleop_hw.joints)),
+    # Serves the URDF and its meshes to viewers; the planner already puts the links on tf.
+    UrdfManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
 coordinator_teleop_xarm6 = autoconnect(
@@ -297,7 +317,7 @@ coordinator_teleop_xarm6 = autoconnect(
         model=_xarm6_teleop_model,
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_xarm6_teleop_hw.joints)),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 
@@ -335,10 +355,15 @@ def _teleop(arm: XArmType) -> Blueprint:
     dof, robot_type = XARM_ARMS[arm]
     ik_model = make_xarm_model_config(dof, robot_type=robot_type, robot="arm", add_gripper=False)
     model = xarm_model(arm, gripper="xarm", robot="arm")
+    declaration = ConnectionConfig(
+        source="arm",
+        model=model,
+        joint_commands={joint.name: (Interface.POSITION,) for joint in movable_joints(model)},
+    )
     return autoconnect(
         XArmTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=model,
+            connections=[declaration],
             tasks=[
                 TaskConfig(
                     name=EEF_TWIST_TASK_NAME,
@@ -364,7 +389,7 @@ def _teleop(arm: XArmType) -> Blueprint:
                 ),
             ],
         ),
-        XArmConnection.blueprint(arm=arm, gripper="xarm"),
+        XArmConnection.blueprint(arm=arm, gripper="xarm", **declaration.model_dump()),
         UrdfManager.blueprint(model=model),
     )
 

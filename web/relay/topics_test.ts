@@ -1,20 +1,28 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { FakeTime } from "jsr:@std/testing@1/time";
 import {
+  ControlFrameReader,
   DataFrameStreamReader,
   decodeDataFrame,
+  encodeControlFrame,
   type FrameHeader,
+  MAX_CONTROL_PAYLOAD_BYTES,
   MAX_TOPIC_SOURCES,
   type Msg,
+  type OptionRanges,
+  topicCapabilitiesOk,
   type TopicMsg,
   topicMsgFromUnknown,
   type TopicOpenMsg,
   type TopicReadyMsg,
+  type TopicSettings,
+  type TopicSettingsUpdate,
   type TopicSubMsg,
+  type TopicVariantMsg,
 } from "@dimos/shared";
 import type { FrameSend, ViewerSink } from "./forward.ts";
 import { TopicBudget, TopicEgress } from "./topic_forward.ts";
-import { type TopicProvider, TopicRegistry, type TopicViewer } from "./topics.ts";
+import { type TopicProvider, TopicRegistry, type TopicViewer, VARIANT_GRACE_MS } from "./topics.ts";
 
 // A transport boundary: writes complete without browser receipts, exactly
 // the case that would conceal unbounded QUIC buffering behind a small FIFO.
@@ -402,6 +410,35 @@ Deno.test("the source count stops where a topic_sources announcement would becom
   h.registry.viewerClosed(h.viewer);
 });
 
+Deno.test("a source whose capabilities would push the announcement past one control frame is refused", () => {
+  const h = setup();
+  const profileOptions: Record<string, OptionRanges> = {};
+  for (let p = 0; p < 16; p++) {
+    profileOptions[`profile-${p}`] = {
+      choice: { kind: "enum", values: Array.from({ length: 16 }, (_, i) => `value-${i}`) },
+    };
+  }
+  const capabilities = {
+    read: true,
+    write: false,
+    profiles: Object.keys(profileOptions),
+    profileOptions,
+  };
+  assert(topicCapabilitiesOk(capabilities));
+  let admitted = 0;
+  while (h.registry.registerSource(new Provider(), `big-${admitted}`, capabilities) === null) {
+    admitted++;
+  }
+  assert(admitted > 0 && admitted < MAX_TOPIC_SOURCES - 1);
+  const announced = h.viewer.messages.at(-1)!;
+  assertEquals(announced.t, "topic_sources");
+  assert(
+    new TextEncoder().encode(JSON.stringify(announced)).byteLength <= MAX_CONTROL_PAYLOAD_BYTES,
+  );
+  assertEquals(new ControlFrameReader().push(encodeControlFrame(announced)).length, 1);
+  h.registry.viewerClosed(h.viewer);
+});
+
 Deno.test("an open registry announces every connected source to every viewer", () => {
   const h = setup();
   const other = new Viewer();
@@ -762,5 +799,482 @@ Deno.test("pending publications stay bounded until provider acknowledgement, the
   const results = writer.messages.filter((m) => m.t === "topic_pub_result");
   assertEquals(results.slice(1).map((m) => m.outcome), Array(16).fill("unknown"));
   h.registry.viewerClosed(writer);
+  h.registry.viewerClosed(h.viewer);
+});
+
+// Encode variants (PLAN_2a): a media route serves up to four settings sets,
+// each viewer points at one, and the relay keeps every viewer's own rate gate.
+const OPTIONS: Record<string, OptionRanges> = {
+  raw: { maxHz: { kind: "number", max: 1000, default: 1000 } },
+  "image.jpeg.low.v1": {
+    maxHz: { kind: "number", max: 1000, default: 30 },
+    maxResolution: { kind: "size", min: 16, max: 4096, default: [640, 360] },
+    quality: { kind: "int", min: 1, max: 100, default: 60 },
+  },
+};
+const LOW: TopicSettings = { maxHz: 30, maxResolution: [640, 360], quality: 60 };
+const camera: TopicSubMsg = {
+  t: "topic_sub",
+  id: "cam",
+  source: "workspace",
+  keyExpr: "sensor/cam",
+  delivery: "latest",
+  profile: "image.jpeg.low.v1",
+  maxHz: 30,
+};
+const rejection = (revision: number, code: string, id = "cam"): Msg => ({
+  t: "topic_error",
+  id,
+  revision,
+  code,
+  message: code.replaceAll("_", " "),
+  outcome: "rejected",
+});
+function mediaSetup(profileOptions: Record<string, OptionRanges> | null = OPTIONS) {
+  let clock = 1000;
+  const registry = new TopicRegistry(() => clock);
+  const provider = new Provider();
+  registry.registerSource(provider, "workspace", {
+    read: true,
+    write: false,
+    profiles: ["raw", "image.jpeg.low.v1"],
+    ...(profileOptions === null ? {} : { profileOptions }),
+  });
+  provider.messages = [];
+  const viewers = new Map<string, Viewer>();
+  const viewer = (name: string) => {
+    let v = viewers.get(name);
+    if (v === undefined) {
+      v = new Viewer();
+      registry.addViewer(v, v.sendMsg);
+      viewers.set(name, v);
+    }
+    return v;
+  };
+  const send = (msg: TopicMsg, target: Viewer) => registry.onViewerMsg(target, msg, target.sendMsg);
+  const subscribe = (
+    name: string,
+    settings?: Partial<TopicSettings>,
+    over: Partial<TopicSubMsg> = {},
+  ) => {
+    const v = viewer(name);
+    send({ ...camera, ...over, ...(settings === undefined ? {} : { settings }) }, v);
+    return v;
+  };
+  const opened = (open = provider.opens().at(-1)!) =>
+    registry.onProviderMsg(provider, { t: "topic_opened", route: open.route, gen: open.gen });
+  const variants = () =>
+    provider.messages.filter((m): m is TopicVariantMsg => m.t === "topic_variant");
+  const variantReady = (msg = variants().at(-1)!) =>
+    registry.onProviderMsg(provider, { ...msg, t: "topic_variant_ready" });
+  const activate = (v: Viewer, ready = v.ready().at(-1)!) =>
+    send({ t: "topic_activate", route: ready.route, gen: ready.gen }, v);
+  const frame = (
+    seq: number,
+    variant: string | undefined,
+    key = "sensor/cam",
+    open = provider.opens().at(-1)!,
+  ) =>
+    registry.onFrame(
+      provider,
+      {
+        ch: open.route,
+        seq,
+        ts: 5,
+        delivery: "latest",
+        meta: {
+          key,
+          encoding: "image/jpeg",
+          gen: open.gen,
+          ingressTs: 4,
+          ...(variant === undefined ? {} : { variant }),
+        },
+      },
+      new Uint8Array([seq]),
+      Symbol("frame"),
+    );
+  const received = (v: Viewer) => v.sink.decoded().map((f) => f.header.seq);
+  const tick = (ms: number) => {
+    clock += ms;
+    registry.reap(clock);
+  };
+  const update = (v: Viewer, revision: number, options: TopicSettingsUpdate) =>
+    send({ t: "topic_update", id: "cam", revision, options }, v);
+  const last = (v: Viewer) => v.messages.at(-1);
+  const close = () => {
+    for (const v of viewers.values()) registry.viewerClosed(v);
+  };
+  return {
+    registry,
+    provider,
+    subscribe,
+    opened,
+    variants,
+    variantReady,
+    activate,
+    frame,
+    received,
+    tick,
+    update,
+    last,
+    close,
+  };
+}
+
+Deno.test("media viewers share one route, distinct settings get their own variant, and frames dispatch on meta.variant", async () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a", { quality: 40 });
+  const open = h.provider.opens()[0];
+  assertEquals(open.settings, { maxHz: 30, maxResolution: [640, 360], quality: 40 });
+  assertEquals(a.ready(), []);
+  h.opened();
+  assertEquals(a.ready()[0].settings, { maxHz: 30, maxResolution: [640, 360], quality: 40 });
+  // Identical settings join the variant that already encodes them.
+  const b = h.subscribe("b", { quality: 40 });
+  assertEquals(b.ready()[0].settings, { maxHz: 30, maxResolution: [640, 360], quality: 40 });
+  assertEquals(h.provider.opens().length, 1);
+  assertEquals(h.variants(), []);
+  const c = h.subscribe("c", { maxResolution: [320, 240] });
+  assertEquals(h.variants().map((m) => [m.variant, m.settings]), [
+    ["v2", { maxHz: 30, maxResolution: [320, 240], quality: 60 }],
+  ]);
+  assertEquals(c.ready(), []);
+  h.variantReady();
+  assertEquals(c.ready()[0].settings, { maxHz: 30, maxResolution: [320, 240], quality: 60 });
+  for (const v of [a, b, c]) h.activate(v);
+  assertEquals(h.provider.messages.filter((m) => m.t === "topic_activate"), [
+    { t: "topic_activate", route: open.route, gen: open.gen },
+  ]);
+  h.frame(1, "v1");
+  h.frame(2, "v2");
+  h.frame(3, undefined);
+  h.frame(4, "v3");
+  await flush();
+  assertEquals([h.received(a), h.received(b), h.received(c)], [[1], [1], [2]]);
+  assertEquals(a.sink.decoded()[0].header.meta, {
+    key: "sensor/cam",
+    encoding: "image/jpeg",
+    gen: open.gen,
+    ingressTs: 4,
+  });
+  h.close();
+});
+
+Deno.test("an update moves the viewer once the new variant encodes, and the idle variant closes after its grace", async () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a");
+  h.opened();
+  h.activate(a);
+  const open = h.provider.opens()[0];
+  h.update(a, 1, { quality: 40 });
+  assertEquals(h.variants().at(-1), {
+    t: "topic_variant",
+    route: open.route,
+    gen: open.gen,
+    variant: "v2",
+    settings: { maxHz: 30, maxResolution: [640, 360], quality: 40 },
+  });
+  // Until the provider encodes the new variant, the old one keeps flowing.
+  h.frame(1, "v1");
+  await flush();
+  assertEquals(h.received(a), [1]);
+  assertEquals(a.messages.some((m) => m.t === "topic_applied"), false);
+  h.variantReady();
+  assertEquals(h.last(a), {
+    t: "topic_applied",
+    id: "cam",
+    revision: 1,
+    settings: { maxHz: 30, maxResolution: [640, 360], quality: 40 },
+  });
+  h.tick(100);
+  h.frame(2, "v1");
+  h.frame(3, "v2");
+  await flush();
+  assertEquals(h.received(a), [1, 3]);
+  // v1 has no viewer: it closes after the grace, not at once.
+  h.tick(VARIANT_GRACE_MS - 101);
+  assertEquals(h.provider.messages.some((m) => m.t === "topic_variant_close"), false);
+  h.tick(1);
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_variant_close",
+    route: open.route,
+    gen: open.gen,
+    variant: "v1",
+  });
+  // A reset returns to the profile settings, in a fresh variant on the freed slot.
+  h.update(a, 2, { quality: null });
+  assertEquals(h.variants().at(-1), {
+    t: "topic_variant",
+    route: open.route,
+    gen: open.gen,
+    variant: "v1",
+    settings: LOW,
+  });
+  h.variantReady();
+  assertEquals(h.last(a), { t: "topic_applied", id: "cam", revision: 2, settings: LOW });
+  h.close();
+});
+
+Deno.test("a variant in its grace period serves a new viewer and stays open", async () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a");
+  h.opened();
+  h.update(a, 1, { quality: 40 });
+  h.variantReady();
+  h.tick(VARIANT_GRACE_MS / 2);
+  // v1 still encodes the profile settings: b takes it instead of a fresh variant.
+  const b = h.subscribe("b");
+  assertEquals(b.ready()[0].settings, LOW);
+  assertEquals(h.variants().length, 1);
+  h.tick(VARIANT_GRACE_MS);
+  assertEquals(h.provider.messages.some((m) => m.t === "topic_variant_close"), false);
+  h.activate(b);
+  h.frame(1, "v1");
+  await flush();
+  assertEquals(h.received(b), [1]);
+  h.close();
+});
+
+Deno.test("a change sent before the previous one is acknowledged keeps that one's settings", () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a");
+  h.opened();
+  h.update(a, 1, { quality: 40 });
+  h.update(a, 2, { maxResolution: [320, 240] });
+  assertEquals(h.variants().map((m) => m.settings), [
+    { maxHz: 30, maxResolution: [640, 360], quality: 40 },
+    { maxHz: 30, maxResolution: [320, 240], quality: 40 },
+  ]);
+  h.variantReady();
+  assertEquals(h.last(a), {
+    t: "topic_applied",
+    id: "cam",
+    revision: 2,
+    settings: { maxHz: 30, maxResolution: [320, 240], quality: 40 },
+  });
+  h.close();
+});
+
+Deno.test("a variant acknowledged before the route opens serves its viewer once the route is open", () => {
+  const h = mediaSetup();
+  h.subscribe("a");
+  const b = h.subscribe("b", { quality: 40 });
+  assertEquals(h.variants().map((m) => m.variant), ["v2"]);
+  // A provider may answer the variant before the route itself.
+  h.variantReady();
+  assertEquals(b.ready(), []);
+  h.opened();
+  assertEquals(b.ready().map((m) => m.settings), [{ ...LOW, quality: 40 }]);
+  h.close();
+});
+
+Deno.test("a viewer moving off a variant lowers that variant's rate to whoever remains", () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a");
+  h.subscribe("b", { maxHz: 5 });
+  h.opened();
+  const open = h.provider.opens()[0];
+  assertEquals(h.variants(), []);
+  h.update(a, 1, { quality: 40 });
+  h.variantReady();
+  // Only b is left on v1: it samples at b's rate now.
+  assertEquals(h.variants().at(-1), {
+    t: "topic_variant",
+    route: open.route,
+    gen: open.gen,
+    variant: "v1",
+    settings: { ...LOW, maxHz: 5 },
+  });
+  h.close();
+});
+
+Deno.test("frames queued under the old variant are dropped when the viewer moves", async () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a", { maxHz: 1 });
+  h.opened();
+  h.activate(a);
+  h.frame(1, "v1");
+  h.frame(2, "v1");
+  await flush();
+  assertEquals(h.received(a), [1]);
+  h.update(a, 1, { quality: 40 });
+  h.variantReady();
+  // The second frame was due now, but it carries the old settings.
+  h.tick(1000);
+  await flush();
+  assertEquals(h.received(a), [1]);
+  h.frame(3, "v2");
+  await flush();
+  assertEquals(h.received(a), [1, 3]);
+  h.close();
+});
+
+Deno.test("a fifth settings set rejects with variant_limit until a variant in its grace period can be retired", () => {
+  const h = mediaSetup();
+  const viewers = [10, 20, 30, 40].map((quality, i) => h.subscribe(`viewer${i}`, { quality }));
+  h.opened();
+  for (const announced of h.variants()) h.variantReady(announced);
+  assertEquals(viewers.map((v) => v.ready().length), [1, 1, 1, 1]);
+  h.update(viewers[0], 1, { quality: 50 });
+  assertEquals(h.last(viewers[0]), rejection(1, "variant_limit"));
+  assertEquals(h.variants().length, 3);
+  assertEquals(viewers[0].ready()[0].settings?.quality, 10);
+  // An unused variant gives way at once; its grace only guards against churn.
+  h.registry.viewerClosed(viewers[3]);
+  h.update(viewers[0], 2, { quality: 50 });
+  assertEquals(h.provider.messages.slice(-2).map((m) => m.t), [
+    "topic_variant_close",
+    "topic_variant",
+  ]);
+  assertEquals(h.variants().at(-1)?.variant, "v4");
+  h.close();
+});
+
+Deno.test("viewer rates stay separate and raise only their variant; settings validate against the advertised ranges", () => {
+  const h = mediaSetup();
+  const slow = h.subscribe("slow", undefined, { maxHz: 5 });
+  h.opened();
+  const open = h.provider.opens()[0];
+  assertEquals(open.settings?.maxHz, 5);
+  const fast = h.subscribe("fast", undefined, { maxHz: 30 });
+  assertEquals(h.variants().at(-1), {
+    t: "topic_variant",
+    route: open.route,
+    gen: open.gen,
+    variant: "v1",
+    settings: LOW,
+  });
+  assertEquals(fast.ready()[0].settings, LOW);
+  assertEquals(slow.ready()[0].settings, { ...LOW, maxHz: 5 });
+  h.activate(slow);
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_activate",
+    route: open.route,
+    gen: open.gen,
+  });
+  h.registry.viewerClosed(fast);
+  assertEquals(h.variants().at(-1)?.settings.maxHz, 5);
+  // Beyond the profile ceiling comes back clamped; null resets to it.
+  h.update(slow, 1, { maxHz: 60 });
+  assertEquals(h.last(slow), { t: "topic_applied", id: "cam", revision: 1, settings: LOW });
+  h.update(slow, 2, { maxHz: null, maxResolution: [3000, 3000] });
+  assertEquals(h.last(slow), { t: "topic_applied", id: "cam", revision: 2, settings: LOW });
+  h.update(slow, 3, { quality: 0 });
+  assertEquals(h.last(slow), rejection(3, "option_out_of_range"));
+  h.update(slow, 4, { keepEvery: 2 });
+  assertEquals(h.last(slow), rejection(4, "unsupported_option"));
+  assertEquals(h.variants().length, 3); // rejected and same-variant updates open nothing
+  h.close();
+});
+
+Deno.test("an older provider without profile options takes rate changes only, gated by the relay", async () => {
+  const h = mediaSetup(null);
+  const refused = h.subscribe("refused", { quality: 40 });
+  assertEquals(h.last(refused), {
+    t: "topic_error",
+    id: "cam",
+    code: "unsupported_option",
+    message: "unsupported option",
+    outcome: "rejected",
+  });
+  assertEquals(h.provider.messages, []);
+  const a = h.subscribe("a");
+  const open = h.provider.opens()[0];
+  assertEquals(open.settings, undefined);
+  h.opened();
+  assertEquals(a.ready()[0].settings, { maxHz: 30 });
+  h.activate(a);
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_activate",
+    route: open.route,
+    gen: open.gen,
+    maxHz: 30,
+  });
+  h.update(a, 1, { maxHz: 10 });
+  assertEquals(h.last(a), { t: "topic_applied", id: "cam", revision: 1, settings: { maxHz: 10 } });
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_activate",
+    route: open.route,
+    gen: open.gen,
+    maxHz: 10,
+  });
+  h.update(a, 2, { quality: 40 });
+  assertEquals(h.last(a), rejection(2, "unsupported_option"));
+  h.frame(1, undefined);
+  await flush();
+  assertEquals(h.received(a), [1]);
+  h.close();
+});
+
+Deno.test("a late variant acknowledgement is ignored and a source restart reopens the settings in force", () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a");
+  h.opened();
+  const open = h.provider.opens()[0];
+  h.update(a, 1, { quality: 40 });
+  h.variantReady();
+  h.tick(VARIANT_GRACE_MS);
+  assertEquals(h.provider.messages.at(-1)?.t, "topic_variant_close");
+  h.update(a, 2, { quality: 50 });
+  assertEquals(h.variants().at(-1)?.variant, "v1");
+  // The provider answers for the retired v1 first; its settings do not match.
+  h.registry.onProviderMsg(h.provider, {
+    t: "topic_variant_ready",
+    route: open.route,
+    gen: open.gen,
+    variant: "v1",
+    settings: LOW,
+  });
+  assertEquals(a.messages.filter((m) => m.t === "topic_applied").length, 1);
+  h.variantReady();
+  assertEquals(h.last(a), {
+    t: "topic_applied",
+    id: "cam",
+    revision: 2,
+    settings: { ...LOW, quality: 50 },
+  });
+  // Restart: the desired subscription reopens its current settings on a fresh route.
+  h.registry.sourceClosed(h.provider);
+  const replacement = new Provider();
+  h.registry.registerSource(replacement, "workspace", {
+    read: true,
+    write: false,
+    profiles: ["raw", "image.jpeg.low.v1"],
+    profileOptions: OPTIONS,
+  });
+  const reopened = replacement.opens()[0];
+  assertNotEquals(reopened.route, open.route);
+  assertEquals(reopened.settings, { ...LOW, quality: 50 });
+  h.close();
+});
+
+Deno.test("a raw route takes rate updates in the relay and a reliable route still keeps every event", async () => {
+  const h = setup();
+  h.send(spec);
+  h.opened();
+  h.activate();
+  const open = h.provider.opens()[0];
+  h.send({ t: "topic_update", id: spec.id, revision: 1, options: { maxHz: 1 } });
+  assertEquals(h.viewer.messages.at(-1), {
+    t: "topic_applied",
+    id: spec.id,
+    revision: 1,
+    settings: { maxHz: 1 },
+  });
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_activate",
+    route: open.route,
+    gen: open.gen,
+    maxHz: 1,
+  });
+  h.sample(1);
+  h.sample(2);
+  h.sample(3);
+  await flush();
+  assertEquals(h.viewer.sink.decoded().map((f) => f.header.seq), [1, 2, 3]);
+  h.send({ t: "topic_update", id: spec.id, revision: 2, options: { quality: 40 } });
+  assertEquals(h.viewer.messages.at(-1), rejection(2, "unsupported_option", spec.id));
+  h.send({ t: "topic_update", id: "nope", revision: 3, options: {} });
+  assertEquals(h.viewer.messages.at(-1), rejection(3, "unknown_topic_handle", "nope"));
   h.registry.viewerClosed(h.viewer);
 });

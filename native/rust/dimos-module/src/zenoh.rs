@@ -316,7 +316,7 @@ impl Transport for ZenohTransport {
     async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> io::Result<()> {
         self.session
             .declare_subscriber(zenoh_key(channel).to_string())
-            .callback(move |sample| on_msg(&sample.payload().to_bytes()))
+            .callback(move |sample| on_msg.deliver(&sample.payload().to_bytes()))
             .background()
             .await
             .map_err(to_io)
