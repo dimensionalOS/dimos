@@ -90,5 +90,6 @@
   "video_fps": 15.0,
   "video_group": "230.1.1.1",
   "video_port": 1720,
-  "deadman_ms": 500
+  "deadman_ms": 500,
+  "frame_id_prefix": null
 }

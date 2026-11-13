@@ -1429,6 +1429,7 @@ mod tests {
     #[test]
     fn a_goal_that_ran_out_a_timeout_is_taken_once() {
         let config = Config {
+            frame_id_prefix: None,
             blocked_timeout_s: 0.0,
             progress_timeout_s: 0.0,
             ..test_config()
@@ -1473,6 +1474,7 @@ mod tests {
     #[test]
     fn a_goal_above_the_floor_it_snaps_to_is_reached_on_arrival() {
         let config = Config {
+            frame_id_prefix: None,
             robot_height: 0.65,
             ..test_config()
         };
