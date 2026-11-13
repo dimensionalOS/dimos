@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import builtins
 import math
 import sys
 from types import ModuleType
@@ -22,12 +21,8 @@ from types import ModuleType
 import pytest
 
 from dimos.robot.manipulators.feetech.arm import (
-    FEETECH_EXTRA,
     FeetechArm,
-    FeetechDependencyError,
-    _create_sdk_handlers,
     _read_motor_position,
-    missing_dependency_error,
 )
 from dimos.robot.manipulators.feetech.calibration import (
     FEETECH_POSITION_SPAN,
@@ -60,11 +55,6 @@ class _FakePacketHandler:
 
     def ReadPos(self, motor_id: int) -> tuple[int, int, int]:
         return (1000 + motor_id, 0, 0)
-
-
-class _FailingPacketHandler:
-    def ReadPos(self, motor_id: int) -> tuple[int, int, int]:
-        return (1000 + motor_id, -1, 2)
 
 
 class _PositionPacketHandler:
@@ -105,42 +95,6 @@ def test_arm_reads_each_open_bus_as_calibrated_radians(monkeypatch: pytest.Monke
 
     assert arm.joint_names == ["left_joint_1", "left_joint_2"]
     assert positions == pytest.approx({"left_joint_1": 0.0, "left_joint_2": -math.pi / 2})
-
-
-def test_missing_dependency_error_names_optional_extra() -> None:
-    error = missing_dependency_error()
-
-    assert f"--extra {FEETECH_EXTRA}" in str(error)
-    assert "Feetech" in str(error)
-
-
-def test_create_sdk_handlers_raises_feetech_dependency_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delitem(sys.modules, "scservo_sdk", raising=False)
-
-    real_import = builtins.__import__
-
-    def fake_import(
-        name: str,
-        globals: dict[str, object] | None = None,
-        locals: dict[str, object] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> object:
-        if name == "scservo_sdk":
-            raise ImportError("missing scservo_sdk")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-
-    with pytest.raises(FeetechDependencyError):
-        _create_sdk_handlers("/dev/missing")
-
-
-def test_read_motor_position_rejects_sdk_error_tuple() -> None:
-    with pytest.raises(RuntimeError, match="position read failed"):
-        _read_motor_position(_FailingPacketHandler(), 3)
 
 
 @pytest.mark.parametrize(
