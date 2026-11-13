@@ -23,7 +23,10 @@ from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.a750.config import a750_model, make_a750_model_config
+from dimos.robot.manipulators.a750.config import (
+    a750_coordinator_connection,
+    make_a750_model_config,
+)
 from dimos.robot.manipulators.a750.connection import A750Connection
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
@@ -60,7 +63,7 @@ def _keyboard_teleop() -> Blueprint:
             tick_rate=100.0,
             publish_joint_state=True,
             joint_state_frame_id="coordinator",
-            model=a750_model(robot="arm"),
+            connections=[a750_coordinator_connection()],
             tasks=[
                 TaskConfig(
                     name=EEF_TWIST_TASK_NAME,

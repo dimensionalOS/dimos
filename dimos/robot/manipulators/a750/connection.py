@@ -33,6 +33,7 @@ from dimos.control.connection.connection_module import (
 )
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import SEPARATOR, Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -54,13 +55,18 @@ class A750Config(ConnectionConfig):
 
     device_path: str
     source: str = "arm"
-    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
+    joint_commands: dict[str, tuple[Interface, ...]] = {}
     velocity_ratio: float = Field(default=1.0, gt=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _model_from_urdf(self) -> Self:
         if self.model is None:
             self.model = a750_model()
+        if not self.joint_commands:
+            # Every joint, finger included, takes positions only.
+            self.joint_commands = {
+                joint.name: (Interface.POSITION,) for joint in movable_joints(self.model)
+            }
         return self
 
 

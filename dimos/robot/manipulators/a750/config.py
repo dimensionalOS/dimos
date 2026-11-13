@@ -20,6 +20,9 @@ import math
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -123,6 +126,17 @@ def a750_model(*, robot: str | None = None) -> RobotModel:
         return model
     moving = [*joint_names(A750_DOF), "finger"]
     return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
+
+
+def a750_coordinator_connection(source: str = "arm") -> ConnectionConfig:
+    """What a coordinator needs to know about the A-750 connection named ``source``:
+    its model, with every joint (the finger too) taking positions."""
+    model = a750_model(robot=source)
+    return ConnectionConfig(
+        source=source,
+        model=model,
+        joint_commands={joint.name: (Interface.POSITION,) for joint in movable_joints(model)},
+    )
 
 
 def make_a750_model_config(robot: str | None = None) -> RobotModelConfig:
