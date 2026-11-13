@@ -59,7 +59,7 @@ merges, with the robot-specific adapter and profile added above them:
 
 | Layer | Pinned source | Role |
 |---|---|---|
-| Current main | `a7670ba97e`, including #5016 | Joint/interface routing and connection ownership |
+| Current main | `8389c26677`, including #5016 and the Python 3.14 default | Joint/interface routing and connection ownership |
 | CC's R1 Pro stack | `3920bf8b1d0517476be8aaa891dac2075a1469e6`, #5017 + #5019 | R1 joint declarations, limits, base and canonical grippers |
 | Krishna's input stack | `1807177e1b` (#5182, includes #5177 at `dea80002b1`); Joy-Con #5198 at `cedc04d1f2` | Current Feetech connections plus the portable Joy-Con backend |
 | Jeff's USD stack | `18743a447c`, #5111 | USD utilities, scene serving, joint transforms and asset ownership |
