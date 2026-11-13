@@ -37,6 +37,7 @@ from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -79,6 +80,8 @@ class TransportRecorder:
 
     A stream is opened on its first message, so its codec can depend on what the
     stream carries: depth images are stored losslessly, colour images as JPEG.
+    Nonempty TF batches are stored as one TFMessage per transform at its source
+    timestamp, matching the native recorder. Queue limits still count batches.
     """
 
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
@@ -99,7 +102,11 @@ class TransportRecorder:
                     codec = codec_for(stream_type, sample=msg)
                     stream = self.store.stream(name, stream_type, codec=codec)
                     self._streams[name] = stream
-                stream.append(msg, ts=ts)
+                if isinstance(msg, TFMessage) and msg.transforms:
+                    for transform in msg.transforms:
+                        stream.append(TFMessage(transform), ts=transform.ts)
+                else:
+                    stream.append(msg, ts=ts)
             except Exception:
                 logger.exception("--record: failed to append to %s", name)
 
@@ -122,7 +129,9 @@ class TransportRecorder:
 
         def on_msg(msg: Any) -> None:
             try:
-                ts = getattr(msg, "ts", None) or time.time()
+                ts = getattr(msg, "ts", None)
+                if ts is None:
+                    ts = time.time()
                 self._queue.put_nowait((name, stream_type, msg, ts))
             except queue.Full:
                 self.dropped += 1

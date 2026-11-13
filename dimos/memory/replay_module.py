@@ -23,9 +23,10 @@ class still ends up with the same ports.
 from __future__ import annotations
 
 from functools import partial
+from itertools import islice
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from reactivex import interval
 
@@ -35,6 +36,7 @@ from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_dataset, resolve_dataset, stream_payload_types
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
     from reactivex import Observable
 
     from dimos.memory.replay import Replay, ReplayStream
+    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.protocol import DimosMsg
 
 logger = setup_logger()
@@ -144,20 +147,40 @@ class ReplayModule(Module):
         # constant stamped at import, often long before the run) is republished at
         # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
         # would spend that lead time emitting nothing.
-        static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
-        timed_starts = [t for n, s in streams.items() if n not in static and (t := s.first_ts())]
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        port: Out[DimosMsg]
-        for name, port in self.outputs.items():
-            stream = streams[name]
-            logger.info("Replaying %s -> %s", name, port)
+        static = {
+            n: _static_message(s)
+            for n, s in streams.items()
+            if s.count() > 1 and s.first_ts() == s.last_ts()
+        }
+        timed_streams: dict[str, Observable[DimosMsg]] = {}
+        timed_starts = []
+        for name, stream in streams.items():
             if name in static:
-                self.register_disposable(
-                    interval(1.0).subscribe(partial(_republish, port, stream.first()))
-                )
                 continue
-            timed: Observable[DimosMsg] = stream.observable()
-            self.register_disposable(timed.subscribe(port.publish))
+            first_ts = stream.first_ts()
+            predicate = None
+            if issubclass(self.outputs[name].type, TFMessage):
+                frozen, first_ts = _split_tf_stream(cast("ReplayStream[TFMessage]", stream))
+                if frozen.transforms:
+                    static[name] = frozen
+                    edges = {(t.frame_id, t.child_frame_id) for t in frozen.transforms}
+                    predicate = partial(_has_dynamic_tf, edges)
+            if first_ts is not None:
+                timed_starts.append(first_ts)
+                timed_streams[name] = stream.observable(predicate=predicate)
+        for name, message in static.items():
+            if isinstance(message, TFMessage):
+                self.outputs[name].publish(message)
+        with replay.prepare(min(timed_starts) if timed_starts else None):
+            port: Out[DimosMsg]
+            for name, port in self.outputs.items():
+                logger.info("Replaying %s -> %s", name, port)
+                if name in static:
+                    self.register_disposable(
+                        interval(1.0).subscribe(partial(_republish, port, static[name]))
+                    )
+                if name in timed_streams:
+                    self.register_disposable(timed_streams[name].subscribe(port.publish))
 
     @rpc
     def stop(self) -> None:
@@ -165,6 +188,54 @@ class ReplayModule(Module):
         if self._store is not None:
             self._store.stop()
             self._store = None
+
+
+def _static_message(stream: ReplayStream[DimosMsg]) -> DimosMsg | None:
+    first = stream.first()
+    if not isinstance(first, TFMessage):
+        return first
+    # TF rows can hold different edges. Keep every distinct transform, without
+    # multiplying repeated batches. Bound iteration because replay may loop.
+    transforms = {
+        transform.lcm_encode(): transform
+        for message in islice(cast("ReplayStream[TFMessage]", stream).iterate(), stream.count())
+        for transform in message.transforms
+    }
+    return TFMessage(*transforms.values())
+
+
+def _has_dynamic_tf(edges: set[tuple[str, str]], message: TFMessage) -> bool:
+    return not message.transforms or any(
+        (t.frame_id, t.child_frame_id) not in edges for t in message.transforms
+    )
+
+
+def _split_tf_stream(stream: ReplayStream[TFMessage]) -> tuple[TFMessage, float | None]:
+    """Collect frozen edges and the first timed row in the selected replay window."""
+    count = stream.count()
+    # None marks an edge whose source timestamp changes. Keep only per-edge
+    # metadata here, never the history of a dynamic edge's payloads.
+    stamps: dict[tuple[str, str], tuple[float, int] | None] = {}
+    for message in islice(stream.iterate(), count):
+        for transform in message.transforms:
+            edge = (transform.frame_id, transform.child_frame_id)
+            previous = stamps.get(edge, (transform.ts, 0))
+            if previous is not None:
+                stamps[edge] = (
+                    (transform.ts, previous[1] + 1) if previous[0] == transform.ts else None
+                )
+    edges = {edge for edge, stamp in stamps.items() if stamp is not None and stamp[1] > 1}
+    transforms: dict[bytes, Transform] = {}
+    first_ts = None
+    # Both scans are bounded even when the replay loops. Encoded identity keeps
+    # distinct values at a frozen timestamp, in their source order.
+    for ts, message in islice(stream.iterate_ts(), count):
+        if first_ts is None and _has_dynamic_tf(edges, message):
+            first_ts = ts
+        for transform in message.transforms:
+            if (transform.frame_id, transform.child_frame_id) in edges:
+                transforms[transform.lcm_encode()] = transform
+    return TFMessage(*transforms.values()), first_ts
 
 
 def _republish(port: Out[Any], msg: Any, _tick: int) -> None:

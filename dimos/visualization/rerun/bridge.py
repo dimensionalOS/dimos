@@ -283,6 +283,7 @@ class Config(ModuleConfig):
 
     visual_override: dict[Glob | str, VisualOverride] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
+    # Per topic entity; TF messages apply the cap independently to each edge.
     max_hz: dict[str, float] = field(default_factory=dict)
 
     # Topic names without the `dimos/` prefix; empty means every topic.
@@ -322,7 +323,7 @@ class RerunBridgeModule(Module):
 
     config: Config
     dedicated_worker = True
-    _last_log: dict[str, float]
+    _last_log: dict[str | tuple[str, str, str], float]
     _websocket_url: str
 
     # Injected when the blueprint has a RerunWebSocketServer.
@@ -448,12 +449,24 @@ class RerunBridgeModule(Module):
 
         entity_path: str = self._get_entity_path(topic)
 
-        # Throttle entities with a max_hz limit
+        # TF rows may arrive separately, so one edge must not throttle another.
         if entity_path in self._min_intervals:
             now = time.monotonic()
-            if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
-                return
-            self._last_log[entity_path] = now
+            interval = self._min_intervals[entity_path]
+            if isinstance(msg, TFMessage):
+                transforms = []
+                for transform in msg.transforms:
+                    key = (entity_path, transform.frame_id, transform.child_frame_id)
+                    if now - self._last_log.get(key, 0.0) >= interval:
+                        self._last_log[key] = now
+                        transforms.append(transform)
+                if not transforms:
+                    return
+                msg = TFMessage(*transforms)
+            else:
+                if now - self._last_log.get(entity_path, 0.0) < interval:
+                    return
+                self._last_log[entity_path] = now
 
         if self._tf_tree is not None and isinstance(msg, TFMessage):
             with self._tf_lock:

@@ -207,3 +207,34 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
+
+
+@pytest.mark.parametrize("ts", [42.25, 0.0])
+def test_records_tf_and_odom_at_source_time(sqlite_store, ts):
+    older = Transform(ts=ts, frame_id="base", child_frame_id="sensor")
+    batches = [
+        TFMessage(Transform(ts=ts + 1.0, child_frame_id="base"), older),
+        TFMessage(Transform(ts=ts + 2.0, child_frame_id="base"), older),
+    ]
+    with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
+        tf_transport, odom_transport = _Transport(), _Transport()
+        for name, msg_type, transport in [
+            ("tf", TFMessage, tf_transport),
+            ("odom", PoseStamped, odom_transport),
+        ]:
+            unsubscribe = recorder.tap(name, msg_type, transport)
+            assert unsubscribe is not None
+            subscriptions.callback(unsubscribe)
+        for batch in batches:
+            tf_transport.publish(batch)
+        odom_transport.publish(PoseStamped(ts=ts))
+
+    rows = sqlite_store.stream("tf", TFMessage).order_by("id").to_list()
+    assert [row.ts for row in rows] == [ts + 1.0, ts, ts + 2.0, ts]
+    assert [row.data.lcm_encode() for row in rows] == [
+        TFMessage(transform).lcm_encode() for batch in batches for transform in batch
+    ]
+    assert sqlite_store.stream("odom", PoseStamped).first().ts == ts
+    # Repeated older members must not make the changing TF stream look static.
+    replay = sqlite_store.replay().stream("tf")
+    assert (replay.first_ts(), replay.last_ts()) == (ts, ts + 2.0)
