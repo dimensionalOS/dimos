@@ -34,6 +34,7 @@ from typing import (
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
+from dimos.core.global_config import global_config as process_global_config
 from dimos.core.module import ModuleBase, is_module_type
 from dimos.core.stream import IO, In, Out, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
@@ -46,27 +47,6 @@ else:
     from typing_extensions import Self
 
 logger = setup_logger()
-
-# Streams that stay global: `.namespace()` never prefixes these, so every
-# namespaced copy of a module publishes onto the one shared topic. They are the
-# streams whose payloads already carry their own names (a TF message names its
-# frames, a JointState names its joints) and `.namespace()` prefixes those names
-# (via `frame_id_prefix`), so one stream still tells the robots apart. Splitting
-# them per namespace instead gives you N tf trees with no common root, which is
-# exactly what a consumer looking up `robot0/base_link -> map` cannot use.
-#
-# `actions`/`world_observations` are sim2's; they are named here so the rule is
-# stated in one place, and take effect when those modules land.
-GLOBAL_STREAMS = frozenset(
-    {
-        "tf",
-        "coordinator_joint_state",
-        "coordinator_joint_command",
-        "joint_command",
-        "actions",
-        "world_observations",
-    }
-)
 
 
 class DisabledModuleProxy:
@@ -372,9 +352,9 @@ class Blueprint:
                 ],
             )
 
-        The streams in `GLOBAL_STREAMS` are exposed whether you ask for them or
-        not, because their payloads name what they carry and the namespace goes
-        into those names instead.
+        The streams named by the `global_streams` global config are exposed whether
+        you ask for them or not, because their payloads name what they carry and
+        the namespace goes into those names instead.
         """
         if not re.fullmatch(r"[A-Za-z0-9_]+", prefix):
             raise ValueError(
@@ -398,10 +378,11 @@ class Blueprint:
                 f"namespaced blueprint (available: {sorted(effective_names)})"
             )
 
-        # GLOBAL_STREAMS is not validated against effective_names: it is a
-        # repo-wide rule, not a per-call argument, and most blueprints have none
-        # of them.
-        global_set = expose_set | GLOBAL_STREAMS
+        # Read at call time, not import time, so a config file or `--global-streams`
+        # is honoured: the CLI applies global config before importing the module
+        # that builds the blueprint. Unlike *expose* these are not checked against
+        # effective_names, being a stack-wide rule rather than a per-call argument.
+        global_set = expose_set | process_global_config.processed_global_streams
 
         new_atoms = []
         new_remap: dict[tuple[str, str], str | type[ModuleBase] | type[Spec]] = {}

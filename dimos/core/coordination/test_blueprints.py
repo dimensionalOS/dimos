@@ -26,7 +26,6 @@ from dimos.core._test_future_annotations_helper import (
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
-    GLOBAL_STREAMS,
     Blueprint,
     BlueprintAtom,
     DisabledModuleProxy,
@@ -36,6 +35,7 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config as process_global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
@@ -430,12 +430,26 @@ def test_namespace_keeps_global_stream_transports_unprefixed() -> None:
 
 
 def test_global_streams_do_not_need_exposing() -> None:
-    """They are a repo-wide rule, so they are not checked against the blueprint's
+    """They are a stack-wide rule, so they are not checked against the blueprint's
     own streams the way *expose* is."""
     blueprint = ModuleA.blueprint().namespace("robot0", expose={"data1"})
 
-    assert "tf" in GLOBAL_STREAMS
+    assert "tf" in process_global_config.processed_global_streams
     assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
+
+
+def test_global_streams_come_from_global_config() -> None:
+    """`--global-streams` / the config file's `g:` section replaces the list."""
+    previous = process_global_config.global_streams
+    try:
+        process_global_config.update(global_streams="data1")
+        blueprint = SharedModule.blueprint().namespace("robot0")
+    finally:
+        process_global_config.update(global_streams=previous)
+
+    assert ("robot0/sharedmodule", "data1") not in blueprint.remapping_map
+    # tf is only global because the default list names it.
+    assert blueprint.remapping_map[("robot0/sharedmodule", "tf")] == "robot0/tf"
 
 
 def test_namespace_expose_typo_raises() -> None:

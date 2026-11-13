@@ -299,12 +299,26 @@ That is how data crosses the boundary.
 
 A few streams are global whether you expose them or not: `tf`,
 `coordinator_joint_state`, `coordinator_joint_command`, `joint_command`, and the
-simulator's `actions` and `world_observations` (the list is `GLOBAL_STREAMS` in
-`dimos/core/coordination/blueprints.py`). Their payloads name what they carry, a
-TF message names its frames and a `JointState` names its joints, and the
+simulator's `actions` and `world_observations`. Their payloads name what they
+carry, a TF message names its frames and a `JointState` names its joints, and the
 namespace goes into those names instead. Prefixing the stream too would give you
 one TF tree per robot with no shared root, which is no use to anything looking up
 a transform between two robots.
+
+That list is the `global_streams` global config, so a stack can replace it from
+the config file or the command line:
+
+```json
+{ "g": { "global_streams": "tf,coordinator_joint_state,my_fleet_stream" } }
+```
+
+```bash
+dimos --global-streams=tf,coordinator_joint_state run my-fleet
+```
+
+It replaces the default rather than adding to it, so spell out the whole set.
+`.namespace()` reads it when the blueprint is built, which is why it is a global
+option and not a `.global_config()` call on the blueprint itself.
 
 In the above example, both `Sensor` modules can send `pointcloud` data to the `AggregateMapper` module.
 

@@ -38,6 +38,25 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 # LLM API keys itself.
 ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
 
+# Streams `Blueprint.namespace()` leaves unprefixed, so every namespaced copy of
+# a module publishes onto the one shared topic. These are the streams whose
+# payloads already carry their own names (a TF message names its frames, a
+# JointState names its joints) and `.namespace()` prefixes those names via
+# `frame_id_prefix`, so one stream still tells the robots apart. Splitting them
+# per namespace instead gives N tf trees with no common root, which is exactly
+# what a consumer looking up `robot0/base_link -> map` cannot use.
+#
+# `actions`/`world_observations` are the simulator's; they are named here so the
+# rule is stated in one place, and take effect when those modules land.
+DEFAULT_GLOBAL_STREAMS = (
+    "tf",
+    "coordinator_joint_state",
+    "coordinator_joint_command",
+    "joint_command",
+    "actions",
+    "world_observations",
+)
+
 
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
@@ -82,6 +101,9 @@ class GlobalConfig(BaseSettings):
     viewer: ViewerBackend = "rerun"
     n_workers: int = 2
     scene_package: str | None = None
+    # Comma-separated stream names `.namespace()` leaves unprefixed. Replaces the
+    # default list rather than adding to it, so spell out the whole set.
+    global_streams: str = ",".join(DEFAULT_GLOBAL_STREAMS)
     robot_model: str | None = None
     # Robot geometry shared by every navigation and patrol module in a stack;
     # a module config may still override it for itself.
@@ -142,6 +164,10 @@ class GlobalConfig(BaseSettings):
                 "No robot IPs specified. Set ROBOT_IPS or --robot-ips to at least one IP."
             )
         return tuple(ips)
+
+    @property
+    def processed_global_streams(self) -> frozenset[str]:
+        return frozenset(x.strip() for x in self.global_streams.split(",") if x.strip())
 
 
 global_config = GlobalConfig()
