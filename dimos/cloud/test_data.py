@@ -597,3 +597,14 @@ def test_mcap_recording_sends_preview_with_joystick(
     doc = t.previews[r["upload_id"]]
     assert doc["streams"]["joystick"]["count"] == 3
     assert [s[1:] for s in doc["joy"]] == [[[0.0, 0.5, -1.0, 0.0], [1, 0, 0]]] * 3
+
+
+def test_mcap_upload_sends_its_preview(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    from dimos.memory.store.test_mcap import ros2_odom, write_ros2_mcap
+
+    cloud, _t, db = env
+    mcap = db.parent / "run.mcap"
+    write_ros2_mcap(mcap, [("/odometry", "nav_msgs/Odometry", 1.0, ros2_odom(1.0, 0, 0))])
+    before = mcap.read_bytes()
+    assert cloud.upload(mcap)["preview"] == "sent"  # opened read-only in place, not as SQLite
+    assert mcap.read_bytes() == before
