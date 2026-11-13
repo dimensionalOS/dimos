@@ -158,13 +158,25 @@ def _read(blackboard: Mapping[str, Plain], path: str) -> tuple[bool, Plain]:
 
 
 def evaluate(expression: Expression, blackboard: Mapping[str, Plain]) -> Plain:
-    found = {path: _read(blackboard, path) for path in expression.reads}
-    data = {path: value for path, (has_value, value) in found.items() if has_value}
+    """Evaluate an expression. A missing field is an error only if the result needs it."""
+    data: dict[str, Plain] = {}
+    missing: list[ExpressionError] = []
+    for path in expression.reads:
+        try:
+            has_value, read = _read(blackboard, path)
+        except ExpressionError as error:
+            missing.append(error)
+            continue
+        if has_value:
+            data[path] = read
     value = expression.program.eval(data=data)
     plain: Plain = value.plain_value()
-    if value.type() == cel.Type.ERROR:
-        raise ExpressionError(f"`{expression.source}`: {plain}", unset=len(data) < len(found))
-    return plain
+    if value.type() != cel.Type.ERROR:
+        return plain
+    if missing:
+        raise missing[0]
+    unset = len(data) < len(expression.reads)
+    raise ExpressionError(f"`{expression.source}`: {plain}", unset=unset)
 
 
 def evaluate_bool(expression: Expression, blackboard: Mapping[str, Plain]) -> bool:

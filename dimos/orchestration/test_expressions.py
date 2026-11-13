@@ -87,6 +87,12 @@ EVALUATED: list[tuple[str, Wanted, dict[str, object], object]] = [
     ("nav_status.goal_id.stamp == nav.goal", True, {}, True),
     ("nav_status.goal_id.stamp == nav.goal", True, {"nav.goal": UNSET}, False),
     ("nav_status.goal_id.stamp == nav.goal", True, {"nav_status": {"status": 3}}, ERROR),
+    (
+        "estop_button || nav_status.goal_id.stamp == nav.goal",
+        True,
+        {"nav_status": {"status": 3}},
+        True,
+    ),
     ("dock", {"x": 0.0, "y": 0.0}, {}, {"x": 1.0, "y": 2.0}),
     ("route[patrol.index]", "", {}, "lab"),
     ("patrol.index < size(route)", True, {}, True),
