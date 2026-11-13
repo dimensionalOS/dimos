@@ -182,9 +182,11 @@ _WRIST_V4L2 = (
 def _wrist_cameras() -> list[Blueprint]:
     """Both wrists' colour as 848x480 JPEG at 30 fps, encoded on the CPU.
 
-    The Jetson encoder path may pad a USB frame's rows past 848 px, which shears
-    the image without an error. The rate must be set: a D405 defaults to 90 fps,
-    at which its colour stream on this controller never delivers a frame.
+    The CPU encoder costs about 9% of one core per wrist. The Jetson encoder
+    cannot take these frames: its buffers have 1792-byte rows, the camera writes
+    1696-byte rows (848 px), and the image comes out scrambled with no error.
+    The rate must be set: a D405 defaults to 90 fps, at which its colour stream
+    on this controller never delivers a frame.
     """
     return [
         V4L2Camera.blueprint(
