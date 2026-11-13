@@ -26,13 +26,16 @@ import threading
 import time
 from unittest.mock import MagicMock
 
+from mcap.writer import Writer
 import pytest
 from pytest_mock import MockerFixture
 from reactivex import Subject
 from reactivex.disposable import Disposable
+from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import GlobalConfig
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -358,3 +361,77 @@ def test_odom_to_tf_prefixed() -> None:
         "robot0/camera_link",
         "robot0/camera_optical",
     )
+
+
+@pytest.mark.parametrize("dataset_kind", ["sqlite", "named-sqlite", "mcap"])
+def test_replay_opens_recording_and_emits_typed_odometry(tmp_path, monkeypatch, dataset_kind):
+    values = [
+        PoseStamped(ts=12.5, frame_id="world"),
+        PoseStamped(ts=13.5, frame_id="world"),
+        PoseStamped(ts=14.0, frame_id="world"),  # beyond seek + duration
+    ]
+    if dataset_kind == "mcap":
+        path = tmp_path / "native.mcap"
+        with path.open("wb") as output:
+            writer = Writer(output)
+            writer.start(profile="dimos")
+            channel = writer.register_channel(
+                topic="odom",
+                message_encoding="lcm",
+                schema_id=0,
+                metadata={
+                    "dimos.payload_type": "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped",
+                    "dimos.observation_time": "publish_time",
+                },
+            )
+            for value in values:
+                writer.add_message(
+                    channel_id=channel,
+                    log_time=20_000_000_000,
+                    publish_time=int(value.ts * 1e9),
+                    data=value.lcm_encode(),
+                )
+            writer.finish()
+    else:
+        path = tmp_path / "recording.db"
+        with SqliteStore(path=str(path)) as store:
+            stream = store.stream("odom", PoseStamped)
+            for value in values:
+                stream.append(value, ts=value.ts)
+
+    dataset = str(path)
+    if dataset_kind == "named-sqlite":
+        monkeypatch.chdir(tmp_path)
+        dataset = "recording"
+    scheduler = TestScheduler()
+    received = []
+    errors = []
+    completed = []
+    with go2_conn.ReplayConnection(dataset=dataset, seek=1.0, duration=0.25) as conn:
+        with conn.odom_stream().subscribe(
+            received.append,
+            errors.append,
+            lambda: completed.append(True),
+            scheduler=scheduler,
+        ):
+            scheduler.advance_by(1.0)
+        assert errors == []
+        assert completed == [True]
+        assert [value.lcm_encode() for value in received] == [values[1].lcm_encode()]
+
+
+def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
+    """A legacy Go2 DDS recording holds nav_msgs.Odometry, which GO2Connection cannot publish."""
+    path = tmp_path / "legacy.mcap"
+    with path.open("wb") as output:
+        writer = Writer(output)
+        writer.start()
+        channel = writer.register_channel(
+            topic="rt/utlidar/robot_odom", message_encoding="cdr", schema_id=0
+        )
+        writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=b"")
+        writer.finish()
+
+    with go2_conn.ReplayConnection(dataset=str(path)) as conn:
+        with pytest.raises(TypeError, match="PoseStamped odometry.*'odom'.*Odometry"):
+            conn.odom_stream()

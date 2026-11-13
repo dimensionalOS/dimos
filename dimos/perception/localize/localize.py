@@ -147,7 +147,7 @@ def _settled(index: Stream[Any, Any], spacing: float) -> set[int]:
     for obs in index.order_by("ts"):
         camera = obs.tags.get("camera")
         last_id, last_ts, last_sharpness = last.get(camera, (-1, -math.inf, -1.0))
-        sharpness = float(obs.data.sharpness)
+        sharpness = float(obs.tags["sharpness"])
         if obs.ts - last_ts < spacing:
             if sharpness <= last_sharpness:
                 continue
@@ -206,7 +206,7 @@ def index_frames(
         lambda obs: obs.derive(
             data=obs.data,
             pose=rig.camera_pose(obs.ts, obs.data.frame_id),
-            tags={**obs.tags, "camera": obs.data.frame_id},
+            tags={**obs.tags, "camera": obs.data.frame_id, "sharpness": float(obs.data.sharpness)},
         )
     ).filter(lambda obs: obs.pose is not None)
 
@@ -302,9 +302,11 @@ def retrieve(
                 continue
             expanded.add(peak_key)
             for feed in feeds.values():
-                gathered: Stream[Any, Any] = feed.near(
-                    peak.pose_stamped, radius=params.verify_radius_m
-                ).transform(QualityWindow(lambda f: f.sharpness, window=params.verify_window_s))
+                gathered: Stream[Any, Any] = (
+                    feed.near(peak.pose_stamped, radius=params.verify_radius_m)
+                    .map(lambda obs: obs.derive(data=obs.tags["sharpness"]))
+                    .transform(QualityWindow(float, window=params.verify_window_s))
+                )
                 candidate_ids.update(obs.id for obs in gathered if _unread(gap, obs))
         logger.info(
             f"localize {q!r}: {len(sightings)} semantic peaks of {index_count} embedded "

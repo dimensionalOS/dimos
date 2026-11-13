@@ -26,12 +26,15 @@ dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
-dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
+
+The Galaxea A1Z runs only on the real arm, through `A1ZConnection`:
+`dimos run a1z-keyboard-teleop --a1zconnection.can-port a1zcan`. See the
+[A1Z guide](/docs/capabilities/manipulation/a1z.md) for its other blueprints.
 
 YAM and OpenArm now use direct connection modules. The coordinator sends joint
 commands over streams; the connection owns the complete native robot and CAN
@@ -508,7 +511,7 @@ planner is locked for its whole native call.
 | Blueprint | Description |
 |-----------|-------------|
 | `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
-| `keyboard-teleop-a1z` | Galaxea A1Z keyboard teleop, planning, and hardware control |
+| `a1z-keyboard-teleop` | Galaxea A1Z keyboard teleop on the real arm, through `A1ZConnection` |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |

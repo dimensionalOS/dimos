@@ -25,6 +25,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 import psutil
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core.run_registry import RunEntry
 from experimental.gateway import launches, shared_config
@@ -103,11 +104,42 @@ def test_a_bad_config_or_name_is_refused(client: TestClient) -> None:
         == 400
     )
     assert client.post("/active/launch", json={"blueprint": "-x"}).status_code == 400
+    assert client.post("/active/launch", json={"blueprint": ""}).status_code == 400
     bad = client.post(
         "/active/launch", json={"blueprint": "demo", "config": {"global": {"robot_iq": 1}}}
     )
     assert bad.status_code == 400 and "robot_iq" in bad.json()["error"]
     assert client.post("/active/exec", json={"args": ["--n-workers=7"]}).status_code == 400
+    assert client.post("/active/exec", json={"args": []}).status_code == 400
+
+
+@pytest.mark.parametrize("scan", ["missing", "stale", "fresh"])
+@pytest.mark.parametrize("field", ["blueprint", "module", "args"])
+@pytest.mark.parametrize("name", ["", " ", "\t", "demo cam", "-x"])
+def test_bad_launch_names_are_refused_before_starting(
+    client: TestClient,
+    state: State,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    scan: str,
+    field: str,
+    name: str,
+) -> None:
+    if scan != "missing":
+        scanned(state, monkeypatch, stale=scan == "stale")
+    start = mocker.spy(launches, "start")
+    payload: dict[str, Any] = {field: [name] if field == "args" else name}
+    if field != "args":
+        payload["module" if field == "blueprint" else "blueprint"] = None
+    path = "/active/exec" if field == "args" else "/active/launch"
+
+    response = client.post(path, json=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {"error": f"bad name: {name}"}
+    start.assert_not_called()
+    assert client.get("/active").json()["launch"] is None
+    assert not launches.request_file().exists()
 
 
 def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
@@ -189,7 +221,10 @@ def test_a_launch_right_after_a_stop_starts(
     until(stopped(client))
 
 
-def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) -> None:
+def test_relaunch_starts_the_last_launch_with_its_secrets(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned(state, monkeypatch)
     assert client.post("/active/relaunch").status_code == 409
     config = {"global": {"n_workers": 2}, "modules": {"agent": {"api_key": "k2"}}}
     client.post("/active/launch", json={"blueprint": "demo", "config": config})
@@ -221,9 +256,54 @@ def test_relaunch_restarts_a_launch_stuck_starting(client: TestClient) -> None:
     assert not launches.alive(stuck_pid)
 
 
-def test_relaunch_copies_a_run_the_gateway_did_not_launch(
-    client: TestClient, tmp_path: Path
+@pytest.mark.parametrize("blueprint", ["demo", "slow"])
+@pytest.mark.parametrize(
+    ("name", "status"),
+    [
+        ("", 400),
+        (" ", 400),
+        ("demo cam", 400),
+        ("-x", 400),
+        (None, 400),
+        (7, 400),
+        ("None", 404),
+        ("removed-blueprint", 404),
+    ],
+)
+def test_relaunch_refuses_bad_saved_names_before_stopping(
+    client: TestClient,
+    state: State,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    blueprint: str,
+    name: Any,
+    status: int,
 ) -> None:
+    first = client.post("/active/launch", json={"blueprint": blueprint})
+    assert first.status_code == 200
+    until(output_has(client, "args"))
+    if blueprint == "demo":
+        until(running(client))
+    request = json.loads(launches.request_file().read_text())
+    request["blueprint"] = name
+    launches.request_file().write_text(json.dumps(request))
+    scanned(state, monkeypatch)
+    stop = mocker.spy(launches, "stop")
+    start = mocker.spy(launches, "start")
+
+    response = client.post("/active/relaunch")
+
+    assert response.status_code == status
+    stop.assert_not_called()
+    start.assert_not_called()
+    assert launch_of(client)["pid"] == first.json()["pid"]
+    assert launches.alive(first.json()["pid"])
+
+
+def test_relaunch_copies_a_run_the_gateway_did_not_launch(
+    client: TestClient, tmp_path: Path, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned(state, monkeypatch)
     command = [sys.executable, "-c", "import time; time.sleep(60)", "run", "outside"]
     env = {**os.environ, "OUTSIDE_RUN": "yes"}
     outside = subprocess.Popen(command, cwd=tmp_path, env=env, start_new_session=True)

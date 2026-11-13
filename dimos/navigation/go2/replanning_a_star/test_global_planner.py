@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -76,3 +77,23 @@ def test_replan_near_the_goal_ignores_the_height_of_the_robot() -> None:
     planner._replan_path()
 
     assert planner.is_goal_reached()
+
+
+@pytest.fixture
+def planner():
+    planner = GlobalPlanner(robot_width=0.3, robot_rotation_diameter=0.6)
+    yield planner
+    planner.stop()
+
+
+def test_first_goal_does_not_log_cancellation_but_explicit_cancel_does(planner, mocker):
+    log = mocker.patch.object(global_planner.logger, "info")
+    goal = PoseStamped(position=[1.0, 2.0, 0.0])
+
+    planner.handle_goal_request(goal)
+
+    log.assert_called_once_with("Got new goal", goal=str(goal))
+
+    planner.cancel_goal()
+
+    log.assert_called_with("Cancelling goal.", but_will_try_again=False, arrived=False)

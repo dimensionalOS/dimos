@@ -16,7 +16,9 @@
 # Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
 all_blueprints = {
+    "a1z-keyboard-teleop": "dimos.robot.manipulators.a1z.blueprints.teleop:a1z_keyboard_teleop",
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
+    "a1z-teleop": "dimos.robot.manipulators.a1z.blueprints.teleop:a1z_teleop",
     "alfred-keyboard-teleop": "dimos.robot.diy.alfred.blueprints.alfred_keyboard_teleop:alfred_keyboard_teleop",
     "alfred-mls-nav": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav:alfred_mls_nav",
     "alfred-mls-nav-lidar": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav_lidar:alfred_mls_nav_lidar",
@@ -90,7 +92,6 @@ all_blueprints = {
     "habitat-voxel": "dimos.simulation.habitat.blueprints:habitat_voxel",
     "hybrid-teleop-sim": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim:hybrid_teleop_sim",
     "hybrid-teleop-sim-collect": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim:hybrid_teleop_sim_collect",
-    "keyboard-teleop-a1z": "dimos.robot.manipulators.a1z.blueprints.teleop:keyboard_teleop_a1z",
     "keyboard-teleop-a750": "dimos.robot.manipulators.a750.blueprints.teleop:keyboard_teleop_a750",
     "keyboard-teleop-lite6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_lite6",
     "keyboard-teleop-openyam": "dimos.robot.manipulators.openyam.blueprints.teleop:keyboard_teleop_openyam",
@@ -240,6 +241,11 @@ all_blueprints = {
 
 
 all_modules = {
+    "a1-z-connection": "dimos.robot.manipulators.a1z.connection.A1ZConnection",
+    "a1-z-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic.A1ZCoordinator",
+    "a1-z-keyboard-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZKeyboardCoordinator",
+    "a1-z-twist-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZTwistCoordinator",
+    "a1-z-web-xr-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZWebXRCoordinator",
     "agent": "dimos.agents.agent.Agent",
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "alfred-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredMountTf",
@@ -317,6 +323,7 @@ all_modules = {
     "head-camera-info": "dimos.robot.galaxea.r1pro.head_cameras.HeadCameraInfo",
     "head-left-camera": "dimos.robot.galaxea.r1pro.head_cameras.HeadLeftCamera",
     "head-right-camera": "dimos.robot.galaxea.r1pro.head_cameras.HeadRightCamera",
+    "headset-feed-module": "dimos.teleop.webxr.headset_feed.HeadsetFeedModule",
     "heuristic-grasp-module": "dimos.manipulation.grasping.heuristic_grasp.HeuristicGraspModule",
     "hosted-stats-module": "dimos.teleop.hosted.hosted_stats.HostedStatsModule",
     "hybrid-teleop-coordinator": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim.HybridTeleopCoordinator",
@@ -380,6 +387,7 @@ all_modules = {
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "premap-module": "dimos.mapping.relocalization.module.PremapModule",
+    "preset-buttons-module": "dimos.imitation.collection.preset_buttons.PresetButtonsModule",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "r1-pro-coordinator": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator.R1ProCoordinator",
     "r1-pro-joylo": "dimos.robot.galaxea.r1pro.joylo_module.R1ProJoylo",
