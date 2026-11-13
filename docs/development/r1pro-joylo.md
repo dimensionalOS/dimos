@@ -130,8 +130,46 @@ come from measured feedback, with no automatic home movement.
 The base defaults to 0.1 m/s (0.2 with boost), yaw to 0.25 rad/s, arms to
 1.5 rad/s and torso joints to 0.5 rad/s in the simulation blueprints. The
 generic profile retains conservative 0.25/0.15 rad/s hardware defaults. A/B/Y, capture and rail buttons
-do not start/save/discard episodes in this profile. Recording workflow and
-physical-robot deployment remain follow-up work.
+do not start/save/discard episodes in this profile. Recording workflow remains follow-up work. The physical robot binding is described below.
+
+
+## Physical R1 Pro
+
+`r1pro-joylo-real` runs CC's `R1ProConnection`, the JoyLo profile and the
+coordinator on the robot. `teleop-openarm-r1pro-joylo` runs the same calibrated
+OpenArm/Joy-Con inputs on the Mac. Neither requires simulator assets or launches
+a viewer. The robot uses ROS 2 Humble and its existing Python 3.10 environment:
+
+```bash
+uv sync --inexact --frozen --python /usr/bin/python3.10 \
+  --python-preference only-system --no-default-groups --extra planning
+source /opt/ros/humble/setup.bash
+# Match ROS_DOMAIN_ID and discovery settings to the installed vendor stack.
+dimos --robot-ip 127.0.0.1 --zenoh-mode client --zenoh-domain r1pro-joylo-real \
+  run r1pro-joylo-real
+```
+
+Start/check the existing Galaxea HDAS and mobiman stack explicitly first:
+this blueprint sets `boot_vendor_stack=False` and does not install or select
+WIM. Use the two-host router instructions below, with domain
+`r1pro-joylo-real` on both hosts and the robot's reachable IP on the Mac.
+The operator launch needs both serial ports and the existing calibration root.
+
+The profile starts paused, captures measured joint positions, and requires a
+fresh X press to follow the leaders. Home pauses. It uses 0.25 rad/s arm and
+0.15 rad/s torso target slews, the existing connection's 0.5 rad/s vendor
+tracking cap, and the same stick/gripper controls as sim. The configured torso
+lengths are 0.40/0.30 m for this robot's installed R1 Pro description. CC's
+control model supplies the joint limits; no model-based IK or dynamics runs
+in this hardware blueprint. Check the variant before using it on another robot.
+
+Hardware upper-body and jaw feedback arrive as separate packets. JoyLo merges
+those packets by joint and retains source timestamps; a fresh jaw cannot renew
+stale arm feedback. Every required joint must be fresh before engagement.
+Keep host clocks synchronized because input timestamps are checked on the robot.
+Follow [R1 Pro hardware procedure](/docs/platforms/safety/r1pro.md) for the first
+slow, attended trial. Software pause holds targets; the physical E-stop remains
+the emergency stop.
 
 
 ## WIM model and controller alignment (2026-11-12)

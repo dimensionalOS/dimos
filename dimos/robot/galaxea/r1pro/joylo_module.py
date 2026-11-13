@@ -27,7 +27,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.galaxea.r1pro.joylo import UPPER, JoyloConfig, JoyloController
+from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER, JoyloConfig, JoyloController
 from dimos.teleop.joycon.raw import decode_readings
 from dimos.teleop.leader.module import GUARDED_JOINT_FRAME_ID
 from dimos.utils.logging_config import setup_logger
@@ -51,6 +51,7 @@ class R1ProJoylo(Module):
         self._controller: JoyloController | None = None
         self._logged_pause_count = 0
         self._stamps = {"leader": -math.inf, "joycon": -math.inf}
+        self._feedback: dict[str, tuple[float, float]] = {}
         self._done = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -65,6 +66,7 @@ class R1ProJoylo(Module):
             self._controller = JoyloController(limits, self.config)
             self._logged_pause_count = 0
             self._stamps = {"leader": -math.inf, "joycon": -math.inf}
+            self._feedback.clear()
         self._done.clear()
         super().start()
         self._thread = threading.Thread(target=self._run, name="r1pro-joylo", daemon=True)
@@ -178,9 +180,28 @@ class R1ProJoylo(Module):
 
     async def handle_robot_feedback(self, sample: JointState) -> None:
         with self._guard:
-            if self._controller is not None and len(sample.name) == len(sample.position):
+            wall = time.time()
+            if (
+                self._controller is None
+                or not math.isfinite(sample.ts)
+                or not -0.05 <= wall - sample.ts <= self.config.input_timeout_s
+                or len(sample.name) != len(sample.position)
+                or len(set(sample.name)) != len(sample.name)
+                or not all(math.isfinite(value) for value in sample.position)
+            ):
+                return
+            # Hardware sends upper body and jaws separately (and body rates with
+            # no positions). Merge by joint, preserving each source timestamp:
+            # fresh jaws must never renew stale arm feedback, nor vice versa.
+            required = (*UPPER, *JAWS)
+            for name, value in zip(sample.name, sample.position, strict=True):
+                if name in required and sample.ts > self._feedback.get(name, (0, -math.inf))[1]:
+                    self._feedback[name] = (value, sample.ts)
+            if all(name in self._feedback for name in required):
+                oldest = min(stamp for _, stamp in self._feedback.values())
                 self._controller.set_feedback(
-                    dict(zip(sample.name, sample.position, strict=True)), time.monotonic()
+                    {name: value for name, (value, _) in self._feedback.items()},
+                    time.monotonic() - max(0.0, wall - oldest),
                 )
 
     def tick(self, now: float, dt: float) -> None:
