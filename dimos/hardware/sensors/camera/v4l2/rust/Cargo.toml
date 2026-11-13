@@ -21,7 +21,7 @@ python = "dimos.hardware.sensors.camera.v4l2.module:V4L2Camera"
 jpeg_out = "sensor_msgs.CompressedImage"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "30482d5b99126e5404b3c0a56dd0eddc8fcea6a8" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "0e1d2f6fb93f2eaba886d167c04bd01749b94f37" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
