@@ -56,8 +56,8 @@ class ObservationStore(Configurable, CompositeResource, Generic[T]):
         """Insert observation metadata, return assigned id."""
         ...
 
-    def validate_query(self, q: StreamQuery) -> None:
-        """Check metadata constraints, including queries dispatched to a vector store."""
+    def warn_if_unposed(self, q: StreamQuery) -> None:
+        """Warn when *q* filters by position and no observation here has a pose to match."""
 
     @abstractmethod
     def query(self, q: StreamQuery) -> Iterator[Observation[T]]:

@@ -113,12 +113,13 @@ def pose_fill_db(
         )
 
     src = SqliteStore(path=str(src_path), must_exist=True)
-    dest = SqliteStore(path=str(dest_path))
     names = streams if streams is not None else src.list_streams()
     if target not in names:
         raise ValueError(f"target stream {target!r} not in {names}")
     if pose_source not in src.list_streams():
         raise ValueError(f"pose_source stream {pose_source!r} not found in source dataset")
+    # Opened after the checks: a rejected run must not leave an empty destination behind.
+    dest = SqliteStore(path=str(dest_path))
 
     written: dict[str, int] = {}
     for name in names:

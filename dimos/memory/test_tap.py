@@ -15,7 +15,6 @@
 from collections.abc import Callable
 from contextlib import ExitStack, closing
 from pathlib import Path
-import shlex
 from typing import Any
 
 import numpy as np
@@ -208,34 +207,3 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
-
-
-def test_close_reports_shell_quoted_pose_fill_command(tmp_path, mocker):
-    path = tmp_path / "recording with spaces" / "memory.db"
-    info = mocker.patch.object(tap.logger, "info")
-    with SqliteStore(path=str(path)) as store:
-        with closing(TransportRecorder(store)) as recorder, ExitStack() as subscriptions:
-            transport = _Transport()
-            unsubscribe = recorder.tap("odom", PoseStamped, transport)
-            assert unsubscribe is not None
-            subscriptions.callback(unsubscribe)
-            transport.publish(PoseStamped(ts=42.25, position=(1, 2, 3)))
-        assert store.stream("odom").count() == 1
-    assert info.call_args.kwargs == {
-        "path": str(path),
-        "pose_fill_command": f"dimos map pose-fill {shlex.quote(str(path))}",
-    }
-    message = info.call_args.args[0]
-    assert "No attached poses" in message
-    assert "writes a new posed DB" in message
-    assert "--target and --pose-source" in message
-
-
-def test_mcap_close_explains_pose_fill_requires_sqlite(tmp_path, mocker):
-    info = mocker.patch.object(tap.logger, "info")
-    path = tmp_path / "memory.mcap"
-    tap.log_recording_closed(path)
-    assert info.call_args.kwargs == {"path": str(path)}
-    message = info.call_args.args[0]
-    assert "No attached poses" in message
-    assert "pose-fill currently accepts SQLite recordings only" in message

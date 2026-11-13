@@ -396,21 +396,21 @@ class SqliteObservationStore(ObservationStore[T]):
         with self._lock:
             self._conn.rollback()
 
-    def validate_query(self, q: StreamQuery) -> None:
+    def warn_if_unposed(self, q: StreamQuery) -> None:
         if not any(isinstance(f, NearFilter) for f in q.filters):
             return
         with self._lock:
-            missing_poses = self._conn.execute(
+            unposed = self._conn.execute(
                 f'SELECT EXISTS(SELECT 1 FROM "{self._name}") '
                 f'AND NOT EXISTS(SELECT 1 FROM "{self._name}_rtree")'
             ).fetchone()[0]
-        if missing_poses:
+        if unposed:
+            # No stacklevel reaches the caller: the depth differs per query path.
             warnings.warn(
-                f"Stream {self._name!r} has no attached poses; near() cannot return results. "
+                f"Stream {self._name!r} has no attached poses, so near() cannot return results. "
                 f"Run dimos map pose-fill <recording.db> --target {self._name} "
-                "with the appropriate --pose-source; this writes a new posed DB.",
-                UserWarning,
-                stacklevel=3,
+                "--pose-source <pose stream> to write a posed copy.",
+                stacklevel=1,
             )
 
     @property
@@ -424,8 +424,6 @@ class SqliteObservationStore(ObservationStore[T]):
     def query(self, q: StreamQuery) -> Iterator[Observation[T]]:
         if q.search_text is not None:
             raise NotImplementedError("search_text is not supported by SqliteObservationStore")
-
-        self.validate_query(q)
 
         join = self._join_blobs
         sql, params, python_filters = _compile_query(q, self._name, join_blob=join)
@@ -457,7 +455,6 @@ class SqliteObservationStore(ObservationStore[T]):
         if python_filters:
             return sum(1 for _ in self.query(q))
 
-        self.validate_query(q)
         with self._lock:
             row = self._conn.execute(sql, params).fetchone()
         return int(row[0]) if row else 0

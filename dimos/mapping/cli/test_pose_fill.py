@@ -20,8 +20,13 @@ The end-to-end `dimos map pose-fill` path against a real recording lives in
 
 from __future__ import annotations
 
-from dimos.mapping.cli.pose_fill import pose_fill
+from pathlib import Path
+
+import pytest
+
+from dimos.mapping.cli.pose_fill import pose_fill, pose_fill_db
 from dimos.memory.store.memory import MemoryStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -59,3 +64,15 @@ def test_pose_fill_mount_composes_static_child_transform() -> None:
     assert out[0].pose_tuple is not None
     # Identity rotations → composed translation is the component-wise sum.
     assert out[0].pose_tuple[:3] == (1.0, 1.0, 0.0)
+
+
+def test_pose_fill_db_rejected_run_leaves_no_destination(tmp_path: Path) -> None:
+    """A wrong ``target`` must not leave a file that blocks the corrected run."""
+    src, dest = tmp_path / "memory.db", tmp_path / "memory_posed.db"
+    with SqliteStore(path=str(src)) as store:
+        store.stream("joint_state", float).append(1.0, ts=0.0)
+
+    with pytest.raises(ValueError, match="target stream 'lidar'"):
+        pose_fill_db(src, dest)
+
+    assert not dest.exists()

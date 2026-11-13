@@ -32,7 +32,7 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.tap import log_recording_closed, matching, recording_dir
+from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES
 from dimos.utils.logging_config import setup_logger
@@ -190,7 +190,6 @@ class RustRecordingSession:
     def __init__(self, plan: RustRecordingPlan) -> None:
         self.plan = plan
         self._ready = threading.Event()
-        self._started = threading.Event()
         self._stopping = threading.Event()
         self._failure: str | None = None
         self._process: subprocess.Popen[bytes] | None = None
@@ -240,7 +239,6 @@ class RustRecordingSession:
             message = self._failure or f"did not report ready within {_READY_TIMEOUT:g}s"
             self.stop()
             raise RuntimeError(f"Rust recorder startup failed: {message}")
-        self._started.set()
         logger.info(
             "Experimental Rust recorder ready",
             artifact_path=str(self.plan.path),
@@ -303,6 +301,4 @@ class RustRecordingSession:
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if process.returncode not in (None, 0):
             logger.warning("Rust recorder stopped with an error", status=process.returncode)
-        if process.returncode == 0 and self._started.is_set() and self._failure is None:
-            log_recording_closed(self.plan.path)
         self._process = None

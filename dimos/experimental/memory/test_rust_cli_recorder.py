@@ -226,9 +226,8 @@ def test_launch_config_uses_default_or_configured_threads(
 
 
 def test_process_exit_before_ready_fails_startup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
     process = _FakeProcess(stdout=b"", returncode=3)
     monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: tmp_path / "recorder")
     monkeypatch.setattr(
@@ -238,16 +237,9 @@ def test_process_exit_before_ready_fails_startup(
 
     with pytest.raises(RuntimeError, match="startup failed: process exited with status 3"):
         RustRecordingSession(_plan(tmp_path)).start()
-    hint.assert_not_called()
 
 
-def test_readiness_timeout_fails_startup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    mocker: MockerFixture,
-    request: pytest.FixtureRequest,
-) -> None:
-    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
+def test_readiness_timeout_fails_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     process = _FakeProcess(stdout=b"")
     monkeypatch.setattr(rust_cli_recorder, "_READY_TIMEOUT", 0.01)
     monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: tmp_path / "recorder")
@@ -255,27 +247,17 @@ def test_readiness_timeout_fails_startup(
         "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
         lambda *args, **kwargs: process,
     )
-    session = RustRecordingSession(_plan(tmp_path))
-    request.addfinalizer(session.stop)
-
-    def late_stdout():
-        assert session._stopping.wait(timeout=1.0)
-        yield b'{"fields":{"message":"memory recorder ready"},"level":"INFO"}\n'
-
-    mocker.patch.object(process, "stdout", late_stdout())
 
     with pytest.raises(RuntimeError, match="did not report ready"):
-        session.start()
+        RustRecordingSession(_plan(tmp_path)).start()
 
     assert process.signals == [signal.SIGTERM]
-    hint.assert_not_called()
 
 
 def test_unexpected_runtime_exit_is_logged_without_raising(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
     process = _FakeProcess()
-    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
     error = mocker.patch.object(rust_cli_recorder.logger, "error")
     session = _start_fake_session(tmp_path, monkeypatch, process)
 
@@ -284,13 +266,11 @@ def test_unexpected_runtime_exit_is_logged_without_raising(
     session.stop()
 
     error.assert_called_once_with("Experimental Rust recorder exited", status=9)
-    hint.assert_not_called()
 
 
 def test_stop_kills_process_that_does_not_flush(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
     process = _FakeProcess(ignore_term=True)
     monkeypatch.setattr(rust_cli_recorder, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.01)
     session = _start_fake_session(tmp_path, monkeypatch, process)
@@ -299,7 +279,6 @@ def test_stop_kills_process_that_does_not_flush(
 
     assert process.signals == [signal.SIGTERM]
     assert process.killed
-    hint.assert_not_called()
 
 
 def test_custom_lcm_url_reaches_recorder_child(tmp_path, monkeypatch, mocker):
@@ -380,14 +359,3 @@ def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     assert popen.call_args.kwargs["cwd"] == str(tmp_path / "dimos/experimental/memory/rust")
     assert popen.call_args.args[0] == "nix build -L path:."
-
-
-def test_successful_stop_reports_recording_pose_hint_once(tmp_path, monkeypatch, mocker):
-    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
-    session = _start_fake_session(tmp_path, monkeypatch, _FakeProcess())
-    try:
-        session.stop()
-        session.stop()
-        hint.assert_called_once_with(tmp_path / "memory.db")
-    finally:
-        session.stop()

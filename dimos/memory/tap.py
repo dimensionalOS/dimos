@@ -29,7 +29,6 @@ import fnmatch
 import os
 from pathlib import Path
 import queue
-import shlex
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -52,23 +51,6 @@ def recording_dir() -> Path:
     """``recordings/<run-id>`` for this ``dimos run``; a timestamp when run outside it."""
     run_id = os.environ.get("DIMOS_RUN_ID") or time.strftime("%Y%m%d-%H%M%S")
     return RECORDINGS_DIR / run_id
-
-
-def log_recording_closed(path: Path) -> None:
-    """Explain the missing pose metadata and the supported post-processing step."""
-    if path.suffix == ".mcap":
-        logger.info(
-            "Recording closed. No attached poses; spatial queries need pose metadata. "
-            "dimos map pose-fill currently accepts SQLite recordings only (--record sqlite).",
-            path=str(path),
-        )
-        return
-    logger.info(
-        "Recording closed. No attached poses; pose-fill writes a new posed DB. "
-        "Adjust --target and --pose-source for your streams.",
-        path=str(path),
-        pose_fill_command=f"dimos map pose-fill {shlex.quote(str(path))}",
-    )
 
 
 def _globs(topics: str) -> list[str]:
@@ -127,7 +109,6 @@ class TransportRecorder:
         self._writer.join()
         if self.dropped:
             logger.warning("--record: dropped %d messages (writer queue full)", self.dropped)
-        log_recording_closed(Path(self.store.config.path))
 
     def tap(
         self, name: str, stream_type: type, transport: Transport[Any]

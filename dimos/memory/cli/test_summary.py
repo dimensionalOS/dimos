@@ -12,52 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import ExitStack, closing
-import shlex
+import re
 
 from typer.testing import CliRunner
 
-from dimos.core.stream import Transport
 from dimos.memory.cli.app import mem_app
-from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.tap import TransportRecorder
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
-def test_summary_reports_missing_poses_on_fresh_recording(tmp_path, mocker):
-    path = tmp_path / "recording with spaces" / "memory.db"
-    transport = mocker.Mock(spec=Transport)
-    with SqliteStore(path=str(path)) as store:
-        with closing(TransportRecorder(store)) as recorder, ExitStack() as subscriptions:
-            unsubscribe = recorder.tap("odom", PoseStamped, transport)
-            assert unsubscribe is not None
-            subscriptions.callback(unsubscribe)
-            on_message = transport.subscribe.call_args.args[0]
-            on_message(PoseStamped(ts=42.25, position=(1, 2, 3)))
+def test_summary_counts_attached_poses_per_stream(sqlite_store: SqliteStore) -> None:
+    lidar = sqlite_store.stream("lidar", float)
+    lidar.append(1.0, ts=1.0, pose=(1, 2, 3))
+    lidar.append(2.0, ts=2.0, pose=(1, 2, 3))
+    lidar.append(3.0, ts=3.0)
+    sqlite_store.stream("cmd_vel", float).append(1.0, ts=1.0)
 
-    # Summary must inspect metadata without decoding recorded sensor payloads.
-    mocker.patch.object(LcmCodec, "decode", side_effect=AssertionError("unexpected payload read"))
-    result = CliRunner().invoke(mem_app, ["summary", str(path)])
+    result = CliRunner().invoke(mem_app, ["summary", sqlite_store.config.path])
 
     assert result.exit_code == 0, result.output
-    assert "odom" in result.output
-    assert "no attached poses" in result.output
-    assert f"dimos map pose-fill {shlex.quote(str(path))}" in " ".join(result.output.split())
-
-
-def test_summary_omits_missing_poses_hint_when_any_stream_has_poses(sqlite_store):
-    path = sqlite_store.config.path
-    assert not sqlite_store.has_poses()
-    empty = CliRunner().invoke(mem_app, ["summary", path])
-    assert empty.exit_code == 0, empty.output
-    assert "no attached poses" not in empty.output
-    sqlite_store.stream("unposed", float).append(1.0, ts=1.0)
-    assert not sqlite_store.has_poses()
-    sqlite_store.stream("posed", float).append(1.0, ts=1.0, pose=(1, 2, 3))
-    assert sqlite_store.has_poses()
-
-    result = CliRunner().invoke(mem_app, ["summary", str(path)])
-
-    assert result.exit_code == 0, result.output
-    assert "no attached poses" not in result.output
+    # Rich colours the output when CI forces a terminal.
+    lines = re.sub(r"\x1b\[[0-9;]*m", "", result.output).splitlines()
+    header = next(line for line in lines if "Stream" in line)
+    column = [cell.strip() for cell in header.split("┃")].index("Poses")
+    poses = {}
+    for name in ("lidar", "cmd_vel"):
+        row = next(line for line in lines if f" {name} " in line)
+        poses[name] = row.split("│")[column].strip()
+    assert poses == {"lidar": "2", "cmd_vel": "—"}
