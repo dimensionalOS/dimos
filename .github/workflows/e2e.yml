@@ -200,6 +200,10 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
       - name: Install native dependencies (pyaudio build, JPEG encoding)
         run: |
           sudo apt-get update
