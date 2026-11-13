@@ -1067,7 +1067,7 @@ mod tests {
 
     #[test]
     fn empty_config_validates() {
-        assert!(validate_config(&crate::module::NoConfig::default()).is_ok());
+        assert!(validate_config(&crate::module::NoConfig).is_ok());
     }
 
     // topic_for fallback
@@ -1566,7 +1566,7 @@ mod tests {
         #[tokio::test]
         async fn io_field_is_wired_to_its_handler_and_can_publish() {
             let mut builder = Builder::new(topics(&[("cmd", "/robot/cmd")]));
-            let mut echo = Echo::build(&mut builder, NoConfig::default());
+            let mut echo = Echo::build(&mut builder, NoConfig);
 
             builder.routes["/robot/cmd"][0].dispatch(b"ping");
             // Dropping the routes closes the sender, so handle() drains and returns.
