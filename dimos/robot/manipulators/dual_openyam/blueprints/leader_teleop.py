@@ -14,9 +14,11 @@
 
 """Two YAM leader arms drive the dual OpenYAM through the leader teleop module."""
 
+from dataclasses import replace
 from typing import ClassVar
 
 from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
@@ -38,7 +40,6 @@ from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnecti
 from dimos.teleop.leader.calibration import LEADER_SIDES, LeaderSide
 from dimos.teleop.leader.mapping import GripperMapping, JointMapping, SideMapping
 from dimos.teleop.leader.module import LeaderTeleopModule
-from dimos.teleop.leader.tasks import leader_gripper_task, leader_task
 
 # dual_openyam.urdf position limits for joint1 to joint6; both arms share them.
 DUAL_OPENYAM_JOINT_LIMITS = (
@@ -114,15 +115,8 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
     }
 
 
-def _gripper_tasks() -> list[TaskConfig]:
-    """One task per follower jaw, driven by the trigger on the same side's leader."""
-    jaws = {jaw.name: jaw for jaw in DualOpenYamConnection.robot.grippers}
-    return [
-        leader_gripper_task(
-            side, f"arm/{jaws[f'{side}_gripper'].joint}", open_at=jaws[f"{side}_gripper"].open_at
-        )
-        for side in LEADER_SIDES
-    ]
+# The follower's jaws by leader side; each is named <side>_gripper on the robot.
+_JAWS = {jaw.name.removesuffix("_gripper"): jaw for jaw in DualOpenYamConnection.robot.grippers}
 
 
 def dual_openyam_leader_module() -> Blueprint:
@@ -151,11 +145,25 @@ def dual_openyam_leader_control() -> Blueprint:
             instance_name="ControlCoordinator",
             model=dual_openyam_control_model(robot="arm"),
             tasks=[
-                leader_task(
-                    DUAL_OPENYAM_LEADER_JOINTS,
-                    velocity_limits=dual_openyam_leader_velocity_limits(),
+                # The trajectory task follows the leader's targets instead of joint_command.
+                replace(
+                    joint_trajectory_task(
+                        DUAL_OPENYAM_LEADER_JOINTS,
+                        velocity_limits=dual_openyam_leader_velocity_limits(),
+                    ),
+                    stream_bind={"joint_command": "leader_joint_command"},
                 ),
-                *_gripper_tasks(),
+                *[
+                    TaskConfig(
+                        name=f"{side}_arm_gripper",
+                        type="gripper",
+                        joint_names=[f"arm/{_JAWS[side].joint}"],
+                        priority=20,
+                        params={"open_at": _JAWS[side].open_at},
+                        stream_bind={"gripper_command": f"{side}_gripper_command"},
+                    )
+                    for side in LEADER_SIDES
+                ],
             ],
             zero_stiffness_joints=[],
         ),

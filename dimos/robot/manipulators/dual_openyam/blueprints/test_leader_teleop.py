@@ -33,7 +33,8 @@ from dimos.robot.manipulators.dual_openyam.config import (
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.teleop.leader.calibration import LEADER_SIDES
 from dimos.teleop.leader.module import LeaderTeleopModule, LeaderTeleopModuleConfig
-from dimos.teleop.leader.tasks import LEADER_JOINT_COMMAND, LEADER_TASK_PRIORITY
+
+LEADER_JOINT_COMMAND = "leader_joint_command"
 
 _MODEL = dual_openyam_model_config(robot="arm")
 # The connection has no mock fallback, so every parse needs both selectors.
@@ -97,7 +98,7 @@ def test_teleop_blueprint_gives_the_leader_its_own_lane_above_the_planner() -> N
     assert leader.type == "trajectory"
     assert leader.joint_names == list(_MODEL.joint_names)
     assert leader.stream_bind == {"joint_command": LEADER_JOINT_COMMAND}
-    assert leader.priority == LEADER_TASK_PRIORITY
+    assert leader.priority == 10
     limits = leader.params["velocity_limits"]
     assert limits == leader_teleop.dual_openyam_leader_velocity_limits()
     assert set(limits) == set(_MODEL.joint_names)
