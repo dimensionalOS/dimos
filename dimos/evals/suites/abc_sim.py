@@ -62,8 +62,8 @@ from dimos.robot.manipulators.dual_openyam.abc_sim import (
 TABLE_Z = 0.75
 GUIDANCE = (
     "You control two YAM arms with parallel grippers, and a fixed overhead RGB-D camera. "
-    "Find objects with the localize module, get grasps for an object from the grasp module, "
-    "and move the arms and grippers through the manipulation module."
+    "Find objects with the localize module, get grasps for an object's point cloud from the grasp "
+    "module, and move the arms and grippers through the manipulation module."
 )
 # The arm bases stand on the table top in some ABC scenes and 1 cm above it in the rest.
 _BASE_Z = {
@@ -79,7 +79,7 @@ _BASE_Z = {
 def environment(env_task: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
     base = [*DUAL_OPENYAM_SIM_BASE_XY, _BASE_Z.get(env_task, 0.76)]
     return MujocoEnvironment(
-        blueprint=["dual-openyam-abc-sim", "perception-localize"],
+        blueprint=["dual-openyam-abc-sim", "manipulation-localize"],
         scene=abc_scene(f"abc_{env_task}"),
         tracked_bodies=bodies,
         module_env={
@@ -87,7 +87,7 @@ def environment(env_task: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
                 {"frame_id": "world", "position": base}
             ),
             # The overhead camera never moves, so one view must confirm an object.
-            "PERCEPTIONLOCALIZE__PARAMS__MIN_VIEWS": "1",
+            "MANIPULATIONLOCALIZE__PARAMS__MIN_VIEWS": "1",
         },
     )
 

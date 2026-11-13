@@ -58,7 +58,7 @@ dual_openyam_abc_sim = autoconnect(
         visualization={"backend": "viser"},
     ),
     ManipulationSkills.blueprint(),
-    # Grasps from an object's point cloud, e.g. localize's object_pointcloud.
+    # Grasps from an object's point cloud, e.g. ManipulationLocalize.get_pointcloud.
     HeuristicGraspModule.blueprint(),
     MujocoSimModule.blueprint(
         address=DUAL_OPENYAM_SIM_SCENE,

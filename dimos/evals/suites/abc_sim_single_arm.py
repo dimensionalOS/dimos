@@ -34,8 +34,8 @@ from dimos.utils.data import LfsPath
 
 GUIDANCE = (
     "You control one YAM arm with a parallel gripper, and a fixed overhead RGB-D camera. "
-    "Find objects with the localize module, get grasps for an object from the grasp module, "
-    "and move the arm and gripper through the manipulation module."
+    "Find objects with the localize module, get grasps for an object's point cloud from the grasp "
+    "module, and move the arm and gripper through the manipulation module."
 )
 
 
@@ -45,7 +45,7 @@ def environment(
     return MujocoEnvironment(
         blueprint=[
             "openyam-manipulation-sim",
-            "perception-localize",
+            "manipulation-localize",
         ],
         scene=LfsPath(f"{scene}/scene.xml"),
         tracked_bodies=bodies,
@@ -54,7 +54,7 @@ def environment(
                 {"frame_id": "world", "position": list(base)}
             ),
             # The overhead camera never moves, so one view must confirm an object.
-            "PERCEPTIONLOCALIZE__PARAMS__MIN_VIEWS": "1",
+            "MANIPULATIONLOCALIZE__PARAMS__MIN_VIEWS": "1",
         },
     )
 
