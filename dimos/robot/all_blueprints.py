@@ -410,6 +410,8 @@ all_modules = {
     "world-belief-module": "dimos.experimental.world_belief.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
+    "wrist-left-camera": "dimos.robot.galaxea.r1pro.wrist_cameras.WristLeftCamera",
+    "wrist-right-camera": "dimos.robot.galaxea.r1pro.wrist_cameras.WristRightCamera",
     "x-arm-connection": "dimos.robot.manipulators.xarm.connection.XArmConnection",
     "x-arm-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic.XArmCoordinator",
     "x-arm-twist-coordinator": "dimos.robot.manipulators.xarm.blueprints.teleop.XArmTwistCoordinator",

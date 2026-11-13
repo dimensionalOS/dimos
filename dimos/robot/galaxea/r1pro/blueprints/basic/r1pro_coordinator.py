@@ -58,6 +58,7 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadRightCamera,
 )
 from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig
+from dimos.robot.galaxea.r1pro.wrist_cameras import WristLeftCamera, WristRightCamera
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -97,8 +98,6 @@ def _r1pro_rerun_blueprint() -> Any:
         rrb.Spatial2DView(origin="world/wrist_right_color", name="Wrist right"),
         # Row 2 — depth.
         rrb.Spatial2DView(origin="world/head_depth", name="Head depth"),
-        rrb.Spatial2DView(origin="world/wrist_left_depth", name="Wrist left depth"),
-        rrb.Spatial2DView(origin="world/wrist_right_depth", name="Wrist right depth"),
         grid_columns=4,
         name="All cameras",
     )
@@ -126,8 +125,6 @@ _RERUN_MAX_HZ = {
 # Per-topic overrides for the rerun bridge (None = suppress entirely).
 _RERUN_VISUAL_OVERRIDE = {
     # Raw depth frames are the heaviest payloads on the viewer link.
-    "world/wrist_left_depth": None,
-    "world/wrist_right_depth": None,
     "world/head_depth": None,
 }
 
@@ -179,7 +176,7 @@ def r1pro_control(
     tasks: Sequence[TaskConfig] | None = None,
     **connection: Any,
 ) -> Blueprint:
-    """R1ProConnection, ControlCoordinator and the head cameras.
+    """R1ProConnection, ControlCoordinator and the head and wrist cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
@@ -204,6 +201,8 @@ def r1pro_control(
         autoconnect(
             R1ProConnection.blueprint(**connection),
             *_head_cameras(),
+            WristLeftCamera.blueprint(),
+            WristRightCamera.blueprint(),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[
@@ -232,6 +231,8 @@ def r1pro_control(
                 (HeadRightCamera, "jpeg_out", "head_right_color"),
                 (HeadCameraInfo, "left_info", "head_left_info"),
                 (HeadCameraInfo, "right_info", "head_right_info"),
+                (WristLeftCamera, "jpeg_out", "wrist_left_color"),
+                (WristRightCamera, "jpeg_out", "wrist_right_color"),
             ]
         )
         .transports(
@@ -268,14 +269,8 @@ def r1pro_control(
                 ("wrist_left_color", CompressedImage): _zenoh_transport(
                     "/wrist_left_color", CompressedImage, latest_wins=True
                 ),
-                ("wrist_left_depth", Image): _zenoh_transport(
-                    "/wrist_left_depth", Image, latest_wins=True
-                ),
                 ("wrist_right_color", CompressedImage): _zenoh_transport(
                     "/wrist_right_color", CompressedImage, latest_wins=True
-                ),
-                ("wrist_right_depth", Image): _zenoh_transport(
-                    "/wrist_right_depth", Image, latest_wins=True
                 ),
                 # ControlCoordinator outs.
                 ("coordinator_joint_state", JointState): _zenoh_transport(
