@@ -150,8 +150,15 @@ def test_stdin_blob_nests_one_section_per_member() -> None:
         "goal": "dimos/goal",
         "path": "dimos/path",
     }
-    assert blob["modules"]["mapper"]["config"] == {"voxel_size": 0.1}
-    assert blob["modules"]["planner"]["config"] == {"world_frame": "map"}
+    # frame_id_prefix rides along for every native module, namespaced or not.
+    assert blob["modules"]["mapper"]["config"] == {
+        "voxel_size": 0.1,
+        "frame_id_prefix": None,
+    }
+    assert blob["modules"]["planner"]["config"] == {
+        "world_frame": "map",
+        "frame_id_prefix": None,
+    }
     assert "suppress" not in blob
     host.stop()
 
