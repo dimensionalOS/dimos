@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The DimOS side of a Feetech robot: publish its joint angles at a fixed rate.
+"""The DimOS side of a Feetech leader robot: follower targets at a fixed rate.
 
 The motor layer lives in :mod:`dimos.robot.manipulators.feetech.arm` and the
-robot's data in :mod:`dimos.robot.manipulators.feetech.robot`. The motors are
-only read: a Feetech connection takes no commands.
+robot's data in :mod:`dimos.robot.manipulators.feetech.robot`. Each reading
+is published as targets for the follower joints the motors drive, kept inside
+their limits, and each trigger as its jaw's opening. The motors are only
+read: a Feetech connection takes no commands.
 """
 
 from __future__ import annotations
 
 from abc import abstractmethod
+import math
 from pathlib import Path
 import threading
 import time
@@ -37,6 +40,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.feetech.arm import FeetechArm, MockFeetechArm
 from dimos.robot.manipulators.feetech.calibration import (
     FEETECH_CALIBRATION_ROOT,
@@ -47,24 +51,32 @@ from dimos.robot.manipulators.feetech.robot import FeetechRobot
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+# The trajectory task treats a JointState in this frame as a streamed jog that
+# it releases 0.4 s after the last message, so the follower is free once the
+# leader stops.
+GUARDED_JOINT_FRAME_ID = "dimos/guarded-joint"
 
 
 class FeetechConnectionConfig(ConnectionConfig):
     """Settings for a Feetech connection.
 
     Attributes:
-        source: The first part of every published joint name, e.g. "leader"
-            gives "leader/left_joint_1".
-        state_rate_hz: How often the joint angles are read and published, in Hz.
+        source: The follower connection's name, which starts every published
+            joint name, e.g. "arm" gives "arm/left_joint1".
+        state_rate_hz: How often the leaders are read and published, in Hz.
         calibration_root: Directory holding one calibration folder per bus.
-        mock_positions: Joint angles to publish when no serial port is given,
-            in radians, keyed by joint name ("left_joint_1"); joints left out
+        filter_cutoff_hz: Cutoff of a low-pass on the joint targets, in Hz,
+            to smooth hand tremor and encoder noise. None sends each reading
+            as it is.
+        mock_positions: Follower joint angles to publish when no serial port
+            is given, in radians, e.g. {"left_joint1": 0.3}; joints left out
             read 0. None makes a serial port required.
     """
 
-    source: str = "leader"
+    source: str = "arm"
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
     calibration_root: Path = FEETECH_CALIBRATION_ROOT
+    filter_cutoff_hz: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     mock_positions: dict[str, float] | None = None
 
     @model_validator(mode="after")
@@ -75,17 +87,22 @@ class FeetechConnectionConfig(ConnectionConfig):
 
 
 class FeetechConnection(ConnectionModule):
-    """Own one Feetech robot and publish its joint angles."""
+    """Own one Feetech leader robot and publish what its follower should do."""
 
-    #: The robot this connection reads: its buses and their motors.
+    #: The robot this connection reads: its buses, motors and triggers.
     robot: ClassVar[FeetechRobot]
     config: FeetechConnectionConfig
+    # Follower joint targets, for the follower coordinator's trajectory task.
     joint_state: Out[JointState]
+    # Jaw openings, 1 = open, for the follower coordinator's gripper tasks.
+    left_gripper_command: Out[Float32]
+    right_gripper_command: Out[Float32]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._arm: FeetechArm | MockFeetechArm | None = None
         self._last_read_error: str | None = None
+        self._filtered: dict[str, float] = {}
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
 
@@ -107,7 +124,9 @@ class FeetechConnection(ConnectionModule):
             arm = MockFeetechArm(self.robot, self.config.mock_positions)
         else:
             calibrations = {
-                bus: load_calibration(self.calibration_path(bus), bus, self.robot.bus(bus).motors)
+                bus: load_calibration(
+                    self.calibration_path(bus), bus, self.robot.bus(bus).motor_names
+                )
                 for bus in ports
             }
             arm = FeetechArm(self.robot, ports, calibrations)
@@ -155,6 +174,45 @@ class FeetechConnection(ConnectionModule):
     def halt(self) -> None:
         """Nothing is ever commanded, so there is nothing to stop."""
 
+    def publish_reading(self, readings: dict[str, dict[str, float]]) -> None:
+        """Publish the follower targets and jaw openings for one reading.
+
+        Args:
+            readings: Motor angles in radians, by bus name, then motor name,
+                as :meth:`FeetechArm.read` returns them.
+        """
+        targets = {
+            motor.joint: motor.target(readings[bus.name][motor.name])
+            for bus in self.robot.buses
+            if bus.name in readings
+            for motor in bus.motors
+        }
+        cutoff = self.config.filter_cutoff_hz
+        if cutoff is not None:
+            # First-order low-pass, sampled once per read.
+            period = 1.0 / self.config.state_rate_hz
+            alpha = period / (1.0 / (math.tau * cutoff) + period)
+            targets = {
+                joint: self._filtered[joint] + alpha * (value - self._filtered[joint])
+                if joint in self._filtered
+                else value
+                for joint, value in targets.items()
+            }
+            self._filtered.update(targets)
+        self.joint_state.publish(
+            JointState(
+                ts=time.time(),
+                frame_id=GUARDED_JOINT_FRAME_ID,
+                name=[f"{self.config.source}/{joint}" for joint in targets],
+                position=list(targets.values()),
+            )
+        )
+        outputs = {"left": self.left_gripper_command, "right": self.right_gripper_command}
+        for bus in self.robot.buses:
+            if bus.trigger is not None and bus.name in readings:
+                opening = bus.trigger.opening(readings[bus.name][bus.trigger.name])
+                outputs[bus.name].publish(Float32(data=opening))
+
     def _read_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz
         while not self._stop_reading.is_set():
@@ -163,7 +221,7 @@ class FeetechConnection(ConnectionModule):
                 with self._hardware_lock:
                     if self._arm is None or not self._connected:
                         return
-                    positions = self._arm.read()
+                    readings = self._arm.read()
             except Exception as error:
                 # A failed read is skipped; the next one may succeed.
                 message = f"{type(error).__name__}: {error}"
@@ -172,11 +230,5 @@ class FeetechConnection(ConnectionModule):
                     self._last_read_error = message
             else:
                 self._last_read_error = None
-                self.joint_state.publish(
-                    JointState(
-                        ts=time.time(),
-                        name=[f"{self.config.source}/{name}" for name in positions],
-                        position=list(positions.values()),
-                    )
-                )
+                self.publish_reading(readings)
             self._stop_reading.wait(max(0.0, period - (time.monotonic() - started)))
