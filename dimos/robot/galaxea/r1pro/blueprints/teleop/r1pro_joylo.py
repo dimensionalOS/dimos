@@ -59,7 +59,7 @@ def _robot_blueprint(
     return (
         autoconnect(
             UsdManager.blueprint(model=UsdModel.from_file(scene), publish_joint_tf=False),
-            SimTfModule.blueprint(scene_manager=UsdManager),
+            SimTfModule.blueprint(),
             SimModule.blueprint(
                 scene_manager=UsdManager,
                 backend=MujocoBackend,

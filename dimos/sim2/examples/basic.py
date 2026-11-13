@@ -57,7 +57,7 @@ sim2_basic = autoconnect(
     _lidar,
     _imu,
     _scene,
-    SimTfModule.blueprint(scene_manager=_scene),
+    SimTfModule.blueprint(),
     SimModule.blueprint(scene_manager=_scene, backend=MujocoBackend, joint_ids=("tool_joint",)),
     SimJointEncoderModule.blueprint(sensor=EncoderConfig(("tool_joint",))),
 ).global_config(viewer="none", transport="zenoh", n_workers=5)

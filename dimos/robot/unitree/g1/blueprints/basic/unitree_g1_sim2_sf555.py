@@ -60,7 +60,7 @@ SCENE = ASSETS / "g1_scene.usda"
 
 unitree_g1_sim2_sf555 = autoconnect(
     UsdManager.blueprint(model=UsdModel.from_file(SCENE), publish_joint_tf=False),
-    SimTfModule.blueprint(scene_manager=UsdManager),
+    SimTfModule.blueprint(),
     SimModule.blueprint(
         scene_manager=UsdManager,
         backend=MujocoBackend,

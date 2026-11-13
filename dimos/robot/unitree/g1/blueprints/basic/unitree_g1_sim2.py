@@ -84,7 +84,7 @@ unitree_g1_sim2 = autoconnect(
     ),
     _lidar,
     _scene,
-    SimTfModule.blueprint(scene_manager=_scene),
+    SimTfModule.blueprint(),
     SimModule.blueprint(
         scene_manager=_scene,
         backend=MujocoBackend,

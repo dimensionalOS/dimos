@@ -22,22 +22,20 @@ from dimos.sim2.sensors.tf import SimTfModule
 
 
 @pytest.fixture
-def sim_tf(world, mocker):
-    module = SimTfModule(scene=world, hz=50)
+def sim_tf(mocker):
+    module = SimTfModule(hz=50)
     try:
         mocker.patch.object(module, "_tf", TF())
         publish = mocker.patch.object(module.tfbuffer, "publish")
-        module.open_sensor(world)
         yield module, publish
     finally:
-        module.close_sensor()
         module.stop()
 
 
-def test_physical_pose_edges_reconstruct_world_poses_at_capture_time(sim_tf, poses):
+async def test_physical_pose_edges_reconstruct_world_poses_at_capture_time(sim_tf, poses):
     module, publish = sim_tf
     sample = poses(time_ns=2_000_000_000)
-    module.acquire(sample, latest=True)
+    await module.handle_observations(sample)
     edges = list(publish.call_args.args)
     absolute = {"world": np.eye(4)}
     while edges:
@@ -53,13 +51,13 @@ def test_physical_pose_edges_reconstruct_world_poses_at_capture_time(sim_tf, pos
     assert len(absolute) > 3
 
 
-def test_rate_and_epoch_changes_do_not_replay_old_transforms(sim_tf, poses):
+async def test_rate_and_epoch_changes_do_not_replay_old_transforms(sim_tf, poses):
     module, publish = sim_tf
     for time_ns, epoch in [(0, 0), (1_000_000, 0), (20_000_000, 0), (0, 1), (40_000_000, 0)]:
-        module.acquire(poses(time_ns=time_ns, epoch=epoch), latest=True)
+        await module.handle_observations(poses(time_ns=time_ns, epoch=epoch))
     assert [call.args[0].ts for call in publish.call_args_list] == [0.0, 0.02, 0.0]
     sample = poses(time_ns=20_000_000, epoch=1)
     sample.header.clock_id = "different-clock"
     with pytest.raises(ValueError, match="clock changed"):
-        module.acquire(sample, latest=True)
+        await module.handle_observations(sample)
     assert publish.call_count == 3
