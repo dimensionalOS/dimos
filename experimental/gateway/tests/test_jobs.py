@@ -319,6 +319,32 @@ def test_only_the_latest_finished_job_of_each_kind_is_kept() -> None:
     assert jobs.get(running.id) is running
 
 
+def test_a_rescan_forgets_what_was_introspected(
+    client: TestClient, scanned: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned.listed = [{"name": "good", "kind": "builtin"}]
+    probes: list[list[str]] = []
+
+    async def probe(dimos_dir: Path, args: list[str], *rest: Any, **options: Any) -> Any:
+        probes.append(args)
+        return {"name": "good", "global": {}, "modules": {}}
+
+    monkeypatch.setattr(introspect, "run_child", probe)
+    config = "/catalog/blueprints/good/config"
+    assert client.get(config).status_code == 200
+    client.get(config)
+    assert len(probes) == 1
+
+    def probes_after(scan: str) -> int:
+        job = client.post(scan).json()["job"]
+        until(lambda: client.get(f"/jobs/{job}").json()["done"])
+        client.get(config)
+        return len(probes)
+
+    assert probes_after("/catalog/scan/blueprints/good") == 2
+    assert probes_after("/catalog/scan") == 3
+
+
 def test_an_extras_install_forgets_the_cached_package_probe(
     client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
 ) -> None:
