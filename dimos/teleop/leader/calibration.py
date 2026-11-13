@@ -99,10 +99,7 @@ def load_calibration(
     """Load and validate a side-specific calibration artifact."""
     artifact_path = calibration_file(path)
     if not artifact_path.exists():
-        raise LeaderCalibrationError(
-            f"Missing {side} leader calibration at {artifact_path}. "
-            "Run `dimos hardware feetech-leader calibrate` first."
-        )
+        raise LeaderCalibrationError(f"Missing {side} leader calibration at {artifact_path}.")
     try:
         calibration = LeaderCalibration.model_validate_json(artifact_path.read_text())
         calibration.require_motors(motor_names)
