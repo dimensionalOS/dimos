@@ -410,3 +410,45 @@ def test_the_login_after_a_state_answers_once_the_login_moves_on(
     assert client.get("/cloud/login?after=idle").json()["state"] == "pending"
     threading.Timer(0.2, approve.set).start()
     assert client.get("/cloud/login?after=pending").json()["state"] == "approved"
+
+
+def test_upload_settings_change_through_the_api_and_reach_the_transfer(
+    client: TestClient, state: State, recording: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DIMOS_CLOUD_UPLOAD_RETRIES", "4")
+    assert client.get("/cloud/settings").json() == {
+        "httpTimeout": 60.0,
+        "uploadRetries": 4,
+        "uploadChunkMb": None,
+        "overridden": [],
+    }
+    changed = client.patch("/cloud/settings", json={"httpTimeout": 300, "uploadChunkMb": 16})
+    assert changed.json() == {
+        "httpTimeout": 300.0,
+        "uploadRetries": 4,
+        "uploadChunkMb": 16,
+        "overridden": ["httpTimeout", "uploadChunkMb"],
+    }
+    assert client.patch("/cloud/settings", json={"httpTimeout": 0}).status_code == 400
+    assert client.patch("/cloud/settings", json={"uploadChunkMb": 1}).status_code == 400
+
+    used: list[Any] = []
+
+    class FakeCloudData:
+        def __init__(self, config: Any) -> None:
+            used.append(config)
+
+        def upload(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {"upload_id": "cloud-1", "skipped": False, "quota": {}}
+
+    monkeypatch.setattr("dimos.cloud.data.CloudData", FakeCloudData)
+    monkeypatch.setattr(cloud, "api_key", lambda: "key")
+    state.uploads._transfer(str(recording), None, None, lambda *args: None)
+    assert (used[0].http_timeout, used[0].upload_retries, used[0].upload_chunk_mb) == (300, 4, 16)
+
+    assert client.patch("/cloud/settings", json={"httpTimeout": None}).json()["overridden"] == [
+        "uploadChunkMb"
+    ]
+    assert uploads.Uploads(state.uploads.bus, state.uploads.file).settings == {
+        "upload_chunk_mb": 16
+    }, "kept across a restart"

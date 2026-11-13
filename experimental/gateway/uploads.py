@@ -261,6 +261,14 @@ class Cancel:
         await self.asked.wait()
 
 
+# CloudConfig field -> its name in GET/PATCH /cloud/settings
+SETTINGS_FIELDS = {
+    "http_timeout": "httpTimeout",
+    "upload_retries": "uploadRetries",
+    "upload_chunk_mb": "uploadChunkMb",
+}
+
+
 class Uploads:
     """The upload queue, worked one at a time, and the device login it waits on."""
 
@@ -268,6 +276,11 @@ class Uploads:
         self.bus = bus
         self.file = file
         self.uploaded_file = file.with_name("uploaded.json") if file else None
+        self.settings_file = file.with_name("cloud_settings.json") if file else None
+        # CloudConfig fields set through PATCH /cloud/settings, over the environment's
+        self.settings: dict[str, Any] = (
+            store.read_json(self.settings_file) if self.settings_file else None
+        ) or {}
         self.items: list[Upload] = (store.read_json(file) if file else None) or []
         self.uploaded_by_path: dict[str, Uploaded] = (
             store.read_json(self.uploaded_file) if self.uploaded_file else None
@@ -318,6 +331,30 @@ class Uploads:
 
     def listing(self) -> dict[str, Any]:
         return {"uploads": self.items, "waitingForLogin": self.waiting_for_login}
+
+    def cloud_config(self) -> CloudConfig:
+        return CloudConfig().model_copy(update=self.settings)
+
+    def settings_listing(self) -> dict[str, Any]:
+        config = self.cloud_config()
+        return {
+            "httpTimeout": config.http_timeout,
+            "uploadRetries": config.upload_retries,
+            "uploadChunkMb": config.upload_chunk_mb,
+            "overridden": sorted(SETTINGS_FIELDS[field] for field in self.settings),
+        }
+
+    def change_settings(self, change: dict[str, Any]) -> dict[str, Any]:
+        """Sets each given setting (camelCase); None puts it back to the environment's. Applies from the next upload."""
+        for name, value in change.items():
+            field = next(field for field, api in SETTINGS_FIELDS.items() if api == name)
+            if value is None:
+                self.settings.pop(field, None)
+            else:
+                self.settings[field] = value
+        if self.settings_file:
+            store.write_atomic(self.settings_file, json.dumps(self.settings, indent=2))
+        return self.settings_listing()
 
     def save(self) -> None:
         if self.file:
@@ -620,7 +657,9 @@ class Uploads:
         if not cloud.api_key():
             raise NotLoggedInError()
         tick("preparing", 0, 0)
-        return CloudData().upload(Path(path), robot_id=robot_id, kind=kind, progress=tick)
+        return CloudData(config=self.cloud_config()).upload(
+            Path(path), robot_id=robot_id, kind=kind, progress=tick
+        )
 
     async def upload(self, upload: Upload) -> None:
         id = upload["id"]

@@ -613,6 +613,15 @@ class Uploads(Body):
     byPath: dict[str, Uploaded]
 
 
+class CloudSettings(Body):
+    """The upload transfer settings in effect, and which of them were set through the API rather than the environment."""
+
+    httpTimeout: float
+    uploadRetries: int
+    uploadChunkMb: int | None
+    overridden: list[str]
+
+
 class SourceFile(Body):
     """A blueprint's or module's .py file, from the checkout it's read from, and the line it starts on."""
 

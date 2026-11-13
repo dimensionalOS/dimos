@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from experimental.gateway import responses
 from experimental.gateway.state import ApiError, FreshQuery, GatewayState
@@ -30,6 +30,15 @@ class UploadRequest(BaseModel):
     robotId: str | None = None
     kind: str | None = None
     retry: str | None = None
+
+
+class SettingsChange(BaseModel):
+    """Only the given settings change; null puts one back to its DIMOS_CLOUD_* environment value."""
+
+    httpTimeout: float | None = Field(default=None, gt=0)
+    uploadRetries: int | None = Field(default=None, ge=0)
+    # S3's smallest part (every part but the last)
+    uploadChunkMb: int | None = Field(default=None, ge=5)
 
 
 @router.get("/cloud/account", response_model=responses.Account)
@@ -80,3 +89,13 @@ async def remove(state: GatewayState, id: str | None = None) -> dict[str, Any]:
     else:
         state.uploads.cancel(id)
     return {**state.uploads.listing(), **state.uploads.uploaded()}
+
+
+@router.get("/cloud/settings", response_model=responses.CloudSettings)
+async def settings(state: GatewayState) -> dict[str, Any]:
+    return state.uploads.settings_listing()
+
+
+@router.patch("/cloud/settings", response_model=responses.CloudSettings)
+async def change_settings(state: GatewayState, change: SettingsChange) -> dict[str, Any]:
+    return state.uploads.change_settings(change.model_dump(exclude_unset=True))
