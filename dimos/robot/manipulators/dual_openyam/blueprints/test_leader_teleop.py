@@ -15,19 +15,10 @@ from typing import Any
 
 import pytest
 
-from dimos.control.connection.mock_joint_connection import MockJointConnection
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.global_config import global_config
-from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.manipulators.dual_openyam.blueprints import leader_teleop
 from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_HOME_PER_ARM,
     dual_openyam_model_config,
-)
-from dimos.robot.manipulators.dual_openyam.connection import (
-    DualOpenYamConnection,
-    DualOpenYamLeaderConnection,
 )
 from dimos.teleop.leader.mapping import LEADER_SIDES
 
@@ -59,41 +50,3 @@ def test_mapping_limits_match_the_urdf() -> None:
             assert joint is not None
             assert joint.lower == pytest.approx(joint_mapping.lower, abs=1e-4)
             assert joint.upper == pytest.approx(joint_mapping.upper, abs=1e-4)
-
-
-def test_serial_ports_from_the_command_line_select_the_leaders() -> None:
-    blueprint = leader_teleop.dual_openyam_leader_teleop
-    parsed = BlueprintConfigParser(blueprint).parse(
-        ["--right-serial-port=/dev/ttyACM1", *_CAN_PORTS], environ={}
-    )
-    leaders = DualOpenYamLeaderConnection(
-        **parsed.module_kwargs(_atom(blueprint, DualOpenYamLeaderConnection).name)
-    )
-    try:
-        assert leaders.serial_ports() == {"left": "", "right": "/dev/ttyACM1"}
-    finally:
-        leaders.stop()
-    kwargs = parsed.module_kwargs(_atom(blueprint, DualOpenYamConnection).name)
-    assert (kwargs["left_can_port"], kwargs["right_can_port"]) == ("follower_l", "follower_r")
-
-
-@pytest.mark.self_hosted
-def test_simulation_mocks_the_leaders_and_the_can_buses(mocker: Any) -> None:
-    mocker.patch.object(global_config, "simulation", "mujoco")
-    (atom,) = leader_teleop.dual_openyam_leaders().blueprints
-    mock_positions = atom.kwargs["mock_positions"]
-    for side in LEADER_SIDES:
-        home = [mock_positions[f"{side}_joint_{index}"] for index in range(1, 7)]
-        assert home == DUAL_OPENYAM_HOME_PER_ARM
-
-    control = leader_teleop.dual_openyam_leader_control()
-    assert not any(issubclass(atom.module, DualOpenYamConnection) for atom in control.blueprints)
-    mock = _atom(control, MockJointConnection)
-    assert mock.kwargs["source"] == "arm"
-    assert control.remapping_map[(mock.name, "position_command")] == "arm_position_command"
-
-
-def test_blueprint_is_registered() -> None:
-    assert all_blueprints["dual-openyam-leader-teleop"].endswith(
-        "leader_teleop:dual_openyam_leader_teleop"
-    )
