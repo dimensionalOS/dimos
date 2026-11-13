@@ -19,15 +19,25 @@ import math
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_openarm_joylo_left_sim2
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_openarm_joylo_sim2
 from dimos.robot.galaxea.r1pro.joylo import ARMS, JAWS, UPPER, JoyloConfig, JoyloController
 from dimos.robot.galaxea.r1pro.leader import R1ProLeaderConnection
 from dimos.teleop.joycon.mapping import JoyConReading
 
 
 @pytest.fixture(scope="module")
-def parsed():
-    return BlueprintConfigParser(r1pro_openarm_joylo_left_sim2).parse([], environ={})
+def parsed(tmp_path_factory):
+    # One attached leader and one left Joy-Con are launch options, not a blueprint.
+    return BlueprintConfigParser(r1pro_openarm_joylo_sim2).parse(
+        [
+            '--r1proleaderconnection.enabled-sides=["left"]',
+            '--r1projoylo.enabled-sides=["left"]',
+            "--r1projoylo.arm-only=true",
+            f"--recorder.recording={tmp_path_factory.mktemp('session') / 'take'}",
+            "--episodes.task=check the left leader",
+        ],
+        environ={},
+    )
 
 
 @pytest.fixture

@@ -24,19 +24,31 @@ import time
 from typing import Any
 import uuid
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_joylo_sim2_mock
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import _robot_blueprint
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _transports
 from dimos.robot.galaxea.r1pro.joylo import ARMS
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
+from dimos.robot.galaxea.r1pro.sim.config import SCENE
 from dimos.robot.galaxea.r1pro.sim.connection import R1ProSimConnection
 from dimos.robot.galaxea.r1pro.sim.joylo_input import JoyloSimInput
 from dimos.sim2.module import SimModule
 
 
 def main() -> None:
-    blueprint = r1pro_joylo_sim2_mock.global_config(
-        zenoh_domain="joylo-check-" + uuid.uuid4().hex,
-        serve_coordinator_rpc=False,
+    # r1pro-openarm-joylo-sim2's robot on the plain scene, with scripted leaders
+    # and Joy-Cons in place of the devices, the cameras and the recorder.
+    blueprint = (
+        autoconnect(_robot_blueprint(SCENE), JoyloSimInput.blueprint())
+        .transports(_transports)
+        .global_config(
+            viewer="none",
+            transport="zenoh",
+            n_workers=6,
+            zenoh_domain="joylo-check-" + uuid.uuid4().hex,
+            serve_coordinator_rpc=False,
+        )
     )
     run = ModuleCoordinator.build(blueprint)
     try:

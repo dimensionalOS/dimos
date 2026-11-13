@@ -5,6 +5,31 @@ a Nintendo Joy-Con attached to each leader. It does not require the pending
 Dynamixel hardware. The first follower is R1 Pro in MuJoCo through sim2;
 the hardware blueprint below connects the same operator inputs to vendor ROS.
 
+## Two blueprints, one stack
+
+| Run | Blueprint | The robot behind it |
+| --- | --- | --- |
+| Hardware | `r1pro-openarm-joylo-real` | CC's ROS connection and the head and wrist cameras, hosted on the robot |
+| Simulation | `r1pro-openarm-joylo-sim2` | A sim2 world in the SF555 office and three Unreal cameras |
+
+Both are the same composition (`blueprints/teleop/r1pro_joylo_inputs.py`): the
+operator devices, the headset page, JoyLo, `R1ProTeleopCoordinator` with its
+tasks, the recorder and the episode control. Stream names, message types, camera
+sizes and RPCs are the same, so an app or a dataset tool needs no simulation
+case. `test_simulation_is_the_hardware_stack_on_a_simulated_robot` holds this.
+Both launches require `--recorder.recording <new folder>` and
+`--episodes.task "<task>"`; see [the backend contract](/docs/development/r1pro-teleop-backend.md).
+
+The simulation differs in three declared ways: its own tracking rates
+(1.5 rad/s arms, 0.5 rad/s torso), the sim2 robot model, and leaders that are
+optional. With no leader serial port the leader arms are not read, JoyLo stays
+paused, and the headset or a browser can drive. Hardware still fails at launch
+without a leader port.
+
+`r1pro-joylo-real` and `teleop-openarm-r1pro-joylo` remain as the two halves of
+the earlier two-host hardware launch (robot control only, and operator devices
+only). They add nothing that `r1pro-openarm-joylo-real` lacks.
+
 ## Real hardware spatial view
 
 `r1pro-openarm-joylo-real` is one distributed run: the robot hosts control,
@@ -315,10 +340,12 @@ its workers. It never opens input hardware. Duplicate action rejections may appe
 servo retransmits the same command when sim2 repeats a barrier observation;
 the simulator rejects that duplicate without applying it twice.
 
-For an interactive receiver, use `dimos run r1pro-joylo-sim2`. It starts paused
-and waits for the physical operator stream. `r1pro-joylo-sim2-mock` additionally
-exposes `JoyloSimInput.send(...)` through `dimos shell`; each sample is sent
-once and callers must refresh it. The demo shows that API.
+The demo runs the robot part of `r1pro-openarm-joylo-sim2` on the plain scene,
+with `JoyloSimInput` in place of the devices, the cameras and the recorder.
+`JoyloSimInput.send(...)` sends each sample once and callers must refresh it;
+the demo shows that API. Stop every other DimOS run on the machine first: RPC
+names are not part of a Zenoh domain, so two runs that both have a `SimModule`
+answer each other's calls.
 
 ## Connect the existing leaders
 
@@ -332,7 +359,8 @@ the report mode and reads calibration; it does not change pairing or flash.
 Linux reader. Original Joy-Con L/R are supported; Joy-Con 2 is not supported.
 
 Use `r1pro-openarm-joylo-sim2` for both operator and simulation on one machine,
-or split the operator and receiver across machines. Pair both Joy-Cons and
+or split the operator and receiver across machines. It starts paused and waits
+for the operator stream. Pair both Joy-Cons and
 check their actual labels/axes with `python -m dimos.teleop.joycon.probe 60`.
 Run the probe while the teleop blueprint is stopped so only one reader owns the devices.
 See [the existing input setup guide](/docs/capabilities/manipulation/openarm_mini_teleop.md)
@@ -365,10 +393,16 @@ seven-joint calibration under `<calibration-root>/left/calibration.json`:
 uv sync --extra base --extra manipulation --extra cpu --extra sim \
   --extra leader-teleop --extra joycon-teleop --all-groups
 source .venv/bin/activate
-dimos run r1pro-openarm-joylo-left-sim2 --daemon \
+dimos run r1pro-openarm-joylo-sim2 --daemon \
+  --recorder.recording <new-session-folder> --episodes.task "<task>" \
+  --r1proleaderconnection.enabled-sides '["left"]' \
+  --r1projoylo.enabled-sides '["left"]' --r1projoylo.arm-only true \
   --r1proleaderconnection.left-serial-port /dev/cu.usbmodem<your-port> \
   --r1proleaderconnection.calibration-root <calibration-root>
 ```
+
+One attached leader and one left Joy-Con are these launch options, not a
+separate blueprint; all other robot motion stays held.
 
 Open Controller in DimOS Desktop with fixed frame `world`. A direct native
 view is also available if Controller's browser connection is unavailable:
@@ -437,9 +471,11 @@ HOST__LISTEN=iface/en0 dimos host start --foreground
 Then use the same domain on both sides:
 
 ```bash
-# Simulation host
+# Simulation host: its own device readers are off; the operator host has them.
 dimos --robot-ip 127.0.0.1 --zenoh-mode client --zenoh-domain r1pro-joylo \
-  run r1pro-joylo-sim2
+  run r1pro-openarm-joylo-sim2 \
+  --recorder.recording <new-session-folder> --episodes.task "<task>" \
+  --disable r1-pro-leader-connection --disable joy-con-teleop-module
 
 # Operator host: add --extra joycon-teleop on macOS; replace placeholders.
 uv sync --extra base --extra manipulation --extra leader-teleop --all-groups
@@ -476,11 +512,10 @@ and wrist-lock checks remain interactive validation.
 
 ## SF555 office: two pickable bottles and three robot cameras
 
-`r1pro-openarm-joylo-office` uses the same two-leader calibration, absolute
-joint mapping and Joy-Con controls as `r1pro-openarm-joylo-sim2`. It starts at
+`r1pro-openarm-joylo-sim2` runs in the SF555 office. The robot starts at
 `(18.0, 8.41, 0.005)`, facing west at the east end of the downstairs engineering
-tables. The head and both wrist RGB-D views are published as sim camera streams.
-The original plain scene remains a separate blueprint.
+tables. The head and both wrist RGB-D views are published on the hardware's
+streams. The plain scene has no cameras; only the scripted demo uses it.
 
 The existing `Hall_A_middle_water_bottle_*` and
 `Hall_A_outer_water_bottle_*` assemblies become two free rigid bodies. All 21
@@ -503,10 +538,23 @@ A single Unreal process renders head-left RGB-D and both wrist RGB-D views.
 Switching views resets temporal history to prevent cross-camera ghosting;
 render targets are cached by resolution. Source pose timestamps and camera calibration accompany every pair.
 The 2025 robot's head and uppercase `left_D405_link`/`right_D405_link` frames
-are used directly. The previous camera profile supplies approximate fields of
-view (118×92° head, 87×58° wrists), not measured 2025 factory intrinsics.
-Head preview is 640×512; wrists are 320×180, with ideal wrist depth restricted
-to 0.07–0.50 m. These previews are not the hardware cameras' full resolution.
+are used directly. The cameras have what `R1SpatialSensors` publishes on the
+robot: the head view 480×384 and the wrists 1280×720, at 5 Hz, with color as
+JPEG (`CompressedImage`, quality 75) and depth raw. Ideal wrist depth is
+restricted to 0.07–0.50 m. `SimCompressedCameraModule` is the sim2 camera device
+with JPEG color; `SimCameraModule` keeps raw color for every other simulation.
+
+Head intrinsics follow the robot's factory stereo calibration when a copy is at
+`~/.cache/dimos/r1pro-hardware/stereo.yaml`, rectified as the hardware does it:
+
+```bash
+scp nvidia@<robot>:/opt/galaxea/body/stereo.yaml ~/.cache/dimos/r1pro-hardware/
+```
+
+Without that file the previous profile's approximate 118×92° field of view
+stands in. Rectification keeps only valid pixels, so the stand-in can be wider
+than the robot's view. The wrists keep the D405's nominal 87×58°: its factory
+values are only in the robot's ROS `camera_info`.
 Camera-rig code was adapted from committed `47713be18a`, preserving its earlier
 implementation history rather than copying another worktree's uncommitted work.
 
@@ -556,9 +604,9 @@ and `unreal-pickables-report.json` record the extraction and placement.
 `DIMOS_UNREAL_EXECUTABLE` and `DIMOS_UNREAL_PROJECT` override the local runtime
 paths without changing code.
 
-Run `dimos run r1pro-openarm-joylo-office --daemon` with the same explicit
-left/right serial ports and calibration-root arguments used for the plain
-blueprint. Use `--r1projoylo.arm-only false` for base/torso controls. X enables
+Run `dimos run r1pro-openarm-joylo-sim2 --daemon` with a new
+`--recorder.recording` folder and an `--episodes.task`, plus the left/right
+serial ports and calibration root when the leaders are attached. X enables
 following; Home pauses. Camera startup is asynchronous: inspect
 `CameraRenderModule.statistics()` for one loaded scene, three cameras and an empty `error`;
 `head_camera.statistics()`, `left_wrist_camera.statistics()` and

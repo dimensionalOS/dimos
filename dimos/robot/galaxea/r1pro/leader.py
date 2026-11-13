@@ -22,11 +22,24 @@ from dimos.robot.manipulators.openarm.mini_connection import (
     OpenArmMiniConnectionConfig,
 )
 from dimos.teleop.joycon.mapping import JoyConSide
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class R1ProLeaderConfig(OpenArmMiniConnectionConfig):
+    """Which leader arms are read, and whether they must be attached.
+
+    Attributes:
+        enabled_sides: The leaders whose readings are published.
+        required: False lets the run start with no serial port given: the leaders
+            are then not read and nothing is published, so JoyLo stays paused and
+            the headset or a browser can still drive. Hardware keeps True.
+    """
+
     source: str = "r1pro"
     enabled_sides: tuple[JoyConSide, ...] = ("left", "right")
+    required: bool = True
 
 
 class R1ProLeaderConnection(OpenArmMiniConnection):
@@ -53,6 +66,13 @@ class R1ProLeaderConnection(OpenArmMiniConnection):
             for side, port in super().serial_ports().items()
             if side in self.config.enabled_sides
         }
+
+    def connect(self) -> None:
+        attached = any(port.strip() for port in self.serial_ports().values())
+        if self.config.required or attached or self.config.mock_positions is not None:
+            super().connect()
+            return
+        logger.warning("No leader serial port given: the leader arms are not read")
 
     def publish_reading(self, readings: dict[str, dict[str, float]]) -> None:
         super().publish_reading(

@@ -539,6 +539,20 @@ robots:
           title: R1 Pro VR teleop
           description: Quest teleoperation on physical hardware; requires the vendor ROS stack.
           hidden: true
+        r1pro-openarm-joylo-sim2:
+          title: R1 Pro teleop + recording (simulation)
+          description: The R1 Pro teleop stack on a simulated robot in the office, with head and wrist cameras and episode recording.
+        r1pro-openarm-joylo-real:
+          title: R1 Pro teleop + recording
+          description: Leader arms, Joy-Cons or a headset drive the physical R1 Pro; cameras and episodes are recorded on the robot.
+        r1pro-joylo-real:
+          title: R1 Pro teleop, robot side only
+          description: Control on the robot without cameras, headset or recording; one half of the earlier two-host launch.
+          hidden: true
+        teleop-openarm-r1pro-joylo:
+          title: R1 Pro teleop, operator devices only
+          description: The leader arms and Joy-Cons for a robot or simulation that runs on another machine.
+          hidden: true
         r1pro-planar-preview:
           title: R1 Pro planning preview
           description: 'Whole-body planning and execution on mock hardware: no robot needed.'

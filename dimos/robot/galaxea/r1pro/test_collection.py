@@ -22,11 +22,43 @@ from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema
 from dimos.robot.galaxea.r1pro._collection_test_fakes import write_collection
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_openarm_joylo_sim2
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_desktop import (
-    r1pro_openarm_joylo_collect,
     r1pro_openarm_joylo_real,
 )
 from dimos.robot.galaxea.r1pro.collection import CAMERAS, r1pro_collection
+
+# What stands for the robot and its cameras in each blueprint; nothing else may differ.
+HARDWARE = {
+    "r1proconnection",
+    "headleftcamera",
+    "headrightcamera",
+    "headcamerainfo",
+    "r1spatialsensors",
+}
+SIMULATION = {
+    "simtfmodule",
+    "simmodule",
+    "simjointencodermodule",
+    "r1prosimcontrol",
+    "r1prosimconnection",
+    "head_camera",
+    "left_wrist_camera",
+    "right_wrist_camera",
+    "camerarendermodule",
+}
+
+
+def _publishers(blueprint, name, kind):
+    """The modules that write one stream, after remapping."""
+    return [
+        atom.name
+        for atom in blueprint.active_blueprints
+        for output in atom.streams
+        if output.direction == "out"
+        and output.type is kind
+        and blueprint.remapping_map.get((atom.name, output.name), output.name) == name
+    ]
 
 
 def test_recording_exports_measured_state_compressed_cameras_and_causal_actions(tmp_path):
@@ -80,8 +112,8 @@ def test_collection_contract_has_explicit_selection_and_rpc_episode_controls():
         r1pro_collection(cameras=("missing",))
 
 
-@pytest.mark.parametrize("blueprint", [r1pro_openarm_joylo_real, r1pro_openarm_joylo_collect])
-def test_hardware_entrypoints_record_robot_streams_with_robot_side_producers(blueprint):
+def test_hardware_run_records_robot_streams_with_robot_side_producers():
+    blueprint = r1pro_openarm_joylo_real
     modules = {atom.name: atom for atom in blueprint.active_blueprints}
     recorder = modules["recorder"]
     required_inputs = set(recorder.kwargs["input_types"]) | {"status"}
@@ -92,14 +124,7 @@ def test_hardware_entrypoints_record_robot_streams_with_robot_side_producers(blu
         if port.name not in required_inputs:
             continue
         topic = blueprint.remapping_map.get((recorder.name, port.name), port.name)
-        publishers = [
-            atom.name
-            for atom in blueprint.active_blueprints
-            for output in atom.streams
-            if output.direction == "out"
-            and output.type is port.type
-            and blueprint.remapping_map.get((atom.name, output.name), output.name) == topic
-        ]
+        publishers = _publishers(blueprint, topic, port.type)
         assert len(publishers) == 1, (port.name, publishers)
         assert publishers[0] in robot.module_names
     schema = recorder.kwargs["recording_schema"]
@@ -110,3 +135,62 @@ def test_hardware_entrypoints_record_robot_streams_with_robot_side_producers(blu
     refs = resolve_module_refs(blueprint)
     assert refs["ControlCoordinator", "_leader"] == "r1projoylo"
     assert refs["r1prowebxrjoystick", "_motion_limits"] == "ControlCoordinator"
+
+
+def test_simulation_is_the_hardware_stack_on_a_simulated_robot():
+    real, sim = r1pro_openarm_joylo_real, r1pro_openarm_joylo_sim2
+    hardware = {atom.name: atom for atom in real.active_blueprints}
+    simulated = {atom.name: atom for atom in sim.active_blueprints}
+    assert set(hardware) - set(simulated) == HARDWARE
+    assert set(simulated) - set(hardware) == SIMULATION
+    shared = set(hardware) & set(simulated)
+    for name in shared:
+        assert hardware[name].module is simulated[name].module, name
+
+    # One recorder contract: the same inputs, features, rates and quality rules,
+    # each fed by exactly one producer of the same name and type.
+    recorder = simulated["recorder"]
+    assert recorder.kwargs["input_types"] == hardware["recorder"].kwargs["input_types"]
+    assert recorder.kwargs["recording_schema"] == hardware["recorder"].kwargs["recording_schema"]
+    for port in recorder.streams:
+        if port.name not in {*recorder.kwargs["input_types"], "status"}:
+            continue
+        assert len(_publishers(sim, port.name, port.type)) == 1, port.name
+        assert len(_publishers(real, port.name, port.type)) == 1, port.name
+
+    # One control contract: the same coordinator tasks on the same joints, the
+    # same module references, and every shared module on the same streams.
+    def tasks(atom):
+        return [(t.name, t.type, tuple(t.joint_names), t.priority) for t in atom.kwargs["tasks"]]
+
+    assert tasks(simulated["ControlCoordinator"]) == tasks(hardware["ControlCoordinator"])
+    assert resolve_module_refs(sim) == resolve_module_refs(real)
+    for name in shared - {"usdmanager"}:  # It serves a scene here and a robot model there.
+        for blueprint, atom in ((real, hardware[name]), (sim, simulated[name])):
+            assert {
+                (s.direction, blueprint.remapping_map.get((name, s.name), s.name), s.type)
+                for s in atom.streams
+            } == {
+                (s.direction, real.remapping_map.get((name, s.name), s.name), s.type)
+                for s in hardware[name].streams
+            }, name
+
+    # The cameras write what R1SpatialSensors writes, on its names and types.
+    def outputs(blueprint, names):
+        return {
+            (blueprint.remapping_map.get((atom.name, s.name), s.name), s.type)
+            for atom in blueprint.active_blueprints
+            if atom.name in names
+            for s in atom.streams
+            if s.direction == "out" and s.name != "tf"
+        }
+
+    assert outputs(sim, {"head_camera", "left_wrist_camera", "right_wrist_camera"}) == outputs(
+        real, {"r1spatialsensors"}
+    )
+    for key in ("color_image", "left_wrist", "right_wrist"):
+        kind = recorder.kwargs["input_types"][key]
+        assert sim.transport_map[key, kind] == real.transport_map[key, kind]
+    # Only the simulation starts with no leader arms attached.
+    assert simulated["r1proleaderconnection"].kwargs["required"] is False
+    assert "required" not in hardware["r1proleaderconnection"].kwargs

@@ -20,15 +20,11 @@ Starts paused. The existing vendor stack must be started and checked explicitly.
 
 import math
 
-from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _transports
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _control_blueprint
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection, R1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.joylo import ARMS, TORSO, JoyloConfig
-from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
-from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 from dimos.robot.galaxea.r1pro.motion import motion_groups
-from dimos.robot.galaxea.r1pro.teleop_coordinator import R1ProTeleopCoordinator, shared_teleop_tasks
 
 _declaration = R1ProConnectionConfig(
     boot_vendor_stack=False,
@@ -53,42 +49,15 @@ def make_joylo_real(
     declaration = _declaration.model_copy(
         update={"publish_odom_tf": publish_odom_tf, "enable_wrist_color": enable_wrist_color}
     )
-    coordinator = R1ProTeleopCoordinator if webxr else R1ProJoyloCoordinator
-    velocity_limits = {**dict.fromkeys(ARMS, 1.0), **dict.fromkeys(TORSO, 0.5)}
-    return (
-        autoconnect(
-            R1ProConnection.blueprint(**declaration.model_dump()),
-            R1ProJoylo.blueprint(**_profile.model_dump()),
-            coordinator.blueprint(
-                instance_name="ControlCoordinator",
-                connections=[
-                    ConnectionConfig(
-                        source=_declaration.source,
-                        model=_declaration.model,
-                        joint_commands=_declaration.joint_commands,
-                        deadman_timeout_s=_declaration.deadman_timeout_s,
-                    )
-                ],
-                motion_limits=motion_groups(),
-                tasks=shared_teleop_tasks(velocity_limits)
-                if webxr
-                else joylo_tasks(velocity_limits),
-            ),
-        )
-        .remappings(
-            [
-                (R1ProConnection, "joint_state", "robot_feedback"),
-                (coordinator, "r1pro_joint_state", "robot_feedback"),
-                (R1ProConnection, "position_command", "r1pro_position_command"),
-                (R1ProConnection, "velocity_command", "r1pro_velocity_command"),
-                (coordinator, "twist_command", "cmd_vel"),
-                (R1ProJoylo, "cmd_vel", "joylo_cmd_vel"),
-                (coordinator, "joylo_twist_command", "joylo_cmd_vel"),
-            ]
-        )
-        .transports(_transports)
-        .global_config(viewer="none", transport="zenoh", n_workers=3)
-    )
+    return _control_blueprint(
+        R1ProConnection.blueprint(**declaration.model_dump()),
+        R1ProConnection,
+        _declaration,
+        joylo=_profile.model_dump(),
+        motion_limits=motion_groups(),
+        velocity_limits={**dict.fromkeys(ARMS, 1.0), **dict.fromkeys(TORSO, 0.5)},
+        webxr=webxr,
+    ).global_config(viewer="none", transport="zenoh", n_workers=3)
 
 
 r1pro_joylo_real = autoconnect(make_joylo_real())

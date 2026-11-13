@@ -23,17 +23,18 @@ The added opening links are invisible measurement frames, not physical bodies.
 
 from dimos.constants import CACHE_DIR
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import ZenohTransport
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS
 from dimos.robot.assets.model import JointDescription, RobotModel
-from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _operator_blueprint
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
+    _camera_transports,
+    _operator_blueprint,
+    _webxr_blueprint,
+    _webxr_joystick_blueprint,
+)
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_real import make_joylo_real
 from dimos.robot.galaxea.r1pro.collection import r1pro_collection
 from dimos.robot.galaxea.r1pro.head_cameras import HeadCameraInfo, HeadLeftCamera, HeadRightCamera
 from dimos.robot.galaxea.r1pro.joylo import UPPER
 from dimos.robot.galaxea.r1pro.spatial_sensors import R1SpatialSensors
-from dimos.robot.galaxea.r1pro.webxr import R1ProWebXR, R1ProWebXRJoystick
 from dimos.robot.usd_manager import UsdManager
 
 _vendor = CACHE_DIR / "r1pro-hardware/mobiman"
@@ -77,47 +78,21 @@ _vision = (
             (HeadCameraInfo, "right_info", "head_right_color_info"),
         ]
     )
-    .transports(
-        {
-            (name, CompressedImage): ZenohTransport.spec(
-                f"dimos/{name}", CompressedImage, qos=QOS_LATEST_WINS
-            )
-            for name in (
-                "head_left_color",
-                "head_right_color",
-                "color_image",
-                "left_wrist",
-                "right_wrist",
-            )
-        }
-    )
+    .transports(_camera_transports)
 )
 
 # The recorder lives beside control and cameras, so laptop/network loss cannot
 # remove the robot-side evidence. It starts first and shuts down last.
-# Both entrypoints require --recorder.recording and --episodes.task at launch.
+# The launch requires --recorder.recording and --episodes.task.
+# r1pro-openarm-joylo-sim2 is this stack on the simulated robot and cameras.
 r1pro_openarm_joylo_real = autoconnect(
     autoconnect(
         r1pro_collection(),
         make_joylo_real(publish_odom_tf=True, enable_wrist_color=False, webxr=True),
-        R1ProWebXRJoystick.blueprint().remappings(
-            [(R1ProWebXRJoystick, "base_twist", "webxr_twist_command")]
-        ),
+        _webxr_joystick_blueprint(),
         _vision,
     ).hosted(tags={"r1pro": True}),
     _operator_blueprint().hosted(local=True),
-    R1ProWebXR.blueprint(body_tracking_mode="optional", input_timeout_s=0.3)
-    .remappings(
-        [
-            (R1ProWebXR, "left_controller_output", "left_cartesian_command"),
-            (R1ProWebXR, "right_controller_output", "right_cartesian_command"),
-            (R1ProWebXR, "left_gripper_command", "webxr_left_gripper"),
-            (R1ProWebXR, "right_gripper_command", "webxr_right_gripper"),
-        ]
-    )
-    .hosted(local=True),
+    _webxr_blueprint().hosted(local=True),
     UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
 ).global_config(viewer="none", transport="zenoh", n_workers=11)
-
-# Keep existing collection launch commands working without a second stack to maintain.
-r1pro_openarm_joylo_collect = r1pro_openarm_joylo_real.global_config()

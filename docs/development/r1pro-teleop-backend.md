@@ -80,8 +80,11 @@ dimos run r1pro-openarm-joylo-real \
 ```
 
 Both options are required; no directory is overwritten or task label invented.
-The old `r1pro-openarm-joylo-collect` name remains an equivalent entrypoint.
 No separate recorder blueprint or `--record` process is needed.
+
+`r1pro-openarm-joylo-sim2` is the same stack on the simulated robot, with the
+same two required options, recorder, episode RPCs, streams and camera sizes. A
+session recorded there has the shape of one recorded on the robot.
 
 The recorder observes the coordinator's dispatched actions, measured robot state,
 and camera outputs, independent of the selected device. OpenArm/Joy-Con and WebXR
