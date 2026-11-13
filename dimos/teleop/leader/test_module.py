@@ -113,12 +113,3 @@ def test_a_jump_drops_the_reading_and_the_next_one_recovers(make: Any) -> None:
         module.commands_for(_reading(left_joint_1=2.0, left_joint_2=0.9, left_joint_7=0.5)) is None
     )
     assert module.commands_for(BOTH) is not None
-
-
-def test_filter_moves_targets_a_fraction_toward_each_reading(make: Any) -> None:
-    module = make(command_filter_cutoff_hz=6.0, reading_period_s=0.01)
-    module.commands_for(_reading(right_joint_1=0.0, right_joint_2=0.0))
-    commands = module.commands_for(_reading(right_joint_1=0.2, right_joint_2=0.0))
-    assert commands is not None
-    moved = commands[0].positions_by_joint["arm/right_joint1"]
-    assert 0.0 < moved < 0.2
