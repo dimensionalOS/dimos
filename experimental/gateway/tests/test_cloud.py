@@ -419,7 +419,10 @@ def test_the_login_after_a_state_answers_once_the_login_moves_on(
 def test_an_upload_carries_its_own_transfer_settings(
     client: TestClient, state: State, recording: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # every setting from the environment, so a developer's own DIMOS_CLOUD_* can't change the answer
+    monkeypatch.setenv("DIMOS_CLOUD_HTTP_TIMEOUT", "60")
     monkeypatch.setenv("DIMOS_CLOUD_UPLOAD_RETRIES", "4")
+    monkeypatch.setenv("DIMOS_CLOUD_UPLOAD_CHUNK_MB", "8")
     upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
     assert upload["settings"] is None
     again = {"path": str(recording), "httpTimeout": 300, "uploadChunkMb": 16}
@@ -451,7 +454,7 @@ def test_an_upload_carries_its_own_transfer_settings(
     state.uploads._transfer(str(recording), None, None, lambda *args: None, None)
     assert [(c.http_timeout, c.upload_retries, c.upload_chunk_mb) for c in used] == [
         (300, 4, 16),
-        (60, 4, None),
+        (60, 4, 8),
     ], "the environment's settings for everything the upload doesn't set, and for other uploads"
 
     state.uploads.update(upload["id"], state="failed")
