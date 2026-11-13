@@ -49,7 +49,8 @@ def test_rust_struct_has_every_config_key() -> None:
     src = (_RUST_MANIFEST.parent / "src" / "main.rs").read_text()
     struct = src.split("struct Config {", 1)[1].split("}", 1)[0]
     declared = {line.split(":")[0].strip() for line in struct.splitlines() if ": " in line}
-    assert declared == _camera_fields()
+    # native_config injects frame_id_prefix, so it is not in the struct's text.
+    assert declared | {"frame_id_prefix"} == _camera_fields()
 
 
 def test_ports_match_registry() -> None:
