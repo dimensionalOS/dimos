@@ -417,6 +417,22 @@ async def test_bad_offers_and_candidates_end_the_peer_without_an_answer(harness:
     assert len(harness.closes()) == 2
 
 
+async def test_a_candidate_the_ice_agent_cannot_take_ends_only_its_peer(
+    harness: Harness, mocker: MockerFixture
+) -> None:
+    await harness.offer("r1")
+    pc = await harness.offer("r2")
+    # What aioice raises for a browser's mDNS host candidate on a host without
+    # a multicast route.
+    mocker.patch.object(pc, "addIceCandidate", side_effect=OSError(19, "No such device"))
+    candidate = "candidate:1 1 udp 2113937151 3f1c8b7e-9a51.local 51234 typ host"
+    await harness.video.candidate(
+        TopicRtcCandidate(id="r2", route="@t:p1", gen=1, candidate=candidate, mid="0")
+    )
+    assert harness.closes() == [TopicRtcClose(id="r2", route="@t:p1", gen=1, reason="rtc_failed")]
+    assert list(harness.video.peers) == ["r1"]
+
+
 async def test_packet_track_ends_recv_when_stopped() -> None:
     track = PacketTrack()
     waiting = asyncio.ensure_future(track.recv())

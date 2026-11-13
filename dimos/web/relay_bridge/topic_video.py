@@ -456,7 +456,11 @@ class TopicVideo:
             if candidate.sdpMid is None:
                 candidate.sdpMLineIndex = 0
             await peer.pc.addIceCandidate(candidate)
-        except (ValueError, AssertionError, IndexError):
+        except Exception as error:
+            # A malformed candidate, or one the ICE agent cannot take (an mDNS
+            # name on a host without a multicast route is an OSError). It ends
+            # this peer and never the provider's connection.
+            logger.warning("video candidate rejected", route=msg.route, error=str(error))
             await self.close_peer(msg.id, "rtc_failed")
 
     def _spawn(self, coroutine: Any) -> None:
