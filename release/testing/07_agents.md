@@ -152,22 +152,7 @@ The first recorded images can precede the first `camera_info` or `tf` message. I
 
 Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors.
 
-## 7.10 xArm6 WorldBelief
-
-The `xarm6-worldbelief` hardware blueprint has a broken TF tree, so this check runs its `scan` and `recall` skills on a recorded xArm6 session. The first run downloads the detector and embedding models.
-
-```bash
-uv run python -c "from dimos.utils.data import get_data; print(get_data('xarm6_worldbelief_realsense_d435i_stationery_calibrated/xarm6_worldbelief_20260729_203624_161992.db'))"
-uv run dimos --replay run world-belief-module mcp-server --daemon --worldbeliefmodule.db-path <printed-path>
-# The start prints "WorldBelief scan models warmed up" before it returns; no separate wait is needed.
-uv run dimos mcp call scan -j '{"prompt": ["book", "pen"]}' --timeout 300
-uv run dimos mcp call recall -a text="pen" --timeout 300
-uv run dimos stop
-```
-
-Expected result: `scan` prints `Scan complete: <n> object(s) present` with a confirmed `pen` among the objects, and `recall` returns the pen with `when_ts`, `where_camera` and a `where_object` position.
-
-## 7.11 Depth2DepthCloud
+## 7.10 Depth2DepthCloud
 
 Needs a Go2 whose Jetson has a dimos checkout and nix. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
 

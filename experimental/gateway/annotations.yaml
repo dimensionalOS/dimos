@@ -207,8 +207,6 @@ modules:
   voxel-grid-mapper: {abilities: [mapping]}
   wavefront-frontier-explorer: {abilities: [exploration]}
   web-xr-teleop-module: {abilities: [vr-teleop]}
-  world-belief-module: {abilities: [spatial-memory]}
-  world-belief-recorder: {abilities: [recording]}
 
 robots:
   # Robot types in launcher order; a robot's `type` is one of these, or null (listed under Other).
@@ -818,10 +816,6 @@ robots:
           title: xArm live object memory
           description: Live object memory on a depth-camera rig, behind an agent skill.
           recommended_config: []
-        xarm6-worldbelief:
-          title: xArm6 world belief
-          description: xArm6 with a RealSense building a world belief (what is where) for an agent.
-          recommended_config: [*xarm6_ip_anywhere]
         xarm-sim:
           title: 'xArm7 in simulation (robot only)'
           description: 'A simulated xArm7: control and sensors as plain zenoh topics, for agents without dimOS. Needs MuJoCo.'
