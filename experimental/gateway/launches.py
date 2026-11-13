@@ -154,9 +154,9 @@ def as_text(value: Any) -> str:
 
 
 def module_env(modules: ModuleValues) -> dict[str, str]:
-    """dimos's env names for module settings: MODULE__FIELD."""
+    """dimos's env names for module settings: MODULE__FIELD (a dotted field: MODULE__A__B)."""
     return {
-        f"{module.replace('/', '_')}__{name}".upper(): as_text(value)
+        f"{module.replace('/', '_')}__{name.replace('.', '__')}".upper(): as_text(value)
         for module, fields in modules.items()
         for name, value in fields.items()
         if value is not None
