@@ -215,7 +215,8 @@ def test_goal_reached_reports_where_the_robot_stopped_and_closes_the_tool(contai
 
 def test_arrival_is_reported(container) -> None:
     container.navigate_with_text("bed")
-    container._latest_odom = PoseStamped(position=make_vector3(1.0, 2.0, 0.0))
+    # Odometry is at body height. The distance to the goal is measured in the plane.
+    container._latest_odom = PoseStamped(position=make_vector3(1.0, 2.0, 0.3))
 
     container._on_goal_reached(Bool(True))
 

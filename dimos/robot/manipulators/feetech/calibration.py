@@ -81,6 +81,14 @@ class FeetechCalibration(BaseConfig):
     motors: dict[str, FeetechMotorCalibration]
     schema_version: Literal[1] = 1
 
+    @model_validator(mode="after")
+    def _one_motor_per_id(self) -> Self:
+        # Two entries with one ID would make two follower joints track one motor.
+        ids = [motor.id for motor in self.motors.values()]
+        if len(set(ids)) != len(ids):
+            raise FeetechCalibrationError(f"{self.side}: two motors share one ID: {sorted(ids)}")
+        return self
+
     def require_motors(self, motor_names: Sequence[str]) -> Self:
         """Check that exactly the given motors are calibrated."""
         missing = set(motor_names) - set(self.motors)

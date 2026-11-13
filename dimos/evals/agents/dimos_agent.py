@@ -94,11 +94,13 @@ class DimosAgentAdapter(PiAdapter):
 
     The gateway keeps its config, state, cache and socket in per-case directories, sends
     model requests to the trace proxy through models.json, and links only to the case's
-    McpServer. The agent keeps its own system prompt, tools and skills; the shared case
-    guidance accompanies the user instruction.
+    McpServer, which the environment adds to a suite that leaves it out for Pi. The agent
+    keeps its own system prompt, tools and skills; the shared case guidance accompanies the
+    user instruction.
     """
 
     config: DimosAgentAdapterConfig
+    requires_mcp = True
 
     # The harness's tools without DimOS; inventory and agent_module join once the gateway links.
     default_tools: ClassVar[tuple[str, ...]] = (

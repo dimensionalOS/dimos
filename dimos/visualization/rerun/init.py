@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
+from dimos.utils.executable import find_executable
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RERUN_GRPC_PORT, RERUN_WEBSOCKET_URL
 
@@ -43,7 +44,7 @@ def spawn_viewer(
     try:
         process = subprocess.Popen(
             [
-                "dimos-viewer",
+                find_executable("dimos-viewer") or "dimos-viewer",
                 "--connect",
                 server_uri,
                 "--ws-url",
@@ -71,7 +72,7 @@ def spawn_viewer(
     import rerun as rr
 
     try:
-        rr.spawn(connect=True, memory_limit=memory_limit)
+        rr.spawn(connect=True, memory_limit=memory_limit, executable_path=find_executable("rerun"))
         return True
     except (RuntimeError, FileNotFoundError):
         logger.warning(

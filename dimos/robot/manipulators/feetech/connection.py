@@ -81,7 +81,7 @@ class FeetechConnectionConfig(ConnectionConfig):
 
     @model_validator(mode="after")
     def _read_only(self) -> Self:
-        if self.joint_commands or self.pd or self.base_range is not None:
+        if self.joint_commands:
             raise ValueError("Feetech connections only read; they take no commands")
         return self
 
