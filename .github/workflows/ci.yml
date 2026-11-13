@@ -282,12 +282,6 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         run: python3 bin/native-modules --build
-      - name: Build the Jetson camera package
-        # V4L2CameraConfig swaps in path:.#jetson only at runtime on a Jetson, so
-        # discovery (literal defaults) never builds it. The result-jetson link is
-        # picked up by the verify and record steps below like any other result.
-        working-directory: dimos/hardware/sensors/camera/v4l2/rust
-        run: nix build -L path:.#jetson --out-link result-jetson
       - name: Verify Cachix holds the built paths
         env:
           CACHIX_CACHE_NAME: dimensionalos
