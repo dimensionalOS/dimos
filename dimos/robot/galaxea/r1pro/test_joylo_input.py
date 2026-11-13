@@ -21,8 +21,8 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_openarm_joylo_left_sim2
 from dimos.robot.galaxea.r1pro.joylo import ARMS, JAWS, UPPER, JoyloConfig, JoyloController
+from dimos.robot.galaxea.r1pro.leader import R1ProLeaderConnection
 from dimos.teleop.joycon.mapping import JoyConReading
-from dimos.teleop.leader.module import LeaderTeleopModule
 
 
 @pytest.fixture(scope="module")
@@ -32,28 +32,31 @@ def parsed():
 
 @pytest.fixture
 def pipeline(mocker, parsed):
-    kwargs = parsed.module_kwargs("leaderteleopmodule")
-    kwargs.update(
-        reader="mock", mock_positions=dict.fromkeys((f"joint_{i}" for i in range(1, 8)), 0.2)
-    )
-    reader = LeaderTeleopModule(**kwargs)
-    reader.connect_teleop()
-    read = mocker.patch.object(
-        reader._readers["left"], "read_positions", return_value=kwargs["mock_positions"]
-    )
-    profile = JoyloController(
-        dict.fromkeys(UPPER, (-2.0, 2.0)),
-        JoyloConfig(**parsed.module_kwargs("r1projoylo")),
-    )
+    kwargs = parsed.module_kwargs("r1proleaderconnection")
+    reader = R1ProLeaderConnection(**{**kwargs, "mock_positions": {}})
     try:
+        reader.connect()
+        read = mocker.Mock(return_value=dict.fromkeys((f"joint_{i}" for i in range(1, 8)), 0.2))
+        mocker.patch.object(reader._arm, "read", side_effect=lambda: {"left": read()})
+        mocker.patch.object(reader.joint_state, "publish")
+        profile = JoyloController(
+            dict.fromkeys(UPPER, (-2.0, 2.0)),
+            JoyloConfig(**parsed.module_kwargs("r1projoylo")),
+        )
         yield reader, profile, read
     finally:
         reader.stop()
 
 
 def tick(reader, profile, now, pressed=()):
-    sample = reader.get_current_command()
-    if sample is not None:
+    sample = None
+    try:
+        readings = reader._arm.read()
+    except OSError:
+        pass  # The connection skips failed serial reads; JoyLo expires the last sample.
+    else:
+        reader.publish_reading(readings)
+        sample = reader.joint_state.publish.call_args.args[0]
         profile.set_leader(dict(zip(sample.name, sample.position, strict=True)), now)
     profile.set_feedback({**dict.fromkeys(UPPER, 0.2), **dict.fromkeys(JAWS, 0.05)}, now)
     profile.set_joycon(JoyConReading(frozenset(pressed)), None, now)
@@ -86,11 +89,11 @@ def test_read_loss_then_large_operator_movement_resumes_same_absolute_mapping_wi
     tick(reader, profile, 0.46)
     _, resumed = tick(reader, profile, 0.48, ("minus",))
     assert profile.active
-    assert resumed.positions[ARMS[0]] == pytest.approx(0.23)
+    assert resumed.positions[ARMS[0]] == pytest.approx(1.2)
 
     read.return_value = {**read.return_value, "joint_1": 1.21}
     _, moved = tick(reader, profile, 0.5)
-    assert moved.positions[ARMS[0]] == pytest.approx(0.26)
+    assert moved.positions[ARMS[0]] == pytest.approx(1.21)
     assert {n: q for n, q in moved.positions.items() if n != ARMS[0]} == dict.fromkeys(
         (n for n in UPPER if n != ARMS[0]), 0.2
     )
@@ -107,7 +110,7 @@ def test_unsmoothed_jump_pauses_before_it_can_move_the_follower(pipeline):
     assert stopped.positions == dict.fromkeys(UPPER, 0.2)
     _, resumed = tick(reader, profile, 0.08, ("minus",))
     assert profile.active
-    assert resumed.positions[ARMS[0]] == pytest.approx(0.23)
+    assert resumed.positions[ARMS[0]] == pytest.approx(1.2)
 
 
 def test_late_sample_cannot_hide_a_timeout_between_guard_ticks(pipeline):
@@ -157,7 +160,7 @@ def test_encoder_wrap_after_missing_input_preserves_mapping_but_requires_enable(
     tick(reader, profile, 0.42)
     _, resumed = tick(reader, profile, 0.44, ("minus",))
     assert profile.active
-    assert resumed.positions[ARMS[2]] == pytest.approx(0.17)
+    assert resumed.positions[ARMS[2]] == pytest.approx(-2.0)
     for i in range(23, 150):
         _, moved = tick(reader, profile, i * 0.02)
     assert profile.active

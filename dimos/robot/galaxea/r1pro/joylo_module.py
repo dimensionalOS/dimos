@@ -33,8 +33,8 @@ from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER, JoyloConfig, JoyloController
+from dimos.robot.manipulators.feetech.connection import GUARDED_JOINT_FRAME_ID
 from dimos.teleop.joycon.raw import decode_readings
-from dimos.teleop.leader.module import GUARDED_JOINT_FRAME_ID
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

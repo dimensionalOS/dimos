@@ -20,9 +20,10 @@ nominal 5 Hz. Results older than 0.5 seconds are discarded. The Desktop's generi
 RGB-D layer makes the textured depth surface.
 `R1SpatialSensors.get_status()` reports counts and capture ages.
 
-`UsdManager(tf_source="joints")` publishes measured joint transforms even when
-host scheduling assigns an unused simulation observation transport. Its file
-server answers Desktop's `*.urdf` discovery and serves only referenced assets.
+`UsdManager` uses upstream `JointTf` for measured hardware transforms. Simulation
+body poses are published separately by `SimTfModule`; the model manager has no
+simulation observation port. The file server retains Desktop's `*.urdf` discovery
+compatibility alongside upstream USD scene serving and referenced assets.
 The connection's wheel odometry supplies the robot's base transform.
 
 Control samples use best-effort delivery with interactive-high priority, ahead
@@ -58,9 +59,10 @@ merges, with the robot-specific adapter and profile added above them:
 
 | Layer | Pinned source | Role |
 |---|---|---|
-| Current control contract | `391ae2d0ef`, main / #5016 | Joint/interface routing and connection ownership |
+| Current main | `a7670ba97e`, including #5016 | Joint/interface routing and connection ownership |
 | CC's R1 Pro stack | `3920bf8b1d0517476be8aaa891dac2075a1469e6`, #5017 + #5019 | R1 joint declarations, limits, base and canonical grippers |
-| Krishna's input stack | `cedc04d1f2f23b249c61acab25881b5e476bc5f5`, #5177 + #5182 + #5198 | Feetech calibration/readers, leader streaming, Joy-Con backend |
+| Krishna's input stack | `1807177e1b` (#5182, includes #5177 at `dea80002b1`); Joy-Con #5198 at `cedc04d1f2` | Current Feetech connections plus the portable Joy-Con backend |
+| Jeff's USD stack | `18743a447c`, #5111 | USD utilities, scene serving, joint transforms and asset ownership |
 | Current sim2 stack | `219fd37d9a` (#5033–#5041; physics #5035, shared cameras #5038) | USD scenes, independent physics, bounded sensor workers and shared rendering |
 | Existing R1 Pro sim work | `47713be18a` | Reused committed `sim/model.py`, `config.py`, `control.py`, tests and scene collision exclusions |
 
@@ -77,7 +79,7 @@ the JoyLo-specific commits onto their merged versions. The inherited sim2
 ## Control path
 
 ```text
-OpenArm Feetech encoders -> Krishna LeaderTeleopModule -> raw leader joints --+
+OpenArm Feetech encoders -> R1ProLeaderConnection -> raw leader joints --+
 Joy-Con L + R -> Krishna JoyConTeleopModule -> full buttons/sticks/presence --+
                                                                           |
                                                                R1ProJoylo profile
@@ -95,14 +97,11 @@ outputs are disabled only in this profile so there is one writer for base,
 jaws and arm authority. Its defaults remain compatible with Krishna's OpenArm
 blueprints.
 
-For JoyLo, the leader module publishes complete, unsmoothed readings and delegates
-jump rejection to `R1ProJoylo`. The generic reader's default jump guard compares
-against its last accepted sample: after a serial dropout and a large operator
-movement it can otherwise reject every later sample, preventing Minus/X from
-recovering. JoyLo retains the current reading while latching a pause, so a fresh
-enable press can resume tracking without a restart. Input errors still drop samples;
-timeouts, discontinuity stopping, joint limits and rate limits remain enforced.
-Generic OpenArm blueprints retain their reader-side jump guard.
+`R1ProLeaderConnection` specializes upstream's Feetech connection with seven
+motors per arm, no trigger servos, and unsmoothed leader readings. JoyLo owns
+input timeouts, discontinuity stopping and absolute-target authority. The old
+`dimos.teleop.leader` implementation and its optional jump-guard workaround are
+removed. The calibration JSON format and checked per-motor flips are unchanged.
 
 The Feetech reader reports calibrated angles in [-pi, pi]. The JoyLo blueprint
 sets `leader_angle_period=2*pi` so successive samples are unwrapped before
@@ -336,16 +335,16 @@ Use `r1pro-openarm-joylo-sim2` for both operator and simulation on one machine,
 or split the operator and receiver across machines. Pair both Joy-Cons and
 check their actual labels/axes with `python -m dimos.teleop.joycon.probe 60`.
 Run the probe while the teleop blueprint is stopped so only one reader owns the devices.
-See [the existing input setup guide](/docs/capabilities/manipulation/openarm_mini_teleop.md#joy-cons-instead-of-trigger-servos)
-for pairing and driver details.
+See [the existing input setup guide](/docs/capabilities/manipulation/openarm_mini_teleop.md)
+for input configuration. Linux uses hid-nintendo; macOS uses the HIDAPI backend.
 
-Install the `leader-teleop` extra on the operator. Use Krishna's calibration
-CLI for each arm and verify signs with `joint-tui` before following. This
+Install the `leader-teleop` extra on the operator. Reuse the existing Feetech
+calibration files; upstream removed the old calibration CLI and `joint-tui`. This
 profile requires exactly `joint_1` through `joint_7`; it takes jaw input from
 the Joy-Cons, so an old calibration with an eighth `gripper` motor needs a
 separate arm-only calibration. Copy the existing files to a separate calibration
 root and remove only their `gripper` entry, preserving all seven arm offsets
-and flips; select that root with `--leaderteleopmodule.calibration-root`.
+and flips; select that root with `--r1proleaderconnection.calibration-root`.
 Joint flips depend on the actual assembled
 leaders and should be verified against one R1 sim joint at a time.
 
@@ -367,8 +366,8 @@ uv sync --extra base --extra manipulation --extra cpu --extra sim \
   --extra leader-teleop --extra joycon-teleop --all-groups
 source .venv/bin/activate
 dimos run r1pro-openarm-joylo-left-sim2 --daemon \
-  --leaderteleopmodule.port-left /dev/cu.usbmodem<your-port> \
-  --leaderteleopmodule.calibration-root <calibration-root>
+  --r1proleaderconnection.left-serial-port /dev/cu.usbmodem<your-port> \
+  --r1proleaderconnection.calibration-root <calibration-root>
 ```
 
 Open Controller in DimOS Desktop with fixed frame `world`. A direct native
@@ -414,11 +413,10 @@ direction check required the following correction for the attached left leader
 
 These signs belong to this assembled leader's separate calibration, not a
 universal OpenArm default or the right arm. When calibrating this same setup
-again, use `--left-flips joint_1,joint_2,joint_6,joint_7` with the calibration
-CLI. To correct an existing calibration, preserve its IDs and homing offsets,
+again, retain the checked per-motor flips. Upstream removed the old Feetech
+calibration CLI. To correct an existing calibration, preserve its IDs and homing offsets,
 change only the relevant `flip` fields while following is paused, and restart
-the operator to reload it. Do not also negate the mapping's `scale`: that
-would apply the same direction correction twice. Re-engage after the reload
+the operator to reload it. Apply each direction correction only in the calibration, so it is not applied twice. Re-engage after the reload
 and check each joint individually.
 
 Missing/stale input pauses following and requires release and a fresh Minus
@@ -447,8 +445,8 @@ dimos --robot-ip 127.0.0.1 --zenoh-mode client --zenoh-domain r1pro-joylo \
 uv sync --extra base --extra manipulation --extra leader-teleop --all-groups
 dimos --robot-ip <simulation-host-ip> --zenoh-domain r1pro-joylo \
   run teleop-openarm-r1pro-joylo \
-  --leaderteleopmodule.port-left <left-feetech-port> \
-  --leaderteleopmodule.port-right <right-feetech-port>
+  --r1proleaderconnection.left-serial-port <left-feetech-port> \
+  --r1proleaderconnection.right-serial-port <right-feetech-port>
 ```
 
 Keep hands stationary for engagement, release X, then press X. Verify each

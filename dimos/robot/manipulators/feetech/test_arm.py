@@ -14,19 +14,23 @@
 
 from __future__ import annotations
 
-import builtins
+import math
 import sys
 from types import ModuleType
 
 import pytest
 
-from dimos.teleop.leader.calibration import FEETECH_POSITION_SPAN
-from dimos.teleop.leader.feetech import (
-    FeetechLeaderReader,
-    LeaderDependencyError,
-    _create_sdk_handlers,
+from dimos.robot.manipulators.feetech.arm import (
+    FeetechArm,
     _read_motor_position,
 )
+from dimos.robot.manipulators.feetech.calibration import (
+    FEETECH_POSITION_SPAN,
+    FeetechCalibration,
+    FeetechCalibrationError,
+    FeetechMotorCalibration,
+)
+from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechMotor, FeetechRobot
 
 
 class _FakePortHandler:
@@ -54,11 +58,6 @@ class _FakePacketHandler:
         return (1000 + motor_id, 0, 0)
 
 
-class _FailingPacketHandler:
-    def ReadPos(self, motor_id: int) -> tuple[int, int, int]:
-        return (1000 + motor_id, -1, 2)
-
-
 class _PositionPacketHandler:
     def __init__(self, result: int | tuple[int, int, int]) -> None:
         self._result = result
@@ -73,48 +72,44 @@ def _install_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "scservo_sdk", sdk)
 
 
-def test_feetech_reader_uses_direct_optional_sdk_import(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_arm_reads_each_open_bus_as_calibrated_radians(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_sdk(monkeypatch)
-    reader = FeetechLeaderReader("/dev/fake", 123456)
 
-    reader.connect()
+    def bus(side: str, *motors: str) -> FeetechBus:
+        return FeetechBus(
+            side, tuple(FeetechMotor(m, f"{side}_{m}", lower=-3.0, upper=3.0) for m in motors)
+        )
+
+    robot = FeetechRobot(buses=(bus("left", "joint_1", "joint_2"), bus("right", "joint_1")))
+    # The fake bus reads 1000 + motor id; offsets put joint_1 at zero and
+    # joint_2 a quarter turn (1024 ticks) away, read backwards.
+    calibration = FeetechCalibration(
+        side="left",
+        motors={
+            "joint_1": FeetechMotorCalibration(id=1, homing_offset=1001),
+            "joint_2": FeetechMotorCalibration(id=7, homing_offset=1007 - 1024, flip=True),
+        },
+    )
+    arm = FeetechArm(robot, {"left": "/dev/fake"}, {"left": calibration})
+    arm.connect()
     try:
-        raw_positions = reader.read_raw_positions({"joint_1": 1, "joint_2": 7})
+        readings = arm.read()
     finally:
-        reader.disconnect()
+        arm.disconnect()
 
-    assert raw_positions == {"joint_1": 1001, "joint_2": 1007}
-
-
-def test_create_sdk_handlers_raises_leader_dependency_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delitem(sys.modules, "scservo_sdk", raising=False)
-
-    real_import = builtins.__import__
-
-    def fake_import(
-        name: str,
-        globals: dict[str, object] | None = None,
-        locals: dict[str, object] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> object:
-        if name == "scservo_sdk":
-            raise ImportError("missing scservo_sdk")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-
-    with pytest.raises(LeaderDependencyError):
-        _create_sdk_handlers("/dev/missing")
+    assert list(readings) == ["left"]
+    assert readings["left"] == pytest.approx({"joint_1": 0.0, "joint_2": -math.pi / 2})
 
 
-def test_read_motor_position_rejects_sdk_error_tuple() -> None:
-    with pytest.raises(RuntimeError, match="position read failed"):
-        _read_motor_position(_FailingPacketHandler(), 3)
+def test_a_calibration_with_two_motors_on_one_id_is_refused() -> None:
+    with pytest.raises(FeetechCalibrationError, match="share one ID"):
+        FeetechCalibration(
+            side="left",
+            motors={
+                "joint_1": FeetechMotorCalibration(id=1, homing_offset=0),
+                "joint_2": FeetechMotorCalibration(id=1, homing_offset=0),
+            },
+        )
 
 
 @pytest.mark.parametrize(

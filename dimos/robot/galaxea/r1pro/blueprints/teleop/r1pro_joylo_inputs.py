@@ -14,7 +14,6 @@
 
 """OpenArm/Joy-Con inputs and transport contract, independent of the simulator."""
 
-import math
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -25,24 +24,8 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_CONTROL, Topic
+from dimos.robot.galaxea.r1pro.leader import R1ProLeaderConnection
 from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
-from dimos.teleop.leader.calibration import DEFAULT_LEADER_MOTOR_NAMES, LEADER_SIDES
-from dimos.teleop.leader.mapping import JointMapping, SideMapping
-from dimos.teleop.leader.module import LeaderTeleopModule
-
-# Preserve calibrated leader radians for absolute joint tracking. Follower limits are applied
-# by R1ProJoylo and again by the coordinator/connection, not in this reader.
-OPENARM_R1PRO_MAPPINGS = {
-    side: SideMapping(
-        joints=tuple(
-            JointMapping(
-                motor=motor, joint=f"r1pro/{side}_arm_joint{i}", lower=-math.tau, upper=math.tau
-            )
-            for i, motor in enumerate(DEFAULT_LEADER_MOTOR_NAMES, 1)
-        )
-    )
-    for side in LEADER_SIDES
-}
 
 _transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
     (name, kind): ZenohTransport.spec(Topic(f"dimos/r1pro/joylo/{name}", kind, qos=QOS_CONTROL))
@@ -62,23 +45,9 @@ _transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
 
 def _operator_blueprint(left_only: bool = False) -> Blueprint:
     return autoconnect(
-        LeaderTeleopModule.blueprint(
-            mappings=OPENARM_R1PRO_MAPPINGS,
-            tick_period_s=0.01,
-            # JoyLo must see the current, unsmoothed readings to detect jumps
-            # after input loss. The generic reader's rejection
-            # against its last accepted pose otherwise makes recovery impossible.
-            max_joint_jump_radians=None,
-            command_filter_cutoff_hz=None,
-            enabled_sides=("left",) if left_only else None,
-        ).remappings(
-            [
-                (LeaderTeleopModule, "leader_joint_command", "leader_readings"),
-                (LeaderTeleopModule, "teleop_buttons", "unused_leader_buttons"),
-                (LeaderTeleopModule, "left_gripper_command", "unused_leader_left_gripper"),
-                (LeaderTeleopModule, "right_gripper_command", "unused_leader_right_gripper"),
-            ]
-        ),
+        R1ProLeaderConnection.blueprint(
+            enabled_sides=("left",) if left_only else ("left", "right"),
+        ).remappings([(R1ProLeaderConnection, "joint_state", "leader_readings")]),
         JoyConTeleopModule.blueprint(publish_legacy_commands=False).remappings(
             [
                 (JoyConTeleopModule, "teleop_buttons", "unused_joycon_buttons"),

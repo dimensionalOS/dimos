@@ -53,7 +53,7 @@ _WAIST_ROLL_ORIGIN = (-0.0039635, 0.0, 0.044)
 
 @lru_cache(maxsize=1)
 def torso_to_mid360() -> Transform:
-    """Read the same native-axis mount used by simulation and UrdfManager."""
+    """Read the same native-axis mount used by simulation and UsdManager."""
     root = ET.parse(Path(__file__).with_name("g1.urdf")).getroot()
     origin = root.find("joint[@name='mid360_joint']/origin")
     if origin is None:

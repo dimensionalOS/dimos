@@ -14,16 +14,17 @@
 
 """JoyLo ports on CC's ordinary connection-backed coordinator."""
 
+from dataclasses import replace
 from typing import ClassVar
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.galaxea.r1pro.config import R1PRO_BODY_AXES
 from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER
-from dimos.teleop.leader.coordinator import leader_task
 
 
 class R1ProJoyloCoordinator(ControlCoordinator):
@@ -40,7 +41,12 @@ class R1ProJoyloCoordinator(ControlCoordinator):
 def joylo_tasks(velocity_limits: dict[str, float] | None = None) -> list[TaskConfig]:
     # One canonical trajectory owner: the profile composes the arms and torso.
     return [
-        leader_task(UPPER, velocity_limits=velocity_limits or dict.fromkeys(UPPER, 0.3)),
+        replace(
+            joint_trajectory_task(
+                UPPER, velocity_limits=velocity_limits or dict.fromkeys(UPPER, 0.3)
+            ),
+            stream_bind={"joint_command": "leader_joint_command"},
+        ),
         TaskConfig(
             name="vel_chassis",
             type="twist_velocity",

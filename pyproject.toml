@@ -314,7 +314,7 @@ manipulation = [
     "dimos[planning,base,sim,cpu]",
 ]
 leader-teleop = [
-    "ftservo-python-sdk",  # teleop/leader/feetech.py
+    "ftservo-python-sdk",  # robot/manipulators/feetech/arm.py
 ]
 joycon-teleop = [
     "hidapi>=0.14.0",  # macOS Bluetooth Joy-Con reports and stick calibration
