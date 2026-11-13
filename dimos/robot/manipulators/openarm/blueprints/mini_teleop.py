@@ -30,6 +30,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.openarm.config import (
@@ -87,7 +88,7 @@ def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprin
     return autoconnect(
         OpenArmLeaderCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_MODEL.model,
+            connections=[arm_declaration(OpenArmConnection)],
             tasks=[
                 # The trajectory task follows the leader's targets instead of joint_command.
                 replace(
