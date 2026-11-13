@@ -51,6 +51,8 @@ class HostConfig(BaseSettings):
     listen: str = DEFAULT_LISTEN
     # Comma-separated routers this one links to; zenoh dials and redials them.
     connect: str = ""
+    # Negotiate lossless compression between Host routers, before data crosses the network.
+    compression: bool = False
     # Link to every Host scouted on scout_addr or heard of from a linked one; off, only connect links.
     autodiscovery: bool = False
     # Link directly to the Hosts a linked Host knows of.

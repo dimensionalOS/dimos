@@ -31,6 +31,15 @@ settings. Compressed camera streams also drop under congestion rather than
 queueing obsolete frames. The 250 ms input watchdog and explicit X re-enable
 after a real dropout remain in effect.
 
+Enable `dimos host config compression=true` on both the robot and operator Host,
+then restart the Hosts before launching this run. This negotiates Zenoh's existing
+lossless link compression before camera data crosses Wi-Fi. Browser depth
+compression alone happens too late when Desktop runs on the operator machine.
+Topic types, full wrist resolution, depth values and calibration are unchanged;
+local native camera sessions do not need rebuilding. A live 1280×720 wrist float
+depth sample compressed from 3.69 MB to 0.44 MB in 7 ms on the robot, with identical
+bytes after decompression. Compression ratio depends on the scene.
+
 Wrist RGB-D subscribes to the installed ROS camera drivers. It needs the physical
 RealSense cameras to enumerate on USB. Frames use the installed vendor model's
 case-sensitive `{left,right}_D405_link` names. No RealSense USB devices were

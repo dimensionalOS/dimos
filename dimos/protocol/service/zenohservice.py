@@ -145,6 +145,9 @@ class ZenohConfig(SessionConfig):
     # Serve zenoh's read-only admin space (@/<zid>/...), e.g. a router's routing tables.
     # Python sessions only, native modules never see it.
     adminspace: bool = False
+    # Python sessions only: Host routers can compress their network link without
+    # changing the native modules' wire contract or any topic's codec.
+    compression: bool = False
     # A router links to the routers it scouts. Python sessions only.
     multicast_autoconnect: bool = False
     # A router links to the routers a linked one tells it of. Python sessions only.
@@ -200,6 +203,7 @@ class ZenohConfig(SessionConfig):
             f"|{self.multicast}|{self.scout_addr}|{self.gossip_enabled}"
             f"|{self.connect_timeout}|{self.adminspace}"
             f"|{self.multicast_autoconnect}|{self.gossip_autoconnect}"
+            f"|{self.compression}"
         )
 
     def to_wire(self) -> dict[str, Any]:
@@ -229,6 +233,7 @@ def _warn_client_single_link(config: ZenohConfig) -> None:
 def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
     """The zenoh session config these settings open."""
     zconfig = make_zenoh_config(config.to_wire())
+    zconfig.insert_json5("transport/unicast/compression/enabled", json.dumps(config.compression))
     if config.adminspace:
         zconfig.insert_json5("adminspace/enabled", "true")
     for source, on in (
