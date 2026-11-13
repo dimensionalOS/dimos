@@ -396,6 +396,7 @@ all_modules = {
     "spot-recorder": "dimos.experimental.robot.bosdyn.spot.recorder.SpotRecorder",
     "start-relay": "dimos.navigation.global_planner.mls_planner.start_relay.StartRelay",
     "static-tf-publisher": "dimos.protocol.tf.static_tf_publisher.StaticTfPublisher",
+    "system-log": "dimos.diagnostics.system_log.module.SystemLog",
     "teleop-control-coordinator": "dimos.control.teleop_coordinator.TeleopControlCoordinator",
     "teleop-recorder": "dimos.teleop.utils.recorder.TeleopRecorder",
     "teleop-skills": "dimos.agents.skills.teleop_skills.TeleopSkills",
