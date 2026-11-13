@@ -21,7 +21,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.g1.g1_tf_publisher import (
     D435_PITCH,
-    MID360_PITCH,
     base_to_torso,
     mount_transforms,
     torso_to_mid360,
@@ -122,4 +121,4 @@ def test_pelvis_height_matches_config_note() -> None:
 
 
 def test_mid360_pitch_constant_matches_urdf() -> None:
-    assert math.isclose(MID360_PITCH, 0.04014257279586953)
+    assert math.isclose(torso_to_mid360().rotation.euler.y, 0.04014257279586953)

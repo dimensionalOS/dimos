@@ -217,7 +217,7 @@ pytest dimos/sim2 -m 'not native_e2e' --import-mode=importlib -o addopts='' -q
 pytest dimos/sim2/test_module.py dimos/sim2/examples --import-mode=importlib -o addopts='' -q
 ```
 
-The final integration slice provides G1 GR00T beside a desk, with camera,
+The final integration slice provides [G1 GR00T beside a desk](/docs/development/sim2/g1.md), with camera,
 lidar, IMU and encoders. MuJoCo is the validated backend. Native renderer/raycaster
 adapters are selectable; another physics backend and cross-renderer fidelity have
 not been validated. The core imports no robot-specific policy or coordinator code.
