@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import math
-from typing import Any
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from dimos_lcm.std_msgs import Time
@@ -72,11 +71,6 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4
-    # Seconds a go_to waits for the robot pose to show up on tf.
-    pose_wait_s: float = 0.5
-
-    def to_config_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in super().to_config_dict().items() if k != "pose_wait_s"}
 
 
 class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
@@ -112,28 +106,18 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             self.stop_navigation()
         super().stop()
 
-    def _pose(self, wait_s: float = 0.0) -> PoseStamped | None:
-        return self.tfbuffer.get_pose(
-            self.config.world_frame, self.config.base_frame, forward_tolerance=wait_s
-        )
-
     @rpc
-    def go_to(self, x: float, y: float) -> Time:
-        """Start driving to a point in the world frame and return the goal's stamp at once.
-        Replaces any goal under way. `nav_status` reports carry the stamp in `goal_id.stamp`,
-        and a report with a status other than PENDING or ACTIVE says the goal is over.
-        Raises LookupError when tf has no robot pose.
+    def go_to(self, pose: PoseStamped) -> Time:
+        """Start driving to a pose and return the goal's stamp at once.
+
+        Replaces any goal under way. The heading is not used. `nav_status` reports carry
+        the stamp in `goal_id.stamp`, and a report with a status other than PENDING or
+        ACTIVE says the goal is over.
 
         Args:
-            x: target x in meters, world frame.
-            y: target y in meters, world frame.
+            pose: target pose. An empty frame is the world frame.
         """
-        pose = self._pose(wait_s=self.config.pose_wait_s)
-        if pose is None:
-            raise LookupError(f"no {self.config.world_frame} -> {self.config.base_frame} on tf")
-        # The planner picks the surface nearest the goal's z, so send the floor height under the robot.
-        floor_z = pose.z - self.config.start_z_offset_m
-        goal = PointStamped(x, y, floor_z, frame_id=self.config.world_frame)
+        goal = PointStamped(pose.x, pose.y, pose.z, frame_id=pose.frame_id)
         self.goal.transport.publish(goal)
         return Time(*goal.ros_timestamp())
 

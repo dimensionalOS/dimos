@@ -19,11 +19,10 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 import math
 from typing import NamedTuple
-from unittest.mock import Mock
 
 import pytest
-from pytest_mock import MockerFixture
 
+from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -56,16 +55,14 @@ class _GoalTransport(Transport[PointStamped]):
 class _Rig(NamedTuple):
     module: MLSPlannerNative
     sent: list[PointStamped]
-    pose: Mock
 
 
 @pytest.fixture()
-def rig(mocker: MockerFixture) -> Generator[_Rig, None, None]:
-    module = MLSPlannerNative(start_z_offset_m=0.3)
+def rig() -> Generator[_Rig, None, None]:
+    module = MLSPlannerNative()
     transport = _GoalTransport()
     module.goal.transport = transport
-    pose = mocker.patch.object(module, "_pose", return_value=None)
-    yield _Rig(module, transport.sent, pose)
+    yield _Rig(module, transport.sent)
     module._close_module()
 
 
@@ -74,28 +71,35 @@ def test_the_planner_exposes_navigation_as_plain_rpcs(rig: _Rig) -> None:
     assert {"go_to", "stop_navigation"} <= MLSPlannerNative.rpcs.keys()
 
 
-def test_go_to_sends_the_point_at_the_floor_height_and_returns_its_stamp(rig: _Rig) -> None:
-    rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 1.5))
+def test_go_to_takes_a_pose_stamped() -> None:
+    (param,) = extract_rpc_info(MLSPlannerNative.go_to).params
 
-    stamp = rig.module.go_to(4.0, 2.0)
+    assert (param.name, param.annotation) == ("pose", PoseStamped)
+
+
+def test_go_to_sends_the_pose_position_and_returns_its_stamp(rig: _Rig) -> None:
+    stamp = rig.module.go_to(PoseStamped(position=(4.0, 2.0, 1.2), frame_id="map"))
 
     (point,) = rig.sent
     assert (point.x, point.y, point.z) == pytest.approx((4.0, 2.0, 1.2))
-    assert point.frame_id == "odom"
+    assert point.frame_id == "map"
     assert [stamp.sec, stamp.nsec] == point.ros_timestamp()
 
 
-def test_go_to_raises_without_a_pose(rig: _Rig) -> None:
-    with pytest.raises(LookupError):
-        rig.module.go_to(4.0, 2.0)
-    assert rig.sent == []
+@pytest.mark.parametrize("frame_id", ["odom", "map", ""])
+def test_go_to_keeps_the_pose_frame_and_stamps_a_new_goal(rig: _Rig, frame_id: str) -> None:
+    pose = PoseStamped(1.0, frame_id, position=(4.0, 2.0, 0.0))
+
+    rig.module.go_to(pose)
+
+    (point,) = rig.sent
+    assert point.frame_id == frame_id
+    assert point.ts != pose.ts
 
 
 def test_a_second_go_to_replaces_the_one_under_way(rig: _Rig) -> None:
-    rig.pose.return_value = PoseStamped(position=(1.0, 0.0, 0.3))
-
-    rig.module.go_to(1.0, 0.0)
-    rig.module.go_to(4.0, 2.0)
+    rig.module.go_to(PoseStamped(position=(1.0, 0.0, 0.0)))
+    rig.module.go_to(PoseStamped(position=(4.0, 2.0, 0.0)))
 
     # The planner drops a goal when the next one arrives, so no cancel goes between them.
     assert [(point.x, point.y) for point in rig.sent] == [(1.0, 0.0), (4.0, 2.0)]
