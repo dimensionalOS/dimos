@@ -90,10 +90,13 @@ $ dimos mem summary recordings/<run-id>/memory.db
 │ total           │                           │ 8,952 │       │      │                     │          │  35.66 MiB │
 └─────────────────┴───────────────────────────┴───────┴───────┴──────┴─────────────────────┴──────────┴────────────┘
 ```
-Replay memory from DB:
+Replay a recording, SQLite or MCAP:
 ```bash
 dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
+dimos --replay --replay-db recordings/<run-id>/memory.mcap run unitree-go2
 ```
+
+An MCAP replay loads each replayed stream into memory at start, so memory use grows with the length of the recording.
 
 `--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds.
 
