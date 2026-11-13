@@ -180,16 +180,18 @@ _WRIST_V4L2 = (
 
 
 def _wrist_cameras() -> list[Blueprint]:
-    """Both wrists' colour as 848x480 JPEG, encoded on the CPU.
+    """Both wrists' colour as 848x480 JPEG at 30 fps, encoded on the CPU.
 
     The Jetson encoder path may pad a USB frame's rows past 848 px, which shears
-    the image without an error.
+    the image without an error. The rate must be set: a D405 defaults to 90 fps,
+    at which its colour stream on this controller never delivers a frame.
     """
     return [
         V4L2Camera.blueprint(
             instance_name=f"wrist_{side}",
             device=_WRIST_V4L2.format(port=port),
             frame_id=f"{side}_d405_link",
+            fps=30.0,
             hardware=False,
         )
         for side, port in (("left", 2), ("right", 1))

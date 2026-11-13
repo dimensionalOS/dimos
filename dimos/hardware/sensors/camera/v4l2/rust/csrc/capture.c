@@ -127,6 +127,23 @@ static int set_format(capture* cap, uint32_t fourcc, char* error, size_t len) {
     return 0;
 }
 
+static int set_rate(capture* cap, double fps, char* error, size_t len) {
+    struct v4l2_streamparm parm = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE};
+    parm.parm.capture.timeperframe.numerator = 1000;
+    parm.parm.capture.timeperframe.denominator = (uint32_t)(fps * 1000.0 + 0.5);
+    if (xioctl(cap->fd, VIDIOC_S_PARM, &parm) < 0) {
+        fail(error, len, "VIDIOC_S_PARM %.3g fps: %s", fps, strerror(errno));
+        return -1;
+    }
+    const struct v4l2_fract* got = &parm.parm.capture.timeperframe;
+    double given = got->numerator ? (double)got->denominator / got->numerator : 0.0;
+    if (given < fps * 0.99 || given > fps * 1.01) {
+        fail(error, len, "driver gave %.3g fps, not %.3g", given, fps);
+        return -1;
+    }
+    return 0;
+}
+
 static int start_mmap(capture* cap, char* error, size_t len) {
     struct v4l2_requestbuffers req = {.count = BUFFERS, .type = V4L2_BUF_TYPE_VIDEO_CAPTURE, .memory = V4L2_MEMORY_MMAP};
     if (xioctl(cap->fd, VIDIOC_REQBUFS, &req) < 0 || req.count != BUFFERS) {
@@ -271,8 +288,8 @@ static int encode(capture* cap, int camera_fd, size_t* out_len, char* error, siz
 }
 #endif
 
-capture* capture_open(const char* device, uint32_t width, uint32_t height, uint32_t fourcc, int hardware,
-                      int jpeg_quality, char* error, size_t error_len) {
+capture* capture_open(const char* device, uint32_t width, uint32_t height, uint32_t fourcc, double fps,
+                      int hardware, int jpeg_quality, char* error, size_t error_len) {
     capture* cap = calloc(1, sizeof(capture));
     if (!cap) {
         fail(error, error_len, "out of memory");
@@ -292,7 +309,7 @@ capture* capture_open(const char* device, uint32_t width, uint32_t height, uint3
         free(cap);
         return NULL;
     }
-    if (set_format(cap, fourcc, error, error_len) < 0) {
+    if (set_format(cap, fourcc, error, error_len) < 0 || (fps > 0 && set_rate(cap, fps, error, error_len) < 0)) {
         capture_close(cap);
         return NULL;
     }
@@ -304,7 +321,7 @@ capture* capture_open(const char* device, uint32_t width, uint32_t height, uint3
         if (started < 0) {
             // Fall back to CPU capture on a fresh fd; the failed REQBUFS may have left this one claimed.
             capture_close(cap);
-            return capture_open(device, width, height, fourcc, 0, jpeg_quality, error, error_len);
+            return capture_open(device, width, height, fourcc, fps, 0, jpeg_quality, error, error_len);
         }
     }
 #else

@@ -17,9 +17,10 @@ typedef struct {
     double encode_s;      // time the hardware spent converting and encoding this frame
 } capture_frame;
 
-// hardware: 0 never, 1 if available. Returns NULL with `error` filled on failure.
-capture* capture_open(const char* device, uint32_t width, uint32_t height, uint32_t fourcc, int hardware,
-                      int jpeg_quality, char* error, size_t error_len);
+// fps: frames per second to ask the driver for, 0 for the driver's default. hardware: 0 never, 1 if
+// available. Returns NULL with `error` filled on failure.
+capture* capture_open(const char* device, uint32_t width, uint32_t height, uint32_t fourcc, double fps,
+                      int hardware, int jpeg_quality, char* error, size_t error_len);
 // 1 when frames come back JPEG-encoded by the hardware.
 int capture_is_hardware(const capture* cap);
 // Waits up to timeout_ms. 1: frame, valid until capture_release. 0: timed out. -1: error.
