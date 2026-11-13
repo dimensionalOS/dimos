@@ -17,16 +17,12 @@ uv sync --extra manipulation --extra leader-teleop --inexact
 
 ## Calibration
 
-Calibrate each leader held in the follower's zero pose, the folded rest pose on
-its supports, and name the joints that read backwards in the flip list. Files
-land under `~/.local/state/dimos/teleop/leader/<side>/calibration.json`, or
-point the module at another file with `--leaderteleopmodule.left-calibration-path`.
-
-```bash
-dimos hardware feetech-leader calibrate --side left --port-left /dev/ttyACM1 \
-  --left-flips joint_1,joint_2,joint_3,joint_4,joint_5,joint_6
-dimos hardware feetech-leader joint-tui --side left --port /dev/ttyACM1
-```
+The module reads one calibration file per side from
+`~/.local/state/dimos/teleop/leader/<side>/calibration.json`, or from the file
+given with `--leaderteleopmodule.left-calibration-path`. Each file holds every
+motor's zero offset, taken with the leader in the follower's zero pose (the
+folded rest pose on its supports), and the joints that read backwards. dimOS
+has no tool to write these files yet.
 
 The trigger needs no flip; its absolute angle is the closure. Its full travel
 is `DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS` (1.5 rad on the Dimensional

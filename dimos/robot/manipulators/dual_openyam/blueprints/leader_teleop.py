@@ -14,11 +14,20 @@
 
 """Two YAM leader arms drive the dual OpenYAM through the leader teleop module."""
 
+from typing import ClassVar
+
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import In
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection, arm_remaps
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
+    arm_connection,
+    arm_remaps,
+)
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_HOME_PER_ARM,
     dual_openyam_arm_joints,
@@ -27,9 +36,9 @@ from dimos.robot.manipulators.dual_openyam.config import (
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.teleop.leader.calibration import LEADER_SIDES, LeaderSide
-from dimos.teleop.leader.coordinator import LeaderCoordinator, leader_gripper_tasks, leader_task
 from dimos.teleop.leader.mapping import GripperMapping, JointMapping, SideMapping
 from dimos.teleop.leader.module import LeaderTeleopModule
+from dimos.teleop.leader.tasks import leader_gripper_task, leader_task
 
 # dual_openyam.urdf position limits for joint1 to joint6; both arms share them.
 DUAL_OPENYAM_JOINT_LIMITS = (
@@ -57,6 +66,17 @@ DUAL_OPENYAM_GRIPPER_TASKS = {
     "left_manipulator": "left_arm_gripper",
     "right_manipulator": "right_arm_gripper",
 }
+
+
+class DualOpenYamLeaderCoordinator(DamiaoCoordinator):
+    """The dual OpenYAM coordinator, plus the port the leader arms' joint targets arrive on."""
+
+    # The 100 Hz tick loop must not share a Python process with cameras, Viser
+    # and recorders: on a Jetson that cost a quarter of its ticks and the arm
+    # moved in steps.
+    dedicated_worker: ClassVar[bool] = True
+
+    leader_joint_command: In[JointState]
 
 
 def _side_mapping(side: LeaderSide) -> SideMapping:
@@ -94,6 +114,17 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
     }
 
 
+def _gripper_tasks() -> list[TaskConfig]:
+    """One task per follower jaw, driven by the trigger on the same side's leader."""
+    jaws = {jaw.name: jaw for jaw in DualOpenYamConnection.robot.grippers}
+    return [
+        leader_gripper_task(
+            side, f"arm/{jaws[f'{side}_gripper'].joint}", open_at=jaws[f"{side}_gripper"].open_at
+        )
+        for side in LEADER_SIDES
+    ]
+
+
 def dual_openyam_leader_module() -> Blueprint:
     """The leader module; --simulation reads the mock leaders parked at the home pose."""
     if global_config.simulation:
@@ -116,7 +147,7 @@ def dual_openyam_leader_module() -> Blueprint:
 def dual_openyam_leader_control() -> Blueprint:
     """The trajectory task fed by the leader port, plus a jaw per side, over the two-bus connection."""
     return autoconnect(
-        LeaderCoordinator.blueprint(
+        DualOpenYamLeaderCoordinator.blueprint(
             instance_name="ControlCoordinator",
             model=dual_openyam_control_model(robot="arm"),
             tasks=[
@@ -124,12 +155,12 @@ def dual_openyam_leader_control() -> Blueprint:
                     DUAL_OPENYAM_LEADER_JOINTS,
                     velocity_limits=dual_openyam_leader_velocity_limits(),
                 ),
-                *leader_gripper_tasks(DualOpenYamConnection.robot.grippers),
+                *_gripper_tasks(),
             ],
             zero_stiffness_joints=[],
         ),
         arm_connection(DualOpenYamConnection),
-    ).remappings(arm_remaps(DualOpenYamConnection, LeaderCoordinator))
+    ).remappings(arm_remaps(DualOpenYamConnection, DualOpenYamLeaderCoordinator))
 
 
 # The leader ports given select the sides; --simulation mocks both the leaders and the CAN.

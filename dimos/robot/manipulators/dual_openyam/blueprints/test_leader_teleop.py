@@ -32,12 +32,8 @@ from dimos.robot.manipulators.dual_openyam.config import (
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.teleop.leader.calibration import LEADER_SIDES
-from dimos.teleop.leader.coordinator import (
-    LEADER_JOINT_COMMAND,
-    LEADER_TASK_PRIORITY,
-    LeaderCoordinator,
-)
 from dimos.teleop.leader.module import LeaderTeleopModule, LeaderTeleopModuleConfig
+from dimos.teleop.leader.tasks import LEADER_JOINT_COMMAND, LEADER_TASK_PRIORITY
 
 _MODEL = dual_openyam_model_config(robot="arm")
 # The connection has no mock fallback, so every parse needs both selectors.
@@ -49,7 +45,7 @@ def _atom(blueprint: Blueprint, module_type: type) -> Any:
 
 
 def _tasks(blueprint: Blueprint) -> dict[str, TaskConfig]:
-    tasks = _atom(blueprint, LeaderCoordinator).kwargs["tasks"]
+    tasks = _atom(blueprint, leader_teleop.DualOpenYamLeaderCoordinator).kwargs["tasks"]
     assert all(isinstance(task, TaskConfig) for task in tasks)
     return {task.name: task for task in tasks}
 
@@ -84,11 +80,14 @@ def test_teleop_blueprint_gives_the_leader_its_own_lane_above_the_planner() -> N
     blueprint = leader_teleop.dual_openyam_leader_teleop
     assert [atom.module for atom in blueprint.blueprints] == [
         LeaderTeleopModule,
-        LeaderCoordinator,
+        leader_teleop.DualOpenYamLeaderCoordinator,
         DualOpenYamConnection,
         ManipulationModule,
     ]
-    assert _atom(blueprint, LeaderCoordinator).kwargs["instance_name"] == "ControlCoordinator"
+    assert (
+        _atom(blueprint, leader_teleop.DualOpenYamLeaderCoordinator).kwargs["instance_name"]
+        == "ControlCoordinator"
+    )
     for stream in (LEADER_JOINT_COMMAND, "left_gripper_command", "right_gripper_command"):
         assert _is_name_unique(blueprint, stream)
 
