@@ -31,7 +31,12 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_MODEL,
 )
-from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechRobot
+from dimos.robot.manipulators.feetech.robot import (
+    FeetechBus,
+    FeetechMotor,
+    FeetechRobot,
+    FeetechTrigger,
+)
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
 DUAL_OPENYAM_SIDES = ("left", "right")
@@ -146,10 +151,33 @@ DUAL_OPENYAM = DamiaoRobot(
     home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
 )
 
-# Leader servo IDs 1 to 6 follow the arm joints, 7 is the gripper trigger.
-DUAL_OPENYAM_LEADER_MOTORS = tuple(f"joint_{index}" for index in range(1, 8))
+# dual_openyam.urdf position limits for joint1 to joint6; both arms share them.
+DUAL_OPENYAM_JOINT_LIMITS = (
+    (-2.618, 3.1416),
+    (0.0, 3.6652),
+    (0.0, 3.1416),
+    (-1.693, 1.5708),
+    (-1.5708, 1.5708),
+    (-2.0944, 2.0944),
+)
+# Trigger angle from released to fully squeezed on the Dimensional leaders.
+DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS = 1.5
+
+
+def _leader_bus(side: str) -> FeetechBus:
+    # Leader servos joint_1 to joint_6 drive the arm joints in order; joint_7
+    # is the gripper trigger.
+    return FeetechBus(
+        side,
+        tuple(
+            FeetechMotor(f"joint_{index}", joint, lower=lower, upper=upper)
+            for index, (joint, (lower, upper)) in enumerate(
+                zip(dual_openyam_arm_joints(side), DUAL_OPENYAM_JOINT_LIMITS, strict=True), start=1
+            )
+        ),
+        trigger=FeetechTrigger("joint_7", DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS),
+    )
+
 
 #: The two YAM leader arms, one Feetech bus each.
-DUAL_OPENYAM_LEADERS = FeetechRobot(
-    buses=tuple(FeetechBus(side, DUAL_OPENYAM_LEADER_MOTORS) for side in DUAL_OPENYAM_SIDES)
-)
+DUAL_OPENYAM_LEADERS = FeetechRobot(buses=tuple(_leader_bus(side) for side in DUAL_OPENYAM_SIDES))
