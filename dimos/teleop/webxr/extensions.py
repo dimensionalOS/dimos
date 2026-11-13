@@ -60,6 +60,17 @@ async def _ws_send_jpeg(ws: WebSocket, data: bytes) -> None:
         pass
 
 
+def push_jpeg_bytes(module: WebXRTeleopModule, jpeg: bytes) -> None:
+    """Forward already compressed camera frames to connected headset clients."""
+    loop = module._ws_loop
+    if loop is None:
+        return
+    with module._clients_lock:
+        clients = tuple(module._connected_clients)
+    for ws in clients:
+        asyncio.run_coroutine_threadsafe(_ws_send_jpeg(ws, jpeg), loop)
+
+
 def _push_jpeg(module: WebXRTeleopModule, msg: Image, quality: int) -> None:
     """JPEG-encode an Image and push it to all of module's connected /ws clients.
 
@@ -132,6 +143,59 @@ class TwistTeleopModule(WebXRTeleopModule):
             self.left_twist.publish(twist)
         else:
             self.right_twist.publish(twist)
+
+
+class ThumbstickDriveConfig(WebXRTeleopConfig):
+    """Config for teleop modules that drive the base with the thumbsticks.
+
+    Attributes:
+        linear_speed: m/s of translation at full left-stick deflection.
+        angular_speed: rad/s of yaw at full right-stick deflection.
+        deadzone: Stick magnitudes below this are treated as centred.
+    """
+
+    linear_speed: float = 0.5
+    angular_speed: float = 0.8
+    deadzone: float = 0.1
+
+
+def _deadzone(value: float, threshold: float) -> float:
+    """``value``, or 0.0 when its magnitude is below ``threshold``."""
+    return 0.0 if abs(value) < threshold else value
+
+
+def thumbstick_twist(
+    left: WebXRControllerState | None,
+    right: WebXRControllerState | None,
+    *,
+    deadzone: float,
+    linear_speed: float,
+    angular_speed: float,
+) -> Twist:
+    """The base Twist the two controllers' thumbsticks ask for, in the body frame.
+
+    The left stick translates (push forward → ``+x``, push right → ``-y``),
+    the right stick's x turns (push right → ``-yaw``). This is the one
+    stick→Twist mapping shared by every thumbstick-driven teleop module.
+
+    Args:
+        left: The left controller, or ``None`` when it has no fresh input.
+        right: The right controller, or ``None`` when it has no fresh input.
+        deadzone: Stick magnitudes below this are treated as centred.
+        linear_speed: m/s at full left-stick deflection.
+        angular_speed: rad/s at full right-stick deflection.
+
+    Returns:
+        A Twist; all zeros when a stick is centred or its controller absent,
+        never the previous speed.
+    """
+    twist = Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+    if left is not None:
+        twist.linear.x = -_deadzone(left.thumbstick.y, deadzone) * linear_speed
+        twist.linear.y = -_deadzone(left.thumbstick.x, deadzone) * linear_speed
+    if right is not None:
+        twist.angular.z = -_deadzone(right.thumbstick.x, deadzone) * angular_speed
+    return twist
 
 
 class ArmTeleopModule(WebXRTeleopModule):
@@ -321,12 +385,9 @@ class VideoArmTeleopModule(ArmTeleopModule):
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
 
 
-class Go2TeleopConfig(WebXRTeleopConfig):
+class Go2TeleopConfig(ThumbstickDriveConfig):
     """Configuration for Go2TeleopModule."""
 
-    linear_speed: float = 0.5  # m/s at full stick deflection
-    angular_speed: float = 0.8  # rad/s at full stick deflection
-    deadzone: float = 0.1
     video_jpeg_quality: int = 70
 
 
@@ -353,9 +414,6 @@ class Go2TeleopModule(WebXRTeleopModule):
     def _publish_safe_command(self) -> None:
         self.cmd_vel.publish(Twist.zero())
 
-    def _deadzone(self, v: float) -> float:
-        return 0.0 if abs(v) < self.config.deadzone else v
-
     def _on_joy(self, msg: Joy) -> bool:
         try:
             valid = super()._on_joy(msg)
@@ -368,15 +426,15 @@ class Go2TeleopModule(WebXRTeleopModule):
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
-        twist = Twist()
-        twist.linear = Vector3(0.0, 0.0, 0.0)
-        twist.angular = Vector3(0.0, 0.0, 0.0)
-        if left is not None:
-            twist.linear.x = -self._deadzone(left.thumbstick.y) * self.config.linear_speed
-            twist.linear.y = -self._deadzone(left.thumbstick.x) * self.config.linear_speed
-        if right is not None:
-            twist.angular.z = -self._deadzone(right.thumbstick.x) * self.config.angular_speed
-        self.cmd_vel.publish(twist)
+        self.cmd_vel.publish(
+            thumbstick_twist(
+                left,
+                right,
+                deadzone=self.config.deadzone,
+                linear_speed=self.config.linear_speed,
+                angular_speed=self.config.angular_speed,
+            )
+        )
         return True
 
     async def handle_color_image(self, msg: Image) -> None:

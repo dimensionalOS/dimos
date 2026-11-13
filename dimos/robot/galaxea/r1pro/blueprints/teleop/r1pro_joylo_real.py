@@ -28,6 +28,7 @@ from dimos.robot.galaxea.r1pro.joylo import ARMS, TORSO, JoyloConfig
 from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 from dimos.robot.galaxea.r1pro.motion import motion_groups
+from dimos.robot.galaxea.r1pro.teleop_coordinator import R1ProTeleopCoordinator, shared_teleop_tasks
 
 _declaration = R1ProConnectionConfig(
     boot_vendor_stack=False,
@@ -45,16 +46,20 @@ _profile = JoyloConfig(
 )
 
 
-def make_joylo_real(*, publish_odom_tf: bool = True, enable_wrist_color: bool = True) -> Blueprint:
+def make_joylo_real(
+    *, publish_odom_tf: bool = True, enable_wrist_color: bool = True, webxr: bool = False
+) -> Blueprint:
     """Compose hardware control with an explicit owner for odometry and wrist video."""
     declaration = _declaration.model_copy(
         update={"publish_odom_tf": publish_odom_tf, "enable_wrist_color": enable_wrist_color}
     )
+    coordinator = R1ProTeleopCoordinator if webxr else R1ProJoyloCoordinator
+    velocity_limits = {**dict.fromkeys(ARMS, 1.0), **dict.fromkeys(TORSO, 0.5)}
     return (
         autoconnect(
             R1ProConnection.blueprint(**declaration.model_dump()),
             R1ProJoylo.blueprint(**_profile.model_dump()),
-            R1ProJoyloCoordinator.blueprint(
+            coordinator.blueprint(
                 instance_name="ControlCoordinator",
                 connections=[
                     ConnectionConfig(
@@ -65,23 +70,20 @@ def make_joylo_real(*, publish_odom_tf: bool = True, enable_wrist_color: bool = 
                     )
                 ],
                 motion_limits=motion_groups(),
-                tasks=joylo_tasks(
-                    {
-                        **dict.fromkeys(ARMS, 1.0),
-                        **dict.fromkeys(TORSO, 0.5),
-                    }
-                ),
+                tasks=shared_teleop_tasks(velocity_limits)
+                if webxr
+                else joylo_tasks(velocity_limits),
             ),
         )
         .remappings(
             [
                 (R1ProConnection, "joint_state", "robot_feedback"),
-                (R1ProJoyloCoordinator, "r1pro_joint_state", "robot_feedback"),
+                (coordinator, "r1pro_joint_state", "robot_feedback"),
                 (R1ProConnection, "position_command", "r1pro_position_command"),
                 (R1ProConnection, "velocity_command", "r1pro_velocity_command"),
-                (R1ProJoyloCoordinator, "twist_command", "cmd_vel"),
+                (coordinator, "twist_command", "cmd_vel"),
                 (R1ProJoylo, "cmd_vel", "joylo_cmd_vel"),
-                (R1ProJoyloCoordinator, "joylo_twist_command", "joylo_cmd_vel"),
+                (coordinator, "joylo_twist_command", "joylo_cmd_vel"),
             ]
         )
         .transports(_transports)

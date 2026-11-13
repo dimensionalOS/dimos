@@ -190,6 +190,8 @@ class TickLoop:
         self._stop_event.set()
         if self._tick_thread and self._tick_thread.is_alive():
             self._tick_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if self._tick_thread.is_alive():
+                raise RuntimeError("Control tick thread did not stop")
         logger.info("TickLoop stopped")
 
     def _loop(self) -> None:

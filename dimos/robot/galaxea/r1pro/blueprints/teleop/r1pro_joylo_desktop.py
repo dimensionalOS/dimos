@@ -33,6 +33,7 @@ from dimos.robot.galaxea.r1pro.collection import r1pro_collection
 from dimos.robot.galaxea.r1pro.head_cameras import HeadCameraInfo, HeadLeftCamera, HeadRightCamera
 from dimos.robot.galaxea.r1pro.joylo import UPPER
 from dimos.robot.galaxea.r1pro.spatial_sensors import R1SpatialSensors
+from dimos.robot.galaxea.r1pro.webxr import R1ProWebXR, R1ProWebXRJoystick
 from dimos.robot.usd_manager import UsdManager
 
 _vendor = CACHE_DIR / "r1pro-hardware/mobiman"
@@ -97,11 +98,26 @@ _vision = (
 # Both entrypoints require --recorder.recording and --episodes.task at launch.
 r1pro_openarm_joylo_real = autoconnect(
     autoconnect(
-        r1pro_collection(), make_joylo_real(publish_odom_tf=True, enable_wrist_color=False), _vision
+        r1pro_collection(),
+        make_joylo_real(publish_odom_tf=True, enable_wrist_color=False, webxr=True),
+        R1ProWebXRJoystick.blueprint().remappings(
+            [(R1ProWebXRJoystick, "base_twist", "webxr_twist_command")]
+        ),
+        _vision,
     ).hosted(tags={"r1pro": True}),
     _operator_blueprint().hosted(local=True),
+    R1ProWebXR.blueprint(body_tracking_mode="optional", input_timeout_s=0.3)
+    .remappings(
+        [
+            (R1ProWebXR, "left_controller_output", "left_cartesian_command"),
+            (R1ProWebXR, "right_controller_output", "right_cartesian_command"),
+            (R1ProWebXR, "left_gripper_command", "webxr_left_gripper"),
+            (R1ProWebXR, "right_gripper_command", "webxr_right_gripper"),
+        ]
+    )
+    .hosted(local=True),
     UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
-).global_config(viewer="none", transport="zenoh", n_workers=9)
+).global_config(viewer="none", transport="zenoh", n_workers=11)
 
 # Keep existing collection launch commands working without a second stack to maintain.
 r1pro_openarm_joylo_collect = r1pro_openarm_joylo_real.global_config()

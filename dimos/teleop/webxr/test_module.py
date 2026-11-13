@@ -35,7 +35,12 @@ from dimos.teleop.webxr.controller_types import (
     ThumbstickState,
     WebXRControllerState,
 )
-from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
+from dimos.teleop.webxr.extensions import (
+    ArmTeleopModule,
+    Go2TeleopModule,
+    HandTeleopModule,
+    thumbstick_twist,
+)
 from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
 
 
@@ -498,6 +503,41 @@ def test_zero_button_moves_every_group_to_zero(mocker: pytest_mock.MockerFixture
     manipulation.execute.assert_called_once_with(
         blocking=False, plan_id=manipulation.plan_to_joints.return_value.plan.plan_id
     )
+
+
+def test_thumbstick_twist_maps_sticks_to_body_frame() -> None:
+    """The one shared stick→Twist mapping: left stick translates, right yaws."""
+    left = WebXRControllerState(thumbstick=ThumbstickState(x=0.25, y=-0.75))
+    right = WebXRControllerState(thumbstick=ThumbstickState(x=-0.5, y=0.0))
+    twist = thumbstick_twist(left, right, deadzone=0.1, linear_speed=1.0, angular_speed=2.0)
+    assert twist.linear.x == pytest.approx(0.75)  # push forward → +x
+    assert twist.linear.y == pytest.approx(-0.25)  # push right → −y
+    assert twist.angular.z == pytest.approx(1.0)  # push left → +yaw
+    assert twist.linear.z == 0.0
+
+
+def test_thumbstick_twist_deadzone_and_absent_controllers_are_zero() -> None:
+    noisy = WebXRControllerState(thumbstick=ThumbstickState(x=0.05, y=-0.05))
+    centered = thumbstick_twist(noisy, noisy, deadzone=0.1, linear_speed=1.0, angular_speed=2.0)
+    absent = thumbstick_twist(None, None, deadzone=0.1, linear_speed=1.0, angular_speed=2.0)
+    assert (centered.linear.x, centered.linear.y, centered.angular.z) == (0.0, 0.0, 0.0)
+    assert (absent.linear.x, absent.linear.y, absent.angular.z) == (0.0, 0.0, 0.0)
+
+
+def test_arm_teleop_publishes_original_joy_only_on_receipt(mocker) -> None:
+    module = ArmTeleopModule()
+    publish = mocker.patch.object(module.left_joy, "publish")
+    try:
+        joy = Joy(ts=123.0, frame_id="left", axes=[0.2, -0.3, 0.0, 0.0], buttons=[0] * 6)
+        assert module._on_joy_bytes(joy.lcm_encode())
+        assert publish.call_args.args[0].ts == pytest.approx(123.0)
+        assert list(publish.call_args.args[0].axes) == pytest.approx(joy.axes)
+        module._publish_button_state(None, None)
+        assert publish.call_count == 1  # No timer refresh of cached input.
+        module._reset_controller_state()
+        assert all(v == 0.0 for v in publish.call_args.args[0].axes)
+    finally:
+        module.stop()
 
 
 def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixture) -> None:

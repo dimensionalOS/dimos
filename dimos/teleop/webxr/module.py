@@ -119,6 +119,8 @@ class WebXRTeleopModule(Module):
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
     teleop_buttons: Out[Buttons]
+    left_joy: Out[Joy]
+    right_joy: Out[Joy]
     button_pressed: Out[Buttons]
     button_released: Out[Buttons]
     status: In[String]
@@ -409,6 +411,10 @@ class WebXRTeleopModule(Module):
                 self._last_pose_update[hand] = None
                 self._last_controller_update[hand] = None
             self._publish_button_state(None, None)
+            for output, frame_id in ((self.left_joy, "left"), (self.right_joy, "right")):
+                output.publish(
+                    Joy(ts=time.time(), frame_id=frame_id, axes=[0.0] * 4, buttons=[0] * 6)
+                )
             self._release_all_buttons()
             self._publish_safe_command()
 
@@ -513,10 +519,14 @@ class WebXRTeleopModule(Module):
                 self._last_controller_update[hand] = None
                 self._is_engaged[hand] = False
                 self._initial_poses[hand] = None
+            output = self.left_joy if hand == Hand.LEFT else self.right_joy
+            output.publish(Joy(ts=time.time(), frame_id=msg.frame_id, axes=[], buttons=[]))
             return False
         with self._lock:
             self._controllers[hand] = controller
             self._last_controller_update[hand] = time.monotonic()
+            output = self.left_joy if hand == Hand.LEFT else self.right_joy
+            output.publish(msg)  # Preserve acquisition time; never republish cached Joy on a timer.
         return True
 
     def _start_server(self) -> None:

@@ -3,8 +3,9 @@
 The backend uses one coordinator motion policy for JoyLo, browser joint commands,
 Cartesian/IK tasks, and policy tasks. Clients select targets and authority; the
 coordinator arbitrates, bounds motion, and dispatches commands. Galaxea's hardware
-controllers still execute them. This change does not install WIM or add an R1
-WebXR blueprint; an IK task configured on this coordinator gets the same limits.
+controllers still execute them. The hardware blueprint includes CC's WebXR IK
+and joystick tasks alongside leader input, using one selected teleop source.
+This does not install WIM.
 
 ## Frontend integration contract
 
@@ -16,6 +17,8 @@ physical speed limiter in the frontend.
 | `ControlCoordinator` | `get_motion_limits()` | Read named groups, joint names, live `rate`, deployment `ceiling`, `unit`, and `label`. |
 | `ControlCoordinator` | `set_motion_limits(rates)` | Atomically update any subset, e.g. `{"arm_rate": 0.75, "base_speed": 0.3}`. Returns all groups. Unknown names, nonfinite values, and values outside `0..ceiling` fail without applying any change. |
 | `ControlCoordinator` | `set_estop(estopped)` | Existing emergency-stop latch. Clearing requires fresh connection feedback and does not resume cancelled trajectories. |
+| `ControlCoordinator` | `get_teleop_source()` | Read `source` (`leader` or `webxr`) and `webxr_ready` (headset clutches have been released since selection). |
+| `ControlCoordinator` | `select_teleop_source(source)` | Select `leader` or `webxr`, finish the current tick, clear old task targets and holds, pause JoyLo, and preserve any existing estop. Selection is idempotent. |
 | `R1ProJoylo` | `status()`, `pause()` | Read leader/Joy-Con health and authority; pause requires a fresh physical enable press to rearm JoyLo. |
 | `episodes` | `command(event)` | `start`, `save`, `discard`, or `toggle`. Returns `EpisodeStatus`. Included in the normal hardware blueprint. |
 | `episodes` | `get_status()` | Read recording state, saved/discarded counts, last event, timestamp, and task label. |
@@ -81,9 +84,50 @@ The old `r1pro-openarm-joylo-collect` name remains an equivalent entrypoint.
 No separate recorder blueprint or `--record` process is needed.
 
 The recorder observes the coordinator's dispatched actions, measured robot state,
-and camera outputs, independent of the device that supplied targets. OpenArm/Joy-Con
-input is connected in this blueprint. R1 WebXR input still needs CC's VR/IK adapter
-integrated into the shared coordinator; enabling recording does not add that adapter.
+and camera outputs, independent of the selected device. OpenArm/Joy-Con and WebXR
+are connected to the same coordinator; switching devices does not restart recording.
+
+## WebXR and leader selection
+
+`r1pro-openarm-joylo-real` starts with `leader` selected. To start with WebXR,
+add `--ControlCoordinator.teleop-source webxr`. The built-in HTTPS headset page is
+served by `R1ProWebXR` on the **operator laptop**, at
+`https://<operator-address>:8443/teleop` (configurable with
+`--r1prowebxr.server-port`). Add `--g.listen-host 0.0.0.0` when the headset must
+reach that server from another machine. The existing `webxr_pose`/`webxr_joy`
+topic inputs also accept packets from a custom spatial frontend.
+
+For a headset session without USB leaders or Joy-Cons, additionally pass
+`--disable r1-pro-leader-connection --disable joy-con-teleop-module`; keep `R1ProJoylo`
+in the blueprint so its pause and existing speed compatibility APIs remain available.
+
+An app can switch sources with `ControlCoordinator.select_teleop_source("webxr")`
+or `"leader"`. The switch clears pending browser/task targets as well as device
+intent, and recaptures holds from measured feedback. It does not clear estop.
+Returning to the leader requires a fresh Joy-Con enable press. Selecting WebXR
+requires releasing both grips and the right-stick click before engaging again;
+the unselected device's streams cannot overwrite targets. Releasing or losing
+WebXR input leaves WebXR selected, without automatically returning to the leader.
+
+Headset controls use CC's mapping:
+
+- Hold both middle-finger grips to steer the two arms; engagement captures the
+  current robot pose, then tracks controller displacement.
+- Index triggers close the corresponding gripper while its grip is held.
+- Hold right-stick click for body motion: left stick translates, right X turns,
+  right Y raises/lowers the torso. Release the click to stop requesting body motion.
+
+Head RGB is forwarded to the headset using the original compressed JPEG bytes.
+The existing Desktop head/wrist RGB-D and three-view RGB recording remain connected.
+Arm/base speeds use the same coordinator settings as leader/browser control;
+the R1 joystick mapper updates physical stick scaling when those settings change.
+CC's IK filtering, tracking-error guard, and slow torso-pitch preference remain.
+The combined hardware stack uses the pinned 2025 kinematics and 0.40/0.30 m lift
+links, matching the existing robot model, rather than CC's standalone 2026 defaults.
+His standalone VR entrypoints remain available separately; do not launch one
+alongside this combined blueprint against the same robot.
+
+## Recording contents
 
 The recorder and episode monitor live beside the robot control/cameras. The recorder
 precedes producers so it starts first and stops last. Operator network loss does not

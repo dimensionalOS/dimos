@@ -18,6 +18,7 @@ import h5py
 import numpy as np
 import pytest
 
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema
 from dimos.robot.galaxea.r1pro._collection_test_fakes import write_collection
@@ -106,3 +107,6 @@ def test_hardware_entrypoints_record_robot_streams_with_robot_side_producers(blu
         "coordinator_joint_command",
         "coordinator_joint_velocity",
     }
+    refs = resolve_module_refs(blueprint)
+    assert refs["ControlCoordinator", "_leader"] == "r1projoylo"
+    assert refs["r1prowebxrjoystick", "_motion_limits"] == "ControlCoordinator"
