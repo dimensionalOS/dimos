@@ -313,6 +313,9 @@ planning = [
 manipulation = [
     "dimos[planning,base,sim,cpu]",
 ]
+leader-teleop = [
+    "ftservo-python-sdk",  # robot/manipulators/feetech/arm.py
+]
 
 cpu = [
     # CPU inference backends. >=1.21 for onnxruntime.preload_dlls().
@@ -654,6 +657,7 @@ bosdyn-client = "bosdyn"
 drake = "pydrake"
 eclipse-zenoh = "zenoh"
 edgetam-dimos = "sam2"
+ftservo-python-sdk = "scservo_sdk"
 GitPython = "git"
 gtsam-extended = "gtsam"
 hydra-core = "hydra"
@@ -793,6 +797,8 @@ module = [
     "sam2.*",
     "scipy",
     "scipy.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "sensor_msgs.*",
     "sqlite_vec",
     "std_msgs.*",
