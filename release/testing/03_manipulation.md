@@ -73,7 +73,9 @@ Needs the agent credentials and a CUDA or MPS GPU, see [Agentic xArm simulation]
 uv run dimos run xarm-perception-sim-agent
 # In another terminal:
 uv run dimos mcp call get_robot_state
-uv run dimos mcp call localize --json-args '{"objects": "cup"}'
+# localize confirms an object from two camera poses, so look from a second one first
+uv run dimos mcp call move_to_pose --json-args '{"x": 0.4, "y": 0.1, "z": 0.35}'
+uv run dimos mcp call localize --json-args '{"objects": "cup", "start": -30, "duration": 30}'
 uv run humancli
 ```
 

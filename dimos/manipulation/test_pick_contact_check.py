@@ -110,6 +110,19 @@ def test_pick_tries_every_grasp_when_the_check_fails(
     assert result.metadata["contact_check_skipped"] == "ValueError: bad mesh"
 
 
+def test_pick_tries_every_grasp_when_the_scene_cloud_fails(
+    module: PickAndPlaceModule, gripper: MagicMock
+) -> None:
+    scene: Any = module._scene
+    scene.scene_cloud.side_effect = RuntimeError("no depth")
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert result.metadata["contact_check_skipped"] == "RuntimeError: no depth"
+    gripper.check.assert_not_called()
+
+
 def test_a_given_grasp_that_fails_the_contact_check_is_not_tried(
     module: PickAndPlaceModule, gripper: MagicMock
 ) -> None:

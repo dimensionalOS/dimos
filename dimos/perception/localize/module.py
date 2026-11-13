@@ -103,8 +103,11 @@ class PerceptionLocalizeConfig(ModuleConfig):
     # scene_cloud: cell size of the merged cloud, and the farthest depth it keeps, metres
     scene_voxel_m: float = 0.01
     scene_depth_trunc_m: float = 2.0
-    # scene_cloud: what an excluded object's box grows by on each side, metres
-    scene_exclude_margin_m: float = 0.02
+    # scene_cloud: what an excluded object's box grows by to the sides and above, metres
+    scene_exclude_margin_m: float = 0.01
+    # scene_cloud: the box starts this far above the object's lowest point, metres,
+    # so the surface the object stands on stays in the scene
+    scene_exclude_floor_m: float = 0.005
 
 
 class PerceptionLocalize(Module):
@@ -318,8 +321,9 @@ class PerceptionLocalize(Module):
     def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
         """Find every instance of each name in the last ``window_s`` seconds of memory.
 
-        The answer replaces the previous one; ``get_pointcloud``, ``get_position``
-        and ``scene_cloud`` read from it. Each entry has ``id``, ``label``,
+        The answer replaces the earlier one for these names and leaves other
+        names' objects as they are; ``get_pointcloud``, ``get_position`` and
+        ``scene_cloud`` read from all of them. Each entry has ``id``, ``label``,
         ``position`` and ``size`` (world frame, metres), ``score``, ``views`` and
         ``seen_s_ago``. Raises RuntimeError until ``state`` reads ready.
         """
@@ -328,6 +332,8 @@ class PerceptionLocalize(Module):
         _, (_, _, _, head, _) = self._localize(names, -window_s, window_s, None)
         found = []
         for instance_id, (label, hit) in self._objects.items():
+            if label not in names:
+                continue
             points = hit.point_cloud.points_f32()
             size = (points.max(axis=0) - points.min(axis=0)) if len(points) else np.zeros(3)
             found.append(
@@ -354,6 +360,13 @@ class PerceptionLocalize(Module):
         return Vector3(*self._resolve(target).position_world_xyz)
 
     @rpc
+    def forget(self, target: str) -> None:
+        """Drop the object with this id or label: it is no longer where it was seen."""
+        self._objects = {
+            i: (label, hit) for i, (label, hit) in self._objects.items() if target not in (i, label)
+        }
+
+    @rpc
     def scene_cloud(
         self,
         exclude: str | None = None,
@@ -365,7 +378,9 @@ class PerceptionLocalize(Module):
         ``start`` and ``duration`` name the window as in ``localize``. The
         cloud is ``scene_voxel_m`` cells, cut at ``scene_depth_trunc_m``.
         ``exclude``, found as in ``get_pointcloud``, leaves out that object's box,
-        grown by ``scene_exclude_margin_m``. None when nothing in the window has depth.
+        grown by ``scene_exclude_margin_m`` to the sides and above. The box starts
+        ``scene_exclude_floor_m`` above the object's lowest point, so what the
+        object stands on stays. None when nothing in the window has depth.
         """
         ready = getattr(self, "_ready", None)
         if ready is None or not ready.is_set() or self.config.geometry != "depth":
@@ -392,6 +407,7 @@ class PerceptionLocalize(Module):
             return merged
         margin = self.config.scene_exclude_margin_m
         low, high = target.min(axis=0) - margin, target.max(axis=0) + margin
+        low[2] = target[:, 2].min() + self.config.scene_exclude_floor_m
         points = merged.points_f32()
         outside = ~np.all((points >= low) & (points <= high), axis=1)
         return PointCloud2.from_numpy(
@@ -429,7 +445,9 @@ class PerceptionLocalize(Module):
             memento=self._memento,
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
-        self._objects = {
+        # An id names an object in one window only, so a label asked again starts over.
+        kept = {i: entry for i, entry in self._objects.items() if entry[0] not in queries}
+        self._objects = kept | {
             hit.instance_id: (query, hit)
             for query, hits in zip(queries, results, strict=True)
             for hit in hits

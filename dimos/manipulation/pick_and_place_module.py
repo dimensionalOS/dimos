@@ -173,7 +173,7 @@ class PickAndPlaceModule(Module):
         of ``grasps`` to pick_object as ``grasp``.
 
         Args:
-            object_id: An id from the last localize scan, or a label only one object has.
+            object_id: An id localize gave, or a label only one localized object has.
             generator: Name of the grasp generator to ask, such as GraspGenXModule.
             approach: Unit vector [x, y, z] in the arm's base frame: the direction
                 the gripper moves in, from the operator's hand into the object.
@@ -216,7 +216,7 @@ class PickAndPlaceModule(Module):
         the planner found no path to any grasp tried.
 
         Args:
-            object_id: An id from the last localize scan, or a label only one object has.
+            object_id: An id localize gave, or a label only one localized object has.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
             grasp: One entry of propose_grasps's ``grasps``; only ``position``
                 and ``orientation`` are needed.
@@ -319,7 +319,11 @@ class PickAndPlaceModule(Module):
         robot = self.config.robot
         if robot is None or robot.gripper is None or not candidates.candidates:
             return candidates, {}
-        scene = self._scene.scene_cloud(exclude=object_id)
+        try:
+            scene = self._scene.scene_cloud(exclude=object_id)
+        except Exception as exc:
+            logger.warning("No scene point cloud; keeping every grasp", error=str(exc))
+            return candidates, {"contact_check_skipped": f"{type(exc).__name__}: {exc}"}
         if scene is None or not scene.frame_id == pointcloud.frame_id == candidates.header.frame_id:
             return candidates, {
                 "contact_check_skipped": "no scene point cloud in the grasps' frame"
@@ -402,6 +406,7 @@ class PickAndPlaceModule(Module):
             self._selected_object_id = object_id
             self._selected_grasp = grasp
             self._holding_object = True
+            self._scene.forget(object_id)
             if box is not None:
                 # The box in the tool tip's frame, as it is at the grasp pose:
                 # it rides with the tip from here.

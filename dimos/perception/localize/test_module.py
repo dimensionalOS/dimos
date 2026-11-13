@@ -150,18 +150,36 @@ def test_objects_of_the_last_scan_are_found_by_id_or_unique_label(localizer, moc
         localizer.get_pointcloud("cup")
 
 
+def test_a_forgotten_object_is_no_longer_found(localizer, mocker):
+    _ready(localizer, mocker, [])
+    bowl = _hit("bowl-1", [[1.0, 0.0, 0.0]])
+    localizer._objects = {
+        "cup-1": ("cup", _hit("cup-1", [[0.0, 0.0, 0.0]])),
+        "bowl-1": ("bowl", bowl),
+    }
+
+    localizer.forget("cup-1")
+
+    assert localizer.get_pointcloud("bowl") is bowl.point_cloud
+    with pytest.raises(LookupError, match="No 'cup-1'"):
+        localizer.get_pointcloud("cup-1")
+
+
 def test_scene_cloud_merges_the_window_and_leaves_out_the_excluded_object(localizer, mocker):
-    table = [[x, y, 0.0] for x in (0.0, 0.5, 1.0) for y in (0.0, 0.5, 1.0)]
-    _ready(localizer, mocker, [_cloud(table), _cloud([[0.5, 0.5, 0.05]])])
-    localizer._objects = {"cup-1": ("cup", _hit("cup-1", [[0.5, 0.5, 0.05]]))}
+    # A 4 cm cup on a table at z = 0, and a block 1.5 cm from the cup's side.
+    table = [[x, 0.0, 0.0] for x in (0.0, 0.5, 1.0)]
+    cup = [[0.5, 0.0, 0.0], [0.5, 0.0, 0.02], [0.5, 0.0, 0.04]]
+    block = [[0.515, 0.0, 0.02]]
+    _ready(localizer, mocker, [_cloud(table), _cloud(cup[1:] + block)])
+    localizer._objects = {"cup-1": ("cup", _hit("cup-1", cup))}
     localizer.config.scene_voxel_m = 0.001
 
     full = localizer.scene_cloud(start=-5.0, duration=5.0)
     without_cup = localizer.scene_cloud("cup", start=-5.0, duration=5.0)
 
-    assert len(full) == 10
-    # Only the cup goes: the table 5 cm under it is outside its box grown by 2 cm.
-    assert len(without_cup) == 9
+    assert len(full) == 6
+    # The table under the cup and the block beside it stay; the cup above the table goes.
+    assert sorted(without_cup.points_f32()[:, 2].tolist()) == pytest.approx([0.0, 0.0, 0.0, 0.02])
     assert localizer.index.time_range.call_args.args == (5.0, 10.0)
 
 
@@ -181,7 +199,7 @@ def test_scan_refuses_until_ready(localizer):
         localizer.scan(["cup"])
 
 
-def test_scan_reports_each_instance_and_replaces_the_last_answer(localizer, mocker):
+def test_scan_replaces_the_objects_of_the_names_asked_and_keeps_the_others(localizer, mocker):
     _ready(localizer, mocker, [])
     localizer._memento = mocker.Mock()
     localizer._color_feed = mocker.Mock()
@@ -190,7 +208,11 @@ def test_scan_reports_each_instance_and_replaces_the_last_answer(localizer, mock
     localizer.index.time_range.return_value = mocker.Mock(count=mocker.Mock(return_value=4))
     localizer.detections = mocker.Mock()
     mocker.patch("dimos.perception.localize.module.as_detection_array")
-    localizer._objects = {"old-1": ("old", _hit("old-1", [[0.0, 0.0, 0.0]]))}
+    block = _hit("block-1", [[0.0, 0.0, 0.0]])
+    localizer._objects = {
+        "block-1": ("block", block),
+        "cup-0": ("cup", _hit("cup-0", [[0.0, 0.0, 0.0]])),
+    }
     cup = _hit("cup-1", [[0.4, 0.1, 0.2], [0.5, 0.2, 0.3]], (0.45, 0.15, 0.25))
     cup.semantic_score, cup.n_views, cup.last_seen_timestamp = 0.8, 3, 9.0
     localizer.detector = mocker.Mock()
@@ -210,5 +232,6 @@ def test_scan_reports_each_instance_and_replaces_the_last_answer(localizer, mock
         }
     ]
     assert localizer.detector.localize.call_args.kwargs["window"] == (6.0, 10.0)
+    assert localizer.get_pointcloud("block") is block.point_cloud
     with pytest.raises(LookupError):
-        localizer.get_pointcloud("old-1")
+        localizer.get_pointcloud("cup-0")

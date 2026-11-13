@@ -131,6 +131,9 @@ def test_pick_object_uses_first_provider_candidate(
     result = module.pick_object("cup-1")
 
     assert result.message == "Pick complete"
+    # Localize no longer has the cup where it was.
+    scene: Any = module._scene
+    scene.forget.assert_called_once_with("cup-1")
     assert module.get_grasp_candidates().candidates == [first, second]
     assert module._selected_grasp is not None
     assert module._selected_grasp.position.x == pytest.approx(0.1)
@@ -264,6 +267,8 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
         "No 'missing' in the last scan. It found: cup cup-1. Did not start the pick."
     )
     assert module._selected_grasp is None
+    scene: Any = module._scene
+    scene.forget.assert_not_called()
 
 
 def test_pick_retains_held_state_when_retract_fails(module: PickAndPlaceModule) -> None:
