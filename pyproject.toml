@@ -50,14 +50,27 @@ exclude = [
     "**/*.pyi",
     "robot/galaxea/r1pro/vendor_setup.sh",
     "robot/manipulators/piper/can_setup.sh",
+    # Native modules must build from the same release as their Python wrappers.
+    # Include nested workspaces, C shims, vendored licenses and Cargo config.
+    "**/rust/**/*.rs",
+    "**/rust/**/*.toml",
+    "**/rust/**/.cargo/*.toml",
+    "**/rust/**/Cargo.lock",
+    "**/rust/**/*.nix",
+    "**/rust/**/flake.lock",
+    "**/rust/**/*.c",
+    "**/rust/**/*.h",
+    "**/rust/**/LICENSE*",
+    "**/rust/**/README.md",
+    "**/rust/**/*.cdr",
 ]
 
 "experimental.gateway" = ["annotations.yaml", "assets/**/*"]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures,
-# the on-robot agent's Node package (it runs from a checkout) and the native
-# (C++/nix) build tree, which is built separately.
+# the on-robot agent's Node package (it runs from a checkout) and native build
+# artifacts. Rust sources and their build inputs are intentionally shipped.
 "dimos" = [
     "agents/node_modules/**",
     "agents/dist/**",
@@ -69,6 +82,12 @@ exclude = [
     "agents/mcp/fixtures/**",
     "mapping/google_maps/fixtures/**",
     "web/websocket_vis/node_modules/**",
+    "**/rust/target/**",
+    "**/rust/**/target/**",
+    "**/rust/build/**",
+    "**/rust/**/build/**",
+    "**/rust/result*",
+    "**/rust/**/result*",
 ]
 
 [project]

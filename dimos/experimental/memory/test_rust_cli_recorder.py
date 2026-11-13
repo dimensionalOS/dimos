@@ -45,6 +45,7 @@ def _zenoh(channel: str, payload_type: type[Any] = PoseStamped) -> ZenohTranspor
 
 @pytest.fixture(autouse=True)
 def recording_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path / "installed")
     monkeypatch.setattr(global_config, "record", "sqlite")
     monkeypatch.setattr(global_config, "record_engine", "rust")
     monkeypatch.setattr(global_config, "record_topics", "*")
