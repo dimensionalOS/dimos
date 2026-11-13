@@ -549,3 +549,28 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_an_mcap_recording_gets_a_manifest_so_it_can_be_previewed(tmp_path: Path) -> None:
+    """No manifest means no console preview, and the manifest used to be read by opening the
+    recording as sqlite — which every .mcap fails, whatever the preview could have made of it."""
+    writer = pytest.importorskip("mcap.writer")
+    path = tmp_path / "run.mcap"
+    with path.open("wb") as out:
+        w = writer.Writer(out)
+        w.start(profile="dimos", library="test")
+        w.register_channel(
+            topic="dimos/lidar/sensor_msgs.PointCloud2", message_encoding="lcm", schema_id=0
+        )
+        w.finish()
+
+    manifest = cd._manifest(path)
+    assert manifest is not None
+    assert [s["name"] for s in manifest["streams"]] == ["lidar"]
+    assert manifest["streams"][0]["payload_module"].endswith("PointCloud2")
+
+
+def test_a_file_that_is_no_recording_has_no_manifest(tmp_path: Path) -> None:
+    junk = tmp_path / "notes.txt"
+    junk.write_text("not a recording")
+    assert cd._manifest(junk) is None

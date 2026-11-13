@@ -86,6 +86,19 @@ class _DimosCodec:
         return self.payload_type.lcm_decode(data)  # type: ignore[attr-defined]
 
 
+def _lcm_type(channel: Any) -> type | None:
+    """The dimos message type an LCM channel names in its own metadata, if it names one.
+
+    A writer that is not dimos itself can still say what it put on a channel: dim-controller's
+    recorder stamps ``lcm_type: foxglove_msgs.CompressedVideo`` on the h264 camera channels of
+    the ros2-profile mcaps it writes, where the mcap *schema* is empty (LCM has no ros2msg
+    schema to give) and the topic is a plain ``/front_camera`` that describes nothing. Without
+    this the frames read back as raw bytes, which is why those recordings had no preview.
+    """
+    name = channel.metadata.get("lcm_type")
+    return get_dimos_type(name) if name else None
+
+
 def _dimos_wire(topic: str) -> tuple[str, type] | None:
     """Split a dimos wire topic into its port name and message type.
 
@@ -296,6 +309,10 @@ class McapStore(Store):
                             f"Cannot decode MCAP stream {ch.topic!r}: install the package "
                             f"providing {payload_type!r} in the dataset reader environment"
                         ) from exc
+                if ch.topic not in self._codecs and ch.message_encoding == "lcm":
+                    named = _lcm_type(ch)
+                    if named is not None:
+                        self._codecs[ch.topic] = _DimosCodec(named)
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:

@@ -24,6 +24,7 @@ import pytest
 from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
 from dimos.memory.store.base import Store
+from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -31,11 +32,18 @@ from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
+class Obs(SimpleNamespace):
+    """One observation, with the derive() a Transformer uses to carry its fields forward."""
+
+    def derive(self, **change: Any) -> "Obs":
+        return Obs(**{**vars(self), **change})
+
+
 class Stream:
     """The reads preview makes of a memory stream, over real dimos payloads."""
 
     def __init__(self, name: str, items: Sequence[tuple[float, Any, Pose | None]]) -> None:
-        self.name, self.obs = name, [SimpleNamespace(ts=t, data=d, pose=p) for t, d, p in items]
+        self.name, self.obs = name, [Obs(ts=t, data=d, pose=p) for t, d, p in items]
 
     def __iter__(self) -> Iterator[SimpleNamespace]:
         return iter(self.obs)
@@ -45,6 +53,20 @@ class Stream:
 
     def first(self) -> SimpleNamespace:
         return self.obs[0]
+
+    def transform(self, xf: Any) -> "Transformed":
+        return Transformed(self, xf)
+
+
+class Transformed:
+    """What stream.transform() gives back: lazy, and with no count() to ask — preview must take
+    its counts and timestamps from the source stream, or it decodes the recording to count it."""
+
+    def __init__(self, source: Stream, xf: Any) -> None:
+        self.name, self._source, self._xf = source.name, source, xf
+
+    def __iter__(self) -> Iterator[Any]:
+        return self._xf(iter(self._source.obs))
 
 
 def store(**streams: Sequence[tuple[float, Any, Pose | None]]) -> Store:
@@ -147,3 +169,56 @@ def test_joystick_is_capped_evenly(monkeypatch: pytest.MonkeyPatch) -> None:
         [0.4],
         [0.9],
     ]
+
+
+def h264_frames(tmp_path: Path, n: int, t0: float = 100.0) -> list[tuple[float, Any, None]]:
+    """n encoded h264 packets, as a camera that records video rather than frames gives them."""
+    import av
+
+    clip = tmp_path / "source.h264"
+    with av.open(str(clip), "w", format="h264") as container:
+        video = container.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 64, 48, "yuv420p"
+        video.options = {"preset": "ultrafast", "tune": "zerolatency", "g": "1"}
+        for i in range(n):
+            picture = np.full((48, 64, 3), 20 * i, np.uint8)
+            container.mux(
+                video.encode(av.VideoFrame.from_ndarray(picture, format="bgr24"))  # type: ignore[arg-type]
+            )
+        container.mux(video.encode())  # type: ignore[arg-type]
+    with av.open(str(clip)) as source:
+        packets = [bytes(p) for p in source.demux(source.streams.video[0]) if p.size]
+    return [
+        (t0 + i / 10, CompressedVideo(data=p, format="h264", frame_id="front"), None)
+        for i, p in enumerate(packets)
+    ]
+
+
+def test_an_h264_camera_is_decoded_for_the_thumbnails(tmp_path: Path) -> None:
+    """The M20 records its cameras as foxglove CompressedVideo (h264), not as jpeg Images, and
+    a preview with no camera at all was the result."""
+    packets = h264_frames(tmp_path, 12)
+    doc = preview.build(store(front_camera=packets, front_camera_info=[(100.0, b"raw", None)]))
+    assert doc is not None
+    assert doc["streams"]["camera"]["name"] == "front_camera"  # the packets, not the decode
+    assert doc["streams"]["camera"]["count"] == len(packets)
+    assert doc["camera"] and all(shot["jpeg"] for shot in doc["camera"])
+    assert doc["thumb"] is not None  # a real picture came back, bright enough to rank
+
+
+def test_an_h264_camera_makes_a_timelapse(tmp_path: Path) -> None:
+    out = tmp_path / "t.mp4"
+    meta = preview.timelapse(store(front_camera=h264_frames(tmp_path, 12)), out)
+    assert meta is not None and meta["type"] == "video/mp4"
+    assert meta["bytes"] == out.stat().st_size > 0
+    assert meta["speed"] == 1.0
+
+
+def test_a_camera_whose_packets_never_decode_leaves_no_timelapse(tmp_path: Path) -> None:
+    rubbish = [
+        (100.0 + i, CompressedVideo(data=b"\x00\x00\x01\x09", format="h264"), None)
+        for i in range(4)
+    ]
+    out = tmp_path / "t.mp4"
+    assert preview.timelapse(store(front_camera=rubbish), out) is None
+    assert not out.exists()
