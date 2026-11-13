@@ -162,7 +162,7 @@ impl RayTracingVoxelMap {
 /// queued and handed on region by region as each one completes.
 struct SeedLoad {
     regions: Vec<SeedRegion>,
-    live: AHashSet<VoxelKey>,
+    non_premap: AHashSet<VoxelKey>,
     next_region: usize,
     next_tile: usize,
     tile_count: usize,
@@ -180,7 +180,7 @@ impl SeedLoad {
         Self {
             tile_count: part.tile_count(),
             regions: part.regions,
-            live: part.live,
+            non_premap: part.non_premap,
             next_region: 0,
             next_tile: 0,
             tiles_done: 0,
@@ -202,7 +202,7 @@ impl SeedLoad {
         let region = self.regions.get(self.next_region)?;
         let tile = &region.tiles[self.next_tile];
         let tile_start = Instant::now();
-        self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile, &self.live));
+        self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile, &self.non_premap));
         let tile_ms = tile_start.elapsed().as_secs_f64() * 1e3;
         self.last_tile_at = Instant::now();
         self.tiles_done += 1;
@@ -658,7 +658,7 @@ fn prepare_seed(
     let mut part = partition_seed(&points, voxel_size, origin, region_m);
     if let Some(flags) = flags {
         let premap: Vec<bool> = flags.iter().map(|f| f & PREMAP_FLAG != 0).collect();
-        part.live = non_premap_voxels(&points, &premap, voxel_size);
+        part.non_premap = non_premap_voxels(&points, &premap, voxel_size);
     }
     Some(part)
 }
@@ -970,7 +970,7 @@ mod tests {
         let mut mapper = Mapper::new(test_config());
         let created: usize = part
             .tiles()
-            .map(|tile| mapper.seed_tile(tile, &part.live))
+            .map(|tile| mapper.seed_tile(tile, &part.non_premap))
             .sum();
         assert_eq!(created, 1);
 
@@ -1021,7 +1021,7 @@ mod tests {
         .expect("loaded map must decode");
         let mut mapper = Mapper::new(test_config());
         for tile in part.tiles() {
-            mapper.seed_tile(tile, &part.live);
+            mapper.seed_tile(tile, &part.non_premap);
         }
         let everywhere = LocalBounds {
             origin_x: 0.0,
@@ -1083,7 +1083,7 @@ mod tests {
             4.0,
         )
         .expect("loaded map must decode");
-        assert!(part.live.is_empty());
+        assert!(part.non_premap.is_empty());
     }
 
     /// Two chunks stacked in z share a region cell, a third far off has its own.
@@ -1223,7 +1223,7 @@ mod tests {
             4.0,
         );
         for tile in part.tiles() {
-            mapper.seed_tile(tile, &part.live);
+            mapper.seed_tile(tile, &part.non_premap);
         }
         let mut viz = RegionSweep::default();
         let sizes = |due: Vec<(Cell, Vec<f32>)>| -> Vec<(Cell, usize)> {

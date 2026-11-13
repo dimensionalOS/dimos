@@ -109,10 +109,10 @@ impl Mapper {
     }
 
     /// Seed one tile of a partitioned world-frame cloud, the voxels in
-    /// `live` as non-premap. Returns how many voxels were created.
-    pub fn seed_tile(&mut self, tile: &[Point], live: &AHashSet<VoxelKey>) -> usize {
+    /// `non_premap` as non-premap. Returns how many voxels were created.
+    pub fn seed_tile(&mut self, tile: &[Point], non_premap: &AHashSet<VoxelKey>) -> usize {
         let pool = Arc::clone(&self.pool);
-        pool.install(|| seed_tile(&mut self.map, tile, live, &self.config))
+        pool.install(|| seed_tile(&mut self.map, tile, non_premap, &self.config))
             .len()
     }
 

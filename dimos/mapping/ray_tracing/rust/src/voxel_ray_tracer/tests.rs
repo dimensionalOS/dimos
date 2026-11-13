@@ -63,7 +63,7 @@ fn seed_all(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config) -> AHa
     let part = partition_seed(points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m);
     let mut created = AHashSet::new();
     for tile in part.tiles() {
-        created.extend(seed_tile(map, tile, &part.live, cfg));
+        created.extend(seed_tile(map, tile, &part.non_premap, cfg));
     }
     created
 }
@@ -2018,7 +2018,7 @@ fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
     let mut map = VoxelMap::default();
     let mut created_total = 0;
     for (i, tile) in tiles.iter().enumerate() {
-        created_total += seed_tile(&mut map, tile, &part.live, &cfg).len();
+        created_total += seed_tile(&mut map, tile, &part.non_premap, &cfg).len();
         let frame: Vec<(f32, f32, f32)> = (0..200)
             .map(|_| (next_coord(), next_coord(), next_coord()))
             .collect();

@@ -1139,7 +1139,7 @@ pub struct SeedPartition {
     pub regions: Vec<SeedRegion>,
     pub voxels: usize,
     /// Voxels a non-premap point of the cloud falls in. Empty when the whole cloud is premap.
-    pub live: AHashSet<VoxelKey>,
+    pub non_premap: AHashSet<VoxelKey>,
 }
 
 impl SeedPartition {
@@ -1164,7 +1164,7 @@ pub fn partition_seed(
     SeedPartition {
         regions: seed_regions(tiles, voxel_size, region_m),
         voxels,
-        live: AHashSet::new(),
+        non_premap: AHashSet::new(),
     }
 }
 
@@ -1288,12 +1288,12 @@ impl Aabb {
 }
 
 /// Seed one tile without ray tracing, creating only absent voxels. A voxel
-/// in `live` is seeded non-premap, and makes an existing one non-premap.
+/// in `non_premap` is seeded non-premap, and makes an existing one non-premap.
 /// Returns the created keys.
 pub fn seed_tile(
     map: &mut VoxelMap,
     points: &[(f32, f32, f32)],
-    live: &AHashSet<VoxelKey>,
+    non_premap: &AHashSet<VoxelKey>,
     cfg: &Config,
 ) -> AHashSet<VoxelKey> {
     let inv = 1.0 / cfg.voxel_size;
@@ -1305,7 +1305,7 @@ pub fn seed_tile(
             continue;
         }
         let key = world_to_voxel(x, y, z, inv);
-        if map.insert_seed(key, !live.contains(&key)) {
+        if map.insert_seed(key, !non_premap.contains(&key)) {
             created.insert(key);
         } else if !created.contains(&key) {
             continue;
@@ -1323,7 +1323,7 @@ pub fn seed_points(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config)
     let part = partition_seed(points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m);
     map.reserve_chunks(part.tile_count());
     part.tiles()
-        .map(|tile| seed_tile(map, tile, &part.live, cfg).len())
+        .map(|tile| seed_tile(map, tile, &part.non_premap, cfg).len())
         .sum()
 }
 
