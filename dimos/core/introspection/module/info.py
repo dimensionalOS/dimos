@@ -79,7 +79,7 @@ class ParamInfo:
     default: str | None = None
     kind: str | None = None
     # The type itself for a plain type or a message class, else object.
-    annotation: object = object
+    annotation: type[Any] | None = object
 
     def __repr__(self) -> str:
         value = self.name
@@ -101,7 +101,7 @@ class RpcInfo:
     documentation: str | None = None
     signature: str | None = None
     # Same rule as ParamInfo.annotation.
-    return_annotation: object = object
+    return_annotation: type[Any] | None = object
 
     def __repr__(self) -> str:
         prefix = f"{self.module_name}." if self.module_name else ""
