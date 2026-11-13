@@ -18,7 +18,7 @@ import importlib
 import pkgutil
 import re
 import time
-from typing import NoReturn
+from typing import NoReturn, TypeAlias
 
 import typer
 import zenoh
@@ -27,10 +27,13 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport, transport_topic, zenoh_prefix
 from dimos.msgs.helpers import resolve_msg_type
+from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
 _MAX_LIST_ITEMS = 8
+
+_Field: TypeAlias = "DimosMsg | str | bytes | int | float | list[_Field] | tuple[_Field, ...]"
 
 _modules_to_try = [
     "dimos.msgs.geometry_msgs",
@@ -84,7 +87,7 @@ def _split_topic(topic: str) -> tuple[str, type | None]:
     return name, msg_type
 
 
-def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
+def _decode_typed_lcm_message(channel: str, data: bytes) -> DimosMsg:
     _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
     cls = resolve_msg_type(msg_name)
     if cls is None:
@@ -92,7 +95,7 @@ def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
     return cls.lcm_decode(data)
 
 
-def _format_message(msg: object) -> str:
+def _format_message(msg: DimosMsg) -> str:
     """Render a message as str() when its class defines one, else as TypeName(field=value, ...)."""
     cls = type(msg)
     if cls.__str__ is not object.__str__ or cls.__repr__ is not object.__repr__:
@@ -107,7 +110,7 @@ def _format_message(msg: object) -> str:
     return f"{cls.__name__}({fields})"
 
 
-def _format_field(value: object) -> str:
+def _format_field(value: _Field) -> str:
     if isinstance(value, (list, tuple)):
         items = [_format_field(item) for item in value[:_MAX_LIST_ITEMS]]
         if len(value) > _MAX_LIST_ITEMS:
@@ -117,6 +120,8 @@ def _format_field(value: object) -> str:
         return f"<{len(value)} bytes>"
     if isinstance(value, str):
         return repr(value)
+    if isinstance(value, (int, float)):
+        return str(value)
     return _format_message(value)
 
 
@@ -137,7 +142,7 @@ def topic_echo(topic: str, type_name: str | None) -> None:
 
     # Typed mode: backend chosen by make_transport from global_config.
     if msg_type is not None:
-        transport: PubSubTransport[object] = make_transport(topic, msg_type)
+        transport: PubSubTransport[DimosMsg] = make_transport(topic, msg_type)
         with transport:
             transport.subscribe(lambda msg: print(_format_message(msg), flush=True))
             _listen_forever(
