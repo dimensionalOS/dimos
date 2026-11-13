@@ -162,7 +162,6 @@ modules:
   mujoco-sim-module: {abilities: [simulation]}
   navigation-skill-container: {abilities: [navigation]}
   object-db-module: {abilities: [object-detection]}
-  object-scene-registration-module: {abilities: [object-detection]}
   object-tracker2-d: {abilities: [object-tracking]}
   object-tracker3-d: {abilities: [object-tracking]}
   object-tracking: {abilities: [object-tracking]}
@@ -1250,8 +1249,4 @@ robots:
         demo-error-on-name-conflicts:
           title: Name conflict error demo
           description: Shows the error dimos gives when two modules' streams collide.
-          hidden: true
-        demo-object-scene-registration:
-          title: Object scene registration demo
-          description: Registers objects into a scene from a ZED camera (needs the ZED SDK).
           hidden: true
