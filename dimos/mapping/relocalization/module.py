@@ -40,6 +40,7 @@ from dimos.mapping.relocalization.named_locations import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
@@ -53,6 +54,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 RECORDING_SUFFIXES = (".db", ".mcap")
+
+LOCALIZED_PERIOD_S = 1.0
 
 
 def stream_key(name: str) -> str:
@@ -182,6 +185,7 @@ class PremapModule(Module):
     loaded_map: Out[PointCloud2]
     named_locations: IO[InteractiveMarkerUpdate]
     named_locations_request: In[String]
+    localized: Out[Bool]
 
     _placed: bool = False
 
@@ -201,6 +205,9 @@ class PremapModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self.register_disposable(
+            rx.interval(LOCALIZED_PERIOD_S).subscribe(lambda _: self.publish_localized())
+        )
         self.register_disposable(
             fix_stream(self.fixes, self.config.tf_interval).subscribe(lambda _: self.publish_tf())
         )
@@ -259,6 +266,9 @@ class PremapModule(Module):
         if self.fix is None:
             return
         self.tf.publish(TFMessage(self.fix.now()))
+
+    def publish_localized(self) -> None:
+        self.localized.publish(Bool(self.placed))
 
     @property
     def placed(self) -> bool:
