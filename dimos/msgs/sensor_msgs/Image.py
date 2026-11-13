@@ -541,9 +541,7 @@ class Image(Timestamped):
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=(
                 msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-                if hasattr(msg, "header")
-                and hasattr(msg.header, "stamp")
-                and msg.header.stamp.sec > 0
+                if hasattr(msg, "header") and hasattr(msg.header, "stamp")
                 else time.time()
             ),
         )
@@ -631,9 +629,7 @@ class Image(Timestamped):
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=(
                 msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-                if hasattr(msg, "header")
-                and hasattr(msg.header, "stamp")
-                and msg.header.stamp.sec > 0
+                if hasattr(msg, "header") and hasattr(msg.header, "stamp")
                 else time.time()
             ),
         )

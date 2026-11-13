@@ -105,7 +105,7 @@ classifiers = [
 dependencies = [
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
-    "dimos-lcm>=0.1.6",
+    "dimos-lcm>=0.1.7",
     "lcm>=1.5.3", # the `lcm` module itself (protocol/service/lcmservice.py)
     "eclipse-zenoh>=1.10.1,<2.0",
     "PyTurboJPEG==1.8.2",
@@ -333,9 +333,12 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
+    # MuJoCo 4 USD import supports Python 3.11-3.13 on macOS ARM64 / Linux x86_64.
+    "mujoco[usd]==4.0.0; python_version >= '3.11' and python_version < '3.14' and (platform_system != 'Linux' or platform_machine != 'aarch64')",
     "mjcf-to-urdf>=0.1.1",
     "playground>=0.0.5",
     "pygame-ce>=2.5.5",
+    "usd-core>=23.11; platform_system != 'Linux' or platform_machine != 'aarch64'",
 ]
 
 mapping = [
@@ -471,6 +474,8 @@ tests = [
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core>=0.7.0,<0.8.0",
     "mujoco>=3.3.4",
+    # MuJoCo 4 USD import supports Python 3.11-3.13 on macOS ARM64 / Linux x86_64.
+    "mujoco[usd]==4.0.0; python_version >= '3.11' and python_version < '3.14' and (platform_system != 'Linux' or platform_machine != 'aarch64')",
     "mjcf-to-urdf>=0.1.1",
     "pygame-ce>=2.5.5",
     "python-can>=4",
@@ -551,7 +556,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
+exclude-newer-package = { mujoco = false, mujoco-core = false, mujoco-studio = false, mujoco-usd = false, dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -583,6 +588,8 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+# Option G message contract; replace the draft Git pin with a release before merge.
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "e63ced404498e82e77963ab81649204054e80473" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
