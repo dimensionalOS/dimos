@@ -23,7 +23,7 @@ typed message or blueprint is imported.
 
 import argparse
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from contextlib import suppress
 import os
 from pathlib import Path
@@ -42,7 +42,12 @@ from dimos.web.relay_bridge.topic_catalog import TopicCatalog
 from dimos.web.relay_bridge.topic_guard import GuardedPublishers
 from dimos.web.relay_bridge.topic_mailbox import TopicIngressBudget, TopicMailbox, TopicSample
 from dimos.web.relay_bridge.topic_metadata import MetadataReceiver
-from dimos.web.relay_bridge.topic_profiles import MEDIA_PROFILES
+from dimos.web.relay_bridge.topic_profiles import (
+    MEDIA_PROFILES,
+    PROFILE_OPTIONS,
+    SETTING_NAMES,
+    normalize_settings,
+)
 from dimos.web.relay_bridge.topic_protocol import (
     MAX_TOPIC_ROUTES,
     TopicActivate,
@@ -61,21 +66,28 @@ from dimos.web.relay_bridge.topic_protocol import (
     TopicPage,
     TopicPublishMeta,
     TopicPubResult,
+    TopicSettings,
     TopicSource,
     TopicSources,
+    TopicVariant,
+    TopicVariantClose,
+    TopicVariantReady,
 )
 from dimos.web.relay_bridge.topic_put import TopicPuts
 from dimos.web.relay_bridge.topic_transform import TopicTransforms
-from dimos.web.relay_bridge.topic_transport import TopicByteBudget
+from dimos.web.relay_bridge.topic_transport import LatestTopicWriter, TopicByteBudget
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fetch_relay_info
 
-_loop_factory: Callable[[], asyncio.AbstractEventLoop] = asyncio.new_event_loop
+# Desktop's pinned runtime includes libuv's event loop for batched UDP I/O.
+# Keep the standalone service usable with the full project's asyncio setup,
+# on Python 3.10 too: neither runner needs asyncio.Runner.
+_run: Callable[[Coroutine[Any, Any, None]], None] = asyncio.run
 try:
     import uvloop
 except ImportError:
     pass
 else:
-    _loop_factory = uvloop.new_event_loop
+    _run = uvloop.run
 
 logger = setup_logger()
 
@@ -103,12 +115,39 @@ class TopicServiceConfig(BaseModel):
     zenoh: dict[str, Any] = Field(default_factory=_local_zenoh)
 
 
+def _encode_key(settings: dict[str, Any]) -> list[Any]:
+    """The settings that define an encoder; the rate is not one of them."""
+    return [settings.get(name) for name in SETTING_NAMES if name != "maxHz"]
+
+
+class _Variant:
+    """One encoder configuration of a media route.
+
+    Variants share the route's Zenoh subscription, mailbox and sequence
+    numbers; each has its own writer, so the per-key latest slots of one do
+    not replace another's, and its own due times.
+    """
+
+    def __init__(self, name: str, settings: dict[str, Any], writer: LatestTopicWriter) -> None:
+        self.name = name
+        self.settings = settings
+        self.writer = writer
+        self.next_due: dict[str, float] = {}
+        # Keys whose newest held sample this variant has not encoded yet.
+        self.pending: set[str] = set()
+
+    @property
+    def period(self) -> float:
+        return 1 / float(self.settings["maxHz"])
+
+
 class _Route:
     def __init__(
         self,
         session: zenoh.Session,
         client: RelayClient,
         spec: TopicOpen,
+        settings: dict[str, Any] | None,
         ingress_budget: TopicIngressBudget,
         send_budget: TopicByteBudget,
         catalog: TopicCatalog,
@@ -121,13 +160,28 @@ class _Route:
         self._catalog = catalog
         self._transforms = transforms
         self._media = MEDIA_PROFILES.get(spec.profile)
+        self._send_budget = send_budget
         self._on_closed = on_closed
         self._loop = asyncio.get_running_loop()
         self._changed = asyncio.Event()
         self._active = asyncio.Event()
-        max_hz = min(spec.maxHz, self._media.max_hz) if self._media else spec.maxHz
-        self._mailbox = TopicMailbox(spec.delivery, float(max_hz), ingress_budget, self._wake)
-        self._writer = client.topic_writer(spec.route, spec.delivery, send_budget, self._failed)
+        self._mailbox = TopicMailbox(spec.delivery, float(spec.maxHz), ingress_budget, self._wake)
+        self._writer = (
+            None
+            if self._media
+            else client.topic_writer(spec.route, spec.delivery, send_budget, self._failed)
+        )
+        self._variants: dict[str, _Variant] = {}
+        # The newest selected sample per key, held until every variant that
+        # still needs it is due; a slow variant never encodes an obsolete frame.
+        self._latest: dict[str, TopicSample] = {}
+        # An older relay opens a media route without settings and drives its
+        # one encoder's rate through topic_activate.
+        self._plain = self._media is not None and settings is None
+        if self._media:
+            self._add_variant(
+                "v1", settings or normalize_settings(spec.profile, {"maxHz": spec.maxHz})
+            )
         self._error: str | None = None
         self._subscriber: zenoh.Subscriber[None] | None = None
         self._task: asyncio.Task[None] | None = None
@@ -135,6 +189,10 @@ class _Route:
         self._sequence = 0
         self.decode_failures = 0
         self._last_decode_warning = float("-inf")
+
+    @property
+    def variants(self) -> dict[str, dict[str, Any]]:
+        return {name: dict(variant.settings) for name, variant in self._variants.items()}
 
     def _wake(self) -> None:
         self._loop.call_soon_threadsafe(self._changed.set)
@@ -171,14 +229,93 @@ class _Route:
                 subscriber = await opening
                 await asyncio.to_thread(subscriber.undeclare)
             raise
-        self._writer.start()
+        if self._writer is not None:
+            self._writer.start()
         self._task = asyncio.create_task(self._run())
 
     def activate(self, max_hz: float | None = None) -> None:
         if max_hz is not None:
-            self._mailbox.set_rate(min(max_hz, self._media.max_hz) if self._media else max_hz)
+            if self._media is None:
+                self._mailbox.set_rate(max_hz)
+            elif self._plain:
+                variant = self._variants["v1"]
+                variant.settings = normalize_settings(
+                    self.spec.profile, {**variant.settings, "maxHz": max_hz}
+                )
+                self._sync_rate()
         self._active.set()
         self._changed.set()
+
+    def _add_variant(self, name: str, settings: dict[str, Any]) -> None:
+        writer = self._client.topic_writer(
+            self.spec.route, "latest", self._send_budget, self._failed
+        )
+        assert isinstance(writer, LatestTopicWriter)
+        writer.start()
+        variant = _Variant(name, settings, writer)
+        variant.pending = set(self._latest)
+        self._variants[name] = variant
+        self._sync_rate()
+
+    def _sync_rate(self) -> None:
+        """The mailbox samples at the fastest variant; each variant gates itself."""
+        if self._media and self._variants:
+            self._mailbox.set_rate(max(float(v.settings["maxHz"]) for v in self._variants.values()))
+        self._changed.set()
+
+    def set_variant(self, name: str, requested: dict[str, Any]) -> dict[str, Any]:
+        """Open a variant, or change the rate of an open one; returns its settings."""
+        settings = normalize_settings(self.spec.profile, requested)
+        existing = self._variants.get(name)
+        if existing is not None and _encode_key(existing.settings) == _encode_key(settings):
+            # A rate change keeps each key's last encode time, as the mailbox does.
+            period = 1 / float(settings["maxHz"])
+            existing.next_due = {
+                key: due + period - existing.period for key, due in existing.next_due.items()
+            }
+            existing.settings = settings
+            self._sync_rate()
+        else:
+            if existing is not None:
+                existing.writer.stop()
+                del self._variants[name]
+            self._add_variant(name, settings)
+        return settings
+
+    async def close_variant(self, name: str) -> None:
+        variant = self._variants.pop(name, None)
+        if variant is None:
+            return
+        self._prune_latest()
+        self._sync_rate()
+        await variant.writer.aclose()
+
+    def _absorb(self, batch: list[TopicSample]) -> None:
+        for sample in batch:
+            previous = self._latest.get(sample.key)
+            if previous is not None:
+                self._mailbox.release(previous)
+            self._latest[sample.key] = sample
+            for variant in self._variants.values():
+                variant.pending.add(sample.key)
+
+    def _prune_latest(self) -> None:
+        for key, sample in list(self._latest.items()):
+            if not any(key in variant.pending for variant in self._variants.values()):
+                del self._latest[key]
+                self._mailbox.release(sample)
+
+    def _metadata(self, sample: TopicSample) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "key": sample.key,
+            "encoding": sample.encoding,
+            "gen": self.spec.gen,
+            "ingressTs": sample.ingress_ts,
+            "kind": sample.kind,
+        }
+        if sample.source_ts is not None:
+            metadata["sourceTs"] = sample.source_ts
+        return metadata
 
     async def _run(self) -> None:
         try:
@@ -207,76 +344,129 @@ class _Route:
                         )
                     )
                     return
+                now = time.monotonic()
                 if self._media:
-                    await self._transforms.slots.acquire()
-                batch, delay = self._mailbox.take(time.monotonic(), limit=1 if self._media else 128)
+                    delay = await self._encode_round(now)
+                else:
+                    delay = self._forward_round(now)
                 coalesce = self.spec.delivery == "reliable" and delay is None
-                try:
-                    for sample in batch:
-                        self._catalog.observe(sample.key, sample.encoding)
-                        self._sequence += 1
-                        metadata: dict[str, Any] = {
-                            "key": sample.key,
-                            "encoding": sample.encoding,
-                            "gen": self.spec.gen,
-                            "ingressTs": sample.ingress_ts,
-                            "kind": sample.kind,
-                        }
-                        if sample.source_ts is not None:
-                            metadata["sourceTs"] = sample.source_ts
-                        payload = bytes(sample.payload)
-                        if self._media and sample.kind == "put":
-                            metadata["queueMs"] = max(0.0, (time.time() - sample.ingress_ts) * 1000)
-                            try:
-                                output = await self._transforms.encode(self.spec.profile, payload)
-                            except (ValueError, OSError) as error:
-                                self.decode_failures += 1
-                                now = time.monotonic()
-                                if now - self._last_decode_warning >= 5:
-                                    logger.warning(
-                                        "topic media sample dropped",
-                                        route=self.spec.route,
-                                        profile=self.spec.profile,
-                                        dropped=self.decode_failures,
-                                        error=str(error),
-                                    )
-                                    self._last_decode_warning = now
-                                continue
-                            payload = output.payload
-                            metadata.update(output.metadata)
-                            metadata["encoding"] = output.encoding
-                            metadata["decodeFailures"] = self.decode_failures
-                        self._writer.offer(
-                            FrameHeader(
-                                ch=self.spec.route,
-                                seq=self._sequence,
-                                ts=time.time(),
-                                delivery=self.spec.delivery,
-                                meta=metadata,
-                            ),
-                            payload,
-                        )
-                except (BufferError, ConnectionError, ValueError, OSError, ImportError):
-                    self._failed("topic_forward_failed")
-                finally:
-                    for sample in batch:
-                        self._mailbox.release(sample)
-                    if self._media:
-                        self._transforms.slots.release()
                 if delay is not None:
                     self._timer = self._loop.call_later(delay, self._changed.set)
         finally:
             await self._dispose()
             self._on_closed(self.spec.route)
 
+    def _forward_round(self, now: float) -> float | None:
+        assert self._writer is not None
+        batch, delay = self._mailbox.take(now, limit=128)
+        try:
+            for sample in batch:
+                self._catalog.observe(sample.key, sample.encoding)
+                self._sequence += 1
+                self._writer.offer(
+                    FrameHeader(
+                        ch=self.spec.route,
+                        seq=self._sequence,
+                        ts=time.time(),
+                        delivery=self.spec.delivery,
+                        meta=self._metadata(sample),
+                    ),
+                    bytes(sample.payload),
+                )
+        except (BufferError, ConnectionError, ValueError, OSError, ImportError):
+            self._failed("topic_forward_failed")
+        finally:
+            for sample in batch:
+                self._mailbox.release(sample)
+        return delay
+
+    async def _encode_round(self, now: float) -> float | None:
+        """Encode the newest sample of every key for each variant that is due.
+
+        One worker permit is held per encode, never across two, so an event
+        route waiting for a worker gets one between a route's variants.
+        """
+        batch, delay = self._mailbox.take(now, limit=128)
+        self._absorb(batch)
+        for variant in list(self._variants.values()):
+            for key in sorted(variant.pending):
+                due = variant.next_due.get(key, 0.0)
+                if due > now:
+                    delay = due - now if delay is None else min(delay, due - now)
+                    continue
+                await self._transforms.slots.acquire()
+                try:
+                    # Select again with the permit in hand: the wait for a
+                    # worker must not leave an obsolete frame to encode.
+                    fresh, _ = self._mailbox.take(time.monotonic(), limit=128)
+                    self._absorb(fresh)
+                    sample = self._latest.get(key)
+                    if sample is None or self._variants.get(variant.name) is not variant:
+                        continue
+                    variant.pending.discard(key)
+                    variant.next_due[key] = now + variant.period
+                    await self._encode_one(variant, sample)
+                finally:
+                    self._transforms.slots.release()
+        self._prune_latest()
+        return delay
+
+    async def _encode_one(self, variant: _Variant, sample: TopicSample) -> None:
+        self._catalog.observe(sample.key, sample.encoding)
+        metadata = self._metadata(sample)
+        metadata["variant"] = variant.name
+        payload = bytes(sample.payload)
+        if sample.kind == "put":
+            metadata["queueMs"] = max(0.0, (time.time() - sample.ingress_ts) * 1000)
+            try:
+                output = await self._transforms.encode(self.spec.profile, payload, variant.settings)
+            except (ValueError, OSError) as error:
+                self.decode_failures += 1
+                now = time.monotonic()
+                if now - self._last_decode_warning >= 5:
+                    logger.warning(
+                        "topic media sample dropped",
+                        route=self.spec.route,
+                        profile=self.spec.profile,
+                        dropped=self.decode_failures,
+                        error=str(error),
+                    )
+                    self._last_decode_warning = now
+                return
+            payload = output.payload
+            metadata.update(output.metadata)
+            metadata["encoding"] = output.encoding
+            metadata["decodeFailures"] = self.decode_failures
+        if self._variants.get(variant.name) is not variant:
+            return  # retired while encoding; its writer is closing
+        self._sequence += 1
+        try:
+            variant.writer.offer(
+                FrameHeader(
+                    ch=self.spec.route,
+                    seq=self._sequence,
+                    ts=time.time(),
+                    delivery="latest",
+                    meta=metadata,
+                ),
+                payload,
+            )
+        except (BufferError, ConnectionError, ValueError, OSError):
+            self._failed("topic_forward_failed")
+
     async def _dispose(self) -> None:
+        # Closing the mailbox returns every charged byte, held samples included.
         self._mailbox.close()
+        self._latest.clear()
         if self._timer is not None:
             self._timer.cancel()
         subscriber, self._subscriber = self._subscriber, None
         if subscriber is not None:
             await asyncio.to_thread(subscriber.undeclare)
-        await self._writer.aclose()
+        for variant in self._variants.values():
+            await variant.writer.aclose()
+        if self._writer is not None:
+            await self._writer.aclose()
 
     async def close(self) -> None:
         if self._task is not None:
@@ -479,10 +669,20 @@ class TopicProvider:
             if message.route in self._routes or len(self._routes) >= MAX_TOPIC_ROUTES:
                 self._error(message.route, "topic_route_limit")
                 return
+            settings = None
+            if message.settings is not None and message.profile != "raw":
+                try:
+                    settings = normalize_settings(
+                        message.profile, message.settings.model_dump(exclude_none=True)
+                    )
+                except ValueError as error:
+                    self._error(message.route, str(error))
+                    return
             route = _Route(
                 self._session,
                 self._client,
                 message,
+                settings,
                 self._ingress_budget,
                 self._send_budget,
                 self._catalog,
@@ -498,15 +698,35 @@ class TopicProvider:
                 self._error(message.route, "invalid_key_expression")
                 return
             self._client.send_control_frame(TopicOpened(route=message.route, gen=message.gen))
-        elif isinstance(message, (TopicActivate, TopicClose)):
+        elif isinstance(message, (TopicActivate, TopicClose, TopicVariant, TopicVariantClose)):
             existing_route = self._routes.get(message.route)
             if existing_route is None or message.gen != self._generation:
                 return
             if isinstance(message, TopicActivate):
                 existing_route.activate(float(message.maxHz) if message.maxHz is not None else None)
-            else:
+            elif isinstance(message, TopicClose):
                 await existing_route.close()
                 self._routes.pop(message.route, None)
+            elif isinstance(message, TopicVariant):
+                if existing_route.spec.profile == "raw":
+                    return
+                try:
+                    settings = existing_route.set_variant(
+                        message.variant, message.settings.model_dump(exclude_none=True)
+                    )
+                except ValueError as error:
+                    self._error(message.route, str(error))
+                    return
+                self._client.send_control_frame(
+                    TopicVariantReady(
+                        route=message.route,
+                        gen=message.gen,
+                        variant=message.variant,
+                        settings=TopicSettings(**settings),
+                    )
+                )
+            else:
+                await existing_route.close_variant(message.variant)
         elif isinstance(message, TopicList):
             if message.source != self.config.source or not self.config.read:
                 self._error(message.id, "topic_read_denied")
@@ -532,6 +752,18 @@ class TopicProvider:
             )
 
 
+def capabilities(config: TopicServiceConfig) -> TopicCapabilities:
+    """What this provider advertises at hello, ranges per profile included."""
+    profiles = ["raw", *MEDIA_PROFILES] if config.media else ["raw"]
+    return TopicCapabilities(
+        read=config.read,
+        write=config.write,
+        profiles=profiles,
+        guardedPublishers=config.write and config.guarded_publishers,
+        profileOptions={name: PROFILE_OPTIONS[name] for name in profiles},
+    )
+
+
 async def serve(config: TopicServiceConfig, stop: asyncio.Event) -> None:
     """Own the direct Zenoh session, relay retries and all subscription cleanup."""
     zconfig = make_zenoh_config(config.zenoh)
@@ -549,12 +781,7 @@ async def serve(config: TopicServiceConfig, stop: asyncio.Event) -> None:
                     await client.hello(
                         topic_source=config.source,
                         token=None if config.token is None else config.token.get_secret_value(),
-                        topic_capabilities=TopicCapabilities(
-                            read=config.read,
-                            write=config.write,
-                            profiles=["raw", *MEDIA_PROFILES] if config.media else ["raw"],
-                            guardedPublishers=config.write and config.guarded_publishers,
-                        ),
+                        topic_capabilities=capabilities(config),
                     )
                     client.start_keepalive()
                     provider = TopicProvider(config, session, client, puts, catalog)
@@ -634,10 +861,7 @@ def main() -> None:
         config = TopicServiceConfig.model_validate_json(args.config.read_bytes())
     except (OSError, ValidationError):
         raise SystemExit("invalid or unreadable topic service configuration") from None
-    # Desktop's pinned runtime includes libuv's event loop for batched UDP I/O.
-    # Keep the standalone service usable with the full project's asyncio setup.
-    with asyncio.Runner(loop_factory=_loop_factory) as runner:
-        runner.run(_main(config, exit_on_stdin_eof=args.exit_on_stdin_eof))
+    _run(_main(config, exit_on_stdin_eof=args.exit_on_stdin_eof))
 
 
 if __name__ == "__main__":

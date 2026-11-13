@@ -538,7 +538,9 @@ verify_nix_develop() {
 # A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension: update the Command Line Tools.
 update_command_line_tools() {
     { ! has_cmd c++ || c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; } && return
-    run_cmd sudo softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
+    run_cmd "${privilege[@]}" softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
 }
 
 # ─── system dependencies ─────────────────────────────────────────────────────
@@ -830,21 +832,23 @@ configure_system() {
 }
 
 configure_lcm_buffers() {
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
     local current_rmem; current_rmem="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
     if [[ "$current_rmem" -ge 67108864 ]]; then ok "LCM buffers already configured"; return; fi
 
     printf "\n"
     info "DimOS uses LCM transport which needs larger UDP buffers:"
-    dim "  sudo sysctl -w net.core.rmem_max=67108864"
-    dim "  sudo sysctl -w net.core.rmem_default=67108864"
+    dim "  ${privilege[*]} sysctl -w net.core.rmem_max=67108864"
+    dim "  ${privilege[*]} sysctl -w net.core.rmem_default=67108864"
     printf "\n"
 
     if prompt_confirm "Apply sysctl changes?" "yes"; then
-        run_cmd sudo sysctl -w net.core.rmem_max=67108864
-        run_cmd sudo sysctl -w net.core.rmem_default=67108864
+        run_cmd "${privilege[@]}" sysctl -w net.core.rmem_max=67108864
+        run_cmd "${privilege[@]}" sysctl -w net.core.rmem_default=67108864
         if prompt_confirm "Persist across reboots?" "yes"; then
             if [[ "$DRY_RUN" != "1" ]]; then
-                printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | sudo tee /etc/sysctl.d/99-dimos.conf >/dev/null
+                printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | "${privilege[@]}" tee /etc/sysctl.d/99-dimos.conf >/dev/null
             else dim "[dry-run] would write /etc/sysctl.d/99-dimos.conf"; fi
         fi
         ok "LCM buffers configured"
@@ -974,7 +978,7 @@ print_quickstart() {
     fi
 
     if [[ "$EXTRAS" == *"unitree"* ]] || [[ "$EXTRAS" == "all" ]] || [[ "$EXTRAS" == *"base"* ]]; then
-        printf "    %s# simulation%s\n    dimos --simulation run unitree-go2\n\n" "$DIM" "$RESET"
+        printf "    %s# replay a recorded session (no hardware needed)%s\n    dimos --replay run unitree-go2\n\n" "$DIM" "$RESET"
         printf "    %s# real hardware%s\n    ROBOT_IP=192.168.1.100 dimos run unitree-go2\n\n" "$DIM" "$RESET"
     fi
     if [[ "$EXTRAS" == *"sim"* ]] || [[ "$EXTRAS" == "all" ]]; then

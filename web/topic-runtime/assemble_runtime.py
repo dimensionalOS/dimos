@@ -21,17 +21,13 @@ wheel console-script installation and absolute build-prefix shebangs are avoided
 """
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import shutil
 import tarfile
 import zipfile
 
-
-def checksum(path: Path) -> str:
-    with path.open("rb") as content:
-        return hashlib.file_digest(content, "sha256").hexdigest()
+from package_runtime import checksum
 
 
 def assemble(inputs: Path, source: Path, relay: Path, output: Path) -> None:
@@ -59,11 +55,8 @@ def assemble(inputs: Path, source: Path, relay: Path, output: Path) -> None:
                         raise ValueError(f"unsupported wheel installation scheme: {entry.filename}")
                     relative = Path(*relative.parts[2:])
                 target = site / relative
-                if entry.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(archive.read(entry))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(entry))
     (output / "relay/sdk").mkdir(parents=True)
     shutil.copy2(relay, output / "relay/dimos-relay")
     (output / "relay/dimos-relay").chmod(0o755)

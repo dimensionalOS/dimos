@@ -126,6 +126,10 @@ uv run dimos hardware g1 disable
 
 ## 5. Legacy navigation viewer example
 
+Rerun's gRPC listener binds to all interfaces even when the bridge's `host`
+is loopback. Restrict remote access with a host firewall as described in
+[Network exposure](/docs/usage/visualization.md#network-exposure).
+
 In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
 
 ```sh skip

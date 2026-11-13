@@ -37,6 +37,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 import re
 from typing import Any, Protocol, cast, runtime_checkable
+import warnings
 
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for, codec_from_id
@@ -47,7 +48,7 @@ from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
-from dimos.memory.type.filter import StreamQuery
+from dimos.memory.type.filter import NearFilter, StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
@@ -166,6 +167,15 @@ class McapObservationStore(ObservationStore[Any]):
                     _loader=partial(decode, message.data),
                 )
 
+    def warn_if_unposed(self, q: StreamQuery) -> None:
+        if any(isinstance(f, NearFilter) for f in q.filters):
+            # No stacklevel reaches the caller: the depth differs per query path.
+            warnings.warn(
+                f"Stream {self.name!r} is read from MCAP, which stores no poses, so near() "
+                "cannot return results. dimos map pose-fill needs a --record sqlite recording.",
+                stacklevel=1,
+            )
+
     def query(self, q: StreamQuery) -> Iterator[Observation[Any]]:
         # MCAP is natively log-time ordered, so id ordering never needs a sort.
         # Native DimOS recordings expose publish_time as observation ts; source
@@ -232,6 +242,7 @@ class McapStore(Store):
         # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
         # source schema so summary() can flag them [raw bytes: <schema>].
         self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
+        self._ambiguous: dict[str, str] = {}  # stream name two topics fold to -> error
         signatures: dict[str, tuple[Any, ...]] = {}
         if summary is not None and summary.statistics is not None:
             for cid, ch in summary.channels.items():
@@ -257,10 +268,12 @@ class McapStore(Store):
                     if wire is not None and had is not None and wire[0] == had[0]:
                         name = f"{name}_{wire[1].__name__}"
                     if self._stream_topic.get(name, ch.topic) != ch.topic:
-                        raise ValueError(
+                        # Only an error for whoever reads that stream; the rest still opens
+                        self._ambiguous[name] = (
                             f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
                             " pass streams= to name them apart"
                         )
+                        continue
                 payload_type = ch.metadata.get("dimos.payload_type")
                 if (
                     decode_metadata
@@ -314,7 +327,11 @@ class McapStore(Store):
                     self._raw[name] = sch.name if sch else None
 
     def list_streams(self) -> list[str]:
-        return sorted(set(self._available) | set(self._streams))
+        return sorted((set(self._available) | set(self._streams)) - set(self._ambiguous))
+
+    def ambiguous_streams(self) -> dict[str, str]:
+        """Stream names two topics fold to (name -> error), left out of :meth:`list_streams`."""
+        return dict(self._ambiguous)
 
     def summary(self) -> str:
         """Base summary, tagging codecless streams with ``[raw bytes: <schema>]``."""
@@ -330,6 +347,8 @@ class McapStore(Store):
     def _create_backend(
         self, name: str, payload_type: type | None = None, **config: Any
     ) -> Backend[Any]:
+        if name in self._ambiguous:
+            raise ValueError(self._ambiguous[name])
         if name not in self._available:
             raise KeyError(f"No stream {name!r}. Available: {sorted(self._available)}")
         topic = self._stream_topic[name]

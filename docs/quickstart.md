@@ -54,6 +54,10 @@ dimos --simulation run unitree-go2       # quadruped
 dimos --simulation run unitree-g1-sim    # humanoid
 ```
 
+!!! note
+
+    The first simulation run downloads the [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) robot models, about **2 GB**, before the simulator opens.
+
 ### Real robot
 
 With a Unitree Go2 on the same network, point dimOS at its IP address and drop the `--replay` flag:
