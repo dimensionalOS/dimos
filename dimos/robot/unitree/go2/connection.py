@@ -16,7 +16,7 @@ import copy
 from enum import Enum
 from importlib import resources
 import sys
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 import time
 from typing import Any, Protocol
 
@@ -32,8 +32,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.cli.dataset import open_dataset
+from dimos.memory.replay import Replay, ReplayStream
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -198,9 +198,7 @@ class ReplayConnection(CompositeResource):
     def replay(self) -> Replay:
         # One shared store + Replay so lidar/odom/video advance against the
         # same wall-clock anchor on subscribe.
-        store = self.register_disposable(
-            SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
-        )
+        store = self.register_disposable(open_dataset(self.dataset))
         store.start()
         return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
 
@@ -320,9 +318,16 @@ class ReplayConnection(CompositeResource):
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
-        stream: ReplayStream[PoseStamped] = self.replay.stream(
-            self._stream_name("go2_odom", "odom")
-        )
+        name = self._stream_name("go2_odom", "odom")
+        kind = self.replay.store.stream(name).data_type
+        if kind is None or not issubclass(kind, PoseStamped):
+            # A legacy Go2 DDS recording stores nav_msgs.Odometry. Replayed as is,
+            # it kills the odom subscriber and leaves lidar and video without TF.
+            raise TypeError(
+                f"Go2 replay needs PoseStamped odometry, but stream {name!r} in dataset "
+                f"{self.dataset!r} holds {kind.__name__ if kind else None}"
+            )
+        stream: ReplayStream[PoseStamped] = self.replay.stream(name)
         return self._tracked(stream.observable())
 
     @simple_mcache
@@ -376,6 +381,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._camera_info_stop = Event()
         self.connection = make_connection(
             self.config.ip,
             self.config,
@@ -396,6 +402,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def start(self) -> None:
         super().start()
+        self._camera_info_stop.clear()
         if not hasattr(self, "connection"):
             return
         self.connection.start()
@@ -440,21 +447,25 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def stop(self) -> None:
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
+        self._camera_info_stop.set()
         try:
             self.liedown()
         except Exception:
             logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
-        if self.connection:
-            try:
-                self.connection.stop()
-            except Exception:
-                logger.warning("connection stop failed", exc_info=True)
-
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
-        super().stop()
+        try:
+            # Cancel and drain stream callbacks before closing the replay DB
+            # or disconnecting the backend they read from.
+            super().stop()
+        finally:
+            if self.connection:
+                try:
+                    self.connection.stop()
+                except Exception:
+                    logger.warning("connection stop failed", exc_info=True)
 
     @classmethod
     def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
@@ -491,9 +502,9 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.odom.publish(msg)
 
     def publish_camera_info(self) -> None:
-        while True:
+        while not self._camera_info_stop.is_set():
             self.camera_info.publish(self.camera_info_static.with_ts(time.time()))
-            time.sleep(1.0)
+            self._camera_info_stop.wait(1.0)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:

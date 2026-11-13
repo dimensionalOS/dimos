@@ -18,12 +18,14 @@
 PROVIDERS: dict[str, tuple[str, str]] = {
     "openai": ("OPENAI_API_KEY", "https://api.openai.com/v1"),
     "anthropic": ("ANTHROPIC_API_KEY", "https://api.anthropic.com"),
+    "google": ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta"),
 }
 
 # Host variables a Pi process may inherit; the provider key is added by name.
 PASSTHROUGH_ENV: tuple[str, ...] = (
     "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
     "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "PI_OFFLINE",
 )  # fmt: skip
 
 # Upper bound on one bash tool call, seconds.
@@ -46,6 +48,10 @@ NO_DIMOS_GUIDANCE = (
 
 # Raw robot bridge: default endpoint (an attached dimos runs its bridge here) and limits.
 RAW_ENDPOINT = "tcp/127.0.0.1:7448"
+
+# The blueprint whose McpServer offers agents MCP tools. Matched by name: a blueprint that
+# bundles an McpServer under another name is not recognized.
+MCP_SERVER = "mcp-server"
 RAW_TOPIC_PREFIX = "robot"
 RAW_MAX_CMD_S = 2.0
 RAW_MAX_LINEAR_MPS = 1.0

@@ -43,7 +43,18 @@ BLUEPRINT_METHODS = {
     "requirements",
     "configurators",
 }
-_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
+_EXCLUDED_MODULE_NAMES = {
+    "AgentModule",
+    "BaseAgent",
+    "Module",
+    "ModuleBase",
+    "StreamModule",
+    "ConnectionModule",
+    "DamiaoConnection",
+    "FeetechConnection",
+    "SimWorld",
+    "CollectionModule",  # Requires profile-owned ports; compose with collect(profile=...).
+}
 
 
 def test_all_blueprints_is_current() -> None:

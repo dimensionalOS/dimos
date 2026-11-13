@@ -334,6 +334,7 @@ class MujocoSimModule(
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
+    body_poses: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -899,8 +900,8 @@ class MujocoSimModule(
         if self._stop_event.is_set():
             return
 
+        next_read = time.monotonic()
         while not self._stop_event.is_set():
-            loop_start = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -913,7 +914,7 @@ class MujocoSimModule(
                 return
 
             if frame is None or frame.timestamp <= last_timestamp:
-                self._stop_event.wait(timeout=interval * 0.5)
+                self._stop_event.wait(timeout=interval * 0.25)
                 continue
             last_timestamp = frame.timestamp
             ts = frame.timestamp
@@ -948,10 +949,12 @@ class MujocoSimModule(
                     depth_shape=frame.depth.shape,
                 )
 
-            elapsed = time.monotonic() - loop_start
-            sleep_time = interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            # Read on a fixed schedule, so a frame that comes late does not
+            # delay the ones after it. When a whole interval behind, restart.
+            now = time.monotonic()
+            next_read = next_read + interval if now - next_read < interval else now + interval
+            if next_read > now:
+                time.sleep(next_read - now)
 
     def _publish_camera_info(self) -> None:
         with self._state_lock:
@@ -1007,9 +1010,11 @@ class MujocoSimModule(
                     child_frame_id=self._camera_link,
                     ts=ts,
                 ),
-                *self._body_transforms(),
             )
         )
+        bodies = self._body_transforms()
+        if bodies:
+            self.body_poses.publish(TFMessage(*bodies))
 
     def _body_transforms(self) -> list[Transform]:
         """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""

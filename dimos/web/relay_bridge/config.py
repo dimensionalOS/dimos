@@ -79,9 +79,9 @@ class RelayBridgeConfig(ModuleConfig):
     robot_name: str = ""
     """Display name; empty falls back to robot_id."""
     jpeg_quality: int = Field(default=75, ge=0, le=100)
-    # MuJoCo publishes video at 20 Hz. Keep enough headroom for that source and
-    # for camera jitter: a cap close to the nominal rate aliases slightly early
-    # frames into an every-other-frame pattern.
+    # MuJoCo publishes video at 20 Hz and the Go2 camera at 30; the sampling
+    # gate tolerates arrival jitter, so a cap at the source rate passes every
+    # frame (pacing.passes_sampling_gate).
     image_max_hz: float = Field(default=30.0, gt=0.0)
     odom_max_hz: float = Field(default=20.0, gt=0.0)
     costmap_max_hz: float = Field(default=5.0, gt=0.0)

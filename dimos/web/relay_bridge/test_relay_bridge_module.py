@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import replace
 import json
 from pathlib import Path
+import random
 import socket
 import subprocess
 import sys
@@ -66,7 +67,7 @@ from dimos.web.relay_bridge.module_test_support import (
     push,
     wait_until,
 )
-from dimos.web.relay_bridge.pacing import passes_rate_gate
+from dimos.web.relay_bridge.pacing import passes_rate_gate, passes_sampling_gate
 from dimos.web.relay_bridge.protocol import (
     PROTOCOL_VERSION,
     ProtocolError,
@@ -233,13 +234,13 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
 
 def test_default_image_gate_preserves_mujoco_video_rate() -> None:
     config = RelayBridgeConfig()
-    last_input: dict[str, float] = {}
+    next_due: dict[str, float] = {}
     times = [100.0 + frame / VIDEO_FPS for frame in range(VIDEO_FPS)]
     accepted = [
         now
         for now in times
-        if passes_rate_gate(
-            last_input,
+        if passes_sampling_gate(
+            next_due,
             "color_image",
             now,
             1.0 / config.image_max_hz,
@@ -247,6 +248,46 @@ def test_default_image_gate_preserves_mujoco_video_rate() -> None:
     ]
 
     assert accepted == times
+
+
+def _sampled(times: list[float], hz: float) -> int:
+    next_due: dict[str, float] = {}
+    return sum(passes_sampling_gate(next_due, "ch", now, 1.0 / hz) for now in times)
+
+
+def _jittered(hz: float, seconds: int, jitter: float, seed: int = 7) -> list[float]:
+    rng = random.Random(seed)
+    return [100.0 + i / hz + rng.uniform(-jitter, jitter) for i in range(int(hz * seconds))]
+
+
+def test_sampling_gate_passes_a_source_at_the_gate_rate_through_jitter() -> None:
+    # A last-arrival anchor rejects every slightly early frame and re-anchors
+    # on the late ones (30 fps -> 20 in the benchmark); the schedule anchor
+    # passes them all. +-2 ms at 30 Hz and +-3 ms at 20 Hz are the W1 cases.
+    assert _sampled(_jittered(30.0, 10, 0.002), 30.0) == 300
+    assert _sampled(_jittered(20.0, 10, 0.003), 20.0) == 200
+    last_input: dict[str, float] = {}
+    strict = sum(
+        passes_rate_gate(last_input, "ch", now, 1.0 / 30.0) for now in _jittered(30.0, 10, 0.002)
+    )
+    assert strict < 250  # the old gate's thinning, for contrast
+
+
+def test_sampling_gate_never_exceeds_the_rate_on_average() -> None:
+    # A 60 Hz source through a 30 Hz gate: half the frames, evenly (plus the
+    # one-frame burst the first accept allows, half an interval after it).
+    assert _sampled(_jittered(60.0, 10, 0.0), 30.0) == 301
+    assert _sampled(_jittered(60.0, 10, 0.004), 30.0) <= 301
+    # A late frame is followed by at most one early one (the schedule holds):
+    # 3 frames in 40 ms after a 100 ms gap on a 30 Hz gate admit 2, not 3.
+    next_due: dict[str, float] = {}
+    assert passes_sampling_gate(next_due, "ch", 100.0, 1 / 30)
+    late = [100.1, 100.12, 100.14]
+    assert [passes_sampling_gate(next_due, "ch", now, 1 / 30) for now in late] == [
+        True,
+        True,
+        False,
+    ]
 
 
 def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
@@ -328,13 +369,13 @@ def test_no_costmap_encode_while_unsubscribed(costmap_bridge, monkeypatch) -> No
     # happen without viewers, independent of the module.encoded bookkeeping.
     module, clients = costmap_bridge
     calls = {"n": 0}
-    real = zlib.compress
+    real = builtin_codecs._zlib_rle
 
-    def spy(data: Any, level: int = -1) -> bytes:
+    def spy(data: bytes) -> bytes:
         calls["n"] += 1
-        return real(data, level)
+        return real(data)
 
-    monkeypatch.setattr(builtin_codecs.zlib, "compress", spy)
+    monkeypatch.setattr(builtin_codecs, "_zlib_rle", spy)
     costmap_transport(module).publish(COSTMAP_GRID)
     costmap_transport(module).publish(COSTMAP_GRID)
     flush_loop(module)

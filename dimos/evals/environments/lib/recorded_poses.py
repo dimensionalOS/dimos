@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Ground-truth object poses that a simulator published on ``tf``."""
+"""Ground-truth object poses that a simulator published on ``body_poses``."""
 
 from __future__ import annotations
 
@@ -34,11 +34,10 @@ def first_body_transform(recording: Store, body: str) -> Transform:
 
 
 def _body_transform(recording: Store, body: str, *, newest: bool) -> Transform:
-    # Several modules publish on tf, so scan messages until one names the body.
-    if "tf" not in recording.streams:
-        raise LookupError("No tf recorded")
-    for record in recording.streams.tf.order_by("ts", desc=newest):
+    if "body_poses" not in recording.streams:
+        raise LookupError("No body_poses recorded")
+    for record in recording.streams.body_poses.order_by("ts", desc=newest):
         for transform in record.data.transforms:
             if transform.child_frame_id == body:
                 return cast("Transform", transform)
-    raise LookupError(f"No tf for body {body!r}; is it in tracked_bodies?")
+    raise LookupError(f"No pose for body {body!r}; is it in tracked_bodies?")

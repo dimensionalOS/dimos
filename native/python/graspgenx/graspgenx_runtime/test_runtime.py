@@ -119,6 +119,19 @@ def test_adapter_sorts_stably_truncates_and_applies_tcp_transform(runtime: Any) 
         module.stop()
 
 
+def test_proposals_sample_the_configured_count(runtime: Any) -> None:
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True, **module_args(config(num_samples=500))
+    )
+    try:
+        module.start()
+        module.propose_grasps(cloud())
+
+        assert runtime.return_value.infer.call_args.args[1] == 500
+    finally:
+        module.stop()
+
+
 def test_empty_backend_result_preserves_input_header(runtime: Any) -> None:
     runtime.return_value.infer.return_value = (
         np.empty((0, 4, 4), dtype=np.float32),
@@ -210,3 +223,21 @@ def test_runtime_implements_the_host_contract() -> None:
     assert inspect.signature(GraspGenXModule.propose_grasps) == inspect.signature(
         GraspGenXRuntimeModule.propose_grasps
     )
+
+
+def test_proposals_by_object_id_name_the_host_module(runtime: Any, mocker: MockerFixture) -> None:
+    """This process serves under a private name; callers know the host's."""
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True,
+        **{**module_args(), "instance_name": "__isolated_python__/GraspGenXModule/abc123"},
+    )
+    module._scene = mocker.MagicMock()
+    module._scene.get_object_pointcloud_by_object_id.return_value = cloud()
+    try:
+        module.start()
+        proposed = module.propose_grasps_for("cup-1")
+    finally:
+        module.stop()
+
+    assert proposed["generator"] == "GraspGenXModule"
+    assert [g["generator"] for g in proposed["grasps"]] == ["GraspGenXModule"]

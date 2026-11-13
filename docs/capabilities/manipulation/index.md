@@ -5,6 +5,10 @@ the default world and native path planner.
 
 For typed client RPCs, see [Manipulation from Python](/docs/capabilities/manipulation/python_api.md).
 
+For demonstration collection, dataset preparation, training, and compatible
+checkpoint rollout, see [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md).
+Start with the OpenYAM hand-teaching tutorial or choose a guide for your task.
+
 ## Quick Start
 
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
@@ -20,26 +24,27 @@ Each blueprint launches the full stack: keyboard UI, mock controller, IK solver,
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
+dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
-dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
 
-OpenYAM is exposed as one whole-body device with six angular arm joints and a
-normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
-for fully open; it does not use meters. Hardware activation calibrates both
-mechanical endpoints, so clear the gripper jaws and workspace before startup.
-The gripper has no default startup target and moves only after joint control has
-an explicit target.
+The Galaxea A1Z runs only on the real arm, through `A1ZConnection`:
+`dimos run a1z-keyboard-teleop --a1zconnection.can-port a1zcan`. See the
+[A1Z guide](/docs/capabilities/manipulation/a1z.md) for its other blueprints.
 
-OpenArm follows the same whole-body model with both arms and both grippers in
-one device: fourteen angular joints (`left_arm/joint1..7`,
-`right_arm/joint1..7`) plus two normalized gripper joints (`left_arm/gripper`,
-`right_arm/gripper`). The keyboard jogs the left arm while the right arm holds
-its pose; keyboard gripper bindings are a follow-up.
+YAM and OpenArm now use direct connection modules. The coordinator sends joint
+commands over streams; the connection owns the complete native robot and CAN
+lifecycle. Deployed joints use the `arm/` namespace. Gripper openings use 0 closed
+to 1 open and remain separate from angular arm coordinates. Physical startup
+calibrates the grippers. See [connection testing and CAN selection](/docs/capabilities/manipulation/damiao-connections.md)
+for mock checks, explicit selectors, planner/teleop entries, and hardware acceptance.
+
+[MakerMods Metal](/docs/capabilities/manipulation/makermods_metal_integration.md) covers the single- and dual-arm
+connections, CAN selectors, and configurable mounting geometry.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 
@@ -55,15 +60,16 @@ Keyboard controls:
 | Y/H | +Yaw/-Yaw |
 | ESC | Quit |
 
-### Motion Planning (two terminals)
+### Motion Planning
 
 ```bash
-# Terminal 1: Mock coordinator
-dimos run coordinator-mock
-
-# Terminal 2: Planner with Drake visualization
-dimos run xarm7-planner-coordinator
+# Planner and coordinator on a real xArm7 (xarm6-planner-coordinator for an xArm6)
+dimos run xarm7-planner-coordinator --xarmconnection.ip 192.168.1.185
 ```
+
+The planner and the coordinator name the arm's joints `arm/joint1` ...; its
+links and tf frames keep their URDF names (`link7`, `link_tcp`). The other
+`xarm7-planner-coordinator` commands below need the same `--xarmconnection.ip`.
 
 Pink IK is the default solver. Tune it with nested module config overrides:
 
@@ -389,10 +395,16 @@ uv sync --extra manipulation --inexact
 
 The Viser panel talks to the concrete `ManipulationOperator` bound into its
 `VisualizationSession`. GUI callbacks enqueue operations through that operator
-for target evaluation, planning, preview, execution, cancellation, reset, and
+for target evaluation, planning, preview, execution, cancellation, and
 clear-plan actions. The panel owns only target drafts, selection state, and
 callback generations; it does not touch `WorldSpec`, IK, planner objects,
 `ManipulationModule`, `WorldMonitor`, or live Drake contexts directly.
+
+The **Zero** preset sets selected groups' joint targets to `0.0` without moving the
+robot. Use **Joint space → Plan → Execute**; the existing feasibility checks apply.
+If any selected joint's limits exclude zero, the preset is rejected and targets
+stay unchanged. Unselected joints stay unchanged. Zero is not Home or hardware
+calibration.
 
 The panel's **Planning mode** selector chooses how the current target is
 reached:
@@ -428,7 +440,7 @@ telemetry snapshots.
 
 ```bash
 # Arm + camera + manipulation + LLM agent (single command)
-dimos run xarm-grasp-agent --controlcoordinator.addresses '{"arm": "<ip>"}'
+dimos run xarm-grasp-agent --xarmconnection.ip <ip>
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
@@ -448,6 +460,12 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **KeyboardTeleopModule**: Pygame UI publishing routed spatial EEF twist intent
 - **ControlCoordinator**: 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule**: world backend, optional visualization, RRT motion planning, obstacle management
+
+A manipulation stack that plans around a camera-built voxel map adds
+`manipulation_mapping()` from
+[`common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) (self
+filter, voxel mapper, `PointCloudBoxFilter`), which feeds `ManipulationModule`'s
+`voxel_map` input.
 
 ### Streaming pose-target control
 
@@ -493,10 +511,11 @@ planner is locked for its whole native call.
 | Blueprint | Description |
 |-----------|-------------|
 | `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
-| `keyboard-teleop-a1z` | Galaxea A1Z keyboard teleop, planning, and hardware control |
+| `a1z-keyboard-teleop` | Galaxea A1Z keyboard teleop on the real arm, through `A1ZConnection` |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
+| `seeed-b601-dm-planner-coordinator` | Seeed reBot B601-DM planning, gripper, and hardware control |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
 | `r1pro-planar-preview` | R1 Pro planar-base, torso, and bimanual planning preview with fake hardware |
@@ -512,6 +531,7 @@ planner is locked for its whole native call.
 | [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | N |
 | [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | N |
 | Piper | 6 | Y | Y | N |
+| [Seeed reBot B601-DM](/docs/capabilities/manipulation/seeed_b601_dm_integration.md) | 6 | N | Y | N |
 | XArm6 | 6 | Y | Y | N |
 | XArm7 | 7 | Y | Y | Y |
 
@@ -524,7 +544,7 @@ planner is locked for its whole native call.
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
-| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, and task helpers |
+| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, mapping, and task helpers |
 | [`robot/manipulators/a750/config.py`](/dimos/robot/manipulators/a750/config.py) | A-750 model and hardware config |
 | [`robot/manipulators/a750/blueprints/teleop.py`](/dimos/robot/manipulators/a750/blueprints/teleop.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints/basic.py`](/dimos/robot/manipulators/piper/blueprints/basic.py) | Piper coordinator blueprint |

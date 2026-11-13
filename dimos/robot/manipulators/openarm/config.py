@@ -12,18 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm hardware and planning model configuration."""
+"""Pinned OpenArm geometry and canonical planning configuration."""
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent, HardwareType
-from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
-from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.robot.manipulators._modeling import named_for_robot
+from dimos.robot.manipulators.damiao.robot import (
+    DamiaoBus,
+    DamiaoGripper,
+    DamiaoMotor,
+    DamiaoRobot,
+)
+from dimos.robot.manipulators.feetech.robot import (
+    FeetechBus,
+    FeetechMotor,
+    FeetechRobot,
+    FeetechTrigger,
+)
 
 OPENARM_DESCRIPTION_URL = "https://github.com/enactic/openarm_description"
 OPENARM_DESCRIPTION_REF = "1fba2cbc05001f05b4514120b70130b4ac06f409"
@@ -42,45 +51,32 @@ OPENARM_BIMANUAL_XACRO = (
     / "openarm_v20.urdf.xacro"
 )
 
-OPENARM_BIMANUAL_MODEL = (
-    RobotModel.from_file(
-        OPENARM_BIMANUAL_XACRO,
-        package_paths={"openarm_description": OPENARM_DESCRIPTION_ROOT},
-        xacro_args={
-            "robot_preset": "default_bimanual",
-            "emit_grasp_frame": "true",
-        },
-    )
-    .with_default_joint_acceleration_limit(1.0)
-    .with_fixed_joints(
-        "openarm_left_finger_joint1",
-        "openarm_left_finger_joint2",
-        "openarm_right_finger_joint1",
-        "openarm_right_finger_joint2",
-    )
-)
+OPENARM_BIMANUAL_MODEL = RobotModel.from_file(
+    OPENARM_BIMANUAL_XACRO,
+    package_paths={"openarm_description": OPENARM_DESCRIPTION_ROOT},
+    xacro_args={
+        "robot_preset": "default_bimanual",
+        "emit_grasp_frame": "true",
+    },
+).with_default_joint_acceleration_limit(1.0)
 
 OPENARM_DOF = 7
-OPENARM_HARDWARE_ID = "openarm"
 OPENARM_SIDES = ("left", "right")
-# Order must match OpenArmDamiaoAdapter.joint_names: all arm groups in
-# declaration order (left then right), then all grippers.
+# Connection order is all left arm joints, all right arm joints, then grippers.
 OPENARM_LEFT_ARM_JOINTS = [f"openarm_left_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 OPENARM_RIGHT_ARM_JOINTS = [f"openarm_right_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
-OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
+# Each jaw turns on finger_joint1, in rad; the URDF has finger_joint2 copy it.
+# The left jaw is open at its joint's upper end, the right at its lower end.
+OPENARM_GRIPPER_JOINTS = [f"openarm_{side}_finger_joint1" for side in OPENARM_SIDES]
+OPENARM_FINGER_JOINTS = [
+    f"openarm_{side}_finger_joint{index}" for side in OPENARM_SIDES for index in (1, 2)
+]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
 OPENARM_HOME_JOINTS = [0.0] * len(OPENARM_ARM_JOINTS)
 OPENARM_GRIPPER_COLLISION_EXCLUSIONS = [
     (f"openarm_{side}_ee_link1", f"openarm_{side}_ee_link2") for side in OPENARM_SIDES
 ]
-
-# MIT gains measured on v1.0 hardware, carried over as the v2.0 starting
-# point: with gravity compensation active the PD terms only handle transient
-# tracking, and high kd excites gearbox buzz. Gripper slots bypass MIT
-# control, so their gains are 0.
-_ARM_KP = (100.0, 100.0, 80.0, 80.0, 60.0, 60.0, 60.0)
-_ARM_KD = (1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8)
 
 
 def validate_side(side: str) -> None:
@@ -88,84 +84,133 @@ def validate_side(side: str) -> None:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
 
 
-def openarm_arm_joints(side: str) -> list[str]:
-    validate_side(side)
-    return [f"{side}_arm/joint{i}" for i in range(1, OPENARM_DOF + 1)]
-
-
 def openarm_urdf_joints(side: str) -> list[str]:
     validate_side(side)
     return [f"openarm_{side}_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 
 
-def openarm_hardware(
-    *,
-    left_can_port: str | None = None,
-    right_can_port: str | None = None,
-) -> HardwareComponent:
-    """Use mock hardware unless both physical CAN interfaces are explicit."""
-    if (left_can_port is None) != (right_can_port is None):
-        raise ValueError("OpenArm hardware requires both left and right CAN ports")
-
-    adapter_type = "openarm_damiao" if left_can_port is not None else "mock_whole_body"
-    adapter_kwargs: dict[str, object] = {}
-    limits: JointLimits | None = None
-    if left_can_port is not None and right_can_port is not None:
-        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_devices={"left": left_can_port, "right": right_can_port},
-            gravity_comp=True,
-        )
-    else:
-        limits = JointLimits(
-            position_lower=[*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0],
-            position_upper=[*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0],
-            velocity_max=[None] * len(OPENARM_JOINTS),
-        )
-    return HardwareComponent(
-        hardware_id=OPENARM_HARDWARE_ID,
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=list(OPENARM_JOINTS),
-        adapter_type=adapter_type,
-        auto_enable=True,
-        limits=limits,
-        adapter_kwargs=adapter_kwargs,
-        wb_config=WholeBodyConfig(
-            kp=(*_ARM_KP, *_ARM_KP, 0.0, 0.0),
-            kd=(*_ARM_KD, *_ARM_KD, 0.0, 0.0),
-        ),
-    )
-
-
-def openarm_bimanual_model_config() -> RobotModelConfig:
+def openarm_bimanual_model_config(*, robot: str | None = None) -> RobotModelConfig:
     """Build the single fourteen-joint planning model with one group per arm.
 
     Collision exclusions cannot span robots, so both arms plan as one robot.
+
+    Args:
+        robot: Name the moving joints under this robot, e.g. "arm" gives
+            "arm/openarm_left_joint1" and "arm/openarm_left_finger_joint1".
     """
     canonical_joint_names = [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
-    return RobotModelConfig(
-        model=OPENARM_BIMANUAL_MODEL,
-        joint_names=canonical_joint_names,
-        base_link="openarm_body_link0",
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="left_arm",
-                joint_names=tuple(openarm_urdf_joints("left")),
-                base_link="openarm_body_link0",
-                tip_link="openarm_left_grasp_frame",
-            ),
-            PlanningGroupDefinition(
-                name="right_arm",
-                joint_names=tuple(openarm_urdf_joints("right")),
-                base_link="openarm_body_link0",
-                tip_link="openarm_right_grasp_frame",
-            ),
-            PlanningGroupDefinition(
-                name="both_arms",
-                joint_names=tuple(canonical_joint_names),
-                base_link="openarm_body_link0",
-            ),
-        ],
-        collision_exclusion_pairs=OPENARM_GRIPPER_COLLISION_EXCLUSIONS,
-        auto_convert_meshes=True,
-        home_joints=list(OPENARM_HOME_JOINTS),
+    return named_for_robot(
+        RobotModelConfig(
+            model=OPENARM_BIMANUAL_MODEL,
+            joint_names=canonical_joint_names,
+            base_link="openarm_body_link0",
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="left_arm",
+                    joint_names=tuple(openarm_urdf_joints("left")),
+                    base_link="openarm_body_link0",
+                    tip_link="openarm_left_grasp_frame",
+                ),
+                PlanningGroupDefinition(
+                    name="right_arm",
+                    joint_names=tuple(openarm_urdf_joints("right")),
+                    base_link="openarm_body_link0",
+                    tip_link="openarm_right_grasp_frame",
+                ),
+                PlanningGroupDefinition(
+                    name="both_arms",
+                    joint_names=tuple(canonical_joint_names),
+                    base_link="openarm_body_link0",
+                ),
+            ],
+            collision_exclusion_pairs=OPENARM_GRIPPER_COLLISION_EXCLUSIONS,
+            auto_convert_meshes=True,
+            home_joints=list(OPENARM_HOME_JOINTS),
+        ),
+        robot,
+        fingers=OPENARM_FINGER_JOINTS,
     )
+
+
+OPENARM_KP = [100.0, 100.0, 80.0, 80.0, 60.0, 60.0, 60.0]
+OPENARM_KD = [1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8]
+
+
+def _bus(side: str) -> DamiaoBus:
+    types = ["DM8009"] * 2 + ["DM4340"] * 2 + ["DM4310"] * 3
+    joints = openarm_urdf_joints(side)
+    return DamiaoBus(
+        arm=[
+            DamiaoMotor(name, motor_type, index, index + 0x10)
+            for index, (name, motor_type) in enumerate(zip(joints, types, strict=True), start=1)
+        ],
+        kp=list(OPENARM_KP),
+        kd=list(OPENARM_KD),
+        gripper=DamiaoGripper(
+            name=f"{side}_gripper",
+            joint=f"openarm_{side}_finger_joint1",
+            open_at="upper" if side == "left" else "lower",
+            motor=DamiaoMotor(f"openarm_{side}_gripper", "DM4310", 0x08, 0x18),
+            opening="decreasing_position",
+            current=0.15,
+        ),
+        name=f"{side}_arm",
+    )
+
+
+#: Both OpenArm arms and jaws, each side on its own Damiao bus.
+OPENARM = DamiaoRobot(
+    buses=[_bus(side) for side in OPENARM_SIDES],
+    model=openarm_bimanual_model_config().model,
+    gravity_model=OPENARM_BIMANUAL_MODEL,
+    base_link="openarm_body_link0",
+    joint_names=[*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS],
+    gravity=True,
+    home_joints=list(OPENARM_HOME_JOINTS),
+)
+
+# Inside the OpenArm URDF limits, which the connection enforces by refusing
+# the whole command; clamping keeps a leader resting on a stop from stalling
+# every joint. Joint 4 (elbow) has no negative range.
+OPENARM_MINI_JOINT_LIMITS: dict[str, tuple[tuple[float, float], ...]] = {
+    "left": (
+        (-3.45, 1.35),
+        (-3.30, 0.15),
+        (-1.50, 1.50),
+        (0.0, 2.40),
+        (-1.50, 1.50),
+        (-0.75, 0.75),
+        (-1.50, 1.50),
+    ),
+    "right": (
+        (-1.35, 3.45),
+        (-0.15, 3.30),
+        (-1.50, 1.50),
+        (0.0, 2.40),
+        (-1.50, 1.50),
+        (-0.75, 0.75),
+        (-1.50, 1.50),
+    ),
+}
+# Squeezing the trigger this far closes the jaw fully.
+OPENARM_MINI_TRIGGER_TRAVEL_RADIANS = 1.0
+
+
+def _mini_bus(side: str) -> FeetechBus:
+    # Leader servos joint_1 to joint_7 (IDs 1 to 7) drive the arm joints in
+    # order; the gripper trigger is at ID 8.
+    return FeetechBus(
+        side,
+        tuple(
+            FeetechMotor(f"joint_{index}", joint, lower=lower, upper=upper)
+            for index, (joint, (lower, upper)) in enumerate(
+                zip(openarm_urdf_joints(side), OPENARM_MINI_JOINT_LIMITS[side], strict=True),
+                start=1,
+            )
+        ),
+        trigger=FeetechTrigger("gripper", OPENARM_MINI_TRIGGER_TRAVEL_RADIANS),
+    )
+
+
+#: The two OpenArm Mini leader arms, one Feetech bus each.
+OPENARM_MINI_LEADERS = FeetechRobot(buses=tuple(_mini_bus(side) for side in OPENARM_SIDES))

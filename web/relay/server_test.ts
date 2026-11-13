@@ -23,7 +23,7 @@ import {
 } from "@dimos/shared";
 import { parseAuthFile } from "./auth.ts";
 import { makeEphemeralCert } from "./cert.ts";
-import { startRelay } from "./server.ts";
+import { type RelayHandle, startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
 // Raw (un-normalized) on purpose: the relay must forward it verbatim.
@@ -57,7 +57,7 @@ function certOpts(hashB64: string | undefined): WebTransportOptions {
 }
 
 function within<T>(promise: Promise<T>, what: string, ms = 8000): Promise<T> {
-  let timer: number;
+  let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<T>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
   });
@@ -195,7 +195,10 @@ function robotCarrier(wt: WebTransport): {
 }
 
 async function sendRobotFrame(robot: WebTransport, header: FrameHeader, payload: Uint8Array) {
-  const stream = await robot.createBidirectionalStream();
+  const stream = await within(
+    robot.createBidirectionalStream({ waitUntilAvailable: true }),
+    "provider stream credit",
+  );
   const writer = stream.writable.getWriter();
   await writer.write(encodeDataFrame(header, payload));
   await writer.close(); // FIN is delayed by Deno (bug 2); the relay reads by byte count
@@ -283,6 +286,7 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     return channels[0]?.inflight ?? -1;
   };
   const clients: WebTransport[] = [];
+  const controlWriters: WritableStreamDefaultWriter<Uint8Array>[] = [];
   let tearingDown = false;
   try {
     const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
@@ -307,6 +311,10 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
       await within(wt.ready, `${name} connect`);
       const control = await wt.createBidirectionalStream();
       const writer = control.writable.getWriter();
+      // Keep this connection's control stream alive for the whole round.
+      // Deno 2.9 releases unowned streams during collection; losing this
+      // writer closes the viewer before backpressure can be exercised.
+      controlWriters.push(writer);
       const next = controlQueue(control.readable);
       await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
       await writer.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
@@ -391,6 +399,7 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     throw e;
   } finally {
     tearingDown = true;
+    for (const writer of controlWriters) void writer.abort().catch(() => {});
     for (const wt of clients) {
       try {
         wt.close();
@@ -1263,7 +1272,10 @@ Deno.test({
     assertEquals(relay.quicPort, relay.httpPort);
     const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
     const info = await res.json();
-    assertEquals(info, { wtUrl: `https://127.0.0.1:${relay.httpPort}`, v: PROTOCOL_VERSION });
+    assertEquals(info, {
+      wtUrl: `https://127.0.0.1:${relay.httpPort}`,
+      v: PROTOCOL_VERSION,
+    });
 
     // The QUIC listener serves the given certificate: pin its locally
     // computed hash (the relay never advertised one) and complete a hello.
@@ -1278,6 +1290,60 @@ Deno.test({
   } finally {
     client.close();
     await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "a relay with --cert/--key retries when an ephemeral TCP port is occupied on UDP",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cert = await makeEphemeralCert();
+  const serve = Deno.serve;
+  let occupied: Deno.DatagramConn | undefined;
+  let bindCount = 0;
+  let firstPort: number | undefined;
+  Deno.serve = new Proxy(serve, {
+    apply(target, thisArg, args) {
+      const server = Reflect.apply(target, thisArg, args) as Deno.HttpServer<Deno.NetAddr>;
+      bindCount++;
+      if (bindCount === 1) {
+        firstPort = server.addr.port;
+        // A TCP port picked by the OS may already be in use on UDP.
+        try {
+          occupied = Deno.listenDatagram({
+            hostname: "127.0.0.1",
+            port: server.addr.port,
+            transport: "udp",
+          });
+        } catch (e) {
+          if (!(e instanceof Deno.errors.AddrInUse)) throw e;
+        }
+      }
+      return server;
+    },
+  });
+  let relay: Awaited<ReturnType<typeof startRelay>> | undefined;
+  try {
+    relay = await startRelay({ port: 0, cert: cert.certPem, key: cert.keyPem });
+    assert(bindCount >= 2);
+    assert(firstPort !== undefined);
+    assert(relay.httpPort !== firstPort);
+    assertEquals(relay.quicPort, relay.httpPort);
+    const probe = Deno.listen({ hostname: "127.0.0.1", port: firstPort });
+    probe.close();
+    const client = Deno.createHttpClient({ caCerts: [cert.certPem] });
+    try {
+      const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
+      assertEquals(res.status, 200);
+      await res.body?.cancel();
+    } finally {
+      client.close();
+    }
+  } finally {
+    Deno.serve = serve;
+    occupied?.close();
+    await relay?.shutdown();
   }
 });
 
@@ -1412,6 +1478,142 @@ Deno.test({
   } finally {
     await relay.shutdown();
   }
+});
+
+const SOURCE_KEY = "source-key-0123456789abcdef";
+const TOPIC_AUTH = parseAuthFile(JSON.stringify({
+  robots: {},
+  viewers: { paul: VIEWER_TOKEN },
+  topicSources: { workspace: SOURCE_KEY },
+}));
+
+function providerHello(token?: string): Msg {
+  return {
+    t: "hello",
+    v: PROTOCOL_VERSION,
+    role: "robot",
+    topicSource: "workspace",
+    topicsVersion: 1,
+    ...(token !== undefined ? { token } : {}),
+  };
+}
+
+/** One topic provider hello and the relay's datagram reply to it. */
+async function providerReply(
+  relay: RelayHandle,
+  hello: Msg,
+): Promise<{ wt: WebTransport; reply: Msg }> {
+  const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+  await within(wt.ready, "provider connect");
+  const datagrams = datagramQueue(wt.datagrams.readable);
+  await sendRobotHello(wt, hello);
+  return { wt, reply: await within(datagrams(), "provider reply") };
+}
+
+/** A viewer hello negotiating topics, read up to its topic_sources snapshot. */
+async function viewerSources(relay: RelayHandle, token?: string): Promise<{
+  wt: WebTransport;
+  sources: Msg;
+  send: (msg: Msg) => Promise<void>;
+  next: () => Promise<Msg>;
+}> {
+  const wt = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+  await within(wt.ready, "viewer connect");
+  const stream = await wt.createBidirectionalStream();
+  const writer = stream.writable.getWriter();
+  const next = controlQueue(stream.readable);
+  const send = (msg: Msg) => writer.write(encodeControlFrame(msg));
+  await send({
+    t: "hello",
+    v: PROTOCOL_VERSION,
+    role: "viewer",
+    topicsVersion: 1,
+    ...(token !== undefined ? { token } : {}),
+  });
+  return { wt, sources: await nextOfType(next, "topic_sources", "topic_sources"), send, next };
+}
+
+Deno.test({
+  name: "topics are open without an auth file, closed with one, and keyed with --open-topics",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const workspace = { source: "workspace", gen: 1, read: true, write: true, profiles: ["raw"] };
+  await t.step("no auth file: a keyless provider registers and every viewer sees it", async () => {
+    const relay = await startRelay({ port: 0 });
+    try {
+      const provider = await providerReply(relay, providerHello());
+      assertEquals(provider.reply, { t: "welcome", v: PROTOCOL_VERSION });
+      const viewer = await viewerSources(relay);
+      assertEquals(viewer.sources, { t: "topic_sources", v: 1, sources: [workspace] });
+      viewer.wt.close();
+      provider.wt.close();
+    } finally {
+      await relay.shutdown();
+    }
+  });
+
+  await t.step("auth file alone: providers are turned away and viewers denied", async () => {
+    const relay = await startRelay({ port: 0, auth: TOPIC_AUTH });
+    try {
+      const provider = await providerReply(relay, providerHello(SOURCE_KEY));
+      assertEquals(provider.reply, {
+        t: "error",
+        code: "topics_disabled",
+        message: "raw topics need a relay started with --open-topics",
+      });
+      await within(provider.wt.closed.catch(() => {}), "provider close");
+      const viewer = await viewerSources(relay, VIEWER_TOKEN);
+      assertEquals(viewer.sources, { t: "topic_sources", v: 1, sources: [] });
+      await viewer.send({
+        t: "topic_sub",
+        id: "s",
+        source: "workspace",
+        keyExpr: "**",
+        delivery: "reliable",
+        profile: "raw",
+        maxHz: 1000,
+      });
+      assertEquals(await nextOfType(viewer.next, "topic_error", "denial"), {
+        t: "topic_error",
+        id: "s",
+        code: "topic_read_denied",
+        message: "topic read denied",
+        outcome: "rejected",
+      });
+      viewer.wt.close();
+    } finally {
+      await relay.shutdown();
+    }
+  });
+
+  await t.step(
+    "auth file with --open-topics: the source key is checked, then any viewer reads",
+    async () => {
+      const relay = await startRelay({ port: 0, auth: TOPIC_AUTH, openTopics: true });
+      try {
+        for (
+          const [name, token] of [["keyless", undefined], ["viewer token", VIEWER_TOKEN]] as const
+        ) {
+          const rejected = await providerReply(relay, providerHello(token));
+          assertEquals(rejected.reply, {
+            t: "error",
+            code: "auth_failed",
+            message: "invalid topic provider key",
+          }, name);
+          await within(rejected.wt.closed.catch(() => {}), `${name} close`);
+        }
+        const provider = await providerReply(relay, providerHello(SOURCE_KEY));
+        assertEquals(provider.reply, { t: "welcome", v: PROTOCOL_VERSION });
+        const viewer = await viewerSources(relay, VIEWER_TOKEN);
+        assertEquals(viewer.sources, { t: "topic_sources", v: 1, sources: [workspace] });
+        viewer.wt.close();
+        provider.wt.close();
+      } finally {
+        await relay.shutdown();
+      }
+    },
+  );
 });
 
 Deno.test({

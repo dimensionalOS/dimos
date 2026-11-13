@@ -20,6 +20,16 @@
 // prefixes) throws and kills only the affected stream.
 
 import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
+import {
+  MAX_MID_LEN,
+  MAX_SDP_LEN,
+  type TopicCapabilities,
+  topicCapabilitiesOk,
+  type TopicMsg,
+  topicMsgFromUnknown,
+  topicSourceOk,
+} from "./topics.ts";
+export * from "./topics.ts";
 
 // Channel/manifest domain types live in manifest.ts; re-exported so protocol
 // consumers keep a single import surface.
@@ -53,7 +63,9 @@ export { RESERVED_CHANNEL_PREFIX, TRACK_ENCODING } from "./manifest.ts";
 // misread in both directions). v2: a reliable channel packs all its frames
 // onto one persistent stream. Bump on any change an old peer would silently
 // misparse.
-export const PROTOCOL_VERSION = 7;
+// v8: separately authenticated topic sources and operations; ordered topic
+// streams upstream and binary publications. Exact-version peers fail loudly.
+export const PROTOCOL_VERSION = 8;
 
 // The reserved data-frame channel carrying robot-leg control messages (v5+:
 // the robot's hello upstream, subs snapshots downstream on the robot control
@@ -79,12 +91,8 @@ export const MAX_REQUEST_ID_LEN = 64;
 // Bound for hello.token (a robot key or viewer token, see relay/auth.ts).
 export const MAX_TOKEN_LEN = 256;
 
-// An SDP rides a control frame or an @control payload, so it stays well under
-// MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section, at most
-// MAX_RTC_TRACKS of them). SDP is ASCII, so this length and the Python
-// mirror's character count agree.
-export const MAX_SDP_LEN = 48 * 1024;
-export const MAX_MID_LEN = 16;
+// MAX_SDP_LEN and MAX_MID_LEN live in topics.ts, which the direct topic video
+// signaling shares with the SFU messages here.
 export const MAX_RTC_TRACKS = 8;
 
 // Reject absurd header lengths before allocating.
@@ -119,6 +127,9 @@ export interface HelloMsg {
   manifest?: RobotManifest;
   // Robot key or viewer token for a relay started with --auth-file.
   token?: string;
+  topicSource?: string;
+  topicCapabilities?: TopicCapabilities;
+  topicsVersion?: 1;
 }
 
 export interface WelcomeMsg {
@@ -317,11 +328,11 @@ export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg 
 export type TeleopMsg = TwistMsg | StopMsg | TeleopStartMsg | TeleopStartedMsg | TeleopStopMsg;
 export type PublishMsg = PubMsg | PubAckMsg | PubNackMsg;
 export type RtcMsg = RtcIceMsg | RtcOfferMsg | RtcAnswerMsg | RtcStalledMsg;
-export type Msg = ControlMsg | SessionMsg | TeleopMsg | PublishMsg | RtcMsg;
+export type Msg = ControlMsg | SessionMsg | TeleopMsg | PublishMsg | RtcMsg | TopicMsg;
 
 // Data-plane frame header. `delivery` tells the relay how to forward frames
-// on channels the robot's manifest does not declare (the manifest's delivery
-// wins when present). `meta` carries encoding-specific extras (e.g. {w, h}
+// on an authorized topic route; declared channels use manifest delivery.
+// `meta` carries encoding-specific extras (e.g. {w, h}
 // for images).
 export interface FrameHeader {
   ch: string;
@@ -334,6 +345,8 @@ export interface FrameHeader {
 export interface DataFrame {
   header: FrameHeader;
   payload: Uint8Array;
+  /** Original wire size, including its JSON header. Absent on synthetic frames. */
+  byteLength?: number;
 }
 
 const enc = new TextEncoder();
@@ -409,7 +422,10 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
   hello: (v) =>
     (v.robot === undefined || isRobotInfo(v.robot)) &&
     (v.manifest === undefined || isRecord(v.manifest)) &&
-    (v.token === undefined || tokenOk(v.token)),
+    (v.token === undefined || tokenOk(v.token)) &&
+    (v.topicSource === undefined || topicSourceOk(v.topicSource)) &&
+    (v.topicCapabilities === undefined || topicCapabilitiesOk(v.topicCapabilities)) &&
+    (v.topicsVersion === undefined || v.topicsVersion === 1),
   error: (v) => v.requestId === undefined || requestIdOk(v.requestId),
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),
@@ -436,6 +452,7 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
 /** Validated message from parsed JSON; null for unknown or malformed ones. */
 export function msgFromUnknown(value: unknown): Msg | null {
   if (!isRecord(value) || typeof value.t !== "string") return null;
+  if (value.t.startsWith("topic_")) return topicMsgFromUnknown(value);
   const fields = Object.hasOwn(MSG_FIELDS, value.t) ? MSG_FIELDS[value.t] : undefined;
   if (fields === undefined) return null;
   for (const [name, kind] of Object.entries(fields)) {
@@ -556,7 +573,11 @@ export function decodeDataFrame(frame: Uint8Array): DataFrame {
     JSON.parse(dec.decode(frame.subarray(8, 8 + lens.headerLen))),
   );
   if (header === null) throw new Error("invalid data frame header");
-  return { header, payload: frame.subarray(8 + lens.headerLen, lens.total) };
+  return {
+    header,
+    payload: frame.subarray(8 + lens.headerLen, lens.total),
+    byteLength: lens.total,
+  };
 }
 
 /** First `limit` bytes of `chunks`, copied into one fresh buffer. */
@@ -602,6 +623,12 @@ export class DataFrameStreamReader {
   #size = 0; // unread bytes across all queued chunks
   #failed: string | null = null;
 
+  constructor(readonly maxPayloadBytes = MAX_DATA_FRAME_BYTES) {}
+
+  get bufferedBytes(): number {
+    return this.#size;
+  }
+
   push(chunk: Uint8Array): DataFrame[] {
     if (this.#failed !== null) throw new DataFrameStreamError(this.#failed, []);
     if (chunk.byteLength > 0) {
@@ -612,6 +639,9 @@ export class DataFrameStreamReader {
     try {
       while (this.#size >= 8) {
         const lens = peekDataFrameLengths(this.#peek(8))!;
+        if (lens.payloadLen > this.maxPayloadBytes) {
+          throw new Error("data payload exceeds stream bound");
+        }
         if (this.#size < lens.total) break;
         frames.push(decodeDataFrame(this.#take(lens.total)));
       }

@@ -77,6 +77,8 @@ class GlobalConfig(BaseSettings):
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
     # Off: share a zenoh bus with a stack that already owns the Coordinator name.
     serve_coordinator_rpc: bool = True
+    # Isolates this run's zenoh streams under dimos-domains/<name>/; a hosted run pins its run id.
+    zenoh_domain: str = Field(default="", pattern=r"^[A-Za-z0-9_.-]*$")
     viewer: ViewerBackend = "rerun"
     n_workers: int = 2
     scene_package: str | None = None
@@ -96,6 +98,8 @@ class GlobalConfig(BaseSettings):
     dtop: bool = False
     listen_host: str = "127.0.0.1"
     local_relay: bool = False
+    topic_metadata: bool = False
+    """Publish bounded Zenoh stream descriptors for a trusted topic service."""
     relay_url: str | None = None
     """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
     bridge discovers its WebTransport endpoint through /api/info."""

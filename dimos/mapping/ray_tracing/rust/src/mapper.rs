@@ -75,14 +75,24 @@ impl Mapper {
 
     /// Register a sensor-frame cloud into the world by `pose` and fold it into
     /// the map.
-    pub fn add_frame(&mut self, mut sensor_points: Vec<Point>, pose: Pose) {
+    pub fn add_frame(&mut self, sensor_points: Vec<Point>, pose: Pose) {
+        let mut sensor_points = self.pre_trace_subsample(sensor_points);
         register(&mut sensor_points, pose);
         self.ingest(sensor_points, pose.position);
     }
 
     /// Fold an already world-frame cloud into the map, raycasting from `origin`.
     pub fn add_frame_world(&mut self, world_points: Vec<Point>, origin: Point) {
+        let world_points = self.pre_trace_subsample(world_points);
         self.ingest(world_points, origin);
+    }
+
+    /// Every `pre_trace_subsample`th point of a lidar cloud, before any other step.
+    fn pre_trace_subsample(&self, points: Vec<Point>) -> Vec<Point> {
+        match self.config.pre_trace_subsample {
+            0 | 1 => points,
+            step => points.into_iter().step_by(step as usize).collect(),
+        }
     }
 
     /// Bulk-seed a world-frame map cloud with no ray tracing, creating only
@@ -275,12 +285,14 @@ mod tests {
             fine_divisor: 0,
             emit_fine: false,
             max_range: 100.0,
+            pre_trace_subsample: 1,
             ray_subsample: 1,
             shadow_depth: 2.0,
             grace_depth: 0.0,
             min_health: 0,
             max_health: 1,
             graze_cos: 0.5,
+            graze_recent_frames: u32::MAX,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,

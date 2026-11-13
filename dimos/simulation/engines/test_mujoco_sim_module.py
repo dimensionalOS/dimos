@@ -24,7 +24,12 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_engine import (
+    CameraConfig,
+    CameraFrame,
+    MujocoEngine,
+    _CameraRendererState,
+)
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
@@ -170,7 +175,7 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         module.stop()
 
 
-def test_tracked_bodies_are_published_on_tf_in_world() -> None:
+def test_tracked_bodies_are_published_on_body_poses_not_tf() -> None:
     module = MujocoSimModule(tracked_bodies=["apple", "ghost"])
     try:
         module.config = MujocoSimModuleConfig(tracked_bodies=["apple", "ghost"])
@@ -185,8 +190,10 @@ def test_tracked_bodies_are_published_on_tf_in_world() -> None:
                 pass
 
         messages: list[Any] = []
+        bodies: list[Any] = []
         module._engine = _FakeEngine()
         module.tf.subscribe(messages.append)
+        module.body_poses.subscribe(bodies.append)
         frame = CameraFrame(
             rgb=np.zeros((1, 1, 3), dtype=np.uint8),
             depth=np.ones((1, 1), dtype=np.float32),
@@ -198,13 +205,13 @@ def test_tracked_bodies_are_published_on_tf_in_world() -> None:
         module._publish_tf(10.0, frame)
         module._publish_tf(11.0, frame)
         children = [t.child_frame_id for t in messages[-1].transforms]
-        assert children[:3] == [
+        assert children == [
             "wrist_camera_color_optical_frame",
             "wrist_camera_depth_optical_frame",
             "wrist_camera_link",
         ]
-        assert children[3:] == ["apple"]
-        apple = messages[-1].transforms[3]
+        assert [t.child_frame_id for t in bodies[-1].transforms] == ["apple"]
+        apple = bodies[-1].transforms[0]
         assert apple.frame_id == "world"
         assert apple.ts == pytest.approx(time.time(), abs=5.0)
         assert np.allclose(apple.translation.to_numpy(), [0.4, 0.08, 0.17])
@@ -416,3 +423,31 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         assert elapsed >= (len(frame_ts) - 1) / fps
     finally:
         module.stop()
+
+
+def test_camera_renders_at_its_fps_when_sim_steps_do_not_divide_the_interval(
+    tmp_path: Path,
+) -> None:
+    # A 3.17 ms sim step: rendering on the first step at least 1/30 s after the
+    # last render would give about 28 frames per second.
+    scene_xml = tmp_path / "camera.xml"
+    scene_xml.write_text('<mujoco><worldbody><camera name="cam" pos="0 0 1"/></worldbody></mujoco>')
+    engine = MujocoEngine(config_path=scene_xml, headless=True)
+    rgb = MagicMock()
+    rgb.render.return_value = np.zeros((1, 1, 3), dtype=np.uint8)
+    depth = MagicMock()
+    depth.render.return_value = np.zeros((1, 1), dtype=np.float32)
+    state = _CameraRendererState(
+        cfg=CameraConfig(name="cam", fps=30.0),
+        cam_id=0,
+        rgb_renderer=rgb,
+        depth_renderer=depth,
+        scene_option=None,
+        interval=1.0 / 30.0,
+    )
+    step_s, duration_s = 0.00317, 3.0
+
+    for step in range(int(duration_s / step_s)):
+        engine._render_cameras(step * step_s, {"cam": state})
+
+    assert rgb.render.call_count == pytest.approx(30 * duration_s, abs=1)

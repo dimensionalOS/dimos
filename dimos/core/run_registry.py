@@ -27,7 +27,10 @@ import time
 
 from dimos.constants import STATE_DIR
 from dimos.core.config_secrets import SECRET_CONFIG_FIELDS, config_field_name, without_secret_values
-from dimos.core.coordination.process_lifecycle import kill_run_processes
+from dimos.core.coordination.process_lifecycle import (
+    is_pid_alive as is_pid_alive,
+    kill_run_processes,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -73,9 +76,12 @@ class RunEntry:
         return REGISTRY_DIR / f"{self.run_id}.json"
 
     def save(self) -> None:
-        """Persist this entry to disk."""
+        """Persist this entry to disk, atomically: list_runs deletes an entry it can't parse, so it mustn't see one half written."""
         REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        self.registry_path.write_text(json.dumps(asdict(self), indent=2))
+        # not *.json, so list_runs never reads it
+        partial = self.registry_path.with_name(f"{self.registry_path.name}.{os.getpid()}.tmp")
+        partial.write_text(json.dumps(asdict(self), indent=2))
+        partial.replace(self.registry_path)
 
     def remove(self) -> None:
         """Delete this entry from disk."""
@@ -109,18 +115,6 @@ def blueprint_from_run_id(run_id: str) -> str | None:
     """
     m = re.fullmatch(r"\d{8}-\d{6}-(?:[0-9a-f]{4}-)?(.+)", run_id)
     return m.group(1) if m else None
-
-
-def is_pid_alive(pid: int) -> bool:
-    """Check whether a process with the given PID is still running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we can't signal it — still alive.
-        return True
 
 
 def list_runs(alive_only: bool = True) -> list[RunEntry]:

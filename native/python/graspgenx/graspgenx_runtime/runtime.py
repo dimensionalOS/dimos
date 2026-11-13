@@ -83,7 +83,7 @@ class GraspGenXRuntimeModule(GraspGenXModule):
             raise ValueError("object pointcloud XYZ values must be finite floats in metres")
 
         try:
-            poses, scores = self._runtime.infer(points)
+            poses, scores = self._runtime.infer(points, self.config.num_samples)
         except Exception as exc:
             raise GraspGenXError("GraspGenX inference failed") from exc
         scores = scores.reshape(-1)
@@ -115,6 +115,23 @@ class GraspGenXRuntimeModule(GraspGenXModule):
             Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
             candidates,
         )
+
+    @rpc
+    def propose_grasps_for(
+        self,
+        object_id: str,
+        approach: list[float] | None = None,
+        max_angle_deg: float = 30.0,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """The host contract's propose_grasps_for, run in this process beside the model."""
+        return self._propose_for(object_id, approach, max_angle_deg, limit)
+
+    def _generator_name(self) -> str:
+        # This process answers to "__isolated_python__/<host name>/<id>"
+        # (IsolatedPythonModule._new_runtime_name); callers know the host name.
+        name = (self.config.instance_name or "").removeprefix("__isolated_python__/")
+        return name.rpartition("/")[0] or GraspGenXModule.__name__
 
     @staticmethod
     def _pose_from_matrix(matrix: np.ndarray) -> Pose:

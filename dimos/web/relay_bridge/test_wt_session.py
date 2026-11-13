@@ -15,15 +15,23 @@
 """Ingress-bound tests for the session's frame and control queues (no
 network: frames are fed straight into the protocol callbacks)."""
 
-from aioquic.quic.connection import QuicConnection
-from aioquic.quic.events import StreamReset
+import asyncio
+import errno
 
+from aioquic.quic.connection import QuicConnection
+from aioquic.quic.events import StreamDataReceived, StreamReset
+import pytest
+from pytest_mock import MockerFixture
+
+from dimos.utils.asyncio_timeout import timeout
 from dimos.web.relay_bridge._wt_session import (
     _CONTROL_QUEUE_MAX,
     _FRAME_QUEUE_MAX,
     _FRAME_QUEUE_MAX_BYTES,
     SessionProtocol,
+    _FinishedStreams,
     _FrameQueue,
+    _PacketPacer,
     make_quic_configuration,
 )
 from dimos.web.relay_bridge.protocol import (
@@ -39,10 +47,37 @@ from dimos.web.relay_bridge.protocol import (
     encode_data_frame,
     encode_datagram,
 )
+from dimos.web.relay_bridge.topic_protocol import MAX_TOPIC_ROUTES, TopicActivate, TopicOpen
 
 
 def _session() -> SessionProtocol:
     return SessionProtocol(QuicConnection(configuration=make_quic_configuration(insecure=True)))
+
+
+async def test_topic_provider_accepts_full_route_reconnect_burst_and_stays_bounded(mocker):
+    session = _session()
+    fail = mocker.patch.object(session, "fail_session")
+    session.enable_topic_provider()
+    for index in range(MAX_TOPIC_ROUTES):
+        session._queue_control_msg(
+            TopicOpen(
+                route=f"@t:p{index}",
+                gen=1,
+                keyExpr=f"key/{index}",
+                delivery="reliable",
+                profile="raw",
+                maxHz=1000,
+            )
+        )
+        session._queue_control_msg(TopicActivate(route=f"@t:p{index}", gen=1))
+    fail.assert_not_called()
+    assert session.control_msgs.qsize() == 2 * MAX_TOPIC_ROUTES
+    assert session.control_dropped == 0
+
+    for _ in range(_CONTROL_QUEUE_MAX + 1):
+        session._queue_control_msg(TopicActivate(route="@t:p0", gen=1))
+    fail.assert_called_once_with("topic provider control queue overflow")
+    assert session.control_msgs.qsize() == session.control_msgs.maxsize
 
 
 def _frame_bytes(ch: str, seq: int, size: int) -> bytes:
@@ -53,6 +88,111 @@ def _frame_bytes(ch: str, seq: int, size: int) -> bytes:
 def _control_bytes(payload: bytes, seq: int = 1) -> bytes:
     header = FrameHeader(ch=CONTROL_CHANNEL, seq=seq, ts=0.5, delivery="reliable")
     return encode_data_frame(header, payload)
+
+
+@pytest.mark.parametrize("rtt", [0.001, 0.2])
+@pytest.mark.parametrize("burst", [16, 32])
+def test_packet_pacer_keeps_bounded_bursts_as_window_grows(rtt: float, burst: int) -> None:
+    pacer = _PacketPacer(max_datagram_size=1200, max_burst_packets=burst)
+    # Grow beyond the one-microsecond packet-time floor on a healthy link.
+    for second, window in enumerate([76_800, 1_200_000, 12_000_000, 120_000_000], 1):
+        pacer.update_rate(congestion_window=window, smoothed_rtt=rtt)
+        now = float(second)
+        sent = 0
+        while pacer.next_send_time(now) is None and sent < 100:
+            pacer.update_after_send(now)
+            sent += 1
+        # Floating-point subtraction can leave one fractional packet of credit.
+        expected = 16 if window == 76_800 else burst
+        assert expected <= sent <= expected + 1
+        assert pacer.next_send_time(now) > now
+
+
+def test_packet_pacer_still_limits_a_small_congestion_window() -> None:
+    pacer = _PacketPacer(max_datagram_size=1200)
+    pacer.update_rate(congestion_window=9600, smoothed_rtt=0.2)
+    for _ in range(2):
+        assert pacer.next_send_time(1.0) is None
+        pacer.update_after_send(1.0)
+    assert pacer.next_send_time(1.0) == pytest.approx(1.025)
+
+
+@pytest.mark.parametrize("burst", [16, 32])
+def test_packet_pacer_rate_refresh_preserves_unused_send_credit(burst: int) -> None:
+    pacer = _PacketPacer(max_datagram_size=1200, max_burst_packets=burst)
+    pacer.update_rate(congestion_window=12_000_000, smoothed_rtt=0.001)
+    for _ in range(8):
+        assert pacer.next_send_time(1.0) is None
+        pacer.update_after_send(1.0)
+
+    # Several ACKs may arrive in the same event-loop clock tick. Updating the
+    # rate must not lose credit merely because no time passed between them.
+    pacer.update_rate(congestion_window=12_000_000, smoothed_rtt=0.001)
+
+    remaining = 0
+    while pacer.next_send_time(1.0) is None and remaining < 100:
+        pacer.update_after_send(1.0)
+        remaining += 1
+    assert burst - 8 <= remaining <= burst - 7
+
+
+@pytest.mark.parametrize("error_number", [errno.ENOBUFS, errno.EMSGSIZE, errno.ENETUNREACH])
+async def test_socket_error_without_refusal_keeps_session_open(
+    error_number: int, mocker: MockerFixture
+) -> None:
+    session = _session()
+    transmit = mocker.patch.object(session, "transmit")
+
+    session.error_received(OSError(error_number, "UDP socket error"))
+
+    assert not session.closed.is_set()
+    transmit.assert_not_called()
+
+
+@pytest.mark.parametrize("flush_now", [False, True])
+async def test_received_datagram_burst_builds_outgoing_packets_once(
+    flush_now: bool, mocker: MockerFixture
+) -> None:
+    session = _session()
+    transport = mocker.Mock(spec=asyncio.DatagramTransport)
+    session.connection_made(transport)
+    session._quic.connect(("127.0.0.1", 443), now=asyncio.get_running_loop().time())
+    transmit = mocker.spy(session, "transmit")
+    flushed = asyncio.Event()
+    try:
+        for _ in range(3):
+            # Invalid packets are harmless, but still exercise the receive
+            # boundary and its flush scheduling with a real QUIC connection.
+            session.datagram_received(b"", ("127.0.0.1", 443))
+        if flush_now:
+            session.transmit()
+        asyncio.get_running_loop().call_soon(flushed.set)
+        async with timeout(1):
+            await flushed.wait()
+
+        transmit.assert_called_once_with()
+        transport.sendto.assert_called_once()
+    finally:
+        if session._transmit_task is not None:
+            session._transmit_task.cancel()
+        if session._timer is not None:
+            session._timer.cancel()
+
+
+async def test_socket_refusal_closes_session_without_reentrant_transmit(
+    mocker: MockerFixture,
+) -> None:
+    session = _session()
+    exc = ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+    # Sending the close can report the same error synchronously.
+    transmit = mocker.patch.object(
+        session, "transmit", side_effect=lambda: session.error_received(exc)
+    )
+
+    session.error_received(exc)
+
+    assert session.closed.is_set()
+    transmit.assert_called_once_with()
 
 
 async def test_frame_queue_bounded_by_total_bytes():
@@ -398,6 +538,56 @@ async def test_viewer_uni_reset_and_fin_stay_routine():
     assert session.frames.qsize() == 1
     session.quic_event_received(StreamReset(error_code=1, stream_id=7))
     assert not session.closed.is_set()
+
+
+@pytest.mark.parametrize("reset", [False, True])
+async def test_completed_webtransport_streams_release_http_parser_state(reset):
+    session = _session()
+    session.session_id = 0
+    for index in range(64):
+        stream_id = 7 + index * 4
+        # QUIC-varint WebTransport uni-stream type 0x54, then session id 0.
+        data = b"\x40\x54\x00" + _frame_bytes("cam", index, 16)
+        session.quic_event_received(
+            StreamDataReceived(data=data, end_stream=not reset, stream_id=stream_id)
+        )
+        if reset:
+            session.quic_event_received(StreamReset(error_code=1, stream_id=stream_id))
+    assert session.frames.qsize() == 64
+    assert session.h3._stream == {}
+    assert session._frame_readers == {}
+    assert not session.closed.is_set()
+
+
+async def test_unused_outgoing_stream_receive_halves_do_not_accumulate_http_state():
+    session = _session()
+    session.session_id = 0
+    for stream_id in range(4, 1028, 4):
+        session.quic_event_received(
+            StreamDataReceived(data=b"", end_stream=True, stream_id=stream_id)
+        )
+    assert session.h3._stream == {}
+    assert not session.closed.is_set()
+
+
+def test_finished_stream_history_compacts_each_family_without_reopening_old_ids():
+    history = _FinishedStreams()
+    expected = set()
+    # One long-lived stream per family stays open while thousands of newer
+    # streams finish, including out-of-order close notifications and repeats.
+    for ordinal in [0, *range(2, 5000, 2), *range(3, 5000, 2), 0]:
+        for family in range(4):
+            stream = ordinal * 4 + family
+            history.add(stream)
+            expected.add(stream)
+    assert set(history) == expected
+    assert len(history) == len(expected)
+    assert history.range_count == 8
+    assert all(stream not in history for stream in range(4, 8))
+    for stream in range(4, 8):
+        history.add(stream)
+    assert history.range_count == 4
+    assert all(stream in history for stream in range(20_000))
 
 
 async def test_failed_session_does_not_leak_into_a_fresh_epoch():

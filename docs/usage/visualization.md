@@ -30,12 +30,42 @@ dimos run unitree-go2 --rerunbridgemodule.rerun-open web
 # Open both native and web
 dimos run unitree-go2 --rerunbridgemodule.rerun-open both
 
-# No viewer (headless): data still accessible via gRPC
+# Open no viewer (headless): the gRPC listener still runs
 dimos run unitree-go2 --rerunbridgemodule.rerun-open none
 
 # Serve the web viewer without auto-opening a browser
 dimos run unitree-go2 --rerunbridgemodule.rerun-web true --rerunbridgemodule.rerun-open native
 ```
+
+## Network exposure
+
+Rerun's gRPC listener (TCP 9877 by default) and web viewer (TCP 9878 when
+enabled) bind to all interfaces, even with `listen_host="127.0.0.1"` or
+`--rerunbridgemodule.host 127.0.0.1`. The pinned Rerun SDK 0.32.0 has no bind
+address option in `serve_grpc` or `serve_web_viewer`. Until the SDK supports
+one, these settings cannot restrict those listeners to loopback.
+
+The bridge's `host` sets the default gRPC connection URL, not the listener's
+bind address. Its connection hints list non-loopback IPv4 interfaces,
+including LAN and Tailscale. Those URLs are connection suggestions, not access
+controls. A localhost URL does not mean the listener is local-only.
+
+`--rerunbridgemodule.rerun-open none` only prevents opening a viewer. gRPC
+still runs, and `--rerunbridgemodule.rerun-web true` still serves the web viewer.
+For blueprints using `vis_module`, use `dimos --viewer none run unitree-go2`
+to omit the Rerun bridge and its listeners. This does not stop an already
+running server.
+
+If you need Rerun locally, configure the host firewall to block inbound TCP
+9877 and 9878 on non-loopback interfaces, including LAN and VPN interfaces.
+Cover IPv4 and IPv6 and keep loopback access allowed. Use your configured
+ports if you changed them. For remote viewing, allow only the trusted source
+addresses that need access.
+
+Check listeners with `ss -ltnp '( sport = :9877 or sport = :9878 )'` on Linux,
+or `lsof -nP -iTCP:9877 -iTCP:9878 -sTCP:LISTEN` on macOS. Wildcard addresses
+such as `0.0.0.0`, `[::]`, or `*` mean all interfaces. A firewall does not
+change that bind address, so also verify blocked access from another machine.
 
 ## Viewer Modes Explained
 
@@ -53,9 +83,10 @@ dimos run unitree-go2 --rerunbridgemodule.rerun-web true --rerunbridgemodule.rer
 
 **What you get:**
 - The Rerun web viewer in your browser at http://localhost:9878
+- The log line `Rerun web viewer ready at ...` has the full URL. Use it to reopen the tab. The bare http://localhost:9878 shows a viewer with no data.
 - Works headless (no display required)
 
-The integrated dashboard at http://localhost:7779 (the Rerun viewer plus the command center sidebar with teleop and goal setting) is the `WebsocketVisModule`, which a blueprint adds with `vis_module(..., websocket_vis=True)`. It opens automatically and embeds Rerun when the bridge's `rerun_open` is `web` or `both`. Override these choices independently with `--websocketvismodule.open-browser false` or `--websocketvismodule.show-rerun-dashboard false`. Without a Rerun bridge, both default to off.
+The dashboard at http://localhost:7779 (a page that embeds the Rerun web viewer) is the `WebsocketVisModule`, which a blueprint adds with `vis_module(..., websocket_vis=True)`. It opens automatically when the bridge's `rerun_open` is `web` or `both`. Override these choices independently with `--websocketvismodule.open-browser false` or `--websocketvismodule.show-rerun-dashboard false`. Without a Rerun bridge, both default to off.
 
 ---
 
@@ -66,11 +97,11 @@ To enable visualization in your own blueprint, use `vis_module`:
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.visualization.vis_module import vis_module
 
 camera_demo = autoconnect(
-    CameraModule.blueprint(),
+    WebcamModule.blueprint(),
     vis_module(viewer_backend=global_config.viewer),
 )
 
@@ -85,7 +116,7 @@ if __name__ == "__main__":
     ModuleCoordinator.build(camera_demo).loop()
 ```
 
-Every LCM stream, such as `color_image` (output by CameraModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
+Every LCM stream, such as `color_image` (output by WebcamModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
 
 ## Performance Tuning
 
@@ -140,10 +171,14 @@ rerun_init(
 # Then connect with: dimos-viewer --connect rerun+http://127.0.0.1:9999/proxy
 ```
 
+The same network limitation applies to `rerun_init(start_grpc=True)`: a
+loopback `connect_url` does not restrict a newly started listener. Include its
+port (9999 in this example) in your firewall rules.
+
 When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc`. Just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
 
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 
 Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
 
-To use a custom websocket port, set `--rerunwebsocketserver.port`; the bridge in the same blueprint takes the viewer URL from that server. `--rerunbridgemodule.websocket-url` points a bridge at a websocket server elsewhere. Set `host` on each module to override its bind address; both default to the shared `listen_host`.
+To use a custom websocket port, set `--rerunwebsocketserver.port`. The bridge in the same blueprint takes the viewer URL from that server. `--rerunbridgemodule.websocket-url` points a bridge at a websocket server elsewhere. `--rerunwebsocketserver.host` controls the websocket bind address and defaults to `listen_host`. The bridge's `host` also defaults to `listen_host`, but only sets its default gRPC connection URL. It does not control the Rerun gRPC or web viewer bind addresses.
