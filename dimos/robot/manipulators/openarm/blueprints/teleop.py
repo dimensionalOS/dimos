@@ -24,6 +24,7 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
@@ -100,7 +101,7 @@ def openarm_teleop_control() -> Blueprint:
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_MODEL.model,
+            connections=[arm_declaration(OpenArmConnection)],
             tasks=[
                 _openarm_webxr_task,
                 # The left jaw is open at its joint's upper end, the right at its lower end.

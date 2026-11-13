@@ -53,6 +53,7 @@ export type {
   TopicPublishReceipt,
   Topics,
   TopicSample,
+  TopicSettings,
   TopicStatus,
   TopicSubscription,
 } from "./topics.ts";

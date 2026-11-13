@@ -20,6 +20,7 @@ sim2/
   cbor.py                    CBOR observation/command envelope validation
   physics/interface.py       PhysicsBackend protocol
   physics/mujoco.py          native dynamics and physical queries
+  physics/drives.py          existing USD drive read/write helpers for MuJoCo
   geometry/mujoco.py          shared model compilation
   geometry/query.py          geometry-only pose application; no physics stepping
   geometry/poses.py          complete pose validation and lookup
@@ -79,7 +80,10 @@ scene revision in different cache directories. `scene=UsdModel(...)` selects a l
 USD instead. An encoder observes existing joints and adds no physical subtree.
 
 MuJoCo 4.0's native USD importer reads the composed USD directly. Install the
-`sim` extra on Python 3.11 or 3.12, on macOS ARM64 or Linux x86_64. There is no
+`sim` extra on Python 3.11-3.13, on macOS ARM64 or Linux x86_64.
+DimOS defaults to Python 3.14, but MuJoCo 4.0's USD importer does not support it;
+use Python 3.12 for this stack. CI runs the native Sim2 tests in a separate 3.12
+environment on both self-hosted platforms. There is no
 runtime USD-to-URDF-to-MJCF path. Convert and validate assets during authoring;
 the running stack loads the prepared files. The camera and lidar create private
 geometry copies with independent bodies driven by `WorldState` poses; neither
@@ -202,7 +206,7 @@ the physics backend. See the G1 guide for the truth-registered preview map.
 ## Run and test
 
 ```sh skip
-uv sync --extra sim
+uv sync --python 3.12 --extra sim
 source .venv/bin/activate
 dimos run sim2-basic --daemon
 dimos shell

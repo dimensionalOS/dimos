@@ -12,93 +12,147 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Galaxea A1Z teleop blueprints."""
+"""Galaxea A1Z teleop blueprints, through ``A1ZConnection``."""
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.module import ModuleBase
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.a1z.config import (
-    a1z_hardware,
+    a1z_coordinator_connection,
+    a1z_model,
     make_a1z_model_config,
 )
-from dimos.robot.manipulators.common.blueprints import (
-    eef_twist_task,
-    teleop_ik_task,
-    trajectory_task,
-)
-from dimos.robot.manipulators.common.coordinators import (
-    ArmTwistCoordinator,
-)
+from dimos.robot.manipulators.a1z.connection import A1ZConnection
+from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
+from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.robot.usd_manager import UsdManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-_a1z_keyboard_hw = a1z_hardware("arm")
-_a1z_model = make_a1z_model_config()
 
-keyboard_teleop_a1z = autoconnect(
-    KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[_a1z_keyboard_hw],
-        tasks=[
-            eef_twist_task(
-                _a1z_keyboard_hw,
-                robot_model=_a1z_model,
-                target_frame="gripper_eef_link",
-            ),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
-            trajectory_task(_a1z_keyboard_hw, priority=20),
-        ],
-    ),
-    ManipulationModule.blueprint(
-        gripper_tasks={"manipulator": "arm_gripper"},
-        model=_a1z_model,
-        visualization={"backend": "viser"},
-    ),
+class A1ZTwistCoordinator(ArmTwistCoordinator):
+    """End-effector twists and gripper openings in, from the Desktop Manipulation app;
+    one A1Z named "arm" out, driven through ``A1ZConnection`` by joint targets."""
+
+    right_gripper_command: In[Float32]
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+class A1ZKeyboardCoordinator(ArmTwistCoordinator):
+    """End-effector twists and gripper openings in, from the keyboard; one A1Z
+    named "arm" out, driven through ``A1ZConnection`` by joint targets."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+class A1ZWebXRCoordinator(TeleopControlCoordinator):
+    """VR controller poses and gripper openings in, from WebXR; one A1Z named
+    "arm" out, driven through ``A1ZConnection`` by joint targets."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+def _remaps(coordinator: type[ModuleBase]) -> list[tuple[type[ModuleBase], str, str]]:
+    """The connection's ports, onto ``coordinator``'s ports for the robot named "arm"."""
+    return [
+        (A1ZConnection, "position_command", "arm_position_command"),
+        (coordinator, "arm_joint_state", "joint_state"),
+    ]
+
+
+def _eef_twist_task() -> TaskConfig:
+    """Move the A1Z's gripper end by the twists that come in on ``ee_twist_command``."""
+    ik_model = make_a1z_model_config(robot="arm")
+    return TaskConfig(
+        name=EEF_TWIST_TASK_NAME,
+        type="eef_twist",
+        joint_names=list(ik_model.joint_names),
+        priority=10,
+        params={
+            "robot_model": ik_model,
+            "target_frame": "gripper_eef_link",
+            # The app sends twists only while a jog is held: the
+            # end stops 0.3 s after the last one.
+            "timeout": 0.3,
+        },
+    )
+
+
+def _webxr_task() -> TaskConfig:
+    """Make the A1Z's gripper end follow the left VR controller."""
+    ik_model = make_a1z_model_config(robot="arm")
+    return TaskConfig(
+        name="teleop_a1z",
+        type="teleop_ik",
+        joint_names=list(ik_model.joint_names),
+        priority=20,
+        params={
+            "robot_model": ik_model,
+            "bindings": [{"hand": "left", "target_frame": "gripper_eef_link"}],
+            "max_joint_velocity_rad_s": 2.0,
+        },
+    )
+
+
+def _teleop(
+    coordinator: type[ControlCoordinator],
+    arm_task: TaskConfig,
+    gripper_stream: str,
+    *inputs: Blueprint,
+) -> Blueprint:
+    """Move an A1Z's end and open and close its gripper, through ``A1ZConnection``.
+    ``UsdManager`` serves the A1Z's URDF and puts its joints on tf, so it can be drawn.
+
+    Wire it up with ``.remappings(_remaps(coordinator))``. The CAN port is given
+    at run time (``--a1zconnection.can-port a1zcan``) or as ``A1ZCONNECTION__CAN_PORT``.
+
+    Args:
+        coordinator: The coordinator class, with the input streams the teleop sends on.
+        arm_task: The task that moves the arm's joints.
+        gripper_stream: The stream that carries gripper openings (0 closed, 1 open).
+        inputs: The modules that send the commands, if any.
+    """
+    model = a1z_model(robot="arm")
+    return autoconnect(
+        *inputs,
+        coordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[a1z_coordinator_connection()],
+            tasks=[
+                arm_task,
+                # arm/gripper is open at its upper end, the task's default.
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                    stream_bind={"gripper_command": gripper_stream},
+                ),
+            ],
+        ),
+        A1ZConnection.blueprint(),
+        UsdManager.blueprint(model=model),
+    )
+
+
+# The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
+# From the Desktop Manipulation app.
+a1z_teleop = _teleop(A1ZTwistCoordinator, _eef_twist_task(), "right_gripper_command").remappings(
+    _remaps(A1ZTwistCoordinator)
 )
-
-
-_a1z_webxr_hw = a1z_hardware("arm")
-_a1z_webxr_model = make_a1z_model_config()
-
-coordinator_teleop_a1z = autoconnect(
-    TeleopControlCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[_a1z_webxr_hw],
-        tasks=[
-            teleop_ik_task(
-                _a1z_webxr_hw,
-                name="teleop_a1z",
-                robot_model=_a1z_webxr_model,
-                bindings=[
-                    {
-                        "hand": "left",
-                        "target_frame": "gripper_eef_link",
-                    }
-                ],
-                priority=20,
-                params={"max_joint_velocity_rad_s": 2.0},
-            ),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-                stream_bind={"gripper_command": "left_gripper_command"},
-            ),
-            trajectory_task(_a1z_webxr_hw),
-        ],
-    ),
-    ManipulationModule.blueprint(
-        gripper_tasks={"manipulator": "arm_gripper"},
-        model=_a1z_webxr_model,
-        visualization={"backend": "viser"},
-    ),
-)
+# From the keyboard, in a pygame window.
+a1z_keyboard_teleop = _teleop(
+    A1ZKeyboardCoordinator, _eef_twist_task(), "gripper_command", KeyboardTeleopModule.blueprint()
+).remappings(_remaps(A1ZKeyboardCoordinator))
+# From a VR headset's left controller; teleop_webxr_a1z adds the WebXR module.
+coordinator_teleop_a1z = _teleop(
+    A1ZWebXRCoordinator, _webxr_task(), "left_gripper_command"
+).remappings(_remaps(A1ZWebXRCoordinator))

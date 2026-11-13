@@ -20,7 +20,8 @@ from pathlib import Path
 from pxr import Sdf, Usd, UsdGeom, UsdLux, UsdPhysics
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import layer_from, load_pxr, usd_with_drives
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
+from dimos.sim2.physics.drives import usd_with_drives
 
 
 def prepare() -> None:

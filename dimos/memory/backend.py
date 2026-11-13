@@ -169,6 +169,7 @@ class Backend(CompositeResource, Generic[T]):
             yield obs
 
     def _iterate_snapshot(self, query: StreamQuery) -> Iterator[Observation[T]]:
+        self.metadata_store.warn_if_unposed(query)
         if query.search_vec is not None and self.vector_store is not None:
             yield from self._vector_search(query)
             return
@@ -214,7 +215,7 @@ class Backend(CompositeResource, Generic[T]):
                 continue
             if not all(f.matches(match) for f in query.filters):
                 continue
-            ranked.append(match.derive(data=match.data, embedding=query.search_vec, similarity=sim))
+            ranked.append(match.derive_lazy(embedding=query.search_vec, similarity=sim))
 
         # Apply remaining query ops (filters already applied; skip vector search)
         rest = replace(query, search_vec=None, search_k=None, filters=())
@@ -257,6 +258,7 @@ class Backend(CompositeResource, Generic[T]):
     def count(self, query: StreamQuery) -> int:
         if query.search_vec:
             return sum(1 for _ in self.iterate(query))
+        self.metadata_store.warn_if_unposed(query)
         return self.metadata_store.count(query)
 
     def serialize(self) -> dict[str, Any]:

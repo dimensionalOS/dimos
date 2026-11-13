@@ -28,8 +28,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import usd_drives
 from dimos.sim2.geometry.mujoco import compile_scene
+from dimos.sim2.physics.drives import usd_drives
 
 
 class MujocoBackend:
