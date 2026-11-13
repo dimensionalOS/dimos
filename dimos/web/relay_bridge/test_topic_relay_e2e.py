@@ -1503,7 +1503,10 @@ async def test_direct_video_viewers_receive_decodable_h264_from_one_encode(
                 assert received[0].key_frame
             assert encode.call_count >= 10
             encoder = next(iter(next(iter(provider._video._routes.values())).encoders.values()))
-            assert encoder.frames == encode.call_count
+            # Every encode ran on the one shared encoder. Its frames counter is
+            # not compared with the spy: it trails by one while the last encode
+            # is still on the worker thread.
+            assert all(call.args[0] is encoder for call in encode.call_args_list)
             assert encoder.keyframes >= 1
 
 
