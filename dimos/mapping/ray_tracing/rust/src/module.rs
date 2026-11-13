@@ -19,7 +19,7 @@ use crate::mapper::{register, Mapper, Pose};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     non_premap_voxels, partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder,
-    SeedPartition, SeedRegion, VoxelKey, PREMAP_FLAG,
+    SeedPartition, SeedRegion, VoxelKey, FLAG_NAMES, PREMAP_FLAG,
 };
 use ahash::AHashSet;
 use dimos_module::pointcloud::{extract_xyz, ExtractError};
@@ -663,14 +663,39 @@ fn prepare_seed(
     Some(part)
 }
 
-/// The per-point uint32 field holding each point's `Voxel::flags` bits.
-const FLAGS_FIELD: &str = "flags";
+/// The per-point uint32 field of `Voxel::flags` bits is named this prefix plus
+/// the bits' names, comma separated, lowest bit first: `flags:premap`.
+const FLAGS_FIELD_PREFIX: &str = "flags:";
 
-/// A cloud's finite xyz points, with its `flags` when it has that field.
+fn flags_field_name() -> String {
+    format!("{FLAGS_FIELD_PREFIX}{}", FLAG_NAMES.join(","))
+}
+
+/// For each bit a flags field's name lists, the `Voxel::flags` bit of the same
+/// name, zero for a name this map does not know.
+fn flag_remap(field_name: &str) -> Vec<u32> {
+    field_name[FLAGS_FIELD_PREFIX.len()..]
+        .split(',')
+        .take(32)
+        .map(|name| {
+            FLAG_NAMES
+                .iter()
+                .position(|known| *known == name.trim())
+                .map_or(0, |bit| 1 << bit)
+        })
+        .collect()
+}
+
+/// A cloud's finite xyz points, with its `flags` (in `Voxel::flags` bit order)
+/// when it has that field.
 type PointsWithFlags = (Vec<(f32, f32, f32)>, Option<Vec<u32>>);
 
 fn extract_xyz_flags(msg: &PointCloud2) -> Result<PointsWithFlags, ExtractError> {
-    let Some(field) = msg.fields.iter().find(|f| f.name == FLAGS_FIELD) else {
+    let Some(field) = msg
+        .fields
+        .iter()
+        .find(|f| f.name.starts_with(FLAGS_FIELD_PREFIX))
+    else {
         let points = extract_xyz(msg)?;
         return Ok((
             points.into_iter().map(|[x, y, z]| (x, y, z)).collect(),
@@ -703,11 +728,19 @@ fn extract_xyz_flags(msg: &PointCloud2) -> Result<PointsWithFlags, ExtractError>
     let read = |at: usize| f32::from_le_bytes(bytes(at));
     let mut points = Vec::with_capacity(n);
     let mut flags = Vec::with_capacity(n);
+    let remap = flag_remap(&field.name);
     for base in (0..n * step).step_by(step) {
         let (x, y, z) = (read(base + xo), read(base + yo), read(base + zo));
         if x.is_finite() && y.is_finite() && z.is_finite() {
             points.push((x, y, z));
-            flags.push(u32::from_le_bytes(bytes(base + offset)));
+            let bits = u32::from_le_bytes(bytes(base + offset));
+            flags.push(
+                remap
+                    .iter()
+                    .enumerate()
+                    .filter(|&(bit, _)| bits & (1 << bit) != 0)
+                    .fold(0, |acc, (_, ours)| acc | ours),
+            );
         }
     }
     Ok((points, Some(flags)))
@@ -825,7 +858,7 @@ fn points_to_cloud(points: &[f32], flags: bool, frame_id: &str, stamp: Time) -> 
     let mut cloud = make_cloud(data, n, frame_id, stamp);
     if flags {
         cloud.fields.push(PointField {
-            name: FLAGS_FIELD.into(),
+            name: flags_field_name(),
             offset: 16,
             datatype: PointField::UINT32 as u8,
             count: 1,
@@ -1012,6 +1045,27 @@ mod tests {
                 "{name} map"
             );
         }
+    }
+
+    /// A flags field names its bits, so another writer's bit order still lands
+    /// each bit on the voxel flag of the same name, and unknown bits drop.
+    #[test]
+    fn flags_field_bits_follow_their_names() {
+        assert_eq!(flags_field_name(), "flags:premap");
+        let quads = [
+            1.5,
+            0.5,
+            0.5,
+            f32::from_bits(0b10),
+            2.5,
+            0.5,
+            0.5,
+            f32::from_bits(0b01),
+        ];
+        let mut cloud = points_to_cloud(&quads, true, "map", Time::default());
+        cloud.fields.last_mut().unwrap().name = "flags:other,premap".into();
+        let (_, flags) = extract_xyz_flags(&cloud).expect("flags cloud must decode");
+        assert_eq!(flags, Some(vec![PREMAP_FLAG, 0]));
     }
 
     /// A loaded cloud without the field is all premap.

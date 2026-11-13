@@ -328,3 +328,22 @@ def test_seq_round_trips_through_lcm_with_and_without_intensity_and_empty() -> N
         assert decoded.seq == seq
         assert len(decoded) == len(cloud)
     assert PointCloud2.lcm_decode(PointCloud2.from_numpy(pts, timestamp=1.0).lcm_encode()).seq == 0
+
+
+def test_flags_field_names_its_bits_and_decodes_by_name():
+    """The flags field is named by its bits, so another writer's order still decodes to ours."""
+    from dimos_lcm.sensor_msgs.PointCloud2 import PointCloud2 as LCMPointCloud2
+
+    cloud = PointCloud2.from_numpy(
+        np.zeros((2, 3), dtype=np.float32), timestamp=0.0, flags=np.array([1, 0], dtype=np.uint32)
+    )
+    msg = LCMPointCloud2.lcm_decode(cloud.lcm_encode())
+    field = next(f for f in msg.fields if f.name.startswith("flags:"))
+    assert field.name == "flags:premap"
+
+    field.name = "flags:other,premap"
+    msg.data = bytes(msg.data)
+    for i, bits in enumerate([0b10, 0b01]):
+        at = i * msg.point_step + field.offset
+        msg.data = msg.data[:at] + int(bits).to_bytes(4, "little") + msg.data[at + 4 :]
+    np.testing.assert_array_equal(PointCloud2.lcm_decode(msg.lcm_encode()).flags_u32(), [1, 0])
