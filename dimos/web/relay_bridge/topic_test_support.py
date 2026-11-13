@@ -17,7 +17,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import zenoh
 
@@ -26,10 +26,16 @@ from dimos.web.relay_bridge.protocol import Msg
 from dimos.web.relay_bridge.relay_process import RelayReadyInfo
 from dimos.web.relay_bridge.topic_catalog import TopicCatalog
 from dimos.web.relay_bridge.topic_metadata import MetadataReceiver
-from dimos.web.relay_bridge.topic_profiles import MEDIA_PROFILES
+from dimos.web.relay_bridge.topic_profiles import PROFILE_OPTIONS
 from dimos.web.relay_bridge.topic_protocol import TopicCapabilities
 from dimos.web.relay_bridge.topic_put import TopicPuts
-from dimos.web.relay_bridge.topic_service import TopicProvider, TopicServiceConfig
+from dimos.web.relay_bridge.topic_service import (
+    TopicProvider,
+    TopicServiceConfig,
+    VideoSettings,
+    capabilities,
+    video_encoder,
+)
 from dimos.web.relay_bridge.wt_client import RelayClient
 
 MessageT = TypeVar("MessageT", bound=Msg)
@@ -43,9 +49,14 @@ async def next_message(client: RelayClient, kind: type[MessageT]) -> MessageT:
                 return msg
 
 
+def route_variants(provider: TopicProvider) -> dict[str, dict[str, dict[str, Any]]]:
+    """The open variants per provider route with their settings in force."""
+    return {route: service.variants for route, service in provider._routes.items()}
+
+
 @asynccontextmanager
 async def provider_connection(
-    relay: RelayReadyInfo, session: zenoh.Session, *, write: bool = True
+    relay: RelayReadyInfo, session: zenoh.Session, *, write: bool = True, video: bool = False
 ) -> AsyncIterator[TopicProvider]:
     """Serve ``session`` as the ``workspace`` source over a real relay connection."""
     config = TopicServiceConfig(
@@ -53,22 +64,25 @@ async def provider_connection(
         relay_url=f"http://127.0.0.1:{relay.http_port}",
         write=write,
         guarded_publishers=True,
+        video=VideoSettings(enabled=video),
     )
+    codec = video_encoder(config)
     async with await RelayClient.connect(relay.wt_url, "robot") as client:
         await client.hello(
             topic_source="workspace",
             topic_capabilities=TopicCapabilities(
                 read=True,
                 write=config.write,
-                profiles=["raw", *MEDIA_PROFILES],
+                profiles=capabilities(config, video=codec is not None).profiles,
                 guardedPublishers=config.write,
+                profileOptions=PROFILE_OPTIONS,
             ),
         )
         catalog = TopicCatalog()
         metadata = MetadataReceiver(session, catalog)
         await metadata.start()
         puts = TopicPuts(session)
-        provider = TopicProvider(config, session, client, puts, catalog)
+        provider = TopicProvider(config, session, client, puts, catalog, codec)
         task = asyncio.create_task(provider.run())
         try:
             yield provider

@@ -16,13 +16,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 import threading
 from typing import TYPE_CHECKING, Any, Literal
 
-from dimos.control.contract.keys import Interface
-from dimos.control.contract.limits import model_limit, movable_joints
+from dimos.control.connection_source import ConnectionSource
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -35,7 +35,6 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.msgs.std_msgs.Float32 import Float32
-    from dimos.robot.assets.model import RobotModel
 
 logger = setup_logger()
 
@@ -259,9 +258,10 @@ class GripperControlTaskParams(BaseConfig):
     open_at: OpenAt = "upper"
 
 
-def _resolve_limits(cfg: Any, hardware: Any, model: RobotModel | None) -> list[tuple[float, float]]:
-    """Each joint's position range: from the adapter that owns it, or, when the
-    coordinator has no adapters, from ``model``."""
+def _resolve_limits(
+    cfg: Any, hardware: Any, connections: Mapping[str, ConnectionSource]
+) -> list[tuple[float, float]]:
+    """Resolve each joint from its owning hardware or connection declaration."""
     where = f"gripper task {cfg.name!r}"
     joint_names = list(cfg.joint_names)
     if not joint_names:
@@ -269,7 +269,7 @@ def _resolve_limits(cfg: Any, hardware: Any, model: RobotModel | None) -> list[t
     if len(set(joint_names)) != len(joint_names):
         raise ValueError(f"{where}: joint_names must not contain duplicates")
     if not hardware:
-        return _model_limits(where, joint_names, model)
+        return _connection_limits(where, joint_names, connections)
     resolved: list[tuple[float, float]] = []
     for joint_name in joint_names:
         owners = [
@@ -305,26 +305,25 @@ def _resolve_limits(cfg: Any, hardware: Any, model: RobotModel | None) -> list[t
     return resolved
 
 
-def _model_limits(
-    where: str, joint_names: list[str], model: RobotModel | None
+def _connection_limits(
+    where: str, joint_names: list[str], connections: Mapping[str, ConnectionSource]
 ) -> list[tuple[float, float]]:
-    """Each joint's position range from the coordinator's model, as the
-    coordinator enforces it on a robot behind a connection module."""
-    if model is None:
-        raise ValueError(f"{where}: the coordinator has no hardware and no model to find joints in")
-    joints = {joint.name: joint for joint in movable_joints(model)}
+    """Read the same per-joint position bounds that the coordinator enforces."""
     resolved: list[tuple[float, float]] = []
     for joint_name in joint_names:
-        if joint_name not in joints:
-            raise ValueError(f"{where}: joint {joint_name!r} is not a movable joint of the model")
-        limit = model_limit(joints[joint_name], Interface.POSITION)
+        source = connections.get(joint_name.partition("/")[0])
+        if source is None:
+            raise ValueError(f"{where}: joint {joint_name!r} has no connection source")
+        limit = source.position_limit(joint_name)
         if limit.lo is None or limit.hi is None:
-            raise ValueError(f"{where}: joint {joint_name!r} has no position range in the model")
+            raise ValueError(f"{where}: joint {joint_name!r} has no bounded position range")
         resolved.append((limit.lo, limit.hi))
     return resolved
 
 
-def create_task(cfg: Any, hardware: Any, model: RobotModel | None = None) -> GripperControlTask:
+def create_task(
+    cfg: Any, hardware: Any, connections: Mapping[str, ConnectionSource] | None = None
+) -> GripperControlTask:
     params = GripperControlTaskParams.model_validate(cfg.params)
     return GripperControlTask(
         cfg.name,
@@ -334,5 +333,5 @@ def create_task(cfg: Any, hardware: Any, model: RobotModel | None = None) -> Gri
             hold_duration=params.hold_duration,
             open_at=params.open_at,
         ),
-        limits=_resolve_limits(cfg, hardware, model),
+        limits=_resolve_limits(cfg, hardware, connections or {}),
     )
