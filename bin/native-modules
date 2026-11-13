@@ -39,6 +39,9 @@ Modes (exactly one):
                  so the shared crates under native/rust are covered too, and a
                  flake that does not build on this system simply declares no
                  check for it.
+  --check-shared-deps
+                 Fail when modules hold different versions (or rust features)
+                 of a shared name@major, or lock a shared input differently.
   --record-links Print `result-symlink store-path` per built module. The
                  publish job stores this in the marker cache entry so consumers
                  can materialise binaries without evaluating anything.
@@ -419,6 +422,7 @@ def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
     lines = [
         f"salt {MARKER_SALT}",
         f"script {_git_object_hash('bin/native-modules')}",
+        f"exceptions {_git_object_hash('bin/shared-deps-exceptions.json')}",
         f"cachix {os.environ.get('CACHIX_CACHE_NAME', '')}",
         *(f"module {m.qualname} dir={m.build_dir} cmd={m.build_command}" for m in modules),
         *(f"path {path} {_git_object_hash(path)}" for path in top),
@@ -594,6 +598,202 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
     return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()
 
 
+# module dir -> keys (e.g. "python3@3") that module is left out of comparing
+SHARED_DEPS_EXCEPTIONS_FILE = REPO_ROOT / "bin" / "shared-deps-exceptions.json"
+
+
+@lru_cache(maxsize=1)
+def shared_deps_exceptions() -> dict[str, frozenset[str]]:
+    return {
+        build_dir: frozenset(keys)
+        for build_dir, keys in json.loads(SHARED_DEPS_EXCEPTIONS_FILE.read_text()).items()
+    }
+
+
+def _parse_drv_name(store_path: str) -> tuple[str, str]:
+    """Same split as builtins.parseDrvName."""
+    name = Path(store_path).name[33:].removesuffix(".drv")
+    match = re.search(r"-(?=[^a-zA-Z])", name)
+    return (name[: match.start()], name[match.end() :]) if match else (name, "")
+
+
+def _semver_major(version: str) -> str | None:
+    """1.53.1 -> 1, 0.8.4 -> 0.8, 0.0.3 -> 0.0.3"""
+    match = re.match(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", version)
+    if match is None:
+        return None
+    parts = [part for part in match.groups() if part is not None]
+    for index, part in enumerate(parts):
+        if part != "0":
+            return ".".join(parts[: index + 1])
+    return ".".join(parts)
+
+
+def _version_key(version: str) -> tuple[int, int, int, bool, str]:
+    """Semver order (1.0.0-rc.1 < 1.0.0)."""
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)(?:-([^+]*))?", version)
+    if match is None:
+        return (0, 0, 0, False, version)
+    major, minor, patch, pre = match.groups()
+    return (int(major), int(minor), int(patch), pre is None, pre or "")
+
+
+def _module_closure(module: DiscoveredModule) -> tuple[str, frozenset[str] | None]:
+    """Every .drv the module's build needs, or None if it doesn't build on this system."""
+    systems = _declared_systems(module)
+    if systems is not None and current_system() not in systems:
+        return module.build_dir, None
+    ref = _flake_ref_of(module)
+    drv = _run(["nix", "path-info", "--derivation", ref], REPO_ROOT / module.build_dir)
+    closure = _run(["nix", "path-info", "--recursive", drv.stdout.split()[-1]])
+    return module.build_dir, frozenset(p for p in closure.stdout.split() if p.endswith(".drv"))
+
+
+def _direct_inputs(build_dir: str) -> dict[str, str]:
+    """source -> locked rev for a flake's direct, non-follows inputs."""
+    lock = json.loads((REPO_ROOT / build_dir / "flake.lock").read_text())
+    nodes = lock["nodes"]
+    pins = {}
+    for node in nodes[lock["root"]].get("inputs", {}).values():
+        if isinstance(node, str):
+            original, locked = nodes[node].get("original", {}), nodes[node].get("locked", {})
+            source = original.get("url") or "/".join(
+                filter(None, [original.get("owner"), original.get("repo"), original.get("dir")])
+            )
+            pins[source or node] = locked.get("rev") or locked.get("narHash", "")
+    return pins
+
+
+def _crate_features(drvs: list[str]) -> dict[str, str]:
+    shown = json.loads(_run(["nix", "derivation", "show", *drvs]).stdout)
+    shown = shown.get("derivations", shown)
+    return {Path(path).name: info["env"].get("crateFeatures", "") for path, info in shown.items()}
+
+
+def _where(build_dirs: set[str], total: int) -> str:
+    if len(build_dirs) == total and total > 3:
+        return f"all {total} modules"
+    return ", ".join(sorted(build_dirs)) if len(build_dirs) <= 3 else f"{len(build_dirs)} modules"
+
+
+def find_mismatches(
+    closures: dict[str, frozenset[str]],
+) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, set[str]]]]:
+    """Mismatches as key -> versions -> modules, plus key -> module -> versions for all keys."""
+    seen: dict[str, dict[str, set[str]]] = {}
+    crate_builds: dict[str, dict[str, set[str]]] = {}
+    for build_dir in closures:
+        for source, rev in _direct_inputs(build_dir).items():
+            seen.setdefault(f"input:{source}", {}).setdefault(build_dir, set()).add(rev[:12])
+        for drv in closures[build_dir]:
+            name, version = _parse_drv_name(drv)
+            major = _semver_major(version)
+            # skip downloads (source tarballs, patches)
+            if major is None or re.search(r"\.(tar(\.\w+)?|tgz|zip|patch|diff)$", version):
+                continue
+            key = f"{name}@{major}"
+            seen.setdefault(key, {}).setdefault(build_dir, set()).add(version)
+            if name.startswith("rust_"):
+                crate_builds.setdefault(key, {}).setdefault(build_dir, set()).add(drv)
+
+    def compared(per_module: dict[str, set[str]], key: str) -> dict[str, set[str]]:
+        return {
+            build_dir: values
+            for build_dir, values in per_module.items()
+            if key not in shared_deps_exceptions().get(build_dir, ())
+        }
+
+    failures: dict[str, dict[str, set[str]]] = {}
+    for key in sorted(seen):
+        by_versions: dict[str, set[str]] = {}
+        for build_dir, versions in compared(seen[key], key).items():
+            label = " ".join(sorted(versions, key=_version_key))
+            by_versions.setdefault(label, set()).add(build_dir)
+        if len(by_versions) > 1:
+            failures[key] = by_versions
+
+    # Compare a crate's own features; its dependents' drvs differ only as a consequence
+    candidates = {
+        key: compared(per_module, key)
+        for key, per_module in crate_builds.items()
+        if key not in failures
+    }
+    split = sorted(
+        {
+            drv
+            for per_module in candidates.values()
+            if len(set().union(*per_module.values())) > 1
+            for drv in set().union(*per_module.values())
+        }
+    )
+    features = _crate_features(split) if split else {}
+    for key, per_module in sorted(candidates.items()):
+        by_features: dict[str, set[str]] = {}
+        for build_dir, drvs in per_module.items():
+            for drv in drvs:
+                label = f"{_parse_drv_name(drv)[1]} [{features.get(Path(drv).name, '')}]"
+                by_features.setdefault(label, set()).add(build_dir)
+        if len(by_features) > 1:
+            failures[key] = by_features
+    return failures, seen
+
+
+def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
+    unique = {m.build_dir: m for m in modules}.values()
+    workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
+    closures: dict[str, frozenset[str]] = {}
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        for build_dir, closure in executor.map(_module_closure, unique):
+            if closure is None:
+                _log(f"SKIP:  {build_dir} does not build on {current_system()}")
+            else:
+                closures[build_dir] = closure
+    _log(f"Read the closures of {len(closures)} module(s)")
+    failures, seen = find_mismatches(closures)
+
+    for build_dir, keys in sorted(shared_deps_exceptions().items()):
+        for key in sorted(keys):
+            if build_dir in closures and build_dir not in seen.get(key, {}):
+                _log(f"WARN:  exception {build_dir} {key} matches nothing on {current_system()}")
+    for key, groups in failures.items():
+        # The biggest group is the reference; every other module gets told how to match it
+        canonical = max(groups, key=lambda label: (len(groups[label]), label))
+        lines = [f"FAIL:  {key}", f"  {canonical}: {', '.join(sorted(groups[canonical]))}"]
+        for label, dirs in groups.items():
+            if label == canonical:
+                continue
+            lines.append(f"  {label}: {', '.join(sorted(dirs))}")
+            for build_dir in sorted(dirs):
+                name = key.split("@")[0]
+                if name.startswith("rust_") and "[" not in label and " " not in label + canonical:
+                    crate = name.removeprefix("rust_")
+                    lines.append(
+                        f"    fix: (cd {build_dir} && cargo update -p {crate}@{label} --precise {canonical})"
+                    )
+                elif "[" in label:
+                    have, want = (
+                        set(x.split("[", 1)[1].rstrip("]").split()) for x in (label, canonical)
+                    )
+                    crate = name.removeprefix("rust_")
+                    if want - have:
+                        lines.append(
+                            f"    fix: enable {crate} features {sorted(want - have)} in {build_dir}"
+                        )
+                    if have - want:
+                        lines.append(
+                            f"    fix: {build_dir} enables extra {crate} features {sorted(have - want)};"
+                            " enable them in the other modules too, or stop enabling them here"
+                        )
+                lines.append(
+                    f'    or add "{key}" under "{build_dir}" in bin/shared-deps-exceptions.json'
+                )
+        _log("\n".join(lines))
+    if failures:
+        sys.exit(f"{len(failures)} shared dependency mismatch(es)")
+    excepted = sum(len(keys) for keys in shared_deps_exceptions().values())
+    _log(f"Shared dependencies agree ({excepted} exception(s))")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -618,6 +818,11 @@ def main() -> None:
         help="build every flake's checks.<system>.tests, which compiles and runs its tests",
     )
     mode.add_argument(
+        "--check-shared-deps",
+        action="store_true",
+        help="fail when modules lock or build a shared dependency differently",
+    )
+    mode.add_argument(
         "--record-links",
         action="store_true",
         help="print each built module's result symlink and its store path",
@@ -637,6 +842,9 @@ def main() -> None:
     if args.record_links:
         for link, store in _result_links(modules):
             print(f"{link} {store}")
+        return
+    if args.check_shared_deps:
+        check_shared_deps(modules)
         return
     if args.verify_published:
         verify_published(modules)
