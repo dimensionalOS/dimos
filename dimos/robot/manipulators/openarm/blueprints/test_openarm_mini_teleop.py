@@ -13,21 +13,15 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import Any
 import xml.etree.ElementTree as ET
 
-from dimos.core.coordination.blueprints import Blueprint
-from dimos.robot.manipulators.openarm.blueprints import mini_teleop
 from dimos.robot.manipulators.openarm.config import (
+    OPENARM_MINI_LEADERS,
     openarm_bimanual_model_config,
     openarm_urdf_joints,
 )
 
 _MODEL = openarm_bimanual_model_config(robot="arm")
-
-
-def _atom(blueprint: Blueprint, module_type: type) -> Any:
-    return next(atom for atom in blueprint.blueprints if atom.module is module_type)
 
 
 def _urdf_limits() -> dict[str, tuple[float, float]]:
@@ -39,19 +33,12 @@ def _urdf_limits() -> dict[str, tuple[float, float]]:
     return limits
 
 
-def test_mappings_drive_each_side_joint_for_joint_inside_the_urdf_limits() -> None:
+def test_each_leader_drives_its_side_joint_for_joint_inside_the_urdf_limits() -> None:
     urdf_limits = _urdf_limits()
-    for side in ("left", "right"):
-        mapping = mini_teleop.MAPPINGS[side]
-        assert mapping.joint_names() == tuple(f"arm/{joint}" for joint in openarm_urdf_joints(side))
-        assert mapping.leader_joint_names() == (
-            *[f"leader/{side}_joint_{i}" for i in range(1, 8)],
-            f"leader/{side}_gripper",
-        )
-        for joint in mapping.joints:
-            lower, upper = urdf_limits[joint.joint]
-            assert lower <= joint.lower < joint.upper <= upper, joint.joint
-            assert (joint.scale, joint.offset) == (1.0, 0.0)
-        assert mapping.gripper is not None
-        assert mapping.gripper.travel_radians == 1.0
-    assert mini_teleop.MAPPINGS["left"].joints[3].lower == 0.0
+    for bus in OPENARM_MINI_LEADERS.buses:
+        assert [motor.joint for motor in bus.motors] == openarm_urdf_joints(bus.name)
+        for motor in bus.motors:
+            lower, upper = urdf_limits[f"arm/{motor.joint}"]
+            assert lower <= motor.lower < motor.upper <= upper, motor.joint
+        assert bus.trigger is not None
+        assert bus.trigger.travel_radians == 1.0

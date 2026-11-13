@@ -32,97 +32,31 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_connection,
     arm_remaps,
 )
-from dimos.robot.manipulators.feetech.robot import joint_name
 from dimos.robot.manipulators.openarm.config import (
-    OPENARM_MINI_LEADER_MOTORS,
+    OPENARM_MINI_LEADERS,
+    OPENARM_SIDES,
     openarm_bimanual_model_config,
-    openarm_urdf_joints,
 )
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection, OpenArmMiniConnection
-from dimos.teleop.leader.mapping import (
-    LEADER_SIDES,
-    GripperMapping,
-    JointMapping,
-    LeaderSide,
-    SideMapping,
-)
-from dimos.teleop.leader.module import LeaderTeleopModule
 
 # Leader-follower needs human arm speeds, well above the WebXR IK profile.
 _ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)
-# Inside the OpenArm URDF limits, which the connection enforces by refusing
-# the whole command; clamping keeps a leader resting on a stop from stalling
-# every joint. Joint 4 (elbow) has no negative range.
-_JOINT_LIMITS: dict[LeaderSide, tuple[tuple[float, float], ...]] = {
-    "left": (
-        (-3.45, 1.35),
-        (-3.30, 0.15),
-        (-1.50, 1.50),
-        (0.0, 2.40),
-        (-1.50, 1.50),
-        (-0.75, 0.75),
-        (-1.50, 1.50),
-    ),
-    "right": (
-        (-1.35, 3.45),
-        (-0.15, 3.30),
-        (-1.50, 1.50),
-        (0.0, 2.40),
-        (-1.50, 1.50),
-        (-0.75, 0.75),
-        (-1.50, 1.50),
-    ),
-}
-# Squeezing the trigger this far closes the jaw fully.
-_GRIPPER_TRAVEL_RADIANS = 1.0
 # Low-pass on the leader targets: halves wrist roughness on the OpenArm for
 # about 10 ms of lag; without it the wrists step at the 50 Hz target rate.
 _COMMAND_FILTER_CUTOFF_HZ = 6.0
 # A reading every coordinator tick: each ramp the trajectory task runs is half
 # the size of the 50 Hz one, and the feel on the arm is the best measured.
 _LEADER_RATE_HZ = 100.0
-# The leader connection publishes every joint as "leader/<side>_<motor>".
-_LEADER_SOURCE = "leader"
 
 OPENARM_ROUTER = os.environ.get("DIMOS_OPENARM_ROUTER", "tcp/127.0.0.1:7447")
 
 _MODEL = openarm_bimanual_model_config(robot="arm")
 
 
-def _leader_joint(side: LeaderSide, motor: str) -> str:
-    return f"{_LEADER_SOURCE}/{joint_name(side, motor)}"
-
-
-def _side_mapping(side: LeaderSide) -> SideMapping:
-    # Leader joint N drives the connection's joint N of the same side.
-    *arm_motors, trigger = OPENARM_MINI_LEADER_MOTORS
-    return SideMapping(
-        joints=tuple(
-            JointMapping(
-                leader_joint=_leader_joint(side, motor),
-                joint=f"arm/{joint}",
-                lower=lower,
-                upper=upper,
-            )
-            for motor, joint, (lower, upper) in zip(
-                arm_motors,
-                openarm_urdf_joints(side),
-                _JOINT_LIMITS[side],
-                strict=True,
-            )
-        ),
-        gripper=GripperMapping(
-            leader_joint=_leader_joint(side, trigger), travel_radians=_GRIPPER_TRAVEL_RADIANS
-        ),
-    )
-
-
-MAPPINGS: dict[LeaderSide, SideMapping] = {side: _side_mapping(side) for side in LEADER_SIDES}
-
 _VELOCITY_LIMITS = {
-    mapping.joint: limit
-    for side in LEADER_SIDES
-    for mapping, limit in zip(MAPPINGS[side].joints, _ARM_VELOCITY_PROFILE_RAD_S, strict=True)
+    f"arm/{motor.joint}": limit
+    for bus in OPENARM_MINI_LEADERS.buses
+    for motor, limit in zip(bus.motors, _ARM_VELOCITY_PROFILE_RAD_S, strict=True)
 }
 
 
@@ -137,22 +71,15 @@ class OpenArmLeaderCoordinator(DamiaoCoordinator):
     leader_joint_command: In[JointState]
 
 
-# The follower's jaws by leader side; each is named <side>_gripper on the robot.
+# The follower's jaws by side; each is named <side>_gripper on the robot.
 _JAWS = {jaw.name.removesuffix("_gripper"): jaw for jaw in OpenArmConnection.robot.grippers}
 
 
 def _leader() -> Blueprint:
-    """The leaders' connection and the mapping from their readings to the arms' targets."""
-    return autoconnect(
-        OpenArmMiniConnection.blueprint(
-            source=_LEADER_SOURCE, state_rate_hz=_LEADER_RATE_HZ
-        ).remappings([(OpenArmMiniConnection, "joint_state", "leader_joint_state")]),
-        LeaderTeleopModule.blueprint(
-            mappings=MAPPINGS,
-            command_filter_cutoff_hz=_COMMAND_FILTER_CUTOFF_HZ,
-            reading_period_s=1.0 / _LEADER_RATE_HZ,
-        ),
-    )
+    """The leaders' connection: the arms' joint targets and jaw openings."""
+    return OpenArmMiniConnection.blueprint(
+        state_rate_hz=_LEADER_RATE_HZ, filter_cutoff_hz=_COMMAND_FILTER_CUTOFF_HZ
+    ).remappings([(OpenArmMiniConnection, "joint_state", "leader_joint_command")])
 
 
 def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:
@@ -176,7 +103,7 @@ def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprin
                         params={"open_at": _JAWS[side].open_at},
                         stream_bind={"gripper_command": f"{side}_gripper_command"},
                     )
-                    for side in LEADER_SIDES
+                    for side in OPENARM_SIDES
                 ],
             ],
             zero_stiffness_joints=[],
@@ -185,7 +112,7 @@ def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprin
         ManipulationModule.blueprint(
             model=_MODEL,
             visualization=visualization if visualization is not None else {"backend": "viser"},
-            gripper_tasks={f"{side}_arm": f"{side}_arm_gripper" for side in LEADER_SIDES},
+            gripper_tasks={f"{side}_arm": f"{side}_arm_gripper" for side in OPENARM_SIDES},
         ),
     ).remappings(arm_remaps(OpenArmConnection, OpenArmLeaderCoordinator))
 

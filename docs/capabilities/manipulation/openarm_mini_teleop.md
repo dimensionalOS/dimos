@@ -1,11 +1,10 @@
 # OpenArm Mini Teleop
 
 Two Feetech leader arms drive the bimanual OpenArm. `OpenArmMiniConnection`
-(`dimos/robot/manipulators/openarm/connection.py`) reads the leaders and
-publishes their joint angles; the generic leader teleop module
-(`dimos/teleop/leader`) maps them onto the arms. The OpenArm folder supplies the
-leader robot data, the joint-to-joint mapping, the joint limits and the
-blueprints.
+(`dimos/robot/manipulators/openarm/connection.py`) reads the leaders. Each
+leader motor names the OpenArm joint it drives and that joint's limits
+(`OPENARM_MINI_LEADERS` in `dimos/robot/manipulators/openarm/config.py`), so the
+connection publishes the arms' joint targets and jaw openings directly.
 
 ## Install
 
@@ -35,8 +34,8 @@ dimos --simulation run teleop-openarm-mini --left-serial-port <feetech-port>
 
 Leader joint N drives follower joint N of the same side, clamped to the OpenArm
 limits before publishing, read every 10 ms and low-passed at 6 Hz
-(`--openarmminiconnection.state-rate-hz` with a matching `--leaderteleopmodule.reading-period-s`,
-and `--leaderteleopmodule.command-filter-cutoff-hz`, to change). The targets stream into the coordinator's `joint_trajectory` task
+(`--openarmminiconnection.state-rate-hz` and `--openarmminiconnection.filter-cutoff-hz`
+to change). The targets stream into the coordinator's `joint_trajectory` task
 with human-speed velocity limits; the trigger drives that side's gripper task,
 1 = open.
 
