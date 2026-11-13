@@ -106,7 +106,7 @@ if __name__ == "__main__":
     coordinator.stop()
 ```
 
-The snippets below continue from this one: in a script, they also go inside the `__main__` block.
+The snippets below continue from this one: in a script, put them inside the `__main__` block, before `coordinator.stop()`.
 
 ### Using Quaternions
 

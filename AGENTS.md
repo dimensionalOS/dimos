@@ -193,7 +193,9 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 # build() deploys all modules into forkserver workers and wires streams
 # loop() blocks the main thread until stopped (Ctrl-C or SIGTERM)
-ModuleCoordinator.build(my_blueprint).loop()
+# The workers import this script again, so build under the __main__ guard
+if __name__ == "__main__":
+    ModuleCoordinator.build(my_blueprint).loop()
 ```
 
 For in-repo DimOS blueprints, expose a module-level variable for `dimos run` to find it and add it to the built-in registry by running `pytest dimos/robot/test_all_blueprints_generation.py`. External packages should not edit `all_blueprints.py`; expose runnable blueprints through installed Python package entry points in the `dimos.blueprints` group.
