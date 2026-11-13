@@ -13,8 +13,8 @@ route = [
     { x = 3.0, y = 7.1 },
 ]
 charger = { x = 1.0, y = 1.0 }
-low_battery = 20.0
-full_battery = 95.0
+low_battery = 0.20
+full_battery = 0.95
 pause_s = 3.0
 retry_s = 1.0
 PREEMPTED = 2
@@ -29,9 +29,9 @@ name = "nav_status"
 stream = "MLSPlannerNative.nav_status"
 
 [[signal]]
-name = "battery_pct"
-stream = "FakeBattery.percent"
-field = "data"
+name = "battery_level"
+stream = "FakeBattery.battery"
+field = "percentage"
 
 [[event]]
 name = "arrived"
@@ -43,11 +43,11 @@ when = "(nav_status.status == ABORTED || nav_status.status == PREEMPTED) && nav_
 
 [[event]]
 name = "battery_low"
-when = "battery_pct < low_battery"
+when = "battery_level < low_battery"
 
 [[event]]
 name = "charged"
-when = "battery_pct >= full_battery"
+when = "battery_level >= full_battery"
 
 [[activity]]
 name = "navigate"

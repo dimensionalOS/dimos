@@ -23,7 +23,7 @@ from dimos_lcm.std_msgs import Time
 import pytest
 
 from dimos.core.introspection.module.info import extract_rpc_info
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind
@@ -39,7 +39,7 @@ from dimos.orchestration.engine import (
     TransitionRecord,
 )
 from dimos.orchestration.loader import load_and_check
-from dimos.orchestration.plain import to_plain
+from dimos.orchestration.plain import field_to_plain, to_plain
 from dimos.simulation.go2_sim.fake_battery import FakeBattery
 
 PATROL = Path(__file__).parent / "go2_sim_patrol.toml"
@@ -54,7 +54,7 @@ def _checked() -> CheckedDefinition:
             for module in MODULES
             for name, fn in module.rpcs.items()
         },
-        streams={"MLSPlannerNative.nav_status": GoalStatus, "FakeBattery.percent": Float32},
+        streams={"MLSPlannerNative.nav_status": GoalStatus, "FakeBattery.battery": BatteryState},
     )
     return bind(load_and_check(PATROL), deployed)
 
@@ -102,10 +102,14 @@ def test_a_low_battery_sends_the_patrol_to_the_charger_and_back() -> None:
         status = GoalStatus(goal_id=GoalID(stamp=Time(len(calls), 0)), status=GoalStatus.SUCCEEDED)
         return SignalItem("nav_status", to_plain(status))
 
+    def battery(level: float) -> SignalItem:
+        state = BatteryState(percentage=level)
+        return SignalItem("battery_level", field_to_plain(state, "percentage"))
+
     perform(effects)
-    run(SignalItem("battery_pct", 15.0))
+    run(battery(0.15))
     run(reached())
-    run(SignalItem("battery_pct", 96.0))
+    run(battery(0.96))
 
     # The leg under way is canceled, and the patrol takes up the same waypoint after charging.
     assert calls == [
