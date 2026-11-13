@@ -36,8 +36,9 @@ GUIDANCE = (
     "You control one YAM arm with a parallel gripper, and a fixed overhead RGB-D camera. "
     "Find objects with the localize module, get grasps for an object's point cloud from the grasp "
     "module, and move the arm and gripper through the manipulation module. "
+    "If localize finds nothing, name the object by colour and shape, e.g. 'green cylinder'. "
     "Use only the cameras and these modules. Do not read the body_poses stream, the "
-    "recordings (memory.db), the scene files under data/, or the MuJoCo model."
+    "recordings (memory.db), any files under data/, or the MuJoCo model."
 )
 
 
@@ -57,6 +58,9 @@ def environment(
             ),
             # The overhead camera never moves, so one view must confirm an object.
             "MANIPULATIONLOCALIZE__PARAMS__MIN_VIEWS": "1",
+            # Plain sim colours score low: OWLv2 gives the blue tray 0.29 as "blue box".
+            "MANIPULATIONLOCALIZE__PARAMS__CANDIDATE_FLOOR": "0.2",
+            "MANIPULATIONLOCALIZE__PARAMS__ACCEPT_SCORE": "0.25",
         },
     )
 

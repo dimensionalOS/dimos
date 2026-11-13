@@ -64,8 +64,9 @@ GUIDANCE = (
     "You control two YAM arms with parallel grippers, and a fixed overhead RGB-D camera. "
     "Find objects with the localize module, get grasps for an object's point cloud from the grasp "
     "module, and move the arms and grippers through the manipulation module. "
+    "If localize finds nothing, name the object by colour and shape, e.g. 'green cylinder'. "
     "Use only the cameras and these modules. Do not read the body_poses stream, the "
-    "recordings (memory.db), the scene files under data/, or the MuJoCo model."
+    "recordings (memory.db), any files under data/, or the MuJoCo model."
 )
 # The arm bases stand on the table top in some ABC scenes and 1 cm above it in the rest.
 _BASE_Z = {
@@ -90,6 +91,9 @@ def environment(env_task: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
             ),
             # The overhead camera never moves, so one view must confirm an object.
             "MANIPULATIONLOCALIZE__PARAMS__MIN_VIEWS": "1",
+            # Plain sim colours score low: OWLv2 gives the blue tray 0.29 as "blue box".
+            "MANIPULATIONLOCALIZE__PARAMS__CANDIDATE_FLOOR": "0.2",
+            "MANIPULATIONLOCALIZE__PARAMS__ACCEPT_SCORE": "0.25",
         },
     )
 
