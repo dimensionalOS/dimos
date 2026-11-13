@@ -38,7 +38,7 @@ path = "nav_msgs.Path"
 nav_status = "actionlib_msgs.GoalStatus"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "00791cd62f8a70fd6273d985fc9e0f848ac38a28" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "7d9c38abed77a381634579358d6bad39ff6a75b2" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }
