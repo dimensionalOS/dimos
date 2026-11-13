@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from itertools import pairwise
 import json
 import math
 import os
@@ -110,6 +111,9 @@ class Service:
                 422, "invalid_annotations", "expected_revision and episodes required"
             )
         original = {ep["id"]: ep for ep in info["episodes"]}
+        duration = float(
+            info.get("duration_s") or max((ep["end_s"] for ep in original.values()), default=0.0)
+        )
         seen = set()
         for ep in episodes:
             key_ep = ep.get("episode_id")
@@ -121,11 +125,9 @@ class Service:
             start, end = ep.get("start_s"), ep.get("end_s")
             if (
                 any(type(x) not in (float, int) or not math.isfinite(x) for x in (start, end))
-                or not original[key_ep]["start_s"] <= start < end <= original[key_ep]["end_s"]
+                or not 0.0 <= start < end <= duration
             ):
-                raise LearningError(
-                    422, "invalid_trim", "Trim must lie within the original episode"
-                )
+                raise LearningError(422, "invalid_trim", "Trim must lie within recording bounds")
             if (
                 type(ep.get("included")) is not bool
                 or not isinstance(ep.get("instruction"), (str, type(None)))
@@ -151,6 +153,11 @@ class Service:
             raise LearningError(
                 422, "missing_episode", "Keep all original episodes; exclude using included=false"
             )
+        submitted = {ep["episode_id"]: ep for ep in episodes}
+        ordered = sorted(original.values(), key=lambda ep: ep["start_s"])
+        for prev, curr in pairwise(ordered):
+            if submitted[prev["id"]]["end_s"] > submitted[curr["id"]]["start_s"]:
+                raise LearningError(422, "invalid_trim", "Adjacent episodes must not overlap")
         with self.store.transaction() as db:
             current = self.annotations(who, key, db)
             if body["expected_revision"] != current["revision"]:

@@ -42,7 +42,7 @@ def test_invalid_annotations(setup, monkeypatch, mutation):
     body = {"expected_revision": 0, "episodes": service.annotations(who(), "source")["episodes"]}
     ep = body["episodes"][0]
     if mutation == "outside":
-        ep["start_s"] = 0
+        ep["start_s"] = -1.0
     if mutation == "unknown":
         ep["episode_id"] = "invented"
     if mutation == "duplicate":
@@ -140,3 +140,47 @@ def test_explicit_run_splits(setup, split, expected):
     assert run["eval_indices"] is None
     assert run["train_indices"] is None
     assert run["eval_split"] == split
+
+
+@pytest.mark.parametrize("start,end", [(0.2, 9.5), (0.0, 10.0)])
+def test_outward_extension_persists(setup, monkeypatch, start, end):
+    _, service, store = setup
+    indexed(service, monkeypatch)
+    initial = service.annotations(who(), "source")
+    initial["episodes"][0].update(start_s=start, end_s=end)
+    saved = service.save_annotations(
+        who(), "source", {"expected_revision": 0, "episodes": initial["episodes"]}
+    )
+    reopened = Service(store)
+    indexed(reopened, monkeypatch)
+    assert reopened.annotations(who(), "source") == saved
+    assert saved["episodes"][0]["start_s"] == start
+    assert saved["episodes"][0]["end_s"] == end
+
+
+@pytest.mark.parametrize("start,end", [(-0.1, 8), (1, 10.1), (8, 8), (9, 8)])
+def test_recording_bounds_rejected(setup, monkeypatch, start, end):
+    _, service, _ = setup
+    indexed(service, monkeypatch)
+    episodes = service.annotations(who(), "source")["episodes"]
+    episodes[0].update(start_s=start, end_s=end)
+    with pytest.raises(LearningError, match="recording bounds"):
+        service.save_annotations(who(), "source", {"expected_revision": 0, "episodes": episodes})
+
+
+@pytest.mark.parametrize("overlap", [False, True])
+def test_submitted_neighbor_bounds_in_capture_order(setup, monkeypatch, overlap):
+    _, service, _ = setup
+    info = indexed(service, monkeypatch)
+    info["episodes"].append(dict(info["episodes"][0], id="second", start_s=8.5, end_s=9.5))
+    episodes = service.annotations(who(), "source")["episodes"]
+    # Neighbor shrinks in the SAME submission; old capture end is not a hard limit.
+    episodes[1]["start_s"] = 9.0
+    episodes[0]["end_s"] = 9.1 if overlap else 9.0
+    episodes.reverse()
+    body = {"expected_revision": 0, "episodes": episodes}
+    if overlap:
+        with pytest.raises(LearningError, match="overlap"):
+            service.save_annotations(who(), "source", body)
+    else:
+        assert service.save_annotations(who(), "source", body)["episodes"] == episodes
