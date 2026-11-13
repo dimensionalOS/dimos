@@ -16,7 +16,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` | TEXT | empty | Select simulation (`mujoco` or `dimsim`); a bare flag selects MuJoCo |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
+| `--replay-db` | TEXT | `go2_short` | Recording to replay: a dataset name, or a `.db` or `.mcap` path |
 | `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
 | `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
 | `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
@@ -95,7 +95,8 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
-# Record every stream of a run, then replay it
+# Record every stream of a run, then replay it. recordings/ is under a Git checkout;
+# an installed package writes to ~/.local/state/dimos/recordings/<run-id>/memory.db
 dimos --record --simulation run unitree-go2
 dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 
@@ -288,6 +289,9 @@ dimos log --json | jq .event # raw JSONL, extract events
 dimos log -r 20260306-143022-a3f1-unitree-go2  # specific run
 ```
 
+`dimos log` shows the running instance. When nothing is running it shows the most recently started run,
+so the log of a stopped run or of a failed start can still be read.
+
 All processes (main + workers) write to the same `main.jsonl`. Filter by module:
 
 ```bash
@@ -384,12 +388,12 @@ Works with any agentic blueprint. Does not require MCP. Publishes directly to th
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `McpClient` in the blueprint find the endpoint themselves).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `Agent` in the blueprint find the endpoint themselves).
 
-To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
+To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `Agent.blueprint()` (LLM agent that fetches tools from the server):
 
 ```python
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 
@@ -397,7 +401,7 @@ from dimos.core.coordination.blueprints import autoconnect
 my_mcp_blueprint = autoconnect(
     # my_robot_stack,
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    Agent.blueprint(),
     # my_skill_containers,
 )
 ```
@@ -507,5 +511,5 @@ dimos rerun-bridge --help
 | Path | Contents |
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
-| `~/.local/state/dimos/logs/<run-id>/main.jsonl` | Structured logs (main process + all workers) |
+| `logs/<run-id>/main.jsonl` (Git checkout) or `~/.local/state/dimos/logs/<run-id>/main.jsonl` (installed package) | Structured logs (main process + all workers) |
 | `.env` | Local config overrides (`ROBOT_IP=192.168.123.161`) |

@@ -26,12 +26,15 @@ dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
-dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
+
+The Galaxea A1Z runs only on the real arm, through `A1ZConnection`:
+`dimos run a1z-keyboard-teleop --a1zconnection.can-port a1zcan`. See the
+[A1Z guide](/docs/capabilities/manipulation/a1z.md) for its other blueprints.
 
 YAM and OpenArm now use direct connection modules. The coordinator sends joint
 commands over streams; the connection owns the complete native robot and CAN
@@ -57,15 +60,16 @@ Keyboard controls:
 | Y/H | +Yaw/-Yaw |
 | ESC | Quit |
 
-### Motion Planning (two terminals)
+### Motion Planning
 
 ```bash
-# Terminal 1: Mock coordinator
-dimos run coordinator-mock
-
-# Terminal 2: Planner with Drake visualization
-dimos run xarm7-planner-coordinator
+# Planner and coordinator on a real xArm7 (xarm6-planner-coordinator for an xArm6)
+dimos run xarm7-planner-coordinator --xarmconnection.ip 192.168.1.185
 ```
+
+The planner and the coordinator name the arm's joints `arm/joint1` ...; its
+links and tf frames keep their URDF names (`link7`, `link_tcp`). The other
+`xarm7-planner-coordinator` commands below need the same `--xarmconnection.ip`.
 
 Pink IK is the default solver. Tune it with nested module config overrides:
 
@@ -436,7 +440,7 @@ telemetry snapshots.
 
 ```bash
 # Arm + camera + manipulation + LLM agent (single command)
-dimos run xarm-grasp-agent --controlcoordinator.addresses '{"arm": "<ip>"}'
+dimos run xarm-grasp-agent --xarmconnection.ip <ip>
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
@@ -507,7 +511,7 @@ planner is locked for its whole native call.
 | Blueprint | Description |
 |-----------|-------------|
 | `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
-| `keyboard-teleop-a1z` | Galaxea A1Z keyboard teleop, planning, and hardware control |
+| `a1z-keyboard-teleop` | Galaxea A1Z keyboard teleop on the real arm, through `A1ZConnection` |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |

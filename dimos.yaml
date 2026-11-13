@@ -1,4 +1,5 @@
 # What dimOS Desktop reads to install and run this version of dimos (fetched over HTTP per tag, no git needed).
+spec-version: v1.4 # "@desktop-gateway" paths are relative to /gateways/desktop/
 name: dimos
 version: "0.0.14"
 install: |
@@ -11,24 +12,26 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 8.0.0
+    version: 9.1.1
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
-      stop, its module instances, RPCs and streams); and past runs (logs, recordings). It saves no config: each launch
+      stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
       carries all of its own. Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   paths:
     /info:
       get:
         description: >-
           Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway
-          tag, its python, its checkout, runs, log and recordings directories, and this process
+          tag, its python, its checkout, runs, log and recordings directories, and this process (with its own code's directory,
+          commit and tag: a copy apart from the checkout it serves when Desktop runs one)
     /server/stop:
       post:
         summary: Stop this gateway (a running blueprint keeps running)
     /catalog:
       get:
         description: >-
-          Every blueprint, module, RPC and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
+          Every blueprint, module, RPC and robot from the last scan (cached on disk), and the abilities (relocalization,
+          loop closure, arm control, …) its modules and blueprints list by id, with how stale it is (scan: finished_at,
           age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)
     /catalog/blueprints:
       get:
@@ -38,6 +41,15 @@ provides:
         description: >-
           A blueprint, plus its file and line and its modules' streams and RPCs; while it runs from another checkout, read
           from that one (`checkout`, `checkoutError`). (slow: imports python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/blueprints/{name}/source:
+      get:
+        summary: '{name, file, line, text}: the blueprint''s .py file, from the checkout its live run came from (slow: imports python)'
         parameters:
           - name: name
             in: path
@@ -65,6 +77,15 @@ provides:
         description: >-
           A module, the blueprints using it, and its RPCs (`name` is its registry name or class). (slow: imports
           python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/modules/{name}/source:
+      get:
+        summary: '{name, file, line, text}: the module''s .py file; ?blueprint= reads it as that blueprint runs it, from its live run''s checkout (slow: imports python)'
         parameters:
           - name: name
             in: path
@@ -260,13 +281,36 @@ provides:
               type: string
     /history/{runId}/logs:
       get:
-        summary: A run's structured log records from ?after= on (?level=, ?q=, ?limit=); latest is the newest
+        summary: A run's structured log records from ?after= on (?level=, ?q=, ?limit=); latest is the newest; watched false = no log event says when it grows
         parameters:
           - name: runId
             in: path
             required: true
             schema:
               type: string
+    /cloud/account:
+      get:
+        description: >-
+          The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks
+    /cloud/login:
+      get:
+        summary: The device login in progress; ?after= (a login state) answers only once its state isn't that one, so a page waits instead of polling
+      post:
+        summary: 'Start a device login: open the answer''s url and enter its code (cloud-login events follow it)'
+      delete:
+        summary: Cancel the device login in progress; with none in progress, log out (a cloud-account event follows)
+    /cloud/uploads:
+      get:
+        description: >-
+          The cloud upload queue: each upload's state, progress, speed, time left and error, waitingForLogin, and every file
+          already in the cloud, by path, with a console link
+      post:
+        description: >-
+          Queue a recording ({path}, robotId, kind) for upload to the Dimensional cloud, or a finished upload again ({retry:
+          id})
+      delete:
+        description: >-
+          Cancel a queued or running upload, or remove a finished one (?id=); with no id, clear the finished uploads
     /extras:
       get:
         summary: 'dimos''s optional extras: installed, applicable, missing, download size'
@@ -286,5 +330,20 @@ provides:
     /docs/search:
       get:
         summary: Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)
+    /msgs.js:
+      get:
+        summary: The LCM message decoders for the browser
+    /msgs.d.ts:
+      get:
+        summary: TypeScript types for msgs.js (one interface per message), which its X-TypeScript-Types header names
+    /cloud/login/page:
+      get:
+        summary: The cloud login page apps embed
+# Run in the copy of this tag Desktop keeps for itself (~/.dimos/desktop/dimos-gateway), apart from the user's checkout:
+# `setup:` makes the copy's own .venv with only what the gateway imports (dimos's base dependencies and the web extra,
+# not dimos itself nor the heavy extras), and `start:` serves DIMOS_DIR, the user's checkout, whose blueprints, venv and
+# runs it introspects and launches in child processes. A dev branch there can't break the gateway Desktop talks to.
+setup: |
+  uv sync --frozen --no-install-project --no-default-groups --extra web
 start: |
-  .venv/bin/python -m experimental.gateway --detach
+  .venv/bin/python -m experimental.gateway --detach ${DIMOS_DIR:+--dimos-dir "$DIMOS_DIR"}

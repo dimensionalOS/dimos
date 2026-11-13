@@ -122,6 +122,30 @@ A robot sends its key when it connects (`--relay-key`, bound to its `--robot-id`
 
 A wrong or missing secret fails with `auth_failed`, and that is terminal: neither client retries. The relay compares secrets in constant time, never logs one, and reports a malformed file by entry name. Edits to the file need a restart. With auth on, `/api/stats` wants the viewer token as a bearer and the log names viewers (`viewer 1 authenticated as paul`).
 
+## Raw topics
+
+A topic provider connects to the relay like a robot but offers raw Zenoh topics instead of a manifest: a page subscribes to key expressions, lists the catalog, publishes bytes, and drives guarded publishers (see the [web SDK](/docs/web/web_sdk.md#raw-topics)). Run it next to the robot with `python -m dimos.web.relay_bridge.topic_service --config provider.json`. It opens its own Zenoh session, so no blueprint is involved. The config names the `source` a page asks for and the `relay_url`:
+
+```json
+{ "source": "workspace", "relay_url": "http://localhost:7780" }
+```
+
+Optional `read`, `write`, `media` and `guarded_publishers` switches bound what the provider accepts; writes and guarded publishers default to false. `video: { "enabled": true }` adds the `video.h264.v1` profile, direct WebRTC video encoded in software (`encoder` is `software`, or an explicit PyAV encoder name such as `libx264`), for up to `max_peers` (16) viewers and `max_encoders` (4) distinct settings; it needs `aiortc` and `av` installed (`dimos[webrtc]`). `zenoh` selects the session's endpoints, scouting and gossip settings. See [TopicServiceConfig](/dimos/web/relay_bridge/topic_service.py) and the [shared Zenoh configuration](/dimos/protocol/service/zenoh_wire.py). `dimos run ... --topic-metadata` publishes the robot's stream descriptors, which the provider's catalog lists.
+
+Access is relay-wide. A relay without an auth file (the local one `dimos run --local-relay` spawns, or `deno task dev`) has topics open: any provider registers without a key and every page reads and writes every connected source, within what the provider accepts. A relay with `--auth-file` keeps topics closed: it turns providers away with `topics_disabled` and denies every topic operation. Start it with `--open-topics` to open them. The provider then needs the key bound to its source in the file's `topicSources` map, passed as `token` in its config, and every viewer token reads and writes every source:
+
+```json
+{
+  "robots": { "go2-lab": "<key>" },
+  "viewers": { "paul": "<token>" },
+  "topicSources": { "workspace": "<key>" }
+}
+```
+
+Source ids start with a letter or digit and run to 64 letters, digits, `_`, `.` or `-`. A relay serves up to 64 sources at once, as long as their announcement with the providers' capabilities fits one 64 KiB control frame. A topic source is not a robot: it never appears in the robot list or in a Cockpit manifest.
+
+A media route serves up to four encode variants, the settings pages change with `update()`, each at the highest rate among its viewers; the relay keeps every viewer's own rate gate, moves a viewer only once its new variant encodes, and closes a variant nobody uses after two seconds. Direct video has no data frames to gate, so each rate is a variant of its own. The fixed profiles stay the ceilings.
+
 ## Binding beyond loopback
 
 A `--host` other than loopback is accepted only with `--cert`, `--key` and `--auth-file` together, or with `--unsafe-non-loopback` when your own TLS and access control sit in front. `--serve-dir` is refused on any non-loopback host: a public relay serves only the built cockpit. `--auth-file` alone on loopback is fine.
