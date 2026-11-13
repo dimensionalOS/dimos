@@ -23,7 +23,8 @@ capture* capture_open(const char* device, uint32_t width, uint32_t height, uint3
                       int hardware, int jpeg_quality, char* error, size_t error_len);
 // 1 when frames come back JPEG-encoded by the hardware.
 int capture_is_hardware(const capture* cap);
-// Waits up to timeout_ms. 1: frame, valid until capture_release. 0: timed out. -1: error.
+// Waits up to timeout_ms, skipping frames the driver flags as broken. 1: frame, valid until
+// capture_release. 0: timed out. -1: error.
 int capture_next(capture* cap, int timeout_ms, capture_frame* frame, char* error, size_t error_len);
 void capture_release(capture* cap);
 void capture_close(capture* cap);

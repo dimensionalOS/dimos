@@ -342,24 +342,40 @@ capture* capture_open(const char* device, uint32_t width, uint32_t height, uint3
 
 int capture_is_hardware(const capture* cap) { return cap->hardware; }
 
+static double monotonic_s(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec + now.tv_nsec * 1e-9;
+}
+
 int capture_next(capture* cap, int timeout_ms, capture_frame* frame, char* error, size_t error_len) {
     capture_release(cap);
-    struct pollfd pfd = {.fd = cap->fd, .events = POLLIN};
-    int ready = poll(&pfd, 1, timeout_ms);
-    if (ready == 0) return 0;
-    if (ready < 0) {
-        if (errno == EINTR) return 0;
-        fail(error, error_len, "poll: %s", strerror(errno));
-        return -1;
+    double deadline = monotonic_s() + timeout_ms * 1e-3;
+    struct v4l2_buffer buf;
+    for (;;) {
+        int wait_ms = (int)((deadline - monotonic_s()) * 1e3);
+        if (wait_ms < 0) return 0;
+        struct pollfd pfd = {.fd = cap->fd, .events = POLLIN};
+        int ready = poll(&pfd, 1, wait_ms);
+        if (ready == 0) return 0;
+        if (ready < 0) {
+            if (errno == EINTR) return 0;
+            fail(error, error_len, "poll: %s", strerror(errno));
+            return -1;
+        }
+        buf = (struct v4l2_buffer){.type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+                                   .memory = cap->hardware ? V4L2_MEMORY_DMABUF : V4L2_MEMORY_MMAP};
+        if (xioctl(cap->fd, VIDIOC_DQBUF, &buf) < 0) {
+            if (errno == EAGAIN) return 0;
+            fail(error, error_len, "VIDIOC_DQBUF: %s", strerror(errno));
+            return -1;
+        }
+        cap->held = (int)buf.index;
+        // A failed USB transfer comes back as a buffer flagged ERROR, usually empty, while the stream
+        // carries on; hand it back and wait for the next frame.
+        if (!(buf.flags & V4L2_BUF_FLAG_ERROR)) break;
+        capture_release(cap);
     }
-    struct v4l2_buffer buf = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
-                              .memory = cap->hardware ? V4L2_MEMORY_DMABUF : V4L2_MEMORY_MMAP};
-    if (xioctl(cap->fd, VIDIOC_DQBUF, &buf) < 0) {
-        if (errno == EAGAIN) return 0;
-        fail(error, error_len, "VIDIOC_DQBUF: %s", strerror(errno));
-        return -1;
-    }
-    cap->held = (int)buf.index;
     frame->stamp_s = buf.timestamp.tv_sec + buf.timestamp.tv_usec * 1e-6;
     frame->stride = cap->stride;
     frame->encode_s = 0;
