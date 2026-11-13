@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -144,6 +145,39 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     monkeypatch.setattr(cd.time, "sleep", lambda s: None)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
+
+
+def test_preview_timing_budget_includes_video(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cloud, _, source = env
+    original = source.read_bytes()
+    doc = {
+        "format": "dimos-spatial-preview-v2",
+        "duration_s": 2,
+        "timing": {"version": 1, "streams": {}},
+    }
+    video = {"bytes": 100, "duration_s": 2, "speed": 1, "type": "video/mp4"}
+    base = {k: v for k, v in doc.items() if k != "timing"}
+    limit = len(json.dumps({**base, "video": video}).encode())
+    monkeypatch.setattr(cd.preview, "PREVIEW_MAX_BYTES", limit)
+    monkeypatch.setattr(cd.preview, "build", lambda store: doc.copy())
+    monkeypatch.setattr(cd.preview, "timelapse", lambda store, path: video)
+
+    def open_copy(path: Path) -> Any:
+        assert path != source and path.read_bytes() == original
+        return nullcontext(None)
+
+    def put_preview(uid: str, sent: dict[str, Any]) -> dict[str, Any]:
+        assert "timing" not in sent
+        assert sent["video"] == video
+        assert len(json.dumps(sent).encode()) <= limit
+        return {}
+
+    monkeypatch.setattr(cd, "open_store", open_copy)
+    monkeypatch.setattr(cloud.backend.api, "put_preview", put_preview)
+    assert cloud.backend._preview("u0", source, tmp_path) == "sent"
+    assert source.read_bytes() == original
 
 
 def test_roundtrip_with_resume_and_manifest(env: tuple[CloudData, FakeTransport, Path]) -> None:
