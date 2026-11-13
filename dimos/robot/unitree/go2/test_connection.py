@@ -346,3 +346,20 @@ def test_replay_opens_recording_and_emits_typed_odometry(tmp_path, monkeypatch, 
         assert errors == []
         assert completed == [True]
         assert [value.lcm_encode() for value in received] == [values[1].lcm_encode()]
+
+
+def test_replay_rejects_legacy_dds_odometry(tmp_path: Path) -> None:
+    """A legacy Go2 DDS recording holds nav_msgs.Odometry, which GO2Connection cannot publish."""
+    path = tmp_path / "legacy.mcap"
+    with path.open("wb") as output:
+        writer = Writer(output)
+        writer.start()
+        channel = writer.register_channel(
+            topic="rt/utlidar/robot_odom", message_encoding="cdr", schema_id=0
+        )
+        writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=b"")
+        writer.finish()
+
+    with go2_conn.ReplayConnection(dataset=str(path)) as conn:
+        with pytest.raises(TypeError, match="PoseStamped odometry.*'odom'.*Odometry"):
+            conn.odom_stream()
