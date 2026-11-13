@@ -37,6 +37,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 import re
 from typing import Any, Protocol, cast, runtime_checkable
+import warnings
 
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for, codec_from_id
@@ -47,7 +48,7 @@ from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
-from dimos.memory.type.filter import StreamQuery
+from dimos.memory.type.filter import NearFilter, StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
@@ -165,6 +166,15 @@ class McapObservationStore(ObservationStore[Any]):
                     data_type=dtype,
                     _loader=partial(decode, message.data),
                 )
+
+    def warn_if_unposed(self, q: StreamQuery) -> None:
+        if any(isinstance(f, NearFilter) for f in q.filters):
+            # No stacklevel reaches the caller: the depth differs per query path.
+            warnings.warn(
+                f"Stream {self.name!r} is read from MCAP, which stores no poses, so near() "
+                "cannot return results. dimos map pose-fill needs a --record sqlite recording.",
+                stacklevel=1,
+            )
 
     def query(self, q: StreamQuery) -> Iterator[Observation[Any]]:
         # MCAP is natively log-time ordered, so id ordering never needs a sort.

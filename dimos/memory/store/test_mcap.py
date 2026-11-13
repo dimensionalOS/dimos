@@ -203,6 +203,29 @@ def test_unknown_metadata_stays_raw(tmp_path, encoding, payload_type):
         assert "raw bytes" in store.summary()
 
 
+@pytest.mark.parametrize(
+    "operation", [lambda q: q.count(), lambda q: len(q.to_list())], ids=["count", "to_list"]
+)
+def test_near_warns_that_mcap_stores_no_poses(tmp_path, operation):
+    path = tmp_path / "recording.mcap"
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start(profile="dimos")
+        channel = writer.register_channel(
+            topic="imu",
+            message_encoding="lcm",
+            schema_id=0,
+            metadata={"dimos.payload_type": "dimos.msgs.sensor_msgs.Imu.Imu"},
+        )
+        writer.add_message(
+            channel_id=channel, log_time=1, publish_time=1, data=Imu(ts=1.0).lcm_encode()
+        )
+        writer.finish()
+    with McapStore(path=str(path)) as store:
+        with pytest.warns(UserWarning, match="'imu' is read from MCAP.*no poses"):
+            assert operation(store.streams.imu.near((0, 0, 0), 1.0)) == 0
+
+
 def test_json_native_metadata_decodes_string(tmp_path):
     path = tmp_path / "events.mcap"
     value = String('{"ts":12.5,"event":"ready"}')
