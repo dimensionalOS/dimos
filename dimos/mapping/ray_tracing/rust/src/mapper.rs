@@ -281,6 +281,7 @@ mod tests {
 
     fn config() -> Config {
         Config {
+            frame_id_prefix: None,
             voxel_size: 1.0,
             fine_divisor: 0,
             emit_fine: false,
@@ -367,6 +368,7 @@ mod tests {
     #[test]
     fn cadence_follows_config() {
         let cfg = Config {
+            frame_id_prefix: None,
             emit_every: 2,
             global_emit_every: 3,
             ..config()
@@ -397,6 +399,7 @@ mod tests {
     #[test]
     fn zero_cadence_disables_emits() {
         let cfg = Config {
+            frame_id_prefix: None,
             emit_every: 0,
             global_emit_every: 0,
             ..config()
@@ -437,6 +440,7 @@ mod tests {
     #[test]
     fn local_points_apply_support_gate() {
         let cfg = Config {
+            frame_id_prefix: None,
             support_min: 3,
             ..config()
         };
@@ -484,6 +488,7 @@ mod tests {
         assert!(mapper.fine_points(&bounds).is_none());
 
         let mut fine = Mapper::new(Config {
+            frame_id_prefix: None,
             fine_divisor: 2,
             ..config()
         });

@@ -84,6 +84,7 @@ impl MLSPlanner {
         worker_threads: u32,
     ) -> PyResult<Self> {
         let config = Config {
+            frame_id_prefix: None,
             world_frame: String::new(),
             base_frame: String::new(),
             voxel_size,

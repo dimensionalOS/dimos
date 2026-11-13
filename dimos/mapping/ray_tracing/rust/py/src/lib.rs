@@ -141,6 +141,7 @@ impl VoxelRayMapper {
         // emit_fine only gates the module's publishing. This API queries fine
         // points explicitly, so it stays off.
         let config = Config {
+            frame_id_prefix: None,
             voxel_size,
             fine_divisor,
             emit_fine: false,
