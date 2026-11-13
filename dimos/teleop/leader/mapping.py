@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Leader motor readings to follower joint targets, described by config, not code."""
+"""Leader arm joint readings to follower joint targets, described by config, not code."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 import sys
+from typing import Literal
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -30,16 +31,28 @@ from pydantic import Field, model_validator
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.service.spec import BaseConfig
-from dimos.teleop.leader.calibration import LeaderSide
+
+LeaderSide = Literal["left", "right"]
+LEADER_SIDES: tuple[LeaderSide, ...] = ("left", "right")
 
 GRIPPER_OPEN = 1.0
 GRIPPER_CLOSED = 0.0
 
 
 class JointMapping(BaseConfig):
-    """One leader motor driving one follower joint: target = scale * reading + offset, clamped."""
+    """One leader joint driving one follower joint: target = scale * reading + offset, clamped.
 
-    motor: str
+    Attributes:
+        leader_joint: The leader joint as its connection publishes it, e.g.
+            "leader/left_joint_1".
+        joint: The follower joint it drives, e.g. "arm/left_joint1".
+        lower: Lowest target sent to the follower, in radians.
+        upper: Highest target sent to the follower, in radians.
+        scale: Follower radians per leader radian.
+        offset: Added after scaling, in radians.
+    """
+
+    leader_joint: str
     joint: str
     lower: float
     upper: float
@@ -59,9 +72,15 @@ class JointMapping(BaseConfig):
 
 
 class GripperMapping(BaseConfig):
-    """The trigger motor squeezed through travel_radians closes the gripper from open to closed."""
+    """A leader trigger joint that opens and closes the follower's gripper.
 
-    motor: str
+    Attributes:
+        leader_joint: The trigger joint as its connection publishes it.
+        travel_radians: How far the trigger turns from released to fully
+            squeezed, in radians; squeezed fully closes the gripper.
+    """
+
+    leader_joint: str
     travel_radians: float = Field(gt=0.0)
 
     def opening(self, reading: float) -> float:
@@ -77,21 +96,19 @@ class SideMapping(BaseConfig):
 
     @model_validator(mode="after")
     def _validate_names(self) -> Self:
-        motors = [mapping.motor for mapping in self.joints]
-        if self.gripper is not None:
-            motors.append(self.gripper.motor)
-        if len(set(motors)) != len(motors):
-            raise ValueError(f"a leader motor is mapped twice: {motors}")
+        leader_joints = list(self.leader_joint_names())
+        if len(set(leader_joints)) != len(leader_joints):
+            raise ValueError(f"a leader joint is mapped twice: {leader_joints}")
         joints = [mapping.joint for mapping in self.joints]
         if len(set(joints)) != len(joints):
             raise ValueError(f"a follower joint is mapped twice: {joints}")
         return self
 
-    def motor_names(self) -> tuple[str, ...]:
-        """The leader motors this side reads, joints first, then the gripper trigger."""
-        names = [mapping.motor for mapping in self.joints]
+    def leader_joint_names(self) -> tuple[str, ...]:
+        """The leader joints this side reads, joints first, then the gripper trigger."""
+        names = [mapping.leader_joint for mapping in self.joints]
         if self.gripper is not None:
-            names.append(self.gripper.motor)
+            names.append(self.gripper.leader_joint)
         return tuple(names)
 
     def joint_names(self) -> tuple[str, ...]:
@@ -115,19 +132,28 @@ def map_side_readings(
     previous_positions_by_joint: Mapping[str, float] | None = None,
     max_joint_jump_radians: float | None = None,
 ) -> SideCommand:
-    """Calibrated leader radians to clamped follower targets and a gripper opening."""
-    missing = set(mapping.motor_names()) - set(readings)
+    """Leader joint angles to clamped follower targets and a gripper opening.
+
+    Args:
+        side: The leader side, for error messages and the result.
+        mapping: What this side drives.
+        readings: Leader joint angles by leader joint name, in radians.
+        previous_positions_by_joint: The last targets sent, to catch jumps.
+        max_joint_jump_radians: Largest change allowed between two readings,
+            in radians; a bigger one raises ValueError.
+    """
+    missing = set(mapping.leader_joint_names()) - set(readings)
     if missing:
-        raise ValueError(f"{side} leader readings missing motors: {sorted(missing)}")
+        raise ValueError(f"{side} leader readings missing joints: {sorted(missing)}")
     positions_by_joint = {
-        joint_mapping.joint: joint_mapping.target(float(readings[joint_mapping.motor]))
+        joint_mapping.joint: joint_mapping.target(float(readings[joint_mapping.leader_joint]))
         for joint_mapping in mapping.joints
     }
     _validate_jump(side, positions_by_joint, previous_positions_by_joint, max_joint_jump_radians)
     gripper_opening = (
         None
         if mapping.gripper is None
-        else mapping.gripper.opening(float(readings[mapping.gripper.motor]))
+        else mapping.gripper.opening(float(readings[mapping.gripper.leader_joint]))
     )
     return SideCommand(side, positions_by_joint, gripper_opening)
 

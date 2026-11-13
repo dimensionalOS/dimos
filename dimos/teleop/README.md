@@ -46,13 +46,16 @@ Base phone teleop module. Receives orientation + gyro data from phone motion sen
 Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Twist`.
 
 ### LeaderTeleopModule
-Reads Feetech leader arms over serial and publishes follower joint targets plus
-per-side gripper openings. The robot is config, not code: a `SideMapping` per
-side names which leader motor drives which follower joint, with limits, scale
-and offset. The robot's blueprint adds a `leader_joint_command` port to its own
-coordinator and points the coordinator's existing `joint_trajectory` and gripper
-tasks at the leader's ports with `stream_bind`. Each side reads its calibration file from
-`STATE_DIR/teleop/leader/<side>/`; the `leader-teleop` extra installs the Feetech SDK.
+Maps leader arm readings onto a follower. The leader arms have their own
+connection (Feetech leaders: `FeetechConnection` in
+`dimos/robot/manipulators/feetech`), which publishes their joint angles; the
+module reads them on `leader_joint_state`, applies the robot's `SideMapping`
+(which leader joint drives which follower joint, with limits, scale and offset,
+and which trigger drives the gripper), drops readings that jump, low-pass
+filters the targets and publishes `leader_joint_command` plus a gripper opening
+per side. The robot's blueprint adds a `leader_joint_command` port to its own
+coordinator and points the existing `joint_trajectory` and gripper tasks at
+these streams with `stream_bind`.
 
 ## Subclassing
 
@@ -93,10 +96,8 @@ teleop/
 │   ├── README.md                # Broker session / aiortc + Cloudflare WebRTC internals
 │   └── blueprints/              # cloudflare.py (Go2 transport + multicam, xArm6/7)
 ├── leader/
-│   ├── module.py                # LeaderTeleopModule: Feetech leaders -> joint targets
-│   ├── mapping.py               # SideMapping/JointMapping/GripperMapping (config, not code)
-│   ├── feetech.py               # Feetech serial readers + mock reader
-│   └── calibration.py           # Per-side calibration files under STATE_DIR/teleop/leader
+│   ├── module.py                # LeaderTeleopModule: leader readings -> follower targets
+│   └── mapping.py               # SideMapping/JointMapping/GripperMapping (config, not code)
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop

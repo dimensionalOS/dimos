@@ -15,18 +15,26 @@
 from __future__ import annotations
 
 import builtins
+import math
 import sys
 from types import ModuleType
 
 import pytest
 
-from dimos.teleop.leader.calibration import FEETECH_POSITION_SPAN
-from dimos.teleop.leader.feetech import (
-    FeetechLeaderReader,
-    LeaderDependencyError,
+from dimos.robot.manipulators.feetech.arm import (
+    FEETECH_EXTRA,
+    FeetechArm,
+    FeetechDependencyError,
     _create_sdk_handlers,
     _read_motor_position,
+    missing_dependency_error,
 )
+from dimos.robot.manipulators.feetech.calibration import (
+    FEETECH_POSITION_SPAN,
+    FeetechCalibration,
+    FeetechMotorCalibration,
+)
+from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechRobot
 
 
 class _FakePortHandler:
@@ -73,22 +81,40 @@ def _install_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "scservo_sdk", sdk)
 
 
-def test_feetech_reader_uses_direct_optional_sdk_import(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_arm_reads_each_open_bus_as_calibrated_radians(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_sdk(monkeypatch)
-    reader = FeetechLeaderReader("/dev/fake", 123456)
-
-    reader.connect()
+    robot = FeetechRobot(
+        buses=(FeetechBus("left", ("joint_1", "joint_2")), FeetechBus("right", ("joint_1",))),
+        baudrate=123456,
+    )
+    # The fake bus reads 1000 + motor id; offsets put joint_1 at zero and
+    # joint_2 a quarter turn (1024 ticks) away, read backwards.
+    calibration = FeetechCalibration(
+        side="left",
+        motors={
+            "joint_1": FeetechMotorCalibration(id=1, homing_offset=1001),
+            "joint_2": FeetechMotorCalibration(id=7, homing_offset=1007 - 1024, flip=True),
+        },
+    )
+    arm = FeetechArm(robot, {"left": "/dev/fake"}, {"left": calibration})
+    arm.connect()
     try:
-        raw_positions = reader.read_raw_positions({"joint_1": 1, "joint_2": 7})
+        positions = arm.read()
     finally:
-        reader.disconnect()
+        arm.disconnect()
 
-    assert raw_positions == {"joint_1": 1001, "joint_2": 1007}
+    assert arm.joint_names == ["left_joint_1", "left_joint_2"]
+    assert positions == pytest.approx({"left_joint_1": 0.0, "left_joint_2": -math.pi / 2})
 
 
-def test_create_sdk_handlers_raises_leader_dependency_error(
+def test_missing_dependency_error_names_optional_extra() -> None:
+    error = missing_dependency_error()
+
+    assert f"--extra {FEETECH_EXTRA}" in str(error)
+    assert "Feetech" in str(error)
+
+
+def test_create_sdk_handlers_raises_feetech_dependency_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delitem(sys.modules, "scservo_sdk", raising=False)
@@ -108,7 +134,7 @@ def test_create_sdk_handlers_raises_leader_dependency_error(
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
-    with pytest.raises(LeaderDependencyError):
+    with pytest.raises(FeetechDependencyError):
         _create_sdk_handlers("/dev/missing")
 
 
