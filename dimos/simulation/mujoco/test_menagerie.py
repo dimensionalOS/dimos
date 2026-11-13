@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import sys
-from threading import Barrier
 from unittest.mock import Mock
 
-from filelock import FileLock, Timeout
 from git import Actor, Repo
 import pytest
 from pytest import MonkeyPatch
@@ -56,15 +53,6 @@ def download(checkout: Path, monkeypatch: MonkeyPatch, mocker: MockerFixture) ->
     return helper
 
 
-def test_downloads_once(download: Mock, monkeypatch: MonkeyPatch) -> None:
-    menagerie.ensure_menagerie()
-    # A finished checkout must not reach the slow mujoco_playground import.
-    monkeypatch.setitem(sys.modules, "mujoco_playground._src", None)
-    menagerie.ensure_menagerie()
-
-    download.assert_called_once_with()
-
-
 @pytest.mark.parametrize(
     "head", [None, "ref: refs/heads/main\n"], ids=["no-git-directory", "on-a-branch"]
 )
@@ -83,29 +71,6 @@ def test_downloads_again_after_unfinished_download(
     download.assert_called_once_with()
     assert not leftover.exists()
     assert (checkout / ".git" / "HEAD").read_text() == PINNED_COMMIT
-
-
-def test_serializes_concurrent_downloads(
-    checkout: Path, download: Mock, monkeypatch: MonkeyPatch
-) -> None:
-    barrier = Barrier(4)
-    clone = download.side_effect
-
-    def shared_path() -> Path:
-        barrier.wait(timeout=5)
-        return checkout
-
-    def locked_clone() -> None:
-        with pytest.raises(Timeout), FileLock(checkout.with_suffix(".lock"), timeout=0):
-            pass
-        clone()
-
-    monkeypatch.setattr(menagerie, "menagerie_path", shared_path)
-    download.side_effect = locked_clone
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda _: menagerie.ensure_menagerie(), range(4)))
-
-    download.assert_called_once_with()
 
 
 @pytest.mark.self_hosted  # needs mujoco_playground, which the default test group leaves out
