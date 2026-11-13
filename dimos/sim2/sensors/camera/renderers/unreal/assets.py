@@ -25,7 +25,7 @@ from scipy.spatial.transform import Rotation
 import trimesh
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import layer_from, load_pxr
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 from dimos.sim2.geometry.poses import pose_array
 
 BASIS = np.diag([1.0, -1.0, 1.0])

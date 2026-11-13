@@ -46,6 +46,7 @@ from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
+from dimos.sim2.sensors.tf import SimTfModule
 
 _declaration = R1ProConnectionConfig(model=CONTROL_MODEL)
 
@@ -57,7 +58,8 @@ def _robot_blueprint(
 ) -> Blueprint:
     return (
         autoconnect(
-            UsdManager.blueprint(model=UsdModel.from_file(scene)),
+            UsdManager.blueprint(model=UsdModel.from_file(scene), publish_joint_tf=False),
+            SimTfModule.blueprint(scene_manager=UsdManager),
             SimModule.blueprint(
                 scene_manager=UsdManager,
                 backend=MujocoBackend,

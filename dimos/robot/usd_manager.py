@@ -22,12 +22,9 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
-from dimos_lcm.sim_msgs import WorldState
-import numpy as np
 from pydantic import Field, field_validator
-from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleBase, ModuleConfig
@@ -39,21 +36,23 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import JointDescription, RobotModel, UsdModel
-from dimos.robot.assets.usd import (
-    graft_usd,
-    prefix_usd_frames,
-    rename_usd_frames,
-    usd_frame_names,
-    warm_usd,
-)
-from dimos.robot.assets.usd_assets import (
+from dimos.robot.assets.usd_utils.assets import (
     describe_unopenable_assets,
+    is_published_asset,
     publish_usd_assets,
+    referenced_asset_paths,
     require_asset_hashes,
     require_fetched_assets,
     resolve_usd_assets,
     unopenable_assets,
 )
+from dimos.robot.assets.usd_utils.frames import (
+    prefix_usd_frames,
+    rename_usd_frames,
+    usd_frame_names,
+)
+from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.pxr import warm_usd
 from dimos.robot.joint_tf import JointTf
 from dimos.utils.logging_config import setup_logger
 
@@ -65,6 +64,7 @@ logger = setup_logger()
 
 SUBTREE_RPC = "get_usd"
 SCENE_RPC = "get_scene"
+ASSET_RPC = "get_asset"
 
 
 WORLD_LINK = "world"
@@ -166,9 +166,6 @@ class UsdManagerConfig(ModuleConfig):
     model: RobotModel | UsdModel | None = None
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
-    # Hosted runs assign transports even to unused ports. Hardware can explicitly
-    # select joint feedback instead of mistaking that for a simulation pose source.
-    tf_source: Literal["auto", "joints", "observations"] = "auto"
     # An edge goes out when it moves, at most this often...
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
@@ -196,7 +193,6 @@ class UsdManager(Module):
     # IO: the joints it poses are published on it (and UsdManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
-    observations: In[WorldState]
     # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
     # gets that file. Either goes out on file_info named as requested.
     render_file_request: In[String]
@@ -216,16 +212,13 @@ class UsdManager(Module):
             joint_tf_hz=self.config.joint_tf_hz,
             unchanged_tf_hz=self.config.unchanged_tf_hz,
         )
-        self._sim_clock: str | None = None
-        self._sim_epoch = -1
-        self._next_sim_tf_ns = 0
         self._usd: str | None = None
         self._usd_lock = RLock()
         self._scene_build = asyncio.Lock()
         self._scene: str | None = None
-        self._scene_description: UsdModel | None = None
         self._subtree_clients: dict[str, RPCClient] = {}
         self._published_assets: dict[str, str] = {}
+        self._asset_mounts: dict[str, Mount] = {}
         try:
             self._check_mounts()
             if not self.config.mounts:
@@ -239,20 +232,30 @@ class UsdManager(Module):
         return self._description.frame_names()
 
     def _renamed_own_frames(self) -> dict[str, str]:
+        """Each own frame that comes out of `frame()` under another name, by its name in the USD.
+
+        The order is the one `_adopt` uses on a mounted subtree: the pre-namespace rename, then
+        the namespace, then `tf_renames`. So `tf_renames` names a frame the way the rest of the
+        system sees it -- `left/arm`, not `arm` -- for this description as much as for a mount.
+        """
         pre = self.config.tf_renames_pre_namespace
         post = self.config.tf_renames
         renamed = {}
         for name in self._own_frame_names():
-            once = pre.get(name, name)
-            new = post.get(once, once)
+            namespaced = self._namespaced(pre.get(name, name))
+            new = post.get(namespaced, namespaced)
             if new != name:
                 renamed[name] = new
         return renamed
 
+    def _namespaced(self, name: str) -> str:
+        prefix = self.config.frame_id_prefix
+        return f"{prefix}/{name}" if prefix else name
+
     def _matched_own_renames(self) -> set[str]:
         names = self._own_frame_names()
         pre = self.config.tf_renames_pre_namespace
-        after_pre = {pre.get(name, name) for name in names}
+        after_pre = {self._namespaced(pre.get(name, name)) for name in names}
         return (names & set(pre)) | (after_pre & set(self.config.tf_renames))
 
     def _check_mounts(self) -> None:
@@ -270,11 +273,7 @@ class UsdManager(Module):
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
-        # A connected simulation supplies all edges at acquisition time.
-        if self.config.publish_joint_tf and (
-            self.config.tf_source == "joints"
-            or (self.config.tf_source == "auto" and self.observations.transport is None)
-        ):
+        if self.config.publish_joint_tf:
             self._joint_tf.start(self.coordinator_joint_state, self.tfbuffer)
 
     @rpc
@@ -302,20 +301,13 @@ class UsdManager(Module):
         await self._ready.wait()
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
-        # Physics and every sensor request the same immutable startup scene.
-        # Compose it once; simultaneous readers share the completed result.
-        async with self._scene_build:
-            if self._scene is None:
-                root, scene = await self._compose(chain)
-                where = root[ASSET_ROOT] or None
-                await asyncio.to_thread(self._check_scene_assets, scene, where)
-                self._scene_description = UsdModel.from_layer(
-                    resolve_usd_assets(scene, root[ASSET_ROOT])
-                )
-                published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
-                self._published_assets = assets
-                self._scene = published
-            return ["", self._scene]
+        root, scene = await self._compose(chain)
+        where = root[ASSET_ROOT] or None
+        await asyncio.to_thread(self._check_scene_assets, scene, where)
+        published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
+        self._published_assets = assets
+        self._scene = published
+        return ["", published]
 
     def _check_scene_assets(self, scene: str, root: str | None) -> None:
         unopenable = unopenable_assets(scene, root)
@@ -335,7 +327,21 @@ class UsdManager(Module):
                 f"published. Ask for a scene before its assets: the names only exist once one "
                 f"has been handed out."
             )
+        mount = self._asset_mounts.get(real)
+        if mount is not None:
+            return await self._asset_from(mount, real)
         return await asyncio.to_thread(self._resolved(real).read_bytes)
+
+    async def _asset_from(self, mount: Mount, name: str) -> bytes:
+        """Ask the mount that published this name for the bytes; nothing here can read it."""
+        client = self._subtree_client(mount)
+        data = await asyncio.to_thread(partial(getattr(client, ASSET_RPC), name))
+        if not isinstance(data, bytes):
+            raise KeyError(
+                f"{name!r} is an asset {mount.remote_name} published, but its "
+                f"{ASSET_RPC}() answered {type(data).__name__}, not bytes"
+            )
+        return data
 
     def _refuse_a_cycle(self, chain: list[str]) -> None:
         if self._scene_identity in chain:
@@ -444,12 +450,24 @@ class UsdManager(Module):
         pre = self.config.tf_renames_pre_namespace
         post = self.config.tf_renames
         where = answer[ASSET_ROOT] or None
+        self._remember_published_assets(answer[USD], where, mount)
         usd = resolve_usd_assets(answer[USD], answer[ASSET_ROOT])
         matched = usd_frame_names(usd, where) & set(pre) if pre else set()
         usd = prefix_usd_frames(rename_usd_frames(usd, pre, where), mount.frame_prefix, where)
         if post:
             matched |= usd_frame_names(usd, where) & set(post)
         return rename_usd_frames(usd, post, where), matched
+
+    def _remember_published_assets(self, usd: str, where: str | None, mount: Mount) -> None:
+        """Note every asset in a subtree that is a name its owner published, not a file here.
+
+        A mount that answers get_scene() hands back a scene whose assets are already published
+        names -- there is no such file on this side of the RPC. Republishing them renames them
+        again, so get_asset has to ask the mount that owns one instead of reading the path.
+        """
+        for asset in referenced_asset_paths(usd, where):
+            if is_published_asset(asset):
+                self._asset_mounts[asset] = mount
 
     def _ask_for_usd(
         self, client: RPCClient, frame_id: str, mount: Mount, chain: list[str]
@@ -461,7 +479,10 @@ class UsdManager(Module):
                 answer = getattr(client, SUBTREE_RPC)()
         except Exception as exc:
             if _is_circular_mount(exc):
-                raise
+                # Raise our own, not the RemoteError we caught: one hop further out that
+                # error's remote_type is RemoteError, and the manager there would read a
+                # cycle as a mount that has not answered yet and ask forever.
+                raise CircularMountError(str(exc)) from exc
             logger.debug(f"{mount.subtree_rpc}() for {frame_id!r} did not answer yet: {exc}")
             return None
         if (
@@ -476,17 +497,19 @@ class UsdManager(Module):
 
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
-        urdf = self._description.urdf()
         model_name = self.config.instance_name or type(self).__name__
-        if (name == "*.urdf" or name == f"{model_name}.urdf") and urdf is not None:
-            self.file_info.publish(File(f"{model_name}.urdf", urdf.xml.encode()))
+        if name in ("*.urdf", f"{model_name}.urdf"):
+            urdf = self._description.urdf()
+            if urdf is not None:
+                self.file_info.publish(File(f"{model_name}.urdf", urdf.xml.encode()))
             return
         if name.endswith(USD_SUFFIXES):
-            usd = self._scene
-            if usd is None and self.config.mounts:
-                usd = (await self.get_scene())[USD]
-            if usd is None:
-                usd = (await asyncio.to_thread(self.get_usd))[USD]
+            async with self._scene_build:
+                usd = self._scene
+                if usd is None and self.config.mounts:
+                    usd = (await self.get_scene())[USD]
+                if usd is None:
+                    usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
             return
         # Only files this description names or the last scene published: a request is never an
@@ -512,59 +535,6 @@ class UsdManager(Module):
         """This description's joints by name, which is what it poses on tf."""
         return self._joint_tf.joints
 
-    async def handle_observations(self, sample: WorldState) -> None:
-        """Publish the same model tree from a complete physical pose sample."""
-        if not self.config.publish_joint_tf or self.config.tf_source == "joints":
-            return
-        h = sample.header
-        if self._sim_clock is not None and self._sim_clock != h.clock_id:
-            raise ValueError("robot model TF clock changed; restart its binding")
-        self._sim_clock = h.clock_id
-        if h.epoch < self._sim_epoch:
-            return
-        if h.epoch > self._sim_epoch:
-            self._sim_epoch, self._next_sim_tf_ns = h.epoch, 0
-        if h.time_ns < self._next_sim_tf_ns:
-            return
-        period = round(1e9 / self.config.joint_tf_hz)
-        self._next_sim_tf_ns = (h.time_ns // period + 1) * period
-        poses = {}
-        for body in sample.bodies:
-            p, q = body.pose.position, body.pose.orientation
-            matrix = np.eye(4)
-            matrix[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
-            matrix[:3, 3] = [p.x, p.y, p.z]
-            poses[body.body_id] = matrix
-        edges = []
-        model = self._scene_description or self._description
-        poses["world"] = np.eye(4)
-        if model.root_link not in poses:
-            raise ValueError(f"missing model root in body poses: {model.root_link}")
-        if model.root_link != "world":
-            edges.append(
-                Transform.from_matrix(
-                    poses[model.root_link],
-                    frame_id="world",
-                    child_frame_id=model.root_link,
-                    ts=sample.header.time_ns / 1e9,
-                )
-            )
-        for joint in model.joints:
-            parent_id, child_id = joint.parent_link, joint.child_link
-            parent, child = poses[parent_id], poses[child_id]
-            relative = np.eye(4)
-            relative[:3, :3] = parent[:3, :3].T @ child[:3, :3]
-            relative[:3, 3] = parent[:3, :3].T @ (child[:3, 3] - parent[:3, 3])
-            edges.append(
-                Transform.from_matrix(
-                    relative,
-                    frame_id=parent_id,
-                    child_frame_id=child_id,
-                    ts=sample.header.time_ns / 1e9,
-                )
-            )
-        self.tfbuffer.publish(*edges)
-
     def static_transforms(self) -> list[Transform]:
         """The edges that never move, so they need no joint state to be known."""
         return self._joint_tf.static_transforms()
@@ -579,9 +549,9 @@ class UsdManager(Module):
             self._joint_tf.add_joint_state(state, self.tfbuffer)
 
     def frame(self, link_or_joint: str) -> str:
-        renamed = self._frames.get(link_or_joint, link_or_joint)
-        prefix = self.config.frame_id_prefix
-        return f"{prefix}/{renamed}" if prefix else renamed
+        # _frames already holds the finished name, namespace included.
+        known = self._frames.get(link_or_joint)
+        return known if known is not None else self._namespaced(link_or_joint)
 
 
 def _is_circular_mount(exc: BaseException) -> bool:

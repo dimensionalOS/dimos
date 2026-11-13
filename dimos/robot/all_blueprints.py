@@ -420,6 +420,7 @@ all_modules = {
     "sim-lidar-module": "dimos.sim2.sensors.lidar.module.SimLidarModule",
     "sim-m20-world": "dimos.simulation.m20_sim.world.SimM20World",
     "sim-module": "dimos.sim2.module.SimModule",
+    "sim-tf-module": "dimos.sim2.sensors.tf.SimTfModule",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",

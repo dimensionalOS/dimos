@@ -34,6 +34,7 @@ from dimos.sim2.sensors.lidar.config import LidarConfig
 from dimos.sim2.sensors.lidar.mid360 import Mid360Returns, Mid360Scan
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
+from dimos.sim2.sensors.tf import SimTfModule
 from dimos.utils.data import LfsPath
 
 IMU = ImuConfig("g1/imu_in_pelvis", orientation="ideal")
@@ -65,6 +66,7 @@ _lidar = SimLidarModule.blueprint(
 
 
 _scene = UsdManager.blueprint(
+    publish_joint_tf=False,
     instance_name="scene",
     model=UsdModel.from_file(LfsPath("sim2_g1_usd/world.usda")),
     mounts={
@@ -82,6 +84,7 @@ unitree_g1_sim2 = autoconnect(
     ),
     _lidar,
     _scene,
+    SimTfModule.blueprint(scene_manager=_scene),
     SimModule.blueprint(
         scene_manager=_scene,
         backend=MujocoBackend,

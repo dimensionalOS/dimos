@@ -189,7 +189,7 @@ class UsdModel:
     def _with_added_frames(self, layer: str) -> str:
         if not self._added_frames:
             return layer
-        from dimos.robot.assets.usd import usd_with_frames
+        from dimos.robot.assets.usd_utils.frames import usd_with_frames
 
         return usd_with_frames(
             layer,
@@ -201,7 +201,7 @@ class UsdModel:
         if self._text is not None:
             return self._text
         if self._urdf is not None:
-            from dimos.robot.assets.urdf_to_usd import urdf_to_usd
+            from dimos.robot.assets.usd_utils.from_urdf import urdf_to_usd
 
             return urdf_to_usd(self._urdf)
         path = self.source_path
@@ -219,7 +219,7 @@ class UsdModel:
 
     @cached_property
     def _poseable(self) -> LoadedRobotModel:
-        from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+        from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
 
         source = self.source_path
         return RobotModel.from_urdf_string(
@@ -229,13 +229,18 @@ class UsdModel:
 
     @property
     def joints(self) -> tuple[JointDescription, ...]:
-        return self._urdf.joints if self._urdf is not None else self._poseable.joints
+        if self._urdf is None:
+            return self._poseable.joints
+        # The URDF knows nothing of frames added to the USD, and reading them back out of the
+        # layer would mean putting the whole description through USD and back for an answer we
+        # already hold: usd_with_frames welds each one exactly here.
+        return self._urdf.joints + self._added_frame_joints()
 
     @cached_property
     def root_link(self) -> str:
         if self._urdf is not None:
             return self._urdf.root_link
-        from dimos.robot.assets.usd_to_urdf import usd_root_link
+        from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
         return usd_root_link(self.usd, self._asset_root())
 
@@ -247,17 +252,31 @@ class UsdModel:
 
     def frame_names(self) -> set[str]:
         if self._urdf is None:
-            from dimos.robot.assets.usd import usd_frame_names
+            from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
             return usd_frame_names(self.usd, self._asset_root())
         names = {self._urdf.root_link}
-        for joint in self._urdf.joints:
+        for joint in (*self._urdf.joints, *self._added_frame_joints()):
             names |= {joint.name, joint.parent_link, joint.child_link}
         return names
 
+    def _added_frame_joints(self) -> tuple[JointDescription, ...]:
+        """The frames with_frames added, as the fixed joints the layer welds them on."""
+        return tuple(
+            JointDescription(
+                name=_FixedFrame(name, parent, xyz, rpy).joint_name,
+                type="fixed",
+                parent_link=parent,
+                child_link=name,
+                origin_xyz=xyz,
+                origin_rpy=rpy,
+            )
+            for name, parent, xyz, rpy in self._added_frames
+        )
+
     def referenced_files(self) -> set[str]:
         if self._urdf is None:
-            from dimos.robot.assets.usd_assets import referenced_asset_paths
+            from dimos.robot.assets.usd_utils.assets import referenced_asset_paths
 
             return referenced_asset_paths(self.usd, self._asset_root())
         return self._urdf.referenced_files()

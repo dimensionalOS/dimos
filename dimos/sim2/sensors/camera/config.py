@@ -23,7 +23,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.robot.assets.model import RobotModel, UsdModel
-from dimos.robot.assets.usd import layer_from, link_prim_paths, load_pxr
+from dimos.robot.assets.usd_utils.frames import link_prim_paths
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
 
 @dataclass(frozen=True)

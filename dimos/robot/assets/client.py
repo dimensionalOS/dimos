@@ -23,8 +23,8 @@ from dimos.constants import CACHE_DIR
 from dimos.core.rpc_client import RPCClient
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import layer_from, load_pxr
-from dimos.robot.assets.usd_assets import asset_attributes, asset_hash, resolve_usd_assets
+from dimos.robot.assets.usd_utils.assets import asset_attributes, asset_hash, resolve_usd_assets
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
 
 def fetch_scene(remote_name: str, rpc: RPCSpec) -> UsdModel:

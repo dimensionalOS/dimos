@@ -149,8 +149,6 @@ class HybridTeleopCoordinator(OperatorHoldCoordinator, ArmTwistCoordinator):
     velocity (m/s, rad/s, world frame); a zero twist, or none for 0.3 s, stops it.
     """
 
-    pass
-
 
 # The planner publishes these links on tf at the arm's real mount; the Desktop
 # draws each URDF link at its tf frame.

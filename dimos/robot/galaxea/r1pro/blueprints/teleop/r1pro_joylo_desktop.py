@@ -97,7 +97,7 @@ r1pro_openarm_joylo_real = autoconnect(
         tags={"r1pro": True}
     ),
     _operator_blueprint().hosted(local=True),
-    UsdManager.blueprint(model=_model, tf_source="joints", unchanged_tf_hz=15).hosted(local=True),
+    UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
 ).global_config(viewer="none", transport="zenoh", n_workers=7)
 
 
@@ -108,5 +108,5 @@ r1pro_openarm_joylo_collect = autoconnect(
         r1pro_collection(), make_joylo_real(publish_odom_tf=True, enable_wrist_color=False), _vision
     ).hosted(tags={"r1pro": True}),
     _operator_blueprint().hosted(local=True),
-    UsdManager.blueprint(model=_model, tf_source="joints", unchanged_tf_hz=15).hosted(local=True),
+    UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
 ).global_config(viewer="none", transport="zenoh", n_workers=9)

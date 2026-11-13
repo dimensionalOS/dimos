@@ -22,8 +22,8 @@ import mujoco
 
 from dimos.robot.assets.client import materialize_scene
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import layer_from, load_pxr
-from dimos.robot.assets.usd_assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
 
 def build_scene(

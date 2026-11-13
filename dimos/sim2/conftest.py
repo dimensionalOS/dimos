@@ -36,7 +36,9 @@ from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.assets.model import RobotModel, UsdModel
-from dimos.robot.assets.usd import graft_usd, layer_from, load_pxr, usd_with_drives
+from dimos.robot.assets.usd_utils.drives import usd_with_drives
+from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 

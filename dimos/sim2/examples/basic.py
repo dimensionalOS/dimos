@@ -29,6 +29,7 @@ from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
 from dimos.sim2.sensors.lidar.config import LidarConfig
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
+from dimos.sim2.sensors.tf import SimTfModule
 
 _camera = SimCameraModule.blueprint(
     instance_name="camera",
@@ -42,6 +43,7 @@ _lidar = SimLidarModule.blueprint(
 )
 _imu = SimImuModule.blueprint(instance_name="imu", sensor=ImuConfig("imu", orientation="ideal"))
 _scene = UsdManager.blueprint(
+    publish_joint_tf=False,
     instance_name="scene",
     model=UsdModel.from_file(DIMOS_PROJECT_ROOT / "assets/sim2_basic/scene.usda"),
     mounts={"camera_mount": _camera, "lidar_mount": _lidar, "imu_mount": _imu},
@@ -55,6 +57,7 @@ sim2_basic = autoconnect(
     _lidar,
     _imu,
     _scene,
+    SimTfModule.blueprint(scene_manager=_scene),
     SimModule.blueprint(scene_manager=_scene, backend=MujocoBackend, joint_ids=("tool_joint",)),
     SimJointEncoderModule.blueprint(sensor=EncoderConfig(("tool_joint",))),
 ).global_config(viewer="none", transport="zenoh", n_workers=5)

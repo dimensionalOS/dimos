@@ -43,6 +43,7 @@ from dimos.sim2.sensors.encoder.module import SimJointEncoderModule
 from dimos.sim2.sensors.imu.module import SimImuModule
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
+from dimos.sim2.sensors.tf import SimTfModule
 
 ASSETS = Path(os.environ.get("DIMOS_SF555_ASSETS", str(Path.home() / ".cache/dimos/sf555")))
 PROJECT = Path(
@@ -58,7 +59,8 @@ EXECUTABLE = Path(
 SCENE = ASSETS / "g1_scene.usda"
 
 unitree_g1_sim2_sf555 = autoconnect(
-    UsdManager.blueprint(model=UsdModel.from_file(SCENE)),
+    UsdManager.blueprint(model=UsdModel.from_file(SCENE), publish_joint_tf=False),
+    SimTfModule.blueprint(scene_manager=UsdManager),
     SimModule.blueprint(
         scene_manager=UsdManager,
         backend=MujocoBackend,
