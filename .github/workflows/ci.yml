@@ -728,7 +728,8 @@ jobs:
         uses: denoland/setup-deno@v2.0.5
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-      # pyaudio needs portaudio; relay tests need TurboJPEG.
+      # pyaudio needs portaudio; relay tests need TurboJPEG; cyclonedds (the dds
+      # extra) has no wheels past Python 3.10 and builds against CycloneDDS.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -737,7 +738,13 @@ jobs:
             sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg
+          sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg cyclonedds-dev
+          # The cyclonedds build wants CMake's install layout, not Ubuntu's multiarch one.
+          sudo mkdir -p /opt/cyclonedds
+          sudo ln -s /usr/include /opt/cyclonedds/include
+          sudo ln -s "/usr/lib/$(uname -m)-linux-gnu" /opt/cyclonedds/lib
+          sudo ln -s /usr/bin /opt/cyclonedds/bin
+          echo "CYCLONEDDS_HOME=/opt/cyclonedds" >> "$GITHUB_ENV"
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
@@ -783,8 +790,9 @@ jobs:
       - name: Provision native modules from Cachix
         if: steps.native-marker.outcome == 'success'
         run: python3 bin/native-modules --link-results .cachix-marker/links.txt
+      # The dds extra runs the DDS tests; only the Ubuntu legs can build cyclonedds.
       - name: Install dependencies
-        run: uv sync --group tests --frozen
+        run: uv sync --group tests --frozen ${{ startsWith(matrix.os, 'ubuntu') && '--extra dds' || '' }}
       - name: Run tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       # Serial and after the parallel run: it binds the livox SDK's fixed ports.
