@@ -119,13 +119,6 @@ def _camera_info_static() -> CameraInfo:
         return CameraInfo.from_yaml(str(yaml_path))
 
 
-def _prefixed(prefix: str | None, name: str) -> str:
-    """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
-    if not prefix or not name:
-        return name
-    return f"{prefix}/{name}"
-
-
 # Static camera mount chain: base_link -> camera_link -> camera_optical.
 # TODO we need a standardized way to specify this for all cameras in dimos
 BASE_TO_OPTICAL: Transform = Transform(
@@ -393,11 +386,10 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.camera_info_static = self.connection.camera_info_static
 
         if self.config.frame_id_prefix and self.camera_info_static.frame_id:
-            # Copy so the class-level default is not mutated.
+            # Copy so the class-level default is not mutated. A stamped frame is
+            # a tf frame, so it is named by the same rule tf publishes under.
             self.camera_info_static = copy.copy(self.camera_info_static)
-            self.camera_info_static.frame_id = _prefixed(
-                self.config.frame_id_prefix, self.camera_info_static.frame_id
-            )
+            self.camera_info_static.frame_id = self.frame(self.camera_info_static.frame_id)
 
     @rpc
     def start(self) -> None:
@@ -408,7 +400,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection.start()
 
         def onimage(image: Image) -> None:
-            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
+            image.frame_id = self.frame(image.frame_id)
             self.color_image.publish(image)
 
         if self.config.lidar:
@@ -467,28 +459,28 @@ class GO2Connection(Module, Camera, Pointcloud):
                 except Exception:
                     logger.warning("connection stop failed", exc_info=True)
 
-    @classmethod
-    def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
+    def _odom_to_tf(self, odom: PoseStamped) -> list[Transform]:
         # The odom parent frame (odom.frame_id) stays unprefixed so namespaced
-        # robots still hang off one shared tree root.
+        # robots still hang off one shared tree root; the rest are this robot's.
+        base_link = self.frame("base_link")
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id=_prefixed(prefix, "base_link"),
-            child_frame_id=_prefixed(prefix, "camera_link"),
+            frame_id=base_link,
+            child_frame_id=self.frame("camera_link"),
             ts=odom.ts,
         )
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id=_prefixed(prefix, "camera_link"),
-            child_frame_id=_prefixed(prefix, "camera_optical"),
+            frame_id=self.frame("camera_link"),
+            child_frame_id=self.frame("camera_optical"),
             ts=odom.ts,
         )
 
         return [
-            Transform.from_pose(_prefixed(prefix, "base_link"), odom),
+            Transform.from_pose(base_link, odom),
             camera_link,
             camera_optical,
         ]
@@ -496,8 +488,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     def _publish_tf(self, msg: PoseStamped) -> None:
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
-            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
-            self.tf.publish(TFMessage(*transforms))
+            self.tf.publish(TFMessage(*self._odom_to_tf(msg)))
         if self.odom.transport:
             self.odom.publish(msg)
 

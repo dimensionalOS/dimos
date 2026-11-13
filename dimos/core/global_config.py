@@ -38,17 +38,18 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 # LLM API keys itself.
 ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
 
-# Streams `Blueprint.namespace()` leaves unprefixed, so every namespaced copy of
-# a module publishes onto the one shared topic. These are the streams whose
-# payloads already carry their own names (a TF message names its frames, a
-# JointState names its joints) and `.namespace()` prefixes those names via
+# What `Blueprint.namespace(expose=...)` exposes when the caller names nothing:
+# streams it leaves unprefixed, so every namespaced copy of a module publishes
+# onto the one shared topic. These are the streams whose payloads already carry
+# their own names (a TF message names its frames, a JointState names its
+# joints) and `.namespace()` prefixes those names via
 # `frame_id_prefix`, so one stream still tells the robots apart. Splitting them
 # per namespace instead gives N tf trees with no common root, which is exactly
 # what a consumer looking up `robot0/base_link -> map` cannot use.
 #
 # `actions`/`world_observations` are the simulator's; they are named here so the
 # rule is stated in one place, and take effect when those modules land.
-DEFAULT_GLOBAL_STREAMS = (
+DEFAULT_EXPOSE_STREAMS = (
     "tf",
     "coordinator_joint_state",
     "coordinator_joint_command",
@@ -101,9 +102,9 @@ class GlobalConfig(BaseSettings):
     viewer: ViewerBackend = "rerun"
     n_workers: int = 2
     scene_package: str | None = None
-    # Comma-separated stream names `.namespace()` leaves unprefixed. Replaces the
-    # default list rather than adding to it, so spell out the whole set.
-    global_streams: str = ",".join(DEFAULT_GLOBAL_STREAMS)
+    # Comma-separated stream names `.namespace()` exposes when the caller names
+    # none. Replaces this list rather than adding to it, so spell out the set.
+    expose_streams: str = ",".join(DEFAULT_EXPOSE_STREAMS)
     robot_model: str | None = None
     # Robot geometry shared by every navigation and patrol module in a stack;
     # a module config may still override it for itself.
@@ -166,8 +167,8 @@ class GlobalConfig(BaseSettings):
         return tuple(ips)
 
     @property
-    def processed_global_streams(self) -> frozenset[str]:
-        return frozenset(x.strip() for x in self.global_streams.split(",") if x.strip())
+    def processed_expose_streams(self) -> frozenset[str]:
+        return frozenset(x.strip() for x in self.expose_streams.split(",") if x.strip())
 
 
 global_config = GlobalConfig()

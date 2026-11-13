@@ -166,9 +166,9 @@ def test_replay_exit_off_leaves_streams_untouched() -> None:
     assert conn._tracked(source) is source
 
 
-def test_odom_to_tf_unprefixed_by_default() -> None:
+def test_odom_to_tf_unprefixed_by_default(connection: Callable[..., GO2Connection]) -> None:
     odom = PoseStamped(ts=1.0, frame_id="world")
-    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom)
+    base, camera_link, camera_optical = connection(False)._odom_to_tf(odom)
     assert (base.frame_id, base.child_frame_id) == ("world", "base_link")
     assert (camera_link.frame_id, camera_link.child_frame_id) == ("base_link", "camera_link")
     assert (camera_optical.frame_id, camera_optical.child_frame_id) == (
@@ -182,11 +182,12 @@ def connection(stub_webrtc: MagicMock) -> Iterator[Callable[[bool], GO2Connectio
     """Build GO2Connections with the tf and odom ports stubbed, and stop them after."""
     built: list[GO2Connection] = []
 
-    def build(publish_tf: bool) -> GO2Connection:
+    def build(publish_tf: bool, frame_id_prefix: str | None = None) -> GO2Connection:
         conn = GO2Connection(
             g=GlobalConfig(robot_ip="127.0.0.1"),
             publish_tf=publish_tf,
             odom_frame_id="go2_odom",
+            frame_id_prefix=frame_id_prefix,
         )
         conn.tf = MagicMock()
         conn.odom = MagicMock()
@@ -275,11 +276,12 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
         thread.join(timeout=2)
 
 
-def test_odom_to_tf_prefixed() -> None:
+def test_odom_to_tf_prefixed(connection: Callable[..., GO2Connection]) -> None:
     """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
     odom parent frame stays global so all robots hang off one tree root."""
     odom = PoseStamped(ts=1.0, frame_id="world")
-    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
+    conn = connection(False, frame_id_prefix="robot0")
+    base, camera_link, camera_optical = conn._odom_to_tf(odom)
     assert (base.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
     assert (camera_link.frame_id, camera_link.child_frame_id) == (
         "robot0/base_link",

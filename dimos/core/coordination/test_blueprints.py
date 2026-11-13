@@ -400,7 +400,7 @@ def test_namespace_expose_keeps_names_global() -> None:
     assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
 
 
-def test_namespace_keeps_global_streams_unprefixed() -> None:
+def test_namespace_exposes_the_default_streams() -> None:
     """tf and the joint streams stay on one topic; the namespace lands in the
     frame ids instead, so one tf tree still tells the robots apart."""
     blueprint = SharedModule.blueprint().namespace("robot0")
@@ -411,14 +411,14 @@ def test_namespace_keeps_global_streams_unprefixed() -> None:
     assert blueprint.blueprints[0].kwargs["frame_id_prefix"] == "robot0"
 
 
-def test_namespace_keeps_global_streams_unprefixed_when_nested() -> None:
+def test_namespace_exposes_the_default_streams_when_nested() -> None:
     blueprint = SharedModule.blueprint().namespace("robot0").namespace("fleet")
 
     assert ("fleet/robot0/sharedmodule", "tf") not in blueprint.remapping_map
     assert blueprint.remapping_map[("fleet/robot0/sharedmodule", "data1")] == "fleet/robot0/data1"
 
 
-def test_namespace_keeps_global_stream_transports_unprefixed() -> None:
+def test_namespace_keeps_exposed_transports_unprefixed() -> None:
     blueprint = (
         SharedModule.blueprint()
         .transports({("tf", Tf): LCMTransport("/tf", Tf)})
@@ -429,26 +429,26 @@ def test_namespace_keeps_global_stream_transports_unprefixed() -> None:
     assert ("robot0/tf", Tf) not in blueprint.transport_map
 
 
-def test_global_streams_do_not_need_exposing() -> None:
-    """They are a stack-wide rule, so they are not checked against the blueprint's
-    own streams the way *expose* is."""
-    blueprint = ModuleA.blueprint().namespace("robot0", expose={"data1"})
+def test_passing_expose_replaces_the_default() -> None:
+    """The default is a stack-wide rule, so it is not checked against this
+    blueprint's streams; a name the caller passes still is."""
+    blueprint = SharedModule.blueprint().namespace("robot0", expose={"data1"})
 
-    assert "tf" in process_global_config.processed_global_streams
-    assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
+    assert "tf" in process_global_config.processed_expose_streams
+    assert ("robot0/sharedmodule", "data1") not in blueprint.remapping_map
+    assert blueprint.remapping_map[("robot0/sharedmodule", "tf")] == "robot0/tf"
 
 
-def test_global_streams_come_from_global_config() -> None:
-    """`--global-streams` / the config file's `g:` section replaces the list."""
-    previous = process_global_config.global_streams
+def test_default_expose_comes_from_global_config() -> None:
+    """`--expose-streams` / the config file's `g:` section replaces the default."""
+    previous = process_global_config.expose_streams
     try:
-        process_global_config.update(global_streams="data1")
+        process_global_config.update(expose_streams="data1")
         blueprint = SharedModule.blueprint().namespace("robot0")
     finally:
-        process_global_config.update(global_streams=previous)
+        process_global_config.update(expose_streams=previous)
 
     assert ("robot0/sharedmodule", "data1") not in blueprint.remapping_map
-    # tf is only global because the default list names it.
     assert blueprint.remapping_map[("robot0/sharedmodule", "tf")] == "robot0/tf"
 
 
