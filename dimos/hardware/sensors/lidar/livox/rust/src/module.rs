@@ -18,7 +18,7 @@ use crate::live::{LiveConfig, LiveSource, Ports};
 use crate::pcap::PcapSource;
 use crate::pipeline::{Frame, ImuRecord, PacketSource, Pipeline};
 use crate::wire::{DataPacket, DataType};
-use dimos_module::{native_config, Module, Output};
+use dimos_module::{native_config, prefix_frame, Module, Output};
 use lcm_msgs::geometry_msgs::{Quaternion, Vector3};
 use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -57,6 +57,9 @@ pub struct Config {
     enable_imu: bool,
     point_format: PointFormat,
     frame_id: String,
+    /// The namespace, for the frames this module stamps on its messages. The
+    /// host fills it from the launch line; it is not a config key.
+    frame_id_prefix: Option<String>,
     imu_frame_id: String,
     /// Replay this capture instead of a live sensor.
     pcap: Nullable<String>,
@@ -253,12 +256,12 @@ fn run_pipeline(
             }
         };
         if let Some(frame) = pipeline.push(&packet, received.arrival_secs) {
-            let msg = cloud_message(format, &config.frame_id, &frame);
+            let msg = cloud_message(format, &config.frame(&config.frame_id), &frame);
             let _ = handle.block_on(lidar.publish(&msg));
         }
         if packet.data_type == DataType::Imu && config.enable_imu {
             for record in pipeline.imu_records(&packet) {
-                let msg = imu_message(&config.imu_frame_id, &record);
+                let msg = imu_message(&config.frame(&config.imu_frame_id), &record);
                 let _ = handle.block_on(imu.publish(&msg));
             }
         }
@@ -269,10 +272,17 @@ fn run_pipeline(
         return;
     }
     if let Some(frame) = pipeline.flush() {
-        let msg = cloud_message(format, &config.frame_id, &frame);
+        let msg = cloud_message(format, &config.frame(&config.frame_id), &frame);
         let _ = handle.block_on(lidar.publish(&msg));
     }
     tracing::info!("packet source ended");
+}
+
+impl Config {
+    /// `name` under this module's namespace, as `Tf` would publish it.
+    fn frame(&self, name: &str) -> String {
+        prefix_frame(self.frame_id_prefix.as_deref(), name)
+    }
 }
 
 fn header(frame_id: &str, ts_ns: u64) -> Header {
