@@ -23,10 +23,14 @@ topic_app = typer.Typer(help="Topic commands for pub/sub")
 
 @topic_app.command()
 def echo(
-    topic: str = typer.Argument(..., help="Topic name to listen on (e.g., /goal_request)"),
+    topic: str = typer.Argument(
+        ...,
+        help="Topic to listen on: a name (cmd_vel or /cmd_vel) or a full channel as the logs "
+        "print it (/cmd_vel#geometry_msgs.Twist on LCM, dimos/cmd_vel/geometry_msgs.Twist on Zenoh)",
+    ),
     type_name: str | None = typer.Argument(
         None,
-        help="Optional message type (e.g., PoseStamped). If omitted, infer from '/topic#pkg.Msg'.",
+        help="Optional message type (e.g., PoseStamped). If omitted, infer it from the channel.",
     ),
 ) -> None:
     from dimos.cli.topic import topic_echo
@@ -36,7 +40,7 @@ def echo(
 
 @topic_app.command()
 def send(
-    topic: str = typer.Argument(..., help="Topic name to send to (e.g., /goal_request)"),
+    topic: str = typer.Argument(..., help="Topic to send to, in any form that echo accepts"),
     message_expr: str = typer.Argument(..., help="Python expression for the message"),
 ) -> None:
     from dimos.cli.topic import topic_send

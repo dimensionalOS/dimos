@@ -79,6 +79,11 @@ Python module construction and `.blueprint(...)` accept the same fields as keywo
 
 `dimos show-config` shows only these global settings. Global environment names are uppercase field names, such as `ROBOT_IP` and `N_WORKERS`; transport also accepts `DIMOS_TRANSPORT`. Use `dimos run <blueprint> --help` to inspect that stack's module settings.
 
+`listen_host` defaults to `127.0.0.1`, but does not restrict Rerun's gRPC or
+web viewer listeners. They bind to all interfaces because the pinned SDK has
+no bind address option. See [Network exposure](/docs/usage/visualization.md#network-exposure)
+for firewall guidance and how to disable the Rerun bridge.
+
 ## Migrating former global settings
 
 The former global names have been removed. Update CLI arguments, `.env`, JSON `g` sections, and Python `.global_config(...)` calls. Unknown fields in `g` are rejected. For environment variables and `.env` entries, `dimos run` and `dimos rerun-bridge` require migration of old credentials and hardware addresses, naming their replacements. Other former names produce a warning and are ignored. `MCP_TIMEOUT` is ignored without a migration warning; use `dimos mcp call --timeout` for each call.
@@ -97,7 +102,7 @@ Scoped module environment variables are resolved by `BlueprintConfigParser`, inc
 | `detection_model` | `perceiveloopskill.detection_model` |
 | `typesafe_api_key` | `typesafenavigationagent.api_key` (or another TypeSafe subclass's `api_key`) |
 | `rerun_open`, `rerun_web`, `rerun_save` | `rerunbridgemodule` config, with the same field names |
-| `rerun_host` | `rerunbridgemodule.host` and `rerunwebsocketserver.host`, independently; both default to `g.listen_host` |
+| `rerun_host` | `rerunbridgemodule.host` sets the default gRPC connection URL. `rerunwebsocketserver.host` sets the websocket bind address. Both default to `g.listen_host`. Neither restricts the Rerun gRPC or web viewer listeners. |
 | `rerun_websocket_server_port` | `rerunwebsocketserver.port`; a `RerunBridgeModule` in the same blueprint takes the viewer URL from that server. `rerunbridgemodule.websocket_url` is only for a server elsewhere |
 | `memory_limit` | Removed unused global. The existing `rerunbridgemodule.memory_limit` controls viewer memory. |
 | `mcp_port` | `mcpserver.port`; an `Agent` in the same blueprint takes the endpoint from that server. `agent.mcp_server_url` is only for a server elsewhere |
@@ -134,4 +139,4 @@ The coordinator settles each component when it starts, once the execution mode i
 - On hardware, a component takes its address from `addresses`. A component left without one runs the mock adapter when its blueprint allows that (`mock_without_address` in the robot's config helper), and otherwise fails to connect.
 - With `--simulation`, the blueprint's simulated adapters stay and `addresses` is ignored. A simulated arm attaches to the `MujocoSimModule` in its blueprint, so a custom scene is set once, as `mujocosimmodule.address`.
 
-The robot config helpers (`xarm7_hardware`, `piper_hardware`, `a1z_hardware`, `a750_hardware`, ...) also take an explicit `address=` for a blueprint of your own. YAM, OpenArm, and Metal instead own CAN in their connection modules. Select YAM with `--openyamconnection.can-port can1`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.
+The robot config helpers (`xarm7_hardware`, `piper_hardware`, `a750_hardware`, ...) also take an explicit `address=` for a blueprint of your own. YAM, OpenArm, Metal, and the A1Z instead own CAN in their connection modules. Select YAM with `--openyamconnection.can-port can1`, the A1Z with `--a1zconnection.can-port a1zcan`, or OpenArm with both `--openarmconnection.left-can-port can1` and `--openarmconnection.right-can-port can0`. These connections do not use coordinator `hardware` or `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.

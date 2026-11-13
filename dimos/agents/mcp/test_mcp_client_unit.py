@@ -334,6 +334,32 @@ def test_on_system_modules_resolves_non_reasoning_models(
     init.assert_called_once_with(model=model_name)
 
 
+def test_the_run_log_names_the_model_backend_and_trace_dir(
+    configured_mcp_client: Agent,
+) -> None:
+    """Release tests switch models between runs, so the log must say which one answered."""
+
+    class ChatOllama:
+        pass
+
+    configured_mcp_client.config.model = "ollama:qwen3:8b"
+    configured_mcp_client.config.trace_dir = Path("/eval/case/raw")
+
+    with (
+        patch("langchain.agents.create_agent"),
+        patch("dimos.agents.agent.init_model", return_value=ChatOllama()),
+        patch("dimos.agents.agent.logger") as logger,
+    ):
+        configured_mcp_client.on_system_modules([])
+
+    logger.info.assert_called_once_with(
+        "Agent model ready.",
+        model="ollama:qwen3:8b",
+        backend="ChatOllama",
+        trace_dir="/eval/case/raw",
+    )
+
+
 def test_set_trace_dir_rebuilds_the_model_with_capture(
     configured_mcp_client: Agent,
 ) -> None:

@@ -13,11 +13,28 @@
 # limitations under the License.
 
 import math
+import socket
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
-from dimos.utils.generic import finite_number, short_id
+from dimos.utils.generic import finite_number, get_local_ips, short_id
+
+
+def test_local_ips_default_stays_ipv4_only(mocker):
+    mocker.patch(
+        "dimos.utils.generic.psutil.net_if_addrs",
+        return_value={
+            "lo": [SimpleNamespace(family=socket.AF_INET, address="127.0.0.1")],
+            "eth0": [
+                SimpleNamespace(family=socket.AF_INET, address="192.168.1.2"),
+                SimpleNamespace(family=socket.AF_INET6, address="fd00::2"),
+            ],
+        },
+    )
+
+    assert get_local_ips() == [("192.168.1.2", "eth0")]
 
 
 def test_short_id_hello_world() -> None:

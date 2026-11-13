@@ -37,7 +37,11 @@ from dimos.protocol.service.zenoh_wire import (
 )
 from dimos.utils.logging_config import setup_logger
 
-ZENOH_LOG_DIRECTIVES = "zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+# hat::peer warns "Gossip is disabled" on every session of a blueprint that turns
+# gossip off on purpose. It is that target's only warning.
+ZENOH_LOG_DIRECTIVES = (
+    "zenoh=warn,zenoh_shm::watchdog::periodic_task=error,zenoh::net::routing::hat::peer=error"
+)
 
 # Process-wide (the subscriber is set once): the orchestrator warns on every failed dial
 # of a connect endpoint, which a Host router redialing an absent peer repeats forever;

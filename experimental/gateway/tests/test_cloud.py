@@ -379,3 +379,34 @@ def test_an_upload_blocked_before_its_first_byte_still_cancels(
         until(lambda: state_of(client, upload["id"]) == "cancelled")
     finally:
         release.set()
+
+
+def test_the_login_after_a_state_answers_once_the_login_moves_on(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approve = threading.Event()
+
+    def post(path: str, **params: Any) -> dict[str, Any]:
+        if path == "/auth/device":
+            return {
+                "verification_uri": "https://console/device",
+                "user_code": "ABCD",
+                "expires_in": 600,
+                "interval": 0.05,
+                "device_code": "d",
+            }
+        return (
+            {"status": "ok", "api_key": "k", "email": "a@b"}
+            if approve.is_set()
+            else {"status": "pending"}
+        )
+
+    # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
+    monkeypatch.setattr(cloud, "_post", post)
+    monkeypatch.setattr(cloud, "_store", lambda key: None)
+    monkeypatch.setattr(uploads, "account", lambda: logged_in_account(approve.is_set()))
+    assert client.post("/cloud/login").json()["state"] == "pending"
+    # an answer that differs already comes at once
+    assert client.get("/cloud/login?after=idle").json()["state"] == "pending"
+    threading.Timer(0.2, approve.set).start()
+    assert client.get("/cloud/login?after=pending").json()["state"] == "approved"

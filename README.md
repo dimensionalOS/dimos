@@ -156,7 +156,7 @@ Install DimOS from https://github.com/dimensionalOS/dimos and run the Go2 replay
 
 ## Guided installation (recommended)
 
-Use the official installer to set up system dependencies, Python 3.12, and dimOS:
+Use the official installer to set up system dependencies, Python, and dimOS:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
