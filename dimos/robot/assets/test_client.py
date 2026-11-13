@@ -16,7 +16,7 @@
 import pytest
 
 from dimos.robot.assets.client import materialize_scene
-from dimos.robot.assets.usd_assets import asset_hash
+from dimos.robot.assets.usd_utils.assets import asset_hash
 
 pytestmark = pytest.mark.self_hosted  # USD is not available in every fast-test environment.
 

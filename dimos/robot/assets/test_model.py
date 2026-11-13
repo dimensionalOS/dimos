@@ -872,7 +872,7 @@ def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
 def test_to_usd_does_not_convert_until_the_layer_is_asked_for(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    import dimos.robot.assets.urdf_to_usd as conversion
+    import dimos.robot.assets.usd_utils.from_urdf as conversion
 
     convert = mocker.patch.object(conversion, "urdf_to_usd", return_value="#usda 1.0\n")
 
@@ -953,7 +953,7 @@ def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
 def test_a_usd_model_converted_from_a_urdf_never_reads_the_layer_to_pose(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    import dimos.robot.assets.usd_to_urdf as usd_to_urdf_module
+    import dimos.robot.assets.usd_utils.to_urdf_mask as usd_to_urdf_module
 
     convert = mocker.patch.object(usd_to_urdf_module, "usd_to_urdf")
     model = _urdf(tmp_path).to_usd()
@@ -1014,6 +1014,23 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
     transferred_joint = decode(encode(limited)).load().get_joint("arm/slide")
     assert transferred_joint is not None
     assert transferred_joint.velocity == 0.2
+
+
+def test_an_added_frame_is_a_joint_of_the_description_too(tmp_path: Path) -> None:
+    """with_frames welds the frame into the layer, so joints and frame_names have to say so."""
+    source = tmp_path / "arm.urdf"
+    source.write_text('<robot name="arm"><link name="base_link"/></robot>')
+    model = (
+        robot_model.RobotModel.from_file(source)
+        .to_usd()
+        .with_frames({"tool": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))})
+    )
+
+    joint = model.get_joint("tool_joint")
+    assert joint is not None, "the added frame is welded in the layer but absent from joints"
+    assert (joint.type, joint.parent_link, joint.child_link) == ("fixed", "base_link", "tool")
+    assert joint.origin_xyz == (0.1, 0.0, 0.2)
+    assert {"tool", "tool_joint"} <= model.frame_names()
 
 
 def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path) -> None:

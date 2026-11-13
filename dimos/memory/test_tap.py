@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from contextlib import ExitStack, closing
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,9 @@ from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class _Transport(Transport[Any]):
@@ -75,6 +78,29 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     assert store.list_streams() == ["odom"]
     assert [o.ts for o in store.stream("odom", PoseStamped)] == [1.0, 2.0]
     store.stop()
+
+
+@pytest.mark.parametrize("ts", [10, 10.0])
+def test_records_tf_with_numeric_timestamp(tmp_path: Path, ts: float) -> None:
+    path = tmp_path / "memory.db"
+    transform = Transform(ts=ts, frame_id="world", child_frame_id="base")
+    transport = _Transport()
+    with SqliteStore(path=str(path)) as store:
+        with closing(TransportRecorder(store)) as recorder, ExitStack() as subscriptions:
+            unsubscribe = recorder.tap("tf", TFMessage, transport)
+            assert unsubscribe is not None
+            subscriptions.callback(unsubscribe)
+            transport.publish(TFMessage(transform))
+        assert recorder.dropped == 0
+
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        rows = store.stream("tf", TFMessage).to_list()
+        assert len(rows) == 1
+        decoded = rows[0].data.transforms
+        assert decoded == [transform]
+        assert decoded[0].ts == ts
+        assert decoded[0].frame_id == "world"
+        assert decoded[0].child_frame_id == "base"
 
 
 def test_depth_is_recorded_losslessly_and_colour_as_jpeg(tmp_path: Path) -> None:
