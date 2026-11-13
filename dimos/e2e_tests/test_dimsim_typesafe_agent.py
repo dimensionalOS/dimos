@@ -66,7 +66,9 @@ def test_go_to_the_chair(
     chair_publisher: None,
 ) -> None:
     start_blueprint("run", "unitree-go2-typesafe", simulator="dimsim")
-    wait_for_system_ready(timeout=1200.0)
+    # Under pytest's 600 s timeout like the other DimSim tests; a healthy start
+    # takes well under a minute.
+    wait_for_system_ready(timeout=300.0)
     # Server physics (odom/lidar) starts only after the browser ships its snapshot.
     lcm_spy.wait_for_message_result(
         "/odom#geometry_msgs.PoseStamped", PoseStamped, lambda _m: True, "no odom", timeout=600

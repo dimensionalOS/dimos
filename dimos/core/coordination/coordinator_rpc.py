@@ -22,6 +22,8 @@ from dimos.core.transport_factory import rpc_backend
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dimos.protocol.rpc.spec import RPCInspectable, RPCSpec
 
 logger = setup_logger()
@@ -56,8 +58,18 @@ class CoordinatorRPC:
         return cls(rpc, selected_name)
 
     @classmethod
-    def connect(cls, *, timeout: float, name: str | None = None) -> CoordinatorRPC:
-        """Attach to a running Coordinator, raising `TimeoutError` if none answers."""
+    def connect(
+        cls,
+        *,
+        timeout: float,
+        name: str | None = None,
+        before_retry: Callable[[], None] | None = None,
+    ) -> CoordinatorRPC:
+        """Attach to a running Coordinator, raising `TimeoutError` if none answers.
+
+        ``before_retry`` runs after every unanswered ping; raising from it gives
+        up early, e.g. once the process meant to serve the Coordinator has exited.
+        """
         selected_name = name or cls.NAME
         rpc = rpc_backend()()
         rpc.start()
@@ -79,6 +91,8 @@ class CoordinatorRPC:
                     break
                 except TimeoutError as exc:
                     last_timeout = exc
+                    if before_retry is not None:
+                        before_retry()
         except BaseException:
             rpc.stop()
             raise

@@ -63,6 +63,46 @@ def test_connect_stops_transport_after_retry_budget_expires(mocker) -> None:
     rpc.stop.assert_called_once_with()
 
 
+def test_connect_runs_before_retry_after_each_unanswered_ping(mocker) -> None:
+    rpc = mocker.Mock()
+    rpc.call_sync.side_effect = [
+        TimeoutError("coordinator not ready"),
+        TimeoutError("coordinator not ready"),
+        ("pong", mocker.Mock()),
+    ]
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.rpc_backend",
+        return_value=mocker.Mock(return_value=rpc),
+    )
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.time.monotonic",
+        side_effect=[10.0, 10.0, 10.25, 10.5],
+    )
+    before_retry = mocker.Mock()
+
+    client = CoordinatorRPC.connect(timeout=1.0, before_retry=before_retry)
+
+    assert client.rpc is rpc
+    assert before_retry.call_count == 2
+    rpc.stop.assert_not_called()
+
+
+def test_connect_gives_up_when_before_retry_raises(mocker) -> None:
+    rpc = mocker.Mock()
+    rpc.call_sync.side_effect = TimeoutError("coordinator not ready")
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.rpc_backend",
+        return_value=mocker.Mock(return_value=rpc),
+    )
+    before_retry = mocker.Mock(side_effect=RuntimeError("dimos exited with 1"))
+
+    with pytest.raises(RuntimeError, match="dimos exited with 1"):
+        CoordinatorRPC.connect(timeout=60.0, before_retry=before_retry)
+
+    before_retry.assert_called_once_with()
+    rpc.stop.assert_called_once_with()
+
+
 def test_serve_and_connect_use_selected_rpc_name(mocker) -> None:
     server_rpc = mocker.Mock()
     client_rpc = mocker.Mock()
