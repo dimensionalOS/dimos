@@ -16,7 +16,15 @@
 
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+)
 
 TOPIC_VERSION = 1
 MAX_TOPIC_KEY_BYTES = 1024
@@ -24,6 +32,15 @@ MAX_TOPIC_PAYLOAD_BYTES = 8 * 1024 * 1024
 MAX_TOPIC_ROUTES = 256
 MAX_TOPIC_KEYS = 128
 MAX_TOPIC_PAGE = 32
+MAX_TOPIC_VARIANTS = 4
+MAX_TOPIC_PROFILE_OPTIONS = 8
+# An SDP rides a control frame or an @control payload, so it stays well under
+# MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section). SDP is ASCII,
+# so this character count and the TS mirror's string length agree.
+MAX_SDP_LEN = 48 * 1024
+MAX_MID_LEN = 16
+MAX_TOPIC_RTC_CANDIDATES = 64
+MAX_TOPIC_RTC_CANDIDATE_LEN = 512
 TOPIC_ROUTE_PREFIX = "@t:"
 TOPIC_PUBLISH_CHANNEL = "@put"
 TOPIC_GUARD_CHANNEL = "@guard"
@@ -42,6 +59,20 @@ def _key_bytes(value: str) -> str:
 def _integer(value: int | float) -> int | float:
     if int(value) != value:
         raise ValueError("expected integer")
+    return value
+
+
+def _reject_none(value: Any) -> Any:
+    # Optional wire fields are omitted when absent; an explicit null is a
+    # different message (the TypeScript mirror checks `=== undefined`).
+    if value is None:
+        raise ValueError("explicit null (absent optional fields are omitted)")
+    return value
+
+
+def _unique(value: list[str]) -> list[str]:
+    if len(set(value)) != len(value):
+        raise ValueError("duplicate names")
     return value
 
 
@@ -65,10 +96,81 @@ TopicVersion = Annotated[Literal[1], BeforeValidator(_version)]
 TopicGuardHandle = Annotated[str, Field(pattern=r"^@p:[A-Za-z0-9_-]{1,48}$")]
 TopicGuardTimeout = Annotated[int | float, Field(ge=100, le=1000), AfterValidator(_integer)]
 TopicTicket = Annotated[int | float, Field(ge=1, le=9007199254740991), AfterValidator(_integer)]
+TopicCount = Annotated[int | float, Field(ge=0, le=9007199254740991), AfterValidator(_integer)]
+TopicVariantId = Annotated[str, Field(pattern=r"^v[1-9][0-9]{0,15}$")]
+TopicName = Annotated[str, Field(min_length=1, max_length=32)]
+TopicNames = Annotated[list[TopicName], Field(max_length=16), AfterValidator(_unique)]
+TopicSize = Annotated[list[TopicCount], Field(min_length=2, max_length=2)]
+TopicSdp = Annotated[str, Field(min_length=1, max_length=MAX_SDP_LEN)]
+TopicMid = Annotated[str, Field(max_length=MAX_MID_LEN)]
+TopicCandidate = Annotated[str, Field(max_length=MAX_TOPIC_RTC_CANDIDATE_LEN)]
 
 
 class _TopicModel(BaseModel):
     model_config = ConfigDict(strict=True, allow_inf_nan=False)
+
+
+class OptionRange(_TopicModel):
+    """One updatable setting of a profile; `default` is the profile value."""
+
+    kind: Literal["int", "number", "size", "enum", "boolean"]
+    min: Annotated[int | float | None, BeforeValidator(_reject_none)] = None
+    max: Annotated[int | float | None, BeforeValidator(_reject_none)] = None
+    values: Annotated[TopicNames | None, BeforeValidator(_reject_none)] = None
+    default: Annotated[
+        int
+        | float
+        | bool
+        | Annotated[list[int | float], Field(max_length=16)]
+        | Annotated[list[TopicName], Field(max_length=16)]
+        | None,
+        BeforeValidator(_reject_none),
+    ] = None
+
+
+ProfileOptions = Annotated[
+    dict[TopicProfile, Annotated[dict[TopicName, OptionRange], Field(max_length=8)]],
+    Field(max_length=16),
+]
+
+
+class TopicSettingsRequest(_TopicModel):
+    """A sparse request on topic_sub; absent keys are omitted, never null."""
+
+    model_config = ConfigDict(strict=True, allow_inf_nan=False, extra="forbid")
+    maxHz: Annotated[TopicRate | None, BeforeValidator(_reject_none)] = None
+    maxResolution: Annotated[TopicSize | None, BeforeValidator(_reject_none)] = None
+    quality: Annotated[TopicCount | None, BeforeValidator(_reject_none)] = None
+    keepEvery: Annotated[TopicCount | None, BeforeValidator(_reject_none)] = None
+    fields: Annotated[
+        Annotated[TopicNames, Field(max_length=8)] | None, BeforeValidator(_reject_none)
+    ] = None
+
+
+class TopicSettings(TopicSettingsRequest):
+    """The settings in force on a route, variant or handle: the rate is always present."""
+
+    maxHz: TopicRate
+
+
+class TopicOptions(_TopicModel):
+    """A topic_update change: an absent key keeps its value, null resets one."""
+
+    model_config = ConfigDict(strict=True, allow_inf_nan=False, extra="forbid")
+    maxHz: TopicRate | None = None
+    maxResolution: TopicSize | None = None
+    quality: TopicCount | None = None
+    keepEvery: TopicCount | None = None
+    fields: Annotated[TopicNames, Field(max_length=8)] | None = None
+
+    @model_serializer(mode="plain")
+    def _serialize(self) -> dict[str, Any]:
+        # The encoders' exclude_none must not eat a null reset.
+        return {
+            name: getattr(self, name)
+            for name in type(self).model_fields
+            if name in self.model_fields_set
+        }
 
 
 class TopicCapabilities(_TopicModel):
@@ -76,6 +178,7 @@ class TopicCapabilities(_TopicModel):
     write: bool
     profiles: list[TopicProfile] = Field(max_length=16)
     guardedPublishers: bool = False
+    profileOptions: Annotated[ProfileOptions | None, BeforeValidator(_reject_none)] = None
 
 
 class TopicSourceInfo(_TopicModel):
@@ -85,6 +188,7 @@ class TopicSourceInfo(_TopicModel):
     write: bool
     profiles: list[TopicProfile] = Field(max_length=16)
     guardedPublishers: bool = False
+    profileOptions: Annotated[ProfileOptions | None, BeforeValidator(_reject_none)] = None
 
 
 class TopicSources(_TopicModel):
@@ -101,6 +205,7 @@ class TopicSub(_TopicModel):
     delivery: Literal["latest", "reliable"]
     profile: TopicProfile
     maxHz: TopicRate
+    settings: Annotated[TopicSettingsRequest | None, BeforeValidator(_reject_none)] = None
 
 
 class TopicOpen(_TopicModel):
@@ -111,6 +216,8 @@ class TopicOpen(_TopicModel):
     delivery: Literal["latest", "reliable"]
     profile: TopicProfile
     maxHz: TopicRate
+    # The route's first variant, v1, with its full normalized settings.
+    settings: Annotated[TopicSettings | None, BeforeValidator(_reject_none)] = None
 
 
 class TopicOpened(_TopicModel):
@@ -125,6 +232,46 @@ class TopicReady(_TopicModel):
     source: TopicSource
     route: TopicRoute
     gen: TopicGeneration
+    settings: Annotated[TopicSettings | None, BeforeValidator(_reject_none)] = None
+
+
+class TopicUpdate(_TopicModel):
+    t: Literal["topic_update"] = "topic_update"
+    id: TopicId
+    revision: TopicGeneration
+    options: TopicOptions
+
+
+class TopicApplied(_TopicModel):
+    t: Literal["topic_applied"] = "topic_applied"
+    id: TopicId
+    revision: TopicGeneration
+    settings: TopicSettings
+
+
+class TopicVariant(_TopicModel):
+    """Relay -> provider: open a variant of a route, or change its rate."""
+
+    t: Literal["topic_variant"] = "topic_variant"
+    route: TopicRoute
+    gen: TopicGeneration
+    variant: TopicVariantId
+    settings: TopicSettings
+
+
+class TopicVariantReady(_TopicModel):
+    t: Literal["topic_variant_ready"] = "topic_variant_ready"
+    route: TopicRoute
+    gen: TopicGeneration
+    variant: TopicVariantId
+    settings: TopicSettings
+
+
+class TopicVariantClose(_TopicModel):
+    t: Literal["topic_variant_close"] = "topic_variant_close"
+    route: TopicRoute
+    gen: TopicGeneration
+    variant: TopicVariantId
 
 
 class TopicActivate(_TopicModel):
@@ -152,6 +299,49 @@ class TopicUnsub(_TopicModel):
     id: TopicId
 
 
+class TopicRtcOffer(_TopicModel):
+    """Direct WebRTC video for a video route, signaled through the relay.
+
+    On the viewer leg ``id`` is the subscription and ``route`` the viewer
+    route; the relay forwards with a private peer id, the provider route and
+    the variant the peer is fed from. No data frames flow on a video route.
+    """
+
+    t: Literal["topic_rtc_offer"] = "topic_rtc_offer"
+    id: TopicId
+    route: TopicRoute
+    gen: TopicGeneration
+    sdp: TopicSdp
+    variant: Annotated[TopicVariantId | None, BeforeValidator(_reject_none)] = None
+
+
+class TopicRtcAnswer(_TopicModel):
+    t: Literal["topic_rtc_answer"] = "topic_rtc_answer"
+    id: TopicId
+    route: TopicRoute
+    gen: TopicGeneration
+    sdp: TopicSdp
+
+
+class TopicRtcCandidate(_TopicModel):
+    """Either direction, trickled. An empty candidate is end-of-candidates."""
+
+    t: Literal["topic_rtc_candidate"] = "topic_rtc_candidate"
+    id: TopicId
+    route: TopicRoute
+    gen: TopicGeneration
+    candidate: TopicCandidate
+    mid: TopicMid
+
+
+class TopicRtcClose(_TopicModel):
+    t: Literal["topic_rtc_close"] = "topic_rtc_close"
+    id: TopicId
+    route: TopicRoute
+    gen: TopicGeneration
+    reason: Annotated[str, Field(min_length=1, max_length=64)]
+
+
 class TopicCredit(_TopicModel):
     t: Literal["topic_credit"] = "topic_credit"
     route: TopicRoute
@@ -163,6 +353,8 @@ class TopicCredit(_TopicModel):
 class TopicError(_TopicModel):
     t: Literal["topic_error"] = "topic_error"
     id: TopicId
+    # Present when the error rejects one topic_update; the handle keeps its settings.
+    revision: Annotated[TopicGeneration | None, BeforeValidator(_reject_none)] = None
     code: Annotated[str, Field(min_length=1, max_length=64)]
     message: TopicEncoding
     outcome: Literal["rejected", "unknown", "interrupted"]
@@ -284,6 +476,15 @@ TopicMsg = (
     | TopicClose
     | TopicCredit
     | TopicUnsub
+    | TopicRtcOffer
+    | TopicRtcAnswer
+    | TopicRtcCandidate
+    | TopicRtcClose
+    | TopicUpdate
+    | TopicApplied
+    | TopicVariant
+    | TopicVariantReady
+    | TopicVariantClose
     | TopicError
     | TopicList
     | TopicPage
