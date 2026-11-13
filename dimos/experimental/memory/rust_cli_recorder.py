@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import json
 import os
@@ -42,6 +43,7 @@ logger = setup_logger()
 _READY_TIMEOUT = 10.0
 _DEFAULT_ENCODING_THREADS = 4
 _READY_MESSAGE = "memory recorder ready"
+_BUILD_LOG_TAIL = 20
 
 
 @dataclass(frozen=True)
@@ -75,16 +77,22 @@ def prepare_rust_recorder() -> Path:
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
+    output: deque[str] = deque(maxlen=_BUILD_LOG_TAIL)
     for raw in process.stdout:
         line = raw.decode("utf-8", errors="replace").rstrip()
         if line:
+            output.append(line)
             logger.info(line, module="rust-recorder-build")
     returncode = process.wait()
     if returncode != 0:
-        raise RuntimeError(
+        message = (
             "Rust recorder build failed "
             f"after {time.perf_counter() - started:.2f}s (exit {returncode})"
         )
+        if output:
+            message += "\n" + "\n".join(output)
+        logger.error(message, module="rust-recorder-build")
+        raise RuntimeError(message)
     if not executable.exists():
         raise FileNotFoundError(f"Rust recorder build did not produce {executable}")
 
@@ -210,10 +218,12 @@ class RustRecordingSession:
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }
         level = os.environ.get("DIMOS_LOG_LEVEL", "info").lower()
+        # Readiness is an INFO event; retain DEBUG/TRACE diagnostics when requested.
+        recorder_level = level if level in {"debug", "trace"} else "info"
         env = {
             **os.environ,
             "DIMOS_TRANSPORT": self.plan.backend,
-            "RUST_LOG": f"{level},{ZENOH_LOG_DIRECTIVES}",
+            "RUST_LOG": f"{level},{ZENOH_LOG_DIRECTIVES},dimos_memory_recorder={recorder_level}",
         }
         if self.plan.lcm_url is not None:
             env["LCM_DEFAULT_URL"] = self.plan.lcm_url

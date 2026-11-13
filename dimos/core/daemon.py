@@ -24,6 +24,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+from dimos.core.global_config import global_config
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -186,10 +187,17 @@ def run_coordinator(
         raise
     spawn_watchdog(run_id, log_dir=log_dir)
     install_signal_handlers(run_id, coordinator, sigint=sigint)
+    wait_for_recording = (
+        global_config.record and not global_config.replay and global_config.record_engine == "rust"
+    )
     try:
-        if on_ready is not None:
+        if on_ready is not None and not wait_for_recording:
             on_ready(coordinator)
         with recording(coordinator):
+            if on_ready is not None and wait_for_recording:
+                if not coordinator.health_check():
+                    raise RuntimeError("health check failed, a worker process died")
+                on_ready(coordinator)
             coordinator.loop()
     except Exception:
         coordinator.stop()
