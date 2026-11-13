@@ -15,35 +15,39 @@
 """Bounded optional media worker boundary; raw forwarding imports no codecs."""
 
 import asyncio
+from collections.abc import Mapping
 from contextlib import suppress
 import importlib
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from dimos.web.relay_bridge.topic_media import MediaOutput
 
 
-def _encode(profile: str, data: bytes) -> "MediaOutput":
+def _encode(profile: str, data: bytes, settings: Mapping[str, Any] | None) -> "MediaOutput":
     # Fixed module, never a class or module name supplied by a browser.
     codec = importlib.import_module("dimos.web.relay_bridge.topic_media")
-    return cast("MediaOutput", codec.encode_media(profile, data))
+    return cast("MediaOutput", codec.encode_media(profile, data, settings))
 
 
 class TopicTransforms:
     """A provider shares two worker permits across all active routes.
 
-    Acquire a permit *before* taking from the raw latest mailbox, so jobs
-    waiting for a worker do not retain an obsolete selected camera frame.
+    Acquire a permit *before* selecting the sample to encode, so jobs waiting
+    for a worker do not retain an obsolete camera frame; release it after each
+    encode, so one route cannot hold both while an event route waits.
     Cancellation waits for an active worker before releasing its permit.
     """
 
     def __init__(self) -> None:
         self.slots = asyncio.Semaphore(2)
 
-    async def encode(self, profile: str, data: bytes) -> "MediaOutput":
+    async def encode(
+        self, profile: str, data: bytes, settings: Mapping[str, Any] | None = None
+    ) -> "MediaOutput":
         started = time.monotonic()
-        task = asyncio.create_task(asyncio.to_thread(_encode, profile, data))
+        task = asyncio.create_task(asyncio.to_thread(_encode, profile, data, settings))
         try:
             result = await asyncio.shield(task)
         except asyncio.CancelledError:
