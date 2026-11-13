@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from dimos_lcm.sim_msgs import WorldState
 import numpy as np
@@ -166,6 +166,9 @@ class UsdManagerConfig(ModuleConfig):
     model: RobotModel | UsdModel | None = None
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
+    # Hosted runs assign transports even to unused ports. Hardware can explicitly
+    # select joint feedback instead of mistaking that for a simulation pose source.
+    tf_source: Literal["auto", "joints", "observations"] = "auto"
     # An edge goes out when it moves, at most this often...
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
@@ -268,7 +271,10 @@ class UsdManager(Module):
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
         # A connected simulation supplies all edges at acquisition time.
-        if self.config.publish_joint_tf and self.observations.transport is None:
+        if self.config.publish_joint_tf and (
+            self.config.tf_source == "joints"
+            or (self.config.tf_source == "auto" and self.observations.transport is None)
+        ):
             self._joint_tf.start(self.coordinator_joint_state, self.tfbuffer)
 
     @rpc
@@ -471,12 +477,9 @@ class UsdManager(Module):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         urdf = self._description.urdf()
-        if (
-            name.endswith(".urdf")
-            and Path(name).stem == self.config.instance_name
-            and urdf is not None
-        ):
-            self.file_info.publish(File(name, urdf.xml.encode()))
+        model_name = self.config.instance_name or type(self).__name__
+        if (name == "*.urdf" or name == f"{model_name}.urdf") and urdf is not None:
+            self.file_info.publish(File(f"{model_name}.urdf", urdf.xml.encode()))
             return
         if name.endswith(USD_SUFFIXES):
             usd = self._scene
@@ -511,7 +514,7 @@ class UsdManager(Module):
 
     async def handle_observations(self, sample: WorldState) -> None:
         """Publish the same model tree from a complete physical pose sample."""
-        if not self.config.publish_joint_tf:
+        if not self.config.publish_joint_tf or self.config.tf_source == "joints":
             return
         h = sample.header
         if self._sim_clock is not None and self._sim_clock != h.clock_id:

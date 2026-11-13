@@ -3,7 +3,34 @@
 This integration uses the existing seven-motor Feetech OpenArm leaders, with
 a Nintendo Joy-Con attached to each leader. It does not require the pending
 Dynamixel hardware. The first follower is R1 Pro in MuJoCo through sim2;
-none of these blueprints opens a vendor ROS connection to a physical robot.
+the hardware blueprint below connects the same operator inputs to vendor ROS.
+
+## Real hardware spatial view
+
+`r1pro-openarm-joylo-real` is one distributed run: the robot hosts control,
+native head capture, calibrated stereo depth and Mid360/Point-LIO; the operator
+Mac hosts leaders/Joy-Cons, the installed vendor robot model and voxel mapping.
+This restores the perception pipeline from the earlier `r1pro-spatial` work
+(`ef8a0548fa`) without its separate control stack. No Rerun viewer is launched.
+
+The head cameras have a single capture owner. `R1SpatialSensors` pairs their
+compressed images by acquisition time, rectifies using the robot's
+`/opt/galaxea/body/stereo.yaml`, and publishes 480-pixel-wide metric RGB-D at a
+nominal 5 Hz. Results older than 0.5 seconds are discarded. The Desktop's generic
+RGB-D layer makes the textured depth surface; the 5 cm LiDAR voxel map is a
+separate layer. `R1SpatialSensors.get_status()` reports counts and capture ages.
+
+`UsdManager(tf_source="joints")` publishes measured joint transforms even when
+host scheduling assigns an unused simulation observation transport. Its file
+server answers Desktop's `*.urdf` discovery and serves only referenced assets.
+Point-LIO owns the odometry transform; the connection's wheel-odometry TF is
+disabled to prevent competing parents for the robot model.
+
+Wrist RGB-D subscribes to the installed ROS camera drivers. It needs the physical
+RealSense cameras to enumerate on USB and calibrated `{left,right}_d405_link`
+mount frames in the model. The installed R1_PRO model inspected on 2026-11-12
+contains neither wrist camera mount, and no RealSense USB devices were detected;
+adding subscriptions alone cannot restore those cameras or locate their depth.
 
 ## Dependency and review structure
 

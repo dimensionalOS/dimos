@@ -432,6 +432,33 @@ def test_render_file_request_serves_the_usd_and_only_files_it_names(
     assert sent[2].data == b"png bytes"
 
 
+@pytest.mark.parametrize("instance", [None, "robot"])
+def test_desktop_model_discovery_answers_wildcard_and_its_own_name(make_filter, mocker, instance):
+    module = make_filter(instance_name=instance)
+    publish = mocker.patch.object(module.file_info, "publish")
+    name = instance or type(module).__name__
+    for request in ("*.urdf", f"{name}.urdf", "unrelated.urdf", "/tmp/secret.urdf"):
+        asyncio.run(module.handle_render_file_request(String(request)))
+    files = [call.args[0] for call in publish.call_args_list]
+    assert [file.uri for file in files] == [f"{name}.urdf"] * 2
+    assert all(b'<robot name="box_robot"' in file.data for file in files)
+
+
+@pytest.mark.parametrize(
+    "source, expected", [("joints", True), ("observations", False), ("auto", False)]
+)
+def test_hardware_joint_tf_can_start_with_an_unused_observation_transport(
+    make_filter, mocker, source, expected
+):
+    module = make_filter(tf_source=source)
+    # Hosted scheduling assigns a transport to every declared port, including unused inputs.
+    mocker.patch.object(module.observations, "_transport", mocker.Mock())
+    mocker.patch.object(Module, "start")
+    start = mocker.patch.object(module._joint_tf, "start")
+    UsdManager.start(module)
+    assert start.call_count == int(expected)
+
+
 def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_capture_is_still_filtered(
     make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:

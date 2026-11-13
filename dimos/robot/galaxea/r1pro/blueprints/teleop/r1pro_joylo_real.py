@@ -21,7 +21,7 @@ Starts paused. The existing vendor stack must be started and checked explicitly.
 import math
 
 from dimos.control.connection.connection_module import ConnectionConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _transports
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection, R1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.joylo import ARMS, TORSO, JoyloConfig
@@ -47,39 +47,48 @@ _profile = JoyloConfig(
     yaw_speed=0.6,
 )
 
-r1pro_joylo_real = (
-    autoconnect(
-        R1ProConnection.blueprint(**_declaration.model_dump()),
-        R1ProJoylo.blueprint(**_profile.model_dump()),
-        R1ProJoyloCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[
-                ConnectionConfig(
-                    source=_declaration.source,
-                    model=_declaration.model,
-                    joint_commands=_declaration.joint_commands,
-                    deadman_timeout_s=_declaration.deadman_timeout_s,
-                )
-            ],
-            tasks=joylo_tasks(
-                {
-                    **dict.fromkeys(ARMS, _profile.max_arm_rate),
-                    **dict.fromkeys(TORSO, _profile.max_torso_rate),
-                }
+
+def make_joylo_real(*, publish_odom_tf: bool = True, enable_wrist_color: bool = True) -> Blueprint:
+    """Compose hardware control with an explicit owner for odometry and wrist video."""
+    declaration = _declaration.model_copy(
+        update={"publish_odom_tf": publish_odom_tf, "enable_wrist_color": enable_wrist_color}
+    )
+    return (
+        autoconnect(
+            R1ProConnection.blueprint(**declaration.model_dump()),
+            R1ProJoylo.blueprint(**_profile.model_dump()),
+            R1ProJoyloCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[
+                    ConnectionConfig(
+                        source=_declaration.source,
+                        model=_declaration.model,
+                        joint_commands=_declaration.joint_commands,
+                        deadman_timeout_s=_declaration.deadman_timeout_s,
+                    )
+                ],
+                tasks=joylo_tasks(
+                    {
+                        **dict.fromkeys(ARMS, _profile.max_arm_rate),
+                        **dict.fromkeys(TORSO, _profile.max_torso_rate),
+                    }
+                ),
             ),
-        ),
+        )
+        .remappings(
+            [
+                (R1ProConnection, "joint_state", "robot_feedback"),
+                (R1ProJoyloCoordinator, "r1pro_joint_state", "robot_feedback"),
+                (R1ProConnection, "position_command", "r1pro_position_command"),
+                (R1ProConnection, "velocity_command", "r1pro_velocity_command"),
+                (R1ProJoyloCoordinator, "twist_command", "cmd_vel"),
+                (R1ProJoylo, "cmd_vel", "joylo_cmd_vel"),
+                (R1ProJoyloCoordinator, "joylo_twist_command", "joylo_cmd_vel"),
+            ]
+        )
+        .transports(_transports)
+        .global_config(viewer="none", transport="zenoh", n_workers=3)
     )
-    .remappings(
-        [
-            (R1ProConnection, "joint_state", "robot_feedback"),
-            (R1ProJoyloCoordinator, "r1pro_joint_state", "robot_feedback"),
-            (R1ProConnection, "position_command", "r1pro_position_command"),
-            (R1ProConnection, "velocity_command", "r1pro_velocity_command"),
-            (R1ProJoyloCoordinator, "twist_command", "cmd_vel"),
-            (R1ProJoylo, "cmd_vel", "joylo_cmd_vel"),
-            (R1ProJoyloCoordinator, "joylo_twist_command", "joylo_cmd_vel"),
-        ]
-    )
-    .transports(_transports)
-    .global_config(viewer="none", transport="zenoh", n_workers=3)
-)
+
+
+r1pro_joylo_real = autoconnect(make_joylo_real())
