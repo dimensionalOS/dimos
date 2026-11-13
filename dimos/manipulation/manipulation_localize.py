@@ -47,8 +47,8 @@ class ManipulationLocalize(PerceptionLocalize):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._objects: dict[str, tuple[str, Localization]] = {}
-        # label, position and the newest frame time of each forgotten object
-        self._gone: list[tuple[str, np.ndarray, float]] = []
+        # Forgotten objects: label, id, box low and high corners, newest frame time then.
+        self._gone: list[tuple[str, str, np.ndarray, np.ndarray, float]] = []
 
     @rpc
     def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
@@ -98,14 +98,22 @@ class ManipulationLocalize(PerceptionLocalize):
     def forget(self, object_id: str) -> None:
         """Drop the object with this id: it is no longer where it was seen.
 
-        Later answers leave out a sighting of its label near that place that is
-        not newer than now, so the old place does not come back as a target.
+        Later answers leave out a sighting of its label that is not newer than
+        now and has its id or is centred inside its box, so the old place does
+        not come back as a target.
         """
         entry = self._objects.pop(object_id, None)
-        if entry is not None:
-            label, hit = entry
-            _, head = self.index.get_time_range()
-            self._gone.append((label, np.asarray(hit.position_world_xyz), head))
+        if entry is None:
+            return
+        label, hit = entry
+        points = hit.point_cloud.points_f32()
+        if not len(points):
+            points = np.asarray([hit.position_world_xyz], dtype=np.float32)
+        _, head = self.index.get_time_range()
+        # Its box, grown 1 cm, so the same object seen a little off still counts as it.
+        self._gone.append(
+            (label, object_id, points.min(axis=0) - 0.01, points.max(axis=0) + 0.01, head)
+        )
 
     @rpc
     def scene_cloud(self, start: float = -5.0, duration: float = 5.0) -> PointCloud2 | None:
@@ -156,13 +164,12 @@ class ManipulationLocalize(PerceptionLocalize):
 
     def _was_taken(self, label: str, hit: Localization) -> bool:
         """Whether this sighting is of a forgotten object, at its old place, from before."""
-        radius = self.config.params.cluster_radius_m
         position = np.asarray(hit.position_world_xyz)
         return any(
             gone_label == label
-            and float(np.linalg.norm(position - place)) < radius
             and hit.last_seen_timestamp <= cutoff
-            for gone_label, place, cutoff in self._gone
+            and (hit.instance_id == gone_id or bool(np.all((position >= low) & (position <= high))))
+            for gone_label, gone_id, low, high, cutoff in self._gone
         )
 
     def _resolve(self, target: str) -> Localization:

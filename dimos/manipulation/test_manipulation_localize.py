@@ -166,20 +166,24 @@ def test_a_forgotten_object_does_not_come_back_from_its_old_sightings(localizer,
     localizer.index.time_range.return_value = mocker.Mock(count=mocker.Mock(return_value=4))
     localizer.detections = mocker.Mock()
     mocker.patch("dimos.perception.localize.module.as_detection_array")
-    localizer._objects = {"cup-1": ("cup", _hit("cup-1", [[0.4, 0.1, 0.2]], (0.4, 0.1, 0.2)))}
-    # Picked when the newest frame was at 10 s.
+    # A 4 cm cup at (0.4, 0.1), picked when the newest frame was at 10 s.
+    cup = [[0.38, 0.08, 0.18], [0.42, 0.12, 0.22]]
+    localizer._objects = {"cup-1": ("cup", _hit("cup-1", cup, (0.4, 0.1, 0.2)))}
     localizer.forget("cup-1")
-    # Later the window still holds the cup at its old place, and the cup where it was put.
-    old = _hit("cup-1", [[0.4, 0.1, 0.2]], (0.41, 0.1, 0.2))
-    put = _hit("cup-2", [[0.3, -0.2, 0.2]], (0.3, -0.2, 0.2))
-    back = _hit("cup-3", [[0.4, 0.1, 0.2]], (0.4, 0.1, 0.2))
-    for hit, seen in ((old, 9.0), (put, 14.0), (back, 15.0)):
+    # Later the window holds the cup at its old place, under its old id and under a new
+    # one; the cup where it was put; a cup seen at the old place after the pick; and a
+    # second cup 5 cm away, last seen before the pick.
+    same_id = _hit("cup-1", cup, (0.4, 0.1, 0.2))
+    new_id = _hit("cup-2", cup, (0.41, 0.1, 0.2))
+    put = _hit("cup-3", [[0.3, -0.2, 0.2]], (0.3, -0.2, 0.2))
+    back = _hit("cup-4", cup, (0.4, 0.1, 0.2))
+    neighbour = _hit("cup-5", [[0.45, 0.1, 0.2]], (0.45, 0.1, 0.2))
+    for hit, seen in ((same_id, 9.0), (new_id, 9.0), (put, 14.0), (back, 15.0), (neighbour, 8.0)):
         hit.semantic_score, hit.n_views, hit.last_seen_timestamp = 0.8, 2, seen
     localizer.index.get_time_range.return_value = (0.0, 16.0)
     localizer.detector = mocker.Mock()
-    localizer.detector.localize.return_value = [[old, put, back]]
+    localizer.detector.localize.return_value = [[same_id, new_id, put, back, neighbour]]
 
     found = localizer.scan(["cup"], window_s=30.0)
 
-    # The old sighting goes; one seen at the old place after the pick stays.
-    assert [o["id"] for o in found] == ["cup-2", "cup-3"]
+    assert [o["id"] for o in found] == ["cup-3", "cup-4", "cup-5"]
