@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from functools import cached_property
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -109,6 +110,27 @@ class LoadedRobotModel:
         """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
 
+    def resolve_frame(self, name: str) -> tuple[str, NDArray[np.float64]]:
+        """Resolve a fixed mount to its articulated ancestor and ancestor-from-frame pose.
+
+        This is model information, independent of a running TF service or simulator.
+        A movable joint ends the fixed chain. Unknown frames fail during binding.
+        """
+        parents = {joint.child_link: joint for joint in self.joints}
+        links = {self.root_link, *parents}
+        if name not in links:
+            raise ValueError(f"Unknown model frame: {name}")
+        transform = np.eye(4)
+        visited: set[str] = set()
+        while name in parents and parents[name].type == "fixed":
+            if name in visited:
+                raise ValueError(f"Cycle in fixed frame chain: {name}")
+            visited.add(name)
+            joint = parents[name]
+            transform = joint.origin() @ transform
+            name = joint.parent_link
+        return name, transform
+
     def referenced_files(self) -> set[str]:
         """The full path of every file the URDF names (mesh, texture, splat, ...): any filename attribute."""
         return {
@@ -154,6 +176,11 @@ class UsdModel:
     @cached_property
     def usd(self) -> str:
         return self._with_added_frames(self._layer())
+
+    @cached_property
+    def revision(self) -> str:
+        """Identity of the description, independent of a client's cache directory."""
+        return hashlib.sha256(self.usd.encode()).hexdigest()
 
     def _asset_root(self) -> Path | None:
         source = self.source_path
@@ -209,7 +236,7 @@ class UsdModel:
         # already hold: usd_with_frames welds each one exactly here.
         return self._urdf.joints + self._added_frame_joints()
 
-    @property
+    @cached_property
     def root_link(self) -> str:
         if self._urdf is not None:
             return self._urdf.root_link
@@ -348,6 +375,8 @@ class RobotModel:
     _removed_joint_subtrees: tuple[str, ...] = ()
     _planar_base: PlanarBaseDefinition | None = None
     _default_joint_acceleration_limit: float | None = None
+    _prefix: str = ""
+
     _base_model: RobotModel | None = None
     _added_joints: tuple[JointDescription, ...] = ()
     # (follower, leader, multiplier, offset) per joint that copies another.
@@ -423,8 +452,21 @@ class RobotModel:
         """Return a model with an additional fixed frame."""
         return replace(
             self,
-            _fixed_frames=(*self._fixed_frames, _FixedFrame(name, parent, xyz, rpy)),
+            _fixed_frames=(
+                *self._fixed_frames,
+                _FixedFrame(name, parent, _triple(_vector_text(xyz)), _triple(_vector_text(rpy))),
+            ),
         )
+
+    def with_prefix(self, prefix: str) -> RobotModel:
+        """Namespace links and joints at materialization, after other model variants.
+
+        Use the same resulting model for control, URDF serving and simulation.
+        Mesh paths and material names are not TF identifiers and remain unchanged.
+        """
+        if not prefix or self._prefix:
+            raise ValueError("Supply one nonempty model prefix")
+        return replace(self, _prefix=prefix)
 
     def with_attached_model(
         self,
@@ -670,6 +712,17 @@ class RobotModel:
             xml = _set_missing_joint_acceleration_limits(
                 xml, self._default_joint_acceleration_limit
             )
+        if self._prefix:
+            root = ET.fromstring(xml)
+            for element in root.findall("link") + root.findall("joint"):
+                element.set("name", self._prefix + element.attrib["name"])
+            for joint in root.findall("joint"):
+                for tag, attribute in (("parent", "link"), ("child", "link"), ("mimic", "joint")):
+                    reference = joint.find(tag)
+                    if reference is not None:
+                        reference.set(attribute, self._prefix + reference.attrib[attribute])
+            xml = ET.tostring(root, encoding="unicode")
+
         return LoadedRobotModel(xml, source_path, package_paths)
 
     def __getstate__(self) -> dict[str, object]:

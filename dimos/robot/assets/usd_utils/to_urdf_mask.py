@@ -289,7 +289,9 @@ def _write_link(pxr: Pxr, root: ET.Element, link_name: str, prim: Prim) -> None:
     for child in prim.GetChildren():
         if child.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or child.IsA(pxr.UsdPhysics.Joint):
             continue
-        _write_geometry(pxr, element, child)
+        # Camera optics and mount containers are frames, not physical shapes.
+        if child.IsA(pxr.UsdGeom.Gprim):
+            _write_geometry(pxr, element, child)
     for fragment in _passthrough_of(prim):
         _append_fragment(element, fragment)
 
@@ -298,7 +300,10 @@ def _write_geometry(pxr: Pxr, link: ET.Element, prim: Prim) -> None:
     shape = _shape_of(pxr, prim)
     if shape is None:
         return
-    tag = "collision" if prim.HasAPI(pxr.UsdPhysics.CollisionAPI) else "visual"
+    collision = prim.HasAPI(pxr.UsdPhysics.CollisionAPI) and bool(
+        pxr.UsdPhysics.CollisionAPI(prim).GetCollisionEnabledAttr().Get()
+    )
+    tag = "collision" if collision else "visual"
     element = ET.SubElement(link, tag)
     xyz, rpy = _placement_of(pxr, prim)
     if np.any(xyz) or np.any(rpy):
