@@ -15,7 +15,8 @@
 """Read-only memory store backed by an mcap file.
 
 Generic and robot-independent. Native DimOS LCM, LZ4+LCM, JPEG and JSON
-channels decode automatically from their encoding and built-in type metadata.
+channels decode automatically from their encoding and built-in type metadata
+(``dimos.payload_type``, or an lcm channel's short ``lcm_type`` msg name).
 With ``decode_metadata=True``, trusted metadata may also import external payload
 types. Other formats use a caller-supplied ``codecs`` map (wire
 topic -> codec), while ``streams`` may map friendly stream names to topics. See
@@ -304,7 +305,9 @@ class McapStore(Store):
                         r"dimos\.msgs\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\2",
                         ch.metadata.get("dimos.payload_type", ""),
                     )
-                    kind = get_dimos_type(f"{match[1]}.{match[2]}") if match else None
+                    # or an lcm channel's short ``lcm_type`` msg name (e.g. "geometry_msgs.Twist")
+                    short = f"{match[1]}.{match[2]}" if match else ch.metadata.get("lcm_type")
+                    kind = get_dimos_type(short) if short else None
                     if kind is not None and hasattr(kind, "lcm_decode"):
                         codec = LcmCodec(kind)
                         self._codecs[ch.topic] = (
