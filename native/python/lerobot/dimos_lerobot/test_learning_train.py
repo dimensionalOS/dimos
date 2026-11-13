@@ -2,9 +2,8 @@
 
 import sys
 
-import pytest
-
 from dimos_lerobot.learning_train import emit, load_check
+import pytest
 
 
 def test_native_adapter_loads():

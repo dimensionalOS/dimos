@@ -1,14 +1,16 @@
 """Opt-in real MCAP acceptance; creates isolated outputs, never alters sources."""
 
-from pathlib import Path
 import json
 import os
+from pathlib import Path
+import socket
 import subprocess
 import sys
 import time
-import socket
+
 import jwt
 import requests
+
 from dimos.imitation.learning.worker import Worker
 
 ROOT = Path(__file__).resolve().parent
