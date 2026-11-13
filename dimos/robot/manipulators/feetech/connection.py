@@ -57,9 +57,9 @@ class FeetechConnectionConfig(ConnectionConfig):
             gives "leader/left_joint_1".
         state_rate_hz: How often the joint angles are read and published, in Hz.
         calibration_root: Directory holding one calibration folder per bus.
-        mock_positions: Joint angles to publish without opening any port, in
-            radians, keyed by joint name ("left_joint_1"); joints left out read
-            0. None reads the hardware.
+        mock_positions: Joint angles to publish when no serial port is given,
+            in radians, keyed by joint name ("left_joint_1"); joints left out
+            read 0. None makes a serial port required.
     """
 
     source: str = "leader"
@@ -98,15 +98,14 @@ class FeetechConnection(ConnectionModule):
         return default_calibration_path(bus, self.config.calibration_root)
 
     def connect(self) -> None:
-        """Load each bus's calibration and open its serial port."""
-        if self.config.mock_positions is not None:
-            arm: FeetechArm | MockFeetechArm = MockFeetechArm(
-                self.robot, self.config.mock_positions
-            )
-        else:
-            ports = {bus: port for bus, port in self.serial_ports().items() if port.strip()}
-            if not ports:
+        """Load each bus's calibration and open its serial port, or start the mock."""
+        ports = {bus: port for bus, port in self.serial_ports().items() if port.strip()}
+        arm: FeetechArm | MockFeetechArm
+        if not ports:
+            if self.config.mock_positions is None:
                 raise ValueError("give a serial port for at least one Feetech bus")
+            arm = MockFeetechArm(self.robot, self.config.mock_positions)
+        else:
             calibrations = {
                 bus: load_calibration(self.calibration_path(bus), bus, self.robot.bus(bus).motors)
                 for bus in ports
