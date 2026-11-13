@@ -132,6 +132,7 @@ all_blueprints = {
     "relocalize-mid360": "dimos.mapping.relocalization.blueprints:relocalize_mid360",
     "replay": "dimos.memory.blueprints:replay",
     "seeed-b601-dm-planner-coordinator": "dimos.robot.manipulators.seeed_b601_dm.blueprints.basic:seeed_b601_dm_planner_coordinator",
+    "sim2-basic": "dimos.sim2.examples.basic:sim2_basic",
     "spot": "dimos.experimental.robot.bosdyn.spot.blueprints.spot:spot",
     "spot-record": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_record:spot_record",
     "spot-replay": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_replay:spot_replay",
