@@ -32,6 +32,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
@@ -39,7 +40,6 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_LEADERS,
     DUAL_OPENYAM_SIDES,
     dual_openyam_arm_joints,
-    dual_openyam_control_model,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import (
@@ -116,7 +116,7 @@ def dual_openyam_leader_control() -> Blueprint:
     return autoconnect(
         DualOpenYamLeaderCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=dual_openyam_control_model(robot="arm"),
+            connections=[arm_declaration(DualOpenYamConnection)],
             tasks=[
                 # The trajectory task follows the leader's targets instead of joint_command.
                 replace(
