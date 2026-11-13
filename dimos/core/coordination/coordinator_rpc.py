@@ -34,26 +34,34 @@ class CoordinatorRPC:
 
     NAME = "Coordinator"
 
-    def __init__(self, rpc: RPCSpec) -> None:
+    def __init__(self, rpc: RPCSpec, name: str = NAME) -> None:
         self._rpc = rpc
+        self._name = name
 
     @classmethod
-    def serve(cls, coordinator: RPCInspectable) -> CoordinatorRPC:
-        """Publish `coordinator`'s @rpc methods under the `Coordinator/` prefix."""
-        cls._ensure_no_existing_service()
+    def serve(
+        cls,
+        coordinator: RPCInspectable,
+        *,
+        name: str | None = None,
+    ) -> CoordinatorRPC:
+        """Publish ``coordinator`` under the selected RPC prefix."""
+        selected_name = name or cls.NAME
+        cls._ensure_no_existing_service(selected_name)
         rpc = rpc_backend()()
         # start() before serve_module_rpc(): Zenoh's subscribe needs an open
         # session (acquired in start()), whereas LCM tolerates either order.
         rpc.start()
-        rpc.serve_module_rpc(coordinator, name=cls.NAME)
-        return cls(rpc)
+        rpc.serve_module_rpc(coordinator, name=selected_name)
+        return cls(rpc, selected_name)
 
     @classmethod
-    def connect(cls, *, timeout: float) -> CoordinatorRPC:
+    def connect(cls, *, timeout: float, name: str | None = None) -> CoordinatorRPC:
         """Attach to a running Coordinator, raising `TimeoutError` if none answers."""
+        selected_name = name or cls.NAME
         rpc = rpc_backend()()
         rpc.start()
-        client = cls(rpc)
+        client = cls(rpc, selected_name)
         deadline = time.monotonic() + timeout
         last_timeout: TimeoutError | None = None
         try:
@@ -79,7 +87,7 @@ class CoordinatorRPC:
     def call(self, method: str, *args: Any, rpc_timeout: float | None = None, **kwargs: Any) -> Any:
         """Invoke `Coordinator/<method>` and return its result."""
         result, _unsub = self._rpc.call_sync(
-            f"{self.NAME}/{method}",
+            f"{self._name}/{method}",
             ([*args], kwargs),
             rpc_timeout=rpc_timeout,
         )
@@ -89,6 +97,10 @@ class CoordinatorRPC:
     def rpc(self) -> RPCSpec:
         return self._rpc
 
+    @property
+    def name(self) -> str:
+        return self._name
+
     def stop(self) -> None:
         try:
             self._rpc.stop()
@@ -96,16 +108,16 @@ class CoordinatorRPC:
             logger.error("Error closing Coordinator RPC service", exc_info=True)
 
     @classmethod
-    def _ensure_no_existing_service(cls) -> None:
+    def _ensure_no_existing_service(cls, name: str) -> None:
         probe = rpc_backend()()
         probe.start()
         try:
             try:
-                probe.call_sync(f"{cls.NAME}/ping", ([], {}), rpc_timeout=0.5)
+                probe.call_sync(f"{name}/ping", ([], {}), rpc_timeout=0.5)
             except TimeoutError:
                 return
             raise RuntimeError(
-                f"another {cls.NAME} service is already running on the "
+                f"another {name} service is already running on the "
                 f"{global_config.transport} bus. Run `dimos stop` first."
             )
         finally:

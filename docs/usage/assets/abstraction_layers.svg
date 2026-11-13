@@ -15,6 +15,6 @@
 <text x="722.16" y="30.96" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">PubSub</text>
 <text x="88.56" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">robot configs</text>
 <text x="290.16" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera, nav</text>
-<text x="506.16" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">LCM, SHM, ROS</text>
+<text x="506.16" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Zenoh, LCM, ROS</text>
 <text x="722.16" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">pub/sub API</text>
 </svg>

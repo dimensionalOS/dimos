@@ -14,7 +14,7 @@
 
 """Draft answer-only QA for the static DimSim apartment.
 
-    DIMOS_TRANSPORT=lcm VIEWER=none DIMSIM_HEADLESS=true \
+    DIMOS_TRANSPORT=lcm VIEWER=none GO2CONNECTION__DIMSIM__HEADLESS=true \
         dimos evals run dimos.evals.suites.dimsim_apartment_qa \
         --agent dimos.evals.agents.pi
 
@@ -73,7 +73,7 @@ _LETTER = choice("ABCD", case_sensitive=True)
 
 def _environment() -> DimSimEnvironment:
     return DimSimEnvironment(
-        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container", "raw-robot-bridge"],
+        blueprint=["unitree-go2", "unitree-skill-container", "raw-robot-bridge"],
         disable=("wavefront-frontier-explorer", "patrolling-module"),
         scene="apartment",
         raw_bridge=True,  # agents without dimOS get the robot as plain topics

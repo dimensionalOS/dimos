@@ -12,20 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Browser audio container -> PCM AudioEvent, via ffmpeg.
+"""Browser audio container -> PCM AudioEvent, via PyAV.
 
-The one decoder for recorded uploads: ffmpeg sniffs whatever container the
-browser produced (webm/opus, ogg, mp4/aac, wav) and absorbs the
-MediaRecorder variance, so callers never transcode client-side.
+The one decoder for recorded uploads: the FFmpeg bundled in the PyAV wheel
+sniffs whatever container the browser produced (webm/opus, ogg, mp4/aac,
+wav) and absorbs the MediaRecorder variance, so callers never transcode
+client-side.
 """
 
 import io
-import shutil
 import time
 
-import ffmpeg  # type: ignore[import-untyped]
+import av
 import numpy as np
-import soundfile as sf  # type: ignore[import-untyped]
 
 from dimos.stream.audio.base import AudioEvent
 from dimos.utils.logging_config import setup_logger
@@ -33,35 +32,30 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def ffmpeg_requirement() -> str | None:
-    """Return a startup error when the ffmpeg executable is unavailable."""
-    if shutil.which("ffmpeg") is None:
-        return "ffmpeg is required for browser audio; install the ffmpeg system package"
-    return None
-
-
 def decode_audio_bytes(raw: bytes) -> AudioEvent | None:
     """One whole recording -> a mono 16-kHz float32 AudioEvent (the shape
-    WhisperNode assumes), or None when ffmpeg cannot decode it."""
+    WhisperNode assumes), or None when FFmpeg cannot decode it."""
     try:
-        out, _ = (
-            ffmpeg.input("pipe:0")
-            .output(
-                "pipe:1",
-                format="wav",
-                acodec="pcm_s16le",
-                ac=1,
-                ar="16000",
-                loglevel="quiet",
-            )
-            .run(input=raw, capture_stdout=True, capture_stderr=True)
-        )
-        audio, sample_rate = sf.read(io.BytesIO(out), dtype="float32")
+        with av.open(io.BytesIO(raw), "r", metadata_errors="ignore") as container:
+            stream = container.streams.audio[0]
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=16_000)
+            frames: list[av.AudioFrame] = []
+            for packet in container.demux(stream):
+                try:
+                    decoded = stream.decode(packet)
+                except av.error.InvalidDataError as exc:
+                    # Keep good audio on either side of a damaged packet.
+                    logger.warning("skipping invalid audio packet", error=str(exc))
+                    continue
+                for frame in decoded:
+                    frames.extend(resampler.resample(frame))
+            frames += resampler.resample(None)  # flush
     except Exception:
         logger.exception("audio decode failed")
         return None
-    if audio.ndim > 1:
-        audio = audio[:, 0]
+    if not frames:
+        return None
+    pcm = np.concatenate([frame.to_ndarray()[0] for frame in frames])
     return AudioEvent(
-        data=np.asarray(audio), sample_rate=sample_rate, timestamp=time.time(), channels=1
+        data=pcm.astype(np.float32) / 32768, sample_rate=16_000, timestamp=time.time()
     )

@@ -59,9 +59,8 @@ class PointLioConfig(NativeModuleConfig):
     # since it publishes odometry and tf without going back through Python.
     base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
     source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = "../../../../../../target/release/pointlio_native"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/pointlio_native"
+    build_command: str | None = "nix build -L path:."
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
@@ -71,8 +70,18 @@ class PointLioConfig(NativeModuleConfig):
     msr_freq: float = 50.0
     main_freq: float = 5000.0
 
-    pointcloud_freq: float = 10.0
-    odom_freq: float = 30.0
+    # Upper limits, not rates. Point-LIO puts out one pose and one cloud per lidar scan,
+    # so a limit above the scan rate (the Mid360 driver's 10 Hz) changes nothing.
+    pointcloud_freq: float = Field(
+        default=10.0, description="Upper limit on the point cloud rate (Hz)."
+    )
+    odom_freq: float = Field(
+        default=30.0,
+        description=(
+            "Upper limit on the odometry and tf rate (Hz). "
+            "One pose comes out per lidar scan, so a value above the scan rate changes nothing."
+        ),
+    )
 
     # Point-LIO tuning (read in rust/src/module.rs).
     # common

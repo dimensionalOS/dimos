@@ -14,9 +14,8 @@
 
 """Default Livox SDK2 network port constants.
 
-These match the defaults in ``common/livox_sdk_config.hpp`` (``SdkPorts``).
-Both the Mid-360 driver and FAST-LIO2 modules reference this single source
-so port numbers are defined in one place on the Python side.
+The Mid-360 driver references this single source so port numbers are
+defined in one place on the Python side.
 """
 
 # Multicast group the SDK joins for point/IMU data by default.

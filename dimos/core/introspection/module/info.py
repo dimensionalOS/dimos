@@ -14,17 +14,24 @@
 
 """Module introspection data structures."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import inspect
-from typing import Any
+from typing import TYPE_CHECKING, Any, NamedTuple, get_type_hints
+
+if TYPE_CHECKING:
+    from dimos.core.stream import StreamDirection, TransportSpec
 
 # Internal RPCs to hide from io() output
 # Every module has these; io() shows what a module adds.
 INTERNAL_RPCS = {
     "build",
     "dynamic_skills",
+    "get_rpc_signatures",
     "get_skills",
+    "get_stream_descriptors",
     "peek_stream",
     "set_module_ref",
     "set_transport",
@@ -35,12 +42,32 @@ INTERNAL_RPCS = {
 }
 
 
+class StreamDescriptor(NamedTuple):
+    """Wire metadata plus the message type and transport of one stream.
+
+    ``transport`` is a description, not a live transport: descriptors cross process
+    boundaries for inspection, and decoding one must not open sockets. Whoever needs
+    the transport calls ``transport.build()``.
+    """
+
+    module: str
+    name: str
+    direction: StreamDirection
+    type_name: str
+    channel: str
+    type: type
+    transport: TransportSpec
+
+
 @dataclass
 class StreamInfo:
     """Information about a module stream (input or output)."""
 
     name: str
     type_name: str
+    module_name: str | None = None
+    direction: StreamDirection | None = None
+    channel: str | None = None
 
 
 @dataclass
@@ -51,6 +78,8 @@ class ParamInfo:
     type_name: str | None = None
     default: str | None = None
     kind: str | None = None
+    # The type itself for a plain type or a message class, else object.
+    annotation: type[Any] | None = object
 
     def __repr__(self) -> str:
         value = self.name
@@ -71,6 +100,8 @@ class RpcInfo:
     module_name: str | None = None
     documentation: str | None = None
     signature: str | None = None
+    # Same rule as ParamInfo.annotation.
+    return_annotation: type[Any] | None = object
 
     def __repr__(self) -> str:
         prefix = f"{self.module_name}." if self.module_name else ""
@@ -109,9 +140,40 @@ class ModuleInfo:
         return f"<Module {instance_name} ({class_name}), rpcs={len(self.rpcs)}>"
 
 
+def _resolved_hints(fn: Callable) -> dict[str, object]:  # type: ignore[type-arg]
+    """The type hints of a callable, without any that cannot be resolved."""
+    try:
+        return get_type_hints(fn)
+    except Exception:
+        pass
+    # One hint failed, so resolve each alone.
+    target = inspect.unwrap(fn)
+    namespace = getattr(target, "__globals__", {})
+    hints: dict[str, object] = {}
+    for name, annotation in getattr(target, "__annotations__", {}).items():
+        try:
+            hints[name] = eval(annotation, namespace) if isinstance(annotation, str) else annotation
+        except Exception:
+            continue
+    return hints
+
+
+def _portable(annotation: object) -> type[Any] | None:
+    """Keep a plain type or a message class. Anything else becomes object."""
+    if annotation is None or annotation is type(None):
+        return None
+    if isinstance(annotation, type) and (
+        any(annotation is plain for plain in (bool, int, float, str))
+        or callable(getattr(annotation, "lcm_encode", None))
+    ):
+        return annotation
+    return object
+
+
 def extract_rpc_info(fn: Callable) -> RpcInfo:  # type: ignore[type-arg]
     """Extract RPC information from a callable."""
     sig = inspect.signature(fn)
+    hints = _resolved_hints(fn)
     params = []
 
     for pname, p in sig.parameters.items():
@@ -129,6 +191,7 @@ def extract_rpc_info(fn: Callable) -> RpcInfo:  # type: ignore[type-arg]
                 type_name=type_name,
                 default=default,
                 kind=p.kind.name,
+                annotation=_portable(hints.get(pname, object)),
             )
         )
 
@@ -142,6 +205,7 @@ def extract_rpc_info(fn: Callable) -> RpcInfo:  # type: ignore[type-arg]
         return_type=return_type,
         documentation=inspect.getdoc(fn),
         signature=str(sig),
+        return_annotation=_portable(hints.get("return", object)),
     )
 
 

@@ -41,18 +41,25 @@ from dimos.models.vl.base import VlModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
+from dimos.perception.experimental.temporal_memory.clip_filter import (
+    CLIP_AVAILABLE,
+    adaptive_keyframes,
+)
+from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
+from dimos.perception.experimental.temporal_memory.frame_window_accumulator import (
+    FrameWindowAccumulator,
+)
+from dimos.perception.experimental.temporal_memory.temporal_state import TemporalState
+from dimos.perception.experimental.temporal_memory.temporal_utils.graph_utils import (
+    build_graph_context,
+    extract_time_window,
+)
+from dimos.perception.experimental.temporal_memory.temporal_utils.helpers import is_scene_stale
+from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
 from dimos.utils.logging_config import get_run_log_dir, setup_logger
 
-from .clip_filter import CLIP_AVAILABLE, adaptive_keyframes
-from .entity_graph_db import EntityGraphDB
-from .frame_window_accumulator import FrameWindowAccumulator
-from .temporal_state import TemporalState
-from .temporal_utils.graph_utils import build_graph_context, extract_time_window
-from .temporal_utils.helpers import is_scene_stale
-from .window_analyzer import WindowAnalyzer
-
 try:
-    from .clip_filter import CLIPFrameFilter
+    from dimos.perception.experimental.temporal_memory.clip_filter import CLIPFrameFilter
 except ImportError:
     CLIPFrameFilter = type(None)  # type: ignore[assignment, misc]
 
@@ -122,9 +129,6 @@ class TemporalMemory(Module):
         super().__init__(**kwargs)
 
         self._vlm_raw = self.config.vlm
-
-        # new_memory is set via TemporalMemoryConfig by the blueprint factory
-        # (which runs in the main process where GlobalConfig is available).
 
         # Components
         self._accumulator = FrameWindowAccumulator(

@@ -1,1 +1,1 @@
-from .arm_robot import ArmRobot as ArmRobot
+from a1z.robots.arm_robot import ArmRobot as ArmRobot

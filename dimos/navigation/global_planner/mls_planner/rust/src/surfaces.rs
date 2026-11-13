@@ -19,11 +19,9 @@
 use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
+use crate::bit_grid::BitGrid;
+use crate::columns::{ColumnIz, ColumnMask};
 use crate::voxel::VoxelKey;
-
-const INF: u16 = u16::MAX - 1;
-
-pub type ColumnIz = AHashMap<(i32, i32), Vec<i32>>;
 
 /// A cell is standable if it has at least the robot's height of clear space
 /// above it.
@@ -34,7 +32,7 @@ pub(crate) fn is_standable(
     by_col: &ColumnIz,
     clearance_cells: i32,
 ) -> bool {
-    let Some(zs) = by_col.get(&(ix, iy)) else {
+    let Some(zs) = by_col.get((ix, iy)) else {
         return true;
     };
     let idx = zs.partition_point(|&z| z <= iz);
@@ -58,26 +56,16 @@ pub fn extract_surfaces(
     if voxel_map.is_empty() {
         return;
     }
+    *by_col = ColumnIz::from_voxels(voxel_map.iter());
 
-    for &(ix, iy, iz) in voxel_map {
-        by_col.entry((ix, iy)).or_default().push(iz);
-    }
-
-    let mut entries: Vec<((i32, i32), &mut Vec<i32>)> =
-        by_col.iter_mut().map(|(&k, v)| (k, v)).collect();
-    entries
-        .par_iter_mut()
-        .for_each(|(_, zs)| zs.sort_unstable());
-
-    let standable: Vec<VoxelKey> = entries
-        .par_iter()
-        .flat_map_iter(|((ix, iy), zs)| {
-            let mut local: Vec<VoxelKey> = Vec::new();
-            standable_in_column(*ix, *iy, zs, clearance_cells, &mut local);
+    let standable: Vec<VoxelKey> = by_col
+        .par_columns()
+        .fold(Vec::new, |mut local, ((ix, iy), zs)| {
+            standable_in_column(ix, iy, zs, clearance_cells, &mut local);
             local
         })
+        .flatten_iter()
         .collect();
-    drop(entries);
 
     close_surface_holes(standable, by_col, closing_passes, clearance_cells, out);
 }
@@ -101,44 +89,24 @@ fn standable_in_column(
     }
 }
 
-/// Insert a voxel into the per-column index, keeping each column sorted.
-pub fn add_to_by_col(by_col: &mut ColumnIz, (ix, iy, iz): VoxelKey) {
-    let zs = by_col.entry((ix, iy)).or_default();
-    if let Err(pos) = zs.binary_search(&iz) {
-        zs.insert(pos, iz);
-    }
-}
-
-/// Remove a voxel from the per-column index, dropping emptied columns.
-pub fn remove_from_by_col(by_col: &mut ColumnIz, (ix, iy, iz): VoxelKey) {
-    if let Some(zs) = by_col.get_mut(&(ix, iy)) {
-        if let Ok(pos) = zs.binary_search(&iz) {
-            zs.remove(pos);
-        }
-        if zs.is_empty() {
-            by_col.remove(&(ix, iy));
-        }
-    }
-}
-
-/// Re-extract surface cells in the inclusive write box. Reads a morphology
-/// halo around the box so boundary closing matches a full rebuild, then
-/// filters back to the box. by_col must already be current.
+/// Re-extract surface cells in the write mask, matching a full rebuild.
+/// by_col must already be current.
 pub fn extract_surfaces_region(
     by_col: &ColumnIz,
     clearance_cells: i32,
     closing_passes: u32,
-    write: (i32, i32, i32, i32),
+    write: &ColumnMask,
 ) -> Vec<VoxelKey> {
-    let (wx0, wx1, wy0, wy1) = write;
     let pad = (2 * closing_passes) as i32;
+    let read = write.dilated(pad);
 
-    let standable: Vec<VoxelKey> = ((wx0 - pad)..(wx1 + pad + 1))
+    let standable: Vec<VoxelKey> = read
+        .rows()
         .into_par_iter()
-        .flat_map_iter(|ix| {
+        .flat_map_iter(|row| {
             let mut local: Vec<VoxelKey> = Vec::new();
-            for iy in (wy0 - pad)..=(wy1 + pad) {
-                if let Some(zs) = by_col.get(&(ix, iy)) {
+            for (ix, iy) in read.row_columns(row) {
+                if let Some(zs) = by_col.get((ix, iy)) {
                     standable_in_column(ix, iy, zs, clearance_cells, &mut local);
                 }
             }
@@ -156,7 +124,7 @@ pub fn extract_surfaces_region(
     );
     closed
         .into_iter()
-        .filter(|&(ix, iy, _)| ix >= wx0 && ix <= wx1 && iy >= wy0 && iy <= wy1)
+        .filter(|&(ix, iy, _)| write.contains((ix, iy)))
         .collect()
 }
 
@@ -242,7 +210,7 @@ fn has_support(by_col: &ColumnIz, ix: i32, iy: i32, iz: i32) -> bool {
     const Z_TOL: i32 = 3;
     for dx in -R..=R {
         for dy in -R..=R {
-            if let Some(zs) = by_col.get(&(ix + dx, iy + dy)) {
+            if let Some(zs) = by_col.get((ix + dx, iy + dy)) {
                 if zs.iter().any(|&oz| (oz - iz).abs() <= Z_TOL) {
                     return true;
                 }
@@ -271,89 +239,43 @@ fn close_at_z(
         min_y = min_y.min(iy as i64);
         max_y = max_y.max(iy as i64);
     }
-
     let w = (max_x - min_x + 1 + 2 * pad) as usize;
     let h = (max_y - min_y + 1 + 2 * pad) as usize;
     let x0 = min_x - pad;
     let y0 = min_y - pad;
 
-    let r = closing_passes.min(INF as u32 - 1) as u16;
-    let mut dist = vec![INF; w * h];
+    let mut grid = BitGrid::new(w, h);
     for &(ix, iy) in xys {
-        dist[(iy as i64 - y0) as usize * w + (ix as i64 - x0) as usize] = 0;
+        grid.set((ix as i64 - x0) as usize, (iy as i64 - y0) as usize);
     }
-    chamfer(&mut dist, w, h, Border::Empty);
-    // Reseeding from the dilation's complement turns the second pass into the
-    // erosion.
-    for v in dist.iter_mut() {
-        *v = if *v <= r { INF } else { 0 };
+    let original = grid.clone();
+    let mut scratch = BitGrid::new(w, h);
+    for _ in 0..closing_passes {
+        grid.dilate(&mut scratch);
     }
-    chamfer(&mut dist, w, h, Border::Source);
+    for _ in 0..closing_passes {
+        grid.erode(&mut scratch);
+    }
 
-    let original: AHashSet<(i32, i32)> = xys.iter().copied().collect();
-    let mut out = Vec::new();
-    for py in 0..h {
-        for px in 0..w {
-            if dist[py * w + px] <= r {
-                continue;
-            }
-            let (Ok(ix), Ok(iy)) = (i32::try_from(x0 + px as i64), i32::try_from(y0 + py as i64))
-            else {
-                continue;
-            };
-
-            if !is_standable(ix, iy, iz, by_col, clearance_cells) {
-                continue;
-            }
-            // Keep a filled cell only with nearby occupied evidence.
-            if !original.contains(&(ix, iy)) && !has_support(by_col, ix, iy, iz) {
-                continue;
-            }
-            out.push((ix, iy, iz));
+    // Closing never removes a cell, so the originals pass straight through.
+    let mut out: Vec<VoxelKey> = xys.iter().map(|&(ix, iy)| (ix, iy, iz)).collect();
+    for (px, py) in grid.set_cells() {
+        if original.get(px, py) {
+            continue;
         }
+        let (Ok(ix), Ok(iy)) = (i32::try_from(x0 + px as i64), i32::try_from(y0 + py as i64))
+        else {
+            continue;
+        };
+        if !is_standable(ix, iy, iz, by_col, clearance_cells) {
+            continue;
+        }
+        if !has_support(by_col, ix, iy, iz) {
+            continue;
+        }
+        out.push((ix, iy, iz));
     }
     out
-}
-
-/// What lies beyond the grid edge for the distance transform.
-#[derive(Clone, Copy)]
-enum Border {
-    Empty,
-    Source,
-}
-
-/// Two-pass L1 distance transform to the zero cells.
-fn chamfer(dist: &mut [u16], w: usize, h: usize, border: Border) {
-    let edge = match border {
-        Border::Empty => INF,
-        Border::Source => 0,
-    };
-    for y in 0..h {
-        for x in 0..w {
-            let left = if x > 0 { dist[y * w + x - 1] } else { edge };
-            let up = if y > 0 { dist[(y - 1) * w + x] } else { edge };
-            let best = left.min(up).saturating_add(1);
-            let i = y * w + x;
-            if best < dist[i] {
-                dist[i] = best;
-            }
-        }
-    }
-    for y in (0..h).rev() {
-        for x in (0..w).rev() {
-            let right = if x + 1 < w { dist[y * w + x + 1] } else { edge };
-            let down = if y + 1 < h {
-                dist[(y + 1) * w + x]
-            } else {
-                edge
-            };
-            let best = right.min(down).saturating_add(1);
-            let i = y * w + x;
-            if best < dist[i] {
-                dist[i] = best;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -366,7 +288,7 @@ mod tests {
 
     fn run(cells: &[VoxelKey], clearance: i32, closing: u32) -> Vec<VoxelKey> {
         let map = voxel_map(cells);
-        let mut by_col = ColumnIz::new();
+        let mut by_col = ColumnIz::default();
         let mut out = Vec::new();
         extract_surfaces(&map, clearance, closing, &mut by_col, &mut out);
         out

@@ -12,6 +12,10 @@ insert_final_newline = true
 [*.md]
 indent_size = 4
 
+# crate2nix compares this file byte for byte with what it generates
+[crate-hashes.json]
+insert_final_newline = false
+
 [*.nix]
 indent_size = 2
 
@@ -22,6 +26,3 @@ max_line_length = 100
 [*.rs]
 indent_style = space
 indent_size = 4
-
-[*.{ts,svelte}]
-indent_size = 2

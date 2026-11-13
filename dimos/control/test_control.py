@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 import math
 import threading
+from threading import Event, Thread
 import time
 from typing import Any
 from unittest.mock import MagicMock
@@ -30,12 +31,10 @@ from dimos.control.components import (
     HardwareComponent,
     HardwareType,
     make_joints,
-    make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.hardware_interface import (
     ConnectedHardware,
-    ConnectedTwistBase,
     ConnectedWholeBody,
 )
 from dimos.control.task import (
@@ -371,27 +370,12 @@ class TestControlCoordinatorLifecycle:
         unsubscribe.assert_called_once_with()
         assert coordinator._stream_unsubs == {}
 
-    def test_map_twist_to_base_joints_routes_planar_twist_via_joint_command(
-        self, make_coordinator, mocker
-    ):
+    def test_stream_callback_only_dispatches_the_original_message(self, make_coordinator, mocker):
         coordinator = make_coordinator()
-        component = HardwareComponent(
-            hardware_id="base",
-            hardware_type=HardwareType.BASE,
-            joints=make_twist_base_joints("base"),
-        )
-        coordinator._hardware = {"base": ConnectedTwistBase(MagicMock(), component)}
         dispatch = mocker.patch.object(coordinator, "_dispatch")
-
-        coordinator._map_twist_to_base_joints(
-            Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
-        )
-
-        stream, joint_state = dispatch.call_args.args
-        assert stream == "joint_command"
-        assert isinstance(joint_state, JointState)
-        assert joint_state.name == ["base/vx", "base/vy", "base/wz"]
-        assert joint_state.velocity == [1.0, 2.0, 3.0]
+        msg = Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+        coordinator._make_stream_cb("twist_command")(msg)
+        dispatch.assert_called_once_with("twist_command", msg)
 
     def test_reset_runtime_state_calls_task_hooks(self, make_coordinator):
         class ResettableTask(BaseControlTask):
@@ -537,23 +521,133 @@ class TestControlCoordinatorTrajectoryExecution:
         assert execute_result.status is TrajectoryExecutionStatus.NO_TRAJECTORY_TASK
         assert cancel_result.status is TrajectoryCancellationStatus.NO_TRAJECTORY_TASK
 
-    def test_execute_rejects_trajectory_when_hardware_start_differs(
+    def test_execute_uses_tick_snapshot_without_polling_hardware(
         self,
         make_coordinator,
         connected_hardware,
         mock_adapter,
         trajectory_task,
         simple_trajectory,
+        mocker,
     ):
+        mocker.patch.object(TickLoop, "start")
         coordinator = make_coordinator()
         mock_adapter.read_joint_positions.return_value = [0.1, 0.0, 0.0, 0.0, 0.0, 0.0]
         coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
         coordinator.add_task(trajectory_task, task_type="trajectory")
 
+        coordinator.start()
+        assert coordinator.get_joint_positions() == {}
+        assert (
+            coordinator.execute_trajectory(simple_trajectory).status
+            is TrajectoryExecutionStatus.START_STATE_UNAVAILABLE
+        )
+        coordinator._tick_loop._tick()
+        mock_adapter.read_joint_positions.reset_mock()
+        mock_adapter.read_joint_positions.return_value = [0.0] * 6
+
+        assert coordinator.get_joint_positions()["arm/joint1"] == 0.1
         result = coordinator.execute_trajectory(simple_trajectory)
+        mock_adapter.read_joint_positions.assert_not_called()
 
         assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
         assert "arm/joint1" in result.message
+        assert not trajectory_task.is_active()
+
+    def test_estop_stops_a_running_trajectory_on_adapter_hardware(
+        self,
+        make_coordinator,
+        connected_hardware,
+        mock_adapter,
+        trajectory_task,
+        simple_trajectory,
+        mocker,
+    ):
+        mocker.patch.object(TickLoop, "start")
+        coordinator = make_coordinator()
+        coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
+        coordinator.add_task(trajectory_task, task_type="trajectory")
+        coordinator.start()
+        tick = coordinator._tick_loop._tick
+        tick()
+        accepted = coordinator.execute_trajectory(simple_trajectory)
+        assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
+        tick()
+        assert mock_adapter.write_joint_positions.called
+        mock_adapter.write_joint_positions.reset_mock()
+
+        assert coordinator.set_estop(True)
+        tick()
+        mock_adapter.write_joint_positions.assert_not_called()
+        refused = coordinator.execute_trajectory(simple_trajectory)
+        assert refused.status is TrajectoryExecutionStatus.ESTOPPED
+
+        # Clearing does not resume the cancelled trajectory.
+        assert coordinator.set_estop(False)
+        tick()
+        mock_adapter.write_joint_positions.assert_not_called()
+        assert not trajectory_task.is_active()
+
+    def test_a_task_added_during_an_estop_is_stopped_too(
+        self,
+        make_coordinator,
+        connected_hardware,
+        trajectory_task,
+        simple_trajectory,
+        mocker,
+    ):
+        mocker.patch.object(TickLoop, "start")
+        coordinator = make_coordinator()
+        coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
+        assert coordinator.set_estop(True)
+
+        coordinator.add_task(trajectory_task, task_type="trajectory")
+
+        refused = coordinator.execute_trajectory(simple_trajectory)
+        assert refused.status is TrajectoryExecutionStatus.ESTOPPED
+        assert coordinator.set_estop(False)
+        coordinator.start()
+        coordinator._tick_loop._tick()
+        accepted = coordinator.execute_trajectory(simple_trajectory)
+        assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
+
+    def test_cancel_waits_for_submission_and_leaves_no_active_trajectory(
+        self, make_coordinator, trajectory_task, simple_trajectory, mocker
+    ):
+        coordinator = make_coordinator()
+        coordinator.add_task(trajectory_task, task_type="trajectory")
+        reading, release, cancelling, cancelled = Event(), Event(), Event(), Event()
+        executions, cancellations = [], []
+
+        def delayed_positions():
+            reading.set()
+            assert release.wait(timeout=2)
+            return trajectory_start_positions(simple_trajectory)
+
+        def cancel():
+            cancelling.set()
+            cancellations.append(coordinator.cancel_trajectory())
+            cancelled.set()
+
+        mocker.patch.object(coordinator, "get_joint_positions", side_effect=delayed_positions)
+        execution = Thread(
+            target=lambda: executions.append(coordinator.execute_trajectory(simple_trajectory))
+        )
+        cancellation = Thread(target=cancel)
+        execution.start()
+        try:
+            assert reading.wait(timeout=2)
+            cancellation.start()
+            assert cancelling.wait(timeout=2)
+            assert not cancelled.wait(timeout=0.05)
+        finally:
+            release.set()
+            execution.join(timeout=2)
+            if cancellation.ident is not None:
+                cancellation.join(timeout=2)
+        assert not execution.is_alive() and not cancellation.is_alive()
+        assert executions[0].status is TrajectoryExecutionStatus.ACCEPTED
+        assert cancellations[0].status is TrajectoryCancellationStatus.CANCELLED
         assert not trajectory_task.is_active()
 
 
@@ -977,6 +1071,28 @@ class TestJointTrajectoryTask:
         assert result.status is TrajectoryCancellationStatus.CANCELLED
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.ABORTED
+
+    def test_estop_cancels_and_refuses_trajectories_until_cleared(
+        self, trajectory_task, simple_trajectory
+    ):
+        start = trajectory_start_positions(simple_trajectory)
+        trajectory_task.execute(simple_trajectory, start)
+
+        trajectory_task.set_estop(True)
+
+        assert not trajectory_task.is_active()
+        assert trajectory_task.get_state() == TrajectoryState.ABORTED
+        refused = trajectory_task.execute(simple_trajectory, start)
+        assert refused.status is TrajectoryExecutionStatus.ESTOPPED
+        streamed = JointState(name=["arm/joint1"], position=[0.1])
+        assert not trajectory_task.on_joint_command(streamed, t_now=0.0)
+
+        trajectory_task.set_estop(False)
+
+        # Not resumed; a new trajectory is taken again.
+        assert not trajectory_task.is_active()
+        accepted = trajectory_task.execute(simple_trajectory, start)
+        assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
 
     def test_cancel_when_stopped_reports_already_stopped(self, trajectory_task):
         result = trajectory_task.cancel()

@@ -37,9 +37,8 @@ def has_nvidia_gpu() -> bool:
 class Depth2DepthCloudConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/perception/depth2depth_cloud/rust"
     executable: str = "result/bin/depth2depth_cloud"
-    # "." in a git checkout enters the whole repo, so the flake can read ../../../../native/rust (tracked files only).
-    # This builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes .#tensorrt (see below).
-    build_command: str | None = "nix build -L ."
+    # Builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes path:.#tensorrt (see below).
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
     base_fields: frozenset[str] = frozenset({"frame_id"})
@@ -68,6 +67,8 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
     reach: float = Field(default=1.0, ge=0.01, le=100.0)
     shape_ema: float = Field(default=0.1, ge=0.0, le=1.0)
     min_anchors: int = Field(default=100, ge=1, le=1000000)
+    # One lidar anchor per anchor_step x anchor_step pixel block (the nearest); 1 keeps them all.
+    anchor_step: int = Field(default=1, ge=1, le=64)
     # Leave out pixels leaning on nearby lidar less than this (0..1); 0 keeps every pixel.
     min_support: float = Field(default=0.0, ge=0.0, le=1.0)
     # Cloud: range crop, then one pixel per decimation x decimation block, then a point budget (0 = none).
@@ -92,8 +93,8 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _tensorrt_on_nvidia(self) -> Depth2DepthCloudConfig:
-        if self.build_command == "nix build -L ." and has_nvidia_gpu():
-            self.build_command = "nix build -L .#tensorrt"
+        if self.build_command == "nix build -L path:." and has_nvidia_gpu():
+            self.build_command = "nix build -L path:.#tensorrt"
         return self
 
     @field_validator("decode_scale")

@@ -22,16 +22,19 @@ import threading
 import time
 from typing import Any, Literal, TypedDict, Union
 
+from pydantic import Field
 import websockets
 import websockets.asyncio.server as ws_server
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.utils.generic import connect_host
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.constants import RERUN_WEBSOCKET_PORT
 
 logger = setup_logger()
 
@@ -73,8 +76,15 @@ def _handshake_noise_filter(record: logging.LogRecord) -> bool:
     return not ("opening handshake failed" in msg or "did not receive a valid HTTP request" in msg)
 
 
+class RerunWebSocketConfig(ModuleConfig):
+    host: str = Field(default_factory=lambda m: m["g"].listen_host)
+    port: int = RERUN_WEBSOCKET_PORT
+
+
 class RerunWebSocketServer(Module):
     """This handles outputs from dimos-viewer (like keyboard controls)"""
+
+    config: RerunWebSocketConfig
 
     clicked_point: Out[PointStamped]
     tele_cmd_vel: Out[Twist]
@@ -87,23 +97,33 @@ class RerunWebSocketServer(Module):
         self._server_ready = threading.Event()
         self._serve_future: concurrent.futures.Future[None] | None = None
         self._bound_port: int | None = None
-        # Set on the first WebSocket client connection. Tests use this to verify
-        # an external client (e.g. dimos-viewer --connect) actually connected.
-        self.client_connected = threading.Event()
 
     @property
     def host(self) -> str:
-        return self.config.g.rerun_host or self.config.g.listen_host
+        return self.config.host
 
     @property
     def port(self) -> int:
-        return self.config.g.rerun_websocket_server_port
+        return self.config.port
 
     @property
     def bound_port(self) -> int:
         """Actual listening port (differs from `port` when configured as 0)."""
         assert self._bound_port is not None, "server not started"
         return self._bound_port
+
+    @rpc
+    def websocket_url(self) -> str:
+        """The endpoint a viewer on this host dials.
+
+        With port 0 this waits for the listener, since only then is the port known.
+        """
+        port = self.config.port
+        if port == 0:
+            if not self._server_ready.wait(timeout=self._STARTUP_TIMEOUT):
+                raise TimeoutError("RerunWebSocketServer has not bound an ephemeral port yet")
+            port = self.bound_port
+        return f"ws://{connect_host(self.config.host)}:{port}/ws"
 
     @rpc
     def start(self) -> None:
@@ -145,7 +165,6 @@ class RerunWebSocketServer(Module):
         super().stop()
         self._server_ready.clear()
         self._bound_port = None
-        self.client_connected.clear()
 
     async def _serve(self) -> None:
         self._stop_event = asyncio.Event()
@@ -171,7 +190,6 @@ class RerunWebSocketServer(Module):
             return
         addr = websocket.remote_address
         logger.info(f"RerunWebSocketServer: viewer connected from {addr}")
-        self.client_connected.set()
         try:
             async for raw in websocket:
                 self._dispatch(raw)

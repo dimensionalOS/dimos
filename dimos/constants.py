@@ -14,6 +14,7 @@
 
 import os
 from pathlib import Path
+import sys
 
 try:
     # Not a dependency, just the best way to get config path if available.
@@ -27,7 +28,26 @@ else:
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
     CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
 
+# Per-boot files of running daemons; a plain `ssh host cmd` has no XDG_RUNTIME_DIR.
+_USER_RUN = Path(f"/run/user/{os.getuid()}") if hasattr(os, "getuid") else None
+if os.environ.get("XDG_RUNTIME_DIR"):
+    RUNTIME_DIR = Path(os.environ["XDG_RUNTIME_DIR"]) / "dimos"
+elif sys.platform == "darwin":
+    # _CS_DARWIN_USER_TEMP_DIR from <unistd.h>. os.confstr_names doesn't list it.
+    RUNTIME_DIR = Path(os.confstr(65537)) / "dimos"
+elif _USER_RUN is not None and _USER_RUN.is_dir():
+    RUNTIME_DIR = _USER_RUN / "dimos"
+else:
+    RUNTIME_DIR = STATE_DIR
+
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
+
+# Python modules saved at runtime, e.g. by an agent. The coordinator and its workers
+# import from here, so a running system can load a module saved after it started.
+RUNTIME_MODULES_DIR = STATE_DIR / "modules"
+
+# The on-robot agent's runtime state: agent module metadata and exports.
+HARNESS_STATE_DIR = STATE_DIR / "harness"
 
 if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
@@ -41,22 +61,6 @@ else:
     DOWNLOADS_DIR = STATE_DIR / "downloads"
 
 CREDENTIALS_PATH = CONFIG_DIR / "credentials"
-
-
-"""
-Constants for shared memory
-Usually, auto-detection for size would be preferred. Sadly, though, channels are made
-and frozen *before* the first frame is received.
-Therefore, a maximum capacity for color image and depth image transfer should be defined
-ahead of time.
-"""
-# Headroom for pickle/encoding framing on top of raw pixels (~263 B observed),
-# so a full frame doesn't overflow the frozen SHM buffer.
-_SHM_ENCODING_OVERHEAD = 4096
-# Default color image size: 1920x1080 frame x 3 (RGB) x uint8
-DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3 + _SHM_ENCODING_OVERHEAD
-# Default depth image size: 1280x720 frame * 4 (float32 size)
-DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4 + _SHM_ENCODING_OVERHEAD
 
 # From https://github.com/lcm-proj/lcm.git
 LCM_MAX_CHANNEL_NAME_LENGTH = 63

@@ -21,8 +21,8 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
-MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config"
+MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
@@ -269,7 +269,7 @@ ${BOLD}OPTIONS${RESET}
     --project-dir <path>   Project directory
     --non-interactive      Accept defaults, no prompts
     --no-cuda              Skip optional CUDA extras and GPU verification
-    --no-sysctl            Skip LCM sysctl configuration
+    --no-sysctl            Skip system configuration (sysctl, memlock limit)
     --use-nix              Force Nix-based setup
     --no-nix               Skip Nix entirely
     --skip-tests           Skip the optional replay smoke test
@@ -435,16 +435,30 @@ install_nix() {
         return
     fi
 
-    info "installing Nix via official installer..."
-    if [[ "$DRY_RUN" == "1" ]]; then
-        dim "[dry-run] sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install) --daemon"
-        HAS_NIX=1; return
-    fi
-
-    if [[ "$NON_INTERACTIVE" == 1 ]]; then
-        (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon --yes)
+    # SteamOS's read-only, update-replaced system can't hold /nix; Determinate's installer keeps the store under /home
+    if ( . /etc/os-release 2>/dev/null; [[ "${ID:-}" == steamos ]] ); then
+        info "installing Nix via Determinate's installer (SteamOS)..."
+        if [[ "$DRY_RUN" == "1" ]]; then
+            dim "[dry-run] curl -sSfL https://install.determinate.systems/nix | sh -s -- install"
+            HAS_NIX=1; return
+        fi
+        if [[ "$NON_INTERACTIVE" == 1 ]]; then
+            curl --proto '=https' --tlsv1.2 -sSfL https://install.determinate.systems/nix | sh -s -- install --no-confirm
+        else
+            (curl --proto '=https' --tlsv1.2 -sSfL https://install.determinate.systems/nix | sh -s -- install) </dev/tty
+        fi
     else
-        (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon) </dev/tty
+        info "installing Nix via official installer..."
+        if [[ "$DRY_RUN" == "1" ]]; then
+            dim "[dry-run] sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install) --daemon"
+            HAS_NIX=1; return
+        fi
+
+        if [[ "$NON_INTERACTIVE" == 1 ]]; then
+            (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon --yes)
+        else
+            (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon) </dev/tty
+        fi
     fi
 
     [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]] && \
@@ -519,6 +533,14 @@ verify_nix_develop() {
     [[ "$INSTALL_PYTHON" == /nix/store/* ]] || die "Nix setup must provide its own Python"
 }
 
+# A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension: update the Command Line Tools.
+update_command_line_tools() {
+    { ! has_cmd c++ || c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; } && return
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
+    run_cmd "${privilege[@]}" softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+}
+
 # ─── system dependencies ─────────────────────────────────────────────────────
 install_system_deps() {
     info "checking system dependencies..."
@@ -528,7 +550,9 @@ install_system_deps() {
             local -a needed=() privilege=(/usr/bin/env)
             if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
             for pkg in $UBUNTU_PACKAGES; do
-                if [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" != "install ok installed" ]]; then
+                # one status line per installed architecture (multiarch), and Ubuntu 24.04 renamed some to <name>t64
+                # (dpkg-query fails for the name that doesn't exist; pipefail is on, so don't let that decide)
+                if ! { dpkg-query -W -f='${Status}\n' "$pkg" "${pkg}t64" 2>/dev/null || true; } | grep -qx "install ok installed"; then
                     needed+=("$pkg")
                 fi
             done
@@ -577,7 +601,8 @@ install_system_deps() {
             if ! prompt_confirm "Install these packages via brew?" "yes"; then
                 die "required system packages were declined; install them before continuing: ${needed[*]}"
             fi
-            run_cmd brew install "${needed[@]}"
+            # brew >= 7 asks before installing unless told not to; we already asked above
+            HOMEBREW_NO_ASK=1 run_cmd brew install "${needed[@]}"
             ;;
         nixos)
             info "NixOS detected — system deps managed via nix develop"
@@ -790,32 +815,76 @@ do_install() {
 
 # ─── system configuration ────────────────────────────────────────────────────
 configure_system() {
-    [[ "$NO_SYSCTL" == "1" ]] && { dim "  skipping sysctl (--no-sysctl)"; return; }
+    [[ "$NO_SYSCTL" == "1" ]] && { dim "  skipping system configuration (--no-sysctl)"; return; }
     [[ "$DETECTED_OS" == "macos" ]] && return
     if [[ "$DETECTED_OS" == "nixos" ]]; then
         info "NixOS: add to configuration.nix:"
         dim "  networking.kernel.sysctl.\"net.core.rmem_max\" = 67108864;"
         dim "  networking.kernel.sysctl.\"net.core.rmem_default\" = 67108864;"
+        dim "  security.pam.loginLimits = [{ domain = \"*\"; type = \"-\"; item = \"memlock\"; value = \"65536\"; }];"
         return
     fi
+    configure_lcm_buffers
+    configure_memlock
+}
+
+configure_lcm_buffers() {
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
     local current_rmem; current_rmem="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
     if [[ "$current_rmem" -ge 67108864 ]]; then ok "LCM buffers already configured"; return; fi
 
     printf "\n"
     info "DimOS uses LCM transport which needs larger UDP buffers:"
-    dim "  sudo sysctl -w net.core.rmem_max=67108864"
-    dim "  sudo sysctl -w net.core.rmem_default=67108864"
+    dim "  ${privilege[*]} sysctl -w net.core.rmem_max=67108864"
+    dim "  ${privilege[*]} sysctl -w net.core.rmem_default=67108864"
     printf "\n"
 
     if prompt_confirm "Apply sysctl changes?" "yes"; then
-        run_cmd sudo sysctl -w net.core.rmem_max=67108864
-        run_cmd sudo sysctl -w net.core.rmem_default=67108864
+        run_cmd "${privilege[@]}" sysctl -w net.core.rmem_max=67108864
+        run_cmd "${privilege[@]}" sysctl -w net.core.rmem_default=67108864
         if prompt_confirm "Persist across reboots?" "yes"; then
             if [[ "$DRY_RUN" != "1" ]]; then
-                printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | sudo tee /etc/sysctl.d/99-dimos.conf >/dev/null
+                printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | "${privilege[@]}" tee /etc/sysctl.d/99-dimos.conf >/dev/null
             else dim "[dry-run] would write /etc/sysctl.d/99-dimos.conf"; fi
         fi
         ok "LCM buffers configured"
+    fi
+}
+
+# The stack checks this limit at startup (MemlockConfiguratorLinux) and would
+# otherwise warn on the first run. Raising it on this shell covers the smoke
+# test below. The limits.d file covers later logins.
+configure_memlock() {
+    local hard; hard="$(ulimit -H -l)"
+    if [[ "$hard" == "unlimited" || "$hard" -ge 65536 ]]; then ok "locked-memory limit already configured"; return; fi
+    local user; user="$(id -un)"
+    local limits_file=/etc/security/limits.d/99-dimos-memlock.conf
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then
+        privilege=(sudo)
+        if [[ "$NON_INTERACTIVE" == "1" ]]; then privilege+=(-n); fi
+    fi
+
+    printf "\n"
+    info "DimOS uses Zenoh shared memory which needs a 64MB locked-memory limit (now $((hard / 1024))MB):"
+    dim "  sudo prlimit --pid=$$ --memlock=67108864:67108864"
+    dim "  write $limits_file for user $user (applies at the next login)"
+    printf "\n"
+
+    if prompt_confirm "Raise the locked-memory limit?" "yes"; then
+        if run_cmd "${privilege[@]}" prlimit --pid=$$ --memlock=67108864:67108864; then
+            if [[ "$DRY_RUN" != "1" ]]; then ok "locked-memory limit raised for this session"; fi
+        else
+            warn "could not raise the limit for this session"
+        fi
+        if [[ "$DRY_RUN" != "1" ]]; then
+            if printf "# Written by dimos: zenoh's SHM pool must be lockable.\n%s\t-\tmemlock\t65536\n" "$user" | "${privilege[@]}" tee "$limits_file" >/dev/null; then
+                ok "locked-memory limit saved for future logins"
+            else
+                warn "could not save locked-memory limit to $limits_file"
+            fi
+        else dim "[dry-run] would write $limits_file"; fi
     fi
 }
 
@@ -906,7 +975,7 @@ print_quickstart() {
     fi
 
     if [[ "$EXTRAS" == *"unitree"* ]] || [[ "$EXTRAS" == "all" ]] || [[ "$EXTRAS" == *"base"* ]]; then
-        printf "    %s# simulation%s\n    dimos --simulation run unitree-go2\n\n" "$DIM" "$RESET"
+        printf "    %s# replay a recorded session (no hardware needed)%s\n    dimos --replay run unitree-go2\n\n" "$DIM" "$RESET"
         printf "    %s# real hardware%s\n    ROBOT_IP=192.168.1.100 dimos run unitree-go2\n\n" "$DIM" "$RESET"
     fi
     if [[ "$EXTRAS" == *"sim"* ]] || [[ "$EXTRAS" == "all" ]]; then
@@ -975,6 +1044,7 @@ main() {
         export UV_PYTHON_PREFERENCE=only-managed
     fi
     if [[ "$SETUP_METHOD" != "nix" ]]; then install_system_deps; fi
+    if [[ "$DETECTED_OS" == "macos" && "$USE_NIX" != 1 ]]; then update_command_line_tools; fi
     install_uv
 
     if [[ -z "$DETECTED_PYTHON" ]]; then

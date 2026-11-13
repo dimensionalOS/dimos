@@ -20,6 +20,7 @@ from dimos.porcelain.module_handle import ModuleHandle
 
 if TYPE_CHECKING:
     from dimos.core.coordination.module_coordinator import ModuleDescriptor
+    from dimos.core.introspection.module.info import StreamDescriptor
 
 
 class ModuleSource(Protocol):
@@ -35,6 +36,8 @@ class ModuleSource(Protocol):
     def list_module_names(self) -> list[str]: ...
 
     def list_module_descriptors(self) -> list[ModuleDescriptor]: ...
+
+    def list_stream_descriptors(self) -> list[StreamDescriptor]: ...
 
     def get_module(self, name: str) -> ModuleHandle: ...
 

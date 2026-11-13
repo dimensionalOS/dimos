@@ -33,22 +33,21 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.service.zenohservice import ZenohConfig
 
-# The crate is a workspace member, so cargo builds into the repo-root target dir.
-_BUILD = "cargo build --release"
+_BUILD = "nix build -L path:.#dimos-native-module-examples"
 
 # Where pong listens when it runs as the router.
 _ROUTER_ENDPOINT = "tcp/127.0.0.1:17450"
 
 
 class PingConfig(NativeModuleConfig):
-    executable: str = "../../../target/release/ping"
+    executable: str = "result/bin/ping"
     build_command: str = _BUILD
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
 
 class PongConfig(NativeModuleConfig):
-    executable: str = "../../../target/release/pong"
+    executable: str = "result/bin/pong"
     build_command: str = _BUILD
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
@@ -90,7 +89,9 @@ def blueprint(topology: bool = False) -> Blueprint:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--transport", choices=["lcm", "zenoh"], default="lcm")
     parser.add_argument(
         "--topology",

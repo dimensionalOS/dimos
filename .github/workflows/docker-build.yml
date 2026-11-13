@@ -26,7 +26,11 @@ jobs:
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-      - uses: actions/checkout@v7
+      - name: Remove stale git lock files
+        # See the ci.yml self-hosted-tests job.
+        run: if [ -d .git ]; then find .git -type f -name '*.lock' -print -delete; fi
+
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -80,7 +84,7 @@ jobs:
     secrets: inherit
     with:
       should-run: true
-      from-image: ubuntu:24.04
+      from-image: ubuntu:26.04
       to-image: dimensional/ros:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  ros
 

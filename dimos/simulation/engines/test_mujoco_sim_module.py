@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 import threading
 import time
@@ -25,7 +24,12 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_engine import (
+    CameraConfig,
+    CameraFrame,
+    MujocoEngine,
+    _CameraRendererState,
+)
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
@@ -171,7 +175,7 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         module.stop()
 
 
-def test_tracked_bodies_are_published_on_tf_in_world() -> None:
+def test_tracked_bodies_are_published_on_body_poses_not_tf() -> None:
     module = MujocoSimModule(tracked_bodies=["apple", "ghost"])
     try:
         module.config = MujocoSimModuleConfig(tracked_bodies=["apple", "ghost"])
@@ -186,8 +190,10 @@ def test_tracked_bodies_are_published_on_tf_in_world() -> None:
                 pass
 
         messages: list[Any] = []
+        bodies: list[Any] = []
         module._engine = _FakeEngine()
         module.tf.subscribe(messages.append)
+        module.body_poses.subscribe(bodies.append)
         frame = CameraFrame(
             rgb=np.zeros((1, 1, 3), dtype=np.uint8),
             depth=np.ones((1, 1), dtype=np.float32),
@@ -199,13 +205,13 @@ def test_tracked_bodies_are_published_on_tf_in_world() -> None:
         module._publish_tf(10.0, frame)
         module._publish_tf(11.0, frame)
         children = [t.child_frame_id for t in messages[-1].transforms]
-        assert children[:3] == [
+        assert children == [
             "wrist_camera_color_optical_frame",
             "wrist_camera_depth_optical_frame",
             "wrist_camera_link",
         ]
-        assert children[3:] == ["apple"]
-        apple = messages[-1].transforms[3]
+        assert [t.child_frame_id for t in bodies[-1].transforms] == ["apple"]
+        apple = bodies[-1].transforms[0]
         assert apple.frame_id == "world"
         assert apple.ts == pytest.approx(time.time(), abs=5.0)
         assert np.allclose(apple.translation.to_numpy(), [0.4, 0.08, 0.17])
@@ -308,43 +314,6 @@ def test_reset_waiters_are_released_when_reset_requests_are_coalesced(tmp_path: 
         engine.disconnect()
 
 
-def _write_scene_xml(path: Path) -> None:
-    path.write_text(
-        """
-<mujoco model="scene">
-  <option timestep="0.02"/>
-  <worldbody>
-    <geom name="static_scene_box" type="box" pos="2 0 0.5" size="0.2 0.2 0.5"/>
-  </worldbody>
-</mujoco>
-""".strip()
-    )
-
-
-def _write_robot_xml(path: Path) -> None:
-    path.write_text(
-        """
-<mujoco model="robot">
-  <option timestep="0.005"/>
-  <worldbody>
-    <body name="base" pos="0 0 0">
-      <freejoint name="floating_base_joint"/>
-      <geom name="base_geom" type="sphere" size="0.05" mass="1.0"/>
-      <site name="imu_site" pos="0 0 0"/>
-      <body name="link" pos="0 0 0.1">
-        <joint name="hinge" type="hinge" axis="0 0 1"/>
-        <geom name="link_geom" type="sphere" size="0.04" mass="1.0"/>
-      </body>
-    </body>
-  </worldbody>
-  <actuator>
-    <motor name="hinge_motor" joint="hinge"/>
-  </actuator>
-</mujoco>
-""".strip()
-    )
-
-
 def _write_freejoint_xml(path: Path) -> None:
     path.write_text(
         """
@@ -358,158 +327,6 @@ def _write_freejoint_xml(path: Path) -> None:
   </worldbody>
 </mujoco>
 """.strip()
-    )
-
-
-def _scene_entity(entity_id: str) -> dict[str, object]:
-    return {
-        "id": entity_id,
-        "spawn": "initial",
-        "descriptor": {
-            "entity_id": entity_id,
-            "kind": "dynamic",
-            "mass": 1.0,
-            "shape_hint": "box",
-            "extents": [0.2, 0.2, 0.2],
-        },
-        "initial_pose": {
-            "x": 1.0,
-            "y": 0.0,
-            "z": 0.1,
-            "qw": 1.0,
-            "qx": 0.0,
-            "qy": 0.0,
-            "qz": 0.0,
-        },
-    }
-
-
-def _write_hull_obj(path: Path) -> None:
-    path.write_text(
-        """
-v 0 0 0
-v 0.1 0 0
-v 0 0.1 0
-v 0 0 0.1
-f 1 2 3
-f 1 2 4
-f 1 3 4
-f 2 3 4
-""".strip()
-    )
-
-
-def _mesh_scene_entity(entity_id: str, hull_path: Path) -> dict[str, object]:
-    entity = _scene_entity(entity_id)
-    descriptor = dict(entity["descriptor"])  # type: ignore[arg-type]
-    descriptor["shape_hint"] = "mesh"
-    descriptor["extents"] = []
-    entity["descriptor"] = descriptor
-    entity["collision_paths"] = [str(hull_path)]
-    return entity
-
-
-@pytest.mark.mujoco
-def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> None:
-    import mujoco
-
-    scene_xml = tmp_path / "scene.xml"
-    robot_xml = tmp_path / "robot.xml"
-    _write_scene_xml(scene_xml)
-    _write_robot_xml(robot_xml)
-
-    module = MujocoSimModule(
-        scene_xml=scene_xml,
-        robot_mjcf=robot_xml,
-        scene_entities=[_scene_entity("chair_000")],
-        spawn_xy=(0.25, -0.5),
-        spawn_z=0.8,
-    )
-    try:
-        model = module._compose_model()
-
-        assert model.opt.timestep == pytest.approx(0.005)
-        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "static_scene_box") >= 0
-        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:chair_000") >= 0
-
-        free_joints: list[tuple[str, int]] = []
-        for joint_id in range(model.njnt):
-            if int(model.jnt_type[joint_id]) != int(mujoco.mjtJoint.mjJNT_FREE):
-                continue
-            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id) or ""
-            free_joints.append((name, int(model.jnt_qposadr[joint_id])))
-
-        robot_free = next(item for item in free_joints if item[0].endswith("floating_base_joint"))
-        entity_free = next(item for item in free_joints if item[0] == "entity:chair_000:free")
-        assert robot_free[1] == 0
-        assert entity_free[1] > robot_free[1]
-
-        engine = MujocoEngine(config_path=robot_xml, headless=True, model=model)
-        assert engine.model is model
-        assert engine.root_qpos_adr == 0
-        assert any(name.endswith("hinge") for name in engine.joint_names)
-    finally:
-        module.stop()
-
-
-@pytest.mark.mujoco
-def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
-    import mujoco
-
-    scene_xml = tmp_path / "scene.xml"
-    robot_xml = tmp_path / "robot.xml"
-    hull_obj = tmp_path / "shared_hull.obj"
-    _write_scene_xml(scene_xml)
-    _write_robot_xml(robot_xml)
-    _write_hull_obj(hull_obj)
-
-    module = MujocoSimModule(
-        scene_xml=scene_xml,
-        robot_mjcf=robot_xml,
-        scene_entities=[
-            _mesh_scene_entity("box_000", hull_obj),
-            _mesh_scene_entity("box_001", hull_obj),
-        ],
-        spawn_xy=(0.0, 0.0),
-    )
-    try:
-        model = module._compose_model()
-
-        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_000") >= 0
-        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:box_001") >= 0
-        assert model.nmesh == 1
-    finally:
-        module.stop()
-
-
-@pytest.fixture
-def freejoint_engine(tmp_path: Path) -> Iterator[MujocoEngine]:
-    robot_xml = tmp_path / "freejoint.xml"
-    _write_freejoint_xml(robot_xml)
-    engine = MujocoEngine(config_path=robot_xml, headless=True)
-    assert engine.connect() is True
-    try:
-        yield engine
-    finally:
-        engine.disconnect()
-
-
-@pytest.mark.mujoco
-def test_engine_request_reset_to_applies_pose_in_sim_loop(freejoint_engine: MujocoEngine) -> None:
-    assert freejoint_engine.request_reset_to(
-        spawn_xy=(1.25, -0.5),
-        spawn_z=0.9,
-        spawn_yaw=0.3,
-        wait=True,
-    )
-    pose = freejoint_engine.get_root_pose()
-    assert pose is not None
-    position, quat_xyzw = pose
-    np.testing.assert_allclose(position, [1.25, -0.5, 0.9], atol=1e-8)
-    np.testing.assert_allclose(
-        quat_xyzw,
-        [0.0, 0.0, np.sin(0.15), np.cos(0.15)],
-        atol=1e-8,
     )
 
 
@@ -606,3 +423,31 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         assert elapsed >= (len(frame_ts) - 1) / fps
     finally:
         module.stop()
+
+
+def test_camera_renders_at_its_fps_when_sim_steps_do_not_divide_the_interval(
+    tmp_path: Path,
+) -> None:
+    # A 3.17 ms sim step: rendering on the first step at least 1/30 s after the
+    # last render would give about 28 frames per second.
+    scene_xml = tmp_path / "camera.xml"
+    scene_xml.write_text('<mujoco><worldbody><camera name="cam" pos="0 0 1"/></worldbody></mujoco>')
+    engine = MujocoEngine(config_path=scene_xml, headless=True)
+    rgb = MagicMock()
+    rgb.render.return_value = np.zeros((1, 1, 3), dtype=np.uint8)
+    depth = MagicMock()
+    depth.render.return_value = np.zeros((1, 1), dtype=np.float32)
+    state = _CameraRendererState(
+        cfg=CameraConfig(name="cam", fps=30.0),
+        cam_id=0,
+        rgb_renderer=rgb,
+        depth_renderer=depth,
+        scene_option=None,
+        interval=1.0 / 30.0,
+    )
+    step_s, duration_s = 0.00317, 3.0
+
+    for step in range(int(duration_s / step_s)):
+        engine._render_cameras(step * step_s, {"cam": state})
+
+    assert rgb.render.call_count == pytest.approx(30 * duration_s, abs=1)

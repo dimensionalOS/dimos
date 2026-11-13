@@ -19,9 +19,9 @@ use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, chunk_points, coarse_of_fine, emit_points, emit_points_fine,
-    emit_points_ungated, global_normal_fits, global_normals, metric_voxel_keys, seed_points,
-    seed_tile, update_map, ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
+    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
+    global_normal_fits, global_normals, seed_points, seed_tile, update_map, ChunkKey, Config,
+    Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -75,14 +75,24 @@ impl Mapper {
 
     /// Register a sensor-frame cloud into the world by `pose` and fold it into
     /// the map.
-    pub fn add_frame(&mut self, mut sensor_points: Vec<Point>, pose: Pose) {
+    pub fn add_frame(&mut self, sensor_points: Vec<Point>, pose: Pose) {
+        let mut sensor_points = self.pre_trace_subsample(sensor_points);
         register(&mut sensor_points, pose);
         self.ingest(sensor_points, pose.position);
     }
 
     /// Fold an already world-frame cloud into the map, raycasting from `origin`.
     pub fn add_frame_world(&mut self, world_points: Vec<Point>, origin: Point) {
+        let world_points = self.pre_trace_subsample(world_points);
         self.ingest(world_points, origin);
+    }
+
+    /// Every `pre_trace_subsample`th point of a lidar cloud, before any other step.
+    fn pre_trace_subsample(&self, points: Vec<Point>) -> Vec<Point> {
+        match self.config.pre_trace_subsample {
+            0 | 1 => points,
+            step => points.into_iter().step_by(step as usize).collect(),
+        }
     }
 
     /// Bulk-seed a world-frame map cloud with no ray tracing, creating only
@@ -234,26 +244,6 @@ impl Mapper {
             .install(|| global_normal_fits(&self.map, self.config.voxel_size))
     }
 
-    /// Delete the voxels covering `points`, world-frame metric positions the
-    /// caller knows to be free. Returns how many voxels were removed.
-    ///
-    /// This frame's live hits are dropped alongside them, so a cleared voxel
-    /// cannot come back out of the live overlay before the next frame replaces
-    /// it.
-    pub fn clear_metric(&mut self, points: impl IntoIterator<Item = Point>) -> usize {
-        let keys: Vec<_> = metric_voxel_keys(points, self.config.voxel_size).collect();
-        for key in &keys {
-            self.live.coarse.remove(key);
-        }
-        if let Some((divisor, _)) = self.config.fine_layer() {
-            let cleared: AHashSet<_> = keys.iter().copied().collect();
-            self.live
-                .fine
-                .retain(|&fine| !cleared.contains(&coarse_of_fine(fine, divisor as i32)));
-        }
-        self.map.clear_voxels(keys)
-    }
-
     /// Reset to an empty map, keeping the config.
     pub fn clear(&mut self) {
         self.map.clear();
@@ -295,12 +285,14 @@ mod tests {
             fine_divisor: 0,
             emit_fine: false,
             max_range: 100.0,
+            pre_trace_subsample: 1,
             ray_subsample: 1,
             shadow_depth: 2.0,
             grace_depth: 0.0,
             min_health: 0,
             max_health: 1,
             graze_cos: 0.5,
+            graze_recent_frames: u32::MAX,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
@@ -311,8 +303,9 @@ mod tests {
             tf_wait_timeout_s: 0.05,
             worker_threads: 4,
             region_m: 4.0,
+            viz_cell_m: 4.0,
             viz_emit_every: 0,
-            viz_sweep_regions: 0,
+            viz_sweep_cells: 0,
         }
     }
 
@@ -417,25 +410,6 @@ mod tests {
             mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
             assert_eq!((mapper.local_due(), mapper.global_due()), (false, false));
         }
-    }
-
-    /// The ghost case: a sensor deposits returns off its own body, then tells
-    /// the mapper that volume is free. Ray tracing never reaches it because the
-    /// body occludes what is behind it, so the mask is the only way out.
-    #[test]
-    fn clear_metric_erases_voxels_ray_tracing_cannot_reach() {
-        let mut mapper = Mapper::new(config());
-        let pose = Pose {
-            position: (0.0, 0.0, 0.0),
-            orientation: IDENTITY,
-        };
-        mapper.add_frame(vec![(5.5, 0.5, 0.5)], pose);
-        assert_eq!(mapper.global_points(), vec![5.5, 0.5, 0.5]);
-
-        assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 1);
-
-        assert!(mapper.global_points().is_empty());
-        assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 0);
     }
 
     #[test]

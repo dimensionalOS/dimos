@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Install the Pi and dimcode CLIs and ripgrep for the agent eval tests (dimos/evals/agents),
+# into the npm prefix given as $1, by default the dimos-test-clis cache directory.
+# dimcode needs Node 24: hosts running another version get a private Node 24 next to
+# the CLIs. The prefix must not have a "dimos" path component, because the no_dimos
+# evals drop such PATH entries.
+set -euo pipefail
+prefix=${1:-"${XDG_CACHE_HOME:-$HOME/.cache}/dimos-test-clis"}
+packages=(@earendil-works/pi-coding-agent@0.85.1 @dimensionalos/dimcode@0.1.0-next.7 @vscode/ripgrep@1.18.0)
+flags=(--no-fund --no-audit)
+case "$(node --version 2>/dev/null || true)" in
+  v24.*) ;;
+  *) packages+=(node@24) ;;
+esac
+# A version-manager shim can run npm under a different node than the one on PATH.
+# Check npm's runtime before hiding engine warnings; the private Node runs the CLIs.
+npm_node_version=$(npm version --json | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).node')
+case "$npm_node_version" in
+  24.*) ;;
+  *) flags+=(--loglevel=error) ;;
+esac
+npm install --prefix "$prefix" "${flags[@]}" "${packages[@]}"
+
+# Pi's grep tool (dimcode bundles Pi) otherwise downloads rg into each test's
+# isolated HOME. This package ships platform binaries in npm; expose rg beside
+# the CLIs on the tests' PATH. Resolved by platform package rather than through
+# the ESM entry point, which the host node may be too old to require().
+rg_path=$(node -p "require.resolve('@vscode/ripgrep-' + process.platform + '-' + process.arch + '/bin/rg', {paths: [process.argv[1]]})" "$prefix")
+ln -sf "$rg_path" "$prefix/node_modules/.bin/rg"
+"$prefix/node_modules/.bin/rg" --version

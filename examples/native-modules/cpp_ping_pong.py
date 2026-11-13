@@ -31,7 +31,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 
-_BUILD = "nix build .#default"
+_BUILD = "nix build -L path:.#dimos-native-module-examples-cpp"
 
 
 class PingConfig(NativeModuleConfig):
@@ -70,7 +70,9 @@ def blueprint() -> Blueprint:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--transport", choices=["lcm", "zenoh"], default="lcm")
     args = parser.parse_args()
 

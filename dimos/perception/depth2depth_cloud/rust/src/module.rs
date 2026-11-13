@@ -96,6 +96,9 @@ pub struct Config {
     shape_ema: f64,
     #[validate(range(min = 1, max = 1000000))]
     min_anchors: i64,
+    /// One lidar anchor per `anchor_step` x `anchor_step` pixel block (the nearest); 1 keeps them all.
+    #[validate(range(min = 1, max = 64))]
+    anchor_step: i64,
     /// Pixels leaning on nearby lidar less than this (0..1) are left out of the cloud; 0 keeps all.
     #[validate(range(min = 0.0, max = 1.0))]
     min_support: f64,
@@ -501,9 +504,15 @@ impl Worker {
                 seconds(&frame.header.stamp),
             );
             let anchored = Instant::now();
-            let visible =
-                depth2depth::cloud::visible_anchors(&anchors, &map.camera, map.height, map.width);
-            let mut calibrated = calibration.apply(&frame.pred, map.height, map.width, &visible);
+            let visible = depth2depth::cloud::thin_anchors(
+                depth2depth::cloud::visible_anchors(&anchors, &map.camera, map.height, map.width),
+                cfg.anchor_step as usize,
+                map.height,
+                map.width,
+            );
+            // Only the pixels the cloud keeps are calibrated.
+            let mut calibrated =
+                calibration.apply_for_cloud(&frame.pred, map.height, map.width, &visible, &options);
             for (depth, support) in calibrated.depth.iter_mut().zip(&calibrated.support) {
                 if (*support as f64) < cfg.min_support {
                     *depth = 0.0;

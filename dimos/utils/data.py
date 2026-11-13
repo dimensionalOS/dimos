@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -82,6 +83,8 @@ def get_project_root() -> Path:
     with FileLock(data_dir / "repo.lock"):
         # Clone if not already cloned
         if not (repo_dir / ".git").exists():
+            logger.info("Cloning the DimOS repository for its data files", path=str(repo_dir))
+            started = time.monotonic()
             try:
                 env = os.environ.copy()
                 env["GIT_LFS_SKIP_SMUDGE"] = "1"
@@ -106,6 +109,9 @@ def get_project_root() -> Path:
                     f"Failed to clone dimos repository: {e.stderr}\n"
                     f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
                 )
+            logger.info(
+                "Cloned the DimOS repository", duration=f"{time.monotonic() - started:.1f}s"
+            )
 
     return repo_dir
 
@@ -117,8 +123,12 @@ def get_data_dir(extra_path: str | None = None) -> Path:
     return get_project_root() / "data"
 
 
-def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
-    """A path, a stem in the working directory or project root, or an LFS name to pull."""
+def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = True) -> Path:
+    """A path, a stem in the working directory or project root, or an LFS name to pull.
+
+    Without ``must_exist`` a name found nowhere is where it would be created: a
+    bare name in the project root, a path as given; nothing is pulled.
+    """
     s = str(name)
     names = [s] if not suffix or s.endswith(suffix) else [s, s + suffix]
     for candidate in names:
@@ -128,6 +138,8 @@ def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
         if (DIMOS_PROJECT_ROOT / p).exists():
             return DIMOS_PROJECT_ROOT / p
     p = Path(names[-1])
+    if not must_exist:
+        return p if p.is_absolute() or p.parent != Path() else DIMOS_PROJECT_ROOT / p
     if p.is_absolute():
         return p
     try:
@@ -235,11 +247,22 @@ def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
 
 
 def _decompress_archive(filename: str | Path) -> Path:
+    """Extract ``<name>.tar.gz``, whose single top-level entry is ``<name>``.
+
+    Extracts into a staging directory and renames the entry into place, so a
+    concurrent reader sees either nothing or the complete tree.
+    """
     target_dir = get_data_dir()
     filename_path = Path(filename)
-    with tarfile.open(filename_path, "r:gz") as tar:
-        tar.extractall(target_dir)
-    return target_dir / filename_path.name.replace(".tar.gz", "")
+    name = filename_path.name.replace(".tar.gz", "")
+    staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=f".{name}."))
+    try:
+        with tarfile.open(filename_path, "r:gz") as tar:
+            tar.extractall(staging, filter="data")
+        (staging / name).rename(target_dir / name)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return target_dir / name
 
 
 def _pull_lfs_archive(filename: str | Path) -> Path:
@@ -314,8 +337,12 @@ def get_data(name: str | Path) -> Path:
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
-    # download and decompress the archive root
-    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+    # Parallel callers (threads, pytest-xdist workers) must not extract the
+    # same archive at once: a reader would see half-written files.
+    with FileLock(data_dir / f".{archive_name}.lock"):
+        if not (data_dir / archive_name).exists():
+            _decompress_archive(_pull_lfs_archive(archive_name))
+    archive_path = data_dir / archive_name
 
     # return full path including nested components
     if nested_path:
@@ -374,7 +401,8 @@ class LfsPath(type(Path())):  # type: ignore[misc]
             return object.__getattribute__(self, name)
 
         # Copying and serializer/type introspection must inspect the lazy wrapper,
-        # not materialize the asset (including probes for absent attributes).
+        # not materialize the asset (including probes for absent attributes). The CBOR
+        # codec is not listed: it looks cbor_encode up on the class, never the instance.
         if name in (
             "_lfs_filename",
             "_lfs_resolved_cache",
@@ -390,6 +418,13 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         # For all other attributes, ensure download first then delegate to resolved path
         resolved = object.__getattribute__(self, "_ensure_downloaded")()
         return getattr(resolved, name)
+
+    def cbor_encode(self) -> str:
+        return str(object.__getattribute__(self, "_lfs_filename"))
+
+    @classmethod
+    def cbor_decode(cls, filename: str) -> "LfsPath":
+        return cls(filename)
 
     def __copy__(self) -> "LfsPath":
         copied = LfsPath(self._lfs_filename)

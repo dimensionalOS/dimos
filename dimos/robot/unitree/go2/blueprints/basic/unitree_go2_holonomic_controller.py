@@ -79,7 +79,7 @@ unitree_go2_holonomic_controller = (
         # calibration artifact was characterized against the velocity API, so
         # under the default the commanded and achieved speeds disagree — the
         # robot runs hot and glides past the goal.
-        GO2Connection.blueprint(velocity_api=True),
+        GO2Connection.blueprint(obstacle_avoidance=False, velocity_api=True),
         _Go2HolonomicCoordinator.blueprint(
             instance_name="ControlCoordinator",
             publish_joint_state=True,
@@ -97,10 +97,13 @@ unitree_go2_holonomic_controller = (
                 # preempts the priority-10 follower for repositioning.
                 TaskConfig(
                     name="vel_go2",
-                    type="velocity",
+                    type="twist_velocity",
                     joint_names=_go2_joints,
                     priority=20,
-                    params={"zero_on_timeout": False},
+                    params={
+                        "axes": ["linear.x", "linear.y", "angular.z"],
+                        "zero_on_timeout": False,
+                    },
                 ),
                 # Sole path/speed consumer: the progress-indexed
                 # holonomic full-pose tracker. Self-calibrates from the
@@ -148,5 +151,4 @@ unitree_go2_holonomic_controller = (
             ("go2_joints", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(obstacle_avoidance=False)
 )

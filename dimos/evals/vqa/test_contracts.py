@@ -43,14 +43,18 @@ from dimos.evals.vqa.families import (
 from dimos.evals.vqa.generate import (
     GenerationFrame,
     GenerationRequest,
+    GenerationResult,
     PrivateLabel,
     PublicCase,
     VqaGenerationConfig,
+    generate_dataset,
     generate_frames_dataset,
+    resolve_generation_frame_indices,
 )
+from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
 from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
 from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
-from dimos.evals.vqa.suite import load_suite
+from dimos.evals.vqa.suite import format_case_inputs, load_suite
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
@@ -817,6 +821,133 @@ def test_generation_request_selects_frame_range() -> None:
     assert request.frame_indices() == range(2, 10, 3)
 
 
+def test_resolve_generation_frame_indices_rejects_quality_window() -> None:
+    request = GenerationRequest(
+        dataset="recording.db",
+        start=0,
+        stop=10,
+        quality_window=0.5,
+    )
+    with pytest.raises(ValueError, match="quality_window"):
+        resolve_generation_frame_indices(request, image_count=10)
+
+
+def test_generate_dataset_forwards_quality_window_indices(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: list[int] = []
+    seen_selection: list[tuple[object, int, int, float, float | None]] = []
+
+    class _FakeImage:
+        pass
+
+    class _FakeLoader:
+        def __init__(self, dataset: object, tolerance_s: float = 0.1) -> None:
+            self.image_count = 200
+            self.images = object()
+
+        def __enter__(self) -> _FakeLoader:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def load_image(self, index: int) -> _FakeImage:
+            return _FakeImage()
+
+        def load(self, index: int) -> object:
+            raise PointCloudFrameUnavailableError(f"no point cloud for {index}")
+
+    class _FakeModel:
+        def __init__(self) -> None:
+            self.config = type("config", (), {"model_name": "fake"})()
+
+        def stop(self) -> None:
+            return None
+
+    def fake_select_quality_indices(
+        images: object,
+        start: int,
+        stop: int,
+        *,
+        quality_window: float,
+        min_brightness: float | None = None,
+    ) -> tuple[int, ...]:
+        seen_selection.append((images, start, stop, quality_window, min_brightness))
+        return (12, 22)
+
+    def fake_generate_frames_dataset(
+        request: GenerationRequest,
+        frames: object,
+        *_args: object,
+        **_kwargs: object,
+    ) -> GenerationResult:
+        for frame in frames:  # type: ignore[attr-defined]
+            captured.append(frame.index)
+        return GenerationResult(
+            output=request.output_directory(),
+            cases=(
+                PublicCase(
+                    id="q",
+                    image="assets/frame.png",
+                    question="Is there a chair?",
+                    choices=("yes", "no"),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("dimos.evals.vqa.generate.PointCloudFrameLoader", _FakeLoader)
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.select_quality_indices", fake_select_quality_indices
+    )
+    monkeypatch.setattr("dimos.models.vl.openai.OpenAIVlModel", _FakeModel)
+    monkeypatch.setattr("dimos.models.vl.moondream.MoondreamVlModel", _FakeModel)
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.generate_frames_dataset", fake_generate_frames_dataset
+    )
+    monkeypatch.setattr(
+        "dimos.evals.vqa.generate.EdgeTAMObjectMaskPipeline", lambda detector: object()
+    )
+    monkeypatch.setattr("dimos.evals.vqa.generate.LidarRangeEstimator", lambda masks: object())
+    monkeypatch.setattr("dimos.evals.vqa.generate.OpenAIQuestionAuthor", lambda model: object())
+
+    result = generate_dataset(
+        GenerationRequest(
+            dataset="recording.db",
+            start=0,
+            stop=100,
+            quality_window=0.5,
+            min_brightness=0.1,
+            output=tmp_path / "out",
+        )
+    )
+    assert len(seen_selection) == 1
+    assert seen_selection[0][1:] == (0, 100, 0.5, 0.1)
+    assert captured == [12, 22]
+    assert result.output == tmp_path / "out"
+
+
+def test_generation_request_rejects_quality_window_with_image_index() -> None:
+    with pytest.raises(ValidationError, match="quality_window"):
+        GenerationRequest(dataset="go2_short", image_index=4, quality_window=0.5)
+
+
+def test_generation_request_rejects_quality_window_with_stride() -> None:
+    with pytest.raises(ValidationError, match="quality_window"):
+        GenerationRequest(
+            dataset="go2_short",
+            start=0,
+            stop=100,
+            stride=10,
+            quality_window=0.5,
+        )
+
+
+def test_generation_request_rejects_min_brightness_without_quality_window() -> None:
+    with pytest.raises(ValidationError, match="min_brightness"):
+        GenerationRequest(dataset="go2_short", start=0, stop=100, min_brightness=0.1)
+
+
 @pytest.mark.parametrize(
     "selection",
     (
@@ -850,6 +981,57 @@ def test_standalone_rows_match_public_private_contract() -> None:
         "id": "frame-000004-chair-presence",
         "answer": "yes",
     }
+
+
+def test_format_case_inputs_adds_body_frame_rules_for_spatial_choices() -> None:
+    image_case = PublicCase(
+        id="presence",
+        image="assets/x.png",
+        question="Is there a chair?",
+        choices=("yes", "no"),
+    )
+    region_case = PublicCase(
+        id="horizontal",
+        image="assets/x.png",
+        question="Which third of the image contains the chair?",
+        choices=("left", "center", "right"),
+    )
+    ego_case = PublicCase(
+        id="ego",
+        image="assets/x.png",
+        question="Is the chair ahead of the robot or behind it?",
+        choices=("ahead", "behind"),
+    )
+    image_inputs = format_case_inputs(image_case)
+    region_inputs = format_case_inputs(region_case)
+    ego_inputs = format_case_inputs(ego_case)
+    assert "Choices: [" in image_inputs
+    assert "Do not refuse" in image_inputs
+    assert "Spatial answering rules" not in image_inputs
+    assert "Spatial answering rules" not in region_inputs
+    assert "ahead" not in region_inputs
+    assert "robot body" not in region_inputs
+    assert "Spatial answering rules" in ego_inputs
+    assert "question time" in ego_inputs
+    assert "robot body" in ego_inputs
+    assert "Earlier frames are history" in ego_inputs
+    assert "only when the referent lies roughly behind" in ego_inputs
+    assert "never invent spellings" in ego_inputs
+    assert 'Choices: ["ahead", "behind"]' in ego_inputs
+
+    turn_case = PublicCase(
+        id="turn",
+        image="assets/x.png",
+        question=(
+            "To face the chair, should the robot turn left, turn right, "
+            "turn around, or is it already ahead?"
+        ),
+        choices=("left", "right", "turn around", "ahead"),
+    )
+    turn_inputs = format_case_inputs(turn_case)
+    assert "Spatial answering rules" in turn_inputs
+    assert '"left"' in turn_inputs and "turn left" in turn_inputs
+    assert "copied verbatim" in turn_inputs
 
 
 @pytest.mark.parametrize("choices", (("yes",), ("yes", "YES")))

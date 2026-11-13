@@ -42,6 +42,8 @@ from dimos.protocol.tf.static_tf_publisher import StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
+    L1_MOUNT,
+    L1_XYZ,
     MID360_MOUNT_PRESETS,
     MID360_XYZ,
 )
@@ -54,6 +56,9 @@ class Go2BaseConfig(StaticTfPublisherConfig):
     # front_camera -> mid360_link, fixed-axis rpy in degrees. Either a raw (roll, pitch,
     # yaw) tuple or a name from MID360_MOUNT_PRESETS.
     mid360_mount: tuple[float, float, float] | str = MID360_MOUNT_PRESETS["SF"]
+    # base_link -> utlidar_lidar (the head L1): metres, and fixed-axis rpy in degrees.
+    l1_xyz: tuple[float, float, float] = L1_XYZ
+    l1_mount: tuple[float, float, float] = L1_MOUNT
     # The front camera's calibration, published at camera_info_hz.
     camera_info: CameraInfo = Field(default_factory=_camera_info_static)
     camera_info_hz: float = Field(default=1.0, gt=0.0)

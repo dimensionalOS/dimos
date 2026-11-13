@@ -92,7 +92,6 @@ recording*.db
 # Downloaded model weights
 FastSAM-x.pt
 yolo11n*.pt
-*mobileclip*
 
 # openspec
 /openspec/changes/archive/

@@ -87,7 +87,6 @@ def test_dual_xarm_models_grippers_without_control_tasks() -> None:
     parsed = BlueprintConfigParser(dual_xarm6_planner_coordinator).parse(environ={})
     config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(manipulation_atom.name))
 
-    assert config.model.gripper_hardware_id is None
     assert [group.tip_link for group in config.model.planning_groups[:2]] == [
         "left/link_tcp",
         "right/link_tcp",

@@ -14,7 +14,7 @@
 
 """Answer-only QA cases for the DimSim apartment scene.
 
-    DIMOS_TRANSPORT=lcm VIEWER=none DIMSIM_HEADLESS=true \\
+    DIMOS_TRANSPORT=lcm VIEWER=none GO2CONNECTION__DIMSIM__HEADLESS=true \\
         dimos evals run dimos.evals.suites.belief_apartment_qa \\
         --agent dimos.evals.agents.pi
 """
@@ -61,7 +61,7 @@ _SAME_DIFF = choice(["same", "different"])
 
 def _environment() -> DimSimEnvironment:
     return DimSimEnvironment(
-        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container", "raw-robot-bridge"],
+        blueprint=["unitree-go2", "unitree-skill-container", "raw-robot-bridge"],
         disable=("wavefront-frontier-explorer", "patrolling-module"),
         scene="apartment",
         raw_bridge=True,

@@ -21,7 +21,7 @@ import time
 from typing import IO
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core.global_config import GlobalConfig
+from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.dimsim.deno_utils import ensure_playwright_chromium
 from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
@@ -38,20 +38,20 @@ _READY_LINE = re.compile(r"^\[bridge:[^\]]*\] ready$")
 
 
 class DimSimProcess:
-    def __init__(self, global_config: GlobalConfig) -> None:
-        self.global_config = global_config
+    def __init__(self, config: DimSimConfig) -> None:
+        self.config = config
         self.process: subprocess.Popen[bytes] | None = None
         self._ready = threading.Event()
 
     def start(self) -> None:
-        scene = self.global_config.dimsim_scene
+        scene = self.config.scene
         _check_lfs_stubs(scene)
 
         deno_path = ensure_deno()
         base_cmd = _deno_cmd(deno_path, _DIMSIM_DIR)
 
-        port = self.global_config.dimsim_port
-        headless = self.global_config.dimsim_headless
+        port = self.config.port
+        headless = self.config.headless
 
         if headless:
             ensure_playwright_chromium(deno_path)
@@ -91,7 +91,7 @@ class DimSimProcess:
         # gate is headless-only.
         if headless:
             try:
-                self.wait_until_ready(self.global_config.dimsim_ready_timeout)
+                self.wait_until_ready(self.config.ready_timeout)
             except BaseException:
                 self.stop()
                 raise
@@ -117,7 +117,7 @@ class DimSimProcess:
                 raise TimeoutError(
                     f"DimSim did not report ready within {timeout:.0f} s. A cold start builds "
                     "the frontend and launches Chromium inside this window; run "
-                    "bin/dimsim-prepare first or raise --dimsim-ready-timeout."
+                    "bin/dimsim-prepare first or raise --go2connection.dimsim.ready-timeout."
                 )
 
     def stop(self) -> None:

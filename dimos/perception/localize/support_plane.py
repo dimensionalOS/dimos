@@ -30,9 +30,9 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-PLANE_DISTANCE = 0.01  # m - RANSAC inlier distance for depth-camera clouds
-PLANE_DISTANCE_CLOUD = 0.03  # m - registered lidar is noisier
+PLANE_DISTANCE = 0.01  # m - RANSAC inlier distance
 MIN_HORIZONTAL_DOT = 0.90  # |normal . z| for a plane to count as horizontal
+PLANE_INLIER_QUANTILE = 0.15  # anchor plane offset near the base of the inlier slab
 PLANE_SEED = 0  # so one window always fits the same plane
 
 
@@ -48,14 +48,17 @@ class SupportPlane:
         return heights
 
 
-def fit_support_plane(rig: Rig, keyframes: list[Observation[Image]]) -> SupportPlane | None:
-    """Dominant near-horizontal plane; non-horizontal candidates are peeled off."""
+def fit_support_plane(
+    rig: Rig, keyframes: list[Observation[Image]], frame: str
+) -> SupportPlane | None:
+    """Dominant near-horizontal plane in one camera's keyframes; non-horizontal
+    candidates are peeled off."""
     if not keyframes:
         return None
 
     clouds = []
     for obs in keyframes[:: max(1, len(keyframes) // 5)][:5]:
-        cloud = rig.backdrop(obs.ts)
+        cloud = rig.backdrop(obs.ts, frame)
         if cloud is not None:
             clouds.append(cloud.voxel_downsample(0.01))
     if not clouds:
@@ -71,27 +74,28 @@ def fit_support_plane(rig: Rig, keyframes: list[Observation[Image]]) -> SupportP
     import open3d as o3d
 
     o3d.utility.random.seed(PLANE_SEED)
-    distance = PLANE_DISTANCE if rig.depth is not None else PLANE_DISTANCE_CLOUD
     remaining = o3d.geometry.PointCloud()
     remaining.points = o3d.utility.Vector3dVector(points)
-    best: tuple[np.ndarray, int] | None = None
+    best: tuple[np.ndarray, int, np.ndarray] | None = None
     for _ in range(4):
         if len(remaining.points) < 500:
             break
         model, inlier_idx = remaining.segment_plane(
-            distance_threshold=distance, ransac_n=3, num_iterations=1000, probability=1.0
+            distance_threshold=PLANE_DISTANCE, ransac_n=3, num_iterations=1000, probability=1.0
         )
         if abs(model[2]) >= MIN_HORIZONTAL_DOT and (best is None or len(inlier_idx) > best[1]):
-            best = (np.array(model), len(inlier_idx))
+            best = (np.array(model), len(inlier_idx), np.asarray(remaining.points)[inlier_idx])
         remaining = remaining.select_by_index(inlier_idx, invert=True)
 
     if best is None:
         logger.warning("support plane: no horizontal plane found in backdrop")
         return None
 
-    model, _ = best
+    model, _, inliers = best
     if model[2] < 0:
         model = -model
-    return SupportPlane(
-        coefficients=(float(model[0]), float(model[1]), float(model[2]), float(model[3]))
-    )
+    # Thin objects (< 1 cm) sitting on the support surface fall inside the RANSAC
+    # inlier slab and bias the least-squares offset upward; anchoring the offset
+    # at the lower quantile of the inliers keeps the plane on the support surface.
+    d = -float(np.quantile(inliers @ model[:3], PLANE_INLIER_QUANTILE))
+    return SupportPlane(coefficients=(float(model[0]), float(model[1]), float(model[2]), d))

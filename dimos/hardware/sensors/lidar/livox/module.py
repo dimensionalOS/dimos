@@ -54,9 +54,8 @@ from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/livox/rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = "../../../../../../target/release/mid360_native"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/mid360_native"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
     # None derives host_ip from a NIC on the lidar's subnet; a box with two links

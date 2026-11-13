@@ -30,7 +30,7 @@ engine. Python remains the default because the native recorder is experimental;
 MCAP recording currently requires the Rust engine.
 
 The Rust engine records exact `LCMTransport` and `ZenohTransport` streams. It
-rejects SHM, DDS, ROS, WebRTC, pickled, JPEG-transport, mixed LCM/Zenoh, and
+rejects DDS, ROS, WebRTC, untyped, JPEG-transport, mixed LCM/Zenoh, and
 other specialized transports before creating an artifact. Narrow
 `--record-topics` or use the Python engine when a selection contains one of
 those transports. Payloads must also be dimOS LCM message types.
@@ -71,39 +71,59 @@ View contents of the memory by stream:
 ```console
 $ dimos mem summary recordings/<run-id>/memory.db
 
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┓
-┃ Stream         ┃  Items ┃    Hz ┃ Start (UTC)         ┃ Duration ┃       Size ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━┩
-│ lidar          │     43 │   2.0 │ 2026-08-27 03:39:06 │    21.2s │   5.14 MiB │
-│ color_image    │    376 │  17.3 │ 2026-08-27 03:39:06 │    21.6s │   4.26 MiB │
-│ global_map     │      9 │   0.4 │ 2026-08-27 03:39:07 │    20.2s │   3.08 MiB │
-│ global_costmap │      9 │   0.4 │ 2026-08-27 03:39:07 │    20.2s │ 421.03 KiB │
-│ tf             │    981 │  45.2 │ 2026-08-27 03:39:06 │    21.7s │ 292.19 KiB │
-│ cmd_vel        │  1,855 │  99.7 │ 2026-08-27 03:39:07 │    18.6s │ 101.45 KiB │
-│ tele_cmd_vel   │  1,855 │  98.6 │ 2026-08-27 03:39:07 │    18.8s │ 101.45 KiB │
-│ goal           │  1,855 │  98.9 │ 2026-08-27 03:39:07 │    18.8s │  94.20 KiB │
-│ way_point      │  1,855 │  98.9 │ 2026-08-27 03:39:07 │    18.8s │  94.20 KiB │
-│ odom           │    981 │  45.2 │ 2026-08-27 03:39:06 │    21.7s │  82.39 KiB │
-│ stop_movement  │  1,855 │  98.9 │ 2026-08-27 03:39:07 │    18.7s │  16.30 KiB │
-│ camera_info    │     24 │     - │ 2026-08-27 03:38:56 │     0.0s │   8.67 KiB │
-│ nav_cmd_vel    │      3 │  32.8 │ 2026-08-27 03:39:28 │     0.1s │   168.00 B │
-│ goal_request   │      1 │     - │ 2026-08-27 03:39:28 │     0.0s │    86.00 B │
-│ path           │      2 │ 289.1 │ 2026-08-27 03:39:28 │     0.0s │    68.00 B │
-│ goal_reached   │      1 │     - │ 2026-08-27 03:39:28 │     0.0s │     9.00 B │
-├────────────────┼────────┼───────┼─────────────────────┼──────────┼────────────┤
-│ total          │ 11,705 │       │                     │          │  13.66 MiB │
-└────────────────┴────────┴───────┴─────────────────────┴──────────┴────────────┘
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Stream          ┃ Type                      ┃ Items ┃ Poses ┃   Hz ┃ Start (UTC)         ┃ Duration ┃       Size ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━┩
+│ lidar           │ sensor_msgs.PointCloud2   │   146 │     - │  1.9 │ 2026-10-22 15:28:34 │    75.9s │  15.10 MiB │
+│ color_image     │ sensor_msgs.Image         │ 1,356 │     - │ 18.5 │ 2026-10-22 15:28:36 │    73.4s │  14.93 MiB │
+│ global_map      │ sensor_msgs.PointCloud2   │    29 │     - │  0.4 │ 2026-10-22 15:28:39 │    70.4s │   3.54 MiB │
+│ tf              │ tf2_msgs.TFMessage        │ 3,583 │     - │ 48.8 │ 2026-10-22 15:28:36 │    73.4s │   1.04 MiB │
+│ global_costmap  │ nav_msgs.OccupancyGrid    │    29 │     - │  0.4 │ 2026-10-22 15:28:39 │    70.4s │ 750.88 KiB │
+│ odom            │ geometry_msgs.PoseStamped │ 3,583 │     - │ 48.8 │ 2026-10-22 15:28:36 │    73.4s │ 300.92 KiB │
+│ camera_info     │ sensor_msgs.CameraInfo    │    76 │     - │  1.0 │ 2026-10-22 15:28:37 │    75.0s │  27.46 KiB │
+│ mapper_frame_ms │ std_msgs.Float32          │   146 │     - │  2.0 │ 2026-10-22 15:28:37 │    72.6s │   1.71 KiB │
+│ pgo_keyframes   │ geometry_msgs.PoseArray   │     1 │     - │    - │ 2026-10-22 15:28:34 │     0.0s │    90.00 B │
+│ goal_request    │ geometry_msgs.PoseStamped │     1 │     - │    - │ 2026-10-22 15:29:50 │     0.0s │    86.00 B │
+│ nav_cmd_vel     │ geometry_msgs.Twist       │     1 │     - │    - │ 2026-10-22 15:29:50 │     0.0s │    56.00 B │
+│ pgo_loops       │ nav_msgs.LineSegments3D   │     1 │     - │    - │ 2026-10-22 15:28:34 │     0.0s │    34.00 B │
+├─────────────────┼───────────────────────────┼───────┼───────┼──────┼─────────────────────┼──────────┼────────────┤
+│ total           │                           │ 8,952 │       │      │                     │          │  35.66 MiB │
+└─────────────────┴───────────────────────────┴───────┴───────┴──────┴─────────────────────┴──────────┴────────────┘
 ```
-Replay memory from DB:
+Replay a recording, SQLite or MCAP:
 ```bash
 dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
+dimos --replay --replay-db recordings/<run-id>/memory.mcap run unitree-go2
 ```
 
-`--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds. `dimos map pose-fill` instead derives poses from `odom` by default.
+An MCAP replay loads each replayed stream into memory at start, so memory use grows with the length of the recording.
+
+`--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds.
+
+## Spatial queries
+
+`stream.near(pose, radius)` matches the pose attached to each observation. `--record` attaches none, so `near()` on a fresh recording returns nothing and warns. The `Poses` column of `dimos mem summary` counts the observations that have a pose.
+
+When `near()` follows a transformation, it checks the transformed observations. If the transformed stream is nonempty and has no poses, it warns when that stream ends; a live stream may never end. A transformation that attaches poses can make spatial queries work without changing the recording.
+
+`dimos map pose-fill` writes a copy of a SQLite recording with poses attached to one stream:
+
+```bash
+dimos map pose-fill recordings/<run-id>/memory.db --target color_image --pose-source odom
+```
+
+- `--target` is the stream that gets the poses (default `lidar`).
+- `--pose-source` is a stream of pose messages, such as `PoseStamped` or `Odometry` (default `odom`). Each target observation takes the pose nearest in time.
+- The copy lands beside the source as `memory_posed.db`. Run the command on the copy to fill another stream.
+- Target observations with no pose within `--tolerance` (default 0.1 s) are left out of the copy.
+- MCAP recordings cannot be pose-filled. Record with `--record sqlite` for spatial queries.
 
 ## Behavior
 
 - Off unless `--record`; never active under `--replay`.
+- The Python recorder automatically subscribes to new streams when modules are
+  added to a recording run through `Dimos.connect().run(...)`. The same topic
+  filters apply, and messages go into the run's existing `memory.db`.
 - The Python recorder uses one writer thread. Its queue holds 1000 messages, then
   drops and warns. The Rust recorder uses its existing native encoding pool and
   ordered writer pipeline.

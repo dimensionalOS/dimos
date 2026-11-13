@@ -1,5 +1,9 @@
 # Agents
 
+To run the on-robot agent, see [The on-robot agent](/docs/usage/agent.md).
+To integrate with a running system, see the [Python agent runtime](/docs/usage/agent/runtime.md) and
+[client SDK](/docs/usage/agent/sdk.md). The sections below cover the native `Agent` agent and module skills.
+
 LLM agents run as native dimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
 ## Architecture
@@ -14,7 +18,7 @@ boxrad = 5px
 
 Input: box "humancli / WebInput" "dimos agent-send" fit wid 170% ht 170%
 arrow right 0.85in "human_input" above "In[str]" below
-Agent: box "McpClient" "LangGraph + LLM" fit wid 170% ht 170%
+Agent: box "Agent" "LangGraph + LLM" fit wid 170% ht 170%
 Skills: box "@skill methods" "on any Module" fit wid 170% ht 170% \
     with .w at (Agent.e.x + 0.9in, Agent.e.y)
 arrow right 0.5in from Skills.e
@@ -39,12 +43,12 @@ arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
 
 ![output](assets/agent_architecture.svg)
 
-**McpClient** (`dimos/agents/mcp/mcp_client.py`) is a `Module` with:
+**Agent** (`dimos/agents/agent.py`) is a `BaseAgent`, the `Module` in `dimos/agents/base_agent.py` that declares its streams:
 - `human_input: In[str]`: receives text from `humancli`, `WebInput`, or `agent-send`
-- `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
+- `agent: Out[BaseMessage]`: publishes the transcript: human input, agent responses (text, tool calls), tool results, and the turns fed to the model on a tool's behalf (`[tool:<name>]` stream updates, image artefacts tagged with the tool name in `additional_kwargs`), which chat UIs render as tool output
 - `agent_idle: Out[bool]`: signals when the agent is waiting for input
 
-The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
+The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools. A blueprint with no `McpServer` and no `mcp_server_url` gives the agent no tools.
 
 ## Skills
 
@@ -75,7 +79,7 @@ class MySkillContainer(Module):
 | `execute_sport_command(command_name)` | `UnitreeSkillContainer` | Unitree sport commands (sit, stand, flip, etc.) |
 | `wait(seconds)` | `UnitreeSkillContainer` | Pause execution |
 | `observe()` | `ObserveSkill` | Capture and return current camera frame |
-| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description |
+| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description. Returns at once; a tool update reports when the robot stops |
 | `tag_location(location_name)` | `NavigationSkillContainer` | Tag current position for later recall |
 | `stop_navigation()` | `NavigationSkillContainer` | Cancel current navigation goal |
 | `follow_person(query)` | `PersonFollowSkillContainer` | Visual servoing to follow a described person |
@@ -88,10 +92,10 @@ class MySkillContainer(Module):
 
 ## MCP
 
-All agentic blueprints use two modules: `McpServer` and `McpClient`.
+All agentic blueprints use two modules: `McpServer` and `Agent`.
 
 * `McpServer` exposes the methods annotated with `@skill` as MCP tools. Any external client can connect to the server to use the MCP tools.
-* `McpClient` has a LangGraph LLM which calls MCP tools from `McpServer`.
+* `Agent` has a LangGraph LLM which calls MCP tools from `McpServer`.
 
 CLI access:
 
@@ -115,4 +119,4 @@ dimos mcp status                                    # Server status
 |--------|-------|-------|
 | Default | `gpt-5.6-luna` | Requires `OPENAI_API_KEY` |
 | `ollama:llama3.1` | Local Ollama | Requires `ollama serve` running |
-| Custom | Any LangChain-compatible | Set via `McpClient.blueprint(model="...")` |
+| Custom | Any LangChain-compatible | Set via `Agent.blueprint(model="...")` |

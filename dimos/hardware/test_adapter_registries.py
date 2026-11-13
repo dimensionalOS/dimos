@@ -32,7 +32,6 @@ from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 # anything else (a typo in a manifest, an internal dimos import breaking,
 # a bad import inside an installed SDK) fails CI.
 OPTIONAL_VENDOR_MODULES = {
-    "a1z",
     "can",
     "cyclonedds",
     "mujoco",
@@ -42,18 +41,11 @@ OPTIONAL_VENDOR_MODULES = {
     "xarm",
 }
 
-# Subpackages containing an adapter.py that intentionally register nothing.
-UNREGISTERED_ADAPTER_DIRS = {
-    # Abstract base used by concrete Damiao robot packages.
-    "dimos.hardware.whole_body.damiao",
-}
-
 # Every name each registry must declare. Removing a name from a manifest is a
 # conscious change: update this set in the same PR.
 EXPECTED_NAMES = {
     "manipulators": {
         "a750",
-        "galaxea_a1z",
         "mock",
         "piper",
         "sim_mujoco",
@@ -67,10 +59,7 @@ EXPECTED_NAMES = {
         "unitree_go2",
     },
     "whole_body": {
-        "dual_openyam_damiao",
         "mock_whole_body",
-        "openarm_damiao",
-        "openyam_damiao",
         "sim_mujoco_g1",
         "transport_lcm",
         "transport_ros",
@@ -111,8 +100,6 @@ def test_every_adapter_dir_has_a_manifest(registry, family) -> None:
     checked = 0
     for pkg_name, max_depth in registry.manifest_roots:
         for sub_pkg, dir_path, depth in _adapter_dirs(pkg_name):
-            if sub_pkg in UNREGISTERED_ADAPTER_DIRS:
-                continue
             assert depth <= max_depth, (
                 f"{dir_path} is deeper than the registry scan depth ({max_depth}); "
                 f"its manifest would never be discovered"

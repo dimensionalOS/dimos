@@ -13,18 +13,25 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from contextlib import ExitStack, closing
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.stream import Transport
+from dimos.experimental.memory import rust_cli_recorder
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class _Transport(Transport[Any]):
@@ -73,6 +80,60 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     store.stop()
 
 
+@pytest.mark.parametrize("ts", [10, 10.0])
+def test_records_tf_with_numeric_timestamp(tmp_path: Path, ts: float) -> None:
+    path = tmp_path / "memory.db"
+    transform = Transform(ts=ts, frame_id="world", child_frame_id="base")
+    transport = _Transport()
+    with SqliteStore(path=str(path)) as store:
+        with closing(TransportRecorder(store)) as recorder, ExitStack() as subscriptions:
+            unsubscribe = recorder.tap("tf", TFMessage, transport)
+            assert unsubscribe is not None
+            subscriptions.callback(unsubscribe)
+            transport.publish(TFMessage(transform))
+        assert recorder.dropped == 0
+
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        rows = store.stream("tf", TFMessage).to_list()
+        assert len(rows) == 1
+        decoded = rows[0].data.transforms
+        assert decoded == [transform]
+        assert decoded[0].ts == ts
+        assert decoded[0].frame_id == "world"
+        assert decoded[0].child_frame_id == "base"
+
+
+def test_depth_is_recorded_losslessly_and_colour_as_jpeg(tmp_path: Path) -> None:
+    pytest.importorskip("turbojpeg")
+    path = tmp_path / "memory.db"
+    store = SqliteStore(path=str(path))
+    store.start()
+    rec = TransportRecorder(store)
+    mm = np.arange(48 * 64, dtype=np.uint16).reshape(48, 64) * 7
+    metres = mm.astype(np.float32) / 1000
+    frames = {
+        "depth16": Image(data=mm, format=ImageFormat.DEPTH16, frame_id="depth_optical", ts=1.0),
+        "depth": Image(data=metres, format=ImageFormat.DEPTH, frame_id="depth_optical", ts=1.0),
+        "color": Image(data=np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=1.0),
+    }
+    for name, frame in frames.items():
+        transport = _Transport()
+        rec.tap(name, Image, transport)
+        transport.publish(frame)
+    rec.close()
+    store.stop()
+
+    store = SqliteStore(path=str(path), must_exist=True)
+    store.start()
+    codecs = {name: store._registry.get(name)["codec_id"] for name in frames}  # type: ignore[index]
+    assert codecs == {"depth16": "lz4+lcm", "depth": "lz4+lcm", "color": "jpeg"}
+    for name in ("depth16", "depth"):
+        decoded = store.stream(name, Image).first().data
+        assert decoded.format == frames[name].format
+        np.testing.assert_array_equal(decoded.data, frames[name].data)
+    store.stop()
+
+
 def test_full_queue_drops_and_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     warnings: list[str] = []
     monkeypatch.setattr(tap.logger, "warning", lambda msg, *args: warnings.append(msg % args))
@@ -110,15 +171,17 @@ def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
 
 
 def test_recording_fails_loudly_when_no_stream_matches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
     monkeypatch.setattr(tap, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(global_config, "record", "sqlite")
     monkeypatch.setattr(global_config, "record_topics", "color_image2")
+    coordinator = mocker.Mock(
+        spec=ModuleCoordinator,
+        transports={("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()},
+    )
     with pytest.raises(ValueError, match="matched none of: lidar, odom"):
-        with tap.recording(
-            {("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()}
-        ):
+        with tap.recording(coordinator):
             pass
     assert not any(tmp_path.rglob("memory.db"))
 
@@ -126,10 +189,9 @@ def test_recording_fails_loudly_when_no_stream_matches(
 def test_recording_delegates_to_rust_session(
     monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
-    from dimos.experimental.memory import rust_cli_recorder
-
     transport = _Transport()
     transports: dict[tuple[str, type], Transport[Any]] = {("odom", PoseStamped): transport}
+    coordinator = mocker.Mock(spec=ModuleCoordinator, transports=transports)
     session = mocker.Mock()
     make_plan = mocker.patch.object(rust_cli_recorder, "make_plan", return_value="plan")
     create_session = mocker.patch.object(
@@ -139,7 +201,7 @@ def test_recording_delegates_to_rust_session(
     monkeypatch.setattr(global_config, "record_engine", "rust")
     monkeypatch.setattr(global_config, "record_topics", "*")
 
-    with tap.recording(transports):
+    with tap.recording(coordinator):
         session.start.assert_called_once_with()
 
     make_plan.assert_called_once_with(transports)

@@ -52,17 +52,28 @@ def _heat(text: str, value: float, column: list[float]) -> str:
     return f"[{_shade(value, lo, hi)}]{text}[/]"
 
 
+def _type_name(t: type | None) -> str:
+    """ROS-style ``pkg.Msg`` for message types, bare class name otherwise."""
+    if t is None:
+        return "—"
+    return getattr(t, "msg_name", None) or t.__qualname__
+
+
 def main(
     dataset: str = typer.Argument(..., help="Dataset .db/.mcap: bare name (cwd or data/) or path"),
 ) -> None:
     """Print per-stream counts, time ranges, and payload sizes for a recorded dataset."""
     from dimos.memory.cli.dataset import open_store, resolve_dataset
+    from dimos.memory.store.sqlite import SqliteStore
 
-    db_path = resolve_dataset(dataset)
-    if db_path.suffix == ".mcap":
+    try:
+        db_path = resolve_dataset(dataset)
+        store = open_store(db_path)
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(str(exc), param_hint="DATASET") from exc
+    if not isinstance(store, SqliteStore):
         # mcap stores don't speak the sqlite _streams table; print the store's own
         # summary. Codecless channels appear as Stream[bytes], flagged [raw bytes: …].
-        store = open_store(db_path)
         with store:
             typer.echo(store.summary())
         return
@@ -71,25 +82,26 @@ def main(
     from rich.progress import Progress
     from rich.table import Table
 
-    from dimos.memory.store.sqlite import SqliteStore
-
-    rows: list[tuple[str, int, float | None, float | None, int]] = []
-    store = SqliteStore(path=str(db_path))
+    rows: list[tuple[str, int, float | None, float | None, int, str, int]] = []
     with store, Progress(transient=True) as prog:
         names = store.list_streams()
+        poses = store.pose_counts()
         task = prog.add_task("scanning", total=len(names))
         for name in names:
             prog.update(task, description=name)
             stream: Stream[Any] = store.stream(name)
             n = stream.count()
             t0, t1 = stream.get_time_range() if n else (None, None)
-            rows.append((name, n, t0, t1, stream.size_bytes() or 0))
+            size, type_name = stream.size_bytes() or 0, _type_name(stream.data_type)
+            rows.append((name, n, t0, t1, size, type_name, poses[name]))
             prog.advance(task)
     rows.sort(key=lambda r: r[4], reverse=True)
 
     table = Table(title=db_path.name)
     table.add_column("Stream", style="cyan")
+    table.add_column("Type", style="magenta")
     table.add_column("Items", justify="right")
+    table.add_column("Poses", justify="right")
     table.add_column("Hz", justify="right")
     table.add_column("Start (UTC)")
     table.add_column("Duration", justify="right")
@@ -102,12 +114,14 @@ def main(
     hz_col = [hz(r[1], r[2], r[3]) for r in rows]
     size_col = [float(r[4]) for r in rows]
 
-    for name, n, t0, t1, size in rows:
+    for name, n, t0, t1, size, type_name, posed in rows:
         dur = t1 - t0 if t0 is not None and t1 is not None else None
         rate = hz(n, t0, t1)
         table.add_row(
             name,
+            type_name,
             _heat(f"{n:,}", n, items_col),
+            f"{posed:,}" if posed else "—",
             _heat(f"{rate:.1f}", rate, hz_col) if rate > 0 else "—",
             datetime.fromtimestamp(t0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             if t0 is not None
@@ -117,7 +131,14 @@ def main(
         )
     table.add_section()
     table.add_row(
-        "total", f"{sum(r[1] for r in rows):,}", "", "", "", human_bytes(sum(r[4] for r in rows))
+        "total",
+        "",
+        f"{sum(r[1] for r in rows):,}",
+        "",
+        "",
+        "",
+        "",
+        human_bytes(sum(r[4] for r in rows)),
     )
 
     console = Console()

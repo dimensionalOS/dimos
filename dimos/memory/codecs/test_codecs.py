@@ -22,9 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pytest
 
-from dimos.memory.codecs.base import Codec, codec_for
+from dimos.memory.codecs.base import Codec, codec_for, codec_id
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
@@ -216,3 +217,24 @@ class TestCodecFor:
         from dimos.memory.codecs.jpeg import JpegCodec
 
         assert isinstance(codec_for(Image), JpegCodec)
+
+    def test_colour_image_sample_returns_jpeg(self) -> None:
+        pytest.importorskip("turbojpeg")
+        rgb = Image(data=np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.RGB)
+
+        assert isinstance(codec_for(Image, sample=rgb), JpegCodec)
+
+    @pytest.mark.parametrize("fmt", [ImageFormat.DEPTH, ImageFormat.DEPTH16, ImageFormat.GRAY16])
+    def test_depth_image_sample_returns_lossless(self, fmt: ImageFormat) -> None:
+        """JPEG is 8-bit colour: uint16 depth comes back as wrong metres, float32 does not encode."""
+        metres = np.linspace(0.5, 6.0, 48 * 64, dtype=np.float32).reshape(48, 64)
+        data = metres if fmt is ImageFormat.DEPTH else (metres * 1000).astype(np.uint16)
+        depth = Image(data=data, format=fmt, frame_id="depth_optical", ts=1.0)
+
+        codec = codec_for(Image, sample=depth)
+        decoded = codec.decode(codec.encode(depth))
+
+        assert codec_id(codec) == "lz4+lcm"
+        assert decoded.format == fmt
+        assert decoded.frame_id == "depth_optical"
+        np.testing.assert_array_equal(decoded.data, depth.data)

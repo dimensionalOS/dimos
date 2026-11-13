@@ -1,0 +1,8 @@
+{
+  "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#dimos-lcm@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
+  "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#lcm-msgs@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
+  "git+https://github.com/dimensionalOS/dimos-module-pointlio.git?rev=22a5403f827d030b248ae473c2808b5d405b3d55#pointlio-core@0.1.0": "sha256-FjUcsZVI8nTcmKw8WhdxBuHelBjOCeJmyEsyqRxDvX0=",
+  "git+https://github.com/dimensionalOS/dimos?rev=30482d5b99126e5404b3c0a56dd0eddc8fcea6a8#dimos-module-macros@0.1.0": "sha256-0Vz5rK97p5kt1Tc3jeVEk6wSFH8RwJQ+wKB+24gbens=",
+  "git+https://github.com/dimensionalOS/dimos?rev=30482d5b99126e5404b3c0a56dd0eddc8fcea6a8#dimos-module@0.1.0": "sha256-0Vz5rK97p5kt1Tc3jeVEk6wSFH8RwJQ+wKB+24gbens=",
+  "git+https://github.com/dimensionalOS/livox-wire?rev=441c4a16dbe2adb0683ece976cc800c6d7fbc790#0.1.0": "sha256-wDNVchRiqm4N9wPGwvYJ9JssmPOC33wBTE4QT6vZkGA="
+}

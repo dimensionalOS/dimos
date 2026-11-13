@@ -18,9 +18,10 @@ use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{rise, CellId, SurfaceCells, SurfaceLookup};
 use crate::dijkstra::{walk_preds, Scored};
-use crate::edges::{NodeEdgeIdx, NodeId, PlannerGraph, NO_NODE};
+use crate::edges::PlannerGraph;
 use crate::mls_planner::Config;
 use crate::nodes::penalty_of;
+use crate::nodes::{NodeId, NO_NODE};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 /// Robot-rooted candidate search radius, in multiples of node spacing.
@@ -275,7 +276,16 @@ pub fn truncate_to_safe(
     // Hold the standoff only when blocked. A clean run to the goal has nothing
     // to stand off from.
     if blocked {
-        return back_off_tail(&waypoints, BEST_EFFORT_DISTANCE_M);
+        let held = back_off_tail(&waypoints, BEST_EFFORT_DISTANCE_M);
+        // A robot already at the standoff has nothing left to follow.
+        return match held.last() {
+            Some(end)
+                if (end.0 - start_pose.0).hypot(end.1 - start_pose.1) >= config.goal_tolerance =>
+            {
+                held
+            }
+            _ => Vec::new(),
+        };
     }
     waypoints
 }
@@ -608,11 +618,8 @@ fn node_dijkstra(
         if d > dist.get(&u).copied().unwrap_or(f32::INFINITY) {
             continue;
         }
-        let Some(adj) = plg.node_adj.get(&u) else {
-            continue;
-        };
-        for &edge_idx in adj {
-            let edge = &plg.node_edges[edge_idx as usize];
+        for &edge_idx in plg.node_edges.adjacent(u) {
+            let edge = &plg.node_edges.edges()[edge_idx as usize];
             let neighbor = if edge.a == u { edge.b } else { edge.a };
             let nd = d + edge.cost;
             if nd < dist.get(&neighbor).copied().unwrap_or(f32::INFINITY) {
@@ -665,9 +672,11 @@ fn assemble_cells(
 
     for pair in node_seq.windows(2) {
         let (a, b) = (pair[0], pair[1]);
-        let edge_idx =
-            edge_between(plg, a, b).expect("consecutive nodes in path must share an edge");
-        let edge = &plg.node_edges[edge_idx as usize];
+        let edge_idx = plg
+            .node_edges
+            .between(a, b)
+            .expect("consecutive nodes in path must share an edge");
+        let edge = &plg.node_edges.edges()[edge_idx as usize];
 
         // The stored corridor runs a to b. Dead cells are skipped: the update
         // safety walk drops broken corridors, so gaps here are rare races.
@@ -842,23 +851,12 @@ fn segment_metrics(
     Some((max_pen, rise(rise_cells, wc.voxel_size)))
 }
 
-fn edge_between(plg: &PlannerGraph, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx> {
-    for &edge_idx in plg.node_adj.get(&a)? {
-        let edge = &plg.node_edges[edge_idx as usize];
-        let other = if edge.a == a { edge.b } else { edge.a };
-        if other == b {
-            return Some(edge_idx);
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::adjacency::{build_surface_cells, build_surface_lookup};
     use crate::edges::build_node_edges;
-    use crate::nodes::NodeData;
+    use crate::nodes::{NodeData, Nodes};
 
     const VOXEL: f32 = 0.1;
     const Z_TOL: f32 = 1.5;
@@ -867,7 +865,7 @@ mod tests {
         let mut plg = PlannerGraph::new();
         build_surface_lookup(surface_cells, &mut plg.surface_lookup);
         build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
-        plg.nodes = node_cells
+        let list = node_cells
             .iter()
             .map(|&c| {
                 let id = plg.cells.id(c).expect("node cell must be in surface");
@@ -877,12 +875,13 @@ mod tests {
                 }
             })
             .collect();
+        let params = truncate_config().placement_params();
+        plg.nodes = Nodes::from_list(&plg.cells, list, &params);
         build_node_edges(
             &plg.cells,
             &plg.nodes,
             &mut plg.cell_state,
             &mut plg.node_edges,
-            &mut plg.node_adj,
         );
         plg
     }
@@ -896,26 +895,7 @@ mod tests {
         start: (f32, f32, f32),
         goal: (f32, f32, f32),
     ) -> Option<Vec<(f32, f32, f32)>> {
-        let config = Config {
-            world_frame: "world".into(),
-            base_frame: "base_link".into(),
-            voxel_size: VOXEL,
-            robot_height: Z_TOL,
-            start_z_offset_m: 0.0,
-            max_overhead_m: 2.0,
-            surface_closing_radius: 0.0,
-            node_spacing_m: 1.0,
-            wall_clearance_m: 0.2,
-            wall_buffer_m: 0.5,
-            wall_buffer_weight: 4.0,
-            step_threshold_m: 0.25,
-            step_penalty_weight: 4.0,
-            goal_tolerance: 0.3,
-            viz_publish_hz: 2.0,
-            viz_region_m: 4.0,
-            viz_sweep_regions: 0,
-            worker_threads: 4,
-        };
+        let config = truncate_config();
         plan(plg, start, goal, &config).map(|(wp, _)| wp)
     }
 
@@ -928,24 +908,14 @@ mod tests {
 
     fn truncate_config() -> Config {
         Config {
-            world_frame: "world".into(),
-            base_frame: "base_link".into(),
             voxel_size: VOXEL,
             robot_height: Z_TOL,
-            start_z_offset_m: 0.0,
-            max_overhead_m: 2.0,
             surface_closing_radius: 0.0,
-            node_spacing_m: 1.0,
             wall_clearance_m: 0.2,
             wall_buffer_m: 0.5,
             wall_buffer_weight: 4.0,
-            step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
-            goal_tolerance: 0.3,
-            viz_publish_hz: 2.0,
-            viz_region_m: 4.0,
-            viz_sweep_regions: 0,
-            worker_threads: 4,
+            ..crate::mls_planner::test_config()
         }
     }
 
@@ -1038,6 +1008,26 @@ mod tests {
             truncate_to_safe(&surface_graph(&near), &cached, robot, &cfg).is_empty(),
             "inside the standoff -> stop"
         );
+    }
+
+    #[test]
+    fn truncate_stops_a_robot_parked_at_the_standoff() {
+        let cfg = truncate_config();
+        let cached: Vec<VoxelKey> = (0..40).map(|x| (x, 0, 0)).collect();
+        let blocked: Vec<VoxelKey> = (0..40).filter(|&x| x != 35).map(|x| (x, 0, 0)).collect();
+        let standoff_x = surface_point_xyz(34, 0, 0, VOXEL).0 - BEST_EFFORT_DISTANCE_M;
+        let z = surface_point_xyz(0, 0, 0, VOXEL).2;
+
+        // Parked short of the standoff, inside the arrival tolerance: nothing left to follow.
+        for short in [0.0, 0.1, 0.2, 0.29] {
+            let robot = (standoff_x - short, 0.0, z);
+            let wp = truncate_to_safe(&surface_graph(&blocked), &cached, robot, &cfg);
+            assert!(wp.is_empty(), "{short} m short of the standoff: {wp:?}");
+        }
+
+        // Further back, the standoff is still ahead to drive to.
+        let robot = (standoff_x - 0.5, 0.0, z);
+        assert!(!truncate_to_safe(&surface_graph(&blocked), &cached, robot, &cfg).is_empty());
     }
 
     #[test]

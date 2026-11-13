@@ -500,6 +500,7 @@ def test_derived_rust_log_keeps_zenoh_quiet(monkeypatch, dimos_level: str, rust_
     monkeypatch.setenv("DIMOS_LOG_LEVEL", dimos_level)
     assert _spawn_env()["RUST_LOG"] == (
         f"{rust_level},zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+        ",zenoh::net::routing::hat::peer=error"
     )
 
 
@@ -507,7 +508,10 @@ def test_rust_log_always_follows_dimos_log_level(monkeypatch) -> None:
     monkeypatch.setenv("RUST_LOG", "trace,zenoh=debug")
     monkeypatch.setenv("DIMOS_LOG_LEVEL", "WARNING")
     env = _spawn_env({"RUST_LOG": "trace"})
-    assert env["RUST_LOG"] == "warn,zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+    assert env["RUST_LOG"] == (
+        "warn,zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+        ",zenoh::net::routing::hat::peer=error"
+    )
 
 
 def test_json_mode_malformed_falls_back_to_plain_text() -> None:
@@ -523,28 +527,36 @@ def test_json_mode_malformed_falls_back_to_plain_text() -> None:
 @pytest.mark.parametrize(
     "module_path,class_name,executable",
     [
-        ("dimos.hardware.sensors.lidar.livox.module", "Mid360", "target/release/mid360_native"),
+        (
+            "dimos.hardware.sensors.lidar.livox.module",
+            "Mid360",
+            "dimos/hardware/sensors/lidar/livox/rust/result/bin/mid360_native",
+        ),
         (
             "dimos.hardware.sensors.lidar.pointlio.module",
             "PointLio",
-            "target/release/pointlio_native",
+            "dimos/hardware/sensors/lidar/pointlio/rust/result/bin/pointlio_native",
         ),
         (
             "dimos.hardware.sensors.lidar.virtual_mid360.module",
             "VirtualMid360",
-            "target/release/virtual_mid360",
+            "dimos/hardware/sensors/lidar/virtual_mid360/result/bin/virtual_mid360",
         ),
         (
             "dimos.mapping.ray_tracing.module",
             "RayTracingVoxelMap",
-            "target/release/voxel_ray_tracing",
+            "dimos/mapping/ray_tracing/rust/result/bin/voxel_ray_tracing",
         ),
         (
             "dimos.navigation.global_planner.mls_planner.mls_planner_native",
             "MLSPlannerNative",
-            "target/release/mls_planner",
+            "dimos/navigation/global_planner/mls_planner/rust/result/bin/mls_planner",
         ),
-        ("dimos.hardware.sensors.camera.v4l2.module", "V4L2Camera", "target/release/v4l2_camera"),
+        (
+            "dimos.hardware.sensors.camera.v4l2.module",
+            "V4L2Camera",
+            "dimos/hardware/sensors/camera/v4l2/rust/result/bin/v4l2_camera",
+        ),
         (
             "dimos.simulation.habitat.connection",
             "HabitatConnection",
