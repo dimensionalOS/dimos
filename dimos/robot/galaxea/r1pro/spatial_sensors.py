@@ -221,7 +221,7 @@ class R1SpatialSensors(Module):
                 else (self.right_wrist, self.right_wrist_depth, self.right_wrist_info)
             )
             published = self._publish(
-                ports, color, depth, calibration, f"{side}_d405_link", _stamp_secs(rgb)
+                ports, color, depth, calibration, f"{side}_D405_link", _stamp_secs(rgb)
             )
             self._stats[side] += int(published)
 

@@ -27,10 +27,10 @@ Point-LIO owns the odometry transform; the connection's wheel-odometry TF is
 disabled to prevent competing parents for the robot model.
 
 Wrist RGB-D subscribes to the installed ROS camera drivers. It needs the physical
-RealSense cameras to enumerate on USB and calibrated `{left,right}_d405_link`
-mount frames in the model. The installed R1_PRO model inspected on 2026-11-12
-contains neither wrist camera mount, and no RealSense USB devices were detected;
-adding subscriptions alone cannot restore those cameras or locate their depth.
+RealSense cameras to enumerate on USB. Frames use the installed vendor model's
+case-sensitive `{left,right}_D405_link` names. No RealSense USB devices were
+detected on 2026-11-12; adding subscriptions alone cannot restore those cameras.
+Wrist depth alignment must be checked against the real scene once connected.
 
 ## Dependency and review structure
 

@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from dimos.mapping.voxels.module import VoxelMapTransformer
+from dimos.mapping.voxels.module import VoxelGridMapper, VoxelMapTransformer
+from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -49,6 +50,26 @@ def test_accumulate_two_frames() -> None:
 def test_empty_stream() -> None:
     xf = VoxelMapTransformer(voxel_size=0.5)
     assert list(xf(iter([]))) == []
+
+
+def test_mapper_preserves_its_configured_map_frame() -> None:
+    mapper = VoxelGridMapper(frame_id="odom", device="CPU:0", carve_columns=False)
+    store = MemoryStore()
+    try:
+        stream = store.stream("lidar", PointCloud2)
+        cloud = PointCloud2.from_numpy(
+            np.array([[1.025, 2.025, 3.025]], dtype=np.float32), frame_id="odom"
+        )
+        cloud.ts = 5.0
+        stream.append(cloud)
+        result = list(mapper.pipeline(stream))
+        assert len(result) == 1
+        assert result[0].data.frame_id == "odom"
+        assert result[0].data.ts == 5.0
+        assert len(result[0].data) == 1
+    finally:
+        store.dispose()
+        mapper.dispose()
 
 
 def test_frame_count_tag() -> None:
