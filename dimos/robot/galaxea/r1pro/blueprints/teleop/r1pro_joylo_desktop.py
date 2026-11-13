@@ -92,21 +92,16 @@ _vision = (
     )
 )
 
-r1pro_openarm_joylo_real = autoconnect(
-    autoconnect(make_joylo_real(publish_odom_tf=True, enable_wrist_color=False), _vision).hosted(
-        tags={"r1pro": True}
-    ),
-    _operator_blueprint().hosted(local=True),
-    UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
-).global_config(viewer="none", transport="zenoh", n_workers=7)
-
-
 # The recorder lives beside control and cameras, so laptop/network loss cannot
 # remove the robot-side evidence. It starts first and shuts down last.
-r1pro_openarm_joylo_collect = autoconnect(
+# Both entrypoints require --recorder.recording and --episodes.task at launch.
+r1pro_openarm_joylo_real = autoconnect(
     autoconnect(
         r1pro_collection(), make_joylo_real(publish_odom_tf=True, enable_wrist_color=False), _vision
     ).hosted(tags={"r1pro": True}),
     _operator_blueprint().hosted(local=True),
     UsdManager.blueprint(model=_model, unchanged_tf_hz=15).hosted(local=True),
 ).global_config(viewer="none", transport="zenoh", n_workers=9)
+
+# Keep existing collection launch commands working without a second stack to maintain.
+r1pro_openarm_joylo_collect = r1pro_openarm_joylo_real.global_config()

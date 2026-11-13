@@ -17,7 +17,7 @@ physical speed limiter in the frontend.
 | `ControlCoordinator` | `set_motion_limits(rates)` | Atomically update any subset, e.g. `{"arm_rate": 0.75, "base_speed": 0.3}`. Returns all groups. Unknown names, nonfinite values, and values outside `0..ceiling` fail without applying any change. |
 | `ControlCoordinator` | `set_estop(estopped)` | Existing emergency-stop latch. Clearing requires fresh connection feedback and does not resume cancelled trajectories. |
 | `R1ProJoylo` | `status()`, `pause()` | Read leader/Joy-Con health and authority; pause requires a fresh physical enable press to rearm JoyLo. |
-| `episodes` | `command(event)` | `start`, `save`, `discard`, or `toggle`. Returns `EpisodeStatus`. Available in the collection blueprint. |
+| `episodes` | `command(event)` | `start`, `save`, `discard`, or `toggle`. Returns `EpisodeStatus`. Included in the normal hardware blueprint. |
 | `episodes` | `get_status()` | Read recording state, saved/discarded counts, last event, timestamp, and task label. |
 
 `motion_settings: String` publishes the full group dictionary as JSON at startup
@@ -66,15 +66,24 @@ stale. Recorder actions use command streams; observations use measured state.
 
 ## Collection deployment
 
-Use the distributed `r1pro-openarm-joylo-collect` blueprint, with the same robot
-host selection and operator devices as `r1pro-openarm-joylo-real`. Supply a new,
-absolute **robot-side** recording directory and a task description:
+Recording is included in the distributed `r1pro-openarm-joylo-real` blueprint.
+Keep the existing robot host selection and operator device settings, and add a new,
+absolute **robot-side** recording directory and a task description at launch:
 
 ```bash
-dimos run r1pro-openarm-joylo-collect \
+dimos run r1pro-openarm-joylo-real \
   --recorder.recording /home/nvidia/recordings/pick-bottle-001 \
   --episodes.task "pick up the bottle"
 ```
+
+Both options are required; no directory is overwritten or task label invented.
+The old `r1pro-openarm-joylo-collect` name remains an equivalent entrypoint.
+No separate recorder blueprint or `--record` process is needed.
+
+The recorder observes the coordinator's dispatched actions, measured robot state,
+and camera outputs, independent of the device that supplied targets. OpenArm/Joy-Con
+input is connected in this blueprint. R1 WebXR input still needs CC's VR/IK adapter
+integrated into the shared coordinator; enabling recording does not add that adapter.
 
 The recorder and episode monitor live beside the robot control/cameras. The recorder
 precedes producers so it starts first and stops last. Operator network loss does not

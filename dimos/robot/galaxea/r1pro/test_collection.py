@@ -21,6 +21,10 @@ import pytest
 from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema
 from dimos.robot.galaxea.r1pro._collection_test_fakes import write_collection
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_desktop import (
+    r1pro_openarm_joylo_collect,
+    r1pro_openarm_joylo_real,
+)
 from dimos.robot.galaxea.r1pro.collection import CAMERAS, r1pro_collection
 
 
@@ -73,3 +77,32 @@ def test_collection_contract_has_explicit_selection_and_rpc_episode_controls():
     assert recorder.kwargs["recording_schema"].action_vector == ("position", "body_velocity")
     with pytest.raises(ValueError, match="unknown"):
         r1pro_collection(cameras=("missing",))
+
+
+@pytest.mark.parametrize("blueprint", [r1pro_openarm_joylo_real, r1pro_openarm_joylo_collect])
+def test_hardware_entrypoints_record_robot_streams_with_robot_side_producers(blueprint):
+    modules = {atom.name: atom for atom in blueprint.active_blueprints}
+    recorder = modules["recorder"]
+    required_inputs = set(recorder.kwargs["input_types"]) | {"status"}
+    robot = next(p for p in blueprint.hosted_placements if p.tags == {"r1pro": True})
+    assert robot.module_names[0] == "recorder"
+    assert "episodes" in robot.module_names
+    for port in recorder.streams:
+        if port.name not in required_inputs:
+            continue
+        topic = blueprint.remapping_map.get((recorder.name, port.name), port.name)
+        publishers = [
+            atom.name
+            for atom in blueprint.active_blueprints
+            for output in atom.streams
+            if output.direction == "out"
+            and output.type is port.type
+            and blueprint.remapping_map.get((atom.name, output.name), output.name) == topic
+        ]
+        assert len(publishers) == 1, (port.name, publishers)
+        assert publishers[0] in robot.module_names
+    schema = recorder.kwargs["recording_schema"]
+    assert {feature.stream for feature in schema.action.values()} == {
+        "coordinator_joint_command",
+        "coordinator_joint_velocity",
+    }
