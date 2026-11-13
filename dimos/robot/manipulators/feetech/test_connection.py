@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import math
 from typing import Any
 
 import pytest
@@ -72,3 +73,13 @@ def test_the_filter_moves_each_target_a_fraction_toward_the_reading(mocker: Any)
         connection.stop()
 
     assert 0.0 < joints.call_args.args[0].position[0] < 0.5
+
+
+def test_a_joint_whose_range_crosses_half_a_turn_follows_the_leader_across_it() -> None:
+    # The OpenArm left shoulder reaches -3.45 rad, past -pi, where the encoder wraps.
+    shoulder = FeetechMotor("joint_1", "left_joint1", lower=-3.45, upper=1.35)
+    just_inside = shoulder.target(-3.10)
+    # Just past -pi the encoder reports +3.10; the target keeps going the same way.
+    just_past = shoulder.target(3.10)
+    assert just_inside == pytest.approx(-3.10)
+    assert just_past == pytest.approx(3.10 - 2 * math.pi)
