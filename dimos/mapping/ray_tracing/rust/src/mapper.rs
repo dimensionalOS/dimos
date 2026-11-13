@@ -19,9 +19,10 @@ use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
-    emit_points_ungated_premap, global_normal_fits, global_normals, seed_points, seed_tile,
-    update_map, ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelKey, VoxelMap,
+    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_flags,
+    emit_points_ungated, emit_points_ungated_flags, global_normal_fits, global_normals,
+    seed_points, seed_tile, update_map, ChunkKey, Config, Cylinder, FrameHits, LocalBounds,
+    VoxelKey, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -202,10 +203,10 @@ impl Mapper {
             .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
     }
 
-    /// `global_points` as flat (x, y, z, premap) quads.
-    pub fn global_points_premap(&self) -> Vec<f32> {
+    /// `global_points` as flat (x, y, z, flags) quads.
+    pub fn global_points_flags(&self) -> Vec<f32> {
         self.pool.install(|| {
-            emit_points_ungated_premap(&self.map, self.config.voxel_size, &self.live.coarse)
+            emit_points_ungated_flags(&self.map, self.config.voxel_size, &self.live.coarse)
         })
     }
 
@@ -214,6 +215,18 @@ impl Mapper {
     pub fn local_points(&self, bounds: &LocalBounds) -> Vec<f32> {
         self.pool.install(|| {
             emit_points(
+                &self.map,
+                self.config.voxel_size,
+                Some(bounds),
+                &self.live.coarse,
+            )
+        })
+    }
+
+    /// `local_points` as flat (x, y, z, flags) quads.
+    pub fn local_points_flags(&self, bounds: &LocalBounds) -> Vec<f32> {
+        self.pool.install(|| {
+            emit_points_flags(
                 &self.map,
                 self.config.voxel_size,
                 Some(bounds),

@@ -1776,21 +1776,6 @@ fn premap_flag_clears_on_a_live_hit() {
     );
 }
 
-/// The premap flag and the last-hit frame share a word without clobbering each other.
-#[test]
-fn premap_bit_and_last_hit_are_independent() {
-    let mut v = Voxel::default();
-    v.set_premap(true);
-    v.set_last_hit(u32::MAX);
-    assert!(v.is_premap());
-    assert_eq!(v.last_hit(), u32::MAX >> 1, "the frame wraps at 2^31");
-    v.set_premap(false);
-    assert_eq!(v.last_hit(), u32::MAX >> 1);
-    v.set_last_hit(7);
-    assert!(!v.is_premap());
-    assert_eq!(v.last_hit(), 7);
-}
-
 /// A non-premap seed point makes its voxel non-premap, new or already seeded.
 #[test]
 fn non_premap_seed_points_land_non_premap() {
@@ -1816,15 +1801,18 @@ fn non_premap_seed_points_land_non_premap() {
     assert!(!map.voxels[&(3, 0, 0)].is_premap(), "new non-premap voxel");
     assert!(map.voxels[&(4, 0, 0)].is_premap(), "new premap voxel");
 
-    let quads = emit_points_ungated_premap(&map, cfg.voxel_size, &AHashSet::new());
-    let mut flags: Vec<(i32, f32)> = quads
+    let quads = emit_points_ungated_flags(&map, cfg.voxel_size, &AHashSet::new());
+    let mut flags: Vec<(i32, u32)> = quads
         .as_chunks::<4>()
         .0
         .iter()
-        .map(|q| (q[0].floor() as i32, q[3]))
+        .map(|q| (q[0].floor() as i32, q[3].to_bits()))
         .collect();
     flags.sort_by_key(|f| f.0);
-    assert_eq!(flags, vec![(1, 1.0), (2, 0.0), (3, 0.0), (4, 1.0)]);
+    assert_eq!(
+        flags,
+        vec![(1, PREMAP_FLAG), (2, 0), (3, 0), (4, PREMAP_FLAG)]
+    );
 }
 
 /// Seeding the same cloud twice creates nothing and adds no moments.

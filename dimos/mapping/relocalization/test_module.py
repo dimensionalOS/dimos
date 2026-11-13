@@ -115,12 +115,12 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
 
 
 def test_saved_premap_flags_survive_loading(module, tmp_path):
-    """A saved cloud's per-point premap flags reach the bus, so the raytracer seeds only those."""
-    flags = np.array([0, 1, 0, 1, 1], dtype=np.uint8)
+    """A saved cloud's per-point flags (premap bit) reach the bus, so the raytracer seeds only those."""
+    flags = np.array([0, 1, 0, 1, 1], dtype=np.uint32)
     path = tmp_path / "flagged.pc2.lcm"
     path.write_bytes(
         PointCloud2.from_numpy(
-            np.zeros((5, 3), dtype=np.float32), timestamp=0.0, premap=flags
+            np.zeros((5, 3), dtype=np.float32), timestamp=0.0, flags=flags
         ).lcm_encode()
     )
     m = module()
@@ -128,7 +128,7 @@ def test_saved_premap_flags_survive_loading(module, tmp_path):
 
     m._load_premap(str(path))
     on_the_bus = PointCloud2.lcm_decode(m.premap.lcm_encode())
-    np.testing.assert_array_equal(on_the_bus.premap_u8(), flags)
+    np.testing.assert_array_equal(on_the_bus.flags_u32(), flags)
 
 
 def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):

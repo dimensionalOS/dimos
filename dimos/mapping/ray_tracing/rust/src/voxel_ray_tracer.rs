@@ -446,14 +446,18 @@ pub struct Voxel {
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
     normal: NormalFit,
-    /// The map frame this voxel was last hit (or seeded) in, in the low 31
-    /// bits, and the `PREMAP_BIT` above them.
+    /// The map frame this voxel was last hit (or seeded) in.
     stamp: u32,
+    /// Per-voxel bits, named in order by `FLAG_NAMES`.
+    flags: u32,
 }
 
-/// Set in `Voxel::stamp` while only premap points put the voxel there: a
+/// Set in `Voxel::flags` while only premap points put the voxel there: a
 /// live hit or non-premap seed point clears it.
-const PREMAP_BIT: u32 = 1 << 31;
+pub const PREMAP_FLAG: u32 = 1 << 0;
+
+/// The name of each `Voxel::flags` bit, lowest first.
+pub const FLAG_NAMES: &[&str] = &["premap"];
 
 impl Default for Voxel {
     fn default() -> Self {
@@ -466,6 +470,7 @@ impl Default for Voxel {
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
             stamp: 0,
+            flags: 0,
         }
     }
 }
@@ -480,24 +485,28 @@ impl Voxel {
 
     /// Only premap points put it here: a live hit or non-premap seed point clears it.
     pub fn is_premap(&self) -> bool {
-        self.stamp & PREMAP_BIT != 0
+        self.flags & PREMAP_FLAG != 0
+    }
+
+    pub fn flags(&self) -> u32 {
+        self.flags
     }
 
     fn set_premap(&mut self, premap: bool) {
-        self.stamp = if premap {
-            self.stamp | PREMAP_BIT
+        self.flags = if premap {
+            self.flags | PREMAP_FLAG
         } else {
-            self.stamp & !PREMAP_BIT
+            self.flags & !PREMAP_FLAG
         };
     }
 
-    /// The map frame this voxel was last hit (or seeded) in, modulo 2^31.
+    /// The map frame this voxel was last hit (or seeded) in.
     fn last_hit(&self) -> u32 {
-        self.stamp & !PREMAP_BIT
+        self.stamp
     }
 
     fn set_last_hit(&mut self, frame: u32) {
-        self.stamp = (self.stamp & PREMAP_BIT) | (frame & !PREMAP_BIT);
+        self.stamp = frame;
     }
 
     /// Fold a centered point into the running moments. True when the count
@@ -859,14 +868,24 @@ pub fn emit_points(
     emit_points_impl(map, voxel_size, bounds, live, true, false)
 }
 
+/// `emit_points` as flat (x, y, z, flags) quads, flags being the voxel's
+/// `Voxel::flags` bits stored in an f32 (`f32::from_bits`).
+pub fn emit_points_flags(
+    map: &VoxelMap,
+    voxel_size: f32,
+    bounds: Option<&LocalBounds>,
+    live: &AHashSet<VoxelKey>,
+) -> Vec<f32> {
+    emit_points_impl(map, voxel_size, bounds, live, true, true)
+}
+
 /// Every healthy voxel plus this frame's live voxels, with no support gate.
 pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
     emit_points_impl(map, voxel_size, None, live, false, false)
 }
 
-/// `emit_points_ungated` as flat (x, y, z, premap) quads, premap 1.0 for a
-/// voxel only the loaded map has put there, else 0.0.
-pub fn emit_points_ungated_premap(
+/// `emit_points_ungated` as flat (x, y, z, flags) quads, like `emit_points_flags`.
+pub fn emit_points_ungated_flags(
     map: &VoxelMap,
     voxel_size: f32,
     live: &AHashSet<VoxelKey>,
@@ -880,7 +899,7 @@ fn emit_points_impl(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
     gated: bool,
-    with_premap: bool,
+    with_flags: bool,
 ) -> Vec<f32> {
     let mut out = scan_chunks(
         map,
@@ -895,14 +914,14 @@ fn emit_points_impl(
             let (x, y, z) = voxel_center(hv.key, voxel_size);
             if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
                 part.extend_from_slice(&[x, y, z]);
-                if with_premap {
-                    part.push(if hv.voxel.is_premap() { 1.0 } else { 0.0 });
+                if with_flags {
+                    part.push(f32::from_bits(hv.voxel.flags()));
                 }
             }
         },
     );
 
-    // This frame hit them, so none is premap.
+    // This frame hit them, so none is premap and none has flags yet.
     for &key in live.iter() {
         if map.voxels.is_healthy(&key) {
             continue;
@@ -912,8 +931,8 @@ fn emit_points_impl(
             continue;
         }
         out.extend_from_slice(&[x, y, z]);
-        if with_premap {
-            out.push(0.0);
+        if with_flags {
+            out.push(f32::from_bits(0));
         }
     }
     out
@@ -1580,7 +1599,7 @@ fn find_misses_along_ray(
                 }
             }
             // Nothing has seen this voxel lately: no surface there to protect from a grazing ray.
-            if map_frame.wrapping_sub(c.last_hit()) & !PREMAP_BIT > graze_recent_frames {
+            if map_frame.wrapping_sub(c.last_hit()) > graze_recent_frames {
                 walk.misses.insert((x, y, z));
                 continue;
             }

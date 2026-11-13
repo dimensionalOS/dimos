@@ -200,7 +200,7 @@ class PointCloud2(Timestamped):
         tags: np.ndarray | None = None,
         lines: np.ndarray | None = None,
         stamps: np.ndarray | None = None,
-        premap: np.ndarray | None = None,
+        flags: np.ndarray | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 
@@ -215,8 +215,8 @@ class PointCloud2(Timestamped):
             lines: Optional (N,) uint8 array of per-point laser line numbers
             stamps: Optional (N,) float64 array of per-point capture times in
                 absolute seconds. In-memory only, not encoded on the wire.
-            premap: Optional (N,) uint8 array, nonzero where a point came from a
-                loaded premap rather than live sensing
+            flags: Optional (N,) uint32 array of per-point flag bits (bit 0 =
+                premap: the point came from a loaded premap, not live sensing)
 
         Returns:
             PointCloud2 instance
@@ -230,7 +230,7 @@ class PointCloud2(Timestamped):
             ("tags", tags),
             ("lines", lines),
             ("stamps", stamps),
-            ("premap", premap),
+            ("flags", flags),
         ):
             if values is not None and len(values) != len(points):
                 raise ValueError(f"{name} has {len(values)} entries for {len(points)} points")
@@ -255,9 +255,9 @@ class PointCloud2(Timestamped):
             pcd_t.point["stamps"] = o3c.Tensor(
                 stamps.astype(np.float64).reshape(-1, 1), dtype=o3c.float64
             )
-        if premap is not None:
-            pcd_t.point["premap"] = o3c.Tensor(
-                premap.astype(np.uint8).reshape(-1, 1), dtype=o3c.uint8
+        if flags is not None:
+            pcd_t.point["flags"] = o3c.Tensor(
+                flags.astype(np.uint32).reshape(-1, 1), dtype=o3c.uint32
             )
         return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
 
@@ -514,9 +514,9 @@ class PointCloud2(Timestamped):
         """Per-point capture times (absolute seconds) as flat float64, or None if absent."""
         return self._per_point_field("stamps", np.float64)
 
-    def premap_u8(self) -> np.ndarray | None:
-        """Per-point premap flags (nonzero = from a loaded premap) as flat uint8, or None."""
-        return self._per_point_field("premap", np.uint8)
+    def flags_u32(self) -> np.ndarray | None:
+        """Per-point flag bits (bit 0 = from a loaded premap) as flat uint32, or None."""
+        return self._per_point_field("flags", np.uint32)
 
     @functools.cached_property
     def axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
@@ -630,7 +630,7 @@ class PointCloud2(Timestamped):
 
             point_data = np.column_stack([points, intensities]).astype(np.float32)
 
-        # Optional per-point attributes (offset_time/tag/line/premap) extend the
+        # Optional per-point attributes (offset_time/tag/line/flags) extend the
         # base 16-byte layout with packed extra fields, emitted only when present.
         extras: list[tuple[str, np.dtype, int, np.ndarray]] = []
         offset_times = self.offset_times_u32()
@@ -642,9 +642,9 @@ class PointCloud2(Timestamped):
         lines = self.lines_u8()
         if lines is not None:
             extras.append(("line", np.dtype("u1"), PointField.UINT8, lines))
-        premap = self.premap_u8()
-        if premap is not None:
-            extras.append(("premap", np.dtype("u1"), PointField.UINT8, premap))
+        flags = self.flags_u32()
+        if flags is not None:
+            extras.append(("flags", np.dtype("<u4"), PointField.UINT32, flags))
 
         wire_array: np.ndarray = point_data
         if extras:
@@ -719,14 +719,14 @@ class PointCloud2(Timestamped):
             "offset_time": PointField.UINT32,
             "tag": PointField.UINT8,
             "line": PointField.UINT8,
-            "premap": PointField.UINT8,
+            "flags": PointField.UINT32,
             # ROS-style per-point fields (the Go2 L1): seconds after the stamp, and ring.
             "time": PointField.FLOAT32,
             "ring": PointField.UINT16,
         }
         x_offset = y_offset = z_offset = rgb_offset = intensity_offset = None
         offset_time_offset = tag_offset = line_offset = time_offset = ring_offset = None
-        premap_offset = None
+        flags_offset = None
         for msgfield in msg.fields:
             if _expected_datatype.get(msgfield.name) != msgfield.datatype:
                 continue
@@ -750,8 +750,8 @@ class PointCloud2(Timestamped):
                 time_offset = msgfield.offset
             elif msgfield.name == "ring":
                 ring_offset = msgfield.offset
-            elif msgfield.name == "premap":
-                premap_offset = msgfield.offset
+            elif msgfield.name == "flags":
+                flags_offset = msgfield.offset
 
         if any(offset is None for offset in [x_offset, y_offset, z_offset]):
             raise ValueError("PointCloud2 message missing X, Y, or Z msgfields")
@@ -804,7 +804,7 @@ class PointCloud2(Timestamped):
                     intensities.reshape(-1, 1), dtype=o3c.float32
                 )
 
-        # Extract per-point attributes (offset_time/tag/line/premap) if present. Unlike
+        # Extract per-point attributes (offset_time/tag/line/flags) if present. Unlike
         # intensity, zero is a meaningful value (first point's offset_time is 0),
         # so field presence alone decides — no nonzero check.
         def _extract_scalar_field(field_offset: int, np_dtype: str) -> np.ndarray:
@@ -846,9 +846,9 @@ class PointCloud2(Timestamped):
                 _extract_scalar_field(ring_offset, "<u2").astype(np.uint8).reshape(-1, 1),
                 dtype=o3c.uint8,
             )
-        if premap_offset is not None:
-            pcd_t.point["premap"] = o3c.Tensor(
-                _extract_scalar_field(premap_offset, "u1").reshape(-1, 1), dtype=o3c.uint8
+        if flags_offset is not None:
+            pcd_t.point["flags"] = o3c.Tensor(
+                _extract_scalar_field(flags_offset, "<u4").reshape(-1, 1), dtype=o3c.uint32
             )
 
         # Extract RGB colors if present
