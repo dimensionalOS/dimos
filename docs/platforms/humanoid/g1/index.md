@@ -155,7 +155,7 @@ On your laptop:
 ```sh skip
 # install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv --python "3.14"
+uv venv --python "3.12"
 # use uv to get the dimos viewer
 uvx dimos-viewer --version
 
@@ -174,7 +174,7 @@ Pinocchio loads the system copy. On affected systems, start the blueprint with
 both libraries preloaded:
 
 ```bash
-ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.14/site-packages/roboplan.libs" \
+ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.12/site-packages/roboplan.libs" \
   -maxdepth 1 -name 'libgomp-*.so*' -print -quit)"
 test -n "$ROBOPLAN_GOMP" || {
   echo "RoboPlan's bundled libgomp was not found"

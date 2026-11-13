@@ -129,7 +129,7 @@ class GroundingDinoDetector(HuggingFaceModel):
             scale = torch.tensor([pil.width, pil.height, pil.width, pil.height], device=rows.device)
             boxes = center_to_corners_format(outputs.pred_boxes[0]) * scale
             survivors = batched_nms(boxes[pairs // n_queries], scores, pairs % n_queries, 0.5)
-            proposals = torch.unique(pairs[survivors] // n_queries)
+            proposals = (pairs[survivors] // n_queries).unique()
             kept_boxes = boxes[proposals].float().cpu().numpy()
             kept_rows = rows[proposals].float().cpu().numpy()
 

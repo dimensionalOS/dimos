@@ -15,7 +15,7 @@
 from datetime import datetime
 from functools import cache
 import os
-from pathlib import Path, PurePath
+from pathlib import Path
 import platform
 import re
 import shutil
@@ -447,20 +447,6 @@ class LfsPath(type(Path())):  # type: ignore[misc]
     def __hash__(self) -> int:
         """Hash the resolved path instead of pathlib's placeholder state."""
         return hash(self._ensure_downloaded())
-
-    def __eq__(self, other: object) -> bool:
-        """Two lazy paths compare by name without downloading; anything else by resolved path.
-
-        pathlib's __eq__ reads attributes that would materialize the asset, and since
-        Python 3.13 dataclasses compare fields with == even when they are the same object.
-        """
-        if isinstance(other, LfsPath):
-            return str(object.__getattribute__(self, "_lfs_filename")) == str(
-                object.__getattribute__(other, "_lfs_filename")
-            )
-        if not isinstance(other, PurePath):
-            return NotImplemented
-        return self._ensure_downloaded() == other
 
     def __truediv__(self, other: object) -> "LfsPath":
         """Path division operator - returns a new lazy LfsPath (no download)."""
