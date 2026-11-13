@@ -70,11 +70,6 @@ def test_load_accepts_the_motor_set_the_mapping_names(tmp_path: Path) -> None:
         load_calibration(tmp_path / "left", "left", (*DEFAULT_LEADER_MOTOR_NAMES, "joint_8"))
 
 
-def test_missing_calibration_error_mentions_calibration_utility(tmp_path: Path) -> None:
-    with pytest.raises(LeaderCalibrationError, match="hardware feetech-leader calibrate"):
-        load_calibration(tmp_path / "missing", "left")
-
-
 def test_invalid_calibration_rejects_unknown_fields_and_bad_values() -> None:
     data = _valid_calibration().model_dump(mode="json")
     data["motors"]["joint_1"]["drive_mode"] = 0  # type: ignore[index]

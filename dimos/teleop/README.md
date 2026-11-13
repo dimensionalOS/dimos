@@ -51,8 +51,8 @@ per-side gripper openings. The robot is config, not code: a `SideMapping` per
 side names which leader motor drives which follower joint, with limits, scale
 and offset. `LeaderCoordinator` adds the `leader_joint_command` port to the
 Damiao coordinator and `leader_task` points the coordinator's `joint_trajectory`
-task at that port with `stream_bind`. Calibrate with `dimos hardware feetech-leader
-calibrate`; the `leader-teleop` extra installs the Feetech SDK.
+task at that port with `stream_bind`. Each side reads its calibration file from
+`STATE_DIR/teleop/leader/<side>/`; the `leader-teleop` extra installs the Feetech SDK.
 
 ## Subclassing
 
@@ -97,8 +97,7 @@ teleop/
 │   ├── mapping.py               # SideMapping/JointMapping/GripperMapping (config, not code)
 │   ├── coordinator.py           # LeaderCoordinator, leader_task, leader_gripper_tasks
 │   ├── feetech.py               # Feetech serial readers + mock reader
-│   ├── calibration.py           # Per-side calibration files under STATE_DIR/teleop/leader
-│   └── cli/                     # dimos hardware feetech-leader {calibrate,joint-tui,setup-motor-id}
+│   └── calibration.py           # Per-side calibration files under STATE_DIR/teleop/leader
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop
