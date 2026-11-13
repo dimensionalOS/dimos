@@ -37,6 +37,12 @@ async def account(state: GatewayState, fresh: FreshQuery = False) -> responses.A
     return {**await state.uploads.account(fresh), "login": state.uploads.login_state()}
 
 
+@router.get("/cloud/login", response_model=responses.Login)
+async def login(state: GatewayState, after: str | None = None) -> responses.Login:
+    """`?after=` (a login state) answers only once the login's state isn't that one, so a page waits instead of polling."""
+    return await state.uploads.next_login(after) if after else state.uploads.login_state()
+
+
 @router.post("/cloud/login", response_model=responses.Login)
 async def start_login(state: GatewayState) -> responses.Login:
     return await state.uploads.start_login()

@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Barrier, Lock
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,6 +96,21 @@ class ConcurrentRemovalHandle:
             if self.remove_count > 1:
                 raise RuntimeError("handle removed more than once")
         time.sleep(0.01)
+
+
+class OnceRemovableHandle:
+    """Like a Viser handle: a folder removes its children, and nothing is removed twice."""
+
+    def __init__(self, *children: OnceRemovableHandle) -> None:
+        self.children = children
+        self.removed = False
+
+    def remove(self) -> None:
+        assert not self.removed, "handle removed twice"
+        self.removed = True
+        for child in self.children:
+            if not child.removed:
+                child.remove()
 
 
 class FakeJointGui:
@@ -575,6 +591,26 @@ def test_gui_close_uses_bounded_operation_worker_stop(monkeypatch: pytest.Monkey
     gui.close()
 
     assert stop_timeouts == [2.0]
+
+
+def test_gui_close_removes_each_handle_once_and_leaves_target_controls_to_the_scene() -> None:
+    gui = make_gui()
+    scene_removals: list[str] = []
+    gui.scene = SimpleNamespace(
+        cancel_preview_animation=lambda: None, remove_target_controls=scene_removals.append
+    )
+    button = OnceRemovableHandle()
+    folder = OnceRemovableHandle(button)
+    control = OnceRemovableHandle()
+    gui._handles.update({"panel_folder": folder, "plan": button, "ee_control:manipulator": control})
+
+    gui.close()
+
+    assert folder.removed and button.removed
+    # The scene made the target controls, so the scene removes them.
+    assert not control.removed
+    assert scene_removals == ["manipulator"]
+    assert gui._handles == {}
 
 
 def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,10 +17,28 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// Per-channel dispatch closure handed to a transport on `subscribe`. The
-/// transport calls it with each message's raw payload. Decode and routing
-/// happen inside it.
-pub type Dispatch = Arc<dyn Fn(&[u8]) + Send + Sync>;
+/// Per-channel delivery handed to a transport on `subscribe`. The transport
+/// calls it with each message's raw payload. Decode and routing happen inside.
+pub trait Deliver: Send + Sync {
+    /// Blocks the calling thread while an input is full.
+    fn deliver(&self, data: &[u8]);
+    /// Never blocks. Returns false when a full input dropped the message.
+    fn try_deliver(&self, data: &[u8]) -> bool;
+}
+
+pub type Dispatch = Arc<dyn Deliver>;
+
+/// A plain callback is a delivery that never stalls.
+impl<F: Fn(&[u8]) + Send + Sync> Deliver for F {
+    fn deliver(&self, data: &[u8]) {
+        self(data)
+    }
+
+    fn try_deliver(&self, data: &[u8]) -> bool {
+        self(data);
+        true
+    }
+}
 
 /// Abstraction over the message transport used by a native module.
 ///

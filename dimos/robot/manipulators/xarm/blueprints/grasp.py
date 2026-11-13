@@ -41,9 +41,6 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
@@ -61,6 +58,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_robot_config,
     make_xarm_model_config,
     xarm_model,
+    xarm_wrist_camera_transform,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
@@ -109,28 +107,6 @@ XARM_GRASP_FRAME_TO_TCP = (
     (0.0, 0.0, 1.0, 0.172),
     (0.0, 0.0, 0.0, 1.0),
 )
-
-
-def _wrist_camera(dof: int) -> Transform:
-    """Where the wrist RealSense sits on the arm's last link, from hand-eye calibration.
-
-    Measured on the xArm7's link7; the xArm6 gets the same numbers on link6, not
-    measured there.
-
-    Args:
-        dof: The arm's joint count: 7 for the xArm7, 6 for the xArm6.
-    """
-    # RealSenseCamera publishes only its own subtree, so without this edge
-    # camera_link has no parent, nothing resolves into world, and every cloud the
-    # camera produces is silently unusable. The last link is a frame the model
-    # already publishes, so ManipulationModule emits the whole chain from one
-    # loop at one rate.
-    return Transform(
-        translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-        rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
-        frame_id=f"link{dof}",
-        child_frame_id="camera_link",
-    )
 
 
 def _sensing(simulated: bool) -> tuple[Blueprint, ...]:
@@ -243,7 +219,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
         ManipulationModule.blueprint(
             gripper_tasks={"manipulator": "arm_gripper"},
             model=model,
-            static_transforms=[] if simulated else [_wrist_camera(dof)],
+            static_transforms=[] if simulated else [xarm_wrist_camera_transform(dof)],
             planning_timeout=10.0,
             visualization={"backend": "viser"},
             world_frame="world",

@@ -20,6 +20,7 @@ pinned Pillow wheel; depth and clouds use zlib and typed-array wire data. This
 module is loaded only when an explicitly enabled media subscription opens.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from io import BytesIO
 import math
@@ -31,7 +32,7 @@ import zlib
 import numpy as np
 from PIL import Image as PILImage
 
-from dimos.web.relay_bridge.topic_profiles import MEDIA_PROFILES, MediaProfile
+from dimos.web.relay_bridge.topic_profiles import MEDIA_PROFILES, MediaProfile, normalize_settings
 from dimos.web.relay_bridge.topic_protocol import MAX_TOPIC_PAYLOAD_BYTES
 
 MAX_MEDIA_PIXELS = 4_194_304
@@ -102,18 +103,24 @@ def _compress(data: bytes) -> bytes:
     return zlib.compress(data, level=1)
 
 
-def _jpeg(image: PILImage.Image, profile: MediaProfile, meta: dict[str, Any]) -> MediaOutput:
+def _jpeg(image: PILImage.Image, settings: Mapping[str, Any], meta: dict[str, Any]) -> MediaOutput:
+    # The settings are normalized: the box never exceeds the profile size and
+    # the quality never exceeds the profile quality. Report what is in force.
+    width, height = settings["maxResolution"]
+    quality = int(settings["quality"])
     try:
-        image.thumbnail((profile.width, profile.height), PILImage.Resampling.BILINEAR)
+        image.thumbnail((width, height), PILImage.Resampling.BILINEAR)
         output = BytesIO()
-        image.save(output, "JPEG", quality=profile.quality, subsampling=2)
-        meta.update(w=image.width, h=image.height, quality=profile.quality)
+        image.save(output, "JPEG", quality=quality, subsampling=2)
+        meta.update(w=image.width, h=image.height, quality=quality)
         return MediaOutput(output.getvalue(), "image/jpeg", meta)
     finally:
         image.close()
 
 
-def _compressed_image(data: bytes, profile: MediaProfile) -> MediaOutput:
+def _compressed_image(
+    data: bytes, profile: MediaProfile, settings: Mapping[str, Any]
+) -> MediaOutput:
     if profile.kind != "jpeg":
         raise ValueError("compressed color image cannot use a depth profile")
     reader = _Reader(data, "b8d011c10412b9a1")
@@ -137,12 +144,12 @@ def _compressed_image(data: bytes, profile: MediaProfile) -> MediaOutput:
             image = opened.convert("RGB")
     except PILImage.DecompressionBombError as error:
         raise ValueError("compressed dimensions exceed budget") from error
-    return _jpeg(image, profile, meta)
+    return _jpeg(image, settings, meta)
 
 
-def _image(data: bytes, profile: MediaProfile) -> MediaOutput:
+def _image(data: bytes, profile: MediaProfile, settings: Mapping[str, Any]) -> MediaOutput:
     if data[:8].hex() == "b8d011c10412b9a1":
-        return _compressed_image(data, profile)
+        return _compressed_image(data, profile, settings)
     reader = _Reader(data, "535cface1f4f5717")
     size = reader.integer()
     meta = reader.header()
@@ -204,10 +211,12 @@ def _image(data: bytes, profile: MediaProfile) -> MediaOutput:
         )
         if channels == 4:
             image = image.convert("RGB")
-    return _jpeg(image, profile, meta)
+    return _jpeg(image, settings, meta)
 
 
-def _cloud(data: bytes, profile: MediaProfile) -> MediaOutput:
+def _cloud(data: bytes, settings: Mapping[str, Any]) -> MediaOutput:
+    keep_every = int(settings["keepEvery"])
+    wanted = settings["fields"]
     reader = _Reader(data, "f5eb3da1c2853175")
     count, size = reader.integer(), reader.integer()
     if not 0 <= count <= 64:
@@ -249,7 +258,7 @@ def _cloud(data: bytes, profile: MediaProfile) -> MediaOutput:
 
     if width * height:
         xyz = np.column_stack([field(axis) for axis in ("x", "y", "z")]).astype(np.float64)
-        indices = np.flatnonzero(np.isfinite(xyz).all(axis=1))[:: profile.keep_every]
+        indices = np.flatnonzero(np.isfinite(xyz).all(axis=1))[::keep_every]
         xyz = xyz[indices]
     else:
         xyz, indices = np.empty((0, 3)), np.empty(0, dtype=np.intp)
@@ -263,8 +272,8 @@ def _cloud(data: bytes, profile: MediaProfile) -> MediaOutput:
     else:
         origin, scale, positions = np.zeros(3), 1.0, np.empty((0, 3), dtype="<i2")
     chunks = [positions.tobytes()]
-    has_intensity = "intensity" in fields and width * height > 0
-    has_color = ("rgb" in fields or "rgba" in fields) and width * height > 0
+    has_intensity = "intensity" in wanted and "intensity" in fields and width * height > 0
+    has_color = "color" in wanted and ("rgb" in fields or "rgba" in fields) and width * height > 0
     if has_intensity:
         chunks.append(field("intensity")[indices].astype("<f4").tobytes())
     if has_color:
@@ -277,17 +286,24 @@ def _cloud(data: bytes, profile: MediaProfile) -> MediaOutput:
         origin=origin.tolist(),
         scale=scale,
         maxError=scale / 2,
-        keepEvery=profile.keep_every,
+        keepEvery=keep_every,
         intensity=has_intensity,
         color=has_color,
     )
     return MediaOutput(_compress(b"".join(chunks)), CLOUD_ENCODING, meta)
 
 
-def encode_media(profile_name: str, data: bytes) -> MediaOutput:
-    """One bounded conversion; callers select/rate-limit before scheduling it."""
+def encode_media(
+    profile_name: str, data: bytes, settings: Mapping[str, Any] | None = None
+) -> MediaOutput:
+    """One bounded conversion; callers select/rate-limit before scheduling it.
+
+    ``settings`` is a request against the profile (absent keys take the
+    profile values); the metadata reports the values in force.
+    """
     profile = MEDIA_PROFILES[profile_name]
-    output = _cloud(data, profile) if profile.kind == "cloud" else _image(data, profile)
+    applied = normalize_settings(profile_name, settings)
+    output = _cloud(data, applied) if profile.kind == "cloud" else _image(data, profile, applied)
     if len(output.payload) > MAX_TOPIC_PAYLOAD_BYTES:
         raise ValueError("encoded media exceeds payload budget")
     output.metadata["profile"] = profile_name

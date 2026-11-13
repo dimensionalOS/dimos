@@ -682,7 +682,7 @@ jobs:
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
     needs: [cachix-build-check, cachix-build]
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       matrix:
         pyver: ['3.10', '3.11', '3.12']

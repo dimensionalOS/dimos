@@ -92,6 +92,8 @@ class McpClientAdapter(EvalSubject):
     uses the agent already supplied by the environment.
     """
 
+    requires_mcp = True
+
     def validate_tools(self) -> None:
         if self.config.no_dimos:
             raise ValueError("McpClientAdapter is dimOS's own agent")

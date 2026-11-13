@@ -77,7 +77,7 @@ count_rooms = EvalCase(
     id="dimsim_count_rooms",
     inputs=INSTRUCTION,
     environment=DimSimEnvironment(
-        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
+        blueprint=["unitree-go2", "unitree-skill-container"],
         # Keep the configured stack, but require deliberate move_to navigation.
         disable=("wavefront-frontier-explorer", "patrolling-module"),
         scene="apartment",

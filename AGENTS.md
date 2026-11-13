@@ -233,7 +233,7 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
 | `dimos agent-send "<text>"` | Send text to the running agent via LCM |
 | `dimos lcmspy / agentspy / humancli / top` | Debug/diagnostic tools |
-| `dimos topic echo <topic> / send <topic> <expr>` | LCM topic pub/sub |
+| `dimos topic echo <topic> / send <topic> <expr>` | Topic pub/sub on the active transport |
 | `dimos rerun-bridge` | Launch Rerun visualization standalone |
 
 Log files: `logs/<run-id>/main.jsonl` under the checkout when running from a Git clone, `~/.local/state/dimos/logs/<run-id>/main.jsonl` for an installed package
