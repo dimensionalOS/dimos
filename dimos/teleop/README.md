@@ -50,8 +50,8 @@ Reads Feetech leader arms over serial and publishes follower joint targets plus
 per-side gripper openings. The robot is config, not code: a `SideMapping` per
 side names which leader motor drives which follower joint, with limits, scale
 and offset. The robot's blueprint adds a `leader_joint_command` port to its own
-coordinator; `leader_task` points the coordinator's `joint_trajectory` task at that
-port with `stream_bind`, and `leader_gripper_task` drives one jaw per side. Each side reads its calibration file from
+coordinator and points the coordinator's existing `joint_trajectory` and gripper
+tasks at the leader's ports with `stream_bind`. Each side reads its calibration file from
 `STATE_DIR/teleop/leader/<side>/`; the `leader-teleop` extra installs the Feetech SDK.
 
 ## Subclassing
@@ -95,7 +95,6 @@ teleop/
 ├── leader/
 │   ├── module.py                # LeaderTeleopModule: Feetech leaders -> joint targets
 │   ├── mapping.py               # SideMapping/JointMapping/GripperMapping (config, not code)
-│   ├── tasks.py                 # leader_task, leader_gripper_task (coordinator task configs)
 │   ├── feetech.py               # Feetech serial readers + mock reader
 │   └── calibration.py           # Per-side calibration files under STATE_DIR/teleop/leader
 ├── phone/
