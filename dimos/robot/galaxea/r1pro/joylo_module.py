@@ -19,6 +19,8 @@ import threading
 import time
 from typing import Any, Protocol
 
+from reactivex.disposable import Disposable
+
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -79,6 +81,10 @@ class R1ProJoylo(Module):
             self._feedback.clear()
         self._done.clear()
         super().start()
+        # This topic carries partial updates for different joints. A single
+        # LATEST async mailbox can replace an arm packet with a jaw/base packet,
+        # falsely starving arm feedback. Merge immediately under the guard.
+        self.register_disposable(Disposable(self.robot_feedback.subscribe(self._on_robot_feedback)))
         self._motion_limits.set_tracking_limits(self.config.arm_rate, self.config.torso_rate)
         self._thread = threading.Thread(target=self._run, name="r1pro-joylo", daemon=True)
         self._thread.start()
@@ -234,6 +240,9 @@ class R1ProJoylo(Module):
                 "arm_only": self.config.arm_only,
                 "enable_button": c.enable_button if c else "",
                 "input_age_s": ages,
+                "feedback_age_s": {
+                    name: time.time() - stamp for name, (_, stamp) in self._feedback.items()
+                },
                 "leader_positions": c.leader.copy() if c else {},
                 "arm_targets": {name: c.target[name] for name in c.arm_names if name in c.target}
                 if c
@@ -293,7 +302,7 @@ class R1ProJoylo(Module):
                 return
             self._controller.set_joycon(readings["left"], readings["right"], time.monotonic())
 
-    async def handle_robot_feedback(self, sample: JointState) -> None:
+    def _on_robot_feedback(self, sample: JointState) -> None:
         with self._guard:
             wall = time.time()
             if (
@@ -329,6 +338,11 @@ class R1ProJoylo(Module):
                     reason=c.last_pause_reason,
                     pause_count=c.pause_count,
                     input_age_s={name: now - stamp for name, stamp in c.receipts.items()},
+                    stale_feedback_joints=[
+                        name
+                        for name, (_, stamp) in self._feedback.items()
+                        if time.time() - stamp > self.config.input_timeout_s
+                    ],
                 )
                 self._logged_pause_count = c.pause_count
             if output is None:

@@ -40,6 +40,11 @@ local native camera sessions do not need rebuilding. A live 1280×720 wrist floa
 depth sample compressed from 3.69 MB to 0.44 MB in 7 ms on the robot, with identical
 bytes after decompression. Compression ratio depends on the scene.
 
+JoyLo merges arm and gripper feedback synchronously by joint, before any
+latest-message mailbox. Those partial packets share a topic and must not replace
+one another. Original timestamps still determine freshness; `status()` exposes
+per-joint feedback ages and pause logs identify stale joints.
+
 Wrist RGB-D subscribes to the installed ROS camera drivers. It needs the physical
 RealSense cameras to enumerate on USB. Frames use the installed vendor model's
 case-sensitive `{left,right}_D405_link` names. No RealSense USB devices were
