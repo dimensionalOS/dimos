@@ -21,7 +21,7 @@ Usage:
     from dimos.hardware.manipulators.registry import adapter_registry
 
     adapter = adapter_registry.create("xarm", ip="192.168.1.185", dof=6)
-    print(adapter_registry.available())  # ["a750", "mock", ..., "xarm"]
+    print(adapter_registry.available())  # ["mock", "piper", ..., "xarm"]
 """
 
 from __future__ import annotations

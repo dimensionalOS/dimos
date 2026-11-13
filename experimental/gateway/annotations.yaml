@@ -1074,10 +1074,7 @@ robots:
           title: A-750 keyboard driving
           description: Move an A-750 arm with this computer's keyboard.
           recommended_config:
-          - module: controlcoordinator
-            field: addresses.arm
-            label: Device
-            placeholder: /dev/ttyUSB0
+          - {module: a750connection, field: device_path, label: Serial port, placeholder: /dev/ttyACM0, required: true}
     coordinators:
       name: Coordinators and mocks
       description: Arm combinations, mobile bases and mock hardware behind dimos's ControlCoordinator.
