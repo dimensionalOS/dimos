@@ -36,6 +36,7 @@ from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.pi import PiAdapter, recording_file
 from dimos.evals.cli import load_agent
+from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.evals.types import (
     FinalMetrics,
     Observation,
@@ -356,6 +357,19 @@ def test_pi_retains_its_stock_prompt(tmp_path: Path) -> None:
     )
     assert "--append-system-prompt" in command
     assert "--system-prompt" not in command
+
+
+def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path, mocker: MockerFixture) -> None:
+    listing = mocker.patch("dimos.evals.agents.pi.tool_listing")
+    run_dir = tmp_path / "case"
+    run_dir.mkdir()
+    adapter = PiAdapter()
+    env = RunningEnvironment(mcp_url="", streams=(), artifacts={}, python_guide=PYTHON_API_GUIDE)
+    prompt = adapter._prepare_case(env, run_dir)
+    assert (run_dir / "DIMOS.md").read_text() == PYTHON_API_GUIDE
+    assert f"- robot: {run_dir / 'DIMOS.md'}" in prompt
+    assert "dimos mcp call" not in prompt
+    listing.assert_not_called()
 
 
 @pytest.mark.parametrize(

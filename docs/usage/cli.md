@@ -16,7 +16,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` | TEXT | empty | Select simulation (`mujoco` or `dimsim`); a bare flag selects MuJoCo |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
+| `--replay-db` | TEXT | `go2_short` | Recording to replay: a dataset name, or a `.db` or `.mcap` path |
 | `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
 | `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
 | `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
@@ -95,7 +95,8 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
-# Record every stream of a run, then replay it
+# Record every stream of a run, then replay it. recordings/ is under a Git checkout;
+# an installed package writes to ~/.local/state/dimos/recordings/<run-id>/memory.db
 dimos --record --simulation run unitree-go2
 dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 
@@ -287,6 +288,9 @@ dimos log -n 100             # last 100 lines
 dimos log --json | jq .event # raw JSONL, extract events
 dimos log -r 20260306-143022-a3f1-unitree-go2  # specific run
 ```
+
+`dimos log` shows the running instance. When nothing is running it shows the most recently started run,
+so the log of a stopped run or of a failed start can still be read.
 
 All processes (main + workers) write to the same `main.jsonl`. Filter by module:
 

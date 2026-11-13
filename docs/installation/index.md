@@ -6,7 +6,7 @@ The recommended way to install dimOS is the guided `install.sh` script. It insta
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-The installer asks for a mode and project directory, sets up system dependencies and uv, installs Python 3.12 and dimOS, and verifies the CLI and native libraries. It can also configure LCM networking and run an optional replay check. Follow the printed activation instructions when it finishes.
+The installer asks for a mode and project directory, sets up system dependencies and uv, installs Python and dimOS, and verifies the CLI and native libraries. It can also configure LCM networking and run an optional replay check. Follow the printed activation instructions when it finishes.
 
 | Platform | Installation path | Validation |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ uv run dimos --help
 
 Use `--mode dev --project-dir ./dimos` for a source checkout. Use `--extras base,unitree` to select capabilities (developer mode defaults to `all` with platform exclusions). See [dependency tiers](/docs/requirements.md#dependency-tiers).
 
-`--skip-tests` skips replay only (installation verification still runs). `--no-sysctl` skips network tuning. These commands can install system packages on your host.
+`--skip-tests` skips replay only (installation verification still runs). `--no-sysctl` skips network tuning and the locked-memory limit. These commands can install system packages on your host.
 
 For all options:
 
