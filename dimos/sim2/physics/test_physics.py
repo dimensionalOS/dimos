@@ -16,7 +16,10 @@ from dimos_lcm.control_msgs import CborCommand
 import numpy as np
 import pytest
 
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd_utils.pxr import frame_name, layer_from, load_pxr
 from dimos.sim2.geometry.poses import poses_by_id
+from dimos.sim2.physics.drives import usd_with_drives
 
 pytestmark = pytest.mark.self_hosted  # Requires MuJoCo's native USD importer.
 
@@ -152,3 +155,23 @@ def test_interfaces_resolve_names_even_when_rows_are_reordered(backend, motor_co
     assert backend.read_joints(("left/slide_x", "right/slide_x")).position == pytest.approx(
         [0.2, 0.1], abs=0.001
     )
+
+
+@pytest.mark.parametrize(
+    "joint_id,kind,usd_target",
+    [("left/slide_x", "linear", 0.25), ("door/hinge", "angular", np.degrees(0.25))],
+)
+def test_authored_drive_target_reaches_native_joint_in_si_units(
+    backend, world, joint_id, kind, usd_target
+):
+    usd = usd_with_drives(world.usd, {joint_id: (40, 2, 0.25)})
+    pxr = load_pxr()
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "drive test", None))
+    joint = next(p for p in stage.Traverse() if frame_name(p) == joint_id)
+    assert pxr.UsdPhysics.DriveAPI(joint, kind).GetTargetPositionAttr().Get() == pytest.approx(
+        usd_target
+    )
+
+    backend.close()
+    backend.load(UsdModel.from_layer(usd), 2_000_000)
+    assert backend.read_joints((joint_id,)).position == pytest.approx([0.25])

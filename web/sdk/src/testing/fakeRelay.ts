@@ -16,6 +16,8 @@ import {
   type RobotInfo,
   TOPIC_GUARD_STREAM_MAGIC,
   TOPIC_PUBLISH_STREAM_MAGIC,
+  type TopicSubMsg,
+  type TopicUpdateMsg,
 } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import type { RelayInfo, WebTransportLike } from "../transport.ts";
@@ -226,6 +228,14 @@ export class FakeRelayEnd {
 
   subs(): string[] {
     return this.sent.flatMap((m) => (m.t === "sub" ? [m.ch] : []));
+  }
+
+  topicSubs(): TopicSubMsg[] {
+    return this.sent.filter((m): m is TopicSubMsg => m.t === "topic_sub");
+  }
+
+  topicUpdates(): TopicUpdateMsg[] {
+    return this.sent.filter((m): m is TopicUpdateMsg => m.t === "topic_update");
   }
 
   unsubs(): string[] {

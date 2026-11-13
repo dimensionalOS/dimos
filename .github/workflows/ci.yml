@@ -391,10 +391,10 @@ jobs:
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install dependency for pyaudio
+      - name: Install dependency for pyaudio and open3d
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libegl1
       - name: Install dependencies
         run: uv sync --group tests --frozen
       # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
@@ -485,14 +485,11 @@ jobs:
           restore-keys: pyo3-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: true
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install dependency for pyaudio (Ubuntu)
+      - name: Install dependencies for pyaudio and open3d (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libegl1
       - name: Install dependency for pyaudio (macOS)
         if: runner.os == 'macOS'
         run: brew install portaudio
@@ -528,7 +525,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libturbojpeg portaudio19-dev
+          sudo apt-get install -y libturbojpeg portaudio19-dev libegl1
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -682,15 +679,15 @@ jobs:
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
     needs: [cachix-build-check, cachix-build]
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       matrix:
-        pyver: ['3.10', '3.11', '3.12']
+        pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
         os: ["macos-latest", "ubuntu-latest"]
         experimental: [false]
         include:
           - os: "ubuntu-24.04-arm"
-            pyver: "3.12"
+            pyver: "3.14"
             experimental: false
       fail-fast: true
     runs-on: ${{ matrix.os }}
@@ -737,7 +734,7 @@ jobs:
             sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg
+          sudo apt-get install -y --no-install-recommends portaudio19-dev libegl1 libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
@@ -871,6 +868,11 @@ jobs:
                 # provision step roots the live closure so GC keeps it.
                 - /var/cache/dimos-nix:/nix
             markers: "self_hosted or skipif_no_ros"
+            # Follows .python-version: the ros-dev image's ROS debs are built
+            # for its Ubuntu's Python and reach the venv through PYTHONPATH, so
+            # the two must match (see docker/ros/Dockerfile). On a mismatch the
+            # skipif_no_ros tests fail at import instead of skipping (conftest).
+            pyver: ""
             experimental: false
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
@@ -923,6 +925,7 @@ jobs:
         with:
           # We persist on disk above, cache would clean some of this up.
           enable-cache: false
+          python-version: ${{ matrix.pyver }}
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -933,6 +936,25 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Start a PulseAudio server for PortAudio
+        # Ubuntu 26.04's PortAudio is built with the PulseAudio host API and
+        # Pa_Initialize fails outright when no server answers, which breaks
+        # `import sounddevice` (unitree_webrtc_connect imports it eagerly).
+        # A daemon with the null sink is enough; root needs --daemonize.
+        # HOME is /github/home, a bind mount owned by the runner's host user,
+        # and PulseAudio refuses a home directory it does not own ("Home
+        # directory not accessible"), daemon and client alike: keep its
+        # runtime and state directories in the container's /tmp instead, and
+        # hand the runtime path to every later step so clients find the socket.
+        if: matrix.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          echo "PULSE_RUNTIME_PATH=/tmp/pulse" >> "$GITHUB_ENV"
+          export PULSE_RUNTIME_PATH=/tmp/pulse PULSE_STATE_PATH=/tmp/pulse-state
+          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/pulseaudio.log ||
+            { cat /tmp/pulseaudio.log; exit 1; }
+          uv run python -c "import sounddevice"
       - name: Install Node 24 for the Pi and dimcode CLIs
         uses: actions/setup-node@v7.1.0
         with:
@@ -1063,14 +1085,30 @@ jobs:
           for _ in $(seq 30); do pgrep -qf "$GITHUB_WORKSPACE/" || exit 0; sleep 0.1; done
           pkill -KILL -f "$GITHUB_WORKSPACE/" || true
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '${{ matrix.markers }}'
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml --ignore=dimos/sim2 --ignore=dimos/robot/unitree/g1/test_sim2_observations.py -m '${{ matrix.markers }}'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '${{ matrix.markers }}' && exit 1
+          uv run pytest --no-cov -vvvvv --lf --ignore=dimos/sim2 --ignore=dimos/robot/unitree/g1/test_sim2_observations.py -m '${{ matrix.markers }}' && exit 1
         shell: bash
+      - name: Run Sim2 native USD tests on Python 3.12
+        # mujoco-usd 4.0 supports Python 3.11-3.13; main now defaults to 3.14.
+        # Keep native simulation checks on both OSes without changing the main environment.
+        if: hashFiles('dimos/sim2/module.py') != ''
+        shell: bash
+        env:
+          UV_PROJECT_ENVIRONMENT: .venv-sim2
+          PYTHONPATH: ""
+        run: |
+          uv sync --python 3.12 --group tests-self-hosted --extra sim --frozen
+          uv run --python 3.12 python setup.py build_ext --inplace
+          paths=(dimos/sim2)
+          if [ -f dimos/robot/unitree/g1/test_sim2_observations.py ]; then
+            paths+=(dimos/robot/unitree/g1/test_sim2_observations.py)
+          fi
+          uv run --python 3.12 pytest "${paths[@]}" --cov=dimos/ --cov-append --junitxml=junit-sim2.xml -m 'not self_hosted_large'
       - name: Print crash diagnostics
         if: failure()
         shell: bash
@@ -1155,7 +1193,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg libegl1
       # LCM lidar/image UDP fragments drop with small kernel buffers; the
       # in-process configurator (64MB) skips under pytest, so do it here.
       - name: Raise UDP receive buffers for LCM

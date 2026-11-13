@@ -36,6 +36,10 @@ class ServerInfo(Body):
     kind: Literal["dimos"]
     startedAt: int
     zenohNamespace: str | None
+    # the gateway's own code, which may be a copy apart from the checkout it serves (Desktop pins one per tag)
+    gatewayDir: str
+    gatewayCommit: str | None
+    gatewayTag: str | None
 
 
 class Paths(Body):
@@ -106,6 +110,8 @@ BlueprintModule = TypedDict(
         "file": str | None,
         "line": int | None,
     },
+    # ?fields= can keep only some of them
+    total=False,
 )
 with_config(CONFIG)(BlueprintModule)
 
@@ -185,6 +191,8 @@ class BlueprintFields(Body, total=False):
     optional_dependency: bool | None
     suggested_extras: list[str]
     scanned_at: str | None
+    # annotations.yaml abilities it has: its modules'
+    abilities: list[str]
 
 
 class CatalogBlueprint(BlueprintFields, total=False):
@@ -224,6 +232,8 @@ ModuleFields = TypedDict(
         "outputs": list[PortType],
         "robots": list[str],
         "blueprints": list[str],
+        # annotations.yaml abilities it gives a blueprint that runs it
+        "abilities": list[str],
     },
     total=False,
 )
@@ -283,6 +293,8 @@ class Catalog(Body, total=False):
     rpcs: list[CatalogRpc]
     robots: dict[str, CatalogRobot]
     types: dict[str, dict[str, Any]]
+    # annotations.yaml abilities by id: label, description
+    abilities: dict[str, dict[str, Any]]
     errors: list[str]
     scan: ScanStatus
 
@@ -515,6 +527,9 @@ class RunLog(Body):
     records: list[LogRecord]
     offset: int
     loggers: list[str]
+    # false: it logs outside the gateway's and the served checkout's logs/ (a third checkout), so no `log` event
+    # says when it grows: ask again to see new lines
+    watched: bool
 
 
 class ProcessStats(Body):
@@ -596,3 +611,12 @@ class Uploads(Body):
     uploads: list[Upload]
     waitingForLogin: bool
     byPath: dict[str, Uploaded]
+
+
+class SourceFile(Body):
+    """A blueprint's or module's .py file, from the checkout it's read from, and the line it starts on."""
+
+    name: str
+    file: str
+    line: int | None
+    text: str

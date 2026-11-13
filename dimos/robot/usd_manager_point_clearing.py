@@ -30,7 +30,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import LoadedRobotModel
-from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
 from dimos.robot.joint_tf import MULTI_DOF_JOINT_TYPES
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.usd_manager import UsdManager, UsdManagerConfig
@@ -73,6 +73,9 @@ class UsdManagerPointClearing(UsdManager):
         kept = self._description.urdf()
         if kept is not None:
             return kept
+        # The root matters: RoboPlan is handed this XML and nothing else, so the mesh names in
+        # it have to be absolute, and they are only because opening the layer anchored at the
+        # USD's own directory is what makes USD resolve them. See the test.
         return LoadedRobotModel(
             usd_to_urdf(self._description.usd, root=self._description._asset_root()),
             self._description.source_path,

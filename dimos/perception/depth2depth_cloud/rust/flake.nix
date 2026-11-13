@@ -79,7 +79,7 @@
           default = build null [ ];
           lint = (build "lint" [ ]).override { runTests = true; testCrateFlags = [ "--list" ]; };
           tests = (build "test" [ ]).override { runTests = true; };
-        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           tensorrt = withHostDriver (build null [ "tensorrt" ]);
         };
         checks.lint = self.packages.${system}.lint;
