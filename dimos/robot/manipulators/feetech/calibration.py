@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Calibration artifacts for Feetech leader arms: one file per leader side."""
+"""Feetech calibration files: each motor's ID, zero offset and direction, one file per bus."""
 
 from __future__ import annotations
 
@@ -35,26 +35,28 @@ CALIBRATION_FILENAME = "calibration.json"
 FEETECH_RAW_MIN = 0
 FEETECH_RAW_MAX = 4095
 FEETECH_POSITION_SPAN = FEETECH_RAW_MAX - FEETECH_RAW_MIN
-LEADER_STATE_DIR = STATE_DIR / "teleop" / "leader"
-LeaderSide = Literal["left", "right"]
-LEADER_SIDES: tuple[LeaderSide, ...] = ("left", "right")
-# Both leader arms built so far carry seven Feetech motors, numbered along the arm.
-DEFAULT_LEADER_MOTOR_NAMES: tuple[str, ...] = tuple(f"joint_{index}" for index in range(1, 8))
-# The trigger servo a leader may carry for its gripper; absent on arm-only leaders.
-LEADER_GRIPPER_MOTOR_NAME = "gripper"
+# Where the leader arms' calibration files have always lived.
+FEETECH_CALIBRATION_ROOT = STATE_DIR / "teleop" / "leader"
 
 
-def default_calibration_path(side: LeaderSide, root: Path = LEADER_STATE_DIR) -> Path:
-    """The calibration directory for a leader side under a per-leader root."""
-    return root / side
+def default_calibration_path(bus: str, root: Path = FEETECH_CALIBRATION_ROOT) -> Path:
+    """The calibration directory for one bus, e.g. ``<root>/left``."""
+    return root / bus
 
 
-class LeaderCalibrationError(RuntimeError):
-    """Raised when a leader calibration is missing or invalid."""
+class FeetechCalibrationError(RuntimeError):
+    """Raised when a calibration file is missing or invalid."""
 
 
-class LeaderMotorCalibration(BaseConfig):
-    """Calibration values for one Feetech motor."""
+class FeetechMotorCalibration(BaseConfig):
+    """Calibration values for one Feetech motor.
+
+    Attributes:
+        id: The motor's ID on its bus.
+        homing_offset: The raw reading at the joint's zero, in encoder ticks
+            (0 to 4095 per turn).
+        flip: True for a motor that reads backwards on this arm.
+    """
 
     id: StrictInt
     homing_offset: StrictInt
@@ -63,15 +65,20 @@ class LeaderMotorCalibration(BaseConfig):
     @model_validator(mode="after")
     def _validate_motor(self) -> Self:
         if self.id <= 0:
-            raise LeaderCalibrationError(f"motor has invalid id {self.id}")
+            raise FeetechCalibrationError(f"motor has invalid id {self.id}")
         return self
 
 
-class LeaderCalibration(BaseConfig):
-    """Side-specific leader calibration artifact."""
+class FeetechCalibration(BaseConfig):
+    """One bus's calibration file.
 
-    side: LeaderSide
-    motors: dict[str, LeaderMotorCalibration]
+    Attributes:
+        side: The bus name the file belongs to, e.g. "left".
+        motors: Calibration per motor name.
+    """
+
+    side: str
+    motors: dict[str, FeetechMotorCalibration]
     schema_version: Literal[1] = 1
 
     def require_motors(self, motor_names: Sequence[str]) -> Self:
@@ -79,8 +86,8 @@ class LeaderCalibration(BaseConfig):
         missing = set(motor_names) - set(self.motors)
         extra = set(self.motors) - set(motor_names)
         if missing or extra:
-            raise LeaderCalibrationError(
-                f"leader calibration must contain exactly the motors {list(motor_names)}; "
+            raise FeetechCalibrationError(
+                f"Feetech calibration must contain exactly the motors {list(motor_names)}; "
                 f"missing={sorted(missing)}, extra={sorted(extra)}"
             )
         return self
@@ -93,30 +100,34 @@ def calibration_file(path: Path) -> Path:
     return path / CALIBRATION_FILENAME
 
 
-def load_calibration(
-    path: Path, side: LeaderSide, motor_names: Sequence[str] = DEFAULT_LEADER_MOTOR_NAMES
-) -> LeaderCalibration:
-    """Load and validate a side-specific calibration artifact."""
+def load_calibration(path: Path, side: str, motor_names: Sequence[str]) -> FeetechCalibration:
+    """Read one bus's calibration file and check it covers exactly ``motor_names``.
+
+    Args:
+        path: The calibration file, or the directory holding ``calibration.json``.
+        side: The bus name the file must be for, e.g. "left".
+        motor_names: The motors the bus reads.
+    """
     artifact_path = calibration_file(path)
     if not artifact_path.exists():
-        raise LeaderCalibrationError(f"Missing {side} leader calibration at {artifact_path}.")
+        raise FeetechCalibrationError(f"Missing {side} Feetech calibration at {artifact_path}.")
     try:
-        calibration = LeaderCalibration.model_validate_json(artifact_path.read_text())
+        calibration = FeetechCalibration.model_validate_json(artifact_path.read_text())
         calibration.require_motors(motor_names)
-    except (LeaderCalibrationError, ValidationError, ValueError) as exc:
-        raise LeaderCalibrationError(
-            f"Invalid {side} leader calibration at {artifact_path}: {exc}"
+    except (FeetechCalibrationError, ValidationError, ValueError) as exc:
+        raise FeetechCalibrationError(
+            f"Invalid {side} Feetech calibration at {artifact_path}: {exc}"
         ) from exc
     if calibration.side != side:
-        raise LeaderCalibrationError(
-            f"Leader calibration side mismatch at {artifact_path}: "
+        raise FeetechCalibrationError(
+            f"Feetech calibration side mismatch at {artifact_path}: "
             f"expected {side!r}, got {calibration.side!r}"
         )
     return calibration
 
 
-def save_calibration(path: Path, calibration: LeaderCalibration) -> Path:
-    """Write a side-specific calibration artifact and return its file path."""
+def save_calibration(path: Path, calibration: FeetechCalibration) -> Path:
+    """Write one bus's calibration file and return its path."""
     artifact_path = calibration_file(path)
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text(calibration.model_dump_json(indent=2) + "\n")
