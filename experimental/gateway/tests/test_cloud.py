@@ -46,7 +46,9 @@ def recording(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def transfer(state: State, monkeypatch: pytest.MonkeyPatch) -> threading.Event:
     release = threading.Event()
 
-    def fake(path: str, robot_id: Any, kind: Any, tick: Callable[..., None]) -> dict[str, Any]:
+    def fake(
+        path: str, robot_id: Any, kind: Any, tick: Callable[..., None], settings: Any
+    ) -> dict[str, Any]:
         tick("upload", 0, 100)
         while not release.wait(0.02):
             tick("upload", 50, 100)
@@ -126,7 +128,7 @@ def test_an_upload_cancelled_after_its_last_part_ends_cancelled(
     release_completion = threading.Event()
 
     def completes_without_progress(
-        path: str, robot_id: Any, kind: Any, tick: Callable[..., None]
+        path: str, robot_id: Any, kind: Any, tick: Callable[..., None], settings: Any
     ) -> dict[str, Any]:
         tick("upload", 100, 100)
         release_completion.wait(10)
@@ -364,7 +366,9 @@ def test_an_upload_blocked_before_its_first_byte_still_cancels(
     timeout — used to ignore DELETE: 200 back, and the upload stayed "uploading" forever."""
     release = threading.Event()
 
-    def never_reports(path: str, robot_id: Any, kind: Any, tick: Callable[..., None]) -> Any:
+    def never_reports(
+        path: str, robot_id: Any, kind: Any, tick: Callable[..., None], settings: Any
+    ) -> Any:
         release.wait()  # blocked before the first tick(), so the flag is never read
         return {"upload_id": "cloud-1", "skipped": False, "quota": {}}
 
@@ -412,25 +416,23 @@ def test_the_login_after_a_state_answers_once_the_login_moves_on(
     assert client.get("/cloud/login?after=pending").json()["state"] == "approved"
 
 
-def test_upload_settings_change_through_the_api_and_reach_the_transfer(
+def test_an_upload_carries_its_own_transfer_settings(
     client: TestClient, state: State, recording: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("DIMOS_CLOUD_UPLOAD_RETRIES", "4")
-    assert client.get("/cloud/settings").json() == {
-        "httpTimeout": 60.0,
-        "uploadRetries": 4,
-        "uploadChunkMb": None,
-        "overridden": [],
-    }
-    changed = client.patch("/cloud/settings", json={"httpTimeout": 300, "uploadChunkMb": 16})
-    assert changed.json() == {
+    upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
+    assert upload["settings"] is None
+    again = {"path": str(recording), "httpTimeout": 300, "uploadChunkMb": 16}
+    assert client.post("/cloud/uploads", json=again).json()["settings"] == {
         "httpTimeout": 300.0,
-        "uploadRetries": 4,
         "uploadChunkMb": 16,
-        "overridden": ["httpTimeout", "uploadChunkMb"],
-    }
-    assert client.patch("/cloud/settings", json={"httpTimeout": 0}).status_code == 400
-    assert client.patch("/cloud/settings", json={"uploadChunkMb": 1}).status_code == 400
+    }, "a file already queued takes the new settings"
+    bad = [{"httpTimeout": 0}, {"uploadRetries": -1}, {"uploadChunkMb": 1}]
+    for setting in bad:
+        assert (
+            client.post("/cloud/uploads", json={"path": str(recording), **setting}).status_code
+            == 400
+        )
 
     used: list[Any] = []
 
@@ -443,12 +445,15 @@ def test_upload_settings_change_through_the_api_and_reach_the_transfer(
 
     monkeypatch.setattr("dimos.cloud.data.CloudData", FakeCloudData)
     monkeypatch.setattr(cloud, "api_key", lambda: "key")
-    state.uploads._transfer(str(recording), None, None, lambda *args: None)
-    assert (used[0].http_timeout, used[0].upload_retries, used[0].upload_chunk_mb) == (300, 4, 16)
+    queued = state.uploads.get(upload["id"])
+    assert queued is not None
+    state.uploads._transfer(str(recording), None, None, lambda *args: None, queued["settings"])
+    state.uploads._transfer(str(recording), None, None, lambda *args: None, None)
+    assert [(c.http_timeout, c.upload_retries, c.upload_chunk_mb) for c in used] == [
+        (300, 4, 16),
+        (60, 4, None),
+    ], "the environment's settings for everything the upload doesn't set, and for other uploads"
 
-    assert client.patch("/cloud/settings", json={"httpTimeout": None}).json()["overridden"] == [
-        "uploadChunkMb"
-    ]
-    assert uploads.Uploads(state.uploads.bus, state.uploads.file).settings == {
-        "upload_chunk_mb": 16
-    }, "kept across a restart"
+    state.uploads.update(upload["id"], state="failed")
+    retried = client.post("/cloud/uploads", json={"retry": upload["id"]}).json()
+    assert retried["settings"] == {"httpTimeout": 300.0, "uploadChunkMb": 16}, "kept by a retry"

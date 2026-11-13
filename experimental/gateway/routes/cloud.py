@@ -30,11 +30,7 @@ class UploadRequest(BaseModel):
     robotId: str | None = None
     kind: str | None = None
     retry: str | None = None
-
-
-class SettingsChange(BaseModel):
-    """Only the given settings change; null puts one back to its DIMOS_CLOUD_* environment value."""
-
+    # this upload's own transfer settings, over the DIMOS_CLOUD_* ones; kept through its retries
     httpTimeout: float | None = Field(default=None, gt=0)
     uploadRetries: int | None = Field(default=None, ge=0)
     # S3's smallest part (every part but the last)
@@ -76,10 +72,13 @@ async def upload_list(state: GatewayState) -> dict[str, Any]:
 async def enqueue(state: GatewayState, request: UploadRequest) -> responses.Upload:
     if (request.path is None) == (request.retry is None):
         raise ApiError(400, "give either path or retry")
+    settings = request.model_dump(
+        include={"httpTimeout", "uploadRetries", "uploadChunkMb"}, exclude_none=True
+    )
     if request.path is None:
         assert request.retry is not None
-        return state.uploads.retry(request.retry)
-    return state.uploads.enqueue(request.path, request.robotId, request.kind)
+        return state.uploads.retry(request.retry, settings)
+    return state.uploads.enqueue(request.path, request.robotId, request.kind, settings)
 
 
 @router.delete("/cloud/uploads", response_model=responses.Uploads)
@@ -89,13 +88,3 @@ async def remove(state: GatewayState, id: str | None = None) -> dict[str, Any]:
     else:
         state.uploads.cancel(id)
     return {**state.uploads.listing(), **state.uploads.uploaded()}
-
-
-@router.get("/cloud/settings", response_model=responses.CloudSettings)
-async def settings(state: GatewayState) -> dict[str, Any]:
-    return state.uploads.settings_listing()
-
-
-@router.patch("/cloud/settings", response_model=responses.CloudSettings)
-async def change_settings(state: GatewayState, change: SettingsChange) -> dict[str, Any]:
-    return state.uploads.change_settings(change.model_dump(exclude_unset=True))

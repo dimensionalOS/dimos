@@ -307,15 +307,11 @@ provides:
       post:
         description: >-
           Queue a recording ({path}, robotId, kind) for upload to the Dimensional cloud, or a finished upload again ({retry:
-          id})
+          id}); httpTimeout, uploadRetries and uploadChunkMb set this upload's own transfer (kept through its retries; a
+          file already queued takes them)
       delete:
         description: >-
           Cancel a queued or running upload, or remove a finished one (?id=); with no id, clear the finished uploads
-    /cloud/settings:
-      get:
-        summary: The upload transfer settings in effect (httpTimeout, uploadRetries, uploadChunkMb) and which were set here over the environment
-      patch:
-        summary: Set httpTimeout, uploadRetries or uploadChunkMb (null puts one back to its DIMOS_CLOUD_* value); kept across restarts, used from the next upload
     /extras:
       get:
         summary: 'dimos''s optional extras: installed, applicable, missing, download size'

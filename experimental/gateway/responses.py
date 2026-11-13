@@ -591,6 +591,7 @@ class Upload(Body):
     startedAt: int | None
     finishedAt: int | None
     link: str | None
+    settings: dict[str, Any] | None
 
 
 class Uploaded(Body):
@@ -611,15 +612,6 @@ class Uploads(Body):
     uploads: list[Upload]
     waitingForLogin: bool
     byPath: dict[str, Uploaded]
-
-
-class CloudSettings(Body):
-    """The upload transfer settings in effect, and which of them were set through the API rather than the environment."""
-
-    httpTimeout: float
-    uploadRetries: int
-    uploadChunkMb: int | None
-    overridden: list[str]
 
 
 class SourceFile(Body):

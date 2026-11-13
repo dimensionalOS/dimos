@@ -169,7 +169,22 @@ def console_datasets_url() -> str | None:
     return urlunsplit((url.scheme, authority, "/console/data", "", ""))
 
 
-def new_upload(id: str, path: Path, size: int, robot_id: str | None, kind: str | None) -> Upload:
+# an upload's own transfer settings (POST /cloud/uploads) -> the CloudConfig field each overrides
+TRANSFER_SETTINGS = {
+    "httpTimeout": "http_timeout",
+    "uploadRetries": "upload_retries",
+    "uploadChunkMb": "upload_chunk_mb",
+}
+
+
+def new_upload(
+    id: str,
+    path: Path,
+    size: int,
+    robot_id: str | None,
+    kind: str | None,
+    settings: dict[str, Any] | None = None,
+) -> Upload:
     return {
         "id": id,
         "path": str(path),
@@ -192,6 +207,7 @@ def new_upload(id: str, path: Path, size: int, robot_id: str | None, kind: str |
         "startedAt": None,
         "finishedAt": None,
         "link": None,
+        "settings": settings or None,
     }
 
 
@@ -261,14 +277,6 @@ class Cancel:
         await self.asked.wait()
 
 
-# CloudConfig field -> its name in GET/PATCH /cloud/settings
-SETTINGS_FIELDS = {
-    "http_timeout": "httpTimeout",
-    "upload_retries": "uploadRetries",
-    "upload_chunk_mb": "uploadChunkMb",
-}
-
-
 class Uploads:
     """The upload queue, worked one at a time, and the device login it waits on."""
 
@@ -276,16 +284,12 @@ class Uploads:
         self.bus = bus
         self.file = file
         self.uploaded_file = file.with_name("uploaded.json") if file else None
-        self.settings_file = file.with_name("cloud_settings.json") if file else None
-        # CloudConfig fields set through PATCH /cloud/settings, over the environment's
-        self.settings: dict[str, Any] = (
-            store.read_json(self.settings_file) if self.settings_file else None
-        ) or {}
         self.items: list[Upload] = (store.read_json(file) if file else None) or []
         self.uploaded_by_path: dict[str, Uploaded] = (
             store.read_json(self.uploaded_file) if self.uploaded_file else None
         ) or {}
         for upload in self.items:
+            upload.setdefault("settings", None)  # queued before uploads had their own settings
             # only when uploaded.json lost it: the file as it is now is the best guess left
             done = uploaded_entry(upload, _size_and_mtime(upload["path"]))
             if done:
@@ -332,30 +336,6 @@ class Uploads:
     def listing(self) -> dict[str, Any]:
         return {"uploads": self.items, "waitingForLogin": self.waiting_for_login}
 
-    def cloud_config(self) -> CloudConfig:
-        return CloudConfig().model_copy(update=self.settings)
-
-    def settings_listing(self) -> dict[str, Any]:
-        config = self.cloud_config()
-        return {
-            "httpTimeout": config.http_timeout,
-            "uploadRetries": config.upload_retries,
-            "uploadChunkMb": config.upload_chunk_mb,
-            "overridden": sorted(SETTINGS_FIELDS[field] for field in self.settings),
-        }
-
-    def change_settings(self, change: dict[str, Any]) -> dict[str, Any]:
-        """Sets each given setting (camelCase); None puts it back to the environment's. Applies from the next upload."""
-        for name, value in change.items():
-            field = next(field for field, api in SETTINGS_FIELDS.items() if api == name)
-            if value is None:
-                self.settings.pop(field, None)
-            else:
-                self.settings[field] = value
-        if self.settings_file:
-            store.write_atomic(self.settings_file, json.dumps(self.settings, indent=2))
-        return self.settings_listing()
-
     def save(self) -> None:
         if self.file:
             store.write_atomic(self.file, json.dumps(self.items, indent=2))
@@ -384,13 +364,20 @@ class Uploads:
         else:
             self.loop.call_soon_threadsafe(self.wake.set)
 
-    def enqueue(self, path: str, robot_id: str | None, kind: str | None) -> Upload:
+    def enqueue(
+        self, path: str, robot_id: str | None, kind: str | None, settings: dict[str, Any] | None
+    ) -> Upload:
+        """Queues a file, with its own transfer settings if given; one already queued takes the new settings."""
         checked_path, size = check_path(path)
         for upload in self.items:
             if upload["path"] == str(checked_path) and upload["state"] in ("queued", "uploading"):
+                if settings and upload["state"] == "queued":
+                    upload["settings"] = settings
+                    self.save()
+                    self.emit(upload.copy())
                 return upload.copy()
         self.next += 1
-        upload = new_upload(f"u{self.next}", checked_path, size, robot_id, kind)
+        upload = new_upload(f"u{self.next}", checked_path, size, robot_id, kind, settings)
         self.items.append(upload)
         self.save()
         self.emit(upload.copy())
@@ -413,7 +400,8 @@ class Uploads:
             self.bus.send({"type": "upload-removed", "id": id})
         self.save()
 
-    def retry(self, id: str) -> Upload:
+    def retry(self, id: str, settings: dict[str, Any] | None) -> Upload:
+        """Queues a finished upload again, keeping its transfer settings unless new ones are given."""
         upload = self.get(id)
         if upload is None:
             raise ApiError(404, f"no upload {id}")
@@ -422,7 +410,14 @@ class Uploads:
         self.items.remove(upload)
         upload_id = upload["uploadId"]
         upload.update(
-            new_upload(id, Path(upload["path"]), upload["size"], upload["robotId"], upload["kind"])
+            new_upload(
+                id,
+                Path(upload["path"]),
+                upload["size"],
+                upload["robotId"],
+                upload["kind"],
+                settings or upload["settings"],
+            )
         )
         upload["uploadId"] = upload_id
         self.items.append(upload)
@@ -648,7 +643,12 @@ class Uploads:
         )
 
     def _transfer(
-        self, path: str, robot_id: str | None, kind: str | None, tick: Callable[..., None]
+        self,
+        path: str,
+        robot_id: str | None,
+        kind: str | None,
+        tick: Callable[..., None],
+        settings: dict[str, Any] | None,
     ) -> dict[str, Any]:
         from dimos.cloud.data import CloudData
 
@@ -657,7 +657,10 @@ class Uploads:
         if not cloud.api_key():
             raise NotLoggedInError()
         tick("preparing", 0, 0)
-        return CloudData(config=self.cloud_config()).upload(
+        config = CloudConfig().model_copy(
+            update={TRANSFER_SETTINGS[name]: value for name, value in (settings or {}).items()}
+        )
+        return CloudData(config=config).upload(
             Path(path), robot_id=robot_id, kind=kind, progress=tick
         )
 
@@ -701,7 +704,12 @@ class Uploads:
 
         transfer = asyncio.ensure_future(
             asyncio.to_thread(
-                self._transfer, upload["path"], upload["robotId"], upload["kind"], tick
+                self._transfer,
+                upload["path"],
+                upload["robotId"],
+                upload["kind"],
+                tick,
+                upload["settings"],
             )
         )
         asked = asyncio.ensure_future(cancel.wait())
