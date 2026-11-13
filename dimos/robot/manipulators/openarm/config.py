@@ -27,6 +27,7 @@ from dimos.robot.manipulators.damiao.robot import (
     DamiaoMotor,
     DamiaoRobot,
 )
+from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechRobot
 
 OPENARM_DESCRIPTION_URL = "https://github.com/enactic/openarm_description"
 OPENARM_DESCRIPTION_REF = "1fba2cbc05001f05b4514120b70130b4ac06f409"
@@ -161,4 +162,13 @@ OPENARM = DamiaoRobot(
     joint_names=[*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS],
     gravity=True,
     home_joints=list(OPENARM_HOME_JOINTS),
+)
+
+# Each OpenArm Mini leader: arm servos joint_1 to joint_7 at IDs 1 to 7, and a
+# gripper trigger at ID 8.
+OPENARM_MINI_LEADER_MOTORS = (*(f"joint_{index}" for index in range(1, 8)), "gripper")
+
+#: The two OpenArm Mini leader arms, one Feetech bus each.
+OPENARM_MINI_LEADERS = FeetechRobot(
+    buses=tuple(FeetechBus(side, OPENARM_MINI_LEADER_MOTORS) for side in OPENARM_SIDES)
 )

@@ -1,8 +1,11 @@
 # OpenArm Mini Teleop
 
-Two Feetech leader arms drive the bimanual OpenArm through the generic leader
-teleop module (`dimos/teleop/leader`). The OpenArm folder supplies only the
-motor-to-joint mapping, the joint limits and the blueprints.
+Two Feetech leader arms drive the bimanual OpenArm. `OpenArmMiniConnection`
+(`dimos/robot/manipulators/openarm/connection.py`) reads the leaders and
+publishes their joint angles; the generic leader teleop module
+(`dimos/teleop/leader`) maps them onto the arms. The OpenArm folder supplies the
+leader robot data, the joint-to-joint mapping, the joint limits and the
+blueprints.
 
 ## Install
 
@@ -13,7 +16,7 @@ uv sync --extra leader-teleop --extra manipulation
 ## Calibration
 
 Each leader carries seven arm motors, `joint_1` to `joint_7` at IDs 1 to 7, and
-a gripper trigger servo at ID 8. The module reads one calibration file per side
+a gripper trigger servo at ID 8. The leader connection reads one calibration file per side
 from `~/.local/state/dimos/teleop/leader/<side>/calibration.json`: each motor's
 zero offset, taken with the leader in the pose that matches the follower's
 all-zero joints and the trigger released, and which motors read backwards. The
@@ -27,12 +30,13 @@ and Viser on one machine. The leader ports you pass select the sides; the other
 arm holds. `--simulation` swaps the CAN connection for a mock.
 
 ```bash
-dimos --simulation run teleop-openarm-mini --leaderteleopmodule.port-left <feetech-port>
+dimos --simulation run teleop-openarm-mini --left-serial-port <feetech-port>
 ```
 
 Leader joint N drives follower joint N of the same side, clamped to the OpenArm
 limits before publishing, read every 10 ms and low-passed at 6 Hz
-(`--leaderteleopmodule.tick-period-s`, `--leaderteleopmodule.command-filter-cutoff-hz` to change). The targets stream into the coordinator's `joint_trajectory` task
+(`--openarmminiconnection.state-rate-hz` with a matching `--leaderteleopmodule.reading-period-s`,
+and `--leaderteleopmodule.command-filter-cutoff-hz`, to change). The targets stream into the coordinator's `joint_trajectory` task
 with human-speed velocity limits; the trigger drives that side's gripper task,
 1 = open.
 
@@ -43,8 +47,8 @@ each leader like its arm, then:
 
 ```bash
 dimos run teleop-openarm-mini \
-  --leaderteleopmodule.port-left <left-feetech-port> \
-  --leaderteleopmodule.port-right <right-feetech-port> \
+  --left-serial-port <left-feetech-port> \
+  --right-serial-port <right-feetech-port> \
   --left-can-port can1 --right-can-port can2
 ```
 
@@ -64,8 +68,8 @@ dimos run teleop-openarm-mini-follower --left-can-port can1 --right-can-port can
 
 # operator laptop
 dimos run teleop-openarm-mini-leader --robot-ip <robot-ip> \
-  --leaderteleopmodule.port-left <left-feetech-port> \
-  --leaderteleopmodule.port-right <right-feetech-port>
+  --left-serial-port <left-feetech-port> \
+  --right-serial-port <right-feetech-port>
 ```
 
 Start the router before the follower. If the link drops, the follower holds its
@@ -81,8 +85,8 @@ leaders, jaw openings from the triggers) and three 640x480 cameras.
 
 ```bash
 dimos run openarm-mini-collection --daemon \
-  --leaderteleopmodule.port-left <feetech-port> \
-  --leaderteleopmodule.port-right <feetech-port> \
+  --left-serial-port <feetech-port> \
+  --right-serial-port <feetech-port> \
   --left-can-port can1 --right-can-port can2 \
   --front.hardware.camera-index /dev/video8 \
   --left-wrist.hardware.camera-index /dev/video0 \

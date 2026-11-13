@@ -341,6 +341,7 @@ all_modules = {
     "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
     "open-arm-connection": "dimos.robot.manipulators.openarm.connection.OpenArmConnection",
     "open-arm-leader-coordinator": "dimos.robot.manipulators.openarm.blueprints.mini_teleop.OpenArmLeaderCoordinator",
+    "open-arm-mini-connection": "dimos.robot.manipulators.openarm.connection.OpenArmMiniConnection",
     "open-yam-connection": "dimos.robot.manipulators.openyam.connection.OpenYamConnection",
     "open-yam-coordinator": "dimos.robot.manipulators.openyam.coordinator.OpenYamCoordinator",
     "open-yam-teleop-coordinator": "dimos.robot.manipulators.openyam.coordinator.OpenYamTeleopCoordinator",
