@@ -32,7 +32,7 @@ from dimos.robot.manipulators.feetech.calibration import (
     FeetechCalibration,
     FeetechMotorCalibration,
 )
-from dimos.robot.manipulators.feetech.robot import FeetechRobot, joint_name
+from dimos.robot.manipulators.feetech.robot import FeetechRobot
 
 FEETECH_EXTRA = "leader-teleop"
 FEETECH_COMM_SUCCESS = 0
@@ -125,19 +125,9 @@ class FeetechArm:
         self._robot = robot
         self._ports = dict(ports)
         self._calibrations = {
-            bus: calibrations[bus].require_motors(robot.bus(bus).motors) for bus in ports
+            bus: calibrations[bus].require_motors(robot.bus(bus).motor_names) for bus in ports
         }
         self._handlers: dict[str, tuple[Any, Any]] = {}
-
-    @property
-    def joint_names(self) -> list[str]:
-        """The joints :meth:`read` returns, bus by bus, e.g. "left_joint_1"."""
-        return [
-            joint_name(bus.name, motor)
-            for bus in self._robot.buses
-            if bus.name in self._ports
-            for motor in bus.motors
-        ]
 
     def connect(self) -> None:
         """Open every bus's serial port at the robot's baudrate."""
@@ -156,23 +146,24 @@ class FeetechArm:
             self.disconnect()
             raise
 
-    def read(self) -> dict[str, float]:
-        """Every motor's joint angle, in radians, keyed by joint name."""
+    def read(self) -> dict[str, dict[str, float]]:
+        """Every motor's angle, in radians, by bus name, then motor name."""
         if not self._handlers:
             raise RuntimeError("Feetech arm is not connected")
-        positions: dict[str, float] = {}
+        readings: dict[str, dict[str, float]] = {}
         for bus in self._robot.buses:
             if bus.name not in self._handlers:
                 continue
             _, packet_handler = self._handlers[bus.name]
             calibration = self._calibrations[bus.name]
-            for motor in bus.motors:
-                motor_calibration = calibration.motors[motor]
-                raw = _read_motor_position(packet_handler, motor_calibration.id)
-                positions[joint_name(bus.name, motor)] = calibrated_motor_radians(
-                    raw, motor_calibration
+            readings[bus.name] = {
+                motor: calibrated_motor_radians(
+                    _read_motor_position(packet_handler, calibration.motors[motor].id),
+                    calibration.motors[motor],
                 )
-        return positions
+                for motor in bus.motor_names
+            }
+        return readings
 
     def disconnect(self) -> None:
         """Close every open serial port; safe to call when nothing is open."""
@@ -184,32 +175,30 @@ class FeetechArm:
 
 
 class MockFeetechArm:
-    """Fixed joint angles without any hardware, for ``--simulation`` runs and tests.
+    """Fixed readings without any hardware, for ``--simulation`` runs and tests.
 
     Args:
         robot: The buses and the motors on each; every bus is "read".
-        positions: Joint angle per joint name, in radians; joints left out read 0.
+        positions: Angle per follower joint, in radians; joints left out
+            read 0. Triggers read 0, released.
     """
 
     def __init__(self, robot: FeetechRobot, positions: Mapping[str, float]) -> None:
-        self._positions = {
-            joint_name(bus.name, motor): float(positions.get(joint_name(bus.name, motor), 0.0))
-            for bus in robot.buses
-            for motor in bus.motors
-        }
+        self._readings: dict[str, dict[str, float]] = {}
+        for bus in robot.buses:
+            readings = {motor.name: float(positions.get(motor.joint, 0.0)) for motor in bus.motors}
+            if bus.trigger is not None:
+                readings[bus.trigger.name] = 0.0
+            self._readings[bus.name] = readings
         self._connected = False
-
-    @property
-    def joint_names(self) -> list[str]:
-        return list(self._positions)
 
     def connect(self) -> None:
         self._connected = True
 
-    def read(self) -> dict[str, float]:
+    def read(self) -> dict[str, dict[str, float]]:
         if not self._connected:
             raise RuntimeError("mock Feetech arm is not connected")
-        return dict(self._positions)
+        return {bus: dict(readings) for bus, readings in self._readings.items()}
 
     def disconnect(self) -> None:
         self._connected = False

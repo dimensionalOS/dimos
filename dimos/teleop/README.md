@@ -45,18 +45,6 @@ Base phone teleop module. Receives orientation + gyro data from phone motion sen
 ### SimplePhoneTeleop
 Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Twist`.
 
-### LeaderTeleopModule
-Maps leader arm readings onto a follower. The leader arms have their own
-connection (Feetech leaders: `FeetechConnection` in
-`dimos/robot/manipulators/feetech`), which publishes their joint angles; the
-module reads them on `leader_joint_state`, applies the robot's `SideMapping`
-(which leader joint drives which follower joint, with limits, scale and offset,
-and which trigger drives the gripper), drops readings that jump, low-pass
-filters the targets and publishes `leader_joint_command` plus a gripper opening
-per side. The robot's blueprint adds a `leader_joint_command` port to its own
-coordinator and points the existing `joint_trajectory` and gripper tasks at
-these streams with `stream_bind`.
-
 ## Subclassing
 
 `WebXRTeleopModule` is designed for extension. Override these methods:
@@ -95,9 +83,6 @@ teleop/
 │   ├── robot_type.py            # RobotType: broker config → operator view auto-select
 │   ├── README.md                # Broker session / aiortc + Cloudflare WebRTC internals
 │   └── blueprints/              # cloudflare.py (Go2 transport + multicam, xArm6/7)
-├── leader/
-│   ├── module.py                # LeaderTeleopModule: leader readings -> follower targets
-│   └── mapping.py               # SideMapping/JointMapping/GripperMapping (config, not code)
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop

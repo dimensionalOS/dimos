@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,45 +11,64 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import threading
 from typing import Any
 
 import pytest
 
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.feetech.connection import FeetechConnection
-from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechRobot
+from dimos.robot.manipulators.feetech.connection import GUARDED_JOINT_FRAME_ID, FeetechConnection
+from dimos.robot.manipulators.feetech.robot import (
+    FeetechBus,
+    FeetechMotor,
+    FeetechRobot,
+    FeetechTrigger,
+)
 
 
 class _Leaders(FeetechConnection):
     robot = FeetechRobot(
-        buses=(FeetechBus("left", ("joint_1", "joint_7")), FeetechBus("right", ("joint_1",)))
+        buses=(
+            FeetechBus(
+                "left",
+                (
+                    FeetechMotor("joint_1", "left_joint1", lower=-1.0, upper=1.0),
+                    FeetechMotor("joint_2", "left_joint2", lower=0.0, upper=2.0),
+                ),
+                trigger=FeetechTrigger("joint_7", travel_radians=1.5),
+            ),
+            FeetechBus("right", (FeetechMotor("joint_1", "right_joint1", lower=-1.0, upper=1.0),)),
+        )
     )
 
     def serial_ports(self) -> dict[str, str]:
         return {}
 
 
-def test_connection_publishes_every_joint_under_its_source(mocker: Any) -> None:
-    connection = _Leaders(mock_positions={"left_joint_7": 0.5})
-    published = threading.Event()
-    messages: list[JointState] = []
-
-    def record(message: JointState) -> None:
-        messages.append(message)
-        published.set()
-
-    mocker.patch.object(connection.joint_state, "publish", side_effect=record)
-    connection.start()
+def test_a_reading_becomes_clamped_follower_targets_and_a_jaw_opening(mocker: Any) -> None:
+    connection = _Leaders(mock_positions={})
+    joints = mocker.patch.object(connection.joint_state, "publish")
+    left = mocker.patch.object(connection.left_gripper_command, "publish")
+    right = mocker.patch.object(connection.right_gripper_command, "publish")
     try:
-        assert published.wait(2.0)
+        # The right leader is not connected; the left trigger is half squeezed.
+        connection.publish_reading({"left": {"joint_1": 1.4, "joint_2": -0.3, "joint_7": -0.75}})
     finally:
         connection.stop()
 
-    assert messages[0].name == [
-        "leader/left_joint_1",
-        "leader/left_joint_7",
-        "leader/right_joint_1",
-    ]
-    assert messages[0].position == pytest.approx([0.0, 0.5, 0.0])
+    targets = joints.call_args.args[0]
+    assert targets.name == ["arm/left_joint1", "arm/left_joint2"]
+    assert targets.position == pytest.approx([1.0, 0.0])
+    assert targets.frame_id == GUARDED_JOINT_FRAME_ID
+    assert left.call_args.args[0].data == pytest.approx(0.5)
+    right.assert_not_called()
+
+
+def test_the_filter_moves_each_target_a_fraction_toward_the_reading(mocker: Any) -> None:
+    connection = _Leaders(mock_positions={}, filter_cutoff_hz=6.0)
+    joints = mocker.patch.object(connection.joint_state, "publish")
+    try:
+        connection.publish_reading({"right": {"joint_1": 0.0}})
+        connection.publish_reading({"right": {"joint_1": 0.5}})
+    finally:
+        connection.stop()
+
+    assert 0.0 < joints.call_args.args[0].position[0] < 0.5
