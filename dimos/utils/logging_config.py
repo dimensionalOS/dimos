@@ -18,6 +18,7 @@ import logging
 import logging.handlers
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import traceback
@@ -34,7 +35,9 @@ logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
 logging.getLogger("websockets.server").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 
-_LOG_FILE_PATH = None
+_LOG_FILE_PATH: Path | None = None
+# Only the process that selected a private startup file may move it into a run.
+_STARTUP_LOG_FILE: tuple[Path, int] | None = None
 
 _RUN_LOG_DIR: Path | None = None
 
@@ -44,13 +47,17 @@ def set_run_log_dir(log_dir: str | Path) -> None:
 
     Updates the global path AND migrates any existing FileHandlers on
     stdlib loggers so that logs written after this call go to the new
-    directory.  Workers spawned after this call inherit the env var.
+    directory. Records in this process's private startup file move there
+    too; existing run logs are preserved. Workers inherit the env var.
     """
-    global _RUN_LOG_DIR, _LOG_FILE_PATH
-    log_dir = Path(log_dir)
-    _RUN_LOG_DIR = log_dir
-    _RUN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    global _RUN_LOG_DIR, _LOG_FILE_PATH, _STARTUP_LOG_FILE
+    log_dir = Path(log_dir).resolve()
+    log_dir.mkdir(parents=True, exist_ok=True)
     new_path = log_dir / "main.jsonl"
+    # Viewers must be able to follow even a quiet run before its first record.
+    new_path.touch(exist_ok=True)
+    old_path = _LOG_FILE_PATH
+    _RUN_LOG_DIR = log_dir
     _LOG_FILE_PATH = new_path
     os.environ["DIMOS_RUN_LOG_DIR"] = str(log_dir)
 
@@ -60,16 +67,43 @@ def set_run_log_dir(log_dir: str | Path) -> None:
         for i, handler in enumerate(logger_obj.handlers):
             if isinstance(handler, logging.FileHandler) and handler.baseFilename != str(new_path):
                 handler.close()
-                new_handler = logging.handlers.RotatingFileHandler(
-                    new_path,
-                    mode="a",
-                    maxBytes=10 * 1024 * 1024,  # 10 MiB
-                    backupCount=20,
-                    encoding="utf-8",
-                )
+                new_handler = _file_handler(new_path)
                 new_handler.setLevel(handler.level)
                 new_handler.setFormatter(handler.formatter)
+                for log_filter in handler.filters:
+                    new_handler.addFilter(log_filter)
                 logger_obj.handlers[i] = new_handler
+
+    # Carry over what this process logged before the run directory existed,
+    # so it does not stay behind in a per-process file.
+    if (
+        old_path is not None
+        and _STARTUP_LOG_FILE == (old_path, os.getpid())
+        and old_path.exists()
+        and not old_path.samefile(new_path)
+    ):
+        with old_path.open("rb") as source, new_path.open("ab") as destination:
+            shutil.copyfileobj(source, destination)
+        old_path.unlink()
+    _STARTUP_LOG_FILE = None
+
+
+def _file_handler(path: Path) -> logging.handlers.RotatingFileHandler:
+    # RotatingFileHandler with a size cap to prevent unbounded log growth.
+    # Multiple forkserver workers may each open their own handler to the same
+    # file. A concurrent rotate can lose a few lines, but that is far
+    # preferable to unbounded growth causing OOM on resource-constrained
+    # devices (cameras + LCM at 30 fps can write ~100 MB/min of JSON logs).
+    return logging.handlers.RotatingFileHandler(
+        path,
+        mode="a",
+        maxBytes=10 * 1024 * 1024,  # 10 MiB
+        backupCount=20,
+        encoding="utf-8",
+        # Open the file on the first record, so a process that logs nothing
+        # leaves no empty file behind.
+        delay=True,
+    )
 
 
 def get_run_log_dir() -> Path | None:
@@ -103,12 +137,15 @@ def _get_log_file_path() -> Path:
 
 
 def _configure_structlog() -> Path:
-    global _LOG_FILE_PATH
+    global _LOG_FILE_PATH, _STARTUP_LOG_FILE
 
-    if _LOG_FILE_PATH:
+    if _LOG_FILE_PATH is not None and structlog.is_configured():
         return _LOG_FILE_PATH
 
-    _LOG_FILE_PATH = _get_log_file_path()
+    if _LOG_FILE_PATH is None:
+        _LOG_FILE_PATH = _get_log_file_path()
+        if _RUN_LOG_DIR is None and not os.environ.get("DIMOS_RUN_LOG_DIR"):
+            _STARTUP_LOG_FILE = (_LOG_FILE_PATH, os.getpid())
 
     shared_processors: list[Any] = [
         structlog.stdlib.add_log_level,
@@ -171,7 +208,8 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
     timestamp = event_dict.pop("timestamp", "")
     if timestamp:
         try:
-            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            # The record stamp is UTC. Print local time, like run ids and the agent output.
+            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone()
             time_str = dt.strftime("%H:%M:%S") + f".{dt.microsecond // 1000:03d}"
         except (ValueError, AttributeError):
             time_str = str(timestamp)[:12]
@@ -192,11 +230,13 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
     # Event message
     event = event_dict.pop("event", "")
 
+    # Traceback rendered by format_exc_info, printed under the line
+    exception = event_dict.pop("exception", "")
+
     # Remove internal / callsite / exception fields
     for key in (
         "func_name",
         "lineno",
-        "exception",
         "exc_info",
         "exception_type",
         "exception_message",
@@ -227,6 +267,9 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
         line = f"{time_str} [{level_short}][{file_path}] {event}"
         if kv_str:
             line += " " + kv_str
+
+    if exception:
+        line += f"\n{exception}"
 
     return line
 
@@ -273,19 +316,7 @@ def setup_logger(*, level: int | None = None) -> Any:
     console_handler.setFormatter(console_formatter)
     stdlib_logger.addHandler(console_handler)
 
-    # RotatingFileHandler with a size cap to prevent unbounded log growth.
-    # Multiple forkserver workers may each open their own handler to the same
-    # file — a concurrent rotate can lose a few lines, but that is far
-    # preferable to unbounded growth causing OOM on resource-constrained
-    # devices (cameras + LCM at 30 fps can write ~100 MB/min of JSON logs).
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file_path,
-        mode="a",
-        maxBytes=10 * 1024 * 1024,  # 10 MiB
-        backupCount=20,
-        encoding="utf-8",
-    )
-
+    file_handler = _file_handler(log_file_path)
     file_handler.setLevel(level)
     file_formatter = structlog.stdlib.ProcessorFormatter(
         processor=structlog.processors.JSONRenderer(),
@@ -311,7 +342,12 @@ def setup_exception_handler() -> None:
         # Get a logger for uncaught exceptions
         logger = setup_logger()
 
-        # Log the exception with full traceback to JSON
+        # Uncaught exceptions must remain visible even when error logging is disabled.
+        if not logger.isEnabledFor(logging.ERROR):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        # The console handler prints the traceback under the line
         logger.error(
             "Uncaught exception occurred",
             exc_info=(exc_type, exc_value, exc_traceback),
@@ -319,18 +355,6 @@ def setup_exception_handler() -> None:
             exception_message=str(exc_value),
             traceback_lines=traceback.format_exception(exc_type, exc_value, exc_traceback),
         )
-
-        # Still display the exception nicely on console using Rich if available
-        try:
-            from rich.console import Console
-            from rich.traceback import Traceback
-
-            console = Console()
-            tb = Traceback.from_exception(exc_type, exc_value, exc_traceback)
-            console.print(tb)
-        except ImportError:
-            # Fall back to standard exception display if Rich is not available
-            sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
     # Set our custom exception handler
     sys.excepthook = handle_exception

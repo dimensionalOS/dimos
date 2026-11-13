@@ -73,7 +73,7 @@ def _explore_house(sim: DimSimClient) -> None:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
-    # dimsim spawns the robot well after MCP is up — wait for odom before driving
+    # dimsim spawns the robot well after dimos is up — wait for odom before driving
     seen: list[PoseStamped] = []
     probe: LCMTransport[PoseStamped] = LCMTransport("/odom", PoseStamped)
     probe.subscribe(lambda msg, *args: seen.append(msg))
@@ -111,7 +111,7 @@ go_to_bed = EvalCase(
     id="dimsim_go_to_bed",
     inputs="go to the bed",
     environment=DimSimEnvironment(
-        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
+        blueprint=["unitree-go2", "unitree-skill-container"],
         scene="apartment",
         setup=_explore_house,
     ),

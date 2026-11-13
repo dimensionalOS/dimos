@@ -34,14 +34,14 @@
           { vals.pkg=pkgs.stdenv.cc.cc.lib;   flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.stdenv.cc;          flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.gfortran.cc.lib;    flags.ldLibraryGroup=true; }
-          { vals.pkg=pkgs.cctools;            flags={}; onlyIf=pkgs.stdenv.isDarwin; } # for pip install opencv-python
-          { vals.pkg=pkgs.pcre2;              flags={ ldLibraryGroup=pkgs.stdenv.isDarwin; packageConfGroup=pkgs.stdenv.isDarwin; }; }
-          { vals.pkg=pkgs.libsysprof-capture; flags.packageConfGroup=true; onlyIf=pkgs.stdenv.isDarwin; }
-          { vals.pkg=pkgs.xcbuild;            flags={}; onlyIf=pkgs.stdenv.isDarwin; }
+          { vals.pkg=pkgs.cctools;            flags={}; onlyIf=pkgs.stdenv.hostPlatform.isDarwin; } # for pip install opencv-python
+          { vals.pkg=pkgs.pcre2;              flags={ ldLibraryGroup=pkgs.stdenv.hostPlatform.isDarwin; packageConfGroup=pkgs.stdenv.hostPlatform.isDarwin; }; }
+          { vals.pkg=pkgs.libsysprof-capture; flags.packageConfGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isDarwin; }
+          { vals.pkg=pkgs.xcbuild;            flags={}; onlyIf=pkgs.stdenv.hostPlatform.isDarwin; }
           { vals.pkg=pkgs.git-lfs;            flags={}; }
           { vals.pkg=pkgs.gnugrep;            flags={}; }
           { vals.pkg=pkgs.gnused;             flags={}; }
-          { vals.pkg=pkgs.iproute2;           flags={}; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.iproute2;           flags={}; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
           { vals.pkg=pkgs.pkg-config;         flags={}; }
           { vals.pkg=pkgs.git;                flags={}; }
           { vals.pkg=pkgs.opensshWithKerberos;flags={}; }
@@ -49,7 +49,7 @@
           { vals.pkg=pkgs.unixtools.netstat;  flags={}; }
 
           # when pip packages call cc with -I/usr/include, that causes problems on some machines, this swaps that out for the nix cc headers
-          # this is only necessary for pip packages from venv, pip packages from nixpkgs.python312Packages.* already have "-I/usr/include" patched with the nix equivalent
+          # this is only necessary for pip packages from venv, pip packages from nixpkgs.python314Packages.* already have "-I/usr/include" patched with the nix equivalent
           {
             vals.pkg=(pkgs.writeShellScriptBin
               "cc-no-usr-include"
@@ -78,10 +78,10 @@
           }
 
           ### Python + static analysis
-          { vals.pkg=pkgs.python312;                    flags={}; vals.pythonMinorVersion="12";}
-          { vals.pkg=pkgs.python312Packages.pip;        flags={}; }
-          { vals.pkg=pkgs.python312Packages.setuptools; flags={}; }
-          { vals.pkg=pkgs.python312Packages.virtualenv; flags={}; }
+          { vals.pkg=pkgs.python314;                    flags={}; vals.pythonMinorVersion="14";}
+          { vals.pkg=pkgs.python314Packages.pip;        flags={}; }
+          { vals.pkg=pkgs.python314Packages.setuptools; flags={}; }
+          { vals.pkg=pkgs.python314Packages.virtualenv; flags={}; }
           { vals.pkg=pkgs.uv;                             flags={}; }
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
 
@@ -92,41 +92,41 @@
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
 
           ### Graphics / X11 stack
-          { vals.pkg=pkgs.libGL;              flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libGLU;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.mesa;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.glfw;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libx11;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxi;              flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxext;            flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxrandr;          flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxinerama;        flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxcursor;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxfixes;          flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxrender;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxdamage;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxcomposite;      flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxcb;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxscrnsaver;      flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.libxxf86vm;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.udev;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.SDL2;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.SDL2.dev;           flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.zlib;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libGL;              flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libGLU;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.mesa;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.glfw;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libx11;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxi;              flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxext;            flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxrandr;          flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxinerama;        flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxcursor;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxfixes;          flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxrender;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxdamage;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxcomposite;      flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxcb;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxscrnsaver;      flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.libxxf86vm;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.udev;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.SDL2;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.SDL2.dev;           flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.zlib;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
 
           ### GTK / OpenCV helpers
-          { vals.pkg=pkgs.glib;                  flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.gtk3;                  flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.gdk-pixbuf;            flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.gobject-introspection; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.glib;                  flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.gtk3;                  flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.gdk-pixbuf;            flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.gobject-introspection; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
 
           ### GStreamer
           { vals.pkg=pkgs.gst_all_1.gstreamer;          flags.ldLibraryGroup=true; flags.giTypelibGroup=true; }
           { vals.pkg=pkgs.gst_all_1.gst-plugins-base;   flags.ldLibraryGroup=true; flags.giTypelibGroup=true; }
-          { vals.pkg=pkgs.gst_all_1.gst-plugins-good;   flags={}; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.gst_all_1.gst-plugins-bad;    flags={}; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.gst_all_1.gst-plugins-ugly;   flags={}; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.python312Packages.gst-python; flags={}; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.gst_all_1.gst-plugins-good;   flags={}; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.gst_all_1.gst-plugins-bad;    flags={}; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.gst_all_1.gst-plugins-ugly;   flags={}; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
+          { vals.pkg=pkgs.python314Packages.gst-python; flags={}; onlyIf=pkgs.stdenv.hostPlatform.isLinux; }
 
           ### Open3D & build-time
           { vals.pkg=pkgs.eigen;         flags={}; }
@@ -149,7 +149,7 @@
           # gets them from the venv.
           {
             vals.pkg=lcm-extended.packages.${system}.lcm;
-            flags={ ldLibraryGroup=true; manualPythonPackages=pkgs.stdenv.isDarwin; };
+            flags={ ldLibraryGroup=true; manualPythonPackages=pkgs.stdenv.hostPlatform.isDarwin; };
           }
           { vals.pkg=pkgs.cyclonedds; flags.ldLibraryGroup=true; flags.packageConfGroup=true; }
         ];
@@ -199,7 +199,7 @@
           export PKG_CONFIG_PATH=${lib.escapeShellArg packageConfPackagesString}
           export PYTHONPATH="$PYTHONPATH:"${lib.escapeShellArg manualPythonPackages}
           # Strip 3.13 site-packages leaked by setup hooks of py-built tools
-          # (pre-commit etc). They shadow the uv-managed 3.12's _sysconfigdata,
+          # (pre-commit etc). They shadow the uv-managed 3.14's _sysconfigdata,
           # making sysconfig report SOABI=cpython-313, which trips setuptools
           # wheel-tag validation.
           export PYTHONPATH="$(printf '%s' "$PYTHONPATH" | tr ':' '\n' | grep -v '/python3\.13/' | paste -sd:)"

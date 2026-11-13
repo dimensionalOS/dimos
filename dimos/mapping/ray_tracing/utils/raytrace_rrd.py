@@ -43,6 +43,7 @@ from dimos.memory.tf import StreamTF
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path
+from dimos.utils.executable import find_executable
 
 TIMELINE = "ts"
 
@@ -176,7 +177,7 @@ def main(
     if out is not None:
         rr.save(str(out))
     else:
-        rr.spawn(memory_limit=viewer_memory)
+        rr.spawn(memory_limit=viewer_memory, executable_path=find_executable("rerun"))
 
     rr.log(
         "world/robot/axes",

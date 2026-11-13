@@ -20,8 +20,9 @@
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
         ours = [ name "dimos-module" "dimos-module-macros" ];
-        callWith = mode: import generated {
-          inherit pkgs;
+        callWith = mode: callForPkgs pkgs mode;
+        callForPkgs = forPkgs: mode: import generated {
+          pkgs = forPkgs;
           buildRustCrateForPkgs = cratePkgs: crate:
             # stabby-macros writes the builder's core count (NUM_JOBS) into its code; one value makes every machine's copy match.
             (cratePkgs.buildRustCrate.override {
@@ -56,6 +57,9 @@
 
         packages.tests = (buildOf (callWith "test")).override { runTests = true; };
         checks.tests = self.packages.${system}.tests;
+
+        # Cross-built robot binary; no tests, they would need an aarch64 emulator.
+        packages.aarch64 = buildOf (callForPkgs pkgs.pkgsCross.aarch64-multiplatform null);
 
         devShells.default = pkgs.mkShell { packages = rustTools; };
       });

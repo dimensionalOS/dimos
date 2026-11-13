@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dimos-lerobot-runtime"
 version = "0.1.0"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "lerobot[dataset,viz]==0.6.0",
     "mcap>=1.2",
@@ -29,6 +29,8 @@ override-dependencies = [
     # LeRobot selects TorchCodec whenever it is importable, but its native wheel
     # cannot load against newer system FFmpeg ABIs. Use LeRobot's PyAV backend.
     "torchcodec; sys_platform == 'never'",
+    # LeRobot 0.6 caps numpy below 2.3, which excludes every numpy with cp314 wheels.
+    "numpy>=2.3",
 ]
 
 [tool.setuptools.packages.find]
@@ -41,7 +43,7 @@ addopts = "--confcutdir=."
 
 [tool.mypy]
 files = ["dimos_lerobot/"]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 explicit_package_bases = true
 mypy_path = "../../.."

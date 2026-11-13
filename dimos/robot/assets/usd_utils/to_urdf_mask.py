@@ -23,8 +23,8 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.urdf_to_usd import _OUT_OF_PLANE, PASSTHROUGH_KEY
-from dimos.robot.assets.usd import Prim, Pxr, Stage, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.from_urdf import OUT_OF_PLANE, PASSTHROUGH_KEY
+from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Stage, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -39,6 +39,12 @@ _JOINT_TYPES = {
     "PhysicsPrismaticJoint": "prismatic",
     "PhysicsFixedJoint": "fixed",
     "PhysicsJoint": "floating",
+}
+
+_AXIS_VECTORS = {
+    "X": np.array([1.0, 0.0, 0.0]),
+    "Y": np.array([0.0, 1.0, 0.0]),
+    "Z": np.array([0.0, 0.0, 1.0]),
 }
 
 
@@ -59,10 +65,9 @@ def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = 
     default_prim = stage.GetDefaultPrim()
     robot_name = name or (default_prim.GetName() if default_prim else "robot")
     robot = ET.Element("robot", name=robot_name)
-    by_group = not _marks_collision(pxr, stage)
 
     for link_name, prim in links.items():
-        _write_link(pxr, robot, link_name, prim, by_group=by_group)
+        _write_link(pxr, robot, link_name, prim)
     joints = joints + _welds_of(pxr, links, joints)
     for joint in joints:
         _write_joint(robot, joint)
@@ -191,7 +196,7 @@ def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
 
     rot0 = _quat_rotation(joint.GetLocalRot0Attr().Get())
     rot1 = _quat_rotation(joint.GetLocalRot1Attr().Get())
-    axis = rot1.apply(np.array([0.0, 0.0, 1.0]))
+    axis = rot1.apply(_axis_of(prim))
     origin_rotation = rot0 * rot1.inv()
 
     position = joint.GetLocalPos0Attr().Get()
@@ -200,7 +205,7 @@ def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
     if named is None:
         # Welded to the world: the child's own transform is where it sits, and the joint
         # carries no offset of its own.
-        origin_xyz, origin_rpy = _placement_of(_body_prim(prim, "physics:body1"))
+        origin_xyz, origin_rpy = _placement_of(pxr, _body_prim(prim, "physics:body1"))
     return _Joint(
         name=prim.GetDisplayName() or prim.GetName(),
         kind=kind,
@@ -215,9 +220,23 @@ def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
     )
 
 
+def _axis_of(prim: Prim) -> NDArray[np.float64]:
+    """Which way a single-DOF joint turns or slides, in its own body1 frame.
+
+    USD names the axis as a token and falls back to X when a layer leaves it out, so a
+    vendored layer that never writes one still means X. from_urdf always writes Z and carries
+    the real direction in localRot1, and a multi-DOF joint has no axis attribute at all -- for
+    those the direction is whatever localRot1 does to Z.
+    """
+    attribute = prim.GetAttribute("physics:axis")
+    if not attribute or not attribute.IsDefined():
+        return _AXIS_VECTORS["Z"]
+    return _AXIS_VECTORS.get(str(attribute.Get()).upper(), _AXIS_VECTORS["Z"])
+
+
 def _free_kind(prim: Prim) -> str:
     applied = {str(name) for name in prim.GetAppliedSchemas()}
-    if all(f"PhysicsLimitAPI:{axis}" in applied for axis in _OUT_OF_PLANE):
+    if all(f"PhysicsLimitAPI:{axis}" in applied for axis in OUT_OF_PLANE):
         return "planar"
     return "floating"
 
@@ -265,41 +284,28 @@ def _passthrough_of(prim: Prim) -> list[str]:
     return [str(fragment) for fragment in urdf.get(PASSTHROUGH_KEY.split(":", 1)[1], ())]
 
 
-def _write_link(pxr: Pxr, root: ET.Element, link_name: str, prim: Prim, *, by_group: bool) -> None:
+def _write_link(pxr: Pxr, root: ET.Element, link_name: str, prim: Prim) -> None:
     element = ET.SubElement(root, "link", name=link_name)
     for child in prim.GetChildren():
         if child.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or child.IsA(pxr.UsdPhysics.Joint):
             continue
         # Camera optics and mount containers are frames, not physical shapes.
         if child.IsA(pxr.UsdGeom.Gprim):
-            _write_geometry(pxr, element, child, by_group=by_group)
+            _write_geometry(pxr, element, child)
     for fragment in _passthrough_of(prim):
         _append_fragment(element, fragment)
 
 
-_MJC_COLLISION_GROUP = 3
-
-
-def _marks_collision(pxr: Pxr, stage: Stage) -> bool:
-    return any(prim.HasAPI(pxr.UsdPhysics.CollisionAPI) for prim in stage.Traverse())
-
-
-def _collides(pxr: Pxr, prim: Prim, *, by_group: bool) -> bool:
-    if prim.HasAPI(pxr.UsdPhysics.CollisionAPI):
-        return bool(pxr.UsdPhysics.CollisionAPI(prim).GetCollisionEnabledAttr().Get())
-    if not by_group:
-        return False
-    group = prim.GetAttribute("mjc:group")
-    return bool(group) and group.Get() == _MJC_COLLISION_GROUP
-
-
-def _write_geometry(pxr: Pxr, link: ET.Element, prim: Prim, *, by_group: bool) -> None:
+def _write_geometry(pxr: Pxr, link: ET.Element, prim: Prim) -> None:
     shape = _shape_of(pxr, prim)
     if shape is None:
         return
-    tag = "collision" if _collides(pxr, prim, by_group=by_group) else "visual"
+    collision = prim.HasAPI(pxr.UsdPhysics.CollisionAPI) and bool(
+        pxr.UsdPhysics.CollisionAPI(prim).GetCollisionEnabledAttr().Get()
+    )
+    tag = "collision" if collision else "visual"
     element = ET.SubElement(link, tag)
-    xyz, rpy = _placement_of(prim)
+    xyz, rpy = _placement_of(pxr, prim)
     if np.any(xyz) or np.any(rpy):
         ET.SubElement(element, "origin", xyz=_triple(xyz), rpy=_triple(rpy))
     geometry = ET.SubElement(element, "geometry")
@@ -355,16 +361,30 @@ def _referenced_path(prim: Prim) -> str | None:
     return None
 
 
-def _placement_of(prim: Prim) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    transform = prim.GetAttribute("xformOp:transform")
-    if not transform or transform.Get() is None:
+def _placement_of(pxr: Pxr, prim: Prim) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Where a prim sits in its parent, however the layer spells it.
+
+    One layer says it as a single matrix and the next as an ordered translate/orient/rotate
+    stack -- the vendored robots use the latter throughout -- so compose the ops rather than
+    insisting on one attribute spelling. The scale op is skipped, not divided back out: the
+    shapes carry scale in their own sizes via _scale_of, and a scale that sits before the
+    offset in xformOpOrder would otherwise multiply the offset too.
+    """
+    xformable = pxr.UsdGeom.Xformable(prim)
+    if not xformable:
         return np.zeros(3), np.zeros(3)
-    matrix = np.asarray(transform.Get(), dtype=np.float64).T
-    rotation = Rotation.from_matrix(matrix[:3, :3])
+    composed = pxr.Gf.Matrix4d(1.0)
+    for op in xformable.GetOrderedXformOps():
+        if op.GetOpType() == pxr.UsdGeom.XformOp.TypeScale:
+            continue
+        composed = op.GetOpTransform(pxr.Usd.TimeCode.Default()) * composed
+    placement = pxr.Gf.Transform(composed)
+    translation = placement.GetTranslation()
+    rotation = _quat_rotation(placement.GetRotation().GetQuat())
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Gimbal lock detected")
         rpy = np.asarray(rotation.as_euler("xyz"), dtype=np.float64)
-    return matrix[:3, 3], rpy
+    return np.asarray([translation[0], translation[1], translation[2]], dtype=np.float64), rpy
 
 
 def _scale_of(prim: Prim) -> NDArray[np.float64]:
@@ -419,7 +439,7 @@ def _welds_of(pxr: Pxr, links: dict[str, Any], joints: list[_Joint]) -> list[_Jo
         ancestor = _link_ancestor(pxr, prim)
         if ancestor is None:
             continue
-        xyz, rpy = _placement_of(prim)
+        xyz, rpy = _placement_of(pxr, prim)
         parent = str(ancestor.GetDisplayName() or ancestor.GetName())
         joint_name = f"{name}_weld"
         kind = "fixed"
