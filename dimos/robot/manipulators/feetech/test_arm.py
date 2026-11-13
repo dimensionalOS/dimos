@@ -29,7 +29,7 @@ from dimos.robot.manipulators.feetech.calibration import (
     FeetechCalibration,
     FeetechMotorCalibration,
 )
-from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechRobot
+from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechMotor, FeetechRobot
 
 
 class _FakePortHandler:
@@ -73,10 +73,13 @@ def _install_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_arm_reads_each_open_bus_as_calibrated_radians(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_sdk(monkeypatch)
-    robot = FeetechRobot(
-        buses=(FeetechBus("left", ("joint_1", "joint_2")), FeetechBus("right", ("joint_1",))),
-        baudrate=123456,
-    )
+
+    def bus(side: str, *motors: str) -> FeetechBus:
+        return FeetechBus(
+            side, tuple(FeetechMotor(m, f"{side}_{m}", lower=-3.0, upper=3.0) for m in motors)
+        )
+
+    robot = FeetechRobot(buses=(bus("left", "joint_1", "joint_2"), bus("right", "joint_1")))
     # The fake bus reads 1000 + motor id; offsets put joint_1 at zero and
     # joint_2 a quarter turn (1024 ticks) away, read backwards.
     calibration = FeetechCalibration(
@@ -89,12 +92,12 @@ def test_arm_reads_each_open_bus_as_calibrated_radians(monkeypatch: pytest.Monke
     arm = FeetechArm(robot, {"left": "/dev/fake"}, {"left": calibration})
     arm.connect()
     try:
-        positions = arm.read()
+        readings = arm.read()
     finally:
         arm.disconnect()
 
-    assert arm.joint_names == ["left_joint_1", "left_joint_2"]
-    assert positions == pytest.approx({"left_joint_1": 0.0, "left_joint_2": -math.pi / 2})
+    assert list(readings) == ["left"]
+    assert readings["left"] == pytest.approx({"joint_1": 0.0, "joint_2": -math.pi / 2})
 
 
 @pytest.mark.parametrize(
