@@ -297,6 +297,45 @@ Prefixed streams only connect within their namespace.
 Stream names listed in `expose` are left unprefixed, so they connect globally.
 That is how data crosses the boundary.
 
+Naming no `expose` exposes a default set instead of nothing: `tf`,
+`coordinator_joint_state`, `coordinator_joint_command`, `joint_command`, and the
+simulator's `actions` and `world_observations`. Their payloads name what they
+carry, a TF message names its frames and a `JointState` names its joints, and the
+namespace goes into those names instead. Prefixing the stream too would give you
+one TF tree per robot with no shared root, which is no use to anything looking up
+a transform between two robots.
+
+That default is the `expose_streams` global config, so a stack can replace it
+from the config file or the command line:
+
+```json
+{ "g": { "expose_streams": "tf,coordinator_joint_state,my_fleet_stream" } }
+```
+
+```bash
+dimos --expose-streams=tf,coordinator_joint_state run my-fleet
+```
+
+Passing `expose` yourself replaces the default rather than adding to it, so spell
+out the whole set. `.namespace()` reads the config when the blueprint is built,
+which is why it is a global option and not a `.global_config()` call on the
+blueprint itself.
+
+Since tf is one shared stream, the frame ids are what keep the robots apart, and
+a module's `tfbuffer` does that for you: `get` and `publish` both name frames
+under the module's `frame_id_prefix`, the same prefix `self.frame_id` carries.
+Pass `prefix=False` to either for a frame that belongs to no namespace, such as
+a shared root like `world` or `map`:
+
+```python skip
+self.tfbuffer.publish(base_to_camera)                  # robot0/base_link -> robot0/camera_link
+self.tfbuffer.publish(world_to_base, prefix=False)     # names used as given
+pose = self.tfbuffer.get("world", "base_link", prefix=False)
+```
+
+A name that already carries the prefix is left alone, so a frame read off the
+stream can be handed straight back.
+
 In the above example, both `Sensor` modules can send `pointcloud` data to the `AggregateMapper` module.
 
 If you want to manually redirect to a namespaced name, you can use the namespaced prefix:  `.remappings([(FleetPlanner, "cmd_r0", "robot0/cmd_vel")])`

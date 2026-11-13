@@ -835,3 +835,79 @@ class TestStreamTF:
             assert len(tf.buffers[("map", "base")]) < 100
         finally:
             store.stop()
+
+
+def _edge(frame_id: str, child_frame_id: str) -> Transform:
+    return Transform(
+        translation=Vector3(1.0, 0.0, 0.0),
+        rotation=Quaternion(),
+        frame_id=frame_id,
+        child_frame_id=child_frame_id,
+        ts=1.0,
+    )
+
+
+def test_publish_names_frames_under_the_prefix() -> None:
+    tf = TF(frame_prefix="robot0")
+
+    tf.publish(_edge("base_link", "camera_link"))
+
+    assert ("robot0/base_link", "robot0/camera_link") in tf.buffers
+
+
+def test_publish_can_opt_out_of_the_prefix() -> None:
+    """A shared root such as `world` belongs to no namespace."""
+    tf = TF(frame_prefix="robot0")
+
+    tf.publish(_edge("world", "robot0/base_link"), prefix=False)
+
+    assert ("world", "robot0/base_link") in tf.buffers
+
+
+def test_publish_does_not_double_the_prefix() -> None:
+    tf = TF(frame_prefix="robot0")
+
+    tf.publish(_edge("robot0/base_link", "robot0/camera_link"))
+
+    assert ("robot0/base_link", "robot0/camera_link") in tf.buffers
+
+
+def test_publish_leaves_the_caller_transform_alone() -> None:
+    tf = TF(frame_prefix="robot0")
+    edge = _edge("base_link", "camera_link")
+
+    tf.publish(edge)
+
+    assert (edge.frame_id, edge.child_frame_id) == ("base_link", "camera_link")
+
+
+def test_get_names_frames_under_the_prefix() -> None:
+    tf = TF(frame_prefix="robot0")
+    tf.receive_transform(_edge("robot0/base_link", "robot0/camera_link"))
+
+    assert tf.get("base_link", "camera_link") is not None
+    assert tf.get("robot0/base_link", "robot0/camera_link") is not None
+
+
+def test_get_can_opt_out_of_the_prefix() -> None:
+    tf = TF(frame_prefix="robot0")
+    tf.receive_transform(_edge("world", "robot0/base_link"))
+
+    assert tf.get("world", "robot0/base_link", prefix=False) is not None
+    assert tf.get("world", "robot0/base_link", warn=False) is None
+
+
+def test_get_pose_passes_the_opt_out_through() -> None:
+    tf = TF(frame_prefix="robot0")
+    tf.receive_transform(_edge("world", "robot0/base_link"))
+
+    assert tf.get_pose("world", "robot0/base_link", prefix=False) is not None
+
+
+def test_without_a_prefix_frames_are_untouched() -> None:
+    tf = TF()
+
+    tf.publish(_edge("base_link", "camera_link"))
+
+    assert ("base_link", "camera_link") in tf.buffers
+    assert tf.get("base_link", "camera_link") is not None

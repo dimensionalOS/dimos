@@ -23,8 +23,9 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.core.transport_factory import transport_topic
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class Cloud:
@@ -71,6 +72,25 @@ class LocalMapper(Module):
     @rpc
     def sensor_name(self) -> str:
         return self.sensor.whoami()
+
+
+class Tracker(Module):
+    """Publishes tf (exposed) alongside a stream the namespace does prefix."""
+
+    tf: IO[TFMessage]
+    local_status: Out[Status]
+
+    @rpc
+    def get_frame_id(self) -> str:
+        return self.frame_id
+
+    @rpc
+    def tf_frame_prefix(self) -> str | None:
+        return self.tfbuffer.frame_prefix
+
+
+class TfConsumer(Module):
+    tf: In[TFMessage]
 
 
 class Aggregator(Module):
@@ -234,5 +254,40 @@ def test_load_blueprint_resolves_existing_provider_in_same_namespace():
 
         mapper0 = coordinator.get_instance("robot0/localmapper")
         assert mapper0.sensor_name() == "robot0/sensor"
+    finally:
+        coordinator.stop()
+
+
+def test_tf_is_one_topic_across_namespaces() -> None:
+    """Every robot's tf lands on the one `/tf`; they are told apart by their
+    frame ids, which the namespace does prefix."""
+    blueprint = autoconnect(
+        TfConsumer.blueprint(),
+        *[Tracker.blueprint().namespace(f"robot{i}") for i in range(2)],
+    )
+    coordinator = ModuleCoordinator.build(blueprint, _parsed_config(blueprint))
+    try:
+        tracker0 = coordinator.get_instance("robot0/tracker")
+        tracker1 = coordinator.get_instance("robot1/tracker")
+        consumer = coordinator.get_instance("tfconsumer")
+
+        # A zenoh transport wraps the name in a Topic; an LCM one is the name.
+        def topic_of(port: Any) -> str:
+            topic = port.transport.topic
+            return str(getattr(topic, "topic", topic))
+
+        assert (
+            topic_of(tracker0.tf)
+            == topic_of(tracker1.tf)
+            == topic_of(consumer.tf)
+            == transport_topic("/tf")
+        )
+        # The namespace is still there, in the frame ids.
+        assert tracker0.get_frame_id() == "robot0/Tracker"
+        assert tracker1.get_frame_id() == "robot1/Tracker"
+        # A stream that is not exposed still splits per namespace.
+        assert tracker0.local_status.transport.topic == transport_topic("/robot0/local_status")
+        # ...and the module's tf buffer names frames under the same prefix.
+        assert tracker0.tf_frame_prefix() == "robot0"
     finally:
         coordinator.stop()

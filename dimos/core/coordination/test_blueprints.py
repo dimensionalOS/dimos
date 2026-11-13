@@ -35,6 +35,7 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config as process_global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
@@ -75,6 +76,24 @@ class ModuleA(Module):
     @rpc
     def get_name(self) -> str:
         return "A, Module A"
+
+
+class Tf:
+    pass
+
+
+class Joints:
+    pass
+
+
+class SharedModule(Module):
+    """Carries the streams `.namespace()` leaves global, plus one that it prefixes."""
+
+    tf: Out[Tf]
+    coordinator_joint_state: Out[Joints]
+    coordinator_joint_command: Out[Joints]
+    joint_command: In[Joints]
+    data1: Out[Data1]
 
 
 class ModuleB(Module):
@@ -379,6 +398,58 @@ def test_namespace_expose_keeps_names_global() -> None:
 
     assert ("robot0/modulea", "data1") not in blueprint.remapping_map
     assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
+
+
+def test_namespace_exposes_the_default_streams() -> None:
+    """tf and the joint streams stay on one topic; the namespace lands in the
+    frame ids instead, so one tf tree still tells the robots apart."""
+    blueprint = SharedModule.blueprint().namespace("robot0")
+
+    for stream in ("tf", "coordinator_joint_state", "coordinator_joint_command", "joint_command"):
+        assert ("robot0/sharedmodule", stream) not in blueprint.remapping_map
+    assert blueprint.remapping_map[("robot0/sharedmodule", "data1")] == "robot0/data1"
+    assert blueprint.blueprints[0].kwargs["frame_id_prefix"] == "robot0"
+
+
+def test_namespace_exposes_the_default_streams_when_nested() -> None:
+    blueprint = SharedModule.blueprint().namespace("robot0").namespace("fleet")
+
+    assert ("fleet/robot0/sharedmodule", "tf") not in blueprint.remapping_map
+    assert blueprint.remapping_map[("fleet/robot0/sharedmodule", "data1")] == "fleet/robot0/data1"
+
+
+def test_namespace_keeps_exposed_transports_unprefixed() -> None:
+    blueprint = (
+        SharedModule.blueprint()
+        .transports({("tf", Tf): LCMTransport("/tf", Tf)})
+        .namespace("robot0")
+    )
+
+    assert blueprint.transport_map[("tf", Tf)].topic.pattern == "/tf"
+    assert ("robot0/tf", Tf) not in blueprint.transport_map
+
+
+def test_passing_expose_replaces_the_default() -> None:
+    """The default is a stack-wide rule, so it is not checked against this
+    blueprint's streams; a name the caller passes still is."""
+    blueprint = SharedModule.blueprint().namespace("robot0", expose={"data1"})
+
+    assert "tf" in process_global_config.processed_expose_streams
+    assert ("robot0/sharedmodule", "data1") not in blueprint.remapping_map
+    assert blueprint.remapping_map[("robot0/sharedmodule", "tf")] == "robot0/tf"
+
+
+def test_default_expose_comes_from_global_config() -> None:
+    """`--expose-streams` / the config file's `g:` section replaces the default."""
+    previous = process_global_config.expose_streams
+    try:
+        process_global_config.update(expose_streams="data1")
+        blueprint = SharedModule.blueprint().namespace("robot0")
+    finally:
+        process_global_config.update(expose_streams=previous)
+
+    assert ("robot0/sharedmodule", "data1") not in blueprint.remapping_map
+    assert blueprint.remapping_map[("robot0/sharedmodule", "tf")] == "robot0/tf"
 
 
 def test_namespace_expose_typo_raises() -> None:

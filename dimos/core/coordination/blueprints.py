@@ -34,6 +34,7 @@ from typing import (
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
+from dimos.core.global_config import global_config as process_global_config
 from dimos.core.module import ModuleBase, is_module_type
 from dimos.core.stream import IO, In, Out, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
@@ -332,7 +333,7 @@ class Blueprint:
             )
         return names[0] if names else module.name
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> "Blueprint":
+    def namespace(self, prefix: str, *, expose: Iterable[str] | None = None) -> "Blueprint":
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
         Instance names, stream names (and so their topics), TF frame ids, and RPC
@@ -350,6 +351,11 @@ class Blueprint:
                     for i, ip in enumerate(ips)
                 ],
             )
+
+        Naming nothing exposes the `expose_streams` global config instead, which
+        defaults to tf and the joint and simulator streams: their payloads name
+        what they carry, so the namespace goes into those names rather than into
+        the topic. Passing *expose* replaces that set, it does not add to it.
         """
         if not re.fullmatch(r"[A-Za-z0-9_]+", prefix):
             raise ValueError(
@@ -357,21 +363,29 @@ class Blueprint:
                 f"(nest namespaces by composition, not with '/')."
             )
 
-        expose_set = frozenset(expose)
+        # The configured default is read at call time, not import time, so a config
+        # file or `--expose-streams` is honoured: the CLI applies global config
+        # before importing the module that builds the blueprint.
+        if expose is None:
+            # A stack-wide default is not checked against this blueprint's streams,
+            # which mostly have none of them; a name the caller passed is.
+            expose_set = process_global_config.processed_expose_streams
+        else:
+            expose_set = frozenset(expose)
 
-        effective_names = set()
-        for atom in self.blueprints:
-            for stream in atom.streams:
-                effective = self.remapping_map.get((atom.name, stream.name), stream.name)
-                if isinstance(effective, str):
-                    effective_names.add(effective)
+            effective_names = set()
+            for atom in self.blueprints:
+                for stream in atom.streams:
+                    effective = self.remapping_map.get((atom.name, stream.name), stream.name)
+                    if isinstance(effective, str):
+                        effective_names.add(effective)
 
-        unknown = expose_set - effective_names
-        if unknown:
-            raise ValueError(
-                f"expose names {sorted(unknown)} do not match any stream in the "
-                f"namespaced blueprint (available: {sorted(effective_names)})"
-            )
+            unknown = expose_set - effective_names
+            if unknown:
+                raise ValueError(
+                    f"expose names {sorted(unknown)} do not match any stream in the "
+                    f"namespaced blueprint (available: {sorted(effective_names)})"
+                )
 
         new_atoms = []
         new_remap: dict[tuple[str, str], str | type[ModuleBase] | type[Spec]] = {}

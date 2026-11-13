@@ -33,6 +33,18 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def prefix_frame(prefix: str | None, frame: str) -> str:
+    """``frame`` under a TF namespace prefix (``ModuleConfig.frame_id_prefix``).
+
+    A name that already carries the prefix is left alone, so a frame read off a
+    stream can be handed straight back. The one place the rule is spelled: both
+    :meth:`MultiTBuffer.prefixed` and ``Module.frame`` go through it.
+    """
+    if not prefix or not frame or frame.startswith(f"{prefix}/"):
+        return frame
+    return f"{prefix}/{frame}"
+
+
 @runtime_checkable
 class TFLookup(Protocol):
     """Read side of a tf buffer: resolve ``parent ← child`` at a time point.
@@ -92,10 +104,15 @@ class TBuffer(InMemoryStore[Transform]):
 # stores multiple transform buffers
 # creates a new buffer on demand when new transform is detected
 class MultiTBuffer:
-    def __init__(self, buffer_size: float = 10.0) -> None:
+    def __init__(self, buffer_size: float = 10.0, *, frame_prefix: str | None = None) -> None:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
+        self.frame_prefix = frame_prefix
         self._cv = threading.Condition()
+
+    def prefixed(self, frame: str) -> str:
+        """``frame`` under this buffer's frame prefix, if it has one."""
+        return prefix_frame(self.frame_prefix, frame)
 
     def receive_transform(self, *args: Transform) -> None:
         with self._cv:
@@ -210,7 +227,16 @@ class MultiTBuffer:
         *,
         forward_tolerance: float = 0.0,
         warn: bool = True,
+        prefix: bool = True,
     ) -> Transform | None:
+        """Look up ``parent ← child``, both names taken under the frame prefix.
+
+        Pass ``prefix=False`` for a frame that is not the namespace's own, such
+        as a shared root like ``world`` or ``map``, or a name you prefixed.
+        """
+        if prefix:
+            parent_frame = self.prefixed(parent_frame)
+            child_frame = self.prefixed(child_frame)
         result = self._get(parent_frame, child_frame, time_point, time_tolerance)
         if result is None and forward_tolerance > 0:
             result = self._wait_get(
@@ -230,6 +256,7 @@ class MultiTBuffer:
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
+        prefix: bool = True,
     ) -> PoseStamped | None:
         tf = self.get(
             parent_frame,
@@ -237,6 +264,7 @@ class MultiTBuffer:
             time_point,
             time_tolerance,
             forward_tolerance=forward_tolerance,
+            prefix=prefix,
         )
         if not tf:
             return None
@@ -328,17 +356,43 @@ class TF(MultiTBuffer):
     it is a purely local buffer.
     """
 
-    def __init__(self, stream: Any | None = None, buffer_size: float = 10.0) -> None:
-        super().__init__(buffer_size)
+    def __init__(
+        self,
+        stream: Any | None = None,
+        buffer_size: float = 10.0,
+        *,
+        frame_prefix: str | None = None,
+    ) -> None:
+        super().__init__(buffer_size, frame_prefix=frame_prefix)
         self._stream = stream
         self._unsubscribe: Callable[[], None] | None = None
         if stream is not None:
             self._unsubscribe = stream.subscribe(self.receive_tfmessage)
 
-    def publish(self, *transforms: Transform) -> None:
+    def publish(self, *transforms: Transform, prefix: bool = True) -> None:
+        """Store locally and send out, both frame ids under the frame prefix.
+
+        Pass ``prefix=False`` to publish the names as given, for an edge that
+        hangs off a shared root like ``world`` or that you prefixed yourself.
+        """
+        if prefix and self.frame_prefix:
+            transforms = tuple(self._prefixed_transform(t) for t in transforms)
         self.receive_transform(*transforms)
         if self._stream is not None:
             self._stream.publish(TFMessage(*transforms))
+
+    def _prefixed_transform(self, transform: Transform) -> Transform:
+        frame_id = self.prefixed(transform.frame_id)
+        child_frame_id = self.prefixed(transform.child_frame_id)
+        if (frame_id, child_frame_id) == (transform.frame_id, transform.child_frame_id):
+            return transform
+        return Transform(
+            translation=transform.translation,
+            rotation=transform.rotation,
+            frame_id=frame_id,
+            child_frame_id=child_frame_id,
+            ts=transform.ts,
+        )
 
     def dispose(self) -> None:
         if self._unsubscribe is not None:

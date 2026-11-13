@@ -40,6 +40,7 @@ class FakeTF(MultiTBuffer):
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
+        prefix: bool = True,
     ) -> Transform | None:
         self.gets += 1
         return super().get(
@@ -48,6 +49,7 @@ class FakeTF(MultiTBuffer):
             time_point,
             time_tolerance,
             forward_tolerance=forward_tolerance,
+            prefix=prefix,
         )
 
     def dispose(self) -> None:

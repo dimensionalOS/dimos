@@ -43,6 +43,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.tf.tf import prefix_frame
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
@@ -117,13 +118,6 @@ _FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
 def _camera_info_static() -> CameraInfo:
     with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
         return CameraInfo.from_yaml(str(yaml_path))
-
-
-def _prefixed(prefix: str | None, name: str) -> str:
-    """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
-    if not prefix or not name:
-        return name
-    return f"{prefix}/{name}"
 
 
 # Static camera mount chain: base_link -> camera_link -> camera_optical.
@@ -393,11 +387,10 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.camera_info_static = self.connection.camera_info_static
 
         if self.config.frame_id_prefix and self.camera_info_static.frame_id:
-            # Copy so the class-level default is not mutated.
+            # Copy so the class-level default is not mutated. A stamped frame is
+            # a tf frame, so it is named by the same rule tf publishes under.
             self.camera_info_static = copy.copy(self.camera_info_static)
-            self.camera_info_static.frame_id = _prefixed(
-                self.config.frame_id_prefix, self.camera_info_static.frame_id
-            )
+            self.camera_info_static.frame_id = self.frame(self.camera_info_static.frame_id)
 
     @rpc
     def start(self) -> None:
@@ -408,7 +401,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection.start()
 
         def onimage(image: Image) -> None:
-            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
+            image.frame_id = self.frame(image.frame_id)
             self.color_image.publish(image)
 
         if self.config.lidar:
@@ -469,26 +462,30 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @classmethod
     def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
-        # The odom parent frame (odom.frame_id) stays unprefixed so namespaced
-        # robots still hang off one shared tree root.
+        # A pure function of the odom pose, so a recording can replay the same
+        # tree without a live module. The odom parent frame (odom.frame_id)
+        # stays unprefixed so namespaced robots still hang off one shared tree
+        # root; the rest are this robot's, named by the rule tf publishes under.
+        base_link = prefix_frame(prefix, "base_link")
+        camera_link_frame = prefix_frame(prefix, "camera_link")
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id=_prefixed(prefix, "base_link"),
-            child_frame_id=_prefixed(prefix, "camera_link"),
+            frame_id=base_link,
+            child_frame_id=camera_link_frame,
             ts=odom.ts,
         )
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id=_prefixed(prefix, "camera_link"),
-            child_frame_id=_prefixed(prefix, "camera_optical"),
+            frame_id=camera_link_frame,
+            child_frame_id=prefix_frame(prefix, "camera_optical"),
             ts=odom.ts,
         )
 
         return [
-            Transform.from_pose(_prefixed(prefix, "base_link"), odom),
+            Transform.from_pose(base_link, odom),
             camera_link,
             camera_optical,
         ]
@@ -496,8 +493,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     def _publish_tf(self, msg: PoseStamped) -> None:
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
-            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
-            self.tf.publish(TFMessage(*transforms))
+            self.tf.publish(TFMessage(*self._odom_to_tf(msg, self.config.frame_id_prefix or "")))
         if self.odom.transport:
             self.odom.publish(msg)
 

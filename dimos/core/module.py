@@ -52,7 +52,7 @@ from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
-from dimos.protocol.tf.tf import TF
+from dimos.protocol.tf.tf import TF, prefix_frame
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
@@ -196,12 +196,17 @@ class ModuleBase(Configurable, CompositeResource):
         """Name for this module to be used for blueprint configs."""
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
 
+    def frame(self, name: str) -> str:
+        """``name`` behind this module's ``frame_id_prefix``, e.g. "go2b/odom".
+
+        The one way to name a frame by hand; a module's ``tfbuffer`` applies the
+        same rule to everything it publishes and looks up.
+        """
+        return prefix_frame(self.config.frame_id_prefix, name)
+
     @property
     def frame_id(self) -> str:
-        base = self.config.frame_id or self.__class__.__name__
-        if self.config.frame_id_prefix:
-            return f"{self.config.frame_id_prefix}/{base}"
-        return base
+        return self.frame(self.config.frame_id or self.__class__.__name__)
 
     @rpc
     def build(self) -> None:
@@ -310,6 +315,10 @@ class ModuleBase(Configurable, CompositeResource):
 
         Built on first touch, disposed with the module. Requires a
         ``tf: In[TFMessage]`` or ``tf: IO[TFMessage]`` port declaration.
+
+        It carries the module's ``frame_id_prefix``, so ``get`` and ``publish``
+        name frames the way :attr:`frame_id` does. Pass ``prefix=False`` to
+        either for a frame outside the namespace, such as a shared ``world``.
         """
         if self._tf is None:
             port = getattr(self, "tf", None)
@@ -323,7 +332,7 @@ class ModuleBase(Configurable, CompositeResource):
                     f"{type(self).__name__}.tf port has no transport yet — "
                     "deploy via a blueprint or call set_transport('tf', ...) first"
                 )
-            self._tf = TF(port)
+            self._tf = TF(port, frame_prefix=self.config.frame_id_prefix)
         return self._tf
 
     @classproperty
