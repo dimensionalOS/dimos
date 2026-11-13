@@ -47,11 +47,43 @@ def upload(
 
 
 @data_app.command("ls")
-def data_ls() -> None:
+def data_ls(
+    as_json: bool = typer.Option(False, "--json", help="Print uploads as JSON (for scripts)"),
+) -> None:
     """List cloud uploads: interactive browser on a terminal, plain table when piped."""
     from dimos.cloud import cli
 
-    cli.ls()
+    cli.ls(as_json)
+
+
+@data_app.command()
+def share(
+    ids: list[str] = typer.Argument(..., help="Upload ids or prefixes from `ls`"),
+    to: str = typer.Option(..., "--to", help="Addresses or @domains, comma separated"),
+    yes: bool = typer.Option(False, "--yes", help="Share; without it, only show what would happen"),
+    as_json: bool = typer.Option(False, "--json", help="Print the result as JSON"),
+) -> None:
+    """Share recordings by email or @domain. Dry run unless --yes: prints who would get
+    access and who would be emailed."""
+    from dimos.cloud import cli
+
+    cli.share(ids, to, yes, as_json)
+
+
+@data_app.command()
+def unshare(
+    ids: list[str] = typer.Argument(..., help="Upload ids or prefixes from `ls`"),
+    to: str = typer.Option("", "--to", help="Addresses or @domains to remove"),
+    everyone: bool = typer.Option(False, "--everyone", help="Remove every share on these"),
+    yes: bool = typer.Option(
+        False, "--yes", help="Remove; without it, only show what would happen"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print the result as JSON"),
+) -> None:
+    """Remove access to recordings. Dry run unless --yes."""
+    from dimos.cloud import cli
+
+    cli.unshare(ids, to, everyone, yes, as_json)
 
 
 @data_app.command()
