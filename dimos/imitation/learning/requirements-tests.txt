@@ -1,0 +1,5 @@
+pillow==13.0.0
+pytest==8.3.5
+httpx==0.28.1
+ruff==0.17.4
+moto[server]==5.2.5

@@ -1,0 +1,8 @@
+fastapi==0.162.0
+uvicorn==0.54.0
+requests==2.34.2
+PyJWT==2.15.1
+mcap==1.6.0
+zstandard==0.25.0
+lz4==4.4.5
+boto3==1.43.125
