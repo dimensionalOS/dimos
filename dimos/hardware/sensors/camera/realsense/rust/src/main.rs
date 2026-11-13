@@ -28,7 +28,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dimos_module::nalgebra::{
     Isometry3, Matrix3, Quaternion, Rotation3, Translation3, UnitQuaternion, Vector3,
 };
-use dimos_module::{native_config, run_with_transport, Module, Output, Tf, Transform};
+use dimos_module::{
+    native_config, prefix_frame, run_with_transport, Module, Output, Tf, Transform,
+};
 use lcm_msgs::geometry_msgs::{Quaternion as QuaternionMsg, Vector3 as Vector3Msg};
 use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2, PointField, RegionOfInterest};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -86,7 +88,6 @@ struct Config {
     #[validate(range(min = 1))]
     fps: i32,
     frame_id: String,
-    frame_id_prefix: Nullable<String>,
     align_depth_to_color: bool,
     enable_depth: bool,
     enable_color: bool,
@@ -116,12 +117,10 @@ impl Config {
     fn stream_depth(&self) -> bool {
         self.enable_depth || self.enable_pointcloud
     }
-    /// `<frame_id_prefix>/<name>`, as Module.frame_id composes it.
+    /// `<frame_id_prefix>/<name>`. The imager frames are stamped on messages as
+    /// well as published, so they are named by the rule `Tf` publishes under.
     fn namespaced(&self, name: &str) -> String {
-        match self.frame_id_prefix.0.as_deref() {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{name}"),
-            _ => name.to_string(),
-        }
+        prefix_frame(self.frame_id_prefix.as_deref(), name)
     }
     /// The imager frames hang off frame_id with its `_link` dropped:
     /// `d435_link` -> `d435_color_optical_frame`.

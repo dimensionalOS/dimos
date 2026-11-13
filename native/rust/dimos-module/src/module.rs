@@ -29,7 +29,16 @@ use crate::transport::{Deliver, Dispatch, Transport};
 
 /// Marker trait for a config checked by `#[native_config]`: every field required,
 /// no Rust-side defaults, no unknown fields. Implemented only by the macro.
-pub trait NativeConfig {}
+pub trait NativeConfig {
+    /// The module's TF namespace prefix, from its `frame_id_prefix` config.
+    ///
+    /// `#[native_config]` injects the field and this accessor, so every native
+    /// module reports one without declaring anything. `None` when the module is
+    /// not namespaced.
+    fn frame_id_prefix(&self) -> Option<&str> {
+        None
+    }
+}
 
 /// Trait required by `Module::Config`s to ensure that configurations are
 /// validated correctly. `Send` because a config is parsed on the host's main
@@ -44,9 +53,18 @@ impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send> M
 /// is used. Just a stand in for modules that don't use configurations.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct NoConfig;
+pub struct NoConfig {
+    // Every module is sent a frame_id_prefix, including one with no config of
+    // its own, so the field is here too rather than rejected as unknown.
+    #[serde(default)]
+    frame_id_prefix: Option<String>,
+}
 
-impl NativeConfig for NoConfig {}
+impl NativeConfig for NoConfig {
+    fn frame_id_prefix(&self) -> Option<&str> {
+        self.frame_id_prefix.as_deref()
+    }
+}
 
 impl Validate for NoConfig {
     fn validate(&self) -> Result<(), validator::ValidationErrors> {
@@ -321,6 +339,7 @@ pub struct Builder {
     // One publish queue per output channel, drained by its own worker.
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
     tf: Option<crate::tf::Tf>,
+    frame_prefix: Option<Arc<str>>,
 }
 
 impl Builder {
@@ -331,7 +350,14 @@ impl Builder {
             routes: HashMap::new(),
             outputs: Vec::new(),
             tf: None,
+            frame_prefix: None,
         }
+    }
+
+    /// The TF namespace every frame named through [`Builder::tf`] goes under.
+    pub(crate) fn with_frame_prefix(mut self, prefix: Option<&str>) -> Self {
+        self.frame_prefix = prefix.filter(|p| !p.is_empty()).map(Arc::from);
+        self
     }
 
     fn topic_for(&mut self, port: &str) -> String {
@@ -426,13 +452,30 @@ impl Builder {
     /// The graph fills in the background as `tf` messages arrive. Repeated calls
     /// share one graph.
     pub fn tf(&mut self) -> crate::tf::Tf {
+        self.tf_port(false)
+    }
+
+    /// The same handle, but one whose [`Tf::recv`](crate::tf::Tf::recv) yields
+    /// each incoming message so the module can handle it.
+    ///
+    /// `#[tf(handler = ...)]` on a `#[derive(Module)]` field calls this.
+    pub fn tf_with_handler(&mut self) -> crate::tf::Tf {
+        self.tf_port(true)
+    }
+
+    fn tf_port(&mut self, with_handler: bool) -> crate::tf::Tf {
         if let Some(tf) = &self.tf {
             return tf.clone();
         }
         let topic = self.topic_for("tf");
         let sender = self.add_publisher(&topic);
-        let (tf, route) =
-            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, sender);
+        let (tf, route) = crate::tf::tf_subscription(
+            topic.clone(),
+            crate::tf::DEFAULT_TF_WINDOW_SECS,
+            sender,
+            self.frame_prefix.clone(),
+            with_handler,
+        );
         self.routes.entry(topic).or_default().push(route);
         self.tf = Some(tf.clone());
         tf
@@ -549,7 +592,7 @@ where
     M: Module,
     T: Transport,
 {
-    let mut builder = Builder::new(topics);
+    let mut builder = Builder::new(topics).with_frame_prefix(config.frame_id_prefix());
     let mut module = M::build(&mut builder, config);
     builder.enforce_topics_match_ports()?;
 
@@ -920,7 +963,7 @@ mod tests {
 
     #[test]
     fn empty_config_validates() {
-        assert!(validate_config(&crate::module::NoConfig).is_ok());
+        assert!(validate_config(&crate::module::NoConfig::default()).is_ok());
     }
 
     // topic_for fallback
@@ -1394,7 +1437,7 @@ mod tests {
         #[tokio::test]
         async fn io_field_is_wired_to_its_handler_and_can_publish() {
             let mut builder = Builder::new(topics(&[("cmd", "/robot/cmd")]));
-            let mut echo = Echo::build(&mut builder, NoConfig);
+            let mut echo = Echo::build(&mut builder, NoConfig::default());
 
             builder.routes["/robot/cmd"][0].dispatch(b"ping");
             // Dropping the routes closes the sender, so handle() drains and returns.

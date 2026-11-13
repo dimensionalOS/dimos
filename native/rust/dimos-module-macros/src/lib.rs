@@ -15,6 +15,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use syn::parse::Parser;
 use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, LitStr, Path, Type};
 
 #[proc_macro_derive(Module, attributes(input, output, io, config, tf, module))]
@@ -63,16 +64,67 @@ pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
         return quote!(#input #maybe_err).into();
     }
 
+    // Injected into every named-field config so a module reports its TF
+    // namespace without declaring anything. A unit struct is left alone: it has
+    // no fields to add one to, and NativeConfig's default accessor covers it.
+    let mut input = input;
+    let injected_prefix = inject_frame_id_prefix(&mut input);
+
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let native_config_impl = if injected_prefix {
+        quote! {
+            impl #impl_generics ::dimos_module::NativeConfig for #name #ty_generics #where_clause {
+                fn frame_id_prefix(&self) -> ::core::option::Option<&str> {
+                    self.frame_id_prefix.as_deref()
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl #impl_generics ::dimos_module::NativeConfig for #name #ty_generics #where_clause {}
+        }
+    };
     quote! {
         #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, ::validator::Validate)]
         #[serde(deny_unknown_fields)]
         #input
-        impl #impl_generics ::dimos_module::NativeConfig for #name #ty_generics #where_clause {}
+        #native_config_impl
         #maybe_err
     }
     .into()
+}
+
+/// Add `frame_id_prefix` to a named-field config. Returns whether it landed.
+///
+/// `#[serde(default)]` so an older launcher that omits it still parses; the
+/// field serializes either way, which is what keeps `run()`'s one-to-one key
+/// check honest about what the module expects.
+fn inject_frame_id_prefix(input: &mut DeriveInput) -> bool {
+    let Data::Struct(data) = &mut input.data else {
+        return false;
+    };
+    let Fields::Named(fields) = &mut data.fields else {
+        return false;
+    };
+    if fields
+        .named
+        .iter()
+        .any(|f| f.ident.as_ref().is_some_and(|i| i == "frame_id_prefix"))
+    {
+        // Already spelled out by hand; leave it and use it.
+        return true;
+    }
+    fields.named.push(
+        syn::Field::parse_named
+            .parse2(quote! {
+                /// TF namespace this module publishes and looks up under.
+                #[serde(default)]
+                pub frame_id_prefix: ::core::option::Option<::std::string::String>
+            })
+            .expect("injected frame_id_prefix field parses"),
+    );
+    true
 }
 
 fn check_native_config(input: &DeriveInput) -> syn::Result<()> {
@@ -194,7 +246,10 @@ enum FieldKind {
         handler: Ident,
     },
     Config,
-    Tf,
+    Tf {
+        /// `#[tf(handler = ...)]`: the method each incoming tf message goes to.
+        handler: Option<Ident>,
+    },
     State,
 }
 
@@ -333,7 +388,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 quote!(#name: builder.io(#name_str, #decode, #encode))
             }
             FieldKind::Config => quote!(#name: config),
-            FieldKind::Tf => quote!(#name: builder.tf()),
+            FieldKind::Tf { handler } => match handler {
+                Some(_) => quote!(#name: builder.tf_with_handler()),
+                None => quote!(#name: builder.tf()),
+            },
             FieldKind::State => quote!(#name: ::core::default::Default::default()),
         }
     });
@@ -345,6 +403,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             FieldKind::Input { handler, .. } | FieldKind::Io { handler, .. } => {
                 Some((f.name, handler))
             }
+            FieldKind::Tf { handler } => handler.as_ref().map(|h| (f.name, h)),
             _ => None,
         })
         .collect();
@@ -451,7 +510,7 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             // goes: bake has to put the topic in the host's map or the module
             // refuses to start. It lists under `inputs` because the graph has
             // no io kind and a host mostly consumes tf.
-            FieldKind::Tf => want_input,
+            FieldKind::Tf { .. } => want_input,
             _ => false,
         })
         .map(|f| PortDecl {
@@ -461,7 +520,7 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             // An explicit `msg` wins: a view type's wire payload and the dimos
             // message it stands for are allowed to differ.
             ty: match f.kind {
-                FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
+                FieldKind::Tf { .. } => TF_PAYLOAD_TYPE.to_string(),
                 _ => f
                     .msg
                     .clone()
@@ -649,7 +708,23 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
             }
-            found = Some(FieldKind::Tf);
+            let mut handler: Option<Ident> = None;
+            // A bare `#[tf]` has no arguments to walk.
+            if !matches!(attr.meta, syn::Meta::Path(_)) {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("handler") {
+                        handler = Some(meta.value()?.parse()?);
+                    } else if meta.path.is_ident("msg") {
+                        msg = Some(meta.value()?.parse::<LitStr>()?.value());
+                    } else {
+                        return Err(
+                            meta.error("unrecognized #[tf] argument; expected `handler = ...`")
+                        );
+                    }
+                    Ok(())
+                })?;
+            }
+            found = Some(FieldKind::Tf { handler });
         }
     }
 

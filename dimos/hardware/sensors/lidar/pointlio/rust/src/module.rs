@@ -15,7 +15,7 @@
 //! Point-LIO native module: PointCloud2 + Imu in, odometry + body cloud + tf out.
 
 use dimos_module::nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion};
-use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
+use dimos_module::{native_config, prefix_frame, Input, Module, Output, Tf, Transform};
 
 /// The driver publishes linear acceleration in m/s^2; Point-LIO wants it in g.
 const GRAVITY_MS2: f64 = 9.80665;
@@ -43,7 +43,6 @@ struct Nullable<T>(Option<T>);
 #[validate(schema(function = core_config_parses))]
 pub struct Config {
     frame_id: String,
-    frame_id_prefix: Nullable<String>,
     sensor_frame_id: String,
     #[validate(range(exclusive_min = 0.0))]
     pointcloud_freq: f64,
@@ -339,12 +338,11 @@ fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>, String> {
 }
 
 impl Config {
-    /// `<frame_id_prefix>/<name>`, as Module.frame_id composes it.
+    /// `<frame_id_prefix>/<name>`. The module publishes odometry and tf without
+    /// going back through Python, so it names the frames itself, by the rule
+    /// `Tf` publishes under.
     fn namespaced(&self, name: &str) -> String {
-        match self.frame_id_prefix.0.as_deref() {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{name}"),
-            _ => name.to_string(),
-        }
+        prefix_frame(self.frame_id_prefix.as_deref(), name)
     }
     fn world_frame(&self) -> String {
         self.namespaced(&self.frame_id)

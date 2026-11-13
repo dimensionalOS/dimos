@@ -12,17 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use dimos_module::{run_with_transport, Module, Tf};
+use dimos_module::{run_with_transport, Module, Tf, Transform};
 use tokio::time::{interval, Duration};
 
 #[derive(Module)]
 #[module(setup = start_lookup)]
 struct TfListener {
-    #[tf]
+    // `handler = ...` also hands each incoming message to that method. A plain
+    // `#[tf]` just fills the graph for lookups.
+    #[tf(handler = handle_tf)]
     tf: Tf,
 }
 
 impl TfListener {
+    async fn handle_tf(&mut self, transforms: Vec<Transform>) {
+        for t in &transforms {
+            tracing::debug!(parent = %t.parent, child = %t.child, "tf edge received");
+        }
+    }
+
     async fn start_lookup(&mut self) {
         let tf = self.tf.clone();
         tokio::spawn(async move {
