@@ -37,6 +37,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 import re
 from typing import Any, Protocol, cast, runtime_checkable
+import warnings
 
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for, codec_from_id
@@ -47,8 +48,9 @@ from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
-from dimos.memory.type.filter import StreamQuery
+from dimos.memory.type.filter import NearFilter, StreamQuery
 from dimos.memory.type.observation import Observation
+from dimos.msgs.helpers import lcm_msg_type
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
 
@@ -165,6 +167,15 @@ class McapObservationStore(ObservationStore[Any]):
                     data_type=dtype,
                     _loader=partial(decode, message.data),
                 )
+
+    def warn_if_unposed(self, q: StreamQuery) -> None:
+        if any(isinstance(f, NearFilter) for f in q.filters):
+            # No stacklevel reaches the caller: the depth differs per query path.
+            warnings.warn(
+                f"Stream {self.name!r} is read from MCAP, which stores no poses, so near() "
+                "cannot return results. dimos map pose-fill needs a --record sqlite recording.",
+                stacklevel=1,
+            )
 
     def query(self, q: StreamQuery) -> Iterator[Observation[Any]]:
         # MCAP is natively log-time ordered, so id ordering never needs a sort.
@@ -291,10 +302,19 @@ class McapStore(Store):
                     # Artifact metadata may select only a built-in message class,
                     # never an arbitrary Python module or pickle decoder.
                     match = re.fullmatch(
-                        r"dimos\.msgs\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\2",
+                        r"(dimos\.msgs|dimos_lcm)\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\3",
                         ch.metadata.get("dimos.payload_type", ""),
                     )
-                    kind = get_dimos_type(f"{match[1]}.{match[2]}") if match else None
+                    kind = None
+                    if match:
+                        msg_name = f"{match[2]}.{match[3]}"
+                        if match[1] == "dimos.msgs":
+                            kind = get_dimos_type(msg_name)
+                        else:
+                            try:
+                                kind = lcm_msg_type(msg_name)
+                            except (ImportError, AttributeError):
+                                pass
                     if kind is not None and hasattr(kind, "lcm_decode"):
                         codec = LcmCodec(kind)
                         self._codecs[ch.topic] = (

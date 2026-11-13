@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     git \
     mesa-utils \
     libgl1 \
+    libegl1 \
     libgl1-mesa-dri \
     software-properties-common \
     libxcb1-dev \

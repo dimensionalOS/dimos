@@ -19,9 +19,20 @@ export const TOPIC_PUBLISH_CHANNEL = "@put";
 export const TOPIC_GUARD_CHANNEL = "@guard";
 export const MAX_TOPIC_GUARD_BYTES = 8192;
 export const MAX_TOPIC_GUARDS = 32;
-/** Encode variants one provider route serves at once; ids are v1..v4. */
+/** Encode variants one provider route serves at once. Ids count up from v1 and
+ * are never reused on a route, so a late frame cannot pass for its successor. */
 export const MAX_TOPIC_VARIANTS = 4;
 export const MAX_TOPIC_PROFILE_OPTIONS = 8;
+/** An SDP rides a control frame or an @control payload, so it stays well
+ * under MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section, at most
+ * MAX_RTC_TRACKS of them). SDP is ASCII, so this length and the Python
+ * mirror's character count agree. */
+export const MAX_SDP_LEN = 48 * 1024;
+export const MAX_MID_LEN = 16;
+/** Trickled ICE candidates one direct video peer may add, and the bound of
+ * one candidate line. Host candidates only: a LAN has a handful. */
+export const MAX_TOPIC_RTC_CANDIDATES = 64;
+export const MAX_TOPIC_RTC_CANDIDATE_LEN = 512;
 export const TOPIC_SETTING_NAMES = [
   "maxHz",
   "maxResolution",
@@ -178,6 +189,45 @@ export interface TopicUnsubMsg {
   t: "topic_unsub";
   id: string;
 }
+/** Direct WebRTC video for a `video.*` route, signaled through the relay. On
+ * the viewer leg `id` is the subscription and `route` the viewer route; the
+ * relay forwards with a private peer id, the provider route and the variant
+ * the viewer receives, and maps replies back. No data frames flow on a video
+ * route: the provider's peer sends H.264 straight to the browser. */
+export interface TopicRtcOfferMsg {
+  t: "topic_rtc_offer";
+  id: string;
+  route: string;
+  gen: number;
+  sdp: string;
+  /** Relay-to-provider only: the encode variant this peer is fed from. */
+  variant?: string;
+}
+export interface TopicRtcAnswerMsg {
+  t: "topic_rtc_answer";
+  id: string;
+  route: string;
+  gen: number;
+  sdp: string;
+}
+/** Either direction, trickled. An empty candidate is end-of-candidates. */
+export interface TopicRtcCandidateMsg {
+  t: "topic_rtc_candidate";
+  id: string;
+  route: string;
+  gen: number;
+  candidate: string;
+  mid: string;
+}
+/** Either direction: the peer is gone, with the reason the other side
+ * reports (`rtc_limit`, `ice_failed`, `encoder_failed`, `route_closed`, ...). */
+export interface TopicRtcCloseMsg {
+  t: "topic_rtc_close";
+  id: string;
+  route: string;
+  gen: number;
+  reason: string;
+}
 export interface TopicErrorMsg {
   t: "topic_error";
   id: string;
@@ -275,6 +325,10 @@ export type TopicMsg =
   | TopicCloseMsg
   | TopicCreditMsg
   | TopicUnsubMsg
+  | TopicRtcOfferMsg
+  | TopicRtcAnswerMsg
+  | TopicRtcCandidateMsg
+  | TopicRtcCloseMsg
   | TopicUpdateMsg
   | TopicAppliedMsg
   | TopicVariantMsg
@@ -348,7 +402,7 @@ const names = (v: unknown, max: number): v is string[] =>
   Array.isArray(v) && v.length <= max && v.every((s) => string(s, 32)) &&
   new Set(v).size === v.length;
 export const topicVariantOk = (v: unknown): v is string =>
-  typeof v === "string" && /^v[1-4](?![\s\S])/.test(v); // MAX_TOPIC_VARIANTS
+  typeof v === "string" && /^v[1-9][0-9]{0,15}(?![\s\S])/.test(v);
 const settingOk = (name: string, v: unknown): boolean => {
   switch (name) {
     case "maxHz":
@@ -570,6 +624,20 @@ export function topicMsgFromUnknown(v: Record<string, unknown>): TopicMsg | null
       break;
     case "topic_unsub":
       ok = id(v.id);
+      break;
+    case "topic_rtc_offer":
+      ok = id(v.id) && routed(v) && string(v.sdp, MAX_SDP_LEN) &&
+        (v.variant === undefined || topicVariantOk(v.variant));
+      break;
+    case "topic_rtc_answer":
+      ok = id(v.id) && routed(v) && string(v.sdp, MAX_SDP_LEN);
+      break;
+    case "topic_rtc_candidate":
+      ok = id(v.id) && routed(v) && string(v.candidate, MAX_TOPIC_RTC_CANDIDATE_LEN, 0) &&
+        string(v.mid, MAX_MID_LEN, 0);
+      break;
+    case "topic_rtc_close":
+      ok = id(v.id) && routed(v) && string(v.reason, 64);
       break;
     case "topic_error":
       ok = id(v.id) && string(v.code, 64) && string(v.message, 256, 0) &&
