@@ -30,16 +30,16 @@ from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.runner import EvalRunner
 from dimos.evals.types import EvalCase, Outcome, RunningEnvironment, Trajectory
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2.geometry.poses import poses_by_id
-from dimos.sim2.module import ControllerConfig, SimModule
+from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.utils.testing.waiting import wait_until
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
 
-pytestmark = pytest.mark.native_e2e
+pytestmark = pytest.mark.self_hosted
 
 
 class PushEvalConfig(EnvironmentConfig):
@@ -49,7 +49,7 @@ class PushEvalConfig(EnvironmentConfig):
 class PushEnvironment(Environment):
     config: PushEvalConfig
 
-    def __init__(self, world: SceneConfig, **kwargs: Any) -> None:
+    def __init__(self, world: UsdModel, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._world = world
         self._sim: ModuleProxy | None = None
@@ -61,8 +61,6 @@ class PushEnvironment(Environment):
         blueprint = SimModule.blueprint(
             scene=self._world,
             backend=MujocoBackend,
-            controllers=(ControllerConfig("eval", 100_000_000, ("left/slide_x",)),),
-            pace_to_wall_time=False,
         ).global_config(
             viewer="none",
             transport="zenoh",
@@ -98,7 +96,7 @@ class PushEnvironment(Environment):
                 ),
                 based_on_time_ns=sample.time_ns,
                 apply_at_ns=sample.time_ns,
-                valid_until_ns=end_ns,
+                valid_until_ns=end_ns + 100_000_000,
                 joint_commands_length=5,
                 joint_commands=[
                     JointCommand(
@@ -118,8 +116,8 @@ class PushEnvironment(Environment):
                 ],
             )
         )
-        # SimModule advances to the next controller boundary, then waits for this subject.
-        wait_until(lambda: sim.status()["time_ns"] == end_ns, timeout=5)
+        # The subject observes elapsed simulation time; physics never waits for it.
+        wait_until(lambda: sim.status()["time_ns"] >= end_ns, timeout=5)
         snapshot = sim.inspect()
         pose = poses_by_id(snapshot)["box"].position
         self._rows.append([snapshot.header.time_ns / 1e9, pose.x, pose.y, pose.z])

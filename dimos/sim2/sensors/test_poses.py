@@ -20,15 +20,15 @@ from dimos_lcm.sim_msgs import WorldState
 import pytest
 from reactivex.subject import Subject
 
-from dimos.sim2.sensors.camera.config import CameraConfig
-from dimos.sim2.sensors.camera.module import SimCameraModule
+from dimos.robot.assets.model import UsdModel
+from dimos.sim2.sensors.camera.render_module import CameraRenderModule
 
 
 @pytest.fixture
-def sensor_input(world, mocker):
-    module = SimCameraModule(
-        scene=world, sensor=CameraConfig("left/camera"), renderer=mocker.Mock()
-    )
+def sensor_input(mocker):
+    # This exercises the input queue; opening the rendering scene is mocked below.
+    scene = UsdModel.from_layer('#usda 1.0\ndef Xform "world" {}\n')
+    module = CameraRenderModule(scene=scene, renderer=mocker.Mock(), cameras=("camera",))
     received = []
     consuming, release, drained = threading.Event(), threading.Event(), threading.Event()
 

@@ -53,7 +53,7 @@ from dimos.robot.manipulators.xarm.config import (
     xarm_model,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
@@ -215,11 +215,10 @@ _xarm7_teleop_model = make_xarm7_model_config(
     add_gripper=True,
 )
 
+
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
 # The dedicated gripper task consumes normalized trigger commands independently.
-
-
 coordinator_teleop_xarm7 = autoconnect(
     TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
@@ -373,7 +372,7 @@ def _teleop(arm: XArmType) -> Blueprint:
             ],
         ),
         XArmConnection.blueprint(arm=arm, gripper="xarm", **declaration.model_dump()),
-        UrdfManager.blueprint(model=model),
+        UsdManager.blueprint(model=model),
     )
 
 

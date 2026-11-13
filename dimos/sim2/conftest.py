@@ -31,12 +31,25 @@ from dimos_lcm.control_msgs import ActionCommand, JointCommand
 from dimos_lcm.sim_msgs import WorldState
 from dimos_lcm.std_msgs import Header, Time
 import pytest
+import reactivex as rx
+from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.robot.assets.model import RobotModel
-from dimos.sim2.description import Drive, Instance, SceneConfig
+from dimos.robot.assets.model import RobotModel, UsdModel
+from dimos.robot.assets.usd import graft_usd, layer_from, load_pxr, usd_with_drives
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
+
+
+@pytest.fixture
+def publication_clock(mocker):
+    clock = TestScheduler()
+    mocker.patch("dimos.sim2.publication.monotonic", side_effect=lambda: clock.clock)
+    mocker.patch(
+        "dimos.sim2.publication.interval",
+        side_effect=lambda period: rx.interval(period, scheduler=clock),
+    )
+    return clock
 
 
 def _box_link(
@@ -103,7 +116,7 @@ def _door_urdf() -> ET.Element:
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> SceneConfig:
+def world(tmp_path: Path) -> UsdModel:
     pusher_path, door_path, box_path = (
         tmp_path / name for name in ("pusher.urdf", "door.urdf", "box.urdf")
     )
@@ -122,33 +135,86 @@ def world(tmp_path: Path) -> SceneConfig:
         .with_fixed_frame("imu", "tool")
     )
 
-    robots = tuple(
-        Instance(
-            name,
-            pusher.with_prefix(name + "/"),
-            xyz=(0, y, 0),
-            drives=tuple(Drive(name + "/" + joint) for joint in ("slide_x", "slide_y")),
+    root = (
+        RobotModel.from_root_link("world")
+        .to_usd()
+        .with_frames(
+            {
+                "left_mount": ("world", (0, 0, 0), (0, 0, 0)),
+                "right_mount": ("world", (0, 1.2, 0), (0, 0, 0)),
+                "box_mount": ("world", (0, 0, 0.055), (0, 0, 0)),
+                "door_mount": ("world", (0.6, 0.4, 0), (0, 0, 0)),
+            }
         )
-        for name, y in (("left", 0.0), ("right", 1.2))
     )
-    return SceneConfig(
-        (
-            *robots,
-            Instance(
-                "box",
-                RobotModel.from_file(box_path),
-                xyz=(0, 0, 0.055),
-                floating=True,
-            ),
-            Instance(
-                "door",
-                RobotModel.from_file(door_path)
-                .with_fixed_frame("imu", "panel", xyz=(0.225, 0, 0.15))
-                .with_prefix("door/"),
-                xyz=(0.6, 0.4, 0),
-            ),
-        ),
+    children = {
+        name + "_mount": usd_with_drives(
+            pusher.with_prefix(name + "/").to_usd().usd,
+            {name + "/" + joint: (200, 20, 0) for joint in ("slide_x", "slide_y")},
+        )
+        for name in ("left", "right")
+    }
+    children["box_mount"] = RobotModel.from_file(box_path).to_usd().usd
+    children["door_mount"] = (
+        RobotModel.from_file(door_path)
+        .with_fixed_frame("imu", "panel", xyz=(0.225, 0, 0.15))
+        .with_prefix("door/")
+        .to_usd()
+        .usd
     )
+    pxr = load_pxr()
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, graft_usd(root.usd, children), "test scene", None))
+    for prim in stage.Traverse():
+        if (prim.GetDisplayName() or prim.GetName()) == "world":
+            prim.RemoveAPI(pxr.UsdPhysics.RigidBodyAPI)
+    # The fixture authors native USD physics, including its actuators.
+    # A geometry's local scale must not scale its origin translation.
+    for prim in stage.Traverse():
+        if prim.IsA(pxr.UsdGeom.Xformable):
+            xform = pxr.UsdGeom.Xformable(prim)
+            ops = xform.GetOrderedXformOps()
+            xform.SetXformOpOrder(
+                sorted(ops, key=lambda op: op.GetOpType() == pxr.UsdGeom.XformOp.TypeScale)
+            )
+    for prim in list(stage.Traverse()):
+        if prim.GetTypeName() == "PhysicsJoint":
+            if prim.GetName() == "box_mount_mount":
+                stage.RemovePrim(prim.GetPath())
+                continue
+            else:
+                prim.SetTypeName("PhysicsFixedJoint")
+        if prim.IsA(pxr.UsdPhysics.Joint):
+            joint = pxr.UsdPhysics.Joint(prim)
+            targets = joint.GetBody0Rel().GetTargets()
+            if targets and str(targets[0]).endswith("/world"):
+                joint.GetBody0Rel().ClearTargets(True)
+        if prim.IsA(pxr.UsdPhysics.PrismaticJoint):
+            path = (
+                stage.GetDefaultPrim()
+                .GetPath()
+                .AppendChild("actuator_" + str(prim.GetPath()).replace("/", "_"))
+            )
+            actuator = stage.DefinePrim(path, "MjcActuator")
+            actuator.CreateRelationship("mjc:target").SetTargets([prim.GetPath()])
+            actuator.CreateAttribute("mjc:gainPrm", pxr.Sdf.ValueTypeNames.DoubleArray).Set(
+                [200.0] + [0.0] * 9
+            )
+            actuator.CreateAttribute("mjc:biasPrm", pxr.Sdf.ValueTypeNames.DoubleArray).Set(
+                [0.0, -200.0, -20.0] + [0.0] * 7
+            )
+            actuator.CreateAttribute("mjc:biasType", pxr.Sdf.ValueTypeNames.Token).Set("affine")
+            actuator.CreateAttribute("mjc:forceLimited", pxr.Sdf.ValueTypeNames.Token).Set("true")
+            actuator.CreateAttribute("mjc:forceRange:min", pxr.Sdf.ValueTypeNames.Double).Set(-80.0)
+            actuator.CreateAttribute("mjc:forceRange:max", pxr.Sdf.ValueTypeNames.Double).Set(80.0)
+    floor = pxr.UsdGeom.Plane.Define(stage, "/world/floor")
+    floor.CreateAxisAttr("Z")
+    floor.CreateWidthAttr(8)
+    floor.CreateLengthAttr(8)
+    pxr.UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
+    light = stage.DefinePrim("/world/light", "DistantLight")
+    light.CreateAttribute("inputs:intensity", pxr.Sdf.ValueTypeNames.Float).Set(1.0)
+    pxr.UsdGeom.Xformable(light).AddRotateXYZOp().Set((-25, -30, 0))
+    return UsdModel.from_layer(str(stage.GetRootLayer().ExportToString()))
 
 
 @pytest.fixture

@@ -933,6 +933,12 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Configure headless MuJoCo rendering
+        if: matrix.os == 'Linux'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libegl1 libegl-mesa0 libgl1-mesa-dri
+          echo "MUJOCO_GL=egl" >> "$GITHUB_ENV"
       - name: Install Node 24 for the Pi and dimcode CLIs
         uses: actions/setup-node@v7.1.0
         with:

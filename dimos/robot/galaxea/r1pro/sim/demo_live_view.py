@@ -29,13 +29,14 @@ import mujoco
 import mujoco.viewer
 
 from dimos.core.transport import ZenohTransport
-from dimos.robot.galaxea.r1pro.sim.config import MODEL, SCENE
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.galaxea.r1pro.sim.config import SCENE
 from dimos.sim2.physics.mujoco import MujocoBackend
 
 
 def main() -> None:
     backend = MujocoBackend()
-    backend.load(SCENE.resolve((("view", {"robot_models": {"r1pro": MODEL.load()}}),)), 5_000_000)
+    backend.load(UsdModel.from_file(SCENE), 5_000_000)
     model, data = backend.model, backend.data
     root_name = "r1pro/base_link"
     root_joint = model.body(root_name).jntadr[0]

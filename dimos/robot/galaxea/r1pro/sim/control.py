@@ -28,19 +28,22 @@ from dimos_lcm.control_msgs import ActionCommand, JointCommand
 import numpy as np
 
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.joylo import JoyloConfig, torso_step
 from dimos.robot.galaxea.r1pro.sim.config import (
-    CONTROL,
+    COMMAND_TTL_NS,
+    CONTROL_PERIOD_NS,
     HOME,
     JOINTS,
     KD,
     KP,
+    MODEL,
     SERVO_JOINTS,
     UPPER_JOINTS,
     UPPER_RATES,
@@ -54,6 +57,7 @@ from dimos.robot.galaxea.r1pro.sim.model import (
     TORSO_LINK_LENGTHS,
     WHEEL_RADIUS,
 )
+from dimos.sim2.module import SimModule
 
 
 def steer_targets(
@@ -73,11 +77,13 @@ def steer_targets(
 
 
 class R1ProSimControlConfig(ModuleConfig):
+    simulation: str = "SimModule"
+    model: RobotModel = MODEL
     upper_command_joints: tuple[str, ...] = UPPER_JOINTS
     coordinator_torso: bool = False
 
 
-class R1ProSimControl(SharedConfigModule):
+class R1ProSimControl(Module):
     config: R1ProSimControlConfig
     joint_state: In[JointState]
     cmd_vel: In[Twist]
@@ -108,37 +114,31 @@ class R1ProSimControl(SharedConfigModule):
         self._wheel_positions: list[tuple[float, float]] = []
         self._steer_limits: dict[str, tuple[float, float]] = {}
 
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        clocks = [
-            config["sim_clock_id"] for _, config in config_senders if "sim_clock_id" in config
-        ]
-        if len(clocks) != 1:
-            raise ValueError("R1 Pro controller requires one simulation clock")
-        self._clock = clocks[0]
-        joints = {
-            joint.name: joint
-            for _, config in config_senders
-            for model in config.get("robot_models", {}).values()
-            for joint in model.joints
-        }
+    @rpc
+    def build(self) -> None:
+        super().build()
+        simulation = RPCClient.remote(SimModule, self.config.simulation, rpc=self.rpc)
+        try:
+            self._clock = simulation.simulation_config()["sim_clock_id"]
+        finally:
+            simulation.stop_rpc_client()
+        self._load_model()
+
+    def _load_model(self) -> None:
+        model = self.config.model.load()
+        joints = {joint.name: joint for joint in model.joints}
         for name in SERVO_JOINTS:
             joint = joints[name]
             assert joint.lower is not None and joint.upper is not None
             self._limits[name] = (joint.lower, joint.upper)
-        self._wheel_positions = [tuple(joints[name].origin_xyz[:2]) for name in STEER_JOINTS]
+        self._wheel_positions = [
+            (joints[name].origin_xyz[0], joints[name].origin_xyz[1]) for name in STEER_JOINTS
+        ]
         for name in STEER_JOINTS:
             joint = joints[name]
             assert joint.lower is not None and joint.upper is not None
             self._steer_limits[name] = (joint.lower, joint.upper)
-        models = [
-            model
-            for _, config in config_senders
-            for model in config.get("robot_models", {}).values()
-            if set(UPPER_JOINTS).issubset({j.name for j in model.joints})
-        ]
-        if len(models) != 1:
-            raise ValueError("R1 Pro servo requires one matching upper-body model")
-        self._servo = UpperBodyServo(models[0])
+        self._servo = UpperBodyServo(model)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.3) -> None:
@@ -214,10 +214,10 @@ class R1ProSimControl(SharedConfigModule):
                     self._targets[SERVO_JOINTS.index(name)] = position
 
     def compute(self, sample: JointState) -> ActionCommand | None:
-        period = CONTROL.period_ns
-        now = round(sample.ts * 1e9 / period) * period
-        if abs(sample.ts * 1e9 - now) > 2 + math.ulp(sample.ts) * 1e9:
+        period = CONTROL_PERIOD_NS
+        if not math.isfinite(sample.ts) or sample.ts < 0:
             return None
+        now = round(sample.ts * 1e9)
         with self._lock:
             if not self._clock or len(self._wheel_positions) != 3:
                 raise RuntimeError("controller has not received its model and clock")
@@ -226,7 +226,15 @@ class R1ProSimControl(SharedConfigModule):
             if now == self._last_ns:
                 return self._last_action
             measured = dict(zip(sample.name, sample.position, strict=True))
-            dt = period / 1e9
+            elapsed = period if self._last_ns < 0 else now - self._last_ns
+            if elapsed > COMMAND_TTL_NS:
+                # Physics has held after expiry. Resume interpolation from measured pose.
+                assert self._servo is not None
+                self._servo.initialized = False
+                self._ramped_targets = np.array([measured[n] for n in SERVO_JOINTS])
+                self._ramped_velocity[:] = 0
+                elapsed = period
+            dt = elapsed / 1e9
             if self._torso_active:
                 axis = self._torso_axis if time.monotonic() < self._torso_until else 0.0
                 self._targets[:4] = torso_step(
@@ -241,7 +249,9 @@ class R1ProSimControl(SharedConfigModule):
             self._ramped_velocity += np.clip(desired - self._ramped_velocity, -0.4 * dt, 0.4 * dt)
             assert self._servo is not None
             measured_upper = np.array([measured[name] for name in UPPER_JOINTS])
-            upper_positions, upper_velocity = self._servo.step(self._targets[:18], measured_upper)
+            upper_positions, upper_velocity = self._servo.step(
+                self._targets[:18], measured_upper, dt=dt
+            )
             self._ramped_targets[:18] = upper_positions
             self._ramped_targets[18:] += np.clip(
                 self._targets[18:] - self._ramped_targets[18:],
@@ -278,12 +288,12 @@ class R1ProSimControl(SharedConfigModule):
                     clock_id=self._clock,
                     epoch=0,
                     time_ns=now,
-                    source_id=CONTROL.controller_id,
-                    sequence=now // period,
+                    source_id="r1pro/servo",
+                    sequence=now,
                 ),
                 based_on_time_ns=now,
                 apply_at_ns=now,
-                valid_until_ns=now + period,
+                valid_until_ns=now + COMMAND_TTL_NS,
                 joint_commands_length=len(rows),
                 joint_commands=[
                     JointCommand(

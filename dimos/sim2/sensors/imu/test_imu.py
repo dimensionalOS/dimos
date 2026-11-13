@@ -20,13 +20,17 @@ from scipy.spatial.transform import Rotation
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
 
+pytestmark = pytest.mark.self_hosted  # Motion truth is acquired from a real USD physics scene.
+
 
 @pytest.fixture
-def imu(world):
+def imu(mocker):
     module = SimImuModule(
         sensor=ImuConfig("left/imu", gyro_bias=(0.1, 0.2, 0.3), accel_std=0.02, seed=4)
     )
-    module.config_receive((("sim", {"sim_gravity_world": world.gravity_world}),))
+    client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
+    client.simulation_config.return_value = {"sim_gravity_world": (0, 0, -9.81)}
+    module.build()
     yield module
     module.dispose()
 
@@ -56,9 +60,11 @@ def test_wrong_frame_cannot_feed_imu(poses, imu):
 
 
 @pytest.fixture
-def ideal_imu(world):
+def ideal_imu(mocker):
     module = SimImuModule(sensor=ImuConfig(frame_id="left/imu", orientation="ideal"))
-    module.config_receive((("sim", {"sim_gravity_world": world.gravity_world}),))
+    client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
+    client.simulation_config.return_value = {"sim_gravity_world": (0, 0, -9.81)}
+    module.build()
     yield module
     module.dispose()
 
@@ -74,8 +80,10 @@ def test_stationary_motion_is_kinematic_and_imu_adds_specific_force(backend, pos
 
 
 @pytest.mark.parametrize("gravity", [(0.0, 0.0, -1.62), (0.0, 0.0, 0.0)])
-def test_configured_gravity_is_rotated_into_sensor_axes(poses, ideal_imu, gravity):
-    ideal_imu.config_receive((("sim", {"sim_gravity_world": gravity}),))
+def test_configured_gravity_is_rotated_into_sensor_axes(poses, ideal_imu, gravity, mocker):
+    client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
+    client.simulation_config.return_value = {"sim_gravity_world": gravity}
+    ideal_imu.build()
     truth = poses()
     body = next(b for b in truth.bodies if b.body_id == "left/imu")
     body.pose.orientation = Quaternion(*Rotation.from_euler("y", 90, degrees=True).as_quat())
@@ -85,10 +93,28 @@ def test_configured_gravity_is_rotated_into_sensor_axes(poses, ideal_imu, gravit
     assert [a.x, a.y, a.z] == pytest.approx([gravity[2], 0, 0], abs=1e-9)
 
 
-@pytest.mark.parametrize(
-    "senders",
-    [(), (("one", {"sim_gravity_world": (0, 0, -1)}), ("two", {"sim_gravity_world": (0, 0, -2)}))],
-)
-def test_missing_or_ambiguous_gravity_fails_configuration(ideal_imu, senders):
-    with pytest.raises(ValueError, match="exactly one simulation"):
-        ideal_imu.config_receive(senders)
+@pytest.mark.parametrize("gravity", [(0, 0), (0, 0, float("nan"))])
+def test_invalid_gravity_fails_build(ideal_imu, gravity, mocker):
+    client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
+    client.simulation_config.return_value = {"sim_gravity_world": gravity}
+    with pytest.raises(ValueError, match="finite 3-vector"):
+        ideal_imu.build()
+    client.stop_rpc_client.assert_called_once()
+
+
+async def test_rate_warning_counts_only_successfully_published_imu_samples(
+    imu, poses, publication_clock, mocker
+):
+    publish = mocker.patch.object(imu.imu, "publish")
+    warning = mocker.patch("dimos.sim2.publication.logger.warning")
+    for tick in range(10):
+        await imu.handle_observations(poses(time_ns=tick * 5_000_000))
+    publish.side_effect = RuntimeError("transport failed")
+    with pytest.raises(RuntimeError, match="transport failed"):
+        await imu.handle_observations(poses(time_ns=50_000_000))
+    publication_clock.advance_to(5)
+    assert warning.call_count == 1
+    assert warning.call_args.kwargs["output"] == "imu"
+    assert warning.call_args.kwargs["requested_hz"] == 200
+    assert warning.call_args.kwargs["actual_hz"] == 2
+    assert warning.call_args.kwargs["published"] == 10

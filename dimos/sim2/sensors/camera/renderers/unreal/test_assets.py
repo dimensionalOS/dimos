@@ -14,7 +14,6 @@
 
 """Coordinate and revision contracts at the native rendering boundary."""
 
-from dataclasses import replace
 from pathlib import Path
 
 from dimos_lcm.common_msgs import SampleHeader
@@ -25,7 +24,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.model import RobotModel
-from dimos.sim2.description import Instance, SceneConfig
+from dimos.sim2.scenes.urdf import Component, prepare_scene
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.renderers.unreal.assets import export_visuals, unreal_pose
 from dimos.sim2.sensors.camera.renderers.unreal.renderer import UnrealRenderer
@@ -48,17 +47,14 @@ def scene(tmp_path):
     path.write_text(
         '<robot name="office"><link name="office/world"><visual><geometry><box size="1 2 3"/></geometry></visual></link></robot>'
     )
-    return SceneConfig((Instance("office", RobotModel.from_file(path)),), ground_plane=False)
+    return prepare_scene({"office": Component(RobotModel.from_file(path))}, ground_plane=False)
 
 
 def test_authored_level_is_not_duplicated_and_cannot_be_repositioned(scene):
-    manifest, visuals, bodies = export_visuals(scene, ("office",))
+    manifest, visuals, bodies = export_visuals(scene, ("office/world",))
     assert manifest["geoms"] == []
     assert visuals == []
     assert bodies == {"office/world"}
-    moved = replace(scene, instances=(replace(scene.instances[0], xyz=(1, 0, 0)),))
-    with pytest.raises(ValueError, match="saved origin"):
-        export_visuals(moved, ("office",))
 
 
 def test_native_visual_replaces_geometry_and_follows_its_body(scene, tmp_path, mocker):
@@ -73,20 +69,18 @@ def test_native_visual_replaces_geometry_and_follows_its_body(scene, tmp_path, m
         Path("unreal"), native_visuals={"office/world": asset}, log_path=tmp_path / "render.log"
     )
     try:
-        renderer.load(scene, CameraConfig("office/world"))
+        renderer.load(scene, (CameraConfig("office/world"),))
         renderer.client.capture.return_value.rgba = np.zeros((1, 1, 4), dtype=np.uint8)
         renderer.client.capture.return_value.depth = np.zeros((1, 1), dtype=np.float32)
         for z in (1.0, 1.2):
             pose = Pose(position=Point(2, 3, z), orientation=Quaternion(w=1))
-            renderer.set_poses(
-                WorldState(
-                    header=SampleHeader(),
-                    model_revision=scene.revision,
-                    bodies_length=1,
-                    bodies=[BodyState(body_id="office/world", pose=pose)],
-                )
+            sample = WorldState(
+                header=SampleHeader(),
+                model_revision=scene.revision,
+                bodies_length=1,
+                bodies=[BodyState(body_id="office/world", pose=pose)],
             )
-            renderer.render(pose)
+            renderer.render(sample, ("office/world",))
             assert renderer.client.capture.call_args.args[0]["poses"][0]["position"] == [
                 200,
                 -300,
@@ -99,7 +93,7 @@ def test_native_visual_replaces_geometry_and_follows_its_body(scene, tmp_path, m
 @pytest.mark.parametrize(
     "authored, mapping",
     [
-        (("office",), {"office/world": "/Game/Props/Bottle.Bottle"}),
+        (("office/world",), {"office/world": "/Game/Props/Bottle.Bottle"}),
         ((), {"missing/body": "/Game/Props/Bottle.Bottle"}),
         ((), {"office/world": "Bottle"}),
     ],
@@ -114,11 +108,11 @@ def test_renderer_rejects_mismatched_model_and_moving_authored_background(scene,
     renderer = UnrealRenderer(
         Path("unreal"),
         level="/Game/Office",
-        authored_instances=("office",),
+        authored_bodies=("office/world",),
         log_path=tmp_path / "render.log",
     )
     try:
-        renderer.load(scene, CameraConfig("office/world"))
+        renderer.load(scene, (CameraConfig("office/world"),))
         sample = WorldState(
             header=SampleHeader(),
             model_revision=scene.revision,
@@ -137,5 +131,38 @@ def test_renderer_rejects_mismatched_model_and_moving_authored_background(scene,
         sample.bodies[0].pose.position.x = 1
         with pytest.raises(ValueError, match="moved"):
             renderer.set_poses(sample)
+    finally:
+        renderer.close()
+
+
+def test_shared_views_use_one_scene_and_one_acquisition(scene, tmp_path, mocker):
+    mocker.patch("dimos.sim2.sensors.camera.renderers.unreal.renderer.RendererProcess")
+    scene = scene.with_frames({"wrist": ("office/world", (0, 0, 0.1), (0, 0, 0))})
+    renderer = UnrealRenderer(Path("unreal"), log_path=tmp_path / "render.log")
+    try:
+        renderer.load(scene, (CameraConfig("office/world"), CameraConfig("wrist")))
+        renderer.client.capture.return_value.rgba = np.zeros((1, 1, 4), dtype=np.uint8)
+        renderer.client.capture.return_value.depth = np.ones((1, 1), dtype=np.float32)
+        sample = WorldState(
+            header=SampleHeader(clock_id="shared", epoch=2, time_ns=123456789, sequence=17),
+            model_revision=scene.revision,
+            bodies_length=2,
+            bodies=[
+                BodyState(body_id=n, pose=Pose(orientation=Quaternion(w=1)))
+                for n in ("office/world", "wrist")
+            ],
+        )
+        images = renderer.render(sample, ("office/world", "wrist"))
+        assert set(images) == {"office/world", "wrist"}
+        assert renderer.client.load.call_count == 1
+        commands = [call.args[0] for call in renderer.client.capture.call_args_list]
+        assert [c["camera"]["view_id"] for c in commands] == ["office/world", "wrist"]
+        for command in commands:
+            assert command["time_ns"] == "123456789"
+            assert command["epoch"] == "2"
+            assert command["sequence"] == "17"
+        assert commands[0]["poses"] is commands[1]["poses"]
+        with pytest.raises(ValueError, match="distinct configured"):
+            renderer.render(sample, ("wrist", "wrist"))
     finally:
         renderer.close()

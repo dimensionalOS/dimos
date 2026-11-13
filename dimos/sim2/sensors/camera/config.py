@@ -18,12 +18,12 @@ from dataclasses import dataclass
 import math
 from typing import Protocol
 
-from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import RobotModel, UsdModel
+from dimos.robot.assets.usd import layer_from, link_prim_paths, load_pxr
 
 
 @dataclass(frozen=True)
@@ -36,8 +36,12 @@ class CameraConfig:
     fy: float = 188.36
     cx: float = 160
     cy: float = 120
+    min_depth_m: float = 0.0
+    max_depth_m: float = math.inf
 
     def __post_init__(self) -> None:
+        if not 0 <= self.min_depth_m < self.max_depth_m:
+            raise ValueError("invalid camera depth range")
         if min(self.width, self.height, self.fx, self.fy, self.hz) <= 0 or not all(
             map(math.isfinite, (self.fx, self.fy, self.cx, self.cy, self.hz))
         ):
@@ -45,19 +49,38 @@ class CameraConfig:
 
 
 class CameraRenderer(Protocol):
-    def load(self, scene: SceneConfig, camera: CameraConfig) -> None: ...
-    def set_poses(self, sample: WorldState) -> None: ...
-    def render(self, pose_world: Pose) -> tuple[NDArray[np.uint8], NDArray[np.float32]]: ...
-    def cancel(self) -> None:
-        """Interrupt blocking I/O from another thread; cleanup remains on the worker."""
-        ...
+    """One scene, many camera views, called only on the rendering owner thread.
 
+    Load scene resources once; share native contexts between compatible views.
+    A render call applies one complete acquisition to every requested camera.
+    Results are keyed by camera frame ID: RGB uint8 (H, W, 3), optical-axis
+    depth float32 (H, W) in metres. Arrays must survive subsequent render calls.
+    Unsupported projections must fail at load, never silently change intrinsics.
+    """
+
+    def load(self, scene: UsdModel, cameras: tuple[CameraConfig, ...]) -> None: ...
+    def render(
+        self, sample: WorldState, camera_ids: tuple[str, ...]
+    ) -> dict[str, tuple[NDArray[np.uint8], NDArray[np.float32]]]: ...
     def close(self) -> None: ...
 
 
-class CameraRigRenderer(CameraRenderer, Protocol):
-    def render_camera(
-        self, camera: CameraConfig, pose_world: Pose
-    ) -> tuple[NDArray[np.uint8], NDArray[np.float32]]:
-        """Render a calibrated view while sharing the loaded scene."""
-        ...
+def camera_usd(camera: CameraConfig) -> str:
+    """Camera description in the same optical frame as Image and CameraInfo."""
+    pxr = load_pxr()
+    layer = layer_from(
+        pxr, RobotModel.from_root_link(camera.frame_id, name="camera").to_usd().usd, "camera", None
+    )
+    stage = pxr.Usd.Stage.Open(layer)
+    path = link_prim_paths(stage)[camera.frame_id]
+    optics = pxr.UsdGeom.Camera.Define(stage, path + "/optics")
+    optics.GetPrim().SetDisplayName(camera.frame_id + "/optics")
+    # USD cameras look down -Z with +Y up; DimOS optical coordinates are +Z, -Y.
+    optics.AddRotateXOp().Set(180.0)
+    focal = 20.0
+    optics.CreateFocalLengthAttr(focal)
+    optics.CreateHorizontalApertureAttr(focal * camera.width / camera.fx)
+    optics.CreateVerticalApertureAttr(focal * camera.height / camera.fy)
+    optics.CreateHorizontalApertureOffsetAttr(focal * (camera.cx - camera.width / 2) / camera.fx)
+    optics.CreateVerticalApertureOffsetAttr(focal * (camera.height / 2 - camera.cy) / camera.fy)
+    return str(layer.ExportToString())

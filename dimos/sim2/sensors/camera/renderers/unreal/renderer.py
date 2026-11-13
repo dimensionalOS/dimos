@@ -18,14 +18,14 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
-import xml.etree.ElementTree as ET
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd import layer_from, load_pxr
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.renderers.unreal.assets import (
@@ -43,13 +43,13 @@ class UnrealRenderer:
         *,
         project: Path | None = None,
         level: str | None = None,
-        authored_instances: tuple[str, ...] = (),
+        authored_bodies: tuple[str, ...] = (),
         native_visuals: dict[str, str] | None = None,
         log_path: Path,
         startup_timeout: float = 180,
         capture_timeout: float = 15,
     ) -> None:
-        if authored_instances and level is None:
+        if authored_bodies and level is None:
             raise ValueError("authored instances require an Unreal level")
         self.process = RendererProcess(
             executable,
@@ -59,23 +59,34 @@ class UnrealRenderer:
             startup_timeout=startup_timeout,
             capture_timeout=capture_timeout,
         )
-        self.authored_instances = authored_instances
+        self.authored_bodies = authored_bodies
         self.native_visuals = native_visuals
         self._assets: TemporaryDirectory[str] | None = None
         self._sample: WorldState | None = None
 
-    def load(self, scene: SceneConfig, camera: CameraConfig) -> None:
-        self.camera = camera
+    def load(self, scene: UsdModel, cameras: tuple[CameraConfig, ...]) -> None:
+        if not cameras or len({c.frame_id for c in cameras}) != len(cameras):
+            raise ValueError("cameras require distinct, nonempty frame IDs")
+        self.cameras = {c.frame_id: c for c in cameras}
         self.revision = scene.revision
+        pxr = load_pxr()
+        stage = pxr.Usd.Stage.Open(
+            layer_from(
+                pxr,
+                scene.usd,
+                "camera scene",
+                scene.source_path.parent if scene.source_path else None,
+            )
+        )
         self.bodies = {
-            link.attrib["name"]
-            for i in scene.instances
-            for link in ET.fromstring(i.description.xml).findall("link")
+            str(p.GetDisplayName() or p.GetName())
+            for p in stage.Traverse()
+            if p.HasAPI(pxr.UsdPhysics.RigidBodyAPI)
         }
-        if camera.frame_id not in self.bodies:
-            raise ValueError(f"unknown camera frame {camera.frame_id}")
+        if not self.cameras.keys() <= self.bodies:
+            raise ValueError("unknown camera frame")
         manifest, self.visuals, self.static_bodies = export_visuals(
-            scene, self.authored_instances, self.native_visuals
+            scene, self.authored_bodies, self.native_visuals
         )
         self._assets = TemporaryDirectory(prefix="dimos-unreal-")
         path = Path(self._assets.name) / "scene.json"
@@ -97,8 +108,25 @@ class UnrealRenderer:
         self._sample = sample
         self._poses = poses
 
-    def render(self, pose_world: Pose) -> tuple[NDArray[np.uint8], NDArray[np.float32]]:
-        return self.render_camera(self.camera, pose_world)
+    def render(
+        self, sample: WorldState, camera_ids: tuple[str, ...]
+    ) -> dict[str, tuple[NDArray[np.uint8], NDArray[np.float32]]]:
+        if len(set(camera_ids)) != len(camera_ids) or not set(camera_ids) <= self.cameras.keys():
+            raise ValueError("render requests require distinct configured camera IDs")
+        self.set_poses(sample)
+        # Pose conversion is shared across all views of this acquisition.
+        self._wire_poses = [
+            {
+                "id": v.id,
+                **unreal_pose(
+                    (np.eye(4) if v.body is None else pose_matrix(self._poses[v.body])) @ v.local
+                ),
+            }
+            for v in self.visuals
+        ]
+        return {
+            name: self.render_camera(self.cameras[name], self._poses[name]) for name in camera_ids
+        }
 
     def render_camera(
         self, camera: CameraConfig, pose_world: Pose
@@ -125,15 +153,7 @@ class UnrealRenderer:
             "cx": c.cx,
             "cy": c.cy,
         }
-        command["poses"] = [
-            {
-                "id": v.id,
-                **unreal_pose(
-                    (np.eye(4) if v.body is None else pose_matrix(self._poses[v.body])) @ v.local
-                ),
-            }
-            for v in self.visuals
-        ]
+        command["poses"] = self._wire_poses
         result = self.client.capture(command)
         return result.rgba[:, :, :3].copy(), result.depth
 

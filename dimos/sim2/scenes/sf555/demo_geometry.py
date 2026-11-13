@@ -23,8 +23,8 @@ import mujoco
 import numpy as np
 
 from dimos.robot.assets.model import RobotModel
-from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.geometry.mujoco import compile_scene
+from dimos.sim2.scenes.urdf import Component, prepare_scene
 
 # The V24 design's documented course origin and reversed plan axes.
 COURSE_ORIGIN = (29.43, 10.65)
@@ -32,8 +32,8 @@ COURSE_ORIGIN = (29.43, 10.65)
 
 def validate(assets: Path) -> None:
     started = time.monotonic()
-    scene = SceneConfig(
-        (Instance("office", RobotModel.from_file(assets / "office.urdf")),), ground_plane=False
+    scene = prepare_scene(
+        {"office": Component(RobotModel.from_file(assets / "office.urdf"))}, ground_plane=False
     )
     model = compile_scene(scene, 2_000_000)
     data = mujoco.MjData(model)

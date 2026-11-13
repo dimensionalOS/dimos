@@ -30,9 +30,9 @@ import mujoco
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_COLLISION_EXCLUSIONS
 from dimos.robot.galaxea.r1pro.sim.office import MODELS
-from dimos.sim2.description import Drive, Instance, SceneConfig
 from dimos.sim2.geometry.mujoco import build_scene
 from dimos.sim2.scenes.sf555.pickables import ASSETS
+from dimos.sim2.scenes.urdf import Component, prepare_scene
 
 
 def check_grasp(side: str, bottle: str, height: float) -> dict[str, float | str]:
@@ -55,18 +55,17 @@ def check_grasp(side: str, bottle: str, height: float) -> dict[str, float | str]
         for a, b in R1PRO_COLLISION_EXCLUSIONS
         if f"r1pro/{a}" in links and f"r1pro/{b}" in links
     )
-    scene = SceneConfig(
-        (
-            Instance(
-                "gripper",
+    scene = prepare_scene(
+        {
+            "gripper": Component(
                 model,
                 xyz=(0.065, 0, 0.30),
                 rpy=(0, math.pi / 2, 0),
-                drives=tuple(Drive(n, kp=1000, kd=10, armature=0.02) for n in fingers),
+                drives={n: (1000, 10, 0) for n in fingers},
                 collision_exclusions=exclusions,
             ),
-            Instance(bottle, MODELS[bottle], xyz=(0, 0, 0.30), floating=True),
-        ),
+            bottle: Component(MODELS[bottle], xyz=(0, 0, 0.30), floating=True),
+        },
         ground_plane=False,
     )
     spec = build_scene(scene)

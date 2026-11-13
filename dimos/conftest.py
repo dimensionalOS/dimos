@@ -16,6 +16,7 @@ import atexit
 from contextlib import suppress
 import faulthandler
 import hashlib
+import importlib.util
 import os
 import pathlib
 import platform
@@ -86,6 +87,13 @@ with suppress(ImportError, ValueError, OSError):
 from dotenv import dotenv_values
 import pytest
 import tqdm
+
+# MuJoCo 4's USD plugin loads native libraries with RTLD_GLOBAL. On Linux,
+# importing it before Drake 1.49 aborts URDF collision parsing (invalid free).
+# Load Drake's parser first in environments that install it, before collection
+# imports any simulation modules. This is a native-library test workaround.
+if platform.system() == "Linux" and importlib.util.find_spec("pydrake") is not None:
+    import pydrake.multibody.parsing  # noqa: F401
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import spawn_watchdog

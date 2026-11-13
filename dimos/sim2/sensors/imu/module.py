@@ -23,12 +23,16 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-from dimos.core.module import ModuleConfig
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.robot.assets.model import RobotModel
+from dimos.sim2.module import SimModule
+from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.sampling import Acquisition, same_acquisition
 
 
@@ -46,16 +50,22 @@ class ImuConfig:
 
 class ImuModuleConfig(ModuleConfig):
     sensor: ImuConfig
+    simulation: str = "SimModule"
 
 
-class SimImuModule(SharedConfigModule):
+class SimImuModule(Module):
     config: ImuModuleConfig
     observations: In[WorldState]
     imu: Out[Imu]
 
+    @rpc
+    def get_usd(self) -> list[str]:
+        return ["", RobotModel.from_root_link(self.config.sensor.frame_id, name="imu").to_usd().usd]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._sampling = Acquisition(self.config.sensor.hz)
+        self._publication_rate = PublicationRate(self, "imu", self.config.sensor.hz)
         self._last: Imu | None = None
         self._last_header: SampleHeader | None = None
         self._gravity_world: NDArray[np.float64] | None = None
@@ -66,11 +76,14 @@ class SimImuModule(SharedConfigModule):
         ):
             raise ValueError("invalid IMU noise/calibration")
 
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        values = [c["sim_gravity_world"] for _, c in config_senders if "sim_gravity_world" in c]
-        if len(values) != 1:
-            raise ValueError("IMU requires gravity from exactly one simulation")
-        gravity = np.asarray(values[0], dtype=float)
+    @rpc
+    def build(self) -> None:
+        super().build()
+        simulation = RPCClient.remote(SimModule, self.config.simulation, rpc=self.rpc)
+        try:
+            gravity = np.asarray(simulation.simulation_config()["sim_gravity_world"], dtype=float)
+        finally:
+            simulation.stop_rpc_client()
         if gravity.shape != (3,) or not np.isfinite(gravity).all():
             raise ValueError("simulation gravity must be a finite 3-vector")
         self._gravity_world = gravity
@@ -78,7 +91,7 @@ class SimImuModule(SharedConfigModule):
     def measure(self, truth: WorldState) -> Imu | None:
         c = self.config.sensor
         if self._gravity_world is None:
-            raise ValueError("IMU requires shared simulation gravity before acquisition")
+            raise ValueError("IMU must be built before acquisition")
         body = next((b for b in truth.bodies if b.body_id == c.frame_id), None)
         if body is None:
             raise ValueError(f"WorldState lacks configured IMU body: {c.frame_id}")
@@ -112,6 +125,8 @@ class SimImuModule(SharedConfigModule):
         return self._last
 
     async def handle_observations(self, truth: WorldState) -> None:
+        self._publication_rate.begin()
         sample = self.measure(truth)
         if sample is not None:
             self.imu.publish(sample)
+            self._publication_rate.published()

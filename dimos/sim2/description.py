@@ -12,94 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Physical scene: shared robot descriptions, placements and actuator parameters."""
+"""Scene selection follows UsdManager: get_scene(), then get_asset() for its files."""
 
-from __future__ import annotations
+from pathlib import Path
 
-from dataclasses import asdict, dataclass, replace
-from functools import cached_property
-import hashlib
-import json
+from pydantic import Field, field_validator, model_validator
 
-from dimos.core.shared_config import ConfigSenders
-from dimos.robot.assets.model import LoadedRobotModel, RobotModel
-
-
-@dataclass(frozen=True)
-class Drive:
-    joint: str
-    kp: float = 200.0
-    kd: float = 20.0
-    initial: float = 0.0
-    armature: float = 0.0  # reflected rotor inertia, kg m² (rotary) or kg (linear)
-    friction: float = 0.0  # Coulomb joint friction, Nm or N
+from dimos.core.module import ModuleConfig
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS, RPCSpec
+from dimos.robot.assets.client import fetch_scene
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.usd_manager import Mount
 
 
-@dataclass(frozen=True)
-class Instance:
-    id: str
-    model: RobotModel | LoadedRobotModel | None = None
-    xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    floating: bool = False
-    drives: tuple[Drive, ...] = ()
-    rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    collision_exclusions: tuple[tuple[str, str], ...] = ()
+class SceneConfig(ModuleConfig):
+    scene: UsdModel | Path | None = None
+    scene_manager: Mount | None = None
+    rpc_timeouts: dict[str, float] = Field(
+        default_factory=lambda: {**DEFAULT_RPC_TIMEOUTS, "get_scene": 120.0}
+    )
 
-    @property
-    def description(self) -> LoadedRobotModel:
-        if self.model is None:
-            raise ValueError(f"model {self.id} has not been resolved")
-        return self.model.load() if isinstance(self.model, RobotModel) else self.model
+    @field_validator("scene_manager", mode="before")
+    @classmethod
+    def normalize_scene_manager(cls, value: object) -> object:
+        return None if value is None else Mount.of(value)
 
+    @model_validator(mode="after")
+    def one_source(self) -> "SceneConfig":
+        if (self.scene is None) == (self.scene_manager is None):
+            raise ValueError("provide exactly one scene or scene_manager")
+        return self
 
-@dataclass(frozen=True)
-class SceneConfig:
-    instances: tuple[Instance, ...]
-    gravity_world: tuple[float, float, float] = (0.0, 0.0, -9.81)
-    ground_plane: bool = True
-
-    def resolve(self, config_senders: ConfigSenders) -> SceneConfig:
-        """Bind instance IDs to shared models before any consumer builds or starts."""
-        models: dict[str, LoadedRobotModel] = {}
-        for sender, config in config_senders:
-            contribution = config.get("robot_models", {})
-            if not isinstance(contribution, dict):
-                raise TypeError(f"{sender}: robot_models must be a mapping")
-            for name, model in contribution.items():
-                if not isinstance(name, str) or not isinstance(model, LoadedRobotModel):
-                    raise TypeError(f"{sender}: robot_models must map IDs to LoadedRobotModel")
-                if name in models:
-                    raise ValueError(f"duplicate shared model {name} from {sender}")
-                models[name] = model
-        instances = []
-        for instance in self.instances:
-            model = models.get(instance.id)
-            if model is None:
-                model = instance.description
-            elif instance.model is not None and instance.description.xml != model.xml:
-                raise ValueError(f"conflicting model definitions for {instance.id}")
-            instances.append(replace(instance, model=model))
-        return replace(self, instances=tuple(instances))
-
-    @cached_property
-    def revision(self) -> str:
-        """Identity of the materialized description; not a native solver checkpoint."""
-        payload = {
-            "gravity_world": self.gravity_world,
-            "ground_plane": self.ground_plane,
-            "instances": [
-                {
-                    "id": i.id,
-                    "xml": i.description.xml,
-                    "xyz": i.xyz,
-                    "rpy": i.rpy,
-                    "floating": i.floating,
-                    "drives": [asdict(d) for d in i.drives],
-                    "collision_exclusions": i.collision_exclusions,
-                }
-                for i in self.instances
-            ],
-        }
-        return hashlib.sha256(
-            json.dumps(json.loads(json.dumps(payload), parse_int=float), sort_keys=True).encode()
-        ).hexdigest()
+    def load_scene(self, rpc: RPCSpec) -> UsdModel:
+        if self.scene_manager is not None:
+            return fetch_scene(self.scene_manager.remote_name, rpc)
+        if isinstance(self.scene, Path):
+            return UsdModel.from_file(self.scene)
+        assert self.scene is not None
+        return self.scene

@@ -19,29 +19,15 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2.geometry.mujoco import build_scene
 from dimos.sim2.geometry.query import MujocoGeometry
 
 
 class MujocoRaycaster:
-    def load(self, scene: SceneConfig, excluded_bodies: tuple[str, ...] = ()) -> None:
+    def load(self, scene: UsdModel, excluded_bodies: tuple[str, ...] = ()) -> None:
         self.geometry = MujocoGeometry(build_scene(scene, kinematic=True).compile(), scene.revision)
-        model = self.geometry.model
-        excluded = {model.body(name).id for name in excluded_bodies}
-        visual_bodies = {
-            int(model.geom_bodyid[i])
-            for i in range(model.ngeom)
-            if "/visual/" in model.geom(i).name
-        }
-        for i in range(model.ngeom):
-            body = int(model.geom_bodyid[i])
-            # Optical queries use visual surfaces where present, not coarse
-            # collision envelopes. Only this sensor's query model is modified.
-            hidden = body in excluded or (
-                body in visual_bodies and "/collision/" in model.geom(i).name
-            )
-            model.geom_group[i] = 5 if hidden else 0
+        self.geometry.select_surfaces(excluded_bodies)
         self._groups = np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8)
 
     def set_poses(self, sample: WorldState) -> None:

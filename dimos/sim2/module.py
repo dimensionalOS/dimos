@@ -16,9 +16,8 @@
 
 from collections.abc import Callable
 from concurrent.futures import Future
-from dataclasses import dataclass
 import math
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 import threading
 import time
 from typing import Any, ClassVar, cast
@@ -30,34 +29,34 @@ from dimos_lcm.sim_msgs import WorldState
 from dimos_lcm.std_msgs import Header, Time
 
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule, shared_config
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.sim2.cbor import validate_cbor_entries
 from dimos.sim2.description import SceneConfig
 from dimos.sim2.physics.interface import PhysicsBackend
+from dimos.sim2.publication import PublicationRate
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+WARNING_INTERVAL_S = 5.0
 
 
-@dataclass(frozen=True)
-class ControllerConfig:
-    controller_id: str
-    period_ns: int
-    joint_ids: tuple[str, ...]
-
-
-class SimConfig(ModuleConfig):
-    scene: SceneConfig
+class SimConfig(SceneConfig):
+    gravity_world: tuple[float, float, float] = (0.0, 0.0, -9.81)
     backend: Callable[[], PhysicsBackend]
     dt_ns: int = 2_000_000
-    controllers: tuple[ControllerConfig, ...] = ()
-    control_timeout_s: float = 2.0
-    startup_timeout_s: float = 30.0
     pace_to_wall_time: bool = True
     observation_hz: float = 500
     joint_ids: tuple[str, ...] = ()
 
 
-class SimModule(SharedConfigModule):
+class SimModule(Module):
+    """Advance fixed physics steps independently of command and sensor arrival.
+
+    Due, unexpired actions apply before the next step. Joint targets persist
+    until replaced or expired; expiry holds the current joint position.
+    """
+
     config: SimConfig
     dedicated_worker: ClassVar[bool] = True
     actions: In[ActionCommand]
@@ -84,26 +83,24 @@ class SimModule(SharedConfigModule):
             "late_steps": 0,
             "time_ns": 0,
             "epoch": 0,
-            "control_wait_s": 0.0,
+            "accepted_commands": 0,
+            "late_commands": 0,
+            "expired_targets": 0,
+            "dropped_observations": 0,
+            "real_time_factor": 0.0,
         }
         self._sequences: dict[str, int] = {}
-        self._answered: dict[str, int] = {}
         self._expires: dict[str, int] = {}
         self._next_sample_ns = 0
-        self._last_state: WorldState | None = None
-        self._waiting_since: float | None = None
-        self._last_repeat = 0.0
-        self._ever_controlled = False
+        self._next_warning = 0.0
+        self._publication_rate = PublicationRate(self, "observations", self.config.observation_hz)
 
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        self.config.scene = self.config.scene.resolve(config_senders)
-
-    @shared_config(SharedConfigModule)
+    @rpc
     def simulation_config(self) -> dict[str, Any]:
-        """Deliver run identity and fixed gravity before any module starts."""
+        """Read this run's identity and gravity; available before physics starts."""
         return {
             "sim_clock_id": self._clock_id,
-            "sim_gravity_world": self.config.scene.gravity_world,
+            "sim_gravity_world": self.config.gravity_world,
         }
 
     @rpc
@@ -112,7 +109,8 @@ class SimModule(SharedConfigModule):
         self._threads = [threading.Thread(target=self._run, name="sim2-physics", daemon=True)]
         try:
             self._threads[0].start()
-            self._ready.result(timeout=self.config.startup_timeout_s)
+            self._ready.result(timeout=120)
+            self._publication_rate.begin()
             publisher = threading.Thread(
                 target=self._publish, name="sim2-observations", daemon=True
             )
@@ -155,35 +153,12 @@ class SimModule(SharedConfigModule):
         c = self.config
         if not 0 < c.dt_ns <= 20_000_000:
             raise ValueError("physics dt must be in (0, 20 ms]")
-        for rate in (c.observation_hz,):
-            if not math.isfinite(rate) or not 0 < rate <= 1e9 / c.dt_ns:
-                raise ValueError("truth rate must be positive and no faster than physics")
-        if not all(math.isfinite(t) and t > 0 for t in (c.control_timeout_s, c.startup_timeout_s)):
-            raise ValueError("control deadlines must be positive")
-        self._backend.load(self.config.scene, c.dt_ns)
-        assigned: set[str] = set()
-        controllers: set[str] = set()
-        for controller in c.controllers:
-            if controller.period_ns <= 0 or controller.period_ns % c.dt_ns:
-                raise ValueError("control period must be a positive multiple of physics dt")
-            names = set(controller.joint_ids)
-            if (
-                not names
-                or len(names) != len(controller.joint_ids)
-                or names & assigned
-                or not names <= set(self._backend.driven_joint_ids)
-                or controller.controller_id in controllers
-            ):
-                raise ValueError("controllers require distinct IDs and disjoint driven joints")
-            assigned.update(names)
-            controllers.add(controller.controller_id)
+        if not math.isfinite(c.observation_hz) or not 0 < c.observation_hz <= 1e9 / c.dt_ns:
+            raise ValueError("truth rate must be positive and no faster than physics")
+        self._scene = c.load_scene(self.rpc)
+        self._backend.load(self._scene, c.dt_ns, c.gravity_world)
         if not set(c.joint_ids) <= set(self._backend.joint_ids):
             raise ValueError("unknown exported joint")
-        for controller in c.controllers:
-            if controller.period_ns % round(1e9 / c.observation_hz):
-                raise ValueError("observation schedule must include every control boundary")
-            if c.joint_ids and not set(controller.joint_ids) <= set(c.joint_ids):
-                raise ValueError("controller joints must be included in WorldState")
         self._set_status(status="running")
         self._ready.set_result(None)
 
@@ -210,7 +185,7 @@ class SimModule(SharedConfigModule):
         joints.header = Header(stamp=Time(sec=sec, nsec=nsec))
         return WorldState(
             header=header,
-            model_revision=self.config.scene.revision,
+            model_revision=self._scene.revision,
             bodies_length=len(bodies),
             bodies=bodies,
             joint_truth=joints,
@@ -252,29 +227,18 @@ class SimModule(SharedConfigModule):
                     {"world", *self._backend.body_ids, *self._backend.joint_ids},
                 )
                 names = {name for row in command.joint_commands for name in row.joint_names}
-                answered = []
-                for controller in self.config.controllers:
-                    if names.intersection(controller.joint_ids):
-                        if (
-                            h.source_id != controller.controller_id
-                            or names != set(controller.joint_ids)
-                            or command.based_on_time_ns != self._time_ns
-                            or command.apply_at_ns != self._time_ns
-                            or command.valid_until_ns < self._time_ns + controller.period_ns
-                            or self._time_ns % controller.period_ns
-                        ):
-                            raise ValueError("controlled joints require their exact current sample")
-                        answered.append(controller.controller_id)
                 # Backend validates the whole action before changing any native state.
                 self._backend.apply_action(command.joint_commands, command.cbor_commands)
                 self._expires.update((n, command.valid_until_ns) for n in names)
-                # An unrelated CBOR operation is never a controller's motor reply.
-                self._answered.update((source, self._time_ns) for source in answered)
                 self._sequences[h.source_id] = h.sequence
+                with self._status_lock:
+                    self._status["accepted_commands"] += 1
+                    self._status["late_commands"] += int(command.apply_at_ns < self._time_ns)
             except ValueError as error:
                 with self._status_lock:
                     self._status["rejected_commands"] += 1
                     self._status["last_rejection"] = str(error)
+                self._warn("Simulation command rejected", reason=str(error))
 
     def _step(self) -> None:
         expired = tuple(n for n, end in self._expires.items() if end <= self._time_ns)
@@ -282,6 +246,11 @@ class SimModule(SharedConfigModule):
             self._backend.hold(expired)
             for name in expired:
                 del self._expires[name]
+            with self._status_lock:
+                self._status["expired_targets"] += len(expired)
+            self._warn(
+                "Simulation joint targets expired; holding current positions", joints=expired
+            )
         self._backend.step()
         self._time_ns += self.config.dt_ns
         with self._status_lock:
@@ -294,20 +263,33 @@ class SimModule(SharedConfigModule):
     def _sample_truth(self) -> None:
         if self._time_ns >= self._next_sample_ns:
             sample = self._inspect()
-            self._observations.put_nowait(sample)
-            self._last_state = sample
+            try:
+                self._observations.put_nowait(sample)
+            except Full:
+                # Publishing must not stall physics. Keep the newest acquisition.
+                try:
+                    self._observations.get_nowait()
+                except Empty:
+                    pass
+                self._observations.put_nowait(sample)
+                with self._status_lock:
+                    self._status["dropped_observations"] += 1
+                self._warn("Simulation publication is falling behind; dropping observations")
             period = round(1e9 / self.config.observation_hz)
             self._next_sample_ns = (self._time_ns // period + 1) * period
+
+    def _warn(self, message: str, **fields: Any) -> None:
+        now = time.monotonic()
+        if now >= self._next_warning:
+            logger.warning(message, **fields)
+            self._next_warning = now + WARNING_INTERVAL_S
 
     def _run(self) -> None:
         try:
             self._load()
             deadline = time.monotonic()
-            # Inference/transport belongs inside the control-period wall budget.
-            # Allow bounded catch-up after a reply, never an unlimited burst.
-            catchup_s = (
-                max((c.period_ns for c in self.config.controllers), default=self.config.dt_ns) / 1e9
-            )
+            report_at, report_time_ns = deadline, self._time_ns
+            step_s = self.config.dt_ns / 1e9
             while not self._done.is_set():
                 self._process_operations()
                 if self.status()["status"] == "fault":
@@ -315,47 +297,21 @@ class SimModule(SharedConfigModule):
                     continue
                 self._apply_commands()
                 self._sample_truth()
-                pending = [
-                    c
-                    for c in self.config.controllers
-                    if not self._time_ns % c.period_ns
-                    and self._answered.get(c.controller_id) != self._time_ns
-                ]
-                now = time.monotonic()
-                if pending:
-                    if self._waiting_since is None:
-                        self._waiting_since = now
-                        self._set_status(status="waiting")
-                    timeout = (
-                        self.config.control_timeout_s
-                        if self._ever_controlled
-                        else self.config.startup_timeout_s
-                    )
-                    if now - self._waiting_since > timeout:
-                        self._set_status(status="fault", error="controller deadline exceeded")
-                        continue
-                    if now - self._last_repeat >= 0.1:
-                        # Retransmit the SAME acquisition; sensors deduplicate their models.
-                        if (
-                            self._last_state is not None
-                            and self._last_state.header.time_ns == self._time_ns
-                        ):
-                            self._observations.put_nowait(self._last_state)
-                        self._last_repeat = now
-                    self._done.wait(0.001)
-                    continue
-                if self._waiting_since is not None:
-                    self._set_status(status="running", control_wait_s=now - self._waiting_since)
-                    self._waiting_since = None
-                    self._ever_controlled = True
                 self._step()
+                now = time.monotonic()
+                if now - report_at >= 1.0:
+                    factor = (self._time_ns - report_time_ns) / 1e9 / (now - report_at)
+                    self._set_status(real_time_factor=factor)
+                    if factor < 0.9:
+                        self._warn("Simulation is running below real time", real_time_factor=factor)
+                    report_at, report_time_ns = now, self._time_ns
                 if self.config.pace_to_wall_time:
-                    deadline += self.config.dt_ns / 1e9
-                    delay = deadline - time.monotonic()
-                    if delay < -catchup_s:
+                    deadline += step_s
+                    delay = deadline - now
+                    if delay < -step_s:
                         with self._status_lock:
                             self._status["late_steps"] += 1
-                        deadline = time.monotonic()
+                        deadline = now
                     self._done.wait(max(0, delay))
         except Exception as error:
             # Thread boundary: preserve the error for RPC/status and unblock startup.
@@ -396,6 +352,7 @@ class SimModule(SharedConfigModule):
                     self._done.wait(0.001)
                     continue
                 self.observations.publish(sample)
+                self._publication_rate.published()
         except Exception as error:
             self._publication_failed(error)
 

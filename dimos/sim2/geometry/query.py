@@ -31,6 +31,28 @@ class MujocoGeometry:
         if model.nq or model.nv or model.nu or np.any(self.mocap_ids < 0):
             raise ValueError("query geometry must not contain dynamics coordinates")
 
+    def select_surfaces(self, excluded_bodies: tuple[str, ...] = ()) -> None:
+        """Optical consumers use visual surfaces instead of collision envelopes."""
+        model = self.model
+        excluded = {model.body(name).id for name in excluded_bodies}
+        visual_bodies = {
+            int(model.geom_bodyid[i])
+            for i in range(model.ngeom)
+            if model.geom_contype[i] == model.geom_conaffinity[i] == 0
+        }
+        for i in range(model.ngeom):
+            body = int(model.geom_bodyid[i])
+            hidden = (
+                model.geom_group[i] >= 3
+                or body in excluded
+                or (
+                    body != 0
+                    and body in visual_bodies
+                    and (model.geom_contype[i] or model.geom_conaffinity[i])
+                )
+            )
+            model.geom_group[i] = 3 if hidden else 0
+
     def set_poses(self, sample: WorldState) -> None:
         poses = poses_by_id(sample)
         if sample.model_revision != self.revision or set(poses) != set(self.body_ids):

@@ -302,6 +302,8 @@ class RendererProcess:
                 f"-DimosPort={listener.getsockname()[1]}",
                 f"-abslog={self.log_path.with_suffix('.engine.log').resolve()}",
             ]
+            if sys.platform == "darwin":
+                args.append("-windowed")
             if self.offscreen:
                 # UE 5.7 Metal still presents a window with RenderOffscreen.
                 # Our headless mode suppresses viewport and Slate presentation.

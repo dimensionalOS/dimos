@@ -20,19 +20,32 @@ from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import (
     _robot_blueprint,
     _transports,
 )
-from dimos.robot.galaxea.r1pro.sim.camera_module import R1ProSimCameras
 from dimos.robot.galaxea.r1pro.sim.cameras import head_camera, wrist_camera
-from dimos.robot.galaxea.r1pro.sim.office import MODELS, SCENE, office_renderer
+from dimos.robot.galaxea.r1pro.sim.office import SCENE, office_renderer
+from dimos.robot.usd_manager import UsdManager
+from dimos.sim2.sensors.camera.module import SimCameraModule
+from dimos.sim2.sensors.camera.render_module import CameraRenderModule
 
 r1pro_openarm_joylo_office = (
     autoconnect(
-        _robot_blueprint(scene=SCENE, models=MODELS),
+        _robot_blueprint(scene=SCENE),
         _operator_blueprint(),
-        R1ProSimCameras.blueprint(
-            scene=SCENE,
-            head=head_camera(),
-            left=wrist_camera("left"),
-            right=wrist_camera("right"),
+        SimCameraModule.blueprint(instance_name="head_camera", sensor=head_camera()),
+        *(
+            SimCameraModule.blueprint(
+                instance_name=f"{side}_wrist_camera", sensor=wrist_camera(side)
+            ).remappings(
+                [
+                    (SimCameraModule, "color_image", f"{side}_wrist"),
+                    (SimCameraModule, "depth_image", f"{side}_wrist_depth"),
+                    (SimCameraModule, "camera_info", f"{side}_wrist_info"),
+                ]
+            )
+            for side in ("left", "right")
+        ),
+        CameraRenderModule.blueprint(
+            scene_manager=UsdManager,
+            cameras=("head_camera", "left_wrist_camera", "right_wrist_camera"),
             renderer=office_renderer,
         ),
     )

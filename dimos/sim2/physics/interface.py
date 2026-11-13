@@ -23,7 +23,7 @@ from dimos_lcm.control_msgs import CborCommand, JointCommand
 from dimos_lcm.sensor_msgs import JointState
 from dimos_lcm.sim_msgs import BodyState, CborObservation
 
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import UsdModel
 
 
 class PhysicsBackend(Protocol):
@@ -32,7 +32,9 @@ class PhysicsBackend(Protocol):
     driven_joint_ids: tuple[str, ...]
     root_ids: tuple[str, ...]
 
-    def load(self, scene: SceneConfig, dt_ns: int) -> None: ...
+    def load(
+        self, scene: UsdModel, dt_ns: int, gravity_world: tuple[float, float, float] = (0, 0, -9.81)
+    ) -> None: ...
     def read_bodies(self) -> list[BodyState]: ...
     def read_joints(self, joint_ids: tuple[str, ...]) -> JointState: ...
     def read_cbor_observations(self) -> list[CborObservation]: ...

@@ -37,15 +37,19 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTaskConfig,
 )
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
+from dimos.core.module import Module
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.sim2.module import ControllerConfig
+from dimos.sim2.description import SceneConfig
+from dimos.sim2.module import SimModule
 from dimos.utils.data import LfsPath
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 JOINTS = tuple(n + "_joint" for n in make_humanoid_joints("g1"))
 POLICY = G1GrootWBCTaskConfig(
@@ -59,14 +63,13 @@ POLICY = G1GrootWBCTaskConfig(
 )
 
 
-CONTROL = ControllerConfig("g1/groot", 20_000_000, JOINTS)
+class G1PolicyConfig(SceneConfig):
+    simulation: str = "SimModule"
+    period_ns: int = 20_000_000
+    command_ttl_ns: int = 100_000_000
 
 
-class G1PolicyConfig(ModuleConfig):
-    control: ControllerConfig = CONTROL
-
-
-class G1PolicyModule(SharedConfigModule):
+class G1PolicyModule(Module):
     config: G1PolicyConfig
     imu: In[Imu]
     joint_state: In[JointState]
@@ -86,26 +89,27 @@ class G1PolicyModule(SharedConfigModule):
         self._clock_id: str | None = None
         self._arm_targets = np.array(POLICY.default_positions_29[15:])
         self.inferences = 0
+        self._missed_samples = 0
+        self._next_warning = 0.0
 
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        clocks = [c["sim_clock_id"] for _, c in config_senders if "sim_clock_id" in c]
-        if len(clocks) != 1:
-            raise ValueError("policy requires exactly one simulation clock")
-        self._clock_id = clocks[0]
-        joints = {
-            joint.name: joint
-            for _, config in config_senders
-            for model in config.get("robot_models", {}).values()
-            for joint in model.joints
-        }
+    @rpc
+    def build(self) -> None:
+        """Load the policy before any module starts advancing physics."""
+        super().build()
+        if self.config.period_ns <= 0 or self.config.command_ttl_ns < self.config.period_ns:
+            raise ValueError("command TTL must cover a positive policy period")
+        simulation = RPCClient.remote(SimModule, self.config.simulation, rpc=self.rpc)
+        try:
+            self._clock_id = simulation.simulation_config()["sim_clock_id"]
+        finally:
+            simulation.stop_rpc_client()
+        scene = self.config.load_scene(self.rpc)
+        joints = {joint.name: joint for joint in scene.joints}
         self._lower = np.array([joints[n].lower for n in JOINTS], dtype=float)
         self._upper = np.array([joints[n].upper for n in JOINTS], dtype=float)
 
-    @rpc
-    def start(self) -> None:
         self._task.start()
         self._task.reset_runtime_state(reactivate=True)
-        super().start()
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
         self.move(twist)
@@ -136,7 +140,7 @@ class G1PolicyModule(SharedConfigModule):
     def _control_time(self, stamp: float) -> int | None:
         if not math.isfinite(stamp) or stamp < 0:
             return None
-        period = self.config.control.period_ns
+        period = self.config.period_ns
         boundary = round(stamp * 1e9 / period) * period
         # Standard DimOS messages use float seconds; codecs may truncate one ns.
         tolerance_ns = 2 + math.ulp(stamp) * 1e9
@@ -150,14 +154,19 @@ class G1PolicyModule(SharedConfigModule):
             if identity < self._identity:
                 return
             if identity == self._identity:
-                if self._last_action is not None:
-                    self.actions.publish(self._last_action)
                 return
             if isinstance(sample, JointState):
                 self._joints[identity] = sample
             else:
                 self._imus[identity] = sample
             if identity in self._joints and identity in self._imus:
+                missed = (identity - self._identity) // self.config.period_ns - 1
+                if self._identity >= 0 and missed > 0:
+                    self._missed_samples += missed
+                    now = time.monotonic()
+                    if now >= self._next_warning:
+                        logger.warning("G1 policy missed sensor acquisitions", missed=missed)
+                        self._next_warning = now + 5.0
                 action = self.compute(self._joints.pop(identity), self._imus.pop(identity))
                 if action is not None:
                     self.actions.publish(action)
@@ -173,7 +182,7 @@ class G1PolicyModule(SharedConfigModule):
                     "policy requires joint and IMU measurements at the same acquisition"
                 )
             if self._clock_id is None:
-                raise ValueError("policy requires shared simulation configuration before control")
+                raise ValueError("policy must be built before control")
             if identity < self._identity:
                 return None
             if identity == self._identity:
@@ -202,7 +211,7 @@ class G1PolicyModule(SharedConfigModule):
                     )
                 },
                 t_now=now,
-                dt=self.config.control.period_ns / 1e9,
+                dt=self.config.period_ns / 1e9,
             )
             result = self._task.compute(state)
             if result is None or result.positions is None:
@@ -215,12 +224,12 @@ class G1PolicyModule(SharedConfigModule):
                     clock_id=self._clock_id,
                     epoch=0,
                     time_ns=identity,
-                    source_id=self.config.control.controller_id,
-                    sequence=identity // self.config.control.period_ns,
+                    source_id=self.config.instance_name or "g1/groot",
+                    sequence=identity // self.config.period_ns,
                 ),
                 based_on_time_ns=identity,
                 apply_at_ns=identity,
-                valid_until_ns=identity + self.config.control.period_ns,
+                valid_until_ns=identity + self.config.command_ttl_ns,
                 joint_commands_length=5,
                 joint_commands=[
                     JointCommand(
@@ -246,7 +255,12 @@ class G1PolicyModule(SharedConfigModule):
 
     @rpc
     def status(self) -> dict[str, Any]:
-        return {"inferences": self.inferences, **self._task.state_snapshot()}
+        with self._lock:
+            return {
+                "inferences": self.inferences,
+                "missed_samples": self._missed_samples,
+                **self._task.state_snapshot(),
+            }
 
     @rpc
     def stop(self) -> None:

@@ -16,6 +16,8 @@ import mujoco
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.self_hosted  # Requires MuJoCo's native USD importer.
+
 
 def test_placing_a_body_preserves_physics_time(backend):
     backend.step()

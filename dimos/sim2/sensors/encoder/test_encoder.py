@@ -17,6 +17,8 @@ import pytest
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
 
+pytestmark = pytest.mark.self_hosted  # Joint truth is acquired from a real USD physics scene.
+
 
 @pytest.fixture
 def encoder():
@@ -36,3 +38,19 @@ def test_encoder_calibration_is_used_and_effort_is_not_fabricated(poses, encoder
     assert restored.ts == 0
     assert restored.position == measured.position
     assert encoder.measure(truth) is measured
+
+
+async def test_rate_warning_counts_encoder_outputs_rather_than_input_observations(
+    encoder, poses, publication_clock, mocker
+):
+    publish = mocker.patch.object(encoder.joint_state, "publish")
+    warning = mocker.patch("dimos.sim2.publication.logger.warning")
+    for tick in range(20):
+        await encoder.handle_observations(poses(time_ns=tick * 1_000_000))
+    assert publish.call_count == 10
+    publication_clock.advance_to(5)
+    assert warning.call_count == 1
+    assert warning.call_args.kwargs["output"] == "joint_state"
+    assert warning.call_args.kwargs["requested_hz"] == 500
+    assert warning.call_args.kwargs["actual_hz"] == 2
+    assert warning.call_args.kwargs["published"] == 10

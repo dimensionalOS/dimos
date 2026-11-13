@@ -26,7 +26,7 @@ import pinocchio as pin
 from ruckig import InputParameter, OutputParameter, Result, Ruckig  # type: ignore[import-not-found]
 
 from dimos.robot.assets.model import LoadedRobotModel
-from dimos.robot.galaxea.r1pro.sim.config import CONTROL, UPPER_JOINTS, UPPER_RATES
+from dimos.robot.galaxea.r1pro.sim.config import CONTROL_PERIOD_NS, UPPER_JOINTS, UPPER_RATES
 
 
 def coupled_wrist_bounds(joint6: float, *, right: bool) -> tuple[float, float]:
@@ -81,7 +81,7 @@ class UpperBodyServo:
             inp.max_acceleration = (1.5 * rates).tolist()
             inp.max_jerk = [1e4] * count
             self.groups.append(
-                (group, Ruckig(count, CONTROL.period_ns / 1e9), inp, OutputParameter(count))
+                (group, Ruckig(count, CONTROL_PERIOD_NS / 1e9), inp, OutputParameter(count))
             )
         self.initialized = False
 
@@ -95,8 +95,14 @@ class UpperBodyServo:
         return result
 
     def step(
-        self, target: NDArray[np.float64], measured: NDArray[np.float64]
+        self,
+        target: NDArray[np.float64],
+        measured: NDArray[np.float64],
+        *,
+        dt: float = CONTROL_PERIOD_NS / 1e9,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError("servo time step must be finite and positive")
         target = self.bound(target)
         positions, velocities = np.zeros(18), np.zeros(18)
         for group, otg, inp, out in self.groups:
@@ -119,6 +125,7 @@ class UpperBodyServo:
                 inp.current_acceleration = [0.0] * len(inp.current_position)
                 otg.reset()
                 continue
+            otg.delta_time = dt
             result = otg.update(inp, out)
             if result not in (Result.Working, Result.Finished):
                 raise RuntimeError(f"R1 Pro trajectory failed: {result}")

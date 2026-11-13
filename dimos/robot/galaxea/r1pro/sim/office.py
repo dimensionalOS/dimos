@@ -20,15 +20,11 @@ choice at the east end of the table by bottle B, facing west. Camera optics are 
 approximations on the unchanged 2025 vendor sensor frames.
 """
 
-from dataclasses import replace
 import json
-import math
 import os
 from pathlib import Path
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.galaxea.r1pro.sim.config import SCENE as ROBOT_SCENE
-from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.scenes.sf555.pickables import ASSETS
 from dimos.sim2.sensors.camera.renderers.unreal.renderer import UnrealRenderer
 
@@ -38,15 +34,7 @@ MODELS = {
     "bottle_a": RobotModel.from_file(ASSETS / "bottle_a.urdf"),
     "bottle_b": RobotModel.from_file(ASSETS / "bottle_b.urdf"),
 }
-SCENE = SceneConfig(
-    instances=(
-        replace(ROBOT_SCENE.instances[0], xyz=(18.0, 8.41, 0.005), rpy=(0, 0, math.pi)),
-        Instance("office"),
-        Instance("bottle_a", xyz=(15.720000267, 8.409999847, 0.877500033), floating=True),
-        Instance("bottle_b", xyz=(17.109998703, 8.409999847, 0.871500025), floating=True),
-    ),
-    ground_plane=False,
-)
+SCENE = ASSETS / "scene.usda"
 
 
 def office_renderer() -> UnrealRenderer:
@@ -64,7 +52,7 @@ def office_renderer() -> UnrealRenderer:
             )
         ),
         level="/Game/SF555/Maps/OfficeJoylo",
-        authored_instances=("office",),
+        authored_bodies=("sf555/world",),
         native_visuals=json.loads((ASSETS / "native-visuals.json").read_text()),
         log_path=ASSETS / "r1pro-cameras.log",
         startup_timeout=600,

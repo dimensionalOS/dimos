@@ -63,6 +63,8 @@ def wrist_camera(side: str) -> CameraConfig:
     width, height = 320, 180
     return CameraConfig(
         f"r1pro/{side}_D405_link",
+        min_depth_m=WRIST_MIN_DEPTH_M,
+        max_depth_m=WRIST_MAX_DEPTH_M,
         width=width,
         height=height,
         fx=width / (2 * math.tan(math.radians(87 / 2))),

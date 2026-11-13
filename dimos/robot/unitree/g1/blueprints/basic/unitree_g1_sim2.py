@@ -12,29 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1/GR00T and a desk, using independently acquired sensor measurements.
-
-Model ledger: vendor G1 URDF, metres/radians, X forward/Y left/Z up.
-Pelvis IMU and native Mid360 axes use the existing URDF links. Camera is an
-explicit prototype optical frame: X right/Y down/Z forward.
-"""
+"""G1/GR00T, desk and device-owned sensors composed by UsdManager."""
 
 from functools import partial
-import math
-from pathlib import Path
 
-from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.hardware.sensors.lidar.livox.module import mid360_usd
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.unitree.g1.sim2_policy import CONTROL, JOINTS, POLICY, G1PolicyModule
-from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.description import Drive, Instance, SceneConfig
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.unitree.g1.sim2_policy import JOINTS, G1PolicyModule
+from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.module import SimCameraModule
+from dimos.sim2.sensors.camera.render_module import CameraRenderModule
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
 from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
@@ -43,42 +35,6 @@ from dimos.sim2.sensors.lidar.mid360 import Mid360Returns, Mid360Scan
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
 from dimos.utils.data import LfsPath
-
-G1_MODEL = (
-    RobotModel.from_file(
-        Path(__file__).parents[2] / "g1.urdf", package_paths={"g1_description": LfsPath("g1_urdf")}
-    )
-    .with_subtree_rooted_at("pelvis")
-    .with_fixed_frame(
-        "camera", "torso_link", xyz=(0.05, 0, 0.40), rpy=(-math.pi / 2, 0, -math.pi / 2)
-    )
-    .with_prefix("g1/")
-)
-MODELS = {
-    "g1": G1_MODEL,
-    "desk": RobotModel.from_file(
-        DIMOS_PROJECT_ROOT / "assets/g1_desk/desk.urdf",
-        package_paths={"g1_desk": LfsPath("g1_desk")},
-    ),
-    "box": RobotModel.from_file(DIMOS_PROJECT_ROOT / "assets/g1_desk/box.urdf").with_prefix("box/"),
-}
-SCENE = SceneConfig(
-    instances=(
-        Instance(
-            "g1",
-            xyz=(0, 0, 0.793),
-            floating=True,
-            drives=tuple(
-                Drive(n, kp, kd, home, 0.01, 0.1)
-                for n, kp, kd, home in zip(
-                    JOINTS, G1_GROOT_KP, G1_GROOT_KD, POLICY.default_positions_29, strict=True
-                )
-            ),
-        ),
-        Instance("desk", xyz=(2, 0, 0), rpy=(0, 0, math.pi / 2)),
-        Instance("box", xyz=(1, 1, 0.05), floating=True),
-    ),
-)
 
 IMU = ImuConfig("g1/imu_in_pelvis", orientation="ideal")
 ENCODERS = EncoderConfig(JOINTS, hz=50)
@@ -91,29 +47,50 @@ LIDAR = LidarConfig(
     # The vendor head mesh seals the optical window. Until that asset has a
     # separate window, omit only this head link from optical queries; retain
     # every other robot link and all physical collisions.
-    excluded_bodies=("g1/head_link",),
+    excluded_bodies=("g1/head_link", "g1/mid360_link_body"),
 )
 
 
-# The mapper is an unchanged downstream consumer of truth-registered scans.
-# Robot returns remain in the scans and can accumulate in this preview map.
+# Providers own their device subtrees. The world manager composes all mounts;
+# consumers refer only to that manager, never a parallel Python model ledger.
+_imu = SimImuModule.blueprint(instance_name="imu", sensor=IMU)
+_camera = SimCameraModule.blueprint(instance_name="camera", sensor=CAMERA)
+_lidar = SimLidarModule.blueprint(
+    instance_name="lidar",
+    scene_manager="scene",
+    sensor=LIDAR,
+    raycaster=MujocoRaycaster,
+    model=UsdModel.from_layer(mid360_usd(LIDAR.frame_id, "g1/mid360_imu")),
+).remappings([(SimLidarModule, "lidar", "lidar_raw")])
+
+
+_scene = UsdManager.blueprint(
+    instance_name="scene",
+    model=UsdModel.from_file(LfsPath("sim2_g1_usd/world.usda")),
+    mounts={
+        "g1/imu_mount": _imu,
+        "g1/camera_mount": _camera,
+        "g1/lidar_mount": _lidar,
+    },
+)
+
 unitree_g1_sim2 = autoconnect(
-    UrdfManager.blueprint(models=MODELS),
+    _imu,
+    _camera,
+    CameraRenderModule.blueprint(
+        scene_manager=_scene, renderer=MujocoRenderer, cameras=("camera",)
+    ),
+    _lidar,
+    _scene,
     SimModule.blueprint(
-        scene=SCENE,
+        scene_manager=_scene,
         backend=MujocoBackend,
         observation_hz=200,
-        controllers=(CONTROL,),
         joint_ids=JOINTS,
     ),
-    SimImuModule.blueprint(sensor=IMU),
     SimJointEncoderModule.blueprint(sensor=ENCODERS),
-    SimCameraModule.blueprint(scene=SCENE, sensor=CAMERA, renderer=MujocoRenderer),
-    SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster).remappings(
-        [(SimLidarModule, "lidar", "lidar_raw")]
-    ),
     VoxelGridMapper.blueprint(
         device="CPU:0", carve_columns=False, block_count=100_000, emit_every=5
     ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
-    G1PolicyModule.blueprint(),
+    G1PolicyModule.blueprint(scene_manager=_scene),
 ).global_config(viewer="none", transport="zenoh", n_workers=8)

@@ -17,23 +17,27 @@
 from abc import ABC, abstractmethod
 from queue import Empty, Full, Queue
 import threading
+import time
 from typing import Any, ClassVar
 
 from dimos_lcm.sim_msgs import WorldState
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
+from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2.description import SceneConfig
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
-class PoseSensorConfig(ModuleConfig):
-    scene: SceneConfig
+class PoseSensorConfig(SceneConfig):
+    pass
 
 
-class _PoseSensorModule(SharedConfigModule, ABC):
+class _PoseSensorModule(Module, ABC):
     config: PoseSensorConfig
     dedicated_worker: ClassVar[bool] = True
     observations: In[WorldState]
@@ -48,18 +52,17 @@ class _PoseSensorModule(SharedConfigModule, ABC):
             "acquisitions": 0,
             "dropped_inputs": 0,
             "gaps": 0,
+            "overruns": 0,
             "error": "",
         }
-
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        self.config.scene = self.config.scene.resolve(config_senders)
+        self._next_warning = 0.0
 
     @rpc
     def start(self) -> None:
         super().start()
         # Rolling sensors need history, before the async handler's LATEST mailbox.
         self.register_disposable(Disposable(self.observations.subscribe(self._on_observations)))
-        self._thread = threading.Thread(target=self._run, args=(self.config.scene,), daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _on_observations(self, sample: WorldState) -> None:
@@ -73,9 +76,9 @@ class _PoseSensorModule(SharedConfigModule, ABC):
                 pass
             self._queue.put_nowait(sample)
 
-    def _run(self, scene: SceneConfig) -> None:
+    def _run(self) -> None:
         try:
-            self.open_sensor(scene)
+            self.open_sensor(self.config.load_scene(self.rpc))
             try:
                 while not self._done.is_set():
                     try:
@@ -91,7 +94,7 @@ class _PoseSensorModule(SharedConfigModule, ABC):
                 self._stats["error"] = repr(error)
 
     @abstractmethod
-    def open_sensor(self, scene: SceneConfig) -> None:
+    def open_sensor(self, scene: UsdModel) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -105,14 +108,23 @@ class _PoseSensorModule(SharedConfigModule, ABC):
     def count(self, key: str) -> None:
         with self._stats_lock:
             self._stats[key] += 1
-
-    def interrupt_sensor(self) -> None:
-        """Wake external I/O when stopping; native cleanup stays on the worker."""
+            now = time.monotonic()
+            if key in ("dropped_inputs", "gaps", "overruns") and now >= self._next_warning:
+                logger.warning(
+                    "Simulated sensor cannot keep up with its input or acquisition rate",
+                    sensor=self.config.instance_name or type(self).__name__,
+                    reason=key,
+                    count=self._stats[key],
+                )
+                self._next_warning = now + 5.0
 
     @rpc
     def statistics(self) -> dict[str, Any]:
         with self._stats_lock:
             return dict(self._stats)
+
+    def interrupt_sensor(self) -> None:
+        """Wake an optional blocking native acquisition before joining its worker."""
 
     @rpc
     def stop(self) -> None:

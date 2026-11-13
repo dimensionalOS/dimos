@@ -22,8 +22,8 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.assets.model import LoadedRobotModel
-from dimos.robot.galaxea.r1pro.sim.config import CONTROL, JOINTS, SERVO_JOINTS, UPPER_JOINTS
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+from dimos.robot.galaxea.r1pro.sim.config import COMMAND_TTL_NS, JOINTS, SERVO_JOINTS, UPPER_JOINTS
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl, steer_targets
 from dimos.robot.galaxea.r1pro.sim.model import (
     FINGER_JOINTS,
@@ -74,8 +74,9 @@ def controller():
         ET.SubElement(joint, "axis", xyz="0 0 1")
         ET.SubElement(joint, "limit", lower="-3.14", upper="3.14", effort="30", velocity="2")
     model = LoadedRobotModel(ET.tostring(root, encoding="unicode"), None, {})
-    module = R1ProSimControl()
-    module.config_receive([("test", {"sim_clock_id": "test", "robot_models": {"r1pro": model}})])
+    module = R1ProSimControl(model=RobotModel.from_urdf_string(model.xml))
+    module._clock = "test"
+    module._load_model()
     yield module
     module.dispose()
 
@@ -99,7 +100,7 @@ def test_deadman_brakes_and_duplicate_samples_keep_original_action(controller, m
     assert action.joint_commands[1].values[-3:] == [0, 0, 0]
     assert controller.compute(sample(0.1)) is None
     assert action.header.clock_id == "test"
-    assert action.valid_until_ns - action.apply_at_ns == CONTROL.period_ns
+    assert action.valid_until_ns - action.apply_at_ns == COMMAND_TTL_NS
 
 
 def test_upper_body_targets_are_bounded_and_rate_limited(controller):
@@ -109,6 +110,29 @@ def test_upper_body_targets_are_bounded_and_rate_limited(controller):
     action = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
     assert -0.5 * 2.25 * 0.004**2 <= action.joint_commands[0].values[4] < 0
     assert action.joint_commands[0].values[:4] == [0, 0, 0, 0]
+
+
+def test_skipped_and_off_grid_samples_advance_by_simulation_time(controller):
+    controller.set_joint(UPPER_JOINTS[4], -1)
+    first = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
+    delayed = controller.compute(
+        JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0.018)
+    )
+    assert delayed is not None
+    assert delayed.based_on_time_ns == 18_000_000
+    # 22 ms of trajectory advancement, not two fixed 4 ms updates.
+    q = delayed.joint_commands[0].values[4]
+    assert -0.5 * 2.25 * 0.022**2 <= q < first.joint_commands[0].values[4] * 10
+    assert delayed.valid_until_ns == 118_000_000
+
+
+def test_after_expiry_resume_starts_at_measured_pose(controller):
+    controller.set_joint(UPPER_JOINTS[4], -1)
+    controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
+    positions = [0.0] * len(JOINTS)
+    positions[4] = -0.4
+    resumed = controller.compute(JointState(name=list(JOINTS), position=positions, ts=1))
+    assert resumed.joint_commands[0].values[4] == pytest.approx(-0.4, abs=2e-5)
 
 
 @pytest.mark.parametrize("measured,expected", [(3.15, 3.14), (-3.15, -3.14)])

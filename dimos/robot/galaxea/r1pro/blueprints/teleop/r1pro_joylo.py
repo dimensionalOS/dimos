@@ -15,6 +15,7 @@
 """OpenArm + Joy-Con input and R1 Pro sim2 bindings; see docs/development/r1pro-joylo.md."""
 
 import math
+from pathlib import Path
 from typing import Any
 
 from dimos.control.connection.connection_module import ConnectionConfig
@@ -26,13 +27,12 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import UsdModel
 from dimos.robot.galaxea.r1pro.connection import R1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 from dimos.robot.galaxea.r1pro.sim.config import (
     ARM_RATE,
-    CONTROL,
     CONTROL_MODEL,
     JOINTS,
     MODEL,
@@ -45,8 +45,7 @@ from dimos.robot.galaxea.r1pro.sim.connection import R1ProSimConnection
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
 from dimos.robot.galaxea.r1pro.sim.joylo_input import JoyloSimInput
 from dimos.robot.galaxea.r1pro.sim.model import TORSO_LINK_LENGTHS
-from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.description import SceneConfig
+from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
@@ -121,20 +120,17 @@ _declaration = R1ProConnectionConfig(model=CONTROL_MODEL)
 def _robot_blueprint(
     left_only: bool = False,
     *,
-    scene: SceneConfig = SCENE,
-    models: dict[str, RobotModel] | None = None,
+    scene: Path = SCENE,
 ) -> Blueprint:
     return (
         autoconnect(
-            UrdfManager.blueprint(models=models if models is not None else {"r1pro": MODEL}),
+            UsdManager.blueprint(model=UsdModel.from_file(scene)),
             SimModule.blueprint(
-                scene=scene,
+                scene_manager=UsdManager,
                 backend=MujocoBackend,
                 dt_ns=2_000_000,
-                controllers=(CONTROL,),
                 joint_ids=JOINTS,
                 observation_hz=250,
-                startup_timeout_s=120,
             ),
             SimJointEncoderModule.blueprint(sensor=EncoderConfig(JOINTS, hz=250)),
             R1ProSimControl.blueprint(coordinator_torso=True),
@@ -165,7 +161,7 @@ def _robot_blueprint(
             [
                 (SimJointEncoderModule, "joint_state", "encoder"),
                 (R1ProSimControl, "joint_state", "encoder"),
-                (UrdfManager, "coordinator_joint_state", "encoder"),
+                (UsdManager, "coordinator_joint_state", "encoder"),
                 (R1ProSimConnection, "joint_state", "robot_feedback"),
                 (R1ProJoyloCoordinator, "r1pro_joint_state", "robot_feedback"),
                 (R1ProSimConnection, "position_command", "r1pro_position_command"),

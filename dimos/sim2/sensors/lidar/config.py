@@ -22,7 +22,7 @@ from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import UsdModel
 
 
 @runtime_checkable
@@ -82,7 +82,7 @@ class LidarConfig:
 
 
 class Raycaster(Protocol):
-    def load(self, scene: SceneConfig, excluded_bodies: tuple[str, ...] = ()) -> None: ...
+    def load(self, scene: UsdModel, excluded_bodies: tuple[str, ...] = ()) -> None: ...
     def set_poses(self, sample: WorldState) -> None: ...
     def cast(
         self,

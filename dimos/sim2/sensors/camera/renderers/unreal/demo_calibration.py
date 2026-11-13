@@ -27,9 +27,9 @@ import numpy as np
 from PIL import Image
 
 from dimos.robot.assets.model import RobotModel
-from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.scenes.urdf import Component, prepare_scene
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.renderers.unreal.renderer import UnrealRenderer
 
@@ -45,7 +45,7 @@ def validate(executable: Path, project: Path, output: Path) -> None:
         model = RobotModel.from_file(urdf).with_fixed_frame(
             "camera", "box", xyz=(0, 0, 1), rpy=(-np.pi / 2, 0, -np.pi / 2)
         )
-        scene = SceneConfig((Instance("box", model),), ground_plane=False)
+        scene = prepare_scene({"box": Component(model)}, ground_plane=False)
         backend = MujocoBackend()
         cleanup.callback(backend.close)
         backend.load(scene, 2_000_000)
@@ -54,7 +54,7 @@ def validate(executable: Path, project: Path, output: Path) -> None:
         )
         cleanup.callback(renderer.close)
         renderer.load(
-            scene, CameraConfig("camera", width=200, height=150, fx=90, fy=110, cx=77, cy=63)
+            scene, (CameraConfig("camera", width=200, height=150, fx=90, fy=110, cx=77, cy=63),)
         )
         bodies = backend.read_bodies()
         state = WorldState(
@@ -68,8 +68,7 @@ def validate(executable: Path, project: Path, output: Path) -> None:
             bodies_length=len(bodies),
             bodies=bodies,
         )
-        renderer.set_poses(state)
-        rgb, depth = renderer.render(poses_by_id(state)["camera"])
+        rgb, depth = renderer.render(state, ("camera",))["camera"]
         assert abs(float(depth[63, 77]) - 2.5) < 0.0001
         yy, xx = np.where(np.isfinite(depth))
         assert abs(float(xx.mean()) - 77) <= 1
@@ -82,14 +81,15 @@ def validate(executable: Path, project: Path, output: Path) -> None:
         # the camera also detects a stale depth buffer paired with a new header.
         captures = []
         for width, height, camera_x in [(201, 153, 0.5), (317, 119, -0.25), (200, 150, 0.0)]:
-            renderer.camera = replace(renderer.camera, width=width, height=height)
+            renderer.cameras["camera"] = replace(
+                renderer.cameras["camera"], width=width, height=height
+            )
             state.header.sequence += 1
             state.header.time_ns += 1
             state.header.epoch += 1
             camera_pose = poses_by_id(state)["camera"]
             camera_pose.position.x = camera_x
-            renderer.set_poses(state)
-            next_rgb, next_depth = renderer.render(camera_pose)
+            next_rgb, next_depth = renderer.render(state, ("camera",))["camera"]
             assert next_rgb.shape == (height, width, 3)
             assert next_depth.shape == (height, width)
             expected_depth = 2.5 - camera_x

@@ -12,64 +12,57 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Camera acquisition, independent of physics and selectable renderer."""
+"""Camera device description and public outputs, served by a shared rendering worker."""
 
-from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
-from dimos_lcm.sim_msgs import WorldState
+from reactivex.disposable import Disposable
 
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.sim2.description import SceneConfig
-from dimos.sim2.geometry.poses import poses_by_id
-from dimos.sim2.sensors.camera.config import CameraConfig, CameraRenderer
-from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
-from dimos.sim2.sensors.sampling import Acquisition
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.sim2.sensors.camera.config import CameraConfig, camera_usd
 
 
-class CameraModuleConfig(PoseSensorConfig):
+class CameraModuleConfig(ModuleConfig):
     sensor: CameraConfig
-    renderer: Callable[[], CameraRenderer]
+    renderer_name: str = "CameraRenderModule"
 
 
-class SimCameraModule(_PoseSensorModule):
+class SimCameraModule(Module):
     config: CameraModuleConfig
     color_image: Out[Image]
     depth_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.renderer = self.config.renderer()
+    @rpc
+    def get_usd(self) -> list[str]:
+        return ["", camera_usd(self.config.sensor)]
 
-    def open_sensor(self, scene: SceneConfig) -> None:
-        self.renderer.load(scene, self.config.sensor)
-        self._sampling = Acquisition(self.config.sensor.hz)
+    @rpc
+    def camera_config(self, renderer_name: str) -> CameraConfig:
+        """Return the optical configuration to this device's selected renderer."""
+        if renderer_name != self.config.renderer_name:
+            raise ValueError(f"camera belongs to renderer {self.config.renderer_name!r}")
+        return self.config.sensor
 
-    def acquire(self, sample: WorldState, *, latest: bool = True) -> None:
-        if not latest or not self._sampling.due(sample.header):
-            return
-        c = self.config.sensor
-        pose = poses_by_id(sample)[c.frame_id]
-        self.renderer.set_poses(sample)
-        rgb, depth = self.renderer.render(pose)
-        stamp = sample.header.time_ns / 1e9
-        self.color_image.publish(Image.from_numpy(rgb, ImageFormat.RGB, c.frame_id, stamp))
-        self.depth_image.publish(Image.from_numpy(depth, ImageFormat.DEPTH, c.frame_id, stamp))
-        info = CameraInfo(
-            width=c.width,
-            height=c.height,
-            K=[c.fx, 0, c.cx, 0, c.fy, c.cy, 0, 0, 1],
-            frame_id=c.frame_id,
-            ts=stamp,
+    @rpc
+    def build(self) -> None:
+        super().build()
+        self._renderer = RPCClient(
+            None, None, self.config.renderer_name, {"camera_statistics"}, rpc=self.rpc
         )
-        self.camera_info.publish(info)
-        self.count("acquisitions")
+        self.register_disposable(Disposable(self._renderer.stop_rpc_client))
 
-    def close_sensor(self) -> None:
-        self.renderer.close()
+    @rpc
+    def start(self) -> None:
+        # All builds have completed: fail if the selected owner omitted this device.
+        self._renderer.camera_statistics(self.config.sensor.frame_id)
+        super().start()
 
-    def interrupt_sensor(self) -> None:
-        self.renderer.cancel()
+    @rpc
+    def statistics(self) -> dict[str, Any]:
+        return cast("dict[str, Any]", self._renderer.camera_statistics(self.config.sensor.frame_id))

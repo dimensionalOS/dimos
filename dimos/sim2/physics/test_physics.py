@@ -18,6 +18,8 @@ import pytest
 
 from dimos.sim2.geometry.poses import poses_by_id
 
+pytestmark = pytest.mark.self_hosted  # Requires MuJoCo's native USD importer.
+
 
 def test_targets_push_box_and_do_not_move_other_robot(backend, poses, motor_commands):
     backend.apply_action(motor_commands(positions=(0.65,)), [])
@@ -57,6 +59,21 @@ def test_invalid_target_batch_is_atomic(backend, motor_commands):
     for _ in range(100):
         backend.step()
     assert backend.read_joints(("left/slide_x",)).position == pytest.approx([0])
+
+
+@pytest.mark.parametrize("side,direction", [(0, -1), (1, 1)])
+def test_joint_limit_roundoff_is_clamped_but_out_of_range_is_rejected(
+    backend, motor_commands, side, direction
+):
+    limit = backend.model.joint("left/slide_x").range[side]
+    backend.apply_action(motor_commands(positions=(limit + direction * 3e-12,), kp=100), [])
+    aid = backend.model.actuator("left/slide_x").id
+    assert backend.data.ctrl[aid] == 100 * limit
+    before = backend.data.ctrl.copy()
+
+    with pytest.raises(ValueError, match="target outside joint limits"):
+        backend.apply_action(motor_commands(positions=(limit + direction * 1e-6,)), [])
+    np.testing.assert_array_equal(backend.data.ctrl, before)
 
 
 def test_motor_law_applies_velocity_gains_and_feedforward_each_step(backend, motor_commands):

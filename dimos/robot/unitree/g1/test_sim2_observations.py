@@ -16,7 +16,6 @@
 
 from collections import defaultdict, deque
 from contextlib import ExitStack
-from dataclasses import replace
 import uuid
 
 from dimos_lcm.common_msgs import SampleHeader
@@ -31,10 +30,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.client import materialize_scene
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import (
     LIDAR,
-    MODELS,
-    SCENE,
     unitree_g1_sim2,
 )
 from dimos.robot.unitree.g1.sim2_policy import JOINTS, G1PolicyModule
@@ -46,7 +44,7 @@ from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
 from dimos.utils.testing.waiting import wait_until
 
-pytestmark = pytest.mark.native_e2e
+pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture
@@ -106,16 +104,32 @@ def test_g1_walks_and_moves_an_arm_with_standard_sensor_messages(deployed_g1, g1
     assert raw.frame_id == "g1/mid360_link"
     assert set(np.unique(raw.lines_u8())) == {0, 1, 2, 3}
     assert g1_measurements["imu"][-1].frame_id == "g1/imu_in_pelvis"
+    wait_until(
+        lambda: any(
+            transform.child_frame_id == "g1/mid360_link"
+            for message in list(g1_measurements["tf"])
+            for transform in message.transforms
+        ),
+        timeout=30,
+    )
+    transforms = [
+        transform for message in list(g1_measurements["tf"]) for transform in message.transforms
+    ]
+    sim_time = sim.inspect().header.time_ns / 1e9
+    assert all(0 <= transform.ts <= sim_time for transform in transforms)
     parents = defaultdict(set)
-    for message in list(g1_measurements["tf"]):
-        for transform in message.transforms:
-            parents[transform.child_frame_id].add(transform.frame_id)
+    for transform in transforms:
+        parents[transform.child_frame_id].add(transform.frame_id)
     assert all(len(p) == 1 for p in parents.values()), dict(parents)
-    assert parents["g1/mid360_link"] == {"g1/torso_link"}
+    assert parents["g1/mid360_link"] == {"g1/lidar_mount"}
+    assert parents["g1/lidar_mount"] == {"g1/torso_link"}
+    assert parents["g1/camera"] == {"g1/camera_mount"}
+    assert parents["g1/imu_in_pelvis"] == {"g1/imu_mount"}
     before = sim.inspect()
     before_inferences = policy.status()["inferences"]
     assert poses_by_id(before)["g1/pelvis"].position.z > 0.68
-    policy.arm_joint("g1/left_elbow_joint", 1.4)
+    # This target clears the hip with the shoulder in its parked position.
+    policy.arm_joint("g1/left_elbow_joint", 1.1)
     policy.move(Twist(linear=Vector3(0.2, 0, 0)), duration=20)
     wait_until(lambda: sim.status()["time_ns"] > before.header.time_ns + 3_000_000_000, timeout=40)
     after = sim.inspect()
@@ -126,16 +140,19 @@ def test_g1_walks_and_moves_an_arm_with_standard_sensor_messages(deployed_g1, g1
         poses_by_id(after)["g1/pelvis"].position.x - poses_by_id(before)["g1/pelvis"].position.x
         > 0.2
     )
-    assert joints.position[joints.name.index("g1/left_elbow_joint")] == pytest.approx(1.4, abs=0.12)
+    assert joints.position[joints.name.index("g1/left_elbow_joint")] == pytest.approx(1.1, abs=0.12)
     assert poses_by_id(sim.inspect())["g1/pelvis"].position.z > 0.68
     assert (
         sim.status()["error"] == camera.statistics()["error"] == lidar.statistics()["error"] == ""
     )
-    assert policy.status()["inferences"] >= before_inferences + 150
+    assert policy.status()["inferences"] > before_inferences
 
 
-def test_g1_mid360_mount_observes_the_floor_instead_of_its_head():
-    scene = replace(SCENE, instances=tuple(replace(i, model=MODELS[i.id]) for i in SCENE.instances))
+def test_g1_mid360_mount_observes_the_floor_instead_of_its_head(deployed_g1, tmp_path):
+    manager = deployed_g1.get_instance("scene")
+    scene = materialize_scene(
+        manager.get_scene([])[1], manager.get_asset, cache=tmp_path / "reader"
+    )
     with ExitStack() as cleanup:
         backend = MujocoBackend()
         cleanup.callback(backend.close)

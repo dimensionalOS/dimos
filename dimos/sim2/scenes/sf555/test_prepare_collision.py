@@ -21,9 +21,9 @@ import numpy as np
 import trimesh
 
 from dimos.robot.assets.model import RobotModel
-from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.geometry.mujoco import compile_scene
 from dimos.sim2.scenes.sf555.prepare_collision import description, prepare_object
+from dimos.sim2.scenes.urdf import Component, prepare_scene
 
 
 def test_concave_doorway_stays_open_and_has_no_fictitious_floor(tmp_path):
@@ -41,7 +41,7 @@ def test_concave_doorway_stays_open_and_has_no_fictitious_floor(tmp_path):
     result = prepare_object((tmp_path, tmp_path, {"name": "door", "file": "door.npz"}))
     urdf = tmp_path / "door.urdf"
     urdf.write_text(ET.tostring(description({"objects": [result]}), encoding="unicode"))
-    scene = SceneConfig((Instance("door", RobotModel.from_file(urdf)),), ground_plane=False)
+    scene = prepare_scene({"door": Component(RobotModel.from_file(urdf))}, ground_plane=False)
     model = compile_scene(scene, 2_000_000)
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)

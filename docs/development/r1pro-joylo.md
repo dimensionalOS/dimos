@@ -15,8 +15,8 @@ merges, with the robot-specific adapter and profile added above them:
 | Current control contract | `391ae2d0ef`, main / #5016 | Joint/interface routing and connection ownership |
 | CC's R1 Pro stack | `3920bf8b1d0517476be8aaa891dac2075a1469e6`, #5017 + #5019 | R1 joint declarations, limits, base and canonical grippers |
 | Krishna's input stack | `cedc04d1f2f23b249c61acab25881b5e476bc5f5`, #5177 + #5182 + #5198 | Feetech calibration/readers, leader streaming, Joy-Con backend |
-| sim2 foundation | `c07ca335fa` | Simulator, sensor and action contracts |
-| Existing R1 Pro sim work | `47713be18a` | Reused committed `sim/model.py`, `config.py`, `control.py`, tests, scene collision exclusions and startup timeout |
+| Current sim2 stack | `219fd37d9a` (#5033–#5041; physics #5035, shared cameras #5038) | USD scenes, independent physics, bounded sensor workers and shared rendering |
+| Existing R1 Pro sim work | `47713be18a` | Reused committed `sim/model.py`, `config.py`, `control.py`, tests and scene collision exclusions |
 
 The R1 sim files are ported from that committed snapshot; uncommitted work in
 the existing sim worktrees is not part of this branch. Its older control and VR
@@ -455,7 +455,9 @@ Run `dimos run r1pro-openarm-joylo-office --daemon` with the same explicit
 left/right serial ports and calibration-root arguments used for the plain
 blueprint. Use `--r1projoylo.arm-only false` for base/torso controls. X enables
 following; Home pauses. Camera startup is asynchronous: inspect
-`R1ProSimCameras.statistics()` for all three counters and an empty `error`.
+`CameraRenderModule.statistics()` for one loaded scene, three cameras and an empty `error`;
+`head_camera.statistics()`, `left_wrist_camera.statistics()` and
+`right_wrist_camera.statistics()` report the individual frame counters.
 RGB-D and CameraInfo are available on
 `color_image`/`depth_image`/`camera_info`, `left_wrist`/`left_wrist_depth`/
 `left_wrist_info`, and the corresponding `right_wrist` topics.
@@ -464,8 +466,8 @@ RGB-D and CameraInfo are available on
 
 `python -m dimos.robot.galaxea.r1pro.sim.demo_office_grasp` exercises each real
 finger model against each prepared bottle. A driven vertical fixture holds the
-wrist orientation; the finger joints and bottle obey dynamics. All four cases
-lifted 0.179–0.184 m, held, then released. There is no weld or artificial object
+wrist orientation; the finger joints and bottle obey dynamics. On the current USD/MuJoCo 4 stack, all four cases
+lifted 0.189–0.192 m, held, then released. There is no weld or artificial object
 attachment. This validates contact feasibility, not a full arm pick trajectory.
 The operator still needs to line up the grasp using the wrist view.
 
@@ -475,3 +477,42 @@ full office. Rendering load can reduce both camera rates and simulation speed
 on this Mac; use simulation-time/wall-time deltas and camera counters to measure
 that separately from leader/Joy-Con input ages. A zero camera error does not
 claim a particular frame rate or real-time physics performance.
+
+
+## Free-running physics and shared Unreal cameras
+
+Prepare the USD artifacts explicitly after the URDF/mesh preparation steps:
+
+```bash
+python -m dimos.robot.galaxea.r1pro.sim.prepare_usd
+python -m dimos.robot.galaxea.r1pro.sim.prepare_usd --office
+```
+
+The plain scene is `~/.cache/dimos/r1pro-joylo/scene.usda`; the office scene is
+`~/.cache/dimos/sf555-joylo/scene.usda`. Large mesh buffers share a hashed binary
+USD asset beside the text scene. UsdManager serves this scene to physics and
+rendering through the same `get_scene`/`get_asset` contract. The existing G1 office
+example has its own explicit preparation command,
+`python -m dimos.sim2.scenes.sf555.prepare_g1_usd`.
+
+Physics advances at 2 ms steps without waiting for a controller reply. The R1
+servo consumes encoder samples nominally at 250 Hz, advances its Ruckig trajectory
+by elapsed simulation time, and publishes actions valid for 100 ms of simulation
+time. Delayed valid actions apply on the next physics tick. If feedback to the
+servo is absent long enough for its action to expire, physics holds the measured
+joint positions; when samples resume, interpolation starts from the measured pose.
+This motor-action timeout is separate from the JoyLo leader/Joy-Con deadman.
+
+Three named SimCameraModule devices expose the existing head and wrist topics;
+one CameraRenderModule owns the Unreal process and scene. Each batch uses the
+same complete WorldState and timestamp for every due view. Unreal still captures
+those views sequentially, sharing the converted body poses and render targets.
+The camera scheduler does not make native rendering parallel. Wrist depth remains
+limited to 0.07–0.50 m, with invalid/out-of-range values published as zero.
+
+A 20.6 s local run on 2026-11-12 measured 0.956 simulation seconds per wall second
+with all three cameras active, versus 0.575–0.610 before this migration. Each camera
+produced 2.72 FPS. The interval accepted 4,921 motor actions with zero rejected
+actions, expired targets or dropped physics observations. Sensor startup and
+rendering can discard obsolete inputs; those counters are distinct from missing
+leader input. This is a local measurement, not a hardware timing guarantee.

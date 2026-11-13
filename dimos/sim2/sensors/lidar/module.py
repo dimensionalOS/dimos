@@ -23,10 +23,12 @@ from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from dimos.core.core import rpc
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.sim2.geometry.poses import pose_array, poses_by_id
+from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.lidar.config import LidarConfig, Raycaster
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
 from dimos.sim2.sensors.sampling import Acquisition
@@ -35,6 +37,7 @@ from dimos.sim2.sensors.sampling import Acquisition
 class LidarModuleConfig(PoseSensorConfig):
     sensor: LidarConfig
     raycaster: Callable[[], Raycaster]
+    model: UsdModel | None = None
 
 
 class SimLidarModule(_PoseSensorModule):
@@ -43,6 +46,16 @@ class SimLidarModule(_PoseSensorModule):
     # Privileged, truth-registered hits for inspection/mapping without SLAM.
     # Never connect this stream to a lidar-inertial estimator.
     pointcloud: Out[PointCloud2]
+
+    @rpc
+    def get_usd(self) -> list[str]:
+        model = (
+            self.config.model
+            or RobotModel.from_root_link(self.config.sensor.frame_id, name="lidar").to_usd()
+        )
+        if self.config.sensor.frame_id not in model.frame_names():
+            raise ValueError("lidar USD must describe its measurement frame")
+        return [str(model.source_path.parent) if model.source_path else "", model.usd]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -60,9 +73,10 @@ class SimLidarModule(_PoseSensorModule):
         self._response = c.response() if c.response is not None else None
         self._history: deque[WorldState] = deque()
         self._sampling = Acquisition(c.scan_hz)
+        self._publication_rate = PublicationRate(self, "lidar", c.scan_hz)
         self._epoch = -1
 
-    def open_sensor(self, scene: SceneConfig) -> None:
+    def open_sensor(self, scene: UsdModel) -> None:
         self.raycaster = self.config.raycaster()
         self.raycaster.load(scene, self.config.sensor.excluded_bodies)
 
@@ -142,10 +156,12 @@ class SimLidarModule(_PoseSensorModule):
         return raw, world
 
     def acquire(self, sample: WorldState, *, latest: bool = True) -> None:
+        self._publication_rate.begin()
         clouds = self.measure(sample)
         if clouds is not None:
             raw, world = clouds
             self.lidar.publish(raw)
+            self._publication_rate.published()
             if self.config.sensor.publish_truth:
                 self.pointcloud.publish(world)
             self.count("acquisitions")

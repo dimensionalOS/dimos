@@ -14,10 +14,11 @@
 
 """Mobile R1 Pro model and demonstration servo tuning."""
 
+from pathlib import Path
+
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_BODY_AXES,
-    R1PRO_COLLISION_EXCLUSIONS,
     R1PRO_PLANAR_BASE,
 )
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS
@@ -27,8 +28,6 @@ from dimos.robot.galaxea.r1pro.sim.model import (
     STEER_JOINTS,
     WHEEL_JOINTS,
 )
-from dimos.sim2.description import Drive, Instance, SceneConfig
-from dimos.sim2.module import ControllerConfig
 
 UPPER_JOINTS = tuple(f"r1pro/{name}" for name in UPPER_BODY_JOINTS)
 SERVO_JOINTS = (*UPPER_JOINTS, *FINGER_JOINTS)
@@ -38,7 +37,8 @@ HOME = (0.0,) * 18
 # Gravity feedforward supplies the static load; gains remain uncalibrated.
 KP = (800.0, 800.0, 800.0, 800.0) + (180.0,) * 14 + (1000.0,) * 4 + (120.0,) * 3 + (0.0,) * 3
 KD = (60.0, 60.0, 60.0, 60.0) + (12.0,) * 14 + (10.0,) * 4 + (12.0,) * 3 + (3.0,) * 3
-CONTROL = ControllerConfig("r1pro/servo", 4_000_000, JOINTS)
+CONTROL_PERIOD_NS = 4_000_000
+COMMAND_TTL_NS = 100_000_000
 # Simulation tracking profile. WIM's 1.5 rad/s demo setting is not a measured
 # hardware maximum; its per-joint ceilings are 3/3/3/5/5/5/5 rad/s.
 ARM_RATE = 1.5
@@ -75,21 +75,5 @@ CONTROL_MODEL = CONTROL_MODEL.with_added_joints(
         )
     )
 )
-SCENE = SceneConfig(
-    instances=(
-        Instance(
-            "r1pro",
-            xyz=(0, 0, 0.005),
-            floating=True,
-            drives=tuple(
-                Drive(name, max(kp, 1.0), kd, armature=0.02)
-                for name, kp, kd in zip(JOINTS, KP, KD, strict=True)
-            ),
-            collision_exclusions=tuple(
-                (f"r1pro/{a}", f"r1pro/{b}")
-                for a, b in R1PRO_COLLISION_EXCLUSIONS
-                if "gmsl" not in a + b and "d405" not in a + b
-            ),
-        ),
-    )
-)
+# Prepared explicitly with python -m dimos.robot.galaxea.r1pro.sim.prepare_usd.
+SCENE = Path.home() / ".cache/dimos/r1pro-joylo/scene.usda"

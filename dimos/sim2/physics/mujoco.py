@@ -14,9 +14,9 @@
 
 """MuJoCo compilation and dynamics. The only dynamics engine in this prototype.
 
-Imports the shared, materialized URDF; no parallel MJCF robot asset. Native
-indices are bound once. Fixed links are retained so logical frame IDs agree
-with UrdfManager even when the model includes massless sensor frames.
+Loads the composed USD through MuJoCo's native importer. Native indices are bound
+once. Fixed bodies remain addressable by UsdManager's frame IDs, including
+massless sensor frames.
 """
 
 from dimos_lcm.control_msgs import CborCommand, JointCommand
@@ -27,15 +27,19 @@ import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.description import SceneConfig
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd import usd_drives
 from dimos.sim2.geometry.mujoco import compile_scene
 
 
 class MujocoBackend:
-    def load(self, scene: SceneConfig, dt_ns: int) -> None:
-        self.model = compile_scene(scene, dt_ns)
+    def load(
+        self, scene: UsdModel, dt_ns: int, gravity_world: tuple[float, float, float] = (0, 0, -9.81)
+    ) -> None:
+        self.model = compile_scene(scene, dt_ns, gravity_world=gravity_world)
         self.data = mujoco.MjData(self.model)
-        self._initial = {d.joint: d.initial for i in scene.instances for d in i.drives}
+        root = scene.source_path.parent if scene.source_path else None
+        self._initial = {n: values[2] for n, values in usd_drives(scene.usd, root).items()}
         self.body_ids = tuple(self.model.body(i).name for i in range(1, self.model.nbody))
         self.joint_ids = tuple(
             self.model.joint(i).name
@@ -43,7 +47,11 @@ class MujocoBackend:
             if self.model.jnt_type[i] != mujoco.mjtJoint.mjJNT_FREE
         )
         self.driven_joint_ids = tuple(self.model.actuator(i).name for i in range(self.model.nu))
-        self.root_ids = tuple(i.description.root_link for i in scene.instances)
+        self.root_ids = tuple(
+            self.model.body(int(self.model.jnt_bodyid[i])).name
+            for i in range(self.model.njnt)
+            if self.model.jnt_type[i] == mujoco.mjtJoint.mjJNT_FREE
+        )
         self._drives = {n: self.model.actuator(n).id for n in self.driven_joint_ids}
         self._gain = self.model.actuator_gainprm.copy()
         self._bias = self.model.actuator_biasprm.copy()
@@ -87,16 +95,18 @@ class MujocoBackend:
         if not np.isfinite(values).all() or np.any(values[:, 2:4] < 0):
             raise ValueError("targets must be finite with nonnegative gains")
         ids = []
-        for name, (position, _velocity, kp, kd, effort) in zip(names, values, strict=True):
+        for name, row in zip(names, values, strict=True):
+            position, _velocity, kp, kd, effort = row
             if name not in self._drives:
                 raise ValueError(f"not a driven joint: {name}")
             joint = self.model.joint(name)
-            if (
-                kp
-                and self.model.jnt_limited[joint.id]
-                and not joint.range[0] <= position <= joint.range[1]
-            ):
-                raise ValueError(f"target outside joint limits: {name}")
+            if kp and self.model.jnt_limited[joint.id]:
+                bounded = np.clip(position, *joint.range)
+                # USD degrees -> URDF radians -> decimal text can round a
+                # boundary slightly beyond the native importer's limit.
+                if abs(position - bounded) > 1e-10:
+                    raise ValueError(f"target outside joint limits: {name}")
+                row[0] = bounded
             aid = self._drives[name]
             if (
                 kp == kd == 0
