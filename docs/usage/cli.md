@@ -82,7 +82,7 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--<c
 Dynamic values accept both `--field=value` and `--field value`. A shorthand is
 available only when it identifies one active module. If two modules expose the
 same field, the CLI reports the ambiguity and lists stable qualified forms such
-as `--relocalizationmodule.map-file`. Global flags work on either side of
+as `--pgovoxelmapper.map-file`. Global flags work on either side of
 `run`; older wrapper-style overrides are no longer accepted.
 
 ```bash

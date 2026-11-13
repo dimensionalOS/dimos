@@ -98,15 +98,29 @@ for ts, frame in replay.iterate_ts():
 
 ### Realtime Playback
 
+`stream()` returns an observable that emits each frame at its recorded time. `.run()` blocks until the last frame, so each playback below finishes before the next one starts:
+
 ```python skip
+from reactivex import operators as ops
+
 # Play at original speed
-replay.stream().subscribe(process)
+replay.stream().pipe(ops.do_action(process)).run()
 
 # Play at 2x speed
-replay.stream(speed=2.0).subscribe(process)
+replay.stream(speed=2.0).pipe(ops.do_action(process)).run()
 
 # Play at half speed
-replay.stream(speed=0.5).subscribe(process)
+replay.stream(speed=0.5).pipe(ops.do_action(process)).run()
+```
+
+`.run()` raises `SequenceContainsNoElementsError` if the replay has no frames, and never returns with `stream(loop=True)`.
+
+To play in the background instead, use `subscribe`. It returns once the first frame is delivered and the rest arrive on timer threads, so keep the program alive for as long as you want frames, then dispose the subscription:
+
+```python skip
+subscription = replay.stream().subscribe(process)
+# ... do other work while frames arrive ...
+subscription.dispose()
 ```
 
 `LegacyPickleStore` also has `iterate_realtime(speed=...)`, which blocks between frames.

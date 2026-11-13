@@ -77,30 +77,36 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.manipulation.control.servo_control.cartesian_motion_controller import CartesianMotionController
 
-# 1. Build your arm driver and the controller; autoconnect connects their streams by name
-coordinator = ModuleCoordinator.build(autoconnect(
-    MyArmDriver.blueprint(),
-    CartesianMotionController.blueprint(
-        control_frequency=20.0,
-        position_kp=1.0,
-        max_linear_velocity=0.15,  # m/s
-    ),
-))
-controller = coordinator.get_instance(CartesianMotionController)
+# Modules run in worker processes that import this script again, so everything
+# that builds or drives them goes under the __main__ guard.
+if __name__ == "__main__":
+    # 1. Build your arm driver and the controller; autoconnect connects their streams by name
+    coordinator = ModuleCoordinator.build(autoconnect(
+        MyArmDriver.blueprint(),
+        CartesianMotionController.blueprint(
+            control_frequency=20.0,
+            position_kp=1.0,
+            max_linear_velocity=0.15,  # m/s
+        ),
+    ))
+    controller = coordinator.get_instance(CartesianMotionController)
 
-# 2. Send Cartesian goal (move 10cm in X)
-controller.set_target_pose(
-    position=[0.3, 0.0, 0.5],  # xyz in meters
-    orientation=[0, 0, 0],     # roll, pitch, yaw in radians
-    frame_id="world"
-)
+    # 2. Send Cartesian goal (move 10cm in X)
+    controller.set_target_pose(
+        position=[0.3, 0.0, 0.5],  # xyz in meters
+        orientation=[0, 0, 0],     # roll, pitch, yaw in radians
+        frame_id="world"
+    )
 
-# 3. Wait for convergence
-while not controller.is_converged():
-    time.sleep(0.1)
+    # 3. Wait for convergence
+    while not controller.is_converged():
+        time.sleep(0.1)
 
-print("Target reached!")
+    print("Target reached!")
+    coordinator.stop()
 ```
+
+The snippets below continue from this one: in a script, they also go inside the `__main__` block.
 
 ### Using Quaternions
 
