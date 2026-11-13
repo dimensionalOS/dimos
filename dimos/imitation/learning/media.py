@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 from typing import Any
@@ -51,26 +52,75 @@ def fetch(url: str, target: Path) -> None:
 
 
 def materialize(descriptor: dict[str, Any], state: Path) -> Path:
-    # Content is frozen into a private cache; caller never writes source files.
-    key = hashlib.sha256(json.dumps(descriptor, sort_keys=True).encode()).hexdigest()
+    # Freeze stable content identity, not an expiring presigned download URL.
+    expected = descriptor.get("source_sha256") or descriptor.get("metadata", {}).get("sha256")
+    if expected is not None and (
+        not isinstance(expected, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected)
+    ):
+        raise LearningError(
+            422, "source_checksum_invalid", "Source SHA256 must be a declared hexadecimal digest"
+        )
+    if not expected and urlparse(descriptor.get("download_url", "")).scheme != "file":
+        raise LearningError(422, "source_checksum_missing", "Platform source SHA256 is required")
+    identity = {
+        k: descriptor.get(k)
+        for k in ("id", "org_id", "schema", "manifest", "schema_url", "manifest_url")
+    }
+    identity["source_sha256"] = expected
+    if not expected:
+        identity["download_url"] = descriptor.get("download_url")
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     destination = state / "sources" / key
     if (destination / "complete.json").exists():
         return destination
+    schema = descriptor.get("schema")
+    if schema is not None and (
+        not isinstance(schema, dict) or schema.get("payload", "recording.mcap") != "recording.mcap"
+    ):
+        raise LearningError(
+            422,
+            "source_format_unsupported",
+            "Learning media currently requires an MCAP RecordingSchema",
+        )
+    encoding = descriptor.get("metadata", {}).get("content_encoding")
+    if encoding:
+        raise LearningError(
+            422,
+            "source_encoding_unsupported",
+            "Supply an uncompressed MCAP source; compressed database recordings are not MCAP",
+        )
     staging = destination.with_name(key + ".partial-" + os.urandom(8).hex())
     staging.mkdir(parents=True)
     try:
-        for name, field in (
-            ("recording.mcap", "download_url"),
-            ("schema.json", "schema_url"),
-            ("manifest.json", "manifest_url"),
-        ):
-            url = descriptor.get(field)
-            if url:
-                fetch(url, staging / name)
-            elif name != "manifest.json":
+        url = descriptor.get("download_url")
+        if not url:
+            raise LearningError(422, "source_url_invalid", "Authorized recording URL required")
+        fetch(url, staging / "recording.mcap")
+        actual = sha256(staging / "recording.mcap")
+        if expected and actual != expected.lower():
+            raise LearningError(
+                409,
+                "source_checksum_mismatch",
+                "Downloaded recording differs from upload-declared SHA256",
+            )
+        if schema is not None:
+            (staging / "schema.json").write_text(json.dumps(schema, allow_nan=False))
+        elif descriptor.get("schema_url"):
+            fetch(descriptor["schema_url"], staging / "schema.json")
+        else:
+            raise LearningError(
+                422, "source_schema_missing", "An authorized companion RecordingSchema is required"
+            )
+        if descriptor.get("manifest") is not None:
+            manifest = descriptor["manifest"]
+            if not isinstance(manifest, dict):
                 raise LearningError(
-                    422, "source_schema_missing", "Authorized recording and schema URLs required"
+                    422, "source_manifest_invalid", "Source manifest must be an object"
                 )
+            # The inline schema is already frozen separately; retain capture metadata unchanged.
+            (staging / "manifest.json").write_text(json.dumps(manifest, allow_nan=False))
+        elif descriptor.get("manifest_url"):
+            fetch(descriptor["manifest_url"], staging / "manifest.json")
         hashes = {p.name: sha256(p) for p in staging.iterdir() if p.is_file()}
         (staging / "complete.json").write_text(json.dumps(hashes))
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +148,10 @@ def capture(directory: Path) -> dict[str, Any]:
             for key, value in schema.get("observation", {}).items()
             if value.get("dtype") == "video"
         ]
+    if len({camera["id"] for camera in cameras}) != len(cameras) or any(
+        not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", camera["id"]) for camera in cameras
+    ):
+        raise LearningError(422, "camera_id_invalid", "Unique safe camera identifiers required")
     episodes: list[dict[str, Any]] = []
     start = None
     origin = None
@@ -180,7 +234,9 @@ def prepare(directory: Path, destination: Path, report: Callable[[str], None]) -
                     422, "unsupported_camera_encoding", f"{channel.topic}: JPEG payload required"
                 )
             bucket = frames[channel.topic]
-            folder = destination / channel.topic
+            folder = destination / (
+                "frames-" + hashlib.sha256(channel.topic.encode()).hexdigest()[:16]
+            )
             folder.mkdir(exist_ok=True)
             path = folder / f"{len(bucket):07d}.jpg"
             path.write_bytes(message.data[begin : end + 2])

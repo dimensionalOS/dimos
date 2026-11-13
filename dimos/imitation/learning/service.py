@@ -5,8 +5,10 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 from pathlib import Path
 import secrets
+import shlex
 import time
 from typing import Any
 from uuid import uuid4
@@ -237,7 +239,17 @@ class Service:
         if kind == "job":
             return [self.public_job(x) for x in items]
         if kind == "worker":
-            return [{k: v for k, v in x.items() if k != "token_hash"} for x in items]
+            return [
+                {
+                    **{k: v for k, v in x.items() if k != "token_hash"},
+                    "status": "revoked"
+                    if x["revoked"]
+                    else "online"
+                    if time.time() - x.get("last_seen", 0) <= 30
+                    else "offline",
+                }
+                for x in items
+            ]
         return items
 
     def detail(self, who: dict[str, Any], kind: str, key: str) -> dict[str, Any]:
@@ -341,6 +353,20 @@ class Service:
             if job["status"] not in TERMINAL:
                 job["status"] = "cancelling" if job["status"] == "running" else "cancelled"
                 self.store.put(db, "job", key, job)
+                if job["status"] == "cancelled":
+                    kind = {"dataset": "dataset", "train": "run"}.get(job["kind"])
+                    if kind:
+                        resource = self.store.get(db, kind, job[kind + "_id"])
+                        if resource is not None:
+                            resource["status"] = "cancelled"
+                            self.store.put(db, kind, resource["id"], resource)
+                    elif job["kind"] == "media":
+                        self.store.put(
+                            db,
+                            "media",
+                            f"{job['org_id']}:{job['payload']['recording_id']}",
+                            {"status": "cancelled", "cameras": [], "duration_s": None},
+                        )
             return self.public_job(job)
 
     def pairing(self, who: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
@@ -358,7 +384,22 @@ class Service:
         return {
             "code": code,
             "expires_at": item["expires_at"],
-            "command": f"python -m dimos.imitation.learning.worker --pair {code} --name {item['name']}",
+            "command": shlex.join(
+                [
+                    "python",
+                    "-m",
+                    "dimos.imitation.learning.worker",
+                    "--api",
+                    os.environ.get(
+                        "DIMOS_LEARNING_PUBLIC_API_URL",
+                        os.environ.get("DIMOS_LEARNING_API_URL", "http://127.0.0.1:8768"),
+                    ),
+                    "--pair",
+                    code,
+                    "--name",
+                    str(item["name"]),
+                ]
+            ),
         }
 
     def pair(self, body: dict[str, Any]) -> dict[str, Any]:

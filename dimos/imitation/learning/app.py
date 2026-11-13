@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException
 
+from dimos.imitation.learning.envelope import DelegationEnvelope
 from dimos.imitation.learning.protocol import LearningError, allowed, identity, source
 from dimos.imitation.learning.service import PRESETS, Service
 from dimos.imitation.learning.store import Store, default_store
@@ -27,6 +28,7 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     app = FastAPI(title="DimOS Learning", version="1", lifespan=lifespan)
     app.state.service = service
+    app.add_middleware(DelegationEnvelope)
 
     @app.exception_handler(LearningError)
     async def learning_error(request: Request, error: LearningError):
@@ -107,16 +109,38 @@ def create_app(store: Store | None = None) -> FastAPI:
     @app.get("/v1/profiles")
     def profiles(who: dict = Depends(identity)):
         items = {}
+        blocked_sources = []
         for item in who.get("sources", []):
             if not item.get("can_read"):
                 continue
-            info = service.recording(who, item["id"])
-            schema = info["schema"]
-            semantics = info["capture_truth"]["gripper_semantics"] or {}
-            items[info["profile_id"]] = {
-                "id": info["profile_id"],
-                "name": info["profile_id"],
-                "cameras": info["cameras"],
+            try:
+                source(who, item["id"])
+                if item.get("schema"):
+                    schema = item["schema"]
+                    profile_id = schema.get("name")
+                    cameras = [
+                        {"id": k, "label": k.replace("_", " ").title()}
+                        for k, v in schema.get("observation", {}).items()
+                        if v.get("dtype") == "video"
+                    ]
+                    semantics = schema.get("metadata", {}).get("gripperSemantics", {})
+                else:
+                    info = service.recording(who, item["id"])
+                    schema, profile_id, cameras = (
+                        info["schema"],
+                        info["profile_id"],
+                        info["cameras"],
+                    )
+                    semantics = info["capture_truth"]["gripper_semantics"] or {}
+            except LearningError as error:
+                blocked_sources.append(
+                    {"recording_id": item["id"], "code": error.code, "message": error.message}
+                )
+                continue
+            items[profile_id] = {
+                "id": profile_id,
+                "name": profile_id,
+                "cameras": cameras,
                 "action": schema.get("action"),
                 "observation": schema.get("observation"),
                 "compatible": semantics.get("gripperCommandRecorded") is not False,
@@ -124,7 +148,7 @@ def create_app(store: Store | None = None) -> FastAPI:
                 if semantics.get("gripperCommandRecorded") is False
                 else None,
             }
-        return {"items": list(items.values())}
+        return {"items": list(items.values()), "blocked_sources": blocked_sources}
 
     @app.get("/v1/presets")
     def presets(who: dict = Depends(identity)):

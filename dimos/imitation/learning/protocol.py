@@ -66,6 +66,12 @@ def identity(request: Request) -> dict[str, Any]:
             or not claims["org_id"]
         ):
             raise ValueError("invalid identity claims")
+        source_digest = claims.get("source_digest")
+        if source_digest is not None:
+            received = getattr(request.state, "learning_source_digest", None)
+            if not isinstance(source_digest, str) or received != source_digest:
+                raise ValueError("Source delegation body does not match signed digest")
+            claims["sources"] = request.state.learning_sources
         return claims
     except (jwt.PyJWTError, ValueError, TypeError) as error:
         raise LearningError(
