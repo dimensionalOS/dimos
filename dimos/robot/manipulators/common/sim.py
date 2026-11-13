@@ -22,10 +22,15 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 
 
-def mujoco_if_sim(sim_path: str | Path, dof: int) -> tuple[Blueprint, ...]:
+def mujoco_if_sim(sim_path: str | Path, arm_dof: int) -> tuple[Blueprint, ...]:
+    """The blueprint's MuJoCo sim, under ``--simulation`` only.
+
+    ``arm_dof`` counts the arm joints alone. The sim takes a scene joint past
+    them as the gripper and drives it through its own range.
+    """
     if not global_config.simulation:
         return ()
 
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
-    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=dof),)
+    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=arm_dof),)

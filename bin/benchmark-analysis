@@ -26,7 +26,7 @@ import argparse
 from collections import Counter, defaultdict
 import csv
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from itertools import count, pairwise
 import json
 import math
@@ -99,7 +99,7 @@ def load_series(path: Path) -> tuple[list[Point], dict[str, str]]:
         units.update({b["name"]: b["unit"] for b in benches})
         points.append(
             Point(
-                time=datetime.fromtimestamp(entry["date"] / 1000, timezone.utc),
+                time=datetime.fromtimestamp(entry["date"] / 1000, UTC),
                 sha=commit["id"],
                 message=commit.get("message", ""),
                 author=commit.get("author", {}).get("username"),

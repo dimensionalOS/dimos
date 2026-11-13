@@ -15,7 +15,7 @@
 from datetime import datetime
 from functools import cache
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
 import platform
 import re
 import shutil
@@ -83,6 +83,8 @@ def get_project_root() -> Path:
     with FileLock(data_dir / "repo.lock"):
         # Clone if not already cloned
         if not (repo_dir / ".git").exists():
+            logger.info("Cloning the DimOS repository for its data files", path=str(repo_dir))
+            started = time.monotonic()
             try:
                 env = os.environ.copy()
                 env["GIT_LFS_SKIP_SMUDGE"] = "1"
@@ -107,6 +109,9 @@ def get_project_root() -> Path:
                     f"Failed to clone dimos repository: {e.stderr}\n"
                     f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
                 )
+            logger.info(
+                "Cloned the DimOS repository", duration=f"{time.monotonic() - started:.1f}s"
+            )
 
     return repo_dir
 
@@ -253,7 +258,7 @@ def _decompress_archive(filename: str | Path) -> Path:
     staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=f".{name}."))
     try:
         with tarfile.open(filename_path, "r:gz") as tar:
-            tar.extractall(staging)
+            tar.extractall(staging, filter="data")
         (staging / name).rename(target_dir / name)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -442,6 +447,20 @@ class LfsPath(type(Path())):  # type: ignore[misc]
     def __hash__(self) -> int:
         """Hash the resolved path instead of pathlib's placeholder state."""
         return hash(self._ensure_downloaded())
+
+    def __eq__(self, other: object) -> bool:
+        """Two lazy paths compare by name without downloading; anything else by resolved path.
+
+        pathlib's __eq__ reads attributes that would materialize the asset, and since
+        Python 3.13 dataclasses compare fields with == even when they are the same object.
+        """
+        if isinstance(other, LfsPath):
+            return str(object.__getattribute__(self, "_lfs_filename")) == str(
+                object.__getattribute__(other, "_lfs_filename")
+            )
+        if not isinstance(other, PurePath):
+            return NotImplemented
+        return self._ensure_downloaded() == other
 
     def __truediv__(self, other: object) -> "LfsPath":
         """Path division operator - returns a new lazy LfsPath (no download)."""

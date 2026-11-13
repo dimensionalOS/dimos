@@ -15,7 +15,7 @@
 import pytest
 import reactivex as rx
 
-from dimos.stream.audio.node_output import SounddeviceAudioOutput
+from dimos.stream.audio.node_output import SounddeviceAudioOutput, sd
 
 
 @pytest.fixture
@@ -25,6 +25,7 @@ def sound_device():
     out.stop()
 
 
+@pytest.mark.skipif(sd is None, reason="sounddevice could not initialize PortAudio")
 def test_consume_audio_survives_missing_device(mocker, sound_device) -> None:
     mocker.patch(
         "dimos.stream.audio.node_output.sd.OutputStream",
@@ -36,3 +37,21 @@ def test_consume_audio_survives_missing_device(mocker, sound_device) -> None:
     assert sound_device._stream is None
     assert not sound_device._running.is_set()
     assert sound_device._subscription is not None
+
+
+def test_consume_audio_survives_unimportable_sounddevice(mocker, sound_device) -> None:
+    mocker.patch("dimos.stream.audio.node_output.sd", None)
+    mocker.patch(
+        "dimos.stream.audio.node_output._sounddevice_error",
+        OSError("PortAudio library not found"),
+    )
+    warning = mocker.patch("dimos.stream.audio.node_output.logger").warning
+
+    sound_device.consume_audio(rx.empty())
+
+    assert sound_device._stream is None
+    assert not sound_device._running.is_set()
+    assert sound_device._subscription is not None
+    warning.assert_called_once()
+    (message,), _ = warning.call_args
+    assert "sounddevice is unavailable: PortAudio library not found" in message
