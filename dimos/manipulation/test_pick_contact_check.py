@@ -49,6 +49,12 @@ def gripper(module: PickAndPlaceModule) -> MagicMock:
     module.config.robot = MagicMock()
     model = MagicMock()
     model.keep_clear.side_effect = lambda *args: GraspContactChecker.keep_clear(model, *args)
+    # keep_clear loads the obstacles once, then checks; both are sent to the mocked check.
+    model._canonicalize_roll.side_effect = lambda candidates, seed: list(candidates)
+    model._load_obstacles.side_effect = lambda *args: args
+    model._check_loaded.side_effect = lambda poses, frame, surface, seed, **_: model.check(
+        poses, surface[0], surface[1], frame, surface[3], surface[4], seed
+    )
     module._contact_checkers["arm/tool"] = model
     state: Any = module._manipulation.get_state.return_value
     state.groups["arm/tool"].joints = JointState(name=["j1", "j2"], position=[0.1, 0.2])

@@ -79,6 +79,7 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
         camera_info: CameraInfo,
         world_to_optical_transform: Transform,
         filters: list[PointCloudFilter] | None = None,
+        depth_scale: float = 0.001,
     ) -> ImageDetections3DPC:
         """Unproject every detection's depth pixels into 3D, dropping empty results."""
         detections_3d = [
@@ -91,6 +92,7 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
                     camera_info,
                     world_to_optical_transform,
                     filters,
+                    depth_scale=depth_scale,
                 )
             )
             is not None

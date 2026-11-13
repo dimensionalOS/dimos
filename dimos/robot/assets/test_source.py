@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from copy import deepcopy
+from dataclasses import is_dataclass
 import os
 from pathlib import Path
 
 import pytest
 
+from dimos.core.coordination.blueprint_config.values import plain
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.git_cache import GitAssetCache
 from dimos.robot.assets.source import RobotDescriptionPath, RobotDescriptionSource
@@ -136,4 +139,21 @@ def test_lazy_path_survives_the_round_trip_without_checkout(
 
     assert isinstance(restored, RobotDescriptionPath)
     assert restored.suffix == ".urdf"
+    assert git_cache.resolve_calls == []
+
+
+def test_lazy_path_survives_copy_and_plain_without_checkout(
+    robot_source: tuple[RobotDescriptionSource, RecordingGitAssetCache],
+) -> None:
+    source, git_cache = robot_source
+    model_path = source / "robots" / "testbot" / "model.urdf"
+
+    assert not is_dataclass(model_path)
+    shallow = copy.copy(model_path)
+    deep = copy.deepcopy(model_path)
+    plained = plain({"urdf": model_path})
+
+    assert isinstance(shallow, RobotDescriptionPath)
+    assert isinstance(deep, RobotDescriptionPath)
+    assert isinstance(plained["urdf"], RobotDescriptionPath)
     assert git_cache.resolve_calls == []

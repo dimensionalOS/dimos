@@ -37,6 +37,7 @@ class GripperConfig(BaseConfig):
     pad_links: tuple[str, ...] = Field(min_length=1)
     finger_joints: dict[str, tuple[float, float]] = Field(default_factory=dict)
     closing_steps: int = Field(default=4, ge=0)
+    approach_axis: tuple[float, float, float] = (0.0, 0.0, 1.0)
 
     def joint_positions(self) -> list[dict[str, float]]:
         """Finger joint positions at the open pose, then at each closing step, last fully closed."""

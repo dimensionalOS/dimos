@@ -127,6 +127,16 @@ class _JointPositionLimits:
     upper: float
 
 
+@dataclass(frozen=True)
+class _PrismaticJointSpec:
+    name: str
+    axis: tuple[float, float, float]
+    lower: float
+    upper: float
+    velocity: float = 1.0
+    effort: float = 10.0
+
+
 _PLANAR_BASE_CONFIG = ConfigDict(extra="forbid", validate_default=True)
 _NonEmptyString = Annotated[str, Field(min_length=1)]
 _PositiveFiniteFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
@@ -188,6 +198,7 @@ class RobotModel:
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame | _AttachedModel, ...] = ()
     _fixed_joints: tuple[str, ...] = ()
+    _prismatic_joints: tuple[_PrismaticJointSpec, ...] = ()
     _renamed_joints: tuple[tuple[str, str], ...] = ()
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
     _joint_velocity_limits: tuple[tuple[str, float], ...] = ()
@@ -346,6 +357,29 @@ class RobotModel:
             raise ValueError("At least one joint must be fixed")
         return replace(self, _fixed_joints=(*self._fixed_joints, *names))
 
+    def with_prismatic_joint(
+        self,
+        name: str,
+        *,
+        axis: tuple[float, float, float] = (0.0, 1.0, 0.0),
+        lower: float,
+        upper: float,
+        velocity: float = 1.0,
+        effort: float = 10.0,
+    ) -> RobotModel:
+        """Return a model with a fixed URDF joint promoted to a prismatic joint."""
+        if lower > upper:
+            raise ValueError(f"Joint position limits are inverted: {lower} > {upper}")
+        spec = _PrismaticJointSpec(
+            name=name,
+            axis=axis,
+            lower=lower,
+            upper=upper,
+            velocity=velocity,
+            effort=effort,
+        )
+        return replace(self, _prismatic_joints=(*self._prismatic_joints, spec))
+
     def with_renamed_joints(self, names: Mapping[str, str]) -> RobotModel:
         """Return a model view whose joints use the supplied canonical names."""
         if not names:
@@ -502,6 +536,8 @@ class RobotModel:
             xml = _add_joints(xml, self._added_joints)
         if self._fixed_joints:
             xml = _set_joints_fixed(xml, self._fixed_joints)
+        if self._prismatic_joints:
+            xml = _set_joints_prismatic(xml, self._prismatic_joints)
         if self._mimic_joints:
             xml = _set_mimic_joints(xml, self._mimic_joints)
         if self._joint_position_limits:
@@ -822,6 +858,28 @@ def _set_joints_fixed(xml: str, names: tuple[str, ...]) -> str:
             if element.tag in movable_elements:
                 joint.remove(element)
 
+    return ET.tostring(root, encoding="unicode")
+
+
+def _set_joints_prismatic(xml: str, specs: tuple[_PrismaticJointSpec, ...]) -> str:
+    root = ET.fromstring(xml)
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    for spec in specs:
+        joint = joints.get(spec.name)
+        if joint is None:
+            raise ValueError(f"Joint not found: {spec.name}")
+        joint.set("type", "prismatic")
+        axis = joint.find("axis")
+        if axis is None:
+            axis = ET.SubElement(joint, "axis")
+        axis.set("xyz", _vector_text(spec.axis))
+        limit = joint.find("limit")
+        if limit is None:
+            limit = ET.SubElement(joint, "limit")
+        limit.set("lower", str(spec.lower))
+        limit.set("upper", str(spec.upper))
+        limit.set("velocity", str(spec.velocity))
+        limit.set("effort", str(spec.effort))
     return ET.tostring(root, encoding="unicode")
 
 

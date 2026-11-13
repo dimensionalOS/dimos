@@ -26,6 +26,7 @@ import math
 from pathlib import Path
 import random
 import threading
+from typing import Any
 
 import numpy as np
 import pytest
@@ -686,3 +687,148 @@ def test_thin_mask_depth_lift() -> None:
     lifted = Detection3DPC.from_depth(det_pliers, depth, info, Transform.identity())
     assert lifted is not None
     assert len(lifted.pointcloud) >= 300
+
+
+def test_module_localize_allocates_one_trace_per_query(desk: Desk) -> None:
+    from dimos.memory.store.memory import MemoryStore
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.perception.localize.module import PerceptionLocalize
+    from dimos.perception.localize.rig import Rig
+    from dimos.protocol.tf.tf import MultiTBuffer
+
+    module = PerceptionLocalize()
+    module._memento = Memento()
+    store = MemoryStore()
+    module._color_feed = store.stream("color_feed", Image)
+    module.index = store.stream("color_image_embedded", Image)
+    img = Image.from_numpy(
+        np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB, frame_id="cam", ts=10.0
+    )
+    module.index.append(img, ts=10.0)
+    module.rig = Rig(cameras={}, tf=MultiTBuffer(buffer_size=math.inf), world_frame="world")
+
+    captured_traces: list[LocalizeTrace] = []
+
+    class FakeDetector:
+        def localize(self, queries: list[str], **kwargs: object) -> list[list[Localization]]:
+            traces = kwargs["traces"]
+            assert isinstance(traces, list)
+            assert len(traces) == len(queries)
+            captured_traces.extend(traces)
+            return answer_window(
+                queries,
+                memento=module._memento,
+                key=memory_key(XARM_PARAMS),
+                window=(0.0, 100.0),
+                head=desk.head,
+                read=desk.read,
+                params=XARM_PARAMS,
+                world_frame="world",
+                traces=list(traces),
+            )
+
+    module.detector = FakeDetector()  # type: ignore[assignment]
+    published: list[Any] = []
+    module.detections = type("Port", (), {"publish": lambda self, msg: published.append(msg)})()  # type: ignore[assignment]
+    module.segmented_image = type("Port", (), {"publish": lambda self, msg: None})()  # type: ignore[assignment]
+    module.detected_pointcloud = type("Port", (), {"publish": lambda self, msg: None})()  # type: ignore[assignment]
+
+    queries = ["book", "pen", "red marker"]
+    results, (_, _, _, _, count) = module._localize(queries, 0.0, 100.0, None)
+    assert len(captured_traces) == 3
+    assert len(results) == 3
+    assert published[0].detections_length >= 3
+    assert count == 1
+    store.stop()
+    module._close_module()
+
+
+def test_d405_depth_scale_lifts_close_range_marker() -> None:
+    from dataclasses import replace
+
+    from dimos.memory.store.memory import MemoryStore
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+    from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
+    from dimos.perception.localize.localize import _lift
+    from dimos.perception.localize.rig import Rig, RigCamera
+    from dimos.protocol.tf.tf import MultiTBuffer
+
+    # Simulate RealSense D405 at 30 cm above a 14 cm black marker (raw uint16 = 3000 -> 0.30 m at 0.1 mm units).
+    img = Image.from_numpy(
+        np.zeros((480, 848, 3), dtype=np.uint8),
+        format=ImageFormat.RGB,
+        frame_id="camera_color_optical_frame",
+        ts=1.0,
+    )
+    marker_mask = np.zeros((480, 848), dtype=np.uint8)
+    marker_mask[230:250, 320:520] = 255  # ~200 px wide at fx=425, z=0.30 m -> ~0.14 m long
+    det_marker = Detection2DSeg(
+        bbox=(320.0, 230.0, 520.0, 250.0),
+        track_id=0,
+        class_id=0,
+        confidence=0.77,
+        name="black marker",
+        ts=1.0,
+        image=img,
+        mask=marker_mask,
+    )
+    dets_2d = ImageDetections2D(image=img, detections=[det_marker])
+
+    depth = Image.from_numpy(
+        np.full((480, 848), 3000, dtype=np.uint16),
+        format=ImageFormat.DEPTH16,
+        frame_id="camera_color_optical_frame",
+        ts=1.0,
+    )
+    info = CameraInfo(
+        height=480,
+        width=848,
+        frame_id="camera_color_optical_frame",
+        K=[425.0, 0.0, 424.0, 0.0, 425.0, 240.0, 0.0, 0.0, 1.0],
+    )
+
+    store = MemoryStore()
+    color_stream = store.stream("color", Image)
+    depth_stream = store.stream("depth", Image)
+    color_stream.append(img, ts=1.0)
+    depth_stream.append(depth, ts=1.0)
+    tf = MultiTBuffer(buffer_size=math.inf)
+    tf.receive_transform(
+        Transform(
+            frame_id="world",
+            child_frame_id="camera_color_optical_frame",
+            ts=1.0,
+        )
+    )
+
+    # With default depth_scale=0.001, 3000 uint16 is misread as 3.0 m -> 1.4 m extent > 0.60 m -> dropped!
+    rig_wrong_scale = Rig(
+        cameras={
+            "camera_color_optical_frame": RigCamera(
+                info=info, color=color_stream, depth=depth_stream, depth_scale=0.001
+            )
+        },
+        tf=tf,
+        world_frame="world",
+    )
+    assert _lift(dets_2d, rig_wrong_scale, XARM_PARAMS, plane=None) == []
+
+    # With D405 depth_scale=0.0001 and min_camera_range_m=0.07, marker lifts at 0.30 m with ~0.14 m extent.
+    rig_d405 = Rig(
+        cameras={
+            "camera_color_optical_frame": RigCamera(
+                info=info, color=color_stream, depth=depth_stream, depth_scale=0.0001
+            )
+        },
+        tf=tf,
+        world_frame="world",
+    )
+    d405_params = replace(XARM_PARAMS, fuse_voxel_m=0.005, min_camera_range_m=0.07, min_views=1)
+    lifted = _lift(dets_2d, rig_d405, d405_params, plane=None)
+    assert len(lifted) == 1
+    pts = np.asarray(lifted[0].pointcloud.pointcloud.points)
+    assert np.isclose(np.median(pts[:, 2]), 0.30, atol=0.01)
+    store.stop()

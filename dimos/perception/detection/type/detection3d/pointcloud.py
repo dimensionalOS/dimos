@@ -153,11 +153,13 @@ class Detection3DPC(Detection3D):
         max_depth: float = 10.0,
         depth_gap: float = 0.1,
         mask_scale: float = 0.9,
+        depth_scale: float = 0.001,
     ) -> Detection3DPC | None:
         """Create a Detection3D by unprojecting the detection's depth pixels.
 
         ``depth`` must be aligned to the detection's image (same intrinsics and
-        size). uint16 depth is taken as millimeters, float as meters. Only the
+        size). uint16 depth is scaled by ``depth_scale`` (0.001 m by default,
+        0.0001 m on RealSense D405), float is taken as meters. Only the
         depth cluster containing the median survives (``depth_gap`` split) —
         mask/bbox edges bleed into the background across a depth jump. The
         segmentation mask is eroded to ``mask_scale`` of its size first, since
@@ -170,7 +172,7 @@ class Detection3DPC(Detection3D):
 
         depth_m = np.asarray(depth.data, dtype=np.float32)
         if depth.data.dtype == np.uint16:
-            depth_m *= 0.001
+            depth_m *= depth_scale
 
         height, width = depth_m.shape[:2]
         seg_mask = getattr(det, "mask", None)

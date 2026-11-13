@@ -184,6 +184,18 @@ def _lift(
                 and float(np.quantile(heights, 0.95)) < params.surface_patch_max_rise_m
             ):
                 continue
+            if params.support_clearance_m > 0.0:
+                # Mask pixels on the object's edges and through its holes read the support's depth.
+                above = heights > params.support_clearance_m
+                if int(above.sum()) < params.min_points:
+                    continue
+                cloud = det3d.pointcloud
+                det3d = replace(
+                    det3d,
+                    pointcloud=PointCloud2.from_numpy(
+                        points[above], frame_id=cloud.frame_id, timestamp=cloud.ts
+                    ),
+                )
         valid.append(det3d)
     return valid
 

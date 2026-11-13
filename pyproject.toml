@@ -776,6 +776,8 @@ module = [
     "pink",
     "pink.*",
     "piper_sdk.*",
+    "pyorbbecsdk",
+    "pyorbbecsdk.*",
     "plum.*",
     "portal",
     "psutil",

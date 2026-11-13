@@ -33,15 +33,17 @@ wide reaches between 0 and one margin past its points. The object's points
 also make a second octree of 1 mm cells, which a link touches only when it
 reaches a point.
 
-When no grasp passes where it is, ``keep_clear`` can slide every grasp along its
-approach and keep those that pass at the nearest depth where any does.
+When fewer than 5 grasps pass where they are, ``keep_clear`` can slide each
+rejected grasp along its approach and keep it at the nearest depth where it passes.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
+from itertools import combinations
 from typing import TYPE_CHECKING
+import xml.etree.ElementTree as ET
 
 import numpy as np
 from numpy.typing import NDArray
@@ -51,14 +53,14 @@ from dimos.manipulation.planning.factory import WorldBackend, create_kinematics,
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID
-from dimos.manipulation.planning.spec.validation import prepare_robot_model
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prepare_robot_model
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.utils.transform_utils import pose_to_matrix
+from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -73,6 +75,7 @@ _GRIPPER_SELF_RADIUS = 0.15
 # Scene points this close (metres) to the object's points are the object's own
 # edge left outside its mask.
 _TARGET_EDGE = 0.01
+_TARGET_RIM = 0.02
 # IK steps per grasp. A reachable grasp nearly always gets there in far fewer;
 # one out of reach takes them all, so this sets the cost of a rejected grasp.
 _IK_ITERATIONS = 80
@@ -108,7 +111,7 @@ class GraspContactChecker:
         fingers = [name for name in self._gripper.finger_joints if name not in robot.joint_names]
         model = robot.model_copy(update={"joint_names": [*robot.joint_names, *fingers]})
         self._world = create_world(backend=world_backend)
-        self._world.load_model(prepare_robot_model(model))
+        self._world.load_model(_without_self_collisions(prepare_robot_model(model)))
         self._world.finalize()
         self._kinematics = create_kinematics(
             config=PinkKinematicsConfig(max_iterations=_IK_ITERATIONS)
@@ -150,32 +153,128 @@ class GraspContactChecker:
                 of a scene point.
             seed: The robot's joint positions now (radians, metres for a sliding
                 joint), where the IK starts; joints left out start at home.
-            depth_search: When no grasp passes where it is, slide every grasp up
-                to this far (metres) along its approach, deeper and back, 5 mm
-                at a time, and return those that pass at the nearest depth
-                where any does. Each depth tried is one more full check. 0
-                checks each grasp only where it is.
+            depth_search: When fewer than 5 grasps pass where they are, slide
+                each rejected grasp up to this far (metres) along its approach,
+                back and deeper, 5 mm at a time, and keep it at the nearest
+                depth where it passes, at half its score less the distance.
+                The result is then ordered by score. 0 checks each grasp only
+                where it is.
         """
         points = _xyz(target)
         obstacles = scene_obstacles(scene, target, tips)
+        approach = self._gripper.approach_axis
+        base_candidates = self._canonicalize_roll(candidates.candidates, seed)
+        surface = self._load_obstacles(
+            points,
+            obstacles,
+            candidates.header.frame_id,
+            contact_margin,
+            obstacle_margin,
+        )
+        solved_arms: dict[int, dict[str, float]] = {}
+        clear = self._check_loaded(
+            [candidate.pose for candidate in base_candidates],
+            candidates.header.frame_id,
+            surface,
+            seed,
+            solved_arms=solved_arms,
+        )
+        resolved: dict[int, GraspCandidate] = {
+            i: c for i, (c, ok) in enumerate(zip(base_candidates, clear, strict=True)) if ok
+        }
+        remaining = [i for i, ok in enumerate(clear) if not ok and i in solved_arms]
         steps = round(depth_search / _DEPTH_STEP)
-        # Nearest first: 0, +1, -1, +2, -2 ... steps; positive is deeper.
-        shifts = [0.0, *(sign * k * _DEPTH_STEP for k in range(1, steps + 1) for sign in (1, -1))]
-        for shift in shifts:
-            moved = [_slid(candidate, shift) for candidate in candidates.candidates]
-            clear = self.check(
-                [candidate.pose for candidate in moved],
+        if steps > 0 and remaining and len(resolved) < 5:
+            rim_obstacles = scene_obstacles(scene, target, tips, edge=_TARGET_RIM)
+            surface = self._load_obstacles(
                 points,
-                obstacles,
+                rim_obstacles,
                 candidates.header.frame_id,
                 contact_margin,
                 obstacle_margin,
-                seed,
             )
-            if any(clear):
-                break
-        kept = [c for c, ok in zip(moved, clear, strict=True) if ok]
-        return GraspCandidateArray(candidates.header, kept)
+            shifts = [
+                0.0,
+                *(sign * k * _DEPTH_STEP for k in range(1, steps + 1) for sign in (-1, 1)),
+            ]
+            start = {
+                **self._rest,
+                **({} if seed is None else dict(zip(seed.name, seed.position, strict=True))),
+            }
+            for shift in shifts:
+                if not remaining:
+                    break
+                moved = [
+                    _slid(
+                        base_candidates[i],
+                        shift,
+                        approach=approach,
+                        score=(
+                            base_candidates[i].score
+                            if shift == 0.0
+                            else 0.5 * base_candidates[i].score - abs(shift)
+                        ),
+                    )
+                    for i in remaining
+                ]
+                ok_list = self._check_loaded(
+                    [candidate.pose for candidate in moved],
+                    candidates.header.frame_id,
+                    surface,
+                    seed,
+                    per_grasp_seeds=[{**start, **solved_arms[i]} for i in remaining],
+                )
+                next_remaining: list[int] = []
+                for idx, cand, ok in zip(remaining, moved, ok_list, strict=True):
+                    if ok:
+                        resolved[idx] = cand
+                    else:
+                        next_remaining.append(idx)
+                remaining = next_remaining
+        ordered = (
+            sorted(resolved.items(), key=lambda item: -item[1].score)
+            if steps > 0
+            else sorted(resolved.items())
+        )
+        return GraspCandidateArray(candidates.header, [c for _, c in ordered])
+
+    def _canonicalize_roll(
+        self,
+        candidates: Sequence[GraspCandidate],
+        seed: JointState | None,
+    ) -> list[GraspCandidate]:
+        """For a 2-pad parallel-jaw gripper, pick the 180-deg approach-axis roll closer to ``seed``."""
+        if len(self._gripper.pad_links) != 2 or not candidates:
+            return list(candidates)
+        start = {
+            **self._rest,
+            **({} if seed is None else dict(zip(seed.name, seed.position, strict=True))),
+        }
+        try:
+            seed_state = self._state(start)
+            with self._world.scratch_context() as ctx:
+                self._world.set_joint_state(ctx, seed_state)
+                seed_tip = self._world.get_group_ee_pose(ctx, self._group.id)
+            r_seed = pose_to_matrix(Pose(seed_tip.position, seed_tip.orientation))[:3, :3]
+        except Exception:
+            return list(candidates)
+        axis = np.asarray(self._gripper.approach_axis, dtype=np.float64)
+        norm = float(np.linalg.norm(axis))
+        if norm <= 1e-9:
+            return list(candidates)
+        axis = axis / norm
+        r_flip = 2.0 * np.outer(axis, axis) - np.eye(3)
+        out: list[GraspCandidate] = []
+        for cand in candidates:
+            mat = pose_to_matrix(cand.pose)
+            r = mat[:3, :3]
+            if float(np.trace(r_seed.T @ (r @ r_flip))) > float(np.trace(r_seed.T @ r)) + 1e-6:
+                mat = mat.copy()
+                mat[:3, :3] = r @ r_flip
+                out.append(GraspCandidate(matrix_to_pose(mat), cand.score))
+            else:
+                out.append(cand)
+        return out
 
     def check(
         self,
@@ -201,6 +300,17 @@ class GraspContactChecker:
             seed: The robot's joint positions now (radians, metres for a sliding
                 joint), where the IK starts; joints left out start at home.
         """
+        surface = self._load_obstacles(target, scene, frame_id, contact_margin, obstacle_margin)
+        return self._check_loaded(grasps, frame_id, surface, seed)
+
+    def _load_obstacles(
+        self,
+        target: NDArray[np.float64],
+        scene: NDArray[np.float64],
+        frame_id: str,
+        contact_margin: float,
+        obstacle_margin: float,
+    ) -> Obstacle | None:
         world = self._world
         world.clear_obstacles()
         pads = self._gripper.pad_links
@@ -209,6 +319,22 @@ class GraspContactChecker:
         for obstacle in (near, surface, _octree(_SCENE, scene, obstacle_margin, frame_id)):
             if obstacle is not None:
                 world.add_obstacle(obstacle)
+        return surface
+
+    def _check_loaded(
+        self,
+        grasps: Sequence[Pose],
+        frame_id: str,
+        surface: Obstacle | None,
+        seed: JointState | None = None,
+        *,
+        solved_arms: dict[int, dict[str, float]] | None = None,
+        per_grasp_seeds: Sequence[dict[str, float]] | None = None,
+    ) -> list[bool]:
+        world = self._world
+        pads = self._gripper.pad_links
+        if surface is not None:
+            world.update_obstacle(replace(surface, touch_links=()))
         start = {
             **self._rest,
             **({} if seed is None else dict(zip(seed.name, seed.position, strict=True))),
@@ -216,12 +342,15 @@ class GraspContactChecker:
         clear: list[bool] = []
         # The first closing step where anything touches anything, by grasp.
         first_touch: dict[int, JointState] = {}
+        steps = self._gripper.joint_positions()
         for index, grasp in enumerate(grasps):
-            arm = self._solve(grasp, frame_id, start)
+            grasp_seed = start if per_grasp_seeds is None else per_grasp_seeds[index]
+            arm = self._solve(grasp, frame_id, grasp_seed)
             if arm is None:
                 clear.append(False)
                 continue
-            steps = self._gripper.joint_positions()
+            if solved_arms is not None:
+                solved_arms[index] = arm
             poses = [self._state({**start, **arm, **fingers}) for fingers in steps]
             clear.append(world.check_config_collision_free(poses[0]))
             if clear[-1]:
@@ -268,8 +397,29 @@ class GraspContactChecker:
         )
 
 
+def _without_self_collisions(prepared: PreparedRobotModel) -> PreparedRobotModel:
+    """The model with every pair of its own links left out of collision checks.
+
+    The check only asks whether the robot touches the object or the scene; the
+    motion planner checks the robot against itself before any move.
+    """
+    links = [
+        str(link.get("name"))
+        for link in ET.fromstring(prepared.description.xml).iter("link")
+        if link.find("collision") is not None
+    ]
+    pairs = [*prepared.config.collision_exclusion_pairs, *combinations(links, 2)]
+    return replace(
+        prepared,
+        config=prepared.config.model_copy(update={"collision_exclusion_pairs": pairs}),
+    )
+
+
 def scene_obstacles(
-    scene: PointCloud2, target: PointCloud2, tips: Sequence[Vector3]
+    scene: PointCloud2,
+    target: PointCloud2,
+    tips: Sequence[Vector3],
+    edge: float = _TARGET_EDGE,
 ) -> NDArray[np.float64]:
     """The scene points around an object that a gripper grasping it must keep clear of.
 
@@ -293,17 +443,25 @@ def scene_obstacles(
     points = points[keep]
     if len(own) and len(points):
         distance, _ = cKDTree(own).query(points)
-        points = points[distance > _TARGET_EDGE]
+        base_z = max(0.006, float(np.quantile(own[:, 2], 0.05)) + 0.006)
+        points = points[(distance > edge) | (points[:, 2] <= base_z)]
     return points
 
 
-def _slid(candidate: GraspCandidate, shift: float) -> GraspCandidate:
-    """The grasp moved ``shift`` metres along its tool tip's z axis (its approach)."""
+def _slid(
+    candidate: GraspCandidate,
+    shift: float,
+    approach: tuple[float, float, float] = (0.0, 0.0, 1.0),
+    score: float | None = None,
+) -> GraspCandidate:
+    """The grasp moved ``shift`` metres along its tool tip's ``approach`` vector."""
+    out_score = candidate.score if score is None else score
     if shift == 0.0:
-        return candidate
+        return candidate if score is None else GraspCandidate(candidate.pose, out_score)
     pose = candidate.pose
-    position = pose.position.to_numpy() + shift * pose_to_matrix(pose)[:3, 2]
-    return GraspCandidate(Pose(Vector3(*position), pose.orientation), candidate.score)
+    direction = pose_to_matrix(pose)[:3, :3] @ np.asarray(approach, dtype=np.float64)
+    position = pose.position.to_numpy() + shift * direction
+    return GraspCandidate(Pose(Vector3(*position), pose.orientation), out_score)
 
 
 def _octree(

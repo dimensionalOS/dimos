@@ -393,6 +393,11 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         command_q = self._clamp_streaming_configuration(
             robot_context, raw_command_q, command_limit_margin
         )
+        clamped_measured_q = self._clamp_streaming_configuration(
+            robot_context, measured_q, command_limit_margin
+        )
+        previous_positions = self._q_to_dimos_positions(robot_context, command_q)
+        measured_positions = self._q_to_dimos_positions(robot_context, clamped_measured_q)
         configuration = pink.Configuration(
             robot_context.model,
             robot_context.data,
@@ -727,6 +732,7 @@ class PoseTargetIKTask(BaseControlTask):
         # built-in subtype. A failed streaming tick must not stop the coordinator.
         except Exception as exc:
             logger.warning("Pink control step failed", task=self._name, error=str(exc))
+            self._reset_command_state()
             return None
         if result is None:
             return None

@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from dimos.core.core import rpc
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -31,6 +32,8 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     # scene_cloud: cell size of the merged cloud, and the farthest depth it keeps, metres
     scene_voxel_m: float = 0.01
     scene_depth_trunc_m: float = 2.0
+    # scene_cloud(exclude=...) drops scene points within this distance (m) of that object's cloud
+    scene_exclude_m: float = 0.01
 
 
 class ManipulationLocalize(PerceptionLocalize):
@@ -49,6 +52,9 @@ class ManipulationLocalize(PerceptionLocalize):
         self._objects: dict[str, tuple[str, Localization]] = {}
         # label, position and the newest frame time of each forgotten object
         self._gone: list[tuple[str, np.ndarray, float]] = []
+        # the window of the last answer, and its merged scene cloud once asked for
+        self._window: tuple[float, float] | None = None
+        self._window_scene: PointCloud2 | None = None
 
     @rpc
     def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
@@ -108,13 +114,21 @@ class ManipulationLocalize(PerceptionLocalize):
             self._gone.append((label, np.asarray(hit.position_world_xyz), head))
 
     @rpc
-    def scene_cloud(self, start: float = -5.0, duration: float = 5.0) -> PointCloud2 | None:
+    def scene_cloud(
+        self, start: float = -5.0, duration: float = 5.0, exclude: str | None = None
+    ) -> PointCloud2 | None:
         """Every embedded depth view in a window of memory, merged into one world-frame cloud.
 
         ``start`` and ``duration`` name the window as in ``localize``. The
         cloud is ``scene_voxel_m`` cells, cut at ``scene_depth_trunc_m``.
         None when nothing in the window has depth.
+
+        ``exclude`` is the id of a localized object: the window is then the one
+        of the last answer, and the object's own points are left out, with a
+        floor patch under it.
         """
+        if exclude is not None:
+            return self._scene_without(exclude)
         if not self._ready.is_set() or self.config.geometry != "depth":
             return None
         first, head = self.index.get_time_range()
@@ -141,6 +155,8 @@ class ManipulationLocalize(PerceptionLocalize):
         overrides: dict[str, Any] | None,
     ) -> tuple[list[list[Localization]], tuple[float, float, float, float, int]]:
         results, window = super()._localize(queries, start, duration, overrides)
+        self._window = (window[0], window[1])
+        self._window_scene = None
         results = [
             [hit for hit in hits if not self._was_taken(query, hit)]
             for query, hits in zip(queries, results, strict=True)
@@ -153,6 +169,66 @@ class ManipulationLocalize(PerceptionLocalize):
             for hit in hits
         }
         return results, window
+
+    def _scene_without(self, object_id: str) -> PointCloud2 | None:
+        """The last answer's window merged into one cloud, without this object's own points.
+
+        Points within ``scene_exclude_m`` of the object's cloud are dropped,
+        except those within 2 mm of the support plane. A patch of that plane,
+        2 mm below it, is added under the object's footprint grown by 4 cm.
+        """
+        if not self._ready.is_set() or self._window is None:
+            return None
+        voxel = self.config.scene_voxel_m
+        if self._window_scene is None:
+            self._window_scene = self._merge_window(*self._window)
+        merged = self._window_scene
+        entry = self._objects.get(object_id)
+        if merged is None or entry is None or self.config.scene_exclude_m <= 0:
+            return merged
+        own = entry[1].point_cloud.points_f32()
+        points = merged.points_f32()
+        if not len(own) or not len(points):
+            return merged
+        distance, _ = cKDTree(own).query(points)
+        plane = next(iter(self.rig.plane_cache.values()), None)
+        if plane is None:
+            points = points[distance > self.config.scene_exclude_m]
+        else:
+            heights = plane.height_above(points)
+            points = points[(distance > self.config.scene_exclude_m) | (heights <= 0.002)]
+            low_xy = own[:, :2].min(axis=0) - 0.04
+            high_xy = own[:, :2].max(axis=0) + 0.04
+            gx, gy = np.meshgrid(
+                np.arange(low_xy[0], high_xy[0], voxel),
+                np.arange(low_xy[1], high_xy[1], voxel),
+            )
+            a, b, c, d = plane.coefficients
+            gz = -(a * gx + b * gy + d + 0.002) / c
+            patch = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1).astype(np.float32)
+            points = np.vstack([points, patch])
+        return PointCloud2.from_numpy(points, frame_id=merged.frame_id, timestamp=merged.ts)
+
+    def _merge_window(self, lo: float, hi: float) -> PointCloud2 | None:
+        """The depth frames of a window as one world-frame cloud."""
+        voxel = self.config.scene_voxel_m
+        parts: list[np.ndarray] = []
+        newest = 0.0
+        single_frame = next(iter(self.rig.cameras)) if len(self.rig.cameras) == 1 else None
+        for obs in self._geometry_memory.time_range(lo, hi):
+            frame_id = single_frame or str(getattr(obs.data, "frame_id", ""))
+            cloud = self.rig.backdrop(obs.ts, frame_id, self.config.scene_depth_trunc_m)
+            if cloud is None:
+                continue
+            pts = cloud.voxel_downsample(voxel).points_f32()
+            if len(pts):
+                parts.append(pts)
+                newest = max(newest, obs.ts)
+        if not parts:
+            return None
+        return PointCloud2.from_numpy(
+            np.vstack(parts), frame_id=self.rig.world_frame, timestamp=newest
+        ).voxel_downsample(voxel)
 
     def _was_taken(self, label: str, hit: Localization) -> bool:
         """Whether this sighting is of a forgotten object, at its old place, from before."""

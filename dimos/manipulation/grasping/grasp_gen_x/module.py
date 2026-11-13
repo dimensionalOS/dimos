@@ -72,6 +72,9 @@ class GraspGenXConfig(IsolatedPythonModuleConfig):
     num_samples: PositiveCount = 500
     # How many grasps a call returns at most, best score first.
     max_candidates: PositiveCount = 100
+    # "graspmoe" adds top-down grasps over the cloud's bounding box to the diffusion samples,
+    # all scored by the discriminator (GraspGenX's demo default).
+    planner: Literal["diffusion", "graspmoe"] = "diffusion"
 
     # Relational matrix properties cannot be expressed through scalar Field constraints.
     @field_validator("grasp_frame_to_tcp")

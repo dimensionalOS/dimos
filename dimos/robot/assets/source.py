@@ -123,6 +123,7 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
         # The CBOR codec is not listed: it looks cbor_encode up on the class.
         if name.startswith("_robot_description_") or name in {
             "_resolve",
+            "__class__",
             "__reduce__",
             "__reduce_ex__",
             "__deepcopy__",

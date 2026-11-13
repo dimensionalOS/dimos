@@ -119,6 +119,7 @@ class RigCamera:
     color: Any  # color_image stream
     depth: Any  # aligned depth stream; None lifts through the rig's lidar
     hz: float | None = None
+    depth_scale: float = 0.001
 
 
 @dataclass
@@ -310,7 +311,9 @@ class Rig:
             depth = self.depth_at(detections.ts, frame)
             if depth is None:
                 return None
-            return ImageDetections3DPC.from_depth(detections, depth, camera.info, transform)
+            return ImageDetections3DPC.from_depth(
+                detections, depth, camera.info, transform, depth_scale=camera.depth_scale
+            )
         cloud = self.lidar_map()
         if cloud is None:
             return None
@@ -321,18 +324,23 @@ class Rig:
         the lidar map for a camera without depth."""
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-        if self.cameras[frame].depth is None:
+        camera = self.cameras[frame]
+        if camera.depth is None:
             return self.lidar_map()
         depth = self.depth_at(ts, frame)
         if depth is None:
             return None
         try:
-            color = self.cameras[frame].color.at(ts, 0.1).first().load()
+            color = camera.color.at(ts, 0.1).first().load()
         except LookupError:
             return None
         transform = self.world_to_optical(ts, frame)
         if transform is None:
             return None
         return PointCloud2.from_rgbd(
-            color, depth, self.cameras[frame].info, depth_scale=0.001, depth_trunc=depth_trunc
+            color,
+            depth,
+            camera.info,
+            depth_scale=camera.depth_scale,
+            depth_trunc=depth_trunc,
         ).transform(-transform)

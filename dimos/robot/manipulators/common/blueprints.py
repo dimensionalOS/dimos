@@ -96,6 +96,8 @@ def eef_twist_task(
     timeout: float = 0.3,
     max_joint_velocity_rad_s: float = 5.0,
     max_command_tracking_error_deg: float = 10.0,
+    feedback_limit_tolerance: float = 1e-3,
+    command_limit_margin: float = 1e-4,
     pink: PinkKinematicsConfig | None = None,
 ) -> TaskConfig:
     task_params: dict[str, Any] = {
@@ -104,6 +106,8 @@ def eef_twist_task(
         "timeout": timeout,
         "max_joint_velocity_rad_s": max_joint_velocity_rad_s,
         "max_command_tracking_error_deg": max_command_tracking_error_deg,
+        "feedback_limit_tolerance": feedback_limit_tolerance,
+        "command_limit_margin": command_limit_margin,
     }
     if pink is not None:
         task_params["pink"] = pink

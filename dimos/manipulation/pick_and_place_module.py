@@ -87,9 +87,12 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # the target's lowest point, so the surface it stands on stays in the scene.
     grasp_exclude_margin: float = Field(default=0.01, ge=0.0)
     grasp_exclude_floor: float = Field(default=0.005, ge=0.0)
-    # When no grasp passes the check where it is, slide the grasps up to this
-    # far (metres) along their approach and try the nearest depth where any
-    # passes. 0 is off.
+    # True takes the scene of the window that found the target, with the target's
+    # own points left out by localize, in place of the last 5 s and the box cut.
+    grasp_scene_from_answer: bool = False
+    # When fewer than 5 grasps pass the check where they are, slide each rejected
+    # grasp up to this far (metres) along its approach and keep it at the nearest
+    # depth where it passes. 0 is off.
     grasp_depth_search: float = Field(default=0.0, ge=0.0)
 
 
@@ -275,7 +278,9 @@ class PickAndPlaceModule(Module):
             )
         # A chosen grasp is checked where it is, never slid to another depth.
         depth_search = self.config.grasp_depth_search if grasp is None else 0.0
-        candidates, facts = self._drop_touching(pointcloud, candidates, group, depth_search)
+        candidates, facts = self._drop_touching(
+            pointcloud, candidates, group, depth_search, object_id
+        )
         facts["source"] = source
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
@@ -318,6 +323,7 @@ class PickAndPlaceModule(Module):
         candidates: GraspCandidateArray,
         group: PlanningGroupID,
         depth_search: float,
+        object_id: str | None = None,
     ) -> tuple[GraspCandidateArray, dict[str, Any]]:
         """Drop the grasps the arm cannot reach, that touch the target off the pads, or hit the scene.
 
@@ -336,8 +342,13 @@ class PickAndPlaceModule(Module):
         robot = self.config.robot
         if robot is None or robot.gripper is None or not candidates.candidates:
             return candidates, {}
+        from_answer = self.config.grasp_scene_from_answer and object_id is not None
         try:
-            scene = self._scene.scene_cloud()
+            scene = (
+                self._scene.scene_cloud(exclude=object_id)
+                if from_answer
+                else self._scene.scene_cloud()
+            )
         except Exception as exc:
             logger.warning("No scene point cloud; keeping every grasp", error=str(exc))
             return candidates, {"contact_check_skipped": f"{type(exc).__name__}: {exc}"}
@@ -345,9 +356,10 @@ class PickAndPlaceModule(Module):
             return candidates, {
                 "contact_check_skipped": "no scene point cloud in the grasps' frame"
             }
-        scene = _without(
-            scene, pointcloud, self.config.grasp_exclude_margin, self.config.grasp_exclude_floor
-        )
+        if not from_answer:
+            scene = _without(
+                scene, pointcloud, self.config.grasp_exclude_margin, self.config.grasp_exclude_floor
+            )
         states = self._manipulation.get_state().groups.values()
         tips = [s.end_effector_pose.position for s in states if s.end_effector_pose is not None]
         joints = {
@@ -400,7 +412,7 @@ class PickAndPlaceModule(Module):
                 position=candidate.pose.position,
                 orientation=candidate.pose.orientation,
             )
-            pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
+            pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset, self._approach_axis())
             blocked = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)
             if isinstance(blocked, PlanResult):
                 # The planner found no path to this candidate; the next one may
@@ -488,7 +500,7 @@ class PickAndPlaceModule(Module):
             position=Vector3(x, y, z),
             orientation=self._selected_grasp.orientation,
         )
-        preplace = self._offset_pose(place, self.config.pregrasp_offset)
+        preplace = self._offset_pose(place, self.config.pregrasp_offset, self._approach_axis())
         if blocked := self._move(preplace, group):
             return self._stopped(f"Move to the pre-place pose above {target}", blocked)
         if blocked := self._servo(preplace, place, group):
@@ -576,12 +588,25 @@ class PickAndPlaceModule(Module):
         source = "planner" if isinstance(result, PlanResult) else "execution"
         return SkillResult(f"{step} did not complete; {source} returned {_status(result)}")
 
+    def _approach_axis(self) -> tuple[float, float, float]:
+        robot = self.config.robot
+        if robot is None or robot.gripper is None:
+            return (0.0, 0.0, 1.0)
+        return robot.gripper.approach_axis
+
     @staticmethod
-    def _offset_pose(pose: PoseStamped, offset: float) -> PoseStamped:
+    def _offset_pose(
+        pose: PoseStamped, offset: float, approach: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    ) -> PoseStamped:
+        retreat = Vector3(
+            -offset * approach[0],
+            -offset * approach[1],
+            -offset * approach[2],
+        )
         return PoseStamped(
             ts=pose.ts,
             frame_id=pose.frame_id,
-            position=pose.position + pose.orientation.rotate_vector(Vector3(0.0, 0.0, -offset)),
+            position=pose.position + pose.orientation.rotate_vector(retreat),
             orientation=pose.orientation,
         )
 

@@ -41,8 +41,10 @@ import threading
 import time
 from typing import Any, Literal
 
+import cv2
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+import numpy as np
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
@@ -62,6 +64,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.localize.dandetect import DanDetector
+from dimos.perception.localize.localize import LocalizeTrace
 from dimos.perception.localize.memento import Memento
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
@@ -82,12 +85,27 @@ GEOMETRY_STREAM = "geometry_memory"
 COLOR_CODEC = "jpeg"
 GEOMETRY_CODEC = "lz4+lcm"
 LIDAR_TOLERANCE = 0.2  # s - an embedded frame to its lidar scan
+MASK_ALPHA = 0.45
+LABEL_COLORS: tuple[tuple[int, int, int], ...] = (
+    (31, 119, 180),
+    (255, 127, 14),
+    (44, 160, 44),
+    (214, 39, 40),
+    (148, 103, 189),
+    (140, 86, 75),
+    (227, 119, 194),
+    (188, 189, 34),
+    (23, 190, 207),
+    (127, 127, 127),
+)
 
 
 class PerceptionLocalizeConfig(ModuleConfig):
     world_frame: str = "world"
     # what lifts a detection: the aligned depth_image, or the lidar
     geometry: Literal["depth", "lidar"] = "depth"
+    # uint16 depth units in meters (0.001 m for D435/D455, 0.0001 m for D405)
+    depth_scale: float = 0.001
     # the camera rides a walking base: the index runs at WALK_EMBED_HZ
     mobile: bool = False
     horizon_s: float = 600.0
@@ -118,8 +136,27 @@ class PerceptionLocalize(Module):
     tf: In[TFMessage]
 
     detections: Out[Detection3DArray]
+    segmented_image: Out[Image]
+    detected_pointcloud: Out[PointCloud2]
 
     _thread: threading.Thread | None = None
+    detector: DanDetector | None = None
+
+    def _ensure_detector(self) -> DanDetector:
+        if self.detector is None:
+            stages = (self.config.embedder, self.config.detector, self.config.segmenter)
+            self._stage = f"loading {', '.join(stages)} weights"
+            logger.info(f"localize: {self._stage}")
+            self.detector = self.register_disposable(DanDetector(*stages))
+            self.detector.start()
+            if hasattr(self.detector.embedder, "_model"):
+                self.detector.embedder.embed_text("warmup")
+        return self.detector
+
+    @rpc
+    def build(self) -> None:
+        super().build()
+        self._ensure_detector()
 
     @rpc
     def start(self) -> None:
@@ -197,6 +234,7 @@ class PerceptionLocalize(Module):
             self._ready.clear()
             if self._thread.is_alive():
                 self._thread.join(timeout=5.0)
+        self.detector = None
         super().stop()
 
     def _pair_geometry(self, upstream: Iterator[Any]) -> Iterator[Any]:
@@ -212,11 +250,7 @@ class PerceptionLocalize(Module):
             yield obs
 
     def _warm(self) -> None:
-        stages = (self.config.embedder, self.config.detector, self.config.segmenter)
-        self._stage = f"loading {', '.join(stages)} weights"
-        logger.info(f"localize: {self._stage}")
-        self.detector = self.register_disposable(DanDetector(*stages))
-        self.detector.start()
+        detector = self._ensure_detector()
 
         self._stage = "waiting for camera_info"
         logger.info(f"localize: {self._stage}")
@@ -233,6 +267,7 @@ class PerceptionLocalize(Module):
                     color=self.index,
                     depth=depth,
                     hz=camera_hz(self._color_feed),
+                    depth_scale=self.config.depth_scale,
                 )
             },
             tf=self._tf_buffer,
@@ -241,7 +276,7 @@ class PerceptionLocalize(Module):
             mobile=self.config.mobile,
             embed_hz=self._embed_hz,
         )
-        self.detector.embed_live(self.rig, self._color_feed, self.index, embed_hz=self.rig.embed_hz)
+        detector.embed_live(self.rig, self._color_feed, self.index, embed_hz=self.rig.embed_hz)
         self.register_disposable(self.index.live().transform(self._pair_geometry).drain_thread())
 
         self._stage = "waiting for the first posed frame of the feed"
@@ -261,6 +296,17 @@ class PerceptionLocalize(Module):
         if self._ready.is_set():
             return f"ready: {self.index.count()} frames embedded, localize will answer"
         return f"not ready: {self._stage}"
+
+    @rpc
+    def index_span(self) -> tuple[float, float, int] | None:
+        """First stamp, newest stamp and count of embedded frames; None until ready."""
+        if not self._ready.is_set():
+            return None
+        count = self.index.count()
+        if count == 0:
+            return None
+        first, head = self.index.get_time_range()
+        return float(first), float(head), count
 
     @skill
     def localize(
@@ -327,6 +373,8 @@ class PerceptionLocalize(Module):
         rig = self.rig
         if rig.lidar is not None:
             rig = replace(rig, lidar=rig.lidar.time_range(lo, hi))
+        assert self.detector is not None
+        traces = [LocalizeTrace() for _ in queries]
         results = self.detector.localize(
             queries,
             index=index,
@@ -336,9 +384,94 @@ class PerceptionLocalize(Module):
             params=self.config.params,
             fields=overrides,
             memento=self._memento,
+            traces=traces,
         )
+        results = [
+            [h for h in hits if h.n_views >= 0.25 * max(x.n_views for x in hits)] if hits else []
+            for hits in results
+        ]
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        self._publish_visualizations(queries, results, traces, rig.world_frame)
         return results, (lo, hi, first, head, index.count())
+
+    def _publish_visualizations(
+        self,
+        queries: list[str],
+        results: list[list[Localization]],
+        traces: list[LocalizeTrace],
+        world_frame: str,
+    ) -> None:
+        """Publish 2D segmented overlay image and 3D detected object point clouds for Rerun."""
+        colors = {query: LABEL_COLORS[k % len(LABEL_COLORS)] for k, query in enumerate(queries)}
+        shots: dict[tuple[str, float], tuple[Image, list[Any]]] = {}
+        for trace in traces:
+            for obs in trace.detection_frames:
+                image = obs.data.image
+                shots.setdefault((image.frame_id, obs.ts), (image, []))[1].extend(
+                    obs.data.detections
+                )
+        for (_camera, _ts), (image, dets) in sorted(shots.items(), key=lambda shot: shot[0][1]):
+            if dets:
+                self.segmented_image.publish(_overlay_detections(image, dets, colors))
+
+        cloud_parts: list[np.ndarray] = []
+        latest_ts = 0.0
+        for hits in results:
+            for hit in hits:
+                pts = hit.point_cloud.points_f32()
+                if len(pts):
+                    cloud_parts.append(pts)
+                    latest_ts = max(latest_ts, hit.last_seen_timestamp)
+        if cloud_parts:
+            merged_cloud = PointCloud2.from_numpy(
+                np.vstack(cloud_parts),
+                frame_id=world_frame,
+                timestamp=latest_ts or time.time(),
+            )
+            self.detected_pointcloud.publish(merged_cloud)
+
+
+def _overlay_detections(
+    image: Image,
+    detections: list[Any],
+    colors: dict[str, tuple[int, int, int]],
+) -> Image:
+    """Render each detection's segmentation mask, contour, box, and label onto ``image``."""
+    best_by_box: dict[tuple[float, ...], Any] = {}
+    for det in detections:
+        key = tuple(round(float(v), 1) for v in det.bbox)
+        prev = best_by_box.get(key)
+        if prev is None or det.confidence > prev.confidence:
+            best_by_box[key] = det
+    selected = list(best_by_box.values())
+
+    canvas = image.to_opencv().copy()
+    tint = canvas.copy()
+    for det in selected:
+        rgb = colors.get(det.name, LABEL_COLORS[0])
+        mask = getattr(det, "mask", None)
+        if mask is not None:
+            tint[mask > 0] = rgb[::-1]
+    canvas = cv2.addWeighted(tint, MASK_ALPHA, canvas, 1.0 - MASK_ALPHA, 0.0)
+    for det in selected:
+        rgb = colors.get(det.name, LABEL_COLORS[0])
+        bgr = rgb[::-1]
+        mask = getattr(det, "mask", None)
+        if mask is not None:
+            contours, _ = cv2.findContours(
+                (mask > 0).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            cv2.drawContours(canvas, contours, -1, bgr, 2)
+        x1, y1, x2, y2 = (int(v) for v in det.bbox)
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), bgr, 1)
+        label = f"{det.name} {det.confidence:.2f}"
+        (width, height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(canvas, (x1, y1 - height - 6), (x1 + width + 4, y1), (0, 0, 0), -1)
+        cv2.rectangle(canvas, (x1, y1 - height - 6), (x1 + width + 4, y1), bgr, 1)
+        cv2.putText(
+            canvas, label, (x1 + 2, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
+        )
+    return Image.from_opencv(canvas, frame_id=image.frame_id, ts=image.ts)
 
 
 def as_detection_array(

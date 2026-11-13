@@ -57,6 +57,7 @@ from graspgenx.grasp_server import (
     SWEEP_VOLUME_ONLY_BACKBONES,
     GraspGenXSampler,
 )
+from graspgenx.samplers.graspmoe import run_graspmoe
 from graspgenx.utils.checkpoint_io import load_model_cfg
 from graspgenx.x_grippers import make_sweep_volume_gripper_info
 
@@ -88,6 +89,7 @@ class GraspGenXRuntime:
             fingertip_depth=config.gripper.fingertip_depth,
         )
         self._sampler = GraspGenXSampler(model_config, gripper_info=gripper_info)
+        self._planner = config.planner
 
     def infer(self, points: np.ndarray, num_samples: int) -> tuple[np.ndarray, np.ndarray]:
         """Sample grasps for an object and return every one, as CPU NumPy arrays.
@@ -95,8 +97,17 @@ class GraspGenXRuntime:
         Args:
             points: (M, 3) object points, metres.
             num_samples: How many grasps to sample. GraspGenX samples again while
-                it has fewer than 40, so a small value can return more.
+                it has fewer than 40, so a small value can return more. GraspMoE
+                returns the best ``num_samples`` of its diffusion and box grasps.
         """
+        if self._planner == "graspmoe":
+            out = run_graspmoe(
+                points, self._sampler, num_grasps=num_samples, topk_num_grasps=num_samples
+            )
+            return (
+                np.concatenate([out["grasps_diff"], out["grasps_obb"]]).reshape(-1, 4, 4),
+                np.concatenate([out["scores_diff"], out["scores_obb"]]).reshape(-1),
+            )
         # GraspGenX keeps only its best 100 unless told how many to keep.
         poses, scores = GraspGenXSampler.run_inference(
             points, self._sampler, num_grasps=num_samples, topk_num_grasps=num_samples

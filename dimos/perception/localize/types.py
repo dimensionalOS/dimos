@@ -64,9 +64,10 @@ class LocalizeParams:
     max_object_extent_m: float = 0.60
     surface_patch_max_rise_m: float = 0.003  # with the drop test, a lift hugging
     surface_patch_min_drop_m: float = -0.02  # the support is surface, not object
+    support_clearance_m: float = 0.0  # drop lifted points this close above the support; 0 keeps all
     min_points: int = 60  # points on a lift
     min_camera_range_m: float = 0.28
-    fuse_voxel_m: float = 0.01  # union cloud voxel at merge; 0 concatenates
+    fuse_voxel_m: float = 0.005  # union cloud voxel at merge; 0 concatenates
     plane_keyframes: int = 5
     plane_cell_m: float = 2.0  # XY cell of the support-plane cache
 
