@@ -1,0 +1,34 @@
+[package]
+name = "dimos-av1-camera"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: a V4L2 camera encoded to AV1 CompressedVideo with SVT-AV1, low delay"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_av1_camera"
+path = "src/lib.rs"
+
+[[bin]]
+name = "av1_camera"
+path = "src/bin/av1_camera.rs"
+
+[package.metadata.dimos.module.av1_camera]
+path = "dimos_av1_camera::module::Av1Camera"
+python = "dimos.hardware.sensors.camera.av1.module:Av1Camera"
+
+[package.metadata.dimos.module.av1_camera.outputs]
+video = "foxglove_msgs.CompressedVideo"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] }
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"

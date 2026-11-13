@@ -240,6 +240,7 @@ all_modules = {
     "arm-pose-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseTwistCoordinator",
     "arm-teleop-module": "dimos.teleop.webxr.extensions.ArmTeleopModule",
     "arm-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmTwistCoordinator",
+    "av1-camera": "dimos.hardware.sensors.camera.av1.module.Av1Camera",
     "b-box-navigation-module": "dimos.agents.skills.visual_servoing.bbox_navigation.BBoxNavigationModule",
     "b601-dm-connection": "dimos.robot.manipulators.seeed_b601_dm.connection.B601DMConnection",
     "benchmarker": "dimos.control.benchmarking.benchmark.Benchmarker",
