@@ -314,6 +314,10 @@ manipulation = [
     "dimos[planning,base,sim,cpu]",
 ]
 
+openarm-mini-teleop = [
+    "ftservo-python-sdk",
+]
+
 cpu = [
     # CPU inference backends. >=1.21 for onnxruntime.preload_dlls().
     "onnxruntime>=1.21",
@@ -654,6 +658,7 @@ bosdyn-client = "bosdyn"
 drake = "pydrake"
 eclipse-zenoh = "zenoh"
 edgetam-dimos = "sam2"
+ftservo-python-sdk = "scservo_sdk"
 GitPython = "git"
 gtsam-extended = "gtsam"
 hydra-core = "hydra"
@@ -791,6 +796,8 @@ module = [
     "reportlab",
     "reportlab.*",
     "sam2.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "scipy",
     "scipy.*",
     "sensor_msgs.*",
