@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from experimental.gateway import responses
 from experimental.gateway.state import ApiError, FreshQuery, GatewayState
+from experimental.gateway.uploads import TRANSFER_SETTINGS
 
 router = APIRouter()
 
@@ -72,9 +73,10 @@ async def upload_list(state: GatewayState) -> dict[str, Any]:
 async def enqueue(state: GatewayState, request: UploadRequest) -> responses.Upload:
     if (request.path is None) == (request.retry is None):
         raise ApiError(400, "give either path or retry")
-    settings = request.model_dump(
-        include={"httpTimeout", "uploadRetries", "uploadChunkMb"}, exclude_none=True
-    )
+    # only what the request names; a null puts that setting back to its default
+    settings = {
+        name: getattr(request, name) for name in request.model_fields_set & set(TRANSFER_SETTINGS)
+    }
     if request.path is None:
         assert request.retry is not None
         return state.uploads.retry(request.retry, settings)

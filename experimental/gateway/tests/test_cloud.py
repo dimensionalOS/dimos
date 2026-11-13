@@ -460,3 +460,15 @@ def test_an_upload_carries_its_own_transfer_settings(
     state.uploads.update(upload["id"], state="failed")
     retried = client.post("/cloud/uploads", json={"retry": upload["id"]}).json()
     assert retried["settings"] == {"httpTimeout": 300.0, "uploadChunkMb": 16}, "kept by a retry"
+
+    state.uploads.update(upload["id"], state="failed")
+    reset = {"retry": upload["id"], "httpTimeout": None, "uploadRetries": 1}
+    assert client.post("/cloud/uploads", json=reset).json()["settings"] == {
+        "uploadChunkMb": 16,
+        "uploadRetries": 1,
+    }, "a retry's settings go over the kept ones, and a null puts one back to its default"
+
+    state.uploads.update(upload["id"], state="uploading")
+    busy = client.post("/cloud/uploads", json={"path": str(recording), "uploadRetries": 3})
+    assert busy.status_code == 409, "an upload already under way can't change its settings"
+    assert client.post("/cloud/uploads", json={"path": str(recording)}).status_code == 200

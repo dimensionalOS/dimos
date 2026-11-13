@@ -38,7 +38,7 @@ from dimos.utils.logging_config import setup_logger
 from experimental.gateway import constants, store
 from experimental.gateway.errors import ApiError
 from experimental.gateway.events import Bus
-from experimental.gateway.responses import Account, Login, Upload, Uploaded
+from experimental.gateway.responses import Account, Login, Upload, Uploaded, UploadSettings
 
 logger = setup_logger()
 
@@ -177,13 +177,22 @@ TRANSFER_SETTINGS = {
 }
 
 
+def merged_settings(
+    kept: UploadSettings | None, sent: dict[str, Any] | None
+) -> UploadSettings | None:
+    """An upload's settings after a request: what it sent over what was kept, a null dropping one."""
+    settings = {**(kept or {}), **(sent or {})}
+    kept_now = {name: value for name, value in settings.items() if value is not None}
+    return cast("UploadSettings", kept_now) if kept_now else None
+
+
 def new_upload(
     id: str,
     path: Path,
     size: int,
     robot_id: str | None,
     kind: str | None,
-    settings: dict[str, Any] | None = None,
+    settings: UploadSettings | None = None,
 ) -> Upload:
     return {
         "id": id,
@@ -367,17 +376,25 @@ class Uploads:
     def enqueue(
         self, path: str, robot_id: str | None, kind: str | None, settings: dict[str, Any] | None
     ) -> Upload:
-        """Queues a file, with its own transfer settings if given; one already queued takes the new settings."""
+        """Queues a file, with its own transfer settings if given; one already queued takes the new
+        settings, and one already uploading can't change them mid-transfer."""
         checked_path, size = check_path(path)
         for upload in self.items:
             if upload["path"] == str(checked_path) and upload["state"] in ("queued", "uploading"):
-                if settings and upload["state"] == "queued":
-                    upload["settings"] = settings
+                if settings and upload["state"] == "uploading":
+                    raise ApiError(
+                        409,
+                        f"{upload['id']} is already uploading with its settings: cancel it, then queue it again",
+                    )
+                if settings:
+                    upload["settings"] = merged_settings(upload["settings"], settings)
                     self.save()
                     self.emit(upload.copy())
                 return upload.copy()
         self.next += 1
-        upload = new_upload(f"u{self.next}", checked_path, size, robot_id, kind, settings)
+        upload = new_upload(
+            f"u{self.next}", checked_path, size, robot_id, kind, merged_settings(None, settings)
+        )
         self.items.append(upload)
         self.save()
         self.emit(upload.copy())
@@ -401,7 +418,7 @@ class Uploads:
         self.save()
 
     def retry(self, id: str, settings: dict[str, Any] | None) -> Upload:
-        """Queues a finished upload again, keeping its transfer settings unless new ones are given."""
+        """Queues a finished upload again with its transfer settings, the ones given over them."""
         upload = self.get(id)
         if upload is None:
             raise ApiError(404, f"no upload {id}")
@@ -416,7 +433,7 @@ class Uploads:
                 upload["size"],
                 upload["robotId"],
                 upload["kind"],
-                settings or upload["settings"],
+                merged_settings(upload["settings"], settings),
             )
         )
         upload["uploadId"] = upload_id
@@ -648,7 +665,7 @@ class Uploads:
         robot_id: str | None,
         kind: str | None,
         tick: Callable[..., None],
-        settings: dict[str, Any] | None,
+        settings: UploadSettings | None,
     ) -> dict[str, Any]:
         from dimos.cloud.data import CloudData
 
