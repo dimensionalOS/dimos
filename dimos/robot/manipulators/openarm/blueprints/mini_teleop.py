@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from typing import ClassVar
 
 from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import In
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -43,7 +45,6 @@ from dimos.teleop.leader.calibration import (
 )
 from dimos.teleop.leader.mapping import GripperMapping, JointMapping, SideMapping
 from dimos.teleop.leader.module import LeaderTeleopModule
-from dimos.teleop.leader.tasks import leader_gripper_task, leader_task
 
 # Leader-follower needs human arm speeds, well above the WebXR IK profile.
 _ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)
@@ -122,15 +123,8 @@ class OpenArmLeaderCoordinator(DamiaoCoordinator):
     leader_joint_command: In[JointState]
 
 
-def _gripper_tasks() -> list[TaskConfig]:
-    """One task per follower jaw, driven by the trigger on the same side's leader."""
-    jaws = {jaw.name: jaw for jaw in OpenArmConnection.robot.grippers}
-    return [
-        leader_gripper_task(
-            side, f"arm/{jaws[f'{side}_gripper'].joint}", open_at=jaws[f"{side}_gripper"].open_at
-        )
-        for side in LEADER_SIDES
-    ]
+# The follower's jaws by leader side; each is named <side>_gripper on the robot.
+_JAWS = {jaw.name.removesuffix("_gripper"): jaw for jaw in OpenArmConnection.robot.grippers}
 
 
 def _leader() -> Blueprint:
@@ -148,8 +142,22 @@ def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprin
             instance_name="ControlCoordinator",
             model=_MODEL.model,
             tasks=[
-                leader_task(_MODEL.joint_names, velocity_limits=_VELOCITY_LIMITS),
-                *_gripper_tasks(),
+                # The trajectory task follows the leader's targets instead of joint_command.
+                replace(
+                    joint_trajectory_task(_MODEL.joint_names, velocity_limits=_VELOCITY_LIMITS),
+                    stream_bind={"joint_command": "leader_joint_command"},
+                ),
+                *[
+                    TaskConfig(
+                        name=f"{side}_arm_gripper",
+                        type="gripper",
+                        joint_names=[f"arm/{_JAWS[side].joint}"],
+                        priority=20,
+                        params={"open_at": _JAWS[side].open_at},
+                        stream_bind={"gripper_command": f"{side}_gripper_command"},
+                    )
+                    for side in LEADER_SIDES
+                ],
             ],
             zero_stiffness_joints=[],
         ),

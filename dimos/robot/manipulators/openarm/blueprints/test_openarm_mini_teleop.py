@@ -32,8 +32,8 @@ from dimos.robot.manipulators.openarm.config import (
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.teleop.leader.feetech import FEETECH_DEFAULT_BAUDRATE
 from dimos.teleop.leader.module import LeaderTeleopModule, LeaderTeleopModuleConfig
-from dimos.teleop.leader.tasks import LEADER_JOINT_COMMAND
 
+LEADER_JOINT_COMMAND = "leader_joint_command"
 _MODEL = openarm_bimanual_model_config(robot="arm")
 _BOTH_ARMS = list(_MODEL.joint_names)
 # The connection config requires both CAN selectors, so parsing a follower needs them.
