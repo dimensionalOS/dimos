@@ -60,6 +60,7 @@ from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
     MAX_PUB_DATA_BYTES,
+    ControlFrameReader,
     DataFrame,
     DataFrameStreamError,
     DataFrameStreamReader,
@@ -68,9 +69,11 @@ from dimos.web.relay_bridge.protocol import (
     Manifest,
     Msg,
     Pong,
+    ProtocolError,
     Subs,
     Welcome,
     decode_datagram,
+    encode_control_frame,
     encode_data_frame,
     encode_datagram,
 )
@@ -303,6 +306,32 @@ class SessionProtocol(QuicConnectionProtocol):
         # polling. See wait_delivery_progress.
         self._delivery_waiters: list[asyncio.Future[None]] = []
         self._delivery_listeners: set[Callable[[], None]] = set()
+        self._control_stream: int | None = None
+        self._control_reader = ControlFrameReader()
+
+    @property
+    def has_control_stream(self) -> bool:
+        return self._control_stream is not None
+
+    def open_control_stream(self) -> int:
+        """The viewer's persistent control stream, the browser SDK's lane.
+
+        Its hello and every later control message ride it, and the relay
+        answers on it. Datagrams cap control at one packet, which a
+        topic_sources snapshot carrying profile options already exceeds.
+        """
+        assert self.session_id is not None
+        if self._control_stream is None:
+            self._control_stream = self.h3.create_webtransport_stream(
+                self.session_id, is_unidirectional=False
+            )
+        return self._control_stream
+
+    def send_control(self, msg: Msg) -> None:
+        if self._control_stream is None:
+            raise ConnectionError("viewer control stream not open")
+        self._quic.send_stream_data(self._control_stream, encode_control_frame(msg))
+        self.transmit()
 
     def open_session(self, authority: str, path: str) -> None:
         self.session_id = self._quic.get_next_available_stream_id()
@@ -366,6 +395,18 @@ class SessionProtocol(QuicConnectionProtocol):
             self.h3._stream.pop(event.stream_id, None)
             if self._carrier_stream(event.stream_id):
                 self.fail_session(f"carrier stream {event.stream_id} reset")
+        elif isinstance(event, StreamDataReceived) and event.stream_id == self._control_stream:
+            # The relay answers on the bidi stream this client opened. aioquic's
+            # H3 layer never surfaces the receive half of such a stream as
+            # WebTransport data, so the control frames are read here directly.
+            try:
+                messages = self._control_reader.push(event.data)
+            except ProtocolError as error:
+                self.fail_session(f"control stream framing: {error}")
+                return
+            for message in messages:
+                self._control_msg_received(message)
+            return
         for h3_event in self.h3.handle_event(event):
             self._h3_event_received(h3_event)
         if isinstance(event, StreamDataReceived) and event.end_stream:
