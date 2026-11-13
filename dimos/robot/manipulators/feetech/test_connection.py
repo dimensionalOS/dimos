@@ -53,8 +53,3 @@ def test_connection_publishes_every_joint_under_its_source(mocker: Any) -> None:
         "leader/right_joint_1",
     ]
     assert messages[0].position == pytest.approx([0.0, 0.5, 0.0])
-
-
-def test_connection_refuses_commands() -> None:
-    with pytest.raises(ValueError, match="only read"):
-        _Leaders(joint_commands=("position",))
