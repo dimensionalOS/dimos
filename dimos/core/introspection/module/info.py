@@ -158,13 +158,14 @@ def _resolved_hints(fn: Callable) -> dict[str, object]:  # type: ignore[type-arg
     return hints
 
 
-def _portable(annotation: object) -> object:
+def _portable(annotation: object) -> type[Any] | None:
     """Keep a plain type or a message class. Anything else becomes object."""
     if annotation is None or annotation is type(None):
         return None
-    if any(annotation is plain for plain in (bool, int, float, str)):
-        return annotation
-    if isinstance(annotation, type) and callable(getattr(annotation, "lcm_encode", None)):
+    if isinstance(annotation, type) and (
+        any(annotation is plain for plain in (bool, int, float, str))
+        or callable(getattr(annotation, "lcm_encode", None))
+    ):
         return annotation
     return object
 
