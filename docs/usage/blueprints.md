@@ -327,7 +327,7 @@ under the module's `frame_id_prefix`, the same prefix `self.frame_id` carries.
 Pass `prefix=False` to either for a frame that belongs to no namespace, such as
 a shared root like `world` or `map`:
 
-```python
+```python skip
 self.tfbuffer.publish(base_to_camera)                  # robot0/base_link -> robot0/camera_link
 self.tfbuffer.publish(world_to_base, prefix=False)     # names used as given
 pose = self.tfbuffer.get("world", "base_link", prefix=False)
