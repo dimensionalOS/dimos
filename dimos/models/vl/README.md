@@ -48,7 +48,7 @@ The model supports four modes of operation:
 
 ```python
 from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 model = MoondreamHostedVlModel()
 image = Image.from_file("path/to/image.jpg")
@@ -64,7 +64,8 @@ detections = model.query_detections(image, "person")
 for det in detections.detections:
     print(f"Found person at {det.bbox}")
 
-# 4. Point (returns list of (x, y) coordinates)
-points = model.point(image, "person")
-print(f"Person centers: {points}")
+# 4. Point (returns ImageDetections2D of points)
+points = model.query_points(image, "person")
+for point in points.detections:
+    print(f"Person at ({point.x}, {point.y})")
 ```

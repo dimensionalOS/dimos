@@ -28,7 +28,7 @@ Choose a new recording directory and a task description for the demonstration:
 
 ```bash skip
 dimos run openyam-teach-collection --daemon \
-  --controlcoordinator.can-port follower_l \
+  --can-port follower_l \
   --recorder.recording recordings/session-001 \
   --episodes.task "pick up the cube" \
   --wrist.hardware.camera-index /dev/video0

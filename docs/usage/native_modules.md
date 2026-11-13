@@ -132,15 +132,20 @@ Native modules work with `autoconnect` exactly like Python modules:
 
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 class PointCloudConsumer(Module):
     pointcloud: In[PointCloud2]
     imu: In[Imu]
 
-autoconnect(
+blueprint = autoconnect(
     MyLidar.blueprint(host_ip="192.168.1.10"),
     PointCloudConsumer.blueprint(),
-).build().loop()
+)
+
+# Workers import this script again, so build under the __main__ guard
+if __name__ == "__main__":
+    ModuleCoordinator.build(blueprint).loop()
 ```
 
 `autoconnect` matches ports by `(name, type)`, assigns LCM topics, and passes them to the native binary as CLI args. You can override transports as usual:

@@ -4,7 +4,7 @@ OpenYAM and Dual OpenYAM use `ConnectionModule` implementations that own the
 native `can-motor-control` robot. The coordinator receives `JointState` feedback
 and sends position commands through streams. It does not construct hardware
 adapters. `openyam-teach-collection` uses the same path with
-`OpenYamTeachConnection`: zero stiffness, teaching damping, gravity compensation
+`OpenYamConnection` in teach mode (`teach=True`): zero stiffness, teaching damping, gravity compensation
 and passive grippers, declared as zero-stiffness joints. Seeed B601-DM also uses
 its own direct connection.
 
@@ -93,7 +93,7 @@ YAM uses its arm-only combined model for planning and gravity compensation.
 
 New Quest recordings and policy rollout use the deployed seven-coordinate names.
 Hand-guided teaching retains its original bare names, PD gains and passive-jaw
-behavior; its CAN override remains `--controlcoordinator.can-port`.
+behavior; its CAN override is `--can-port`, as for the other single-arm stacks.
 
 Planner gripper routing is explicit through `ManipulationModuleConfig.gripper_tasks`:
 single YAM binds `manipulator` to `arm_gripper`; dual YAM binds

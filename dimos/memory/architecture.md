@@ -74,7 +74,7 @@ Transform-sourced streams (post `.transform()`) always use `StreamQuery.apply()`
 ## Quick start
 
 ```python
-from dimos.memory import MemoryStore
+from dimos.memory.store.memory import MemoryStore
 
 store = MemoryStore()
 images = store.stream("images")

@@ -72,11 +72,11 @@ local to the bridge and is not treated as hardware-health telemetry.
 
 ```bash
 # Go2 Pro (skip probing)
-dimos run teleop-hosted-go2-transport -o go2audiobridgemodule.speaker=enabled
+dimos run teleop-hosted-go2-transport --go2audiobridgemodule.speaker enabled
 
 # Go2 Air (never call the firmware audio hub)
 dimos run teleop-hosted-go2-transport \
-  -o go2audiobridgemodule.speaker=disabled
+  --go2audiobridgemodule.speaker disabled
 ```
 
 ## Datachannels

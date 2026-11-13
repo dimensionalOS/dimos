@@ -193,11 +193,11 @@ normalized gripper commands and feedback; an unbound group has no gripper API.
 
 OpenYAM policy rollout and Quest collection use direct connections and namespaced
 seven-coordinate state/action vectors. `openyam-teach-collection` uses
-`OpenYamTeachConnection`: zero stiffness, teaching damping, gravity
+`OpenYamConnection` in teach mode (`teach=True`): zero stiffness, teaching damping, gravity
 compensation and passive gripper commands on every tick, declared to the
 coordinator as zero-stiffness joints. Its seven-coordinate recording schema uses
 the deployed `arm/...` names. The direct stacks take
-`--openyamteachconnection.can-port` (or `--can-port`).
+`--openyamconnection.can-port` (or `--can-port`).
 
 Hand guiding refuses to start unless the robot declares zero stiffness. For a
 connection, `connect_damiao` derives that declaration from the connection's own
