@@ -131,7 +131,11 @@ def test_topic_send_delivers(topic_form: str) -> None:
 def test_topic_echo_delivers(topic_form: str, type_name: str | None, mocker: MockerFixture) -> None:
     collector = CallbackCollector(1)
     message = Twist(Vector3(0.5, 0, 0), Vector3(0, 0, 0))
-    mocker.patch("dimos.cli.topic.print", side_effect=lambda msg, **kwargs: collector(msg, None))
+    # numpy print options are per thread, so render the expected text on the printing thread
+    mocker.patch(
+        "dimos.cli.topic.print",
+        side_effect=lambda text, **kwargs: collector(text, _format_message(message)),
+    )
 
     with make_transport("/test_topic", Twist) as publisher:
 
@@ -142,7 +146,8 @@ def test_topic_echo_delivers(topic_form: str, type_name: str | None, mocker: Moc
         mocker.patch("dimos.cli.topic._listen_forever", side_effect=publish_and_wait)
         topic_echo(topic_form, type_name)
 
-    assert collector.results[0][0] == _format_message(message)
+    printed, expected = collector.results[0]
+    assert printed == expected
 
 
 @pytest.mark.parametrize(
