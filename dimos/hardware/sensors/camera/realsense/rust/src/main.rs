@@ -117,8 +117,8 @@ impl Config {
     fn stream_depth(&self) -> bool {
         self.enable_depth || self.enable_pointcloud
     }
-    /// `<frame_id_prefix>/<name>`. The imager frames are stamped on messages as
-    /// well as published, so they are named by the rule `Tf` publishes under.
+    /// `<frame_id_prefix>/<name>`: the imager frames are stamped on messages
+    /// as well as published, so they follow the rule `Tf` publishes under.
     fn namespaced(&self, name: &str) -> String {
         prefix_frame(self.frame_id_prefix.as_deref(), name)
     }

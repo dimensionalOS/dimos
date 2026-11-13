@@ -16,7 +16,7 @@ path = "src/bin/go2_dds.rs"
 [dependencies]
 # Our forks, vendored: the robot has no GitHub access. See vendor/*/Cargo.toml.
 cyclonedds-rs = { path = "vendor/cyclonedds-rs", default-features = false }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "2a12754ef634cce739f4a09cfe216048ff614341" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "c8684651249edcc76eb8ecb741b42fc368b62833" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", tag = "v0.1.6" }
 serde = { version = "1", features = ["derive"] }
 serde-big-array = "0.5"

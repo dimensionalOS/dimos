@@ -64,9 +64,8 @@ pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
         return quote!(#input #maybe_err).into();
     }
 
-    // Injected into every named-field config so a module reports its TF
-    // namespace without declaring anything. A unit struct is left alone: it has
-    // no fields to add one to, and NativeConfig's default accessor covers it.
+    // A unit struct is left alone: no fields to add one to, and NativeConfig's
+    // default accessor covers it.
     let mut input = input;
     let injected_prefix = inject_frame_id_prefix(&mut input);
 
@@ -97,9 +96,8 @@ pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Add `frame_id_prefix` to a named-field config. Returns whether it landed.
 ///
-/// `#[serde(default)]` so a module outside a namespace, which is sent no such
-/// key, still parses. It is skipped on the way back out so `run()`'s one-to-one
-/// key check agrees: no prefix, no key, on both sides of the line.
+/// Defaulted and skipped when absent, so `run()`'s one-to-one key check agrees
+/// with an unnamespaced module's config: no prefix, no key, on both sides.
 fn inject_frame_id_prefix(input: &mut DeriveInput) -> bool {
     let Data::Struct(data) = &mut input.data else {
         return false;
@@ -119,8 +117,6 @@ fn inject_frame_id_prefix(input: &mut DeriveInput) -> bool {
         syn::Field::parse_named
             .parse2(quote! {
                 /// TF namespace this module publishes and looks up under.
-                ///
-                /// Absent from the config of a module that is not namespaced.
                 #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
                 pub frame_id_prefix: ::core::option::Option<::std::string::String>
             })

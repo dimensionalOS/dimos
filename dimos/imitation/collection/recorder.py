@@ -98,9 +98,7 @@ class CollectionModuleConfig(RustRecorderConfig):
 
     def to_config_dict(self) -> dict[str, Any]:
         # Collection settings stay in Python; Rust accepts only its recorder
-        # config. frame_id_prefix rides along when there is one, because
-        # native_config puts it on every native config struct and a namespaced
-        # module needs it to name its frames.
+        # config, plus the frame prefix when there is one.
         config: dict[str, Any] = {
             "store": self.store.model_dump(),
             "encoding_threads": self.encoding_threads,

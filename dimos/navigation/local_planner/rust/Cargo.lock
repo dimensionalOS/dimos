@@ -627,7 +627,7 @@ dependencies = [
 [[package]]
 name = "dimos-module"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=2a12754ef634cce739f4a09cfe216048ff614341#2a12754ef634cce739f4a09cfe216048ff614341"
+source = "git+https://github.com/dimensionalOS/dimos?rev=c8684651249edcc76eb8ecb741b42fc368b62833#c8684651249edcc76eb8ecb741b42fc368b62833"
 dependencies = [
  "async-channel",
  "dimos-lcm",
@@ -648,7 +648,7 @@ dependencies = [
 [[package]]
 name = "dimos-module-macros"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=2a12754ef634cce739f4a09cfe216048ff614341#2a12754ef634cce739f4a09cfe216048ff614341"
+source = "git+https://github.com/dimensionalOS/dimos?rev=c8684651249edcc76eb8ecb741b42fc368b62833#c8684651249edcc76eb8ecb741b42fc368b62833"
 dependencies = [
  "proc-macro2",
  "quote",

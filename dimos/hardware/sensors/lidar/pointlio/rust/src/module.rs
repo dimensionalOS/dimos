@@ -331,9 +331,7 @@ fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>, String> {
 }
 
 impl Config {
-    /// `<frame_id_prefix>/<name>`. The module publishes odometry and tf without
-    /// going back through Python, so it names the frames itself, by the rule
-    /// `Tf` publishes under.
+    /// `<frame_id_prefix>/<name>`, by the rule `Tf` publishes under.
     fn namespaced(&self, name: &str) -> String {
         prefix_frame(self.frame_id_prefix.as_deref(), name)
     }

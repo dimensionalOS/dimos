@@ -30,11 +30,7 @@ use crate::transport::{Deliver, Dispatch, Transport};
 /// Marker trait for a config checked by `#[native_config]`: every field required,
 /// no Rust-side defaults, no unknown fields. Implemented only by the macro.
 pub trait NativeConfig {
-    /// The module's TF namespace prefix, from its `frame_id_prefix` config.
-    ///
-    /// `#[native_config]` injects the field and this accessor, so every native
-    /// module reports one without declaring anything. `None` when the module is
-    /// not namespaced.
+    /// The module's TF namespace prefix, injected by `#[native_config]`.
     fn frame_id_prefix(&self) -> Option<&str> {
         None
     }
@@ -53,17 +49,12 @@ impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send> M
 /// is used. Just a stand in for modules that don't use configurations.
 #[derive(Debug, Default, Serialize)]
 pub struct NoConfig {
-    // A namespaced module is sent a frame_id_prefix even with no config of its
-    // own, so the field is here too rather than rejected as unknown. Skipped on
-    // the way out so an unnamespaced module's empty config stays empty, which is
-    // what keeps `enforce_one_to_one` agreeing with a config that has no key.
+    // A namespaced module is sent a prefix even with no config of its own.
     #[serde(skip_serializing_if = "Option::is_none")]
     frame_id_prefix: Option<String>,
 }
 
-// A module with no config of its own is sent a null config unless it is
-// namespaced, so both that null and an object carrying only the prefix have to
-// land here.
+// Sent a null config unless it is namespaced, so both shapes have to land here.
 impl<'de> Deserialize<'de> for NoConfig {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
@@ -102,7 +93,7 @@ pub(crate) fn init_tracing() {
 
 // Only absorbs jitter between the transport and the handler. A full buffer
 // blocks the transport so congestion reaches the publisher's QoS.
-const INPUT_BUFFER_LEN: usize = 8;
+pub(crate) const INPUT_BUFFER_LEN: usize = 8;
 const PUBLISH_CHANNEL_CAPACITY: usize = 32;
 
 // Each input() call produces a TypedRoute that decodes its message type
@@ -475,9 +466,7 @@ impl Builder {
     }
 
     /// The same handle, but one whose [`Tf::recv`](crate::tf::Tf::recv) yields
-    /// each incoming message so the module can handle it.
-    ///
-    /// `#[tf(handler = ...)]` on a `#[derive(Module)]` field calls this.
+    /// each incoming message. `#[tf(handler = ...)]` calls this.
     pub fn tf_with_handler(&mut self) -> crate::tf::Tf {
         self.tf_port(true)
     }
@@ -495,9 +484,7 @@ impl Builder {
             self.routes.entry(topic).or_default().push(route);
             self.tf = Some(tf);
         }
-        // The handler is installed on the shared handle rather than at
-        // construction, so a plain `#[tf]` field declared first does not cost
-        // a later `#[tf(handler = ...)]` field its messages.
+        // On the shared handle, so port order cannot cost a handler its messages.
         let tf = self.tf.as_mut().expect("the handle was just built");
         if with_handler {
             tf.enable_handler();
@@ -868,9 +855,7 @@ mod tests {
             .contains("missing 'config' field"));
     }
 
-    // Python sends no frame_id_prefix for a module outside a namespace, and a
-    // module with no config of its own then gets a null config. Both have to
-    // read as "no prefix" rather than as a key the struct is missing.
+    // An unnamespaced module with no config of its own gets a null config.
     #[test]
     fn a_module_with_no_config_takes_a_null_as_no_prefix() {
         let json = r#"{"topics": {}, "config": null}"#;
@@ -1161,9 +1146,7 @@ mod tests {
         assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
     }
 
-    // A plain `#[tf]` field ahead of a `#[tf(handler = ...)]` one used to hand
-    // the handler the cached plain handle, whose recv() ended the dispatch loop
-    // at once.
+    // This used to hand back the plain handle, whose recv() ended the loop.
     #[tokio::test]
     async fn a_handler_asked_for_after_a_plain_tf_port_still_receives() {
         let mut builder = builder_with_topics(&[("tf", "/tf")]);
@@ -1185,7 +1168,6 @@ mod tests {
 
         let got = handled.recv().await.expect("the handler receives it");
         assert_eq!((got[0].parent.as_str(), got[0].child.as_str()), ("a", "b"));
-        // The plain handle still fills the same graph, it just does not consume.
         assert!(plain.get_latest("a", "b").is_some());
     }
 

@@ -32,8 +32,7 @@ _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
 def _camera_fields() -> set[str]:
     own = set(RealSenseCameraConfig.model_fields) - set(NativeModuleConfig.model_fields)
     # The frame stem is a base field that crosses the wire too. frame_id_prefix
-    # is not here: `#[native_config]` injects it into the rust struct, and it is
-    # sent only when the module is namespaced.
+    # is not, being injected into the rust struct and sent only when namespaced.
     return own | {"frame_id"}
 
 

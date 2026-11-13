@@ -87,11 +87,9 @@ else:
 
 logger = setup_logger()
 
-# A base field every native module may be sent, whatever its own config
-# declares. `#[native_config]` injects `frame_id_prefix` into every Rust config
-# struct, so a native module is namespaced by the same `.namespace()` call as a
-# Python one without having to opt in through `base_fields`. It is sent only
-# when there is a namespace: a module that gets no key reads it as no prefix.
+# `#[native_config]` injects this into every Rust config struct, so a native
+# module needs no `base_fields` opt-in to be namespaced. Sent only when there is
+# a namespace; a module that gets no key reads it as no prefix.
 FRAME_PREFIX_FIELD = "frame_id_prefix"
 
 
@@ -157,8 +155,7 @@ class NativeModuleConfig(ModuleConfig):
 
     # Native config structs reject unknown fields, so a base field only crosses
     # the boundary if that module's native struct declares it. `frame_id_prefix`
-    # is the exception: `#[native_config]` injects it into every one, so it is
-    # always sent and a module never has to opt in to being namespaced.
+    # is the exception, injected into every one.
     base_fields: frozenset[str] = frozenset()
 
     @model_validator(mode="before")

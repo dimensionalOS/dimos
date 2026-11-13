@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
-use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify};
+use tokio::sync::{mpsc, Notify};
 use tracing::warn;
 
 use crate::module::Route;
@@ -36,11 +36,7 @@ use crate::time::now_secs;
 /// How many seconds of history each edge keeps.
 pub(crate) const DEFAULT_TF_WINDOW_SECS: f64 = 10.0;
 
-/// `frame` under a TF namespace prefix (the module's `frame_id_prefix`).
-///
-/// A name that already carries the prefix is left alone, so a frame read off
-/// the stream can be handed straight back. The Python tf API applies the same
-/// rule to its own frames; the two must agree.
+/// `frame` under a TF namespace prefix, left alone if it already carries it.
 pub fn prefix_frame(prefix: Option<&str>, frame: &str) -> String {
     match prefix {
         Some(p) if !p.is_empty() && !frame.is_empty() && !frame.starts_with(&format!("{p}/")) => {
@@ -52,14 +48,8 @@ pub fn prefix_frame(prefix: Option<&str>, frame: &str) -> String {
 
 const WARN_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Messages a declared tf handler may fall behind by before one is dropped.
-const TF_HANDLER_QUEUE: usize = 64;
-
 /// The channel a declared tf handler receives on, shared with the route.
-///
-/// Filled the first time a handler is asked for, which is why declaring one
-/// does not depend on the order the ports are built in.
-type HandlerSlot = Arc<OnceLock<mpsc::Sender<Vec<Transform>>>>;
+type HandlerSlot = Arc<OnceLock<async_channel::Sender<Vec<Transform>>>>;
 
 /// A rigid transform from `parent` to `child` at a point in time.
 ///
@@ -370,46 +360,35 @@ impl Graph {
 pub struct Tf {
     graph: Arc<Graph>,
     sender: mpsc::Sender<Vec<u8>>,
-    /// The module's `frame_id_prefix`, applied to every frame named through
-    /// this handle unless the call opts out.
+    /// Applied to every frame named through this handle unless the call opts out.
     frame_prefix: Option<Arc<str>>,
     /// Present only when the module declared a tf handler; the route feeds it.
-    updates: Option<Arc<AsyncMutex<mpsc::Receiver<Vec<Transform>>>>>,
-    /// The route's end of that channel, empty until a handler is declared.
+    updates: Option<async_channel::Receiver<Vec<Transform>>>,
     handler: HandlerSlot,
 }
 
 impl Tf {
-    /// `frame` under this handle's frame prefix, if it has one.
-    ///
-    /// The same rule everything else here applies, for a module that needs the
-    /// name itself rather than a lookup.
     pub fn prefixed(&self, frame: &str) -> String {
         prefix_frame(self.frame_prefix.as_deref(), frame)
     }
 
-    /// Start feeding [`Tf::recv`], so the module handles each `tf` message.
-    ///
-    /// Idempotent, and it reaches the route through a shared slot, so a
-    /// `#[tf(handler = ...)]` field installs the channel whatever order the
-    /// ports were built in.
+    /// Start feeding [`Tf::recv`]. Idempotent, and independent of port order.
     pub(crate) fn enable_handler(&mut self) {
         if self.updates.is_some() {
             return;
         }
-        let (tx, rx) = mpsc::channel(TF_HANDLER_QUEUE);
+        // The same bounded-and-blocking shape as an `#[input]` port, so a slow
+        // handler pushes back on the transport instead of dropping transforms
+        // behind the publisher's QoS.
+        let (tx, rx) = async_channel::bounded(crate::module::INPUT_BUFFER_LEN);
         if self.handler.set(tx).is_ok() {
-            self.updates = Some(Arc::new(AsyncMutex::new(rx)));
+            self.updates = Some(rx);
         }
     }
 
-    /// The transforms from the next `tf` message to arrive.
-    ///
-    /// Only a `#[tf(handler = ...)]` port receives these; a plain `#[tf]` field
-    /// fills the graph and nothing else. Returns `None` once the stream ends.
+    /// The transforms from the next `tf` message; only a handler port gets them.
     pub async fn recv(&self) -> Option<Vec<Transform>> {
-        let updates = self.updates.as_ref()?;
-        updates.lock().await.recv().await
+        self.updates.as_ref()?.recv().await.ok()
     }
     /// Start a lookup of the transform from `parent` to `child`.
     ///
@@ -437,8 +416,7 @@ impl Tf {
         self.lookup(parent, child).get()
     }
 
-    /// Publish transforms on the `tf` topic, both frame ids under the frame
-    /// prefix.
+    /// Publish on the `tf` topic, both frame ids under the frame prefix.
     ///
     /// The transforms also feed the local graph, so a lookup right after sees
     /// them without waiting for the transport round trip.
@@ -446,10 +424,8 @@ impl Tf {
         self.send(transforms, true).await
     }
 
-    /// Publish with the frame ids exactly as given.
-    ///
-    /// For an edge that hangs off a frame belonging to no namespace, such as a
-    /// shared `world` or `map` root.
+    /// Publish with the frame ids exactly as given, for an edge off a shared
+    /// root like `world` or `map`.
     pub async fn publish_unprefixed(&self, transforms: &[Transform]) -> io::Result<()> {
         self.send(transforms, false).await
     }
@@ -509,16 +485,13 @@ impl Lookup<'_> {
         self
     }
 
-    /// Name the frames exactly as given, without the frame prefix.
-    ///
-    /// For a frame that belongs to no namespace, such as a shared `world` or
-    /// `map` root, or one you prefixed yourself.
+    /// Name the frames exactly as given: a shared root, or one you prefixed
+    /// yourself.
     pub fn unprefixed(mut self) -> Self {
         self.prefix = false;
         self
     }
 
-    /// The pair this lookup resolves: the frames as given, or under the prefix.
     fn frames(&self) -> (Cow<'_, str>, Cow<'_, str>) {
         if !self.prefix || self.tf.frame_prefix.is_none() {
             return (Cow::Borrowed(self.parent), Cow::Borrowed(self.child));
@@ -638,12 +611,13 @@ pub(crate) fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformSta
 struct TfRoute {
     topic: String,
     graph: Arc<Graph>,
-    // Filled once the module declares a tf handler; empty for a plain port.
     updates: HandlerSlot,
 }
 
-impl Route for TfRoute {
-    fn dispatch(&self, data: &[u8]) {
+impl TfRoute {
+    // Fills the graph, and returns the transforms for a declared handler. A
+    // plain `#[tf]` port gets `None`, so it never pays for the second copy.
+    fn receive(&self, data: &[u8]) -> Option<Vec<Transform>> {
         let msg = match lcm_msgs::tf2_msgs::TFMessage::decode(data) {
             Ok(msg) => msg,
             Err(e) => {
@@ -653,13 +627,13 @@ impl Route for TfRoute {
                     error = %e,
                     "tf decode error"
                 );
-                return;
+                return None;
             }
         };
-        // A plain `#[tf]` port only fills the graph, so it never pays for the
-        // second copy of every transform.
-        let handler = self.updates.get();
-        let mut received = handler.map(|_| Vec::with_capacity(msg.transforms.len()));
+        let mut received = self
+            .updates
+            .get()
+            .map(|_| Vec::with_capacity(msg.transforms.len()));
         self.graph.update(|buffer| {
             for st in &msg.transforms {
                 let t = &st.transform.translation;
@@ -690,17 +664,35 @@ impl Route for TfRoute {
                 }
             }
         });
-        // The graph is filled first, so a handler that looks a transform up
-        // sees the message that woke it. A handler too slow to keep up drops
-        // the message rather than stalling the whole delivery loop.
-        if let (Some(updates), Some(received)) = (handler, received) {
-            if !received.is_empty() && updates.try_send(received).is_err() {
-                crate::error_throttled!(
-                    Duration::from_secs(1),
-                    topic = %self.topic,
-                    "tf handler is behind; dropping a message"
-                );
-            }
+        received.filter(|received| !received.is_empty())
+    }
+}
+
+// The graph is filled before the handler is fed, so a handler that looks a
+// transform up sees the message that woke it. Feeding it follows the same rule
+// as an `#[input]` port: blocking on a reliable transport, so congestion
+// reaches the publisher's QoS, and dropped where the transport asks for that.
+impl Route for TfRoute {
+    fn dispatch(&self, data: &[u8]) {
+        let Some(received) = self.receive(data) else {
+            return;
+        };
+        if let Some(updates) = self.updates.get() {
+            // A closed channel means the module is stopping.
+            let _ = updates.send_blocking(received);
+        }
+    }
+
+    fn try_dispatch(&self, data: &[u8]) -> bool {
+        let Some(received) = self.receive(data) else {
+            return true;
+        };
+        let Some(updates) = self.updates.get() else {
+            return true;
+        };
+        match updates.try_send(received) {
+            Err(async_channel::TrySendError::Full(_)) => false,
+            Ok(()) | Err(async_channel::TrySendError::Closed(_)) => true,
         }
     }
 }
@@ -1442,6 +1434,27 @@ mod tests {
             .unprefixed()
             .get()
             .is_some());
+    }
+
+    // An LCM transport asks each route to take a message without blocking, and
+    // a full handler has to say no so the transport reports the drop.
+    #[tokio::test]
+    async fn a_full_handler_refuses_a_try_dispatch() {
+        let (tx, _rx) = mpsc::channel(8);
+        let (mut tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
+        tf.enable_handler();
+        for i in 0..crate::module::INPUT_BUFFER_LEN {
+            assert!(
+                route.try_dispatch(&stamped_message("a", "b", i as f64, 1.0)),
+                "the buffer takes the first {} messages",
+                crate::module::INPUT_BUFFER_LEN
+            );
+        }
+        assert!(!route.try_dispatch(&stamped_message("a", "b", 99.0, 1.0)));
+        // The graph took it even so, and draining one makes room again.
+        assert!(tf.get_latest("a", "b").is_some());
+        tf.recv().await.expect("a buffered message");
+        assert!(route.try_dispatch(&stamped_message("a", "b", 100.0, 1.0)));
     }
 
     #[tokio::test]
