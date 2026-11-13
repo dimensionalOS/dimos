@@ -61,6 +61,54 @@ def test_authored_level_is_not_duplicated_and_cannot_be_repositioned(scene):
         export_visuals(moved, ("office",))
 
 
+def test_native_visual_replaces_geometry_and_follows_its_body(scene, tmp_path, mocker):
+    mocker.patch("dimos.sim2.sensors.camera.renderers.unreal.renderer.RendererProcess")
+    asset = "/Game/Props/Bottle.Bottle"
+    manifest, visuals, static = export_visuals(scene, (), {"office/world": asset})
+    assert manifest["meshes"] == []
+    assert len(manifest["geoms"]) == len(visuals) == 1
+    assert manifest["geoms"][0]["static_mesh"] == asset
+    assert not static
+    renderer = UnrealRenderer(
+        Path("unreal"), native_visuals={"office/world": asset}, log_path=tmp_path / "render.log"
+    )
+    try:
+        renderer.load(scene, CameraConfig("office/world"))
+        renderer.client.capture.return_value.rgba = np.zeros((1, 1, 4), dtype=np.uint8)
+        renderer.client.capture.return_value.depth = np.zeros((1, 1), dtype=np.float32)
+        for z in (1.0, 1.2):
+            pose = Pose(position=Point(2, 3, z), orientation=Quaternion(w=1))
+            renderer.set_poses(
+                WorldState(
+                    header=SampleHeader(),
+                    model_revision=scene.revision,
+                    bodies_length=1,
+                    bodies=[BodyState(body_id="office/world", pose=pose)],
+                )
+            )
+            renderer.render(pose)
+            assert renderer.client.capture.call_args.args[0]["poses"][0]["position"] == [
+                200,
+                -300,
+                z * 100,
+            ]
+    finally:
+        renderer.close()
+
+
+@pytest.mark.parametrize(
+    "authored, mapping",
+    [
+        (("office",), {"office/world": "/Game/Props/Bottle.Bottle"}),
+        ((), {"missing/body": "/Game/Props/Bottle.Bottle"}),
+        ((), {"office/world": "Bottle"}),
+    ],
+)
+def test_native_visual_rejects_unbound_or_invalid_assets(scene, authored, mapping):
+    with pytest.raises(ValueError):
+        export_visuals(scene, authored, mapping)
+
+
 def test_renderer_rejects_mismatched_model_and_moving_authored_background(scene, tmp_path, mocker):
     mocker.patch("dimos.sim2.sensors.camera.renderers.unreal.renderer.RendererProcess")
     renderer = UnrealRenderer(

@@ -44,6 +44,7 @@ class UnrealRenderer:
         project: Path | None = None,
         level: str | None = None,
         authored_instances: tuple[str, ...] = (),
+        native_visuals: dict[str, str] | None = None,
         log_path: Path,
         startup_timeout: float = 180,
         capture_timeout: float = 15,
@@ -59,6 +60,7 @@ class UnrealRenderer:
             capture_timeout=capture_timeout,
         )
         self.authored_instances = authored_instances
+        self.native_visuals = native_visuals
         self._assets: TemporaryDirectory[str] | None = None
         self._sample: WorldState | None = None
 
@@ -72,7 +74,9 @@ class UnrealRenderer:
         }
         if camera.frame_id not in self.bodies:
             raise ValueError(f"unknown camera frame {camera.frame_id}")
-        manifest, self.visuals, self.static_bodies = export_visuals(scene, self.authored_instances)
+        manifest, self.visuals, self.static_bodies = export_visuals(
+            scene, self.authored_instances, self.native_visuals
+        )
         self._assets = TemporaryDirectory(prefix="dimos-unreal-")
         path = Path(self._assets.name) / "scene.json"
         try:
@@ -94,9 +98,17 @@ class UnrealRenderer:
         self._poses = poses
 
     def render(self, pose_world: Pose) -> tuple[NDArray[np.uint8], NDArray[np.float32]]:
+        return self.render_camera(self.camera, pose_world)
+
+    def render_camera(
+        self, camera: CameraConfig, pose_world: Pose
+    ) -> tuple[NDArray[np.uint8], NDArray[np.float32]]:
+        """Capture another calibrated view in the same loaded world/process."""
+        if camera.frame_id not in self.bodies:
+            raise ValueError(f"unknown camera frame {camera.frame_id}")
         if self._sample is None:
             raise RuntimeError("set_poses must precede render")
-        sample, c = self._sample, self.camera
+        sample, c = self._sample, camera
         command: dict[str, Any] = {
             key: str(
                 sample.model_revision if key == "model_revision" else getattr(sample.header, key)
@@ -104,6 +116,7 @@ class UnrealRenderer:
             for key in IDENTITY_FIELDS
         }
         command["camera"] = {
+            "view_id": c.frame_id,
             **unreal_pose(pose_matrix(pose_world), camera=True),
             "width": c.width,
             "height": c.height,

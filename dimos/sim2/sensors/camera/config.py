@@ -53,3 +53,11 @@ class CameraRenderer(Protocol):
         ...
 
     def close(self) -> None: ...
+
+
+class CameraRigRenderer(CameraRenderer, Protocol):
+    def render_camera(
+        self, camera: CameraConfig, pose_world: Pose
+    ) -> tuple[NDArray[np.uint8], NDArray[np.float32]]:
+        """Render a calibrated view while sharing the loaded scene."""
+        ...

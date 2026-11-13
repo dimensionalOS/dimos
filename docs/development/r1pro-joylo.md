@@ -368,3 +368,110 @@ measured simulated left-arm movement during the observed trial. The native
 viewer received all 28 simulated joints; Controller's browser view remained
 unresolved on that installation. Exhaustive direction/range checks, gripper
 and wrist-lock checks remain interactive validation.
+
+## SF555 office: two pickable bottles and three robot cameras
+
+`r1pro-openarm-joylo-office` uses the same two-leader calibration, absolute
+joint mapping and Joy-Con controls as `r1pro-openarm-joylo-sim2`. It starts at
+`(18.0, 8.41, 0.005)`, facing west at the east end of the downstairs engineering
+tables. The head and both wrist RGB-D views are published as sim camera streams.
+The original plain scene remains a separate blueprint.
+
+The existing `Hall_A_middle_water_bottle_*` and
+`Hall_A_outer_water_bottle_*` assemblies become two free rigid bodies. All 21
+parts of each bottle move together. Their original visual triangles, dimensions
+and placement are preserved. The bottles are removed from both the static
+collision scene and the saved Unreal background, including caps/labels merged
+into furniture chunks. The runtime renderer binds each native bottle mesh to
+its sim2 body pose; Unreal does not run a second physics simulation.
+
+Assumptions: each bottle weighs 0.30 kg, inertia is a solid-cylinder approximation,
+collision is a convex envelope, and MuJoCo's default friction is uncalibrated.
+The translucent plastic is rendered as opaque pale blue so ideal depth sees the
+same graspable surface as color. There is no fluid, deformation or stereo noise
+model. Other office objects stay static, with the existing approximate furniture
+collisions. The office-specific robot model decomposes the four finger meshes
+into convex pieces; single whole-finger hulls bridge their concave openings and
+push bottles out. All robot joint frames, limits, inertias and visuals are unchanged.
+
+A single Unreal process renders head-left RGB-D and both wrist RGB-D views.
+Switching views resets temporal history to prevent cross-camera ghosting;
+render targets are cached by resolution. Source pose timestamps and camera calibration accompany every pair.
+The 2025 robot's head and uppercase `left_D405_link`/`right_D405_link` frames
+are used directly. The previous camera profile supplies approximate fields of
+view (118×92° head, 87×58° wrists), not measured 2025 factory intrinsics.
+Head preview is 640×512; wrists are 320×180, with ideal wrist depth restricted
+to 0.07–0.50 m. These previews are not the hardware cameras' full resolution.
+Camera-rig code was adapted from committed `47713be18a`, preserving its earlier
+implementation history rather than copying another worktree's uncommitted work.
+
+### Prepare the private assets
+
+Requires the SF555 V24 source package, its previously prepared collision export,
+Blender, Unreal 5.7, and the R1 2025 meshes used by the plain blueprint. These
+private/generated assets are not committed. Run from the repository root;
+change the source/cache paths for another machine. Set the asset-root environment
+variable before importing the blueprint or generating descriptions.
+
+```bash
+export DIMOS_SF555_JOYLO_ASSETS="$HOME/.cache/dimos/sf555-joylo"
+OFFICE_SOURCE="$HOME/Desktop/sf-555-office"
+OFFICE_ENGINE="/Users/Shared/Epic Games/UE_5.7"
+OFFICE_EDITOR="$OFFICE_ENGINE/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor"
+URDF_GENERATOR="$HOME/.codex/skills/urdf/scripts/urdf"
+
+.venv/bin/python -m dimos.sim2.scenes.sf555.pickables \
+  --source "$HOME/.cache/dimos/sf555" --output "$DIMOS_SF555_JOYLO_ASSETS"
+for target in office bottle_a bottle_b; do
+  SF555_URDF_TARGET="$target" .venv/bin/python "$URDF_GENERATOR" \
+    dimos/sim2/scenes/sf555/pickables.py \
+    -o "$DIMOS_SF555_JOYLO_ASSETS/$target.urdf"
+done
+.venv/bin/python -m dimos.robot.galaxea.r1pro.sim.grasp_contacts
+.venv/bin/python "$URDF_GENERATOR" \
+  dimos/robot/galaxea/r1pro/sim/grasp_contacts.py \
+  -o "$DIMOS_SF555_JOYLO_ASSETS/r1pro.urdf"
+
+.venv/bin/python -m dimos.sim2.scenes.sf555.prepare_unreal \
+  --source "$OFFICE_SOURCE" --output "$DIMOS_SF555_JOYLO_ASSETS" \
+  --engine "$OFFICE_ENGINE"
+/Applications/Blender.app/Contents/MacOS/Blender --background \
+  --python dimos/sim2/scenes/sf555/export_pickables.py -- \
+  "$OFFICE_SOURCE" "$DIMOS_SF555_JOYLO_ASSETS"
+"$OFFICE_EDITOR" "$DIMOS_SF555_JOYLO_ASSETS/DimosRenderer/DimosRenderer.uproject" \
+  -run=pythonscript \
+  -script="$PWD/dimos/sim2/scenes/sf555/prepare_pickables_unreal.py" \
+  -unattended -NullRHI -nosound
+```
+
+The editor script saves `/Game/SF555/Maps/OfficeJoylo` only inside the derived
+project and writes `native-visuals.json`. Source hashes guard against mixing
+Blender versions; `pickables.json`, `visual-split.json`, `finger-collisions.json`
+and `unreal-pickables-report.json` record the extraction and placement.
+`DIMOS_UNREAL_EXECUTABLE` and `DIMOS_UNREAL_PROJECT` override the local runtime
+paths without changing code.
+
+Run `dimos run r1pro-openarm-joylo-office --daemon` with the same explicit
+left/right serial ports and calibration-root arguments used for the plain
+blueprint. Use `--r1projoylo.arm-only false` for base/torso controls. X enables
+following; Home pauses. Camera startup is asynchronous: inspect
+`R1ProSimCameras.statistics()` for all three counters and an empty `error`.
+RGB-D and CameraInfo are available on
+`color_image`/`depth_image`/`camera_info`, `left_wrist`/`left_wrist_depth`/
+`left_wrist_info`, and the corresponding `right_wrist` topics.
+
+### Contact and camera checks
+
+`python -m dimos.robot.galaxea.r1pro.sim.demo_office_grasp` exercises each real
+finger model against each prepared bottle. A driven vertical fixture holds the
+wrist orientation; the finger joints and bottle obey dynamics. All four cases
+lifted 0.179–0.184 m, held, then released. There is no weld or artificial object
+attachment. This validates contact feasibility, not a full arm pick trajectory.
+The operator still needs to line up the grasp using the wrist view.
+
+The focused extraction, renderer protocol, camera calibration and rig tests pass.
+Native rendering was built and all three live RGB streams were inspected in the
+full office. Rendering load can reduce both camera rates and simulation speed
+on this Mac; use simulation-time/wall-time deltas and camera counters to measure
+that separately from leader/Joy-Con input ages. A zero camera error does not
+claim a particular frame rate or real-time physics performance.

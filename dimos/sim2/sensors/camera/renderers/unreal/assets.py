@@ -55,7 +55,9 @@ class Visual:
 
 
 def export_visuals(
-    scene: SceneConfig, authored_instances: tuple[str, ...]
+    scene: SceneConfig,
+    authored_instances: tuple[str, ...],
+    native_visuals: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], list[Visual], set[str]]:
     """Load once, keeping each visual attached to the shared model's named body.
 
@@ -66,6 +68,8 @@ def export_visuals(
     """
     if not set(authored_instances) <= {i.id for i in scene.instances}:
         raise ValueError("authored instance is absent from the physics scene")
+    native_visuals = native_visuals or {}
+    used_native: set[str] = set()
     manifest: dict[str, Any] = {"version": 2, "meshes": [], "geoms": []}
     visuals: list[Visual] = []
     static_bodies: set[str] = set()
@@ -107,6 +111,23 @@ def export_visuals(
         root = ET.fromstring(model.xml)
         materials = {m.get("name"): m for m in root.findall("material")}
         for link in root.findall("link"):
+            body = link.attrib["name"]
+            if body in native_visuals:
+                asset = native_visuals[body]
+                if not asset.startswith("/Game/") or "." not in asset:
+                    raise ValueError("native visuals require a full Unreal content object path")
+                index = len(visuals)
+                visuals.append(Visual(index, body, np.eye(4)))
+                manifest["geoms"].append(
+                    {
+                        "id": index,
+                        "static_mesh": asset,
+                        "scale": [1, 1, 1],
+                        **unreal_pose(np.eye(4)),
+                    }
+                )
+                used_native.add(body)
+                continue
             for shape in link.findall("visual"):
                 geom = shape.find("geometry")
                 if geom is None or len(geom) != 1:
@@ -167,4 +188,8 @@ def export_visuals(
                         **unreal_pose(local),
                     }
                 )
+    if used_native != set(native_visuals):
+        raise ValueError(
+            "native visual body is missing or belongs to the static authored background"
+        )
     return manifest, visuals, static_bodies

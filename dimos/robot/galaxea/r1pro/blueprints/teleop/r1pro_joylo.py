@@ -26,6 +26,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.connection import R1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
@@ -45,6 +46,7 @@ from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
 from dimos.robot.galaxea.r1pro.sim.joylo_input import JoyloSimInput
 from dimos.robot.galaxea.r1pro.sim.model import TORSO_LINK_LENGTHS
 from dimos.robot.urdf_manager import UrdfManager
+from dimos.sim2.description import SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
@@ -116,12 +118,17 @@ def _operator_blueprint(left_only: bool = False) -> Blueprint:
 _declaration = R1ProConnectionConfig(model=CONTROL_MODEL)
 
 
-def _robot_blueprint(left_only: bool = False) -> Blueprint:
+def _robot_blueprint(
+    left_only: bool = False,
+    *,
+    scene: SceneConfig = SCENE,
+    models: dict[str, RobotModel] | None = None,
+) -> Blueprint:
     return (
         autoconnect(
-            UrdfManager.blueprint(models={"r1pro": MODEL}),
+            UrdfManager.blueprint(models=models if models is not None else {"r1pro": MODEL}),
             SimModule.blueprint(
-                scene=SCENE,
+                scene=scene,
                 backend=MujocoBackend,
                 dt_ns=2_000_000,
                 controllers=(CONTROL,),
