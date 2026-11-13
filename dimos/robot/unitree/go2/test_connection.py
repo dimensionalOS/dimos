@@ -281,7 +281,7 @@ def test_odom_to_tf_prefixed(connection: Callable[..., GO2Connection]) -> None:
     odom parent frame stays global so all robots hang off one tree root."""
     odom = PoseStamped(ts=1.0, frame_id="world")
     conn = connection(False, frame_id_prefix="robot0")
-    base, camera_link, camera_optical = conn._odom_to_tf(odom)
+    base, camera_link, camera_optical = conn._odom_to_tf(odom, conn.config.frame_id_prefix or "")
     assert (base.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
     assert (camera_link.frame_id, camera_link.child_frame_id) == (
         "robot0/base_link",
