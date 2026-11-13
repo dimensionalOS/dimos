@@ -52,7 +52,7 @@ exclude = [
     "robot/manipulators/piper/can_setup.sh",
 ]
 
-"experimental.gateway" = ["annotations.yaml"]
+"experimental.gateway" = ["annotations.yaml", "assets/**/*"]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures,
@@ -312,6 +312,9 @@ planning = [
 # Complete manipulation workflow: control, planning, perception, agents, and simulation.
 manipulation = [
     "dimos[planning,base,sim,cpu]",
+]
+leader-teleop = [
+    "ftservo-python-sdk",  # robot/manipulators/feetech/arm.py
 ]
 
 cpu = [
@@ -654,6 +657,7 @@ bosdyn-client = "bosdyn"
 drake = "pydrake"
 eclipse-zenoh = "zenoh"
 edgetam-dimos = "sam2"
+ftservo-python-sdk = "scservo_sdk"
 GitPython = "git"
 gtsam-extended = "gtsam"
 hydra-core = "hydra"
@@ -793,6 +797,8 @@ module = [
     "sam2.*",
     "scipy",
     "scipy.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "sensor_msgs.*",
     "sqlite_vec",
     "std_msgs.*",

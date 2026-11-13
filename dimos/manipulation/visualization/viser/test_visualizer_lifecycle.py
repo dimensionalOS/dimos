@@ -23,6 +23,8 @@ import trimesh
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from viser.extras import ViserUrdf
+
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.joint_space import JointSpace
@@ -90,6 +92,48 @@ class CollisionStrictUrdf:
             warnings.warn(
                 "Cannot set `.show_collision`, since no collision meshes were loaded.", stacklevel=2
             )
+
+
+class ViserLikeHandle:
+    """Like a Viser handle: it takes what is under it along, and warns when removed twice."""
+
+    def __init__(self, api: ViserLikeApi, name: str) -> None:
+        self._api = api
+        self.name = name
+        api.live[name] = self
+
+    def remove(self) -> None:
+        if self.name not in self._api.live:
+            warnings.warn(f"Attempted to remove already removed node: {self.name}", stacklevel=2)
+            return
+        for name in [n for n in self._api.live if f"{n}/".startswith(f"{self.name}/")]:
+            del self._api.live[name]
+
+    def on_update(self, _callback: object) -> None:
+        pass
+
+    def __enter__(self) -> None:
+        self._api.open_folders.append(self.name)
+
+    def __exit__(self, *_exc: object) -> None:
+        self._api.open_folders.pop()
+
+
+class ViserLikeApi:
+    """Stands in for server.scene and server.gui: every add_* call makes a live handle."""
+
+    def __init__(self) -> None:
+        self.live: dict[str, ViserLikeHandle] = {}
+        self.open_folders: list[str] = []
+
+    def __getattr__(self, method: str) -> object:
+        if not method.startswith("add_"):
+            raise AttributeError(method)
+
+        def add(name: str, *_args: object, **_kwargs: object) -> ViserLikeHandle:
+            return ViserLikeHandle(self, "/".join([*self.open_folders[-1:], name]))
+
+        return add
 
 
 class FakeServer:
@@ -619,6 +663,33 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
     wrong_root_config.model = RobotModel.from_file(non_fixed_world_root)
     with pytest.raises(ValueError, match="prepared URDF root 'world'"):
         scene.loaded_robot_description(materialized_model(wrong_root_config))
+
+
+def test_scene_close_removes_everything_once(tmp_path: Path) -> None:
+    trimesh.creation.box().export(tmp_path / "link.stl")
+    link = '<visual><geometry><mesh filename="link.stl"/></geometry></visual>'
+    urdf_path = tmp_path / "arm.urdf"
+    urdf_path.write_text(
+        f'<robot name="arm"><link name="base_link">{link}</link><link name="tip">{link}</link>'
+        '<joint name="joint1" type="revolute"><parent link="base_link"/><child link="tip"/>'
+        '<axis xyz="0 0 1"/><limit lower="-1" upper="1" effort="1" velocity="1"/></joint></robot>'
+    )
+    model = RobotModel.from_file(urdf_path)
+    config = RobotModelConfig(model=model, base_link="base_link", joint_names=["joint1"])
+    server = SimpleNamespace(scene=ViserLikeApi(), gui=ViserLikeApi())
+    # Viser's own URDF helper, so the test also holds its internals to what the scene expects.
+    scene = ViserManipulationScene(server, ViserUrdf)
+    scene.register_model(materialized_model(config))
+    scene.ensure_target_controls("manipulator", lambda _handle: None)
+    assert "/robots/model/current/visual/tip" in server.scene.live
+    assert "Scene/manipulation.obstacles" in server.gui.live
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        scene.close()
+
+    assert not server.scene.live
+    assert not server.gui.live
 
 
 def test_a_model_without_collision_meshes_is_never_asked_to_show_them(

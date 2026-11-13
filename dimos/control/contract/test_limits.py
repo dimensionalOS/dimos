@@ -80,6 +80,11 @@ def chain_model(
     return model_from(tmp_path, urdf, name)
 
 
+def commands(model: RobotModel, *interfaces: Interface) -> dict[str, tuple[Interface, ...]]:
+    """Declare the test model's movable joints with the requested interfaces."""
+    return {joint.name: interfaces for joint in movable_joints(model)}
+
+
 def config(**fields: Any) -> ConnectionConfig:
     """A config for a robot called "arm"."""
     return ConnectionConfig(source="arm", **fields)
@@ -126,13 +131,23 @@ TOY_URDF = """<?xml version="1.0"?>
 def test_a_joint_command_gives_every_moving_joint_a_key_in_model_order(
     model: RobotModel,
 ) -> None:
-    table = limits(config(model=model, joint_commands=(Interface.POSITION,)))
+    table = limits(
+        config(
+            model=model,
+            joint_commands=commands(model, Interface.POSITION),
+        )
+    )
     assert table == {f"arm/{j}/position": Limits(-1.0, 1.0) for j in JOINTS}
     assert list(table) == ["arm/j1/position", "arm/j2/position", "arm/j3/position"]
 
 
 def test_each_joint_command_takes_its_own_bound_from_the_model(model: RobotModel) -> None:
-    table = limits(config(model=model, joint_commands=(Interface.POSITION, Interface.VELOCITY)))
+    table = limits(
+        config(
+            model=model,
+            joint_commands=commands(model, Interface.POSITION, Interface.VELOCITY),
+        )
+    )
     assert table["arm/j1/position"] == Limits(-1.0, 1.0)
     assert table["arm/j1/velocity"] == Limits(-2.0, 2.0)
     assert len(table) == 6
@@ -142,7 +157,7 @@ def test_each_joint_command_takes_its_own_bound_from_the_model(model: RobotModel
 def test_pd_tells_each_joint_five_things_with_gains_any_size_from_zero(
     model: RobotModel,
 ) -> None:
-    table = limits(config(model=model, pd=True))
+    table = limits(config(model=model, joint_commands=commands(model, *PD_INTERFACES)))
     assert [key for key in table if key.startswith("arm/j1/")] == [
         f"arm/j1/{interface}" for interface in PD_INTERFACES
     ]
@@ -151,9 +166,14 @@ def test_pd_tells_each_joint_five_things_with_gains_any_size_from_zero(
     assert len(table) == 15
 
 
-def test_pd_and_a_joint_command_share_their_keys(model: RobotModel) -> None:
-    both = limits(config(model=model, pd=True, joint_commands=(Interface.POSITION,)))
-    assert both == limits(config(model=model, pd=True))
+def test_duplicate_declared_interfaces_share_their_keys(model: RobotModel) -> None:
+    both = config(
+        model=model,
+        joint_commands=commands(model, *PD_INTERFACES, Interface.POSITION),
+    )
+    assert limits(both) == limits(
+        config(model=model, joint_commands=commands(model, *PD_INTERFACES))
+    )
 
 
 def test_moving_joints_are_the_revolute_continuous_and_prismatic_ones(tmp_path: Path) -> None:
@@ -165,8 +185,8 @@ def test_moving_joints_are_the_revolute_continuous_and_prismatic_ones(tmp_path: 
 def test_a_joint_that_spins_freely_has_no_position_bound(tmp_path: Path) -> None:
     table = limits(
         config(
-            model=model_from(tmp_path, TOY_URDF),
-            joint_commands=(Interface.POSITION, Interface.VELOCITY),
+            model=(toy := model_from(tmp_path, TOY_URDF)),
+            joint_commands=commands(toy, Interface.POSITION, Interface.VELOCITY),
         )
     )
     assert table["arm/spinner/position"] == Limits()
@@ -199,60 +219,61 @@ def test_a_model_unclear_about_a_bound_a_command_needs_is_refused(
     # Reading a missing bound as "no limit" would let the joint go anywhere.
     model = model_from(tmp_path, TOY_URDF.replace(broken, "", 1))
     with pytest.raises(ValueError, match=match):
-        limits(config(model=model, joint_commands=(interface,)))
+        limits(config(model=model, joint_commands=commands(model, interface)))
 
 
 def test_a_bound_no_command_needs_may_be_missing(tmp_path: Path) -> None:
     model = model_from(tmp_path, TOY_URDF.replace('effort="40.0"', "", 1))
     assert "arm/shoulder/position" in limits(
-        config(model=model, joint_commands=(Interface.POSITION,))
+        config(
+            model=model,
+            joint_commands=commands(model, Interface.POSITION),
+        )
     )
 
 
 def test_a_joint_is_told_joint_things_only(model: RobotModel) -> None:
-    with pytest.raises(ValueError, match="not told vx"):
-        limits(config(model=model, joint_commands=(Interface.VX,)))
+    with pytest.raises(ValueError, match="not told qx"):
+        limits(config(model=model, joint_commands=commands(model, Interface.QX)))
 
 
 def test_a_joint_command_without_a_model_is_refused() -> None:
     with pytest.raises(ValueError, match="no model"):
-        limits(config(joint_commands=(Interface.POSITION,)))
+        limits(config(joint_commands={"j1": (Interface.POSITION,)}))
     with pytest.raises(ValueError, match="no model"):
-        limits(config(pd=True))
+        limits(config(joint_commands={"j1": PD_INTERFACES}))
 
 
 def test_a_model_with_no_moving_joint_is_refused(tmp_path: Path) -> None:
     statue = chain_model(tmp_path, "statue", ["neck"], "", joint_type="fixed")
     with pytest.raises(ValueError, match="no joints to drive"):
-        limits(config(model=statue, joint_commands=(Interface.POSITION,)))
+        limits(config(model=statue, joint_commands={"neck": (Interface.POSITION,)}))
 
 
-def test_a_base_range_gives_three_clamped_keys_symmetric_about_zero() -> None:
-    table = limits(ConnectionConfig(source="go2", base_range=RANGE))
-    assert table == {
-        "go2/base/vx": Limits(-1.5, 1.5, clamp=True),
-        "go2/base/vy": Limits(0.0, 0.0, clamp=True),
-        "go2/base/wz": Limits(-2.0, 2.0, clamp=True),
-    }
+def test_planar_joints_use_model_velocity_bounds_without_position_bounds(model: RobotModel) -> None:
+    from dimos.robot.assets.model import PlanarBaseDefinition
 
-
-def test_joints_come_before_the_base(model: RobotModel) -> None:
-    table = limits(config(model=model, joint_commands=(Interface.POSITION,), base_range=RANGE))
-    assert list(table) == [
-        "arm/j1/position",
-        "arm/j2/position",
-        "arm/j3/position",
-        "arm/base/vx",
-        "arm/base/vy",
-        "arm/base/wz",
+    planar = model.with_planar_base(
+        PlanarBaseDefinition(
+            joint_names=("base_x", "base_y", "base_yaw"),
+            velocity_limits=(1.5, 0.5, 2.0),
+            acceleration_limits=(1.0, 1.0, 2.0),
+        )
+    )
+    names = tuple(j.name for j in movable_joints(planar) if j.name not in JOINTS)
+    cfg = config(
+        model=planar,
+        joint_commands={name: (Interface.VELOCITY,) for name in names},
+    )
+    table = limits(cfg)
+    assert list(table.values()) == [
+        Limits(-1.5, 1.5),
+        Limits(-0.5, 0.5),
+        Limits(-2.0, 2.0),
     ]
-
-
-def test_a_base_range_below_zero_or_without_end_is_refused() -> None:
-    with pytest.raises(ValueError, match="lo above hi"):
-        limits(config(base_range=Twist(linear=Vector3(-1.0, 0.0, 0.0))))
-    with pytest.raises(ValueError, match="non-finite"):
-        limits(config(base_range=Twist(angular=Vector3(0.0, 0.0, math.inf))))
+    assert all(key.endswith("/velocity") for key in table)
+    with pytest.raises(ValueError, match="absent from its model"):
+        limits(config(model=model, joint_commands={"missing": (Interface.VELOCITY,)}))
 
 
 def test_a_config_that_commands_nothing_is_refused(model: RobotModel) -> None:
@@ -263,7 +284,7 @@ def test_a_config_that_commands_nothing_is_refused(model: RobotModel) -> None:
 
 
 def test_the_table_crosses_processes(model: RobotModel) -> None:
-    table = limits(config(model=model, pd=True, base_range=RANGE))
+    table = limits(config(model=model, joint_commands=commands(model, *PD_INTERFACES)))
     assert roundtrip(table) == table
 
 
@@ -297,7 +318,13 @@ def g1_leg_model() -> RobotModel:
 
 
 def test_the_in_repo_g1_drives_every_joint_that_moves() -> None:
-    table = limits(ConnectionConfig(source="g1", model=RobotModel.from_file(G1_URDF), pd=True))
+    table = limits(
+        ConnectionConfig(
+            source="g1",
+            model=(g1 := RobotModel.from_file(G1_URDF)),
+            joint_commands=commands(g1, *PD_INTERFACES),
+        )
+    )
     joints = list(dict.fromkeys(key.rsplit("/", 1)[0] for key in table))
     # 29 motors; the floating base and the fixed sensor mounts are skipped.
     assert len(joints) == 29
@@ -307,7 +334,13 @@ def test_the_in_repo_g1_drives_every_joint_that_moves() -> None:
 
 
 def test_the_in_repo_g1_gets_its_bounds_from_its_model() -> None:
-    table = limits(ConnectionConfig(source="g1", model=g1_leg_model(), pd=True))
+    table = limits(
+        ConnectionConfig(
+            source="g1",
+            model=(g1 := g1_leg_model()),
+            joint_commands=commands(g1, *PD_INTERFACES),
+        )
+    )
     assert table["g1/left_hip_pitch/position"] == Limits(-2.5307, 2.8798)
     assert table["g1/left_hip_pitch/velocity"] == Limits(-32.0, 32.0)
     assert table["g1/left_hip_pitch/effort"] == Limits(-88.0, 88.0)

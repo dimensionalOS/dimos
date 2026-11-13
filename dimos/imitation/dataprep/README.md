@@ -5,20 +5,29 @@ selects saved episodes, aligns the configured features, and writes a dataset.
 Inspection and export use the same feature validation and alignment plan.
 The source recording remains unchanged.
 
-## Configure and inspect the source
+## Inspect and prepare a recording
 
-Start from [example_config.json](/dimos/imitation/dataprep/example_config.json). Set `source` to your
-recording, adapt the feature shapes and names to your robot, and set
-`output.format` and `output.path`. The example maps its action to measured
-`coordinator_joint_state` snapshots; a feature named `joint_target` does not
-make that data an commanded command.
+The CLI uses the `schema.json` saved in each collection directory:
 
-`inspect_recording` accepts a `DataPrepConfig` to report saved-episode quality
-before export. The CLI command `dimos imitation inspect data/recordings/session.db`
-reports stream counts, saved/discarded episodes, and unfinished episodes. Use
-your actual path; `.mcap` recordings are supported too. The CLI's recording
-inspection does not accept a feature config, so use the Python API for quality
-inspection with the same config you will export.
+```bash
+dimos imitation inspect /path/to/recording
+dimos imitation prepare /path/to/recording --output /path/to/new-dataset
+dimos imitation inspect /path/to/new-dataset
+```
+
+Replace these paths with your recording and a new output directory. Inspection
+reports stream counts, episode status and quality using the saved schema.
+Preparation exports a LeRobot dataset. See
+[recordings and profiles](/docs/capabilities/manipulation/learning/reference/recordings-and-profiles.md)
+for the collection layout.
+
+For a standalone `.db` or `.mcap` file, `dimos imitation inspect /path/to/session.db`
+reports stream and episode counts. To assess quality or export HDF5, use the
+Python API with a `DataPrepConfig`. Start from
+[example_config.json](/dimos/imitation/dataprep/example_config.json), adapt its
+feature names and shapes, and set `source`, `output.format` and `output.path`.
+The example's action uses measured `coordinator_joint_state` snapshots. Naming
+it `joint_target` does not turn those measurements into commands.
 
 For MCAP, sample alignment uses source/publish timestamps, rather than reception
 timestamps. Recorded message-type metadata supplies codecs for supported typed
@@ -152,14 +161,22 @@ excludes invalid saved episodes and raises an error if none remain.
 
 ## Export and provenance
 
-Build with the Python API, `run_dataprep(config)` in
-[build.py](/dimos/imitation/dataprep/build.py): copy
-`dimos/imitation/dataprep/example_config.json`, set `source`, `output.format`
-(`hdf5` or `lerobot`) and `output.path` to your recording and dataset, then run
-`run_dataprep(DataPrepConfig.model_validate_json(Path("my_config.json").read_text()))`
-(`DataPrepConfig` is in `dimos.imitation.dataprep.schema`). A collection
-directory with a `schema.json` builds a LeRobot dataset with
-`dimos imitation prepare <directory>`.
+Use `dimos imitation prepare /path/to/recording --output /path/to/new-dataset`
+for LeRobot export from a collection directory. For a custom config or HDF5
+output, use `run_dataprep(config)` in [build.py](/dimos/imitation/dataprep/build.py):
+
+```python no-result
+from pathlib import Path
+
+from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
+from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig
+
+config = DataPrepConfig.model_validate_json(Path("/path/to/config.json").read_text())
+config.source = "/path/to/session.db"
+config.output = OutputConfig(format="hdf5", path=Path("/path/to/session.hdf5"))
+report = inspect_recording(config.source, config=config)
+dataset = run_dataprep(config)
+```
 
 HDF5 export requires `h5py` and a nonempty task label on every exported episode.
 It stores each episode under `/episodes/episode_NNNNNN`, with `observation/`,
@@ -174,7 +191,7 @@ feature schemas, synchronization and quality settings, quality reports,
 exported episode boundaries/task labels, output format and metadata.
 `fps` defaults to `sync.rate_hz` unless explicitly supplied in output metadata.
 
-`dimos imitation inspect data/datasets/session.hdf5` inspects the built dataset.
+`dimos imitation inspect /path/to/session.hdf5` inspects the built dataset.
 LeRobot output remains supported through the format-specific writer; choosing
 a writer does not change the source feature or alignment contract.
 
