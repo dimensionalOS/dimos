@@ -75,6 +75,8 @@ def _robot_blueprint(
                 torso_link_lengths=TORSO_LINK_LENGTHS,
                 arm_rate=ARM_RATE,
                 torso_rate=TORSO_RATE,
+                max_arm_rate=ARM_RATE,
+                max_torso_rate=TORSO_RATE,
             ),
             R1ProJoyloCoordinator.blueprint(
                 instance_name="ControlCoordinator",

@@ -17,12 +17,13 @@
 from typing import ClassVar
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.galaxea.r1pro.config import R1PRO_BODY_AXES
-from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER
+from dimos.robot.galaxea.r1pro.joylo import ARMS, JAWS, TORSO, UPPER
 from dimos.teleop.leader.coordinator import leader_task
 
 
@@ -35,6 +36,23 @@ class R1ProJoyloCoordinator(ControlCoordinator):
     r1pro_position_command: Out[JointState]
     r1pro_velocity_command: Out[JointState]
     r1pro_joint_state: In[JointState]
+
+    _tracking_limits: dict[str, float] | None = None
+
+    @rpc
+    def set_tracking_limits(self, arm_rate: float, torso_rate: float) -> None:
+        """Apply the shared tracking rates to leader, browser and RPC joint targets."""
+        limits = {**dict.fromkeys(ARMS, arm_rate), **dict.fromkeys(TORSO, torso_rate)}
+        with self._task_lock:
+            if self._trajectory_task is not None:
+                self._trajectory_task.set_velocity_limits(limits)
+            self._tracking_limits = limits
+
+    def _setup_from_config(self) -> None:
+        super()._setup_from_config()
+        with self._task_lock:
+            if self._tracking_limits is not None and self._trajectory_task is not None:
+                self._trajectory_task.set_velocity_limits(self._tracking_limits)
 
 
 def joylo_tasks(velocity_limits: dict[str, float] | None = None) -> list[TaskConfig]:

@@ -222,10 +222,24 @@ class JointTrajectoryTask(BaseControlTask):
             ):
                 raise ValueError("velocity_limits must be finite and positive")
             self._velocity_limits = dict(configured_limits)
+        self._velocity_ceilings = self._velocity_limits.copy()
 
         logger.info(
             f"JointTrajectoryTask {self._name} initialized for joints: {config.joint_names}"
         )
+
+    def set_velocity_limits(self, limits: dict[str, float]) -> None:
+        """Set live slew limits for every command source, within configured ceilings.
+
+        The coordinator must hold its task lock. Zero holds the current commanded
+        position; changing a limit does not replace or enable a motion.
+        """
+        if set(limits) != self._joint_names or any(
+            not math.isfinite(value) or not 0 <= value <= self._velocity_ceilings[name]
+            for name, value in limits.items()
+        ):
+            raise ValueError("limits must name every joint and stay within configured ceilings")
+        self._velocity_limits = dict(limits)
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""

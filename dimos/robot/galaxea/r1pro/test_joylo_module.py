@@ -16,9 +16,15 @@ import math
 
 import pytest
 
+from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
+)
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER, JoyloController
+from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 
 
@@ -27,9 +33,19 @@ def module(mocker):
     mocker.patch("dimos.robot.galaxea.r1pro.joylo_module.time.time", return_value=100)
     mocker.patch("dimos.robot.galaxea.r1pro.joylo_module.time.monotonic", return_value=10)
     instance = R1ProJoylo()
+    coordinator = R1ProJoyloCoordinator()
+    coordinator.add_task(
+        JointTrajectoryTask(
+            JointTrajectoryTaskConfig(
+                joint_names=list(UPPER), velocity_limits=dict.fromkeys(UPPER, 3.0)
+            )
+        )
+    )
+    instance._motion_limits = coordinator
     instance._controller = JoyloController(dict.fromkeys(UPPER, (-3, 3)), instance.config)
     yield instance
     instance.dispose()
+    coordinator.dispose()
 
 
 @pytest.mark.parametrize("stamp", [99.7, 100.1, math.nan, math.inf])
@@ -92,7 +108,7 @@ async def test_delayed_feedback_does_not_overwrite_new_pose_or_refresh_its_age(m
 @pytest.mark.asyncio
 async def test_desktop_speed_input_changes_controller_without_enabling_it(module):
     await module.handle_arm_tracking_speed(Float32(data=0.75))
-    await module.handle_joycon_drive_speed(Float32(data=0.3))
+    await module.handle_drive_speed(Float32(data=0.3))
     assert module._controller.config.arm_rate == 0.75
     assert module._controller.config.base_speed == 0.3
     assert not module.status()["active"]
@@ -111,3 +127,30 @@ def test_deployment_speed_ceiling_and_zero_rate(module):
     with pytest.raises(ValueError):
         module.set_motion_speeds(arm_rate=1.1)
     assert module.set_motion_speeds(arm_rate=0)["arm_rate"] == 0
+
+
+@pytest.mark.parametrize("frame", ["", "dimos/guarded-joint"])
+def test_shared_tracking_speed_limits_browser_and_leader_targets(module, frame):
+    module.set_motion_speeds(arm_rate=0.2, torso_rate=0.1)
+    task = module._motion_limits._trajectory_task
+    assert task.on_joint_command(
+        JointState(frame_id=frame, name=list(UPPER), position=[1.0] * len(UPPER)), 1.0
+    )
+    state = CoordinatorState(
+        joints=JointStateSnapshot(joint_positions=dict.fromkeys(UPPER, 0.0)), t_now=1.1, dt=0.01
+    )
+    assert task.compute(state).positions == pytest.approx([0.001] * 4 + [0.002] * 14)
+    module.set_motion_speeds(arm_rate=0.0, torso_rate=0.0)
+    assert task.compute(state).positions == pytest.approx([0.001] * 4 + [0.002] * 14)
+    module.set_motion_speeds(arm_rate=0.4, torso_rate=0.2)
+    assert task.compute(state).positions == pytest.approx([0.003] * 4 + [0.006] * 14)
+
+
+def test_speed_readback_describes_live_values_and_deployment_bounds(module):
+    module.config.max_arm_rate = 1.0
+    module.set_motion_speeds(base_speed=0.4, yaw_speed=0.8)
+    settings = module.get_motion_speeds()
+    assert settings["settings"][settings["drive"]["linear"]]["value"] == 0.4
+    assert settings["settings"][settings["drive"]["angular"]]["value"] == 0.8
+    assert settings["settings"]["arm_rate"]["max"] == 1.0
+    assert not module.status()["active"]

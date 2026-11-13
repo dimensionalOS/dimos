@@ -169,15 +169,22 @@ Separate coordinator tasks arbitrate these sources, so JoyLo's 100 Hz neutral
 commands cannot erase Desktop's commands. Fresh Desktop drive commands have
 priority; after 200 ms without one, control returns to JoyLo (zero if its sticks
 are centered or its profile is paused). Coordinator E-stop covers both sources.
-The DRIVE panel's Top speed/Top turn adjust its own driving commands.
+The DRIVE panel's Shared speed/Shared turn read and update the robot's settings:
+browser controls and JoyCons use the same translation and yaw rates. The Joy-Con
+stick-click still doubles translation temporarily.
 
-Control SET also exposes `arm_tracking_speed` and `torso_tracking_speed` in rad/s,
-plus `joycon_drive_speed` in m/s and `joycon_turn_speed` in rad/s. These are saved
-settings, not hold-to-send rates. `R1ProJoylo.set_motion_speeds` updates the same
-values atomically without enabling motion. Hardware ceilings are 1.0 rad/s for
-arm tracking, 0.5 rad/s for torso tracking, 0.5 m/s Joy-Con drive (1.0 with boost),
-and 2.0 rad/s turning. Invalid/nonfinite requests are rejected. Zero freezes that
-rate. Changes last for this run; `status()` reports the applied values.
+Control SET exposes the same shared drive/turn settings plus arm and torso
+tracking rates. `get_motion_speeds` describes their current values, bounds, units
+and drive-axis bindings so Desktop needs no robot-specific names. Its matching
+`set_motion_speeds` RPC updates JoyLo and the coordinator's joint trajectory slew
+limits; browser/RPC joint targets and leader targets obey the same tracking rate.
+The numeric inputs `arm_tracking_speed`, `torso_tracking_speed`, `drive_speed` and
+`turn_speed` update these same settings. Hardware ceilings are 1.0 rad/s for arm
+tracking, 0.5 rad/s for torso tracking, 0.5 m/s drive (1.0 with Joy-Con boost), and
+2.0 rad/s turning. Invalid/nonfinite requests are rejected. Zero freezes that
+rate. Settings do not enable motion and last for this run. Desktop reads them on
+opening the Control panel, uses acknowledged values for driving, and polls for
+changes from other clients while the panel is open.
 
 Hardware upper-body and jaw feedback arrive as separate packets. JoyLo merges
 those packets by joint and retains source timestamps; a fresh jaw cannot renew
