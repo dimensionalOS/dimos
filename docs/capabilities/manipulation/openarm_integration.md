@@ -77,6 +77,8 @@ there is no atomic transaction across both buses.
 | `openarm-planner-coordinator` | bimanual planner, connection, and coordinator |
 | `teleop-webxr-openarm` | bimanual WebXR task, independent grippers, planner, and Viser |
 | `openarm-connection-control` | connection and coordinator with trajectory and gripper tasks |
+| `teleop-openarm-mini`, `-leader`, `-follower` | Feetech leader arms driving both arms and jaws, see [OpenArm Mini Teleop](/docs/capabilities/manipulation/openarm_mini_teleop.md) |
+| `openarm-mini-collection`, `openarm-mini-follower-collection` | the leader stack plus the collection recorder and three cameras |
 
 ## WebXR controls and safety
 
