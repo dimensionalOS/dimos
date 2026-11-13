@@ -47,6 +47,7 @@ def test_optical_rays_skip_authored_hidden_collision_geometry():
     assert distance == pytest.approx(1.9)
 
 
+@pytest.mark.self_hosted
 def test_hidden_referenced_shapes_remain_in_physics_but_not_optical_resources(tmp_path):
     (tmp_path / "geometry.usda").write_text("""#usda 1.0
 (defaultPrim = "world")
