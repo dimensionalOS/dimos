@@ -126,6 +126,10 @@ uv run dimos hardware g1 disable
 
 ## 5. Legacy navigation viewer example
 
+Rerun's gRPC listener binds to all interfaces even when the bridge's `host`
+is loopback. Restrict remote access with a host firewall as described in
+[Network exposure](/docs/usage/visualization.md#network-exposure).
+
 In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
 
 ```sh skip
@@ -151,7 +155,7 @@ On your laptop:
 ```sh skip
 # install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv --python "3.12"
+uv venv --python "3.14"
 # use uv to get the dimos viewer
 uvx dimos-viewer --version
 
@@ -170,7 +174,7 @@ Pinocchio loads the system copy. On affected systems, start the blueprint with
 both libraries preloaded:
 
 ```bash
-ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.12/site-packages/roboplan.libs" \
+ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.14/site-packages/roboplan.libs" \
   -maxdepth 1 -name 'libgomp-*.so*' -print -quit)"
 test -n "$ROBOPLAN_GOMP" || {
   echo "RoboPlan's bundled libgomp was not found"

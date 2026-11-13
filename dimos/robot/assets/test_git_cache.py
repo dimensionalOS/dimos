@@ -18,6 +18,7 @@ from pathlib import Path
 
 from git import Repo
 import pytest
+from structlog.testing import capture_logs
 
 from dimos.robot.assets.git_cache import GitAssetCache, GitAssetCacheWarning
 
@@ -35,6 +36,23 @@ def _make_remote(tmp_path: Path) -> tuple[Path, Repo]:
     author.index.commit("initial")
     author.git.push("--set-upstream", "origin", "main")
     return remote_path, author
+
+
+def test_the_first_clone_is_logged_and_a_cached_checkout_is_not(tmp_path: Path) -> None:
+    remote_path, _ = _make_remote(tmp_path)
+    cache = GitAssetCache(tmp_path / "cache")
+
+    with capture_logs() as logs:
+        checkout = cache.resolve(str(remote_path), "main")
+        cache.resolve(str(remote_path), "main")
+
+    assert [log["event"] for log in logs] == ["Cloning robot assets", "Cloned robot assets"]
+    assert (logs[0]["repo"], logs[0]["ref"], logs[0]["path"]) == (
+        str(remote_path),
+        "main",
+        str(checkout),
+    )
+    assert "duration" in logs[1]
 
 
 def test_refresh_preserves_local_only_commits(tmp_path: Path) -> None:

@@ -70,8 +70,18 @@ class PointLioConfig(NativeModuleConfig):
     msr_freq: float = 50.0
     main_freq: float = 5000.0
 
-    pointcloud_freq: float = 10.0
-    odom_freq: float = 30.0
+    # Upper limits, not rates. Point-LIO puts out one pose and one cloud per lidar scan,
+    # so a limit above the scan rate (the Mid360 driver's 10 Hz) changes nothing.
+    pointcloud_freq: float = Field(
+        default=10.0, description="Upper limit on the point cloud rate (Hz)."
+    )
+    odom_freq: float = Field(
+        default=30.0,
+        description=(
+            "Upper limit on the odometry and tf rate (Hz). "
+            "One pose comes out per lidar scan, so a value above the scan rate changes nothing."
+        ),
+    )
 
     # Point-LIO tuning (read in rust/src/module.rs).
     # common

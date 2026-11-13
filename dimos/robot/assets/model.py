@@ -292,7 +292,8 @@ class PlanarBaseDefinition:
 
     The three coordinates are ordered ``x``, ``y``, then ``yaw``. Linear
     coordinates use meters and angular coordinates use radians. Translation is
-    unbounded and yaw is periodic.
+    unbounded and yaw is periodic. These are geometric position coordinates,
+    not velocity-only body action resources or derivatives of body-frame rates.
     """
 
     velocity_limits: _PositiveVector3
