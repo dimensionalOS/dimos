@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
 from typing import TYPE_CHECKING
 
 import pytest
@@ -84,6 +83,9 @@ class TestSqliteBlobStore:
         with SqliteBlobStore(path=path) as store:
             store.put("s", 1, b"old")
             store.put("s", 2, b"remove")
+            # Each write is committed, so a second connection sees it before the writer closes.
+            with SqliteBlobStore(path=path) as reader:
+                assert reader.get("s", 1) == b"old"
 
         with SqliteBlobStore(path=path) as store:
             assert store.get("s", 1) == b"old"
@@ -96,9 +98,8 @@ class TestSqliteBlobStore:
                 store.get("s", 2)
 
     def test_borrowed_transaction_remains_caller_owned(self, tmp_path: Path) -> None:
-        with ExitStack() as stack:
-            disposable, conn = open_disposable_sqlite_connection(tmp_path / "blobs.db")
-            stack.callback(disposable.dispose)
+        disposable, conn = open_disposable_sqlite_connection(tmp_path / "blobs.db")
+        try:
             isolation_level = conn.isolation_level
             with SqliteBlobStore(conn=conn) as store:
                 store.put("s", 1, b"committed")
@@ -109,6 +110,8 @@ class TestSqliteBlobStore:
             assert conn.in_transaction
             conn.rollback()
             assert conn.execute('SELECT data FROM "s_blob"').fetchall() == [(b"committed",)]
+        finally:
+            disposable.dispose()
 
 
 class TestMemoryBlobStore:
