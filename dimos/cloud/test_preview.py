@@ -14,6 +14,7 @@
 
 import base64
 from collections.abc import Iterator, Sequence
+from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -24,18 +25,27 @@ import pytest
 from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
 from dimos.memory.store.base import Store
+from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo as Go2CompressedVideo
+
+
+class Obs(SimpleNamespace):
+    """One observation, with the derive() a Transformer uses to carry its fields forward."""
+
+    def derive(self, **change: Any) -> "Obs":
+        return Obs(**{**vars(self), **change})
 
 
 class Stream:
     """The reads preview makes of a memory stream, over real dimos payloads."""
 
     def __init__(self, name: str, items: Sequence[tuple[float, Any, Pose | None]]) -> None:
-        self.name, self.obs = name, [SimpleNamespace(ts=t, data=d, pose=p) for t, d, p in items]
+        self.name, self.obs = name, [Obs(ts=t, data=d, pose=p) for t, d, p in items]
 
     def __iter__(self) -> Iterator[SimpleNamespace]:
         return iter(self.obs)
@@ -45,6 +55,20 @@ class Stream:
 
     def first(self) -> SimpleNamespace:
         return self.obs[0]
+
+    def transform(self, xf: Any) -> "Transformed":
+        return Transformed(self, xf)
+
+
+class Transformed:
+    """What stream.transform() gives back: lazy, and with no count() to ask — preview must take
+    its counts and timestamps from the source stream, or it decodes the recording to count it."""
+
+    def __init__(self, source: Stream, xf: Any) -> None:
+        self.name, self._source, self._xf = source.name, source, xf
+
+    def __iter__(self) -> Iterator[Any]:
+        return cast("Iterator[Any]", self._xf(iter(self._source.obs)))
 
 
 def store(**streams: Sequence[tuple[float, Any, Pose | None]]) -> Store:
@@ -222,3 +246,81 @@ def test_ros2_tf_static_without_tf(tmp_path: Path) -> None:
         doc = preview.build(recording)
     assert doc is not None and len(doc["scans"]) == 1
     assert np.allclose(points(doc, doc["map"]), [[6.0, 0.0, 0.3]], atol=0.03)
+
+
+VIDEO_ENCODERS = {  # what each recorded format is encoded with here, kept fast and quiet
+    "h264": ("libx264", {"preset": "ultrafast", "tune": "zerolatency"}),
+    "h265": ("libx265", {"preset": "ultrafast", "x265-params": "log-level=error"}),
+    "av1": ("libsvtav1", {"preset": "8", "svtav1-params": "lookahead=0"}),
+    "vp9": ("libvpx-vp9", {"deadline": "realtime", "lag-in-frames": "0"}),
+}
+
+
+def video_frames(n: int, format: str = "h264", t0: float = 100.0) -> list[tuple[float, Any, None]]:
+    """n encoded packets, as a camera that records video rather than frames gives them."""
+    import av
+
+    codec, options = VIDEO_ENCODERS[format]
+    encoder: Any = av.CodecContext.create(codec, "w")
+    encoder.width, encoder.height, encoder.pix_fmt = 64, 48, "yuv420p"
+    encoder.time_base, encoder.framerate = Fraction(1, 10), Fraction(10, 1)
+    encoder.gop_size, encoder.max_b_frames, encoder.options = 4, 0, options
+    pictures = []
+    for i in range(n):
+        picture = av.VideoFrame.from_ndarray(np.full((48, 64, 3), 20 * i, np.uint8), format="bgr24")
+        picture.pts = i
+        pictures.append(picture)
+    packets = [p for picture in [*pictures, None] for p in encoder.encode(picture)]
+    return [
+        (t0 + p.pts / 10, CompressedVideo(data=bytes(p), format=format, frame_id="front"), None)
+        for p in packets
+    ]
+
+
+@pytest.mark.parametrize("format", list(VIDEO_ENCODERS))
+def test_a_video_camera_is_decoded_for_the_thumbnails(format: str) -> None:
+    """The M20 records its cameras as foxglove CompressedVideo (h264), not as jpeg Images, and
+    a preview with no camera at all was the result; h265, AV1 and vp9 decode the same way."""
+    packets = video_frames(12, format)
+    doc = preview.build(store(front_camera=packets, front_camera_info=[(100.0, b"raw", None)]))
+    assert doc is not None
+    assert doc["streams"]["camera"]["name"] == "front_camera"  # the packets, not the decode
+    assert doc["streams"]["camera"]["count"] == len(packets)
+    assert doc["camera"] and all(shot["jpeg"] for shot in doc["camera"])
+    assert [shot["t"] for shot in doc["camera"]] == sorted(shot["t"] for shot in doc["camera"])
+    assert doc["thumb"] is not None  # a real picture came back, bright enough to rank
+
+
+@pytest.mark.parametrize("format", list(VIDEO_ENCODERS))
+def test_a_video_camera_makes_a_timelapse(tmp_path: Path, format: str) -> None:
+    out = tmp_path / "t.mp4"
+    meta = preview.timelapse(store(front_camera=video_frames(12, format)), out)
+    assert meta is not None and meta["type"] == "video/mp4"
+    assert meta["bytes"] == out.stat().st_size > 0
+    assert meta["speed"] == 1.0
+
+
+def test_a_go2_h264_camera_is_decoded_too() -> None:
+    """The Go2's DDS front camera has its own CompressedVideo (no timestamp of its own)."""
+    packets = [
+        (
+            t,
+            Go2CompressedVideo(
+                data=np.frombuffer(v.data, np.uint8), format="h264", frame_id="front"
+            ),
+            None,
+        )
+        for t, v, _ in video_frames(12)
+    ]
+    doc = preview.build(store(frontvideo=packets))
+    assert doc is not None and doc["camera"] and doc["thumb"] is not None
+
+
+def test_a_camera_whose_packets_never_decode_leaves_no_timelapse(tmp_path: Path) -> None:
+    rubbish = [
+        (100.0 + i, CompressedVideo(data=b"\x00\x00\x01\x09", format="h264"), None)
+        for i in range(4)
+    ]
+    out = tmp_path / "t.mp4"
+    assert preview.timelapse(store(front_camera=rubbish), out) is None
+    assert not out.exists()

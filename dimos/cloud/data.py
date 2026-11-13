@@ -429,15 +429,52 @@ def _is_sidecar(path: Path) -> bool:
     return path.name.endswith(("-shm", "-wal", "-journal"))  # SQLite's own suffixes
 
 
-def _manifest(db: Path) -> dict[str, Any] | None:
+def _sqlite_streams(db: Path) -> list[dict[str, Any]] | None:
     try:
         with contextlib.closing(
             sqlite3.connect(f"{db.absolute().as_uri()}?mode=ro", uri=True)
         ) as conn:
             rows = conn.execute("SELECT name, config FROM _streams").fetchall()
-        return {"streams": [{"name": n, **json.loads(c)} for n, c in rows]}
     except sqlite3.Error:
         return None
+    return [{"name": n, **json.loads(c)} for n, c in rows]
+
+
+def _store_streams(recording: Path) -> list[dict[str, Any]] | None:
+    """What a recording that isn't a dimos sqlite database holds, asked of the store itself."""
+    try:
+        with open_store(recording) as store:
+            streams = []
+            for name in store.list_streams():
+                try:
+                    payload = store.stream(name).data_type
+                except Exception:  # a channel whose type won't import still leaves the rest
+                    continue
+                streams.append(
+                    {
+                        "name": name,
+                        "payload_module": f"{payload.__module__}.{payload.__qualname__}"
+                        if payload
+                        else None,
+                    }
+                )
+            return streams
+    except Exception:
+        return None
+
+
+def _manifest(recording: Path) -> dict[str, Any] | None:
+    """What the recording holds: the server keeps it, and it is what says a preview can be built.
+
+    A dimos sqlite database answers from its own `_streams` table, cheaply and without importing
+    any dimos type. Anything else — an .mcap — is opened as a store and asked instead. Without
+    that an .mcap had no manifest, and no manifest meant no console preview at all, whatever the
+    preview itself could make of it.
+    """
+    streams = _sqlite_streams(recording)
+    if streams is None:
+        streams = _store_streams(recording)
+    return {"streams": streams} if streams else None
 
 
 def _plain_name(filename: str, wire: str) -> str:

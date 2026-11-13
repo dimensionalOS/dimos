@@ -29,6 +29,7 @@ from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -624,3 +625,32 @@ def test_a_name_two_topics_fold_to_fails_only_when_read(tmp_path):
         assert store.stream("imu").count() == 1
         with pytest.raises(ValueError, match="pass streams="):
             store.stream("camera_info")
+
+
+def test_lcm_channel_typed_by_its_schema_name(tmp_path: Path) -> None:
+    """The R1's recorder names an LCM channel's type as its schema (``sensor_msgs.CompressedImage``)
+    and nothing else; a compressed frame comes back as an Image, as the jpeg channels do."""
+    path = tmp_path / "r1.mcap"
+    picture = np.full((8, 8, 3), [20, 80, 140], dtype=np.uint8)
+    frame = CompressedImage(data=cv2.imencode(".jpg", picture)[1].tobytes(), format="jpeg", ts=3.0)
+    imu = Imu(ts=3.0, frame_id="imu_link", angular_velocity=Vector3(1.0, 2.0, 3.0))
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start(profile="", library="test")
+        for topic, schema, data in (
+            ("/head_left_color", "sensor_msgs.CompressedImage", frame.lcm_encode()),
+            ("/imu", "sensor_msgs.Imu", imu.lcm_encode()),
+            ("/custom", "my_pkg.Thing", b"\x00"),
+        ):
+            schema_id = writer.register_schema(name=schema, encoding="lcm", data=b"")
+            channel_id = writer.register_channel(
+                topic=topic, message_encoding="lcm", schema_id=schema_id
+            )
+            writer.add_message(channel_id=channel_id, log_time=1, publish_time=1, data=data)
+        writer.finish()
+
+    with McapStore(path=str(path)) as store:
+        image = store.stream("head_left_color").first().data
+        assert isinstance(image, Image) and image.shape[:2] == (8, 8)
+        assert store.stream("imu").first().data.lcm_encode() == imu.lcm_encode()
+        assert store.stream("custom").first().data == b"\x00"

@@ -53,6 +53,7 @@ from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import NearFilter, StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.msgs.helpers import lcm_msg_type
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
@@ -159,6 +160,35 @@ def _ros2_codec(schema: Any) -> _Ros2Codec | None:
     twin = lcm_msg_type(msg_type.msg_name)
     direct = issubclass(msg_type, twin) and set(twin.__typenames__) <= _LCM_PRIMITIVES
     return _Ros2Codec(payload, msg_type, decode_ros, direct)
+
+
+def _lcm_type(channel: Any, schema: Any) -> type | None:
+    """The dimos message type an LCM channel names, in its metadata or its schema, if any.
+
+    A writer that is not dimos itself can still say what it put on a channel: dim-controller's
+    recorder stamps ``lcm_type: foxglove_msgs.CompressedVideo`` on the h264 camera channels of
+    the ros2-profile mcaps it writes, where the mcap *schema* is empty (LCM has no ros2msg
+    schema to give) and the topic is a plain ``/front_camera`` that describes nothing. Other
+    LCM recorders (the R1's) name the type as an ``lcm``-encoded schema instead:
+    ``sensor_msgs.CompressedImage``. Without this the frames read back as raw bytes, which is
+    why those recordings had no preview. Only a built-in dimos message type is picked.
+    """
+    name = channel.metadata.get("lcm_type") or (
+        schema.name if schema is not None and schema.encoding == "lcm" else ""
+    )
+    if not re.fullmatch(r"[a-z][a-z0-9_]*_msgs\.[A-Z][A-Za-z0-9]*", name):
+        return None
+    return get_dimos_type(name)
+
+
+@dataclass(frozen=True)
+class _CompressedImageCodec:
+    """An LCM ``CompressedImage`` channel, decoded to an ``Image`` as the jpeg channels are."""
+
+    payload_type: type = Image
+
+    def decode(self, data: bytes) -> Any:
+        return CompressedImage.lcm_decode(data).decode()
 
 
 def _dimos_wire(topic: str) -> tuple[str, type] | None:
@@ -380,6 +410,12 @@ class McapStore(Store):
                             f"Cannot decode MCAP stream {ch.topic!r}: install the package "
                             f"providing {payload_type!r} in the dataset reader environment"
                         ) from exc
+                if ch.topic not in self._codecs and ch.message_encoding == "lcm":
+                    named = _lcm_type(ch, summary.schemas.get(ch.schema_id))
+                    if named is CompressedImage:
+                        self._codecs[ch.topic] = _CompressedImageCodec()
+                    elif named is not None:
+                        self._codecs[ch.topic] = _DimosCodec(named)
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:
