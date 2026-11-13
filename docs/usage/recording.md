@@ -101,6 +101,8 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 
 `stream.near(pose, radius)` matches the pose attached to each observation. `--record` attaches none, so `near()` on a fresh recording returns nothing and warns. The `Poses` column of `dimos mem summary` counts the observations that have a pose.
 
+When `near()` follows a transformation, it checks the transformed observations. If the transformed stream is nonempty and has no poses, it warns when that stream ends; a live stream may never end. A transformation that attaches poses can make spatial queries work without changing the recording.
+
 `dimos map pose-fill` writes a copy of a SQLite recording with poses attached to one stream:
 
 ```bash
