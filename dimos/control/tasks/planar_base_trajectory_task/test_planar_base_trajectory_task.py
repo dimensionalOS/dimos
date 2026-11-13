@@ -17,6 +17,7 @@ import math
 import pytest
 
 from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.tasks.planar_base_trajectory_task import planar_base_trajectory_task
 from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
     PlanarBaseTrajectoryTask,
     PlanarBaseTrajectoryTaskConfig,
@@ -237,3 +238,39 @@ def test_lost_odometry_aborts_and_stops_the_base(loss, goal):
 
     assert task.get_status().state == TrajectoryState.ABORTED
     assert [o for o in outputs if o is not None][-1].velocities == ZERO
+
+
+def test_execution_logs_target_duration_and_completed_pose_once(mocker):
+    log = mocker.patch.object(planar_base_trajectory_task.logger, "info")
+    task = _task()
+    plan = _line(ZERO, [1.0, 0.0, 0.0], duration=2.0, n=2)
+    base = _TwistBase()
+
+    task.execute(plan)
+    task.compute(base.state(100.0))
+    base.x = 1.0
+    task.compute(base.state(102.0))
+    task.compute(base.state(102.1))
+
+    assert log.call_args_list == [
+        mocker.call(
+            "Executing trajectory", task_name="base_traj", duration=2.0, target=[1.0, 0.0, 0.0]
+        ),
+        mocker.call(
+            "Trajectory completed",
+            task_name="base_traj",
+            elapsed=2.0,
+            position=(1.0, 0.0, 0.0),
+        ),
+    ]
+
+
+def test_cancel_logs_result_once(mocker):
+    task = _task()
+    task.execute(_line(ZERO, [1.0, 0.0, 0.0], duration=2.0, n=2))
+    log = mocker.patch.object(planar_base_trajectory_task.logger, "info")
+
+    assert task.cancel()
+    assert not task.cancel()
+
+    log.assert_called_once_with("Trajectory cancelled", task_name="base_traj", elapsed=0.0)

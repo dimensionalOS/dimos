@@ -112,48 +112,58 @@ def pose_fill_db(
             "collide on ts). Delete it (and any -wal/-shm sidecars) first."
         )
 
-    src = SqliteStore(path=str(src_path), must_exist=True)
-    dest = SqliteStore(path=str(dest_path))
-    names = streams if streams is not None else src.list_streams()
-    if target not in names:
-        raise ValueError(f"target stream {target!r} not in {names}")
-    if pose_source not in src.list_streams():
-        raise ValueError(f"pose_source stream {pose_source!r} not found in source dataset")
-
     written: dict[str, int] = {}
-    for name in names:
-        src_b = cast("Backend[Any]", src.stream(name)._source)
-        dest_b = cast("Backend[Any]", dest.stream(name, src_b.data_type, codec=src_b.codec)._source)
+    with SqliteStore(path=str(src_path), must_exist=True) as src:
+        available = src.list_streams()
+        names = streams if streams is not None else available
+        if target not in names:
+            raise ValueError(f"target stream {target!r} not in {names}")
+        if pose_source not in available:
+            raise ValueError(f"pose_source stream {pose_source!r} not found in source dataset")
+        missing = sorted(set(names) - set(available))
+        if missing:
+            raise ValueError(f"streams not found in source dataset: {missing}")
 
-        # Re-posed observations for the target (ids preserved from source, so
-        # the source blob still resolves); plain metadata for everything else.
-        if name == target:
-            rows: Iterable[Observation[Any]] = pose_fill(
-                src.stream(name).from_time(seek or None).to_time(duration).order_by("ts"),
-                src.stream(pose_source).from_time(seek or None).to_time(duration).order_by("ts"),
-                tolerance=tolerance,
-            )
-        else:
-            rows = src.stream(name).from_time(seek or None).to_time(duration).order_by("ts")
+        # Validate the full selection before creating a destination that would block retries.
+        with SqliteStore(path=str(dest_path)) as dest:
+            for name in names:
+                src_b = cast("Backend[Any]", src.stream(name)._source)
+                dest_b = cast(
+                    "Backend[Any]", dest.stream(name, src_b.data_type, codec=src_b.codec)._source
+                )
 
-        scalar = src_b.data_type in (int, float)
-        n = 0
-        for obs in rows:
-            blob = (
-                None if scalar or src_b.blob_store is None else src_b.blob_store.get(name, obs.id)
-            )
-            row_id = dest_b.metadata_store.insert(obs)
-            if blob is not None:
-                assert dest_b.blob_store is not None
-                dest_b.blob_store.put(name, row_id, blob)
-            n += 1
-        commit = getattr(dest_b.metadata_store, "commit", None)
-        if commit is not None:
-            commit()
-        written[name] = n
+                # Re-posed observations for the target (ids preserved from source, so
+                # the source blob still resolves); plain metadata for everything else.
+                if name == target:
+                    rows: Iterable[Observation[Any]] = pose_fill(
+                        src.stream(name).from_time(seek or None).to_time(duration).order_by("ts"),
+                        src.stream(pose_source)
+                        .from_time(seek or None)
+                        .to_time(duration)
+                        .order_by("ts"),
+                        tolerance=tolerance,
+                    )
+                else:
+                    rows = src.stream(name).from_time(seek or None).to_time(duration).order_by("ts")
 
-    src.stop()
-    dest.stop()
+                scalar = src_b.data_type in (int, float)
+                n = 0
+                for obs in rows:
+                    blob = (
+                        None
+                        if scalar or src_b.blob_store is None
+                        else src_b.blob_store.get(name, obs.id)
+                    )
+                    row_id = dest_b.metadata_store.insert(obs)
+                    if blob is not None:
+                        assert dest_b.blob_store is not None
+                        dest_b.blob_store.put(name, row_id, blob)
+                    n += 1
+                commit = getattr(dest_b.metadata_store, "commit", None)
+                if commit is not None:
+                    commit()
+                written[name] = n
+
     return written
 
 

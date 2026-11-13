@@ -227,3 +227,31 @@ finally:
 ```
 
 Disconnecting does not stop the remote blueprint or cancel its motion.
+
+Don't name a script after a standard-library module (`inspect.py`, `types.py`,
+`test.py`): Python imports the script's folder first, so the script shadows the
+real module and `import dimos` fails.
+
+## Cameras
+
+Read the arm's camera with `peek_stream`, which returns the next frame or `None`
+if none arrives in time:
+
+```python skip
+color = app.peek_stream("color_image", 2.0)
+depth = app.peek_stream("depth_image", 2.0)
+info = app.peek_stream("depth_camera_info", 2.0)
+if color is None or depth is None or info is None:
+    raise RuntimeError("no camera frame within 2 s")
+color.save("view.jpg")             # RGB, saved for viewing
+depth = depth.as_numpy()           # float32 metres
+fx, _, cx, _, fy, cy, _, _, _ = info.K  # depth intrinsics, 3x3 row-major
+```
+
+Use `camera_info` for colour pixels and `depth_camera_info` for depth pixels; the
+two match only when depth is registered to colour, as in simulation.
+
+A depth pixel `(u, v)` back-projects to the camera's optical frame as
+`z = depth[v, u]`, `x = (u - cx) * z / fx`, `y = (v - cy) * z / fy`, with +Z
+forward, +X image right and +Y image down. `app.list_streams()` lists every
+stream the running modules publish.
