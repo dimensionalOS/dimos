@@ -45,6 +45,8 @@ class MujocoEnvironmentConfig(SimConfig):
         "body_poses",
         "odom",
     )
+    # Ground truth the agent must not read through peek_stream: exact object poses.
+    peek_hidden: tuple[str, ...] = ("body_poses",)
     # Full xArm MJCF for the MujocoSimModule; the coordinator's sim adapter attaches to it.
     scene: Path | None = None
     base_height: float | None = Field(default=None, ge=0, allow_inf_nan=False)
@@ -61,6 +63,7 @@ class MujocoEnvironment(Sim):
         if self.config.scene is not None:
             proc.extra_env["MUJOCOSIMMODULE__ADDRESS"] = str(self.config.scene.resolve())
         proc.extra_env.update(self.config.module_env)
+        proc.extra_env["PEEK_HIDDEN_STREAMS"] = ",".join(self.config.peek_hidden)
         if self.config.base_height is not None:
             proc.extra_env["MANIPULATIONMODULE__MODEL__BASE_POSE"] = json.dumps(
                 {"frame_id": "world", "position": [0.0, 0.0, self.config.base_height]}
