@@ -36,7 +36,7 @@ uv run dimos run lite6-planner-coordinator
 
 * Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X in Viser. Press [ and ] to open and close the gripper.
 * Planner: drag the target gizmo in Viser, click Plan, then Execute.
-* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6`, `keyboard-teleop-piper`, `keyboard-teleop-a750` and `keyboard-teleop-a1z`. Repeat the planner check with `a1z-planner-coordinator`, adding `--visualization.backend viser`.
+* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6`, `keyboard-teleop-piper` and `keyboard-teleop-a750`.
 * The OpenYAM and OpenArm blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`, `dual-openyam-planner-coordinator` and `openarm-planner-coordinator`. Add `--visualization.backend viser` to `keyboard-teleop-openyam-planner` and the three planner blueprints.
 
 Expected result: each blueprint starts without an arm and the model moves in Viser.
@@ -122,3 +122,18 @@ uv run dimos run r1pro-planar-preview
 * Set `moving_base/r1pro/base_yaw` to `3.0`, Plan and Execute. Then set it to `-3.0`, Plan and Preview.
 
 Expected result: each plan succeeds and the mock robot ends at each executed target. The yaw preview from 3.0 to -3.0 turns the short way through pi.
+
+## 3.8 Galaxea A1Z on hardware
+
+Needs the A1Z on the CAN interface `a1zcan` (`dimos hardware a1z configure-can`) and its SDK; see the [A1Z guide](../../docs/capabilities/manipulation/a1z.md). Support the arm and clear its workspace: it moves home after it starts and before it stops.
+
+```bash
+uv run dimos run a1z-keyboard-teleop --a1zconnection.can-port a1zcan
+uv run dimos run a1z-planner-coordinator --a1zconnection.can-port a1zcan --visualization.backend viser
+```
+
+* Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X. Press [ and ] to open and close the gripper.
+* Planner: drag the target gizmo in Viser, click Plan, then Execute.
+* Jog the arm from the Desktop Manipulation app with `a1z-teleop`, and repeat the headset check from 3.5 with `teleop-webxr-a1z` and the left controller. Both take `--a1zconnection.can-port a1zcan`.
+
+Expected result: the arm moves home, follows each command, and moves home again before its motors turn off on Ctrl+C.

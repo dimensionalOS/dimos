@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 import numpy as np
 from pydantic import Field, FiniteFloat, field_validator
@@ -26,7 +26,7 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_generator_module import GraspGeneratorModule
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.service.spec import BaseConfig
@@ -92,7 +92,7 @@ class GraspGenXError(RuntimeError):
     """Base error for model loading and inference failures."""
 
 
-class GraspGenXModule(IsolatedPythonModule, GraspGenSpec):
+class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
     """Grasp proposals implemented in a separately locked Python environment."""
 
     project_dir = "native/python/graspgenx"
@@ -103,3 +103,32 @@ class GraspGenXModule(IsolatedPythonModule, GraspGenSpec):
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
         """Return ranked TCP poses for an object point cloud in its input frame."""
         raise NotImplementedError
+
+    @rpc
+    def propose_grasps_for(
+        self,
+        object_id: str,
+        approach: list[float] | None = None,
+        max_angle_deg: float = 30.0,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Propose grasps on a scanned object of any shape, from a learned grasp model.
+
+        Grasps come from many directions, so this suits mugs, tools and objects
+        held from the side. Needs a GPU and takes about a second for 500
+        candidates. The grasps are not checked for reach or collisions. Pass one
+        entry of ``grasps`` to pick_object as ``grasp``.
+
+        Args:
+            object_id: ID from the latest scan_objects call.
+            approach: Unit vector [x, y, z] in the arm's base frame: the direction
+                the gripper moves in, from the operator's hand into the object.
+                [0, 0, -1] is straight down. None accepts any direction.
+            max_angle_deg: Half-angle of the cone around approach, degrees.
+            limit: How many grasps to return, best first.
+
+        Returns ``grasps`` (each with position, orientation, score and angle_deg),
+        ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
+        made, which says how far off approach is when ``grasps`` is empty.
+        """
+        return self._propose_for(object_id, approach, max_angle_deg, limit)

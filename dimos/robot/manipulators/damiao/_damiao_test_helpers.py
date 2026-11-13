@@ -156,9 +156,7 @@ def mock_connection_rig(
                 deadman_timeout_s=10,
                 initial_positions=dict(zip(names, positions, strict=True)),
             )
-            coordinator.config.model = model.with_renamed_joints(
-                {name: f"arm/{name}" for name in names}
-            )
+            coordinator.config.connections = [connection.config]
             inputs = {name: LocalTransport[Any]() for name in coordinator.inputs}
             for name, transport in inputs.items():
                 coordinator.set_transport(name, transport)
