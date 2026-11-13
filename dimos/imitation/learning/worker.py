@@ -333,7 +333,7 @@ def main() -> None:
                 "status": "blocked" if error.status in (422, 503) else "failed",
                 "error": {"code": error.code, "message": error.message},
             }
-        except Exception as error:  # noqa: BLE001 -- offline executor must persist failure for owner
+        except Exception as error:
             import traceback
 
             traceback.print_exc()
