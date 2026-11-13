@@ -199,14 +199,16 @@ class PickAndPlaceModule(Module):
             max_angle_deg: Half-angle of the cone around approach, degrees.
             limit: How many grasps to return, best first.
 
-        Returns ``object_id``, ``grasps`` (each with position, orientation, score
-        and angle_deg), ``considered`` and ``nearest_angle_deg``, the angle of the
-        closest grasp made, which says how far off approach is when ``grasps`` is empty.
+        Returns ``object_id`` (the id, also when a label was given), ``grasps``
+        (each with position, orientation, score and angle_deg), ``considered`` and
+        ``nearest_angle_deg``, the angle of the closest grasp made, which says how
+        far off approach is when ``grasps`` is empty.
         """
         chosen = self._grasp_generators.get(generator)
         if chosen is None:
             running = ", ".join(sorted(self._grasp_generators)) or "none"
             raise ValueError(f"No grasp generator named {generator}; running: {running}")
+        object_id = self._scene.get_id(object_id)
         cloud = self._scene.get_pointcloud(object_id)
         answer: dict[str, Any] = chosen.propose_grasps_for(
             cloud=cloud, approach=approach, max_angle_deg=max_angle_deg, limit=limit
@@ -246,6 +248,7 @@ class PickAndPlaceModule(Module):
             )
         self._clear_selection()
         try:
+            object_id = self._scene.get_id(object_id)
             pointcloud = self._scene.get_pointcloud(object_id)
         except (LookupError, ValueError) as exc:
             return SkillResult(f"{exc} Did not start the pick.")

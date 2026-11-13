@@ -43,10 +43,9 @@ class ManipulationLocalize(PerceptionLocalize):
 
     config: ManipulationLocalizeConfig
 
-    @rpc
-    def start(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._objects: dict[str, tuple[str, Localization]] = {}
-        super().start()
 
     @rpc
     def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
@@ -88,11 +87,14 @@ class ManipulationLocalize(PerceptionLocalize):
         return Vector3(*self._resolve(target).position_world_xyz)
 
     @rpc
-    def forget(self, target: str) -> None:
-        """Drop the object with this id or label: it is no longer where it was seen."""
-        self._objects = {
-            i: (label, hit) for i, (label, hit) in self._objects.items() if target not in (i, label)
-        }
+    def get_id(self, target: str) -> str:
+        """The id of one localized object, found as in ``get_pointcloud``."""
+        return self._resolve(target).instance_id
+
+    @rpc
+    def forget(self, object_id: str) -> None:
+        """Drop the object with this id: it is no longer where it was seen."""
+        self._objects.pop(object_id, None)
 
     @rpc
     def scene_cloud(self, start: float = -5.0, duration: float = 5.0) -> PointCloud2 | None:

@@ -76,6 +76,7 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.execute.return_value = COMPLETED
     instance._manipulation.move_linear.return_value = _linear_move()
     instance._manipulation.set_gripper_position.return_value = ACCEPTED
+    instance._scene.get_id.side_effect = _resolved
     # The cup's points: a 4 cm cube centred on the grasp at (0.1, 0.0, 0.2).
     instance._scene.get_pointcloud.side_effect = _localized(
         "cup-1",
@@ -101,12 +102,18 @@ def settled_gripper(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
 
 
+def _resolved(asked: str) -> str:
+    """A localize get_id that knows one object: the cup cup-1."""
+    if asked not in ("cup", "cup-1"):
+        raise LookupError(f"No {asked!r} among the localized objects. They are: cup cup-1.")
+    return "cup-1"
+
+
 def _localized(instance_id: str, cloud: PointCloud2) -> Any:
-    """A localize get_pointcloud that knows one instance, with this cloud."""
+    """A localize get_pointcloud that gives this cloud for one id and no other."""
 
     def get_pointcloud(asked: str) -> PointCloud2:
-        if asked != instance_id:
-            raise LookupError(f"No {asked!r} in the last scan. It found: cup {instance_id}.")
+        assert asked == instance_id
         return cloud
 
     return get_pointcloud
@@ -128,9 +135,10 @@ def test_pick_object_uses_first_provider_candidate(
         Header(1.0, "world"), [first, second]
     )
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object("cup")
 
     assert result.message == "Pick complete"
+    assert result.metadata["object_id"] == "cup-1"
     # Localize no longer has the cup where it was.
     scene: Any = module._scene
     scene.forget.assert_called_once_with("cup-1")
@@ -264,7 +272,7 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
     result = module.pick_object("missing")
 
     assert result.message == (
-        "No 'missing' in the last scan. It found: cup cup-1. Did not start the pick."
+        "No 'missing' among the localized objects. They are: cup cup-1. Did not start the pick."
     )
     assert module._selected_grasp is None
     scene: Any = module._scene
@@ -685,7 +693,7 @@ def test_propose_grasps_asks_the_generator_the_agent_names(module: PickAndPlaceM
     planner = MagicMock(remote_name="ManipulationModule", rpcs=frozenset({"plan_to_pose"}))
     module.on_system_modules([graspgenx, heuristic, planner])
 
-    answer = module.propose_grasps("cup-1", "HeuristicGraspModule", approach=[0.0, 0.0, -1.0])
+    answer = module.propose_grasps("cup", "HeuristicGraspModule", approach=[0.0, 0.0, -1.0])
 
     assert answer == {"object_id": "cup-1", "generator": "HeuristicGraspModule", "grasps": []}
     heuristic.propose_grasps_for.assert_called_once_with(

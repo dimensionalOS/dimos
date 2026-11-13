@@ -68,6 +68,7 @@ def test_localized_objects_are_found_by_id_or_unique_label(localizer, mocker):
     assert localizer.get_pointcloud("cup-1") is cup.point_cloud
     assert localizer.get_pointcloud("cup") is cup.point_cloud
     assert localizer.get_position("cup").x == pytest.approx(0.4)
+    assert localizer.get_id("cup") == "cup-1"
     with pytest.raises(ValueError, match="block-1, block-2"):
         localizer.get_pointcloud("block")
     with pytest.raises(LookupError, match=r"No 'bowl' among the localized objects\. They are: cup"):

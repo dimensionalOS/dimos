@@ -75,13 +75,13 @@ uv run dimos run xarm-perception-sim-agent
 uv run dimos mcp call get_robot_state
 # localize confirms an object from two camera poses, so look from a second one first
 uv run dimos mcp call move_to_pose --json-args '{"x": 0.4, "y": 0.1, "z": 0.35}'
-uv run dimos mcp call localize --json-args '{"objects": "cup", "start": -30, "duration": 30}'
+uv run dimos mcp call localize --json-args '{"objects": "red cube", "start": -30, "duration": 30}'
 uv run humancli
 ```
 
 * In `humancli` send "Scan for objects." and then "Move 10 cm to the left."
 
-Expected result: MuJoCo shows the arm, a table, an apple, an orange and a cup. `get_robot_state` prints the joints, end-effector pose and gripper state, `localize` reports the cup with an `id`, the agent lists the objects it found, and the arm moves 10 cm sideways.
+Expected result: MuJoCo shows the arm on a table with small blocks, balls, two bowls and a basket. `get_robot_state` prints the joints, end-effector pose and gripper state, `localize` reports the red cube with an `id`, the agent lists the objects it found, and the arm moves 10 cm sideways.
 
 ## 3.5 WebXR headset teleop
 
