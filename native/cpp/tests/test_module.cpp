@@ -9,6 +9,7 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -130,6 +131,21 @@ struct WorkerGuard {
 };
 
 }  // namespace
+
+TEST_CASE("the builder carries the namespace the module was launched under") {
+    Notifier notifier;
+    Builder named({{"data", "/data"}}, &notifier, std::string("robot0"));
+    CHECK(named.frame("base_link") == "robot0/base_link");
+    Builder plain({{"data", "/data"}}, &notifier);
+    CHECK(plain.frame("base_link") == "base_link");
+    CHECK_FALSE(plain.frame_prefix().has_value());
+
+    // It rides beside the config on the launch line, like the topics.
+    const auto launch = nlohmann::json{{"config", nlohmann::json::object()},
+                                       {"frame_id_prefix", "robot0"}};
+    CHECK(launch_frame_prefix(launch) == std::optional<std::string>("robot0"));
+    CHECK_FALSE(launch_frame_prefix(nlohmann::json::object()).has_value());
+}
 
 TEST_CASE("an inbound message routes through a handler to an output") {
     MockTransport transport;

@@ -36,6 +36,9 @@ use validator::ValidationError;
 #[validate(schema(function = core_config_parses))]
 pub struct Config {
     frame_id: String,
+    /// The namespace, for the frames this module stamps on its messages. A
+    /// config that does not declare it is not sent the key.
+    frame_id_prefix: Option<String>,
     sensor_frame_id: String,
     #[validate(range(exclusive_min = 0.0))]
     pointcloud_freq: f64,

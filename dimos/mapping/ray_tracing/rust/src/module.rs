@@ -780,7 +780,6 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            frame_id_prefix: None,
             voxel_size: 1.0,
             fine_divisor: 0,
             emit_fine: false,

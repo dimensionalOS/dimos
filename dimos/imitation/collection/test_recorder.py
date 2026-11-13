@@ -389,14 +389,6 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
         sys.modules.pop("vendor_robot", None)
 
 
-def test_a_namespaced_collection_sends_its_frame_prefix(tmp_path):
-    """`to_config_dict` is hand-rolled here, which is how the key went missing once."""
-    plain = CollectionModuleConfig(recording=tmp_path / "session")
-    assert "frame_id_prefix" not in plain.to_config_dict()
-    namespaced = CollectionModuleConfig(recording=tmp_path / "ns", frame_id_prefix="robot0")
-    assert namespaced.to_config_dict()["frame_id_prefix"] == "robot0"
-
-
 @pytest.mark.parametrize("format,payload", [("mcap", "recording.mcap"), ("sqlite", "recording.db")])
 def test_collection_config_roundtrip_keeps_derived_store(tmp_path, format, payload):
     config = CollectionModuleConfig(recording=tmp_path / "session", format=format)

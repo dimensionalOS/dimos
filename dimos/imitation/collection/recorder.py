@@ -97,16 +97,12 @@ class CollectionModuleConfig(RustRecorderConfig):
         return self
 
     def to_config_dict(self) -> dict[str, Any]:
-        # Collection settings stay in Python; Rust accepts only its recorder
-        # config, plus the frame prefix when there is one.
-        config: dict[str, Any] = {
+        # Collection settings stay in Python; Rust accepts only its recorder config.
+        return {
             "store": self.store.model_dump(),
             "encoding_threads": self.encoding_threads,
             "streams": [stream.model_dump() for stream in self.streams],
         }
-        if self.frame_id_prefix is not None:
-            config["frame_id_prefix"] = self.frame_id_prefix
-        return config
 
 
 class CollectionModule(RustRecorder):

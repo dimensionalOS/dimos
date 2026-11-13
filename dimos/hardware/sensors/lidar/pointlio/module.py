@@ -55,8 +55,6 @@ IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 class PointLioConfig(NativeModuleConfig):
     stdin_config: bool = True
     frame_id: str = "odom"
-    # frame_id_prefix too: the module composes the namespaced frame itself,
-    # since it publishes odometry and tf without going back through Python.
     base_fields: frozenset[str] = frozenset({"frame_id"})
     source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
     executable: str = "result/bin/pointlio_native"

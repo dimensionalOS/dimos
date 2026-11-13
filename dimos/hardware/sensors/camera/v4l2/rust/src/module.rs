@@ -17,7 +17,7 @@
 
 use std::time::{Duration, Instant};
 
-use dimos_module::{native_config, Module, Output};
+use dimos_module::{native_config, prefix_frame, Module, Output};
 use lcm_msgs::sensor_msgs::CompressedImage;
 use lcm_msgs::std_msgs::{Header, Time};
 use tracing::{info, warn};
@@ -44,6 +44,9 @@ pub struct Config {
     #[validate(length(equal = 4))]
     fourcc: String,
     frame_id: String,
+    /// The namespace, for the frame this module stamps on its images. The host
+    /// fills it from the launch line; it is not a config key.
+    frame_id_prefix: Option<String>,
     #[validate(range(min = 1, max = 100))]
     jpeg_quality: i64,
     /// Use the Jetson's hardware encoder when it is present; the CPU path covers everything else.
@@ -159,7 +162,7 @@ fn pump(
                     sec: stamp.trunc() as i32,
                     nsec: (stamp.fract() * 1e9) as i32,
                 },
-                frame_id: config.frame_id.clone(),
+                frame_id: prefix_frame(config.frame_id_prefix.as_deref(), &config.frame_id),
             },
             format: "jpeg".into(),
             data,

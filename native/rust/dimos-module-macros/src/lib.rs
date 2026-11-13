@@ -15,7 +15,6 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::parse::Parser;
 use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, LitStr, Path, Type};
 
 #[proc_macro_derive(Module, attributes(input, output, io, config, tf, module))]
@@ -64,18 +63,22 @@ pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
         return quote!(#input #maybe_err).into();
     }
 
-    // A unit struct is left alone: no fields to add one to, and NativeConfig's
-    // default accessor covers it.
     let mut input = input;
-    let injected_prefix = inject_frame_id_prefix(&mut input);
+    let declares_prefix = take_frame_id_prefix_as_optional(&mut input);
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    let native_config_impl = if injected_prefix {
+    let native_config_impl = if declares_prefix {
         quote! {
             impl #impl_generics ::dimos_module::NativeConfig for #name #ty_generics #where_clause {
                 fn frame_id_prefix(&self) -> ::core::option::Option<&str> {
                     self.frame_id_prefix.as_deref()
+                }
+                fn set_frame_id_prefix(
+                    &mut self,
+                    prefix: ::core::option::Option<::std::string::String>,
+                ) {
+                    self.frame_id_prefix = prefix;
                 }
             }
         }
@@ -94,34 +97,27 @@ pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Add `frame_id_prefix` to a named-field config. Returns whether it landed.
+/// Whether the config declares `frame_id_prefix`, and if so keep it off the wire.
 ///
-/// Defaulted and skipped when absent, so `run()`'s one-to-one key check agrees
-/// with an unnamespaced module's config: no prefix, no key, on both sides.
-fn inject_frame_id_prefix(input: &mut DeriveInput) -> bool {
+/// Declaring it is how a module that wants the namespace as a string asks to be
+/// told: the host sets it from the launch line before `build`, where it rides
+/// beside the config rather than in it. `#[serde(skip)]` so the field is not a
+/// config key on either side of `run()`'s one-to-one check.
+fn take_frame_id_prefix_as_optional(input: &mut DeriveInput) -> bool {
     let Data::Struct(data) = &mut input.data else {
         return false;
     };
     let Fields::Named(fields) = &mut data.fields else {
         return false;
     };
-    if fields
+    let Some(field) = fields
         .named
-        .iter()
-        .any(|f| f.ident.as_ref().is_some_and(|i| i == "frame_id_prefix"))
-    {
-        // Already spelled out by hand; leave it and use it.
-        return true;
-    }
-    fields.named.push(
-        syn::Field::parse_named
-            .parse2(quote! {
-                /// TF namespace this module publishes and looks up under.
-                #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
-                pub frame_id_prefix: ::core::option::Option<::std::string::String>
-            })
-            .expect("injected frame_id_prefix field parses"),
-    );
+        .iter_mut()
+        .find(|f| f.ident.as_ref().is_some_and(|i| i == "frame_id_prefix"))
+    else {
+        return false;
+    };
+    field.attrs.push(syn::parse_quote!(#[serde(skip)]));
     true
 }
 
@@ -148,14 +144,20 @@ fn check_native_config(input: &DeriveInput) -> syn::Result<()> {
     check_container_serde(input)?;
 
     for field in fields {
-        if is_option(&field.ty) {
+        // frame_id_prefix is the one genuinely absent-or-present key: a module
+        // outside a namespace is sent none, and declaring the field is how a
+        // module asks to read the namespace as a string.
+        let is_frame_prefix = field.ident.as_ref().is_some_and(|i| i == "frame_id_prefix");
+        if is_option(&field.ty) && !is_frame_prefix {
             return Err(syn::Error::new_spanned(
                 &field.ty,
                 "native_config forbids Option fields: an absent field would silently become None. \
                  Make it required and let Python always send it.",
             ));
         }
-        check_field_serde(field)?;
+        if !is_frame_prefix {
+            check_field_serde(field)?;
+        }
     }
 
     Ok(())

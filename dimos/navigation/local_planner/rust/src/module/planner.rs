@@ -687,7 +687,6 @@ mod tests {
 
     fn config() -> Config {
         Config {
-            frame_id_prefix: None,
             embodiment: Emb::fixture(),
             body_dilate_m: 0.0,
             unseen_cost: 1.0,
@@ -875,7 +874,6 @@ mod tests {
         let room = room_on_a_floor(-0.28);
         // under an absolute band the walls are invisible; off the body reference the room is sealed
         let cfg = Config {
-            frame_id_prefix: None,
             obstacle_model: "body_band".into(),
             ..config()
         };
@@ -943,7 +941,6 @@ mod tests {
     fn the_body_band_drops_the_ground_slab_rather_than_walling_the_robot_in() {
         // quantisation puts the ground's own layer just inside a naive band
         let cfg = Config {
-            frame_id_prefix: None,
             obstacle_model: "body_band".into(),
             ..config()
         };
@@ -1012,7 +1009,6 @@ mod tests {
     #[test]
     fn a_low_object_wall_to_wall_is_crossed_slowly() {
         let cfg = Config {
-            frame_id_prefix: None,
             step_speed: 0.3,
             ..config()
         };
@@ -1061,7 +1057,6 @@ mod tests {
     fn a_tilted_floor_is_walked_at_full_speed() {
         // a 3 percent grade along the way, so the floor crosses voxel layers ahead of the robot
         let cfg = Config {
-            frame_id_prefix: None,
             step_speed: 0.3,
             ..config()
         };
