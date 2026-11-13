@@ -26,7 +26,8 @@ def test_config_fields_match_the_rust_struct():
     """What python sends over stdin is exactly what the rust `Config` declares."""
     body = re.search(r"pub struct Config \{(.*?)\n\}", RUST_MODULE.read_text(), re.S).group(1)
     rust = set(re.findall(r"^\s*pub (\w+):", body, re.M))
-    assert set(GO2DDSConfig(executable="x").to_config_dict()) == rust
+    # native_config injects frame_id_prefix, so it is not in the struct's text.
+    assert set(GO2DDSConfig(executable="x").to_config_dict()) == rust | {"frame_id_prefix"}
 
 
 def test_rust_fixture_is_the_default_config():
