@@ -28,11 +28,15 @@ from dimos.teleop.leader.mapping import (
 
 ARM = SideMapping(
     joints=(
-        JointMapping(motor="joint_1", joint="arm/left_joint1", lower=-2.6, upper=3.1),
-        JointMapping(motor="joint_2", joint="arm/left_joint2", lower=0.0, upper=3.6, scale=-1.0),
-        JointMapping(motor="joint_3", joint="arm/left_joint3", lower=0.0, upper=3.1, offset=0.5),
+        JointMapping(leader_joint="joint_1", joint="arm/left_joint1", lower=-2.6, upper=3.1),
+        JointMapping(
+            leader_joint="joint_2", joint="arm/left_joint2", lower=0.0, upper=3.6, scale=-1.0
+        ),
+        JointMapping(
+            leader_joint="joint_3", joint="arm/left_joint3", lower=0.0, upper=3.1, offset=0.5
+        ),
     ),
-    gripper=GripperMapping(motor="joint_7", travel_radians=1.0),
+    gripper=GripperMapping(leader_joint="joint_7", travel_radians=1.0),
 )
 
 
@@ -59,11 +63,11 @@ def test_a_side_without_a_gripper_mapping_reports_no_opening() -> None:
     arm_only = SideMapping(joints=ARM.joints)
     command = map_side_readings("right", arm_only, {"joint_1": 0, "joint_2": 0, "joint_3": 0})
     assert command.gripper_opening is None
-    assert arm_only.motor_names() == ("joint_1", "joint_2", "joint_3")
+    assert arm_only.leader_joint_names() == ("joint_1", "joint_2", "joint_3")
 
 
-def test_missing_motor_readings_are_rejected() -> None:
-    with pytest.raises(ValueError, match="missing motors: \\['joint_3', 'joint_7'\\]"):
+def test_missing_leader_readings_are_rejected() -> None:
+    with pytest.raises(ValueError, match="missing joints: \\['joint_3', 'joint_7'\\]"):
         map_side_readings("left", ARM, {"joint_1": 0.0, "joint_2": 0.0})
 
 
@@ -89,7 +93,9 @@ def test_combined_command_keeps_side_order_and_frame() -> None:
         "left", ARM, {"joint_1": 0.1, "joint_2": 0, "joint_3": 0, "joint_7": 0}
     )
     right_map = SideMapping(
-        joints=(JointMapping(motor="joint_1", joint="arm/right_joint1", lower=-3.1, upper=2.6),)
+        joints=(
+            JointMapping(leader_joint="joint_1", joint="arm/right_joint1", lower=-3.1, upper=2.6),
+        )
     )
     right = map_side_readings("right", right_map, {"joint_1": -0.2})
     state = combine_side_commands([left, right], frame_id="dimos/guarded-joint")
@@ -103,26 +109,26 @@ def test_combined_command_keeps_side_order_and_frame() -> None:
     assert state.frame_id == "dimos/guarded-joint"
 
 
-def test_mapping_rejects_a_motor_or_joint_used_twice() -> None:
+def test_mapping_rejects_a_leader_or_follower_joint_used_twice() -> None:
     with pytest.raises(ValueError, match="mapped twice"):
         SideMapping(
             joints=(
-                JointMapping(motor="joint_1", joint="a", lower=0, upper=1),
-                JointMapping(motor="joint_1", joint="b", lower=0, upper=1),
+                JointMapping(leader_joint="joint_1", joint="a", lower=0, upper=1),
+                JointMapping(leader_joint="joint_1", joint="b", lower=0, upper=1),
             )
         )
     with pytest.raises(ValueError, match="mapped twice"):
         SideMapping(
-            joints=(JointMapping(motor="joint_1", joint="a", lower=0, upper=1),),
-            gripper=GripperMapping(motor="joint_1", travel_radians=1.0),
+            joints=(JointMapping(leader_joint="joint_1", joint="a", lower=0, upper=1),),
+            gripper=GripperMapping(leader_joint="joint_1", travel_radians=1.0),
         )
 
 
 def test_mapping_rejects_inverted_limits_and_zero_scale() -> None:
     with pytest.raises(ValueError, match="lower 1.0 must be below upper 0.0"):
-        JointMapping(motor="joint_1", joint="a", lower=1.0, upper=0.0)
+        JointMapping(leader_joint="joint_1", joint="a", lower=1.0, upper=0.0)
     with pytest.raises(ValueError, match="scale must not be zero"):
-        JointMapping(motor="joint_1", joint="a", lower=0.0, upper=1.0, scale=0.0)
+        JointMapping(leader_joint="joint_1", joint="a", lower=0.0, upper=1.0, scale=0.0)
 
 
 def test_low_pass_alpha_and_smoothing() -> None:
