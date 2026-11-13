@@ -646,6 +646,9 @@ def stop() -> str:
             launch = current_launch()
             if launch is None or launch["phase"] != "starting":
                 raise ApiError(409, "nothing running")
+            assert record is not None
+            # asked for, so its exit is a stop: without this the dead launch reads as failed
+            _save({**record, "stopping": True})
             message = kill_starting(launch)
             _wait_reaped(int(launch["pid"]))
             return message
