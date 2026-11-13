@@ -26,7 +26,6 @@ fn test_rng(mut state: u64) -> impl FnMut() -> u64 + Copy {
 
 fn basic_config() -> Config {
     Config {
-        frame_id_prefix: None,
         voxel_size: 1.0,
         fine_divisor: 0,
         emit_fine: false,
@@ -69,7 +68,6 @@ fn seed_all(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config) -> AHa
 #[test]
 fn update_map_drops_invalid_and_out_of_range_points() {
     let cfg = Config {
-        frame_id_prefix: None,
         max_range: 5.0,
         ..basic_config()
     };
@@ -92,7 +90,6 @@ fn update_map_drops_invalid_and_out_of_range_points() {
 #[test]
 fn points_outside_the_key_range_are_dropped() {
     let cfg = Config {
-        frame_id_prefix: None,
         max_range: 0.0,
         ..basic_config()
     };
@@ -283,7 +280,6 @@ fn hit_caught_by_other_ray_is_not_removed() {
 #[test]
 fn point_beyond_max_range_does_not_clear() {
     let cfg = Config {
-        frame_id_prefix: None,
         max_range: 3.0,
         ..basic_config()
     };
@@ -296,7 +292,6 @@ fn point_beyond_max_range_does_not_clear() {
 #[test]
 fn fine_gate_spares_ray_through_unobserved_cells() {
     let cfg = Config {
-        frame_id_prefix: None,
         fine_divisor: 2,
         shadow_depth: 0.0,
         ..basic_config()
@@ -317,7 +312,6 @@ fn fine_gate_spares_ray_through_unobserved_cells() {
 #[test]
 fn fine_gate_clears_when_ray_crosses_observed_cells() {
     let cfg = Config {
-        frame_id_prefix: None,
         fine_divisor: 2,
         shadow_depth: 0.0,
         ..basic_config()
@@ -337,7 +331,6 @@ fn fine_gate_clears_when_ray_crosses_observed_cells() {
 #[test]
 fn two_hits_needed_when_min_health_is_negative() {
     let cfg = Config {
-        frame_id_prefix: None,
         min_health: -1,
         ..basic_config()
     };
@@ -355,7 +348,6 @@ fn ground_clipping_single_ray() {
     let voxel_size = 0.1_f32;
     let lidar_height = 1.0_f32;
     let cfg = Config {
-        frame_id_prefix: None,
         voxel_size,
         fine_divisor: 0,
         emit_fine: false,
@@ -517,7 +509,6 @@ fn stair_clipping_ray_fan() {
     let voxel_size = 0.1_f32;
     let half = voxel_size * 0.5;
     let cfg = Config {
-        frame_id_prefix: None,
         voxel_size,
         fine_divisor: 0,
         emit_fine: false,
@@ -605,7 +596,6 @@ fn landing_floor_ray_fan() {
     let voxel_size = 0.1_f32;
     let half = voxel_size * 0.5;
     let cfg = Config {
-        frame_id_prefix: None,
         voxel_size,
         fine_divisor: 0,
         emit_fine: false,
@@ -681,7 +671,6 @@ fn landing_grazed_from_below() {
     let voxel_size = 0.1_f32;
     let half = voxel_size * 0.5;
     let cfg = |graze_cos| Config {
-        frame_id_prefix: None,
         voxel_size,
         fine_divisor: 0,
         emit_fine: false,
@@ -763,7 +752,6 @@ fn landing_grazed_from_below() {
 #[test]
 fn two_misses_needed_when_max_health_is_two() {
     let cfg = Config {
-        frame_id_prefix: None,
         max_health: 2,
         ..basic_config()
     };
@@ -827,7 +815,6 @@ fn grazing_ray_spares_planar_floor() {
     let ray = vec![(8.0_f32, 0.0, 0.0)];
 
     let cfg = Config {
-        frame_id_prefix: None,
         voxel_size,
         fine_divisor: 0,
         emit_fine: false,
@@ -888,7 +875,6 @@ fn grazed_floor_with_recency() -> GrazedFloor {
         })
         .collect();
     let cfg = Config {
-        frame_id_prefix: None,
         voxel_size,
         shadow_depth: 0.2,
         grace_depth: 0.2,
@@ -1137,7 +1123,6 @@ fn support_counts_match_neighbor_scan_after_random_transitions() {
     let mut next_u64 = test_rng(5573589319906701683);
 
     let cfg = Config {
-        frame_id_prefix: None,
         min_health: -1,
         max_health: 2,
         ..basic_config()
@@ -1202,7 +1187,6 @@ fn new_voxel_seeds_support_from_existing_healthy_neighbors() {
 
 fn fine_config(divisor: u32) -> Config {
     Config {
-        frame_id_prefix: None,
         fine_divisor: divisor,
         ..basic_config()
     }
@@ -1288,7 +1272,6 @@ fn cleared_voxel_drops_fine_detail() {
 #[test]
 fn live_fine_cells_emit_before_confirmation() {
     let cfg = Config {
-        frame_id_prefix: None,
         min_health: -1,
         ..fine_config(2)
     };
@@ -1371,7 +1354,6 @@ fn milestone_gated_normals_match_full_refit() {
 
     let voxel_size = 0.1_f32;
     let cfg = Config {
-        frame_id_prefix: None,
         voxel_size,
         max_range: 50.0,
         shadow_depth: 0.2,
@@ -1498,7 +1480,6 @@ fn global_normals_fits_stale_voxels_for_the_output() {
 fn new_voxel_is_fit_before_grazing_ray() {
     let voxel_size = 0.1_f32;
     let cfg = Config {
-        frame_id_prefix: None,
         voxel_size,
         max_range: 50.0,
         shadow_depth: 0.2,
@@ -1843,7 +1824,6 @@ fn seed_into_live_map_keeps_indexes_consistent() {
     let mut next_u64 = test_rng(1442695040888963407);
     let mut next_coord = move || (next_u64() % 800) as f32 / 100.0 - 4.0;
     let cfg = Config {
-        frame_id_prefix: None,
         min_health: -1,
         max_health: 3,
         ..basic_config()
@@ -1950,7 +1930,6 @@ fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
     let mut next_u64 = test_rng(1442695040888963407);
     let mut next_coord = move || (next_u64() % 4000) as f32 / 100.0 - 20.0;
     let cfg = Config {
-        frame_id_prefix: None,
         min_health: -1,
         max_health: 3,
         ..basic_config()
@@ -1982,7 +1961,6 @@ fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
 #[test]
 fn live_rays_carve_seeded_voxels_they_pass_through() {
     let cfg = Config {
-        frame_id_prefix: None,
         min_health: -1,
         max_health: 5,
         ..basic_config()

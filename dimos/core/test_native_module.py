@@ -371,11 +371,19 @@ def test_a_pinned_session_is_not_a_module_config_field(monkeypatch) -> None:
     assert _launch(monkeypatch, "zenoh", session=ZenohConfig())["config"] is None
 
 
-def test_the_frame_prefix_is_sent_only_once_there_is_one(monkeypatch) -> None:
-    """A module outside a namespace gets no key, and reads that as no prefix."""
-    assert _launch(monkeypatch, "lcm")["config"] is None
-    namespaced = _launch(monkeypatch, "lcm", frame_id_prefix="robot0")["config"]
-    assert namespaced == {"frame_id_prefix": "robot0"}
+def test_the_frame_prefix_rides_beside_the_config(monkeypatch) -> None:
+    """Like the topics: it reaches a module whatever that module's config says.
+
+    A module outside a namespace is sent no key at all, and the native side
+    reads that as no prefix.
+    """
+    plain = _launch(monkeypatch, "lcm")
+    assert FRAME_PREFIX_FIELD not in plain
+    assert plain["config"] is None
+    namespaced = _launch(monkeypatch, "lcm", frame_id_prefix="robot0")
+    assert namespaced[FRAME_PREFIX_FIELD] == "robot0"
+    # Still not a config key, so no native config struct has to declare it.
+    assert namespaced["config"] is None
 
 
 def test_a_session_for_another_transport_is_rejected(monkeypatch) -> None:

@@ -868,7 +868,6 @@ fn bfs_ball(
 #[cfg(test)]
 pub(crate) fn test_config() -> Config {
     Config {
-        frame_id_prefix: None,
         world_frame: String::new(),
         base_frame: String::new(),
         voxel_size: 0.1,

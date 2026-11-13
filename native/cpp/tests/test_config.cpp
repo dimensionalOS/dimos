@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+#include <optional>
 #include <string>
 
 #include "dimos/native/config.hpp"
@@ -196,28 +197,12 @@ TEST_CASE("parse handles a struct past the 64-field macro limit") {
     CHECK(c.f69 == 69);
 }
 
-TEST_CASE("the frame id prefix every module is sent is not a struct field") {
-    Config cfg(json{{"value", 5}, {"name", "lidar"}, {"frame_id_prefix", "r1"}});
-    RangedCfg c = cfg.parse<RangedCfg>();  // must not throw: the SDK took the key
-    CHECK(c.value == 5);
-    CHECK(cfg.frame_id_prefix().has_value());
-    CHECK(*cfg.frame_id_prefix() == "r1");
-    CHECK(cfg.frame("base_link") == "r1/base_link");
-}
-
-TEST_CASE("an unnamespaced module is sent a null prefix and names frames bare") {
-    Config cfg(json{{"frame_id_prefix", nullptr}});
-    cfg.enforce_all_consumed();  // must not throw
-    CHECK_FALSE(cfg.frame_id_prefix().has_value());
-    CHECK(cfg.frame("base_link") == "base_link");
-}
-
-TEST_CASE("a frame already under the prefix keeps its one prefix") {
-    Config cfg(json{{"frame_id_prefix", "r1"}});
-    CHECK(cfg.frame("r1/base_link") == "r1/base_link");
-    CHECK(cfg.frame("") == "");
-}
-
-TEST_CASE("a non-string frame id prefix is rejected") {
-    CHECK_THROWS_AS(Config(json{{"frame_id_prefix", 7}}), std::runtime_error);
+TEST_CASE("prefix_frame names a frame under a namespace") {
+    using dimos::native::prefix_frame;
+    CHECK(prefix_frame("r1", "base_link") == "r1/base_link");
+    // Already prefixed, so a frame read off the stream can be handed back.
+    CHECK(prefix_frame("r1", "r1/base_link") == "r1/base_link");
+    CHECK(prefix_frame(std::nullopt, "base_link") == "base_link");
+    CHECK(prefix_frame("", "base_link") == "base_link");
+    CHECK(prefix_frame("r1", "") == "");
 }

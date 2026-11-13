@@ -109,7 +109,6 @@ fn a_cached_path_is_followed_up_to_a_new_gap_and_no_further() {
 #[test]
 fn a_negative_blocked_timeout_is_rejected() {
     let config = Config {
-        frame_id_prefix: None,
         blocked_timeout_s: -1.0,
         ..test_config()
     };
@@ -448,7 +447,6 @@ fn sticky_node_keeps_its_place_when_the_field_shifts() {
 #[test]
 fn sticky_node_dies_when_a_wall_grows_next_to_it() {
     let cfg = Config {
-        frame_id_prefix: None,
         wall_clearance_m: 0.2,
         ..test_config()
     };

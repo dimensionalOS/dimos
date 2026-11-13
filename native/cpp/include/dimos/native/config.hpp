@@ -71,9 +71,6 @@ inline std::string quoted_list(const std::vector<std::string>& items) {
     return out + "]";
 }
 
-/// The key Python sends on every native module's config, whatever the module.
-constexpr const char* FRAME_ID_PREFIX_KEY = "frame_id_prefix";
-
 /// `frame` under a TF namespace prefix, left alone if it already carries it.
 /// The rust and python tf APIs apply the same rule; the three must agree.
 inline std::string prefix_frame(const std::optional<std::string>& prefix,
@@ -105,32 +102,9 @@ public:
             throw std::runtime_error(std::string("config must be a JSON object, got ") +
                                      obj_.type_name());
         }
-        // The SDK owns this key rather than every config struct having to name
-        // it, so it comes out before the one-to-one check sees it. Rust reaches
-        // the same place by injecting the field into every config struct.
-        auto prefix = obj_.find(FRAME_ID_PREFIX_KEY);
-        if (prefix != obj_.end()) {
-            if (!prefix->is_null()) {
-                if (!prefix->is_string()) {
-                    throw std::runtime_error(
-                        std::string("failed to deserialize config: field '") +
-                        FRAME_ID_PREFIX_KEY + "': expected a string, got " + prefix->type_name());
-                }
-                frame_id_prefix_ = prefix->get<std::string>();
-            }
-            obj_.erase(prefix);
-        }
         for (auto it = obj_.begin(); it != obj_.end(); ++it) {
             keys_.insert(it.key());
         }
-    }
-
-    /// This module's TF namespace prefix, or nothing when it runs unnamespaced.
-    const std::optional<std::string>& frame_id_prefix() const { return frame_id_prefix_; }
-
-    /// `name` under this module's frame prefix.
-    std::string frame(const std::string& name) const {
-        return prefix_frame(frame_id_prefix_, name);
     }
 
     /// Throw if any field Python sent was never read. This is the deny-unknown
@@ -182,7 +156,6 @@ private:
     nlohmann::json obj_;
     std::set<std::string> keys_;
     std::set<std::string> consumed_;
-    std::optional<std::string> frame_id_prefix_;
 };
 
 }  // namespace dimos::native

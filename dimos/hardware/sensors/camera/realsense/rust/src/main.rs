@@ -88,6 +88,9 @@ struct Config {
     #[validate(range(min = 1))]
     fps: i32,
     frame_id: String,
+    /// The namespace, for the imager frames this module stamps on its messages.
+    /// A config that does not declare it is not sent the key.
+    frame_id_prefix: Option<String>,
     align_depth_to_color: bool,
     enable_depth: bool,
     enable_color: bool,

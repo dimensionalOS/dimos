@@ -601,7 +601,6 @@ mod tests {
     fn writer_restores_arrival_order_after_parallel_encoding() {
         let file = NamedTempFile::new().unwrap();
         let config = RecorderConfig {
-            frame_id_prefix: None,
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
             },
@@ -760,7 +759,6 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let raw = stream("raw", Codec::Lcm, false);
         let config = RecorderConfig {
-            frame_id_prefix: None,
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
             },
@@ -784,7 +782,6 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let image = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
         let config = RecorderConfig {
-            frame_id_prefix: None,
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
             },
@@ -805,7 +802,6 @@ mod tests {
     #[test]
     fn zero_encoding_threads_fail_native_config_validation() {
         let config = RecorderConfig {
-            frame_id_prefix: None,
             store: store::RecordingStoreConfig::Sqlite {
                 path: "unused.db".to_string(),
             },

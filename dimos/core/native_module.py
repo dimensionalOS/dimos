@@ -87,9 +87,10 @@ else:
 
 logger = setup_logger()
 
-# `#[native_config]` injects this into every Rust config struct, so a native
-# module needs no `base_fields` opt-in to be namespaced. Sent only when there is
-# a namespace; a module that gets no key reads it as no prefix.
+# Sent beside the config, like the topics, so it reaches every native module
+# whatever its own config declares and no module needs a `base_fields` opt-in to
+# be namespaced. The native side hands it to `Builder::frame_prefix`, and to the
+# config of a module that declares the field for frames it names outside tf.
 FRAME_PREFIX_FIELD = "frame_id_prefix"
 
 
@@ -154,8 +155,7 @@ class NativeModuleConfig(ModuleConfig):
     cli_name_override: dict[str, str] = Field(default_factory=dict)
 
     # Native config structs reject unknown fields, so a base field only crosses
-    # the boundary if that module's native struct declares it. `frame_id_prefix`
-    # is the exception, injected into every one.
+    # the boundary if that module's native struct declares it.
     base_fields: frozenset[str] = frozenset()
 
     @model_validator(mode="before")
@@ -200,7 +200,7 @@ class NativeModuleConfig(ModuleConfig):
         return self
 
     def _ignore_fields(self) -> set[str]:
-        return set(NativeModuleConfig.model_fields) - self.base_fields - {FRAME_PREFIX_FIELD}
+        return set(NativeModuleConfig.model_fields) - self.base_fields
 
     def to_config_dict(self) -> dict[str, Any]:
         """Module-specific config fields as a plain dict, for the stdin JSON."""
@@ -335,6 +335,8 @@ class NativeModule(Module):
             "config": config_dict or None,
             "session": self._session().to_wire(),
         }
+        if self.config.frame_id_prefix:
+            blob[FRAME_PREFIX_FIELD] = self.config.frame_id_prefix
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos

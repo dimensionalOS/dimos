@@ -908,7 +908,6 @@ mod tests {
 
     fn truncate_config() -> Config {
         Config {
-            frame_id_prefix: None,
             voxel_size: VOXEL,
             robot_height: Z_TOL,
             surface_closing_radius: 0.0,

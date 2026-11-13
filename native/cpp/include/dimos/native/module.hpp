@@ -18,6 +18,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <set>
 #include <stdexcept>
@@ -260,8 +261,17 @@ private:
 
 class Builder {
 public:
-    Builder(std::unordered_map<std::string, std::string> topics, Notifier* notifier)
-        : topics_(std::move(topics)), notifier_(notifier) {}
+    Builder(std::unordered_map<std::string, std::string> topics, Notifier* notifier,
+            std::optional<std::string> frame_prefix = std::nullopt)
+        : topics_(std::move(topics)),
+          notifier_(notifier),
+          frame_prefix_(std::move(frame_prefix)) {}
+
+    /// The namespace this module was launched under, if any.
+    const std::optional<std::string>& frame_prefix() const { return frame_prefix_; }
+
+    /// `name` under this module's namespace, the name tf uses for that frame.
+    std::string frame(const std::string& name) const { return prefix_frame(frame_prefix_, name); }
 
     // Explicit decoder + handler form. Use for a lambda or a non-lcm decoder.
     template <class T>
@@ -332,6 +342,7 @@ private:
     std::unordered_map<std::string, std::string> topics_;
     std::set<std::string> requested_;
     Notifier* notifier_;
+    std::optional<std::string> frame_prefix_;
     std::vector<std::pair<std::string, Dispatch>> routes_;
     std::vector<std::unique_ptr<InputPort>> owned_inputs_;
     std::vector<InputPort*> input_ports_;
@@ -404,6 +415,18 @@ struct StdinConfig {
     nlohmann::json launch;
 };
 
+/// The namespace the coordinator launched this module under, if any.
+///
+/// A sibling of `config` on the launch line, like `topics`, so it reaches a
+/// module whatever its own config declares.
+inline std::optional<std::string> launch_frame_prefix(const nlohmann::json& launch) {
+    auto it = launch.find("frame_id_prefix");
+    if (it == launch.end() || !it->is_string()) {
+        return std::nullopt;
+    }
+    return it->get<std::string>();
+}
+
 inline StdinConfig parse_stdin_config(const std::string& line) {
     constexpr const char* WHITESPACE = " \t\n\v\f\r";
     std::size_t begin = line.find_first_not_of(WHITESPACE);
@@ -447,7 +470,7 @@ void run_fallible(std::unique_ptr<Transport> transport, StdinConfig parsed) {
                                                               : nlohmann::json());
 
     Notifier notifier;
-    Builder builder(std::move(parsed.topics), &notifier);
+    Builder builder(std::move(parsed.topics), &notifier, launch_frame_prefix(parsed.launch));
     M module;
     Config config(std::move(parsed.config));
     module.build(builder, config);
