@@ -79,7 +79,16 @@ def connect_dimos() -> Any:
     entry = get_most_recent(alive_only=True)
     transport = run_transport(entry) if entry is not None else None
     # TODO(core): Dimos.connect could take a transport= instead of reading the process-wide GlobalConfig
-    global_config.update(transport=transport or GlobalConfig().transport)
+    defaults = GlobalConfig()
+    settings: dict[str, Any] = {"transport": transport or defaults.transport}
+    # Terminal-launched robot runs may dial a router that loopback scouting cannot find.
+    # Reset between runs so a former remote robot does not leak into a local session.
+    for field in ("robot_ip", "robot_ips", "zenoh_connect", "zenoh_mode", "zenoh_domain"):
+        value = entry.config_overrides.get(field) if entry else None
+        if value is None and entry is not None:
+            value = flag_value(list(entry.original_argv), "--" + field.replace("_", "-"))
+        settings[field] = getattr(defaults, field) if value is None else value
+    global_config.update(**settings)
     return Dimos.connect()
 
 

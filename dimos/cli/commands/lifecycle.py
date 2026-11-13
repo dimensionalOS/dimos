@@ -123,7 +123,9 @@ def _run_hosted(
     """Place the Blueprint on the live Hosts and stream their logs until Ctrl-C or SIGTERM."""
     import threading
 
+    from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
     from dimos.hosted.client import root_rpc
+    from dimos.hosted.coordinator import HostedCoordinator
     from dimos.hosted.deploy import deployed, log_printer, wait_for_hosts
     from dimos.hosted.machine import local_host
     from dimos.protocol.service.zenohservice import split_csv
@@ -157,11 +159,16 @@ def _run_hosted(
                 for module, host in sorted(placement.items()):
                     typer.echo(f"{host:>16}  {module}")
                 typer.echo("Running; Ctrl-C stops every fragment")
+                host_ids = [d.host_id for d in descriptors if d.name in placement.values()]
+                facade = HostedCoordinator(rpc, entry.run_id, host_ids, stop.set)
+                service = CoordinatorRPC.serve(facade)
                 entry.save()
                 try:
                     stop.wait()
                 except KeyboardInterrupt:
                     pass
+                finally:
+                    service.stop()
     except (RuntimeError, TimeoutError, ValueError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc

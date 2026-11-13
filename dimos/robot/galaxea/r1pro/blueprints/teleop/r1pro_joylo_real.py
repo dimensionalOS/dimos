@@ -30,9 +30,10 @@ from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 
 _declaration = R1ProConnectionConfig(
     boot_vendor_stack=False,
-    enable_wrist_color=False,
+    enable_wrist_color=True,
+    color_publish_hz=10.0,
     enable_wrist_depth=False,
-    publish_odom_tf=False,
+    publish_odom_tf=True,
 )
 _profile = JoyloConfig(leader_angle_period=math.tau, torso_link_lengths=(0.4, 0.3))
 
