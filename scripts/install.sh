@@ -39,7 +39,9 @@ SKIP_TESTS="${DIMOS_SKIP_TESTS:-0}"
 HAS_NIX=0
 SETUP_METHOD=""
 INSTALL_DIR=""
-INSTALL_PYTHON="3.12"
+INSTALL_PYTHON="3.14"
+# TODO: Increase to 3.14 after release.
+LIBRARY_PYTHON="3.12"
 GUM=""
 INSTALL_DEPS=1
 DEV_TOOLS=0
@@ -269,7 +271,7 @@ ${BOLD}OPTIONS${RESET}
     --project-dir <path>   Project directory
     --non-interactive      Accept defaults, no prompts
     --no-cuda              Skip optional CUDA extras and GPU verification
-    --no-sysctl            Skip LCM sysctl configuration
+    --no-sysctl            Skip system configuration (sysctl, memlock limit)
     --use-nix              Force Nix-based setup
     --no-nix               Skip Nix entirely
     --skip-tests           Skip the optional replay smoke test
@@ -357,12 +359,12 @@ detect_gpu() {
 }
 
 detect_python() {
-    for cmd in python3.12 python3.11 python3.10 python3; do
+    for cmd in python3.14 python3.13 python3.12 python3.11 python3.10 python3; do
         if has_cmd "$cmd"; then
             local ver; ver="$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")"
             if [[ -n "$ver" ]]; then
                 local major minor; major="$(echo "$ver" | cut -d. -f1)"; minor="$(echo "$ver" | cut -d. -f2)"
-                if [[ "$major" -eq 3 ]] && [[ "$minor" -ge 10 && "$minor" -lt 13 ]]; then
+                if [[ "$major" -eq 3 ]] && [[ "$minor" -ge 10 && "$minor" -lt 15 ]]; then
                     DETECTED_PYTHON="$(command -v "$cmd")"; DETECTED_PYTHON_VER="$ver"; return
                 fi
             fi
@@ -400,7 +402,7 @@ print_sysinfo() {
         apple-silicon) gpu_display="Apple Silicon (Metal/MPS)" ;;
         none)          gpu_display="CPU only" ;;
     esac
-    [[ -n "$DETECTED_PYTHON_VER" ]] && python_display="$DETECTED_PYTHON_VER" || python_display="${YELLOW}not found (uv will install 3.12)${RESET}"
+    [[ -n "$DETECTED_PYTHON_VER" ]] && python_display="$DETECTED_PYTHON_VER" || python_display="${YELLOW}not found (uv will install it)${RESET}"
     [[ "$HAS_NIX" == "1" ]] && nix_display="${GREEN}$(nix --version 2>/dev/null | head -1)${RESET}" || nix_display="not installed"
 
     printf "  %sOS:%s       %s\n" "$DIM" "$RESET" "$os_display"
@@ -536,7 +538,9 @@ verify_nix_develop() {
 # A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension: update the Command Line Tools.
 update_command_line_tools() {
     { ! has_cmd c++ || c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; } && return
-    run_cmd sudo softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
+    run_cmd "${privilege[@]}" softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
 }
 
 # ─── system dependencies ─────────────────────────────────────────────────────
@@ -750,11 +754,12 @@ do_install_library() {
     local dir="${PROJECT_DIR:-}"
     if [[ -z "$dir" ]]; then dir=$(prompt_install_dir "$PWD/dimensional-applications" library) || die "cancelled"; fi
     INSTALL_DIR="$dir"
+    [[ "$USE_NIX" == 1 ]] || INSTALL_PYTHON="$LIBRARY_PYTHON"
     info "library install → $dir"
     run_cmd mkdir -p "$dir"
     if ! prompt_confirm "Install dependencies now?" yes; then
         INSTALL_DEPS=0
-        dim "to install later: uv venv --python 3.12 && uv pip install 'dimos[$EXTRAS]'"
+        dim "to install later: uv venv --python $INSTALL_PYTHON && uv pip install 'dimos[$EXTRAS]'"
         return
     fi
     if [[ "$USE_NIX" == 1 ]]; then
@@ -813,32 +818,76 @@ do_install() {
 
 # ─── system configuration ────────────────────────────────────────────────────
 configure_system() {
-    [[ "$NO_SYSCTL" == "1" ]] && { dim "  skipping sysctl (--no-sysctl)"; return; }
+    [[ "$NO_SYSCTL" == "1" ]] && { dim "  skipping system configuration (--no-sysctl)"; return; }
     [[ "$DETECTED_OS" == "macos" ]] && return
     if [[ "$DETECTED_OS" == "nixos" ]]; then
         info "NixOS: add to configuration.nix:"
         dim "  networking.kernel.sysctl.\"net.core.rmem_max\" = 67108864;"
         dim "  networking.kernel.sysctl.\"net.core.rmem_default\" = 67108864;"
+        dim "  security.pam.loginLimits = [{ domain = \"*\"; type = \"-\"; item = \"memlock\"; value = \"65536\"; }];"
         return
     fi
+    configure_lcm_buffers
+    configure_memlock
+}
+
+configure_lcm_buffers() {
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
     local current_rmem; current_rmem="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
     if [[ "$current_rmem" -ge 67108864 ]]; then ok "LCM buffers already configured"; return; fi
 
     printf "\n"
     info "DimOS uses LCM transport which needs larger UDP buffers:"
-    dim "  sudo sysctl -w net.core.rmem_max=67108864"
-    dim "  sudo sysctl -w net.core.rmem_default=67108864"
+    dim "  ${privilege[*]} sysctl -w net.core.rmem_max=67108864"
+    dim "  ${privilege[*]} sysctl -w net.core.rmem_default=67108864"
     printf "\n"
 
     if prompt_confirm "Apply sysctl changes?" "yes"; then
-        run_cmd sudo sysctl -w net.core.rmem_max=67108864
-        run_cmd sudo sysctl -w net.core.rmem_default=67108864
+        run_cmd "${privilege[@]}" sysctl -w net.core.rmem_max=67108864
+        run_cmd "${privilege[@]}" sysctl -w net.core.rmem_default=67108864
         if prompt_confirm "Persist across reboots?" "yes"; then
             if [[ "$DRY_RUN" != "1" ]]; then
-                printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | sudo tee /etc/sysctl.d/99-dimos.conf >/dev/null
+                printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | "${privilege[@]}" tee /etc/sysctl.d/99-dimos.conf >/dev/null
             else dim "[dry-run] would write /etc/sysctl.d/99-dimos.conf"; fi
         fi
         ok "LCM buffers configured"
+    fi
+}
+
+# The stack checks this limit at startup (MemlockConfiguratorLinux) and would
+# otherwise warn on the first run. Raising it on this shell covers the smoke
+# test below. The limits.d file covers later logins.
+configure_memlock() {
+    local hard; hard="$(ulimit -H -l)"
+    if [[ "$hard" == "unlimited" || "$hard" -ge 65536 ]]; then ok "locked-memory limit already configured"; return; fi
+    local user; user="$(id -un)"
+    local limits_file=/etc/security/limits.d/99-dimos-memlock.conf
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then
+        privilege=(sudo)
+        if [[ "$NON_INTERACTIVE" == "1" ]]; then privilege+=(-n); fi
+    fi
+
+    printf "\n"
+    info "DimOS uses Zenoh shared memory which needs a 64MB locked-memory limit (now $((hard / 1024))MB):"
+    dim "  sudo prlimit --pid=$$ --memlock=67108864:67108864"
+    dim "  write $limits_file for user $user (applies at the next login)"
+    printf "\n"
+
+    if prompt_confirm "Raise the locked-memory limit?" "yes"; then
+        if run_cmd "${privilege[@]}" prlimit --pid=$$ --memlock=67108864:67108864; then
+            if [[ "$DRY_RUN" != "1" ]]; then ok "locked-memory limit raised for this session"; fi
+        else
+            warn "could not raise the limit for this session"
+        fi
+        if [[ "$DRY_RUN" != "1" ]]; then
+            if printf "# Written by dimos: zenoh's SHM pool must be lockable.\n%s\t-\tmemlock\t65536\n" "$user" | "${privilege[@]}" tee "$limits_file" >/dev/null; then
+                ok "locked-memory limit saved for future logins"
+            else
+                warn "could not save locked-memory limit to $limits_file"
+            fi
+        else dim "[dry-run] would write $limits_file"; fi
     fi
 }
 
@@ -929,7 +978,7 @@ print_quickstart() {
     fi
 
     if [[ "$EXTRAS" == *"unitree"* ]] || [[ "$EXTRAS" == "all" ]] || [[ "$EXTRAS" == *"base"* ]]; then
-        printf "    %s# simulation%s\n    dimos --simulation run unitree-go2\n\n" "$DIM" "$RESET"
+        printf "    %s# replay a recorded session (no hardware needed)%s\n    dimos --replay run unitree-go2\n\n" "$DIM" "$RESET"
         printf "    %s# real hardware%s\n    ROBOT_IP=192.168.1.100 dimos run unitree-go2\n\n" "$DIM" "$RESET"
     fi
     if [[ "$EXTRAS" == *"sim"* ]] || [[ "$EXTRAS" == "all" ]]; then
@@ -986,8 +1035,8 @@ main() {
     fi
     if [[ "$DETECTED_OS" == "macos" ]]; then
         local mac_major; mac_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
-        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 14 ]]; then
-            die "macOS ${DETECTED_OS_VERSION} too old — 14+ required by current dependencies"
+        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 15 ]]; then
+            die "macOS ${DETECTED_OS_VERSION} too old — 15+ required by current dependencies"
         fi
     fi
 
@@ -1003,7 +1052,7 @@ main() {
 
     if [[ -z "$DETECTED_PYTHON" ]]; then
         detect_python
-        [[ -z "$DETECTED_PYTHON" ]] && info "python 3.12 will be installed by uv automatically"
+        [[ -z "$DETECTED_PYTHON" ]] && info "python will be installed by uv automatically"
     fi
 
     prompt_install_mode

@@ -22,8 +22,8 @@ import mujoco
 
 from dimos.robot.assets.client import materialize_scene
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import layer_from, load_pxr
-from dimos.robot.assets.usd_assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
 
 def build_scene(
@@ -39,7 +39,7 @@ def build_scene(
         import_module("mujoco._usd")
     except ImportError as exc:
         raise ImportError(
-            "Sim2 requires MuJoCo's USD importer: install dimos[sim] on Python 3.11+"
+            "Sim2 requires MuJoCo's USD importer: install dimos[sim] on Python 3.11-3.13 (use uv sync --python 3.12 --extra sim)"
         ) from exc
     root = str(scene.source_path.parent) if scene.source_path else ""
     usd = resolve_usd_assets(scene.usd, root)

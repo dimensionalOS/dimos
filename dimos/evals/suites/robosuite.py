@@ -21,7 +21,7 @@ from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 
 GUIDANCE = (
-    "Locate the objects with the wrist camera and use the robot's manipulation skills. "
+    "Locate the objects with the wrist camera and move the arm through dimOS. "
     "Read the current robot pose; preserve its orientation for top-down moves. "
     "Keep the final result steady for at least two seconds before finishing."
 )
@@ -29,7 +29,7 @@ GUIDANCE = (
 
 def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
     return MujocoEnvironment(
-        blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
+        blueprint=["xarm-perception-sim", "observe-skill"],
         disable=PERCEPTION_MODULES,
         scene=LfsPath(f"robosuite/{scene}/scene.xml"),
         base_height=0.912,

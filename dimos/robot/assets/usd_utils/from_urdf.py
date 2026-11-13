@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import itertools
 from pathlib import Path
 from typing import TYPE_CHECKING
 import xml.etree.ElementTree as ET
@@ -24,8 +25,16 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.usd import Prim, Pxr, Quat, Stage, load_pxr, prim_identifier, usd_matrix
-from dimos.robot.assets.usd_assets import write_asset_info
+from dimos.robot.assets.usd_utils.assets import write_asset_info
+from dimos.robot.assets.usd_utils.pxr import (
+    Prim,
+    Pxr,
+    Quat,
+    Stage,
+    load_pxr,
+    prim_identifier,
+    usd_matrix,
+)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -38,7 +47,7 @@ logger = setup_logger()
 
 
 _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
-_OUT_OF_PLANE = ("transZ", "rotX", "rotY")
+OUT_OF_PLANE = ("transZ", "rotX", "rotY")
 PASSTHROUGH_KEY = "urdf:unconverted"
 
 
@@ -155,7 +164,7 @@ def _write_link_tree(
     inertials: Mapping[str, tuple[float, np.ndarray, np.ndarray]] | None = None,
     joint: JointDescription | None = None,
 ) -> None:
-    prim_path = f"{parent_path}/{prim_identifier(pxr, link)}"
+    prim_path = f"{parent_path}/{_free_identifier(pxr, stage, parent_path, link)}"
     if link in paths:
         logger.warning(f"URDF link {link!r} is reached more than once; ignoring the later edge")
         return
@@ -194,6 +203,23 @@ def _write_link_tree(
             inertials=inertials,
             joint=child_joint,
         )
+
+
+def _free_identifier(pxr: Pxr, stage: Stage, parent_path: str, name: str) -> str:
+    """A USD identifier for `name` that nothing under `parent_path` has taken yet.
+
+    Tf.MakeValidIdentifier is not injective -- `arm-1` and `arm_1` both come out `arm_1` -- so
+    two siblings URDF considers distinct would otherwise define the same prim, and the second
+    would fail on adding a transform op the first already has. The real name is in displayName
+    either way, which is what every reader here maps back from.
+    """
+    identifier = prim_identifier(pxr, name)
+    tries = itertools.chain([identifier], (f"{identifier}_{n}" for n in itertools.count(2)))
+    return next(
+        candidate
+        for candidate in tries
+        if not stage.GetPrimAtPath(pxr.Sdf.Path(f"{parent_path}/{candidate}"))
+    )
 
 
 def _geometry_name(geometry: _Geometry, index: int) -> str:
@@ -270,9 +296,8 @@ def _write_joints(
         if parent is None or child is None:
             logger.warning(f"skipping joint {joint.name!r}: it names a link outside the tree")
             continue
-        prim = _define_joint(
-            pxr, stage, f"{scope.GetPath()}/{prim_identifier(pxr, joint.name)}", joint
-        )
+        path = _free_identifier(pxr, stage, str(scope.GetPath()), joint.name)
+        prim = _define_joint(pxr, stage, f"{scope.GetPath()}/{path}", joint)
         if prim is None:
             continue
         prim.CreateBody0Rel().SetTargets([pxr.Sdf.Path(parent)])
@@ -293,7 +318,7 @@ def _define_joint(pxr: Pxr, stage: Stage, path: str, joint: JointDescription) ->
     if joint.type in _MULTI_DOF_JOINT_TYPES:
         prim = pxr.UsdPhysics.Joint.Define(stage, path)
         if joint.type == "planar":
-            for axis in _OUT_OF_PLANE:
+            for axis in OUT_OF_PLANE:
                 locked = pxr.UsdPhysics.LimitAPI.Apply(prim.GetPrim(), axis)
                 locked.CreateLowAttr(0.0)
                 locked.CreateHighAttr(0.0)
@@ -304,7 +329,12 @@ def _define_joint(pxr: Pxr, stage: Stage, path: str, joint: JointDescription) ->
 
 def _set_joint_frames(pxr: Pxr, prim: Prim, joint: JointDescription) -> None:
     single_axis = joint.type not in {"fixed", *_MULTI_DOF_JOINT_TYPES}
-    to_z = _rotation_to_z(joint.axis) if single_axis else Rotation.identity()
+    # A planar joint's axis is the plane's normal, and _define_joint locks the joint's own Z
+    # and X/Y rotations -- so its frames have to put that normal on Z too, or a joint whose
+    # normal is x would move in xy.
+    to_z = (
+        _rotation_to_z(joint.axis) if single_axis or joint.type == "planar" else Rotation.identity()
+    )
     origin = Rotation.from_euler("xyz", joint.origin_rpy)
     prim.CreateLocalPos0Attr(pxr.Gf.Vec3f(*joint.origin_xyz))
     prim.CreateLocalRot0Attr(_quat(pxr, origin * to_z))
@@ -367,7 +397,9 @@ def _urdf_links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geom
 
 
 _UNDERSTOOD_LINK_TAGS = frozenset({"visual", "collision"})
-_UNDERSTOOD_JOINT_TAGS = frozenset({"origin", "parent", "child", "axis", "limit", "mimic"})
+# mimic is not in here on purpose: USD has no way to say "this joint follows that one", so
+# it travels as an unconverted fragment and comes back out of to_urdf_mask intact.
+_UNDERSTOOD_JOINT_TAGS = frozenset({"origin", "parent", "child", "axis", "limit"})
 
 
 def _passthrough_xml(element: ET.Element, understood: frozenset[str]) -> list[str]:

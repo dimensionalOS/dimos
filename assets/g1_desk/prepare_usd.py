@@ -29,16 +29,12 @@ import trimesh
 
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import (
-    graft_usd,
-    layer_from,
-    load_pxr,
-    prefix_usd_frames,
-    usd_with_drives,
-    usd_with_frames,
-)
-from dimos.robot.assets.usd_assets import resolve_usd_assets, write_asset_info
+from dimos.robot.assets.usd_utils.assets import resolve_usd_assets, write_asset_info
+from dimos.robot.assets.usd_utils.frames import prefix_usd_frames, usd_with_frames
+from dimos.robot.assets.usd_utils.layers import graft_usd
+from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 from dimos.robot.unitree.g1.sim2_policy import JOINTS, POLICY
+from dimos.sim2.physics.drives import usd_with_drives
 
 
 def prepare(g1_source: Path, out: Path) -> None:

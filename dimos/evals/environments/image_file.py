@@ -49,7 +49,7 @@ class ImageFile(Environment):
         if not self.config.path.is_file():
             raise FileNotFoundError(f"image does not exist: {self.config.path}")
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         from dimos.memory.store.memory import MemoryStore
         from dimos.msgs.sensor_msgs.Image import Image
 

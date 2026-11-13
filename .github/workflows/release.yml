@@ -119,10 +119,14 @@ jobs:
       # Skip musllinux (Alpine) — Pinocchio's build ecosystem (pin/coal/cmeel-*)
       # is glibc-only; cmeel-assimp >= 6.0.5 has no musllinux wheels.
       CIBW_SKIP: "*-musllinux_*"
-      CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
-      CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
+      # TODO(PY312): Raise to 2_39.
+      CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
+      CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34
       # Asserts the packaged relay + Cockpit and serves them from the installed wheel.
       CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
+      # Skip tests here, then test in next job. Otherwise we hit dependency conflicts
+      # between open3d and manylinux versions.
+      CIBW_TEST_SKIP: "*-manylinux_*"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - name: Checkout
@@ -141,9 +145,35 @@ jobs:
           name: wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: wheelhouse/*.whl
 
+  smoke-wheels:
+    needs: build-wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - { os: ubuntu-latest,    arch: x86_64 }
+          - { os: ubuntu-24.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read  # For checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download wheels
+        uses: actions/download-artifact@v8
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.arch }}
+          path: wheelhouse
+      - name: Smoke-test the wheel
+        uses: ./.github/actions/smoke-wheel
+        with:
+          python-version: ${{ matrix.python-version }}
+
   publish-testpypi:
     if: ${{ inputs.dry-run }}
-    needs: [validate, build-sdist, build-wheels]
+    needs: [validate, build-sdist, build-wheels, smoke-wheels]
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -172,7 +202,7 @@ jobs:
 
   publish-pypi:
     if: ${{ ! inputs.dry-run }}
-    needs: [validate, build-sdist, build-wheels]
+    needs: [validate, build-sdist, build-wheels, smoke-wheels]
     runs-on: ubuntu-latest
     environment:
       name: pypi

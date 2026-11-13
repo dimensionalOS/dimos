@@ -28,6 +28,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from dimos.control.contract.keys import Interface
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 from dimos.utils.logging_config import setup_logger
 
@@ -84,6 +85,13 @@ class ConnectedHardware:
     def joint_names(self) -> list[JointName]:
         """Ordered list of joint names."""
         return self._joint_names
+
+    @property
+    def joint_command_interfaces(self) -> dict[str, frozenset[Interface]]:
+        """Command interfaces implemented by this runtime wrapper."""
+        return {
+            name: frozenset({Interface.POSITION, Interface.VELOCITY}) for name in self.joint_names
+        }
 
     @property
     def component(self) -> HardwareComponent:
@@ -223,6 +231,10 @@ class ConnectedTwistBase(ConnectedHardware):
     - No retry loop for initialization (twist bases start at zero velocity)
     """
 
+    @property
+    def joint_command_interfaces(self) -> dict[str, frozenset[Interface]]:
+        return {name: frozenset({Interface.VELOCITY}) for name in self.joint_names}
+
     _twist_adapter: TwistBaseAdapter
 
     def __init__(
@@ -314,6 +326,10 @@ class ConnectedWholeBody(ConnectedHardware):
     - write_command converts position commands to MotorCommand with PD gains
     - write_motor_commands provides direct pass-through to adapter
     """
+
+    @property
+    def joint_command_interfaces(self) -> dict[str, frozenset[Interface]]:
+        return {name: frozenset({Interface.POSITION}) for name in self.joint_names}
 
     _wb_adapter: WholeBodyAdapter
 

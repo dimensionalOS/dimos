@@ -17,10 +17,20 @@ import threading
 
 import numpy as np
 from reactivex import Observable
-import sounddevice as sd  # type: ignore[import-untyped]
 
 from dimos.stream.audio.base import AbstractAudioConsumer
 from dimos.utils.logging_config import setup_logger
+
+# sounddevice initializes PortAudio on import. PortAudio 19.7 (Ubuntu 26.04)
+# aborts that when its PulseAudio host API finds no server, so headless hosts
+# cannot import sounddevice at all; keep this module importable and report the
+# failure when a stream is opened.
+_sounddevice_error: Exception | None = None
+try:
+    import sounddevice as sd
+except Exception as exc:
+    sd = None
+    _sounddevice_error = exc
 
 logger = setup_logger()
 
@@ -71,6 +81,8 @@ class SounddeviceAudioOutput(AbstractAudioConsumer):
         # available (e.g. in CI / headless), log and continue — audio events
         # will still be drained from the observable and silently dropped.
         try:
+            if sd is None:
+                raise RuntimeError(f"sounddevice is unavailable: {_sounddevice_error}")
             self._stream = sd.OutputStream(
                 device=self.device_index,
                 samplerate=self.sample_rate,

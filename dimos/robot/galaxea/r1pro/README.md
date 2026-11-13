@@ -20,7 +20,7 @@ vendor profile instead with `--r1proconnection.vendor-profile ATCStandard/R1PROV
 
 - `ROS_DOMAIN_ID=1` (new-gen V2.3.0), `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`.
 - ROS 2 Humble ships `rclpy` built for CPython 3.10, so the venv must use the
-  robot's system interpreter. `.python-version` says 3.12, so pass `--python`
+  robot's system interpreter. `.python-version` says 3.14, so pass `--python`
   explicitly rather than relying on direnv:
 
   ```bash
