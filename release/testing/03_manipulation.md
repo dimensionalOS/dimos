@@ -54,9 +54,12 @@ uv run dimos shell
 ...in the shell:
 
 ```python
+import time
+from dimos.manipulation.sdk import Arm
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
-app.ManipulationSkills.go_home()   # localize confirms an object from two camera poses
 print(app.ManipulationLocalize.state())   # repeat until it reads ready
+Arm.from_app(app).move_linear(dy=0.08)   # localize confirms an object from two camera poses
+time.sleep(2.0)   # let the second view reach memory
 for o in app.ManipulationLocalize.scan(XARM_GRASP_PROMPTS, window_s=30.0):   # labels are unreliable, so pick by position
     print(o["id"], o["label"], o["position"])
 app.PickAndPlaceModule.pick_object("<id>")   # the can, near x=0.57 y=0.00

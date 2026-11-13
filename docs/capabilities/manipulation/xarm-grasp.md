@@ -144,11 +144,15 @@ verifies an object from two or more camera positions, so look at the table from 
 second arm pose before asking. Wait until `state()` reads ready:
 
 ```python skip
+import time
+
+from dimos.manipulation.sdk import Arm
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
 
 localize = app.ManipulationLocalize
-app.ManipulationSkills.go_init()
 print(localize.state())
+Arm.from_app(app).move_linear(dy=0.08)  # a second camera pose, 8 cm to the side
+time.sleep(2.0)  # let the second view reach memory
 print(localize.localize(",".join(XARM_GRASP_PROMPTS), -30.0, 30.0))
 ```
 

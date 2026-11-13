@@ -155,3 +155,31 @@ def test_scan_replaces_the_objects_of_the_names_asked_and_keeps_the_others(local
     assert localizer.get_pointcloud("block") is block.point_cloud
     with pytest.raises(LookupError):
         localizer.get_pointcloud("cup-0")
+
+
+def test_a_forgotten_object_does_not_come_back_from_its_old_sightings(localizer, mocker):
+    _ready(localizer, mocker, [])
+    localizer._memento = mocker.Mock()
+    localizer._color_feed = mocker.Mock()
+    localizer.rig.lidar = None
+    localizer.rig.cameras = {}
+    localizer.index.time_range.return_value = mocker.Mock(count=mocker.Mock(return_value=4))
+    localizer.detections = mocker.Mock()
+    mocker.patch("dimos.perception.localize.module.as_detection_array")
+    localizer._objects = {"cup-1": ("cup", _hit("cup-1", [[0.4, 0.1, 0.2]], (0.4, 0.1, 0.2)))}
+    # Picked when the newest frame was at 10 s.
+    localizer.forget("cup-1")
+    # Later the window still holds the cup at its old place, and the cup where it was put.
+    old = _hit("cup-1", [[0.4, 0.1, 0.2]], (0.41, 0.1, 0.2))
+    put = _hit("cup-2", [[0.3, -0.2, 0.2]], (0.3, -0.2, 0.2))
+    back = _hit("cup-3", [[0.4, 0.1, 0.2]], (0.4, 0.1, 0.2))
+    for hit, seen in ((old, 9.0), (put, 14.0), (back, 15.0)):
+        hit.semantic_score, hit.n_views, hit.last_seen_timestamp = 0.8, 2, seen
+    localizer.index.get_time_range.return_value = (0.0, 16.0)
+    localizer.detector = mocker.Mock()
+    localizer.detector.localize.return_value = [[old, put, back]]
+
+    found = localizer.scan(["cup"], window_s=30.0)
+
+    # The old sighting goes; one seen at the old place after the pick stays.
+    assert [o["id"] for o in found] == ["cup-2", "cup-3"]

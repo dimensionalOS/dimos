@@ -38,7 +38,8 @@ class ManipulationLocalize(PerceptionLocalize):
 
     A ``localize`` or ``scan`` answer replaces the objects of the labels it was
     asked for and keeps the others. Pick and place reads them by id, or by a
-    label only one object has.
+    label only one object has. A forgotten object's older sightings are left out
+    of later answers.
     """
 
     config: ManipulationLocalizeConfig
@@ -46,6 +47,8 @@ class ManipulationLocalize(PerceptionLocalize):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._objects: dict[str, tuple[str, Localization]] = {}
+        # label, position and the newest frame time of each forgotten object
+        self._gone: list[tuple[str, np.ndarray, float]] = []
 
     @rpc
     def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
@@ -93,8 +96,16 @@ class ManipulationLocalize(PerceptionLocalize):
 
     @rpc
     def forget(self, object_id: str) -> None:
-        """Drop the object with this id: it is no longer where it was seen."""
-        self._objects.pop(object_id, None)
+        """Drop the object with this id: it is no longer where it was seen.
+
+        Later answers leave out a sighting of its label near that place that is
+        not newer than now, so the old place does not come back as a target.
+        """
+        entry = self._objects.pop(object_id, None)
+        if entry is not None:
+            label, hit = entry
+            _, head = self.index.get_time_range()
+            self._gone.append((label, np.asarray(hit.position_world_xyz), head))
 
     @rpc
     def scene_cloud(self, start: float = -5.0, duration: float = 5.0) -> PointCloud2 | None:
@@ -130,6 +141,10 @@ class ManipulationLocalize(PerceptionLocalize):
         overrides: dict[str, Any] | None,
     ) -> tuple[list[list[Localization]], tuple[float, float, float, float, int]]:
         results, window = super()._localize(queries, start, duration, overrides)
+        results = [
+            [hit for hit in hits if not self._was_taken(query, hit)]
+            for query, hits in zip(queries, results, strict=True)
+        ]
         # An id names an object in one window only, so a label asked again starts over.
         kept = {i: entry for i, entry in self._objects.items() if entry[0] not in queries}
         self._objects = kept | {
@@ -138,6 +153,17 @@ class ManipulationLocalize(PerceptionLocalize):
             for hit in hits
         }
         return results, window
+
+    def _was_taken(self, label: str, hit: Localization) -> bool:
+        """Whether this sighting is of a forgotten object, at its old place, from before."""
+        radius = self.config.params.cluster_radius_m
+        position = np.asarray(hit.position_world_xyz)
+        return any(
+            gone_label == label
+            and float(np.linalg.norm(position - place)) < radius
+            and hit.last_seen_timestamp <= cutoff
+            for gone_label, place, cutoff in self._gone
+        )
 
     def _resolve(self, target: str) -> Localization:
         """A localized object by id, or by a label exactly one of them has."""
