@@ -10,32 +10,15 @@ motor-to-joint mapping, the joint limits and the blueprints.
 uv sync --extra leader-teleop --extra manipulation
 ```
 
-## Set motor IDs and calibrate
+## Calibration
 
 Each leader carries seven arm motors, `joint_1` to `joint_7` at IDs 1 to 7, and
-a gripper trigger servo at ID 8. Write IDs one motor at a time:
-
-```bash
-dimos hardware feetech-leader setup-motor-id --port <feetech-port> --old-id 1 --new-id 3
-```
-
-Hold the leader in the pose that matches the follower's all-zero joints, trigger
-released, and record the zero offsets. Flips name the motors that read backwards
-on your printed arm; the default is none.
-
-```bash
-dimos hardware feetech-leader calibrate --side left --port-left <feetech-port> \
-  --left-flips joint_1,joint_3,joint_4,joint_5,joint_6,joint_7
-```
-
-The file lands at `~/.local/state/dimos/teleop/leader/<side>/calibration.json`.
-The trigger is recorded when a servo answers at ID 8. The OpenArm mapping names
-the trigger, so a leader calibrated without one does not start; recalibrate with
-the trigger connected. Check a side without starting any robot control:
-
-```bash
-dimos hardware feetech-leader joint-tui --side left --port <feetech-port>
-```
+a gripper trigger servo at ID 8. The module reads one calibration file per side
+from `~/.local/state/dimos/teleop/leader/<side>/calibration.json`: each motor's
+zero offset, taken with the leader in the pose that matches the follower's
+all-zero joints and the trigger released, and which motors read backwards. The
+OpenArm mapping names the trigger, so a calibration without it does not start.
+dimOS has no tool to write these files yet.
 
 ## Bring-up in Viser
 

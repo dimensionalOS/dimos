@@ -346,6 +346,7 @@ all_modules = {
     "observe-skill": "dimos.agents.skills.observe_skill.ObserveSkill",
     "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
     "open-arm-connection": "dimos.robot.manipulators.openarm.connection.OpenArmConnection",
+    "open-arm-leader-coordinator": "dimos.robot.manipulators.openarm.blueprints.mini_teleop.OpenArmLeaderCoordinator",
     "open-yam-connection": "dimos.robot.manipulators.openyam.connection.OpenYamConnection",
     "open-yam-coordinator": "dimos.robot.manipulators.openyam.coordinator.OpenYamCoordinator",
     "open-yam-teleop-coordinator": "dimos.robot.manipulators.openyam.coordinator.OpenYamTeleopCoordinator",
