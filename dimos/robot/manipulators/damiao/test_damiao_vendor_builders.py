@@ -28,6 +28,7 @@ from dimos.robot.manipulators.makermods_metal.config import METAL
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.mark.parametrize(
@@ -140,6 +141,7 @@ def test_native_wiring_and_commands(
                 (f"{prefix}{index}", motor, index, index + 0x10)
                 for index, motor in enumerate(motors, 1)
             ]
+            wait_until(lambda group=group: native.groups[group].commands, timeout=2)
             rows = native.groups[group].commands[-1]
             np.testing.assert_equal(rows[:, 0], kp)
             np.testing.assert_equal(rows[:, 1], kd)
