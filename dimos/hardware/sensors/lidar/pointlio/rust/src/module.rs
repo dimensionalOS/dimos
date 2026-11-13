@@ -417,6 +417,7 @@ fn cloud_message(frame_id: &str, ts: f64, cloud: &[PointXYZI]) -> PointCloud2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dimos_module::NativeConfig;
 
     fn field(name: &str, offset: usize, datatype: i8) -> PointField {
         PointField {
@@ -537,11 +538,9 @@ mod tests {
         assert_eq!(plain.world_frame(), "odom");
         assert_eq!(plain.sensor_frame(), "mid360_link");
 
-        let prefixed: Config = serde_json::from_str(&SAMPLE.replace(
-            r#""frame_id":"odom""#,
-            r#""frame_id":"odom","frame_id_prefix":"r1""#,
-        ))
-        .unwrap();
+        // Not a config key: the host sets it from the launch line before build.
+        let mut prefixed: Config = serde_json::from_str(SAMPLE).unwrap();
+        prefixed.set_frame_id_prefix(Some("r1".into()));
         assert_eq!(prefixed.world_frame(), "r1/odom");
         assert_eq!(prefixed.sensor_frame(), "r1/mid360_link");
     }
