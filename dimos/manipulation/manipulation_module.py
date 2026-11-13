@@ -21,14 +21,15 @@ from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
+from importlib import import_module
 import math
 import threading
 import time
 import traceback
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, get_type_hints
 
 import numpy as np
-from pydantic import Field, model_validator
+from pydantic import Field, TypeAdapter, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import TaskName
@@ -213,6 +214,38 @@ class ManipulationModule(Module):
     voxel_map: In[PointCloud2]
     objects: In[list[DetObject]]
     tf: Out[TFMessage]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        fields = get_type_hints(cls)["config"].model_fields
+        if kwargs.get("world_backend", fields["world_backend"].default) != "roboplan":
+            return
+
+        planner: ManipulationPlannerConfig = TypeAdapter(ManipulationPlannerConfig).validate_python(
+            kwargs.get("planner", fields["planner"].get_default(call_default_factory=True))
+        )
+        parametrization: TrajectoryParametrizationConfig | None = TypeAdapter(
+            TrajectoryParametrizationConfig | None
+        ).validate_python(
+            kwargs.get(
+                "trajectory_parametrization",
+                fields["trajectory_parametrization"].get_default(call_default_factory=True),
+            )
+        )
+        dependencies = ["roboplan.core"]
+        if planner.backend == "roboplan":
+            dependencies.extend(("roboplan.rrt", "roboplan.cartesian_planning"))
+        if parametrization is None or parametrization.backend == "roboplan_toppra":
+            dependencies.append("roboplan.toppra")
+
+        for dependency in dependencies:
+            try:
+                import_module(dependency)
+            except ImportError as exc:
+                raise ImportError(
+                    f"Failed to import {dependency}: {exc}. "
+                    "Install the manipulation extra before selecting the roboplan backend."
+                ) from exc
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
