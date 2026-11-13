@@ -25,15 +25,8 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use pointlio_core::{LivoxPoint, PointLio, PointXYZI};
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use validator::ValidationError;
-
-/// Python's `None`, sent as a JSON null under a key that is always present.
-/// native_config forbids `Option`, so an absent key cannot pass as None.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(transparent)]
-struct Nullable<T>(Option<T>);
 
 /// The Python `PointLioConfig` tuning fields, 1:1. The tuning block is handed to
 /// `pointlio_core::Config` by a JSON round trip, so it stays name-compatible
