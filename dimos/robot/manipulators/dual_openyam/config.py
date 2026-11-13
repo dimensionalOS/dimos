@@ -37,7 +37,9 @@ DUAL_OPENYAM_SIDES = ("left", "right")
 DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 DUAL_OPENYAM_KP = [80.0, 80.0, 80.0, 10.0, 10.0, 10.0]
-DUAL_OPENYAM_KD = [5.0, 5.0, 5.0, 1.5, 1.5, 1.5]
+# Arm damping 1.0 (was 5.0): under leader teleop the DM4340s trailed the target by 90-120 ms
+# at 5.0 and by 40-50 ms at 1.0, with no hum; OpenArm runs the same motors at 1.0.
+DUAL_OPENYAM_KD = [1.0, 1.0, 1.0, 1.5, 1.5, 1.5]
 
 
 def dual_openyam_arm_joints(side: str) -> list[str]:

@@ -88,3 +88,23 @@ is `strict`, which rejects an episode on a single dropped camera frame; the
 three D405s on shared USB hubs do drop frames. If `dimos imitation inspect`
 shows rejected episodes, set `quality.mode` to `fill` in the recording's
 `schema.json` and prepare again.
+
+## Tuning, measured on Anvil
+
+Leader command against measured joint state, 100 Hz, `arm_position_command` vs
+`coordinator_joint_state` from a collection recording. The coordinator runs alone on its
+worker and the command cadence is 10 ms flat, so what remains is the follower itself.
+
+| change | arm joints 1-3 lag | wrist joints 4-6 lag | wrist feel |
+|---|---|---|---|
+| main gains (arm kd 5.0, wrist kp 10) | 90-120 ms | 160-190 ms | slight teeth |
+| filter off | same | same | rougher |
+| wrist velocity limit 6.0 | same | same | rougher |
+| arm kd 1.0 (shipped) | 40-50 ms | unchanged | slight teeth |
+| arm kd 1.0 + wrist kp 20 or 40 | 40-50 ms | 100 / 60 ms | teeth, unusable |
+
+The arm damping is the one change that moved the lag, so it ships. A stiffer wrist tracks faster
+but reproduces the 10 ms one-point jog restarts of the trajectory task as teeth, which the soft
+wrist blurs; that restart is a platform item, and the wrist gains stay at main's values until it
+lands. `--simulation` replaces the leaders with mock readers parked at the home pose; to drive the
+model from the real boards pass `--leaderteleopmodule.reader feetech` with the ports.
