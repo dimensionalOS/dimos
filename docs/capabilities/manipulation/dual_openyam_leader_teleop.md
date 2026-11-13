@@ -3,7 +3,7 @@
 Two YAM leader arms (seven Feetech STS3215 servos each, IDs 1 to 6 on the
 joints and 7 on the gripper trigger) drive the two OpenYAM followers joint for
 joint. The leaders are read by `DualOpenYamLeaderConnection`
-(`dimos/robot/manipulators/dual_openyam/connection.py`), a Feetech connection.
+(`dimos/robot/manipulators/dual_openyam/leader_connection.py`), a Feetech connection.
 Each leader motor names the follower joint it drives and that joint's limits
 (`DUAL_OPENYAM_LEADERS` in `dimos/robot/manipulators/dual_openyam/config.py`),
 so the connection publishes the followers' joint targets and jaw openings

@@ -42,10 +42,8 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_arm_joints,
     dual_openyam_model_config,
 )
-from dimos.robot.manipulators.dual_openyam.connection import (
-    DualOpenYamConnection,
-    DualOpenYamLeaderConnection,
-)
+from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.robot.manipulators.dual_openyam.leader_connection import DualOpenYamLeaderConnection
 
 # Following a human arm needs more than the URDF's 2 rad/s.
 DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 3.0
