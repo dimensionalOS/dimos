@@ -49,6 +49,9 @@ def test_flags_spell_values_as_dimos_reads_them() -> None:
         "--replay",
         '--robot-ips=["a"]',
     ]
+    accepted = LaunchConfig({"replay": "true", "n_workers": 3.0})
+    launches.check_global(accepted.global_)
+    assert launches.run_args("demo", accepted) == ["--n-workers=3", "--replay", "run", "demo"]
     launch = LaunchConfig({"replay": True}, {}, args=["--api-key", "x"])
     assert launches.run_args("demo", launch) == [
         *("run", "demo"),
