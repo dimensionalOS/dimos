@@ -110,12 +110,9 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     def go_to(self, pose: PoseStamped) -> Time:
         """Start driving to a pose and return the goal's stamp at once.
 
-        Replaces any goal under way. The heading is not used. `nav_status` reports carry
-        the stamp in `goal_id.stamp`, and a report with a status other than PENDING or
-        ACTIVE says the goal is over.
-
-        Args:
-            pose: target pose. An empty frame is the world frame.
+        Replaces any goal under way. The heading is not used and an empty frame is the
+        world frame. `nav_status` reports carry the stamp in `goal_id.stamp`, and a report
+        with a status other than PENDING or ACTIVE says the goal is over.
         """
         goal = PointStamped(pose.x, pose.y, pose.z, frame_id=pose.frame_id)
         self.goal.transport.publish(goal)

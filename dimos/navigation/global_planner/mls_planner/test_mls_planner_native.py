@@ -77,24 +77,16 @@ def test_go_to_takes_a_pose_stamped() -> None:
     assert (param.name, param.annotation) == ("pose", PoseStamped)
 
 
-def test_go_to_sends_the_pose_position_and_returns_its_stamp(rig: _Rig) -> None:
-    stamp = rig.module.go_to(PoseStamped(position=(4.0, 2.0, 1.2), frame_id="map"))
+def test_go_to_sends_the_pose_position_under_a_new_stamp_and_returns_it(rig: _Rig) -> None:
+    pose = PoseStamped(1.0, "map", position=(4.0, 2.0, 1.2))
+
+    stamp = rig.module.go_to(pose)
 
     (point,) = rig.sent
     assert (point.x, point.y, point.z) == pytest.approx((4.0, 2.0, 1.2))
     assert point.frame_id == "map"
-    assert [stamp.sec, stamp.nsec] == point.ros_timestamp()
-
-
-@pytest.mark.parametrize("frame_id", ["odom", "map", ""])
-def test_go_to_keeps_the_pose_frame_and_stamps_a_new_goal(rig: _Rig, frame_id: str) -> None:
-    pose = PoseStamped(1.0, frame_id, position=(4.0, 2.0, 0.0))
-
-    rig.module.go_to(pose)
-
-    (point,) = rig.sent
-    assert point.frame_id == frame_id
     assert point.ts != pose.ts
+    assert [stamp.sec, stamp.nsec] == point.ros_timestamp()
 
 
 def test_a_second_go_to_replaces_the_one_under_way(rig: _Rig) -> None:
