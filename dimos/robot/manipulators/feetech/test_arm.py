@@ -27,6 +27,7 @@ from dimos.robot.manipulators.feetech.arm import (
 from dimos.robot.manipulators.feetech.calibration import (
     FEETECH_POSITION_SPAN,
     FeetechCalibration,
+    FeetechCalibrationError,
     FeetechMotorCalibration,
 )
 from dimos.robot.manipulators.feetech.robot import FeetechBus, FeetechMotor, FeetechRobot
@@ -98,6 +99,17 @@ def test_arm_reads_each_open_bus_as_calibrated_radians(monkeypatch: pytest.Monke
 
     assert list(readings) == ["left"]
     assert readings["left"] == pytest.approx({"joint_1": 0.0, "joint_2": -math.pi / 2})
+
+
+def test_a_calibration_with_two_motors_on_one_id_is_refused() -> None:
+    with pytest.raises(FeetechCalibrationError, match="share one ID"):
+        FeetechCalibration(
+            side="left",
+            motors={
+                "joint_1": FeetechMotorCalibration(id=1, homing_offset=0),
+                "joint_2": FeetechMotorCalibration(id=1, homing_offset=0),
+            },
+        )
 
 
 @pytest.mark.parametrize(
