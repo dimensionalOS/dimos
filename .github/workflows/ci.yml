@@ -1085,14 +1085,30 @@ jobs:
           for _ in $(seq 30); do pgrep -qf "$GITHUB_WORKSPACE/" || exit 0; sleep 0.1; done
           pkill -KILL -f "$GITHUB_WORKSPACE/" || true
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '${{ matrix.markers }}'
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml --ignore=dimos/sim2 --ignore=dimos/robot/unitree/g1/test_sim2_observations.py -m '${{ matrix.markers }}'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '${{ matrix.markers }}' && exit 1
+          uv run pytest --no-cov -vvvvv --lf --ignore=dimos/sim2 --ignore=dimos/robot/unitree/g1/test_sim2_observations.py -m '${{ matrix.markers }}' && exit 1
         shell: bash
+      - name: Run Sim2 native USD tests on Python 3.12
+        # mujoco-usd 4.0 supports Python 3.11-3.13; main now defaults to 3.14.
+        # Keep native simulation checks on both OSes without changing the main environment.
+        if: hashFiles('dimos/sim2/module.py') != ''
+        shell: bash
+        env:
+          UV_PROJECT_ENVIRONMENT: .venv-sim2
+          PYTHONPATH: ""
+        run: |
+          uv sync --python 3.12 --group tests-self-hosted --extra sim --frozen
+          uv run --python 3.12 python setup.py build_ext --inplace
+          paths=(dimos/sim2)
+          if [ -f dimos/robot/unitree/g1/test_sim2_observations.py ]; then
+            paths+=(dimos/robot/unitree/g1/test_sim2_observations.py)
+          fi
+          uv run --python 3.12 pytest "${paths[@]}" --cov=dimos/ --cov-append --junitxml=junit-sim2.xml -m 'not self_hosted_large'
       - name: Print crash diagnostics
         if: failure()
         shell: bash
