@@ -23,22 +23,15 @@ The added opening links are invisible measurement frames, not physical bodies.
 
 from dimos.constants import CACHE_DIR
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.lidar.livox.ports import (
-    SDK_HOST_CMD_DATA_PORT,
-    SDK_HOST_IMU_DATA_PORT,
-    SDK_HOST_POINT_DATA_PORT,
-)
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
-from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.core.transport import ZenohTransport
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _operator_blueprint
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_real import make_joylo_real
-from dimos.robot.galaxea.r1pro.config import R1PRO_CHASSIS_LIDAR_HOST_IP, R1PRO_CHASSIS_LIDAR_IP
 from dimos.robot.galaxea.r1pro.head_cameras import HeadCameraInfo, HeadLeftCamera, HeadRightCamera
 from dimos.robot.galaxea.r1pro.joylo import UPPER
-from dimos.robot.galaxea.r1pro.lio import R1ProLio
-from dimos.robot.galaxea.r1pro.spatial_sensors import R1SpatialCloud, R1SpatialSensors
+from dimos.robot.galaxea.r1pro.spatial_sensors import R1SpatialSensors
 from dimos.robot.usd_manager import UsdManager
 
 _vendor = CACHE_DIR / "r1pro-hardware/mobiman"
@@ -67,55 +60,41 @@ for _side in ("left", "right"):
             _multiplier,
         )
 
-_vision = autoconnect(
-    HeadLeftCamera.blueprint(jpeg_quality=70, build_command=None),
-    HeadRightCamera.blueprint(jpeg_quality=70, build_command=None),
-    HeadCameraInfo.blueprint(),
-    R1SpatialSensors.blueprint(),
-).remappings(
-    [
-        (HeadLeftCamera, "jpeg_out", "head_left_color"),
-        (HeadRightCamera, "jpeg_out", "head_right_color"),
-        (HeadCameraInfo, "left_info", "head_left_color_info"),
-        (HeadCameraInfo, "right_info", "head_right_color_info"),
-    ]
-)
-
-_lidar = autoconnect(
-    mid360_for_pointlio(
-        frame_id="lidar_pointlio_link",
-        lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
-        host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
-        host_cmd_data_port=SDK_HOST_CMD_DATA_PORT + 1,
-        host_point_data_port=SDK_HOST_POINT_DATA_PORT + 1,
-        host_imu_data_port=SDK_HOST_IMU_DATA_PORT + 1,
-        build_command=None,
-    ),
-    PointLio.blueprint(sensor_frame_id="lidar_pointlio_link", build_command=None).remappings(
-        [(PointLio, "odometry", "pointlio_odometry")]
-    ),
-)
-
-_map = autoconnect(
-    R1ProLio.blueprint(model=_model, publish_hz=15).remappings(
-        [(R1ProLio, "odometry", "pointlio_odometry"), (R1ProLio, "pose", "odom")]
-    ),
-    R1SpatialCloud.blueprint(),
-    VoxelGridMapper.blueprint(
-        device="CPU:0",
-        frame_id="odom",
-        voxel_size=0.05,
-        carve_columns=False,
-        block_count=100_000,
-        emit_every=5,
-    ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
+_vision = (
+    autoconnect(
+        HeadLeftCamera.blueprint(jpeg_quality=70, build_command=None),
+        HeadRightCamera.blueprint(jpeg_quality=70, build_command=None),
+        HeadCameraInfo.blueprint(),
+        R1SpatialSensors.blueprint(),
+    )
+    .remappings(
+        [
+            (HeadLeftCamera, "jpeg_out", "head_left_color"),
+            (HeadRightCamera, "jpeg_out", "head_right_color"),
+            (HeadCameraInfo, "left_info", "head_left_color_info"),
+            (HeadCameraInfo, "right_info", "head_right_color_info"),
+        ]
+    )
+    .transports(
+        {
+            (name, CompressedImage): ZenohTransport.spec(
+                f"dimos/{name}", CompressedImage, qos=QOS_LATEST_WINS
+            )
+            for name in (
+                "head_left_color",
+                "head_right_color",
+                "color_image",
+                "left_wrist",
+                "right_wrist",
+            )
+        }
+    )
 )
 
 r1pro_openarm_joylo_real = autoconnect(
-    autoconnect(
-        make_joylo_real(publish_odom_tf=False, enable_wrist_color=False), _vision, _lidar
-    ).hosted(tags={"r1pro": True}),
+    autoconnect(make_joylo_real(publish_odom_tf=True, enable_wrist_color=False), _vision).hosted(
+        tags={"r1pro": True}
+    ),
     _operator_blueprint().hosted(local=True),
     UsdManager.blueprint(model=_model, tf_source="joints", unchanged_tf_hz=15).hosted(local=True),
-    _map.hosted(local=True),
-).global_config(viewer="none", transport="zenoh", n_workers=9)
+).global_config(viewer="none", transport="zenoh", n_workers=7)

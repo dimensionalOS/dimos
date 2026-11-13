@@ -24,7 +24,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_CONTROL, Topic
 from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
 from dimos.teleop.leader.calibration import DEFAULT_LEADER_MOTOR_NAMES, LEADER_SIDES
 from dimos.teleop.leader.mapping import JointMapping, SideMapping
@@ -45,7 +45,7 @@ OPENARM_R1PRO_MAPPINGS = {
 }
 
 _transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
-    (name, kind): ZenohTransport.spec(Topic(f"dimos/r1pro/joylo/{name}", kind, qos=QOS_LATEST_WINS))
+    (name, kind): ZenohTransport.spec(Topic(f"dimos/r1pro/joylo/{name}", kind, qos=QOS_CONTROL))
     for name, kind in (
         ("leader_readings", JointState),
         ("joycon_sample", Joy),

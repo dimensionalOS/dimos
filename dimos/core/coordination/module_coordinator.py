@@ -865,6 +865,10 @@ def _coerce_transport_to_backend(transport: Transport[Any]) -> Transport[Any]:
 
     # Strip the zenoh namespace back to the logical name; the factory re-applies the right one.
     logical = next((raw[len(p) :] for p in (prefix, "dimos/") if raw.startswith(p)), raw)
+    if outside and not mismatched:
+        # Changing the run namespace is not a backend conversion. Preserve the
+        # publisher's delivery policy instead of reverting to default QoS.
+        return transport.with_topic(prefix + logical.lstrip("/"))
     return make_transport(logical, msg_type)
 
 
