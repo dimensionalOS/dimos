@@ -92,6 +92,7 @@ def test_transport_spec_of_a_live_transport_decodes_without_building_it(mocker) 
         transport.stop()
 
 
+@pytest.mark.self_hosted  # Only self-hosted Linux CI installs cyclonedds (the unitree-dds extra).
 @pytest.mark.skipif(not DDS_AVAILABLE, reason="cyclonedds is not installed")
 def test_dds_transport_roundtrip_preserves_qos_and_domain() -> None:
     from cyclonedds.qos import Policy, Qos  # cyclonedds: see DDS_AVAILABLE
