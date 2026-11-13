@@ -38,7 +38,8 @@ from dimos.robot.manipulators.openarm.config import (
     OPENARM_SIDES,
     openarm_bimanual_model_config,
 )
-from dimos.robot.manipulators.openarm.connection import OpenArmConnection, OpenArmMiniConnection
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
+from dimos.robot.manipulators.openarm.mini_connection import OpenArmMiniConnection
 
 # Leader-follower needs human arm speeds, well above the WebXR IK profile.
 _ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)
