@@ -287,34 +287,12 @@ class PerceptionLocalize(Module):
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
         queries = [q.strip() for q in objects.split(",") if q.strip()]
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        hi = lo + duration
-        # frames older than the feed's memory can no longer be asked for
-        self._memento.forget(first)
-        index = self.index.time_range(lo, hi)
-        for cam in self.rig.cameras.values():
-            if cam.hz is None:
-                cam.hz = camera_hz(self._color_feed)
-        rig = self.rig
-        if rig.lidar is not None:
-            rig = replace(rig, lidar=rig.lidar.time_range(lo, hi))
         overrides = json.loads(params) if params.strip() else None
-        results = self.detector.localize(
-            queries,
-            index=index,
-            window=(lo, hi),
-            head=head,
-            rig=rig,
-            params=self.config.params,
-            fields=overrides,
-            memento=self._memento,
-        )
-        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        results, (lo, hi, first, head, frames) = self._localize(queries, start, duration, overrides)
 
         lines: list[str] = [
             f"window {lo - first:.1f}s to {hi - first:.1f}s of "
-            f"{head - first:.1f}s of feed, {index.count()} frames"
+            f"{head - first:.1f}s of feed, {frames} frames"
         ]
         for query, hits in zip(queries, results, strict=True):
             if not hits:
@@ -328,6 +306,39 @@ class PerceptionLocalize(Module):
                     f"first {max(0.0, head - hit.first_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
+
+    def _localize(
+        self,
+        queries: list[str],
+        start: float,
+        duration: float,
+        overrides: dict[str, Any] | None,
+    ) -> tuple[list[list[Localization]], tuple[float, float, float, float, int]]:
+        """One localize call: the instances per query, and the window it read."""
+        first, head = self.index.get_time_range()
+        lo = max(first, head + start if start < 0 else first + start)
+        hi = lo + duration
+        # frames older than the feed's memory can no longer be asked for
+        self._memento.forget(first)
+        index = self.index.time_range(lo, hi)
+        for cam in self.rig.cameras.values():
+            if cam.hz is None:
+                cam.hz = camera_hz(self._color_feed)
+        rig = self.rig
+        if rig.lidar is not None:
+            rig = replace(rig, lidar=rig.lidar.time_range(lo, hi))
+        results = self.detector.localize(
+            queries,
+            index=index,
+            window=(lo, hi),
+            head=head,
+            rig=rig,
+            params=self.config.params,
+            fields=overrides,
+            memento=self._memento,
+        )
+        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        return results, (lo, hi, first, head, index.count())
 
 
 def as_detection_array(

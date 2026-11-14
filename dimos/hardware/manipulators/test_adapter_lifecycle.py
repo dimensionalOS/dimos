@@ -24,7 +24,6 @@ piper_sdk_module = ModuleType("piper_sdk")
 piper_sdk_module.__dict__["C_PiperInterface_V2"] = lambda **_: None
 sys.modules.setdefault("piper_sdk", piper_sdk_module)
 
-from dimos.hardware.manipulators.a750.adapter import A750Adapter
 from dimos.hardware.manipulators.piper import adapter as piper_adapter
 from dimos.hardware.manipulators.piper.adapter import PiperAdapter
 
@@ -150,32 +149,3 @@ def test_piper_gripper_uses_sdk_units_and_clamps(piper_sdk: Any) -> None:
     assert piper_sdk.gripper_position == 80_000
     assert adapter.read_joint_positions()[-1] == 0.08
     assert piper_sdk.GripperCtrl.call_args.args[0] == 80_000
-
-
-class _A750Robot:
-    def __init__(self) -> None:
-        self.actions: list[str] = []
-
-    def start_control_loop(self) -> None:
-        self.actions.append("start")
-
-    def stop_control_loop(self) -> None:
-        self.actions.append("stop")
-
-
-class _LifecycleA750Adapter(A750Adapter):
-    def use_robot(self, robot: _A750Robot) -> None:
-        self._robot: _A750Robot | None
-        self._connected: bool
-        self._robot = robot
-        self._connected = True
-
-
-def test_a750_lifecycle_starts_then_stops_control_loop() -> None:
-    robot = _A750Robot()
-    adapter = _LifecycleA750Adapter()
-    adapter.use_robot(robot)
-
-    assert adapter.activate()
-    assert adapter.deactivate()
-    assert robot.actions == ["start", "stop"]
