@@ -16,6 +16,7 @@
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+import math
 from typing import Any
 
 import numpy as np
@@ -28,17 +29,16 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao._damiao_test_helpers import LocalTransport
+from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
+    DUAL_OPENYAM_CAMERA_TRANSFORM,
+    DUAL_OPENYAM_TABLE_TOP_Z,
+)
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM,
     DUAL_OPENYAM_HOME_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.dual_openyam.sim_connection import DualOpenYamSimConnection
-from dimos.robot.manipulators.dual_openyam.sim_scene import (
-    DUAL_OPENYAM_TABLE_TOP_Z,
-    OVERHEAD_CAMERA_XYZ,
-    OVERHEAD_CAMERA_XYZW,
-)
 from dimos.utils.testing.waiting import wait_until
 
 JOINTS = [f"arm/{name}" for name in DUAL_OPENYAM.joint_names]
@@ -109,7 +109,7 @@ def test_stands_in_for_the_damiao_connection_port_for_port(no_rpc: None) -> None
 
     assert set(real) == {"position_command", "joint_state"}
     assert [stream for stream in simulated if stream.name in real] == list(real.values())
-    assert {stream.name for stream in simulated} - set(real) == set(CAMERA_PORTS)
+    assert {stream.name for stream in simulated} - set(real) == {*CAMERA_PORTS, "pointcloud"}
     assert DualOpenYamSimConnection.robot is DualOpenYamConnection.robot
 
     connection = DualOpenYamSimConnection()
@@ -186,6 +186,26 @@ def test_holds_where_it_is_when_commands_stop(deploy: Deploy) -> None:
 
 
 @pytest.mark.self_hosted
+def test_says_where_an_object_is_and_stands_it_somewhere_else(deploy: Deploy) -> None:
+    connection = deploy(cameras=False, deadman_timeout_s=30.0).connection
+
+    # The cube's frame is at its centre, half its 5.7 cm above the table.
+    resting = DUAL_OPENYAM_TABLE_TOP_Z + 0.0285
+    assert connection.body_position("rubiks_cube") == pytest.approx(
+        [0.37, -0.09, resting], abs=2e-3
+    )
+
+    connection.place_body("rubiks_cube", [0.30, 0.10, resting], math.radians(45.0))
+
+    assert connection.body_position("rubiks_cube") == pytest.approx([0.30, 0.10, resting], abs=2e-3)
+    # An arm's link is a body too, but not one to pick up and put down.
+    with pytest.raises(ValueError, match="no free body"):
+        connection.place_body("left_gripper", [0.30, 0.10, resting])
+    with pytest.raises(ValueError, match="no free body"):
+        connection.place_body("mug", [0.30, 0.10, resting])
+
+
+@pytest.mark.self_hosted
 def test_publishes_each_camera_on_its_realsense_port_and_frames(
     deploy: Deploy, mujoco_gl: None
 ) -> None:
@@ -233,12 +253,12 @@ def test_publishes_each_camera_on_its_realsense_port_and_frames(
     }
     # The overhead camera's camera_link sits where the rig's calibration puts it.
     mount = edges["camera_link"]
-    assert [mount.translation.x, mount.translation.y, mount.translation.z] == pytest.approx(
-        OVERHEAD_CAMERA_XYZ, abs=1e-6
+    calibrated = DUAL_OPENYAM_CAMERA_TRANSFORM
+    assert mount.translation.to_numpy() == pytest.approx(
+        calibrated.translation.to_numpy(), abs=1e-6
     )
-    turn = [mount.rotation.x, mount.rotation.y, mount.rotation.z, mount.rotation.w]
-    calibrated = np.array(OVERHEAD_CAMERA_XYZW) / np.linalg.norm(OVERHEAD_CAMERA_XYZW)
-    assert abs(np.dot(turn, calibrated)) == pytest.approx(1.0, abs=1e-9)
+    turn = calibrated.rotation.to_numpy() / np.linalg.norm(calibrated.rotation.to_numpy())
+    assert abs(np.dot(mount.rotation.to_numpy(), turn)) == pytest.approx(1.0, abs=1e-9)
     assert edges["camera_color_optical_frame"].rotation == OPTICAL_ROTATION
     # Depth, intrinsics and tf agree: the pixel at the image centre is a point of the table top.
     row, column = 240, 320
@@ -246,7 +266,7 @@ def test_publishes_each_camera_on_its_realsense_port_and_frames(
         [(column + 0.5 - info.K[2]) / info.K[0], (row + 0.5 - info.K[5]) / info.K[4], 1.0]
     )
     optical_in_world = mount.rotation.to_rotation_matrix() @ OPTICAL_ROTATION.to_rotation_matrix()
-    on_table = np.array(OVERHEAD_CAMERA_XYZ) + optical_in_world @ in_optical
+    on_table = mount.translation.to_numpy() + optical_in_world @ in_optical
     assert on_table[2] == pytest.approx(DUAL_OPENYAM_TABLE_TOP_Z, abs=1e-3)
     # Each wrist camera rides above its own arm's gripper at the home posture.
     assert edges["left_wrist/camera_link"].translation.y > 0.15
@@ -256,3 +276,65 @@ def test_publishes_each_camera_on_its_realsense_port_and_frames(
     first = published["color_image"][0]
     assert {edge.ts for edge in edges.values()} == {first.ts}
     assert published["left_wrist_color_image"][0].ts == first.ts
+
+
+@pytest.mark.self_hosted
+def test_publishes_the_overhead_view_as_a_realsense_builds_its_point_cloud(
+    deploy: Deploy, mujoco_gl: None
+) -> None:
+    published = deploy(deadman_timeout_s=30.0, enable_pointcloud=True, depth_trunc_m=0.6).published
+    wait_until(
+        lambda: len(published["pointcloud"]) >= 3 and bool(published["camera_info"]), timeout=20.0
+    )
+
+    cloud = published["pointcloud"][-1]
+    # It has the frame and the stamp of the depth image it was built from.
+    [depth] = [image for image in published["depth_image"] if image.ts == cloud.ts]
+    [color] = [image for image in published["color_image"] if image.ts == cloud.ts]
+    assert cloud.frame_id == depth.frame_id == "camera_color_optical_frame"
+    # Every second pixel is put back through the pinhole, and nothing past the cut-off.
+    info = published["camera_info"][-1]
+    rows, columns = np.mgrid[0:480:2, 0:640:2]
+    distance = depth.data[::2, ::2]
+    near = distance <= 0.6
+    assert 0.3 < near.mean() < 0.95
+    points = cloud.points_f32()
+    assert points == pytest.approx(
+        np.column_stack(
+            [
+                (columns[near] - info.K[2]) * distance[near] / info.K[0],
+                (rows[near] - info.K[5]) * distance[near] / info.K[4],
+                distance[near],
+            ]
+        ),
+        abs=1e-6,
+    )
+    colors = cloud.pointcloud_tensor.point["colors"].numpy()
+    assert colors == pytest.approx(color.data[::2, ::2][near] / 255.0, abs=1e-6)
+    # Through the camera's mount the points are the scene: an empty stretch of
+    # the table, out to the picture's edge, lies flat at the table's height.
+    mount = DUAL_OPENYAM_CAMERA_TRANSFORM
+    optical_in_world = mount.rotation.to_rotation_matrix() @ OPTICAL_ROTATION.to_rotation_matrix()
+    in_world = points @ optical_in_world.T + mount.translation.to_numpy()
+    on_table = (in_world[:, 0] > 0.2) & (in_world[:, 0] < 0.3) & (np.abs(in_world[:, 1]) < 0.15)
+    assert on_table.sum() > 1000
+    assert in_world[on_table, 2] == pytest.approx(DUAL_OPENYAM_TABLE_TOP_Z, abs=1.5e-3)
+    # Clouds come at their own rate, 5 Hz by default, not with every frame.
+    stamps = [cloud.ts for cloud in published["pointcloud"]]
+    assert np.diff(stamps).min() >= 0.2
+
+
+@pytest.mark.self_hosted
+def test_leaves_the_overhead_cameras_mount_to_the_planner_when_told_to(
+    deploy: Deploy, mujoco_gl: None
+) -> None:
+    published = deploy(deadman_timeout_s=30.0, publish_overhead_mount=False).published
+    wait_until(lambda: bool(published["tf"]), timeout=20.0)
+
+    parents = {edge.child_frame_id: edge.frame_id for edge in published["tf"][0].transforms}
+    # The imagers hang off camera_link as before; where that is, the planner says.
+    assert "camera_link" not in parents
+    assert parents["camera_color_frame"] == parents["camera_depth_frame"] == "camera_link"
+    # The wrist cameras ride the arms, and only the rig knows where they are.
+    assert parents["left_wrist/camera_link"] == parents["right_wrist/camera_link"] == "world"
+    assert not published["pointcloud"]

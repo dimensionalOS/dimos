@@ -50,6 +50,59 @@ Rendering needs OpenGL: on a machine without a display, set `MUJOCO_GL=egl`.
 `--cameras false` runs the physics alone, and `--headless false` opens the MuJoCo
 window.
 
+### Scan and Pick in the simulation
+
+`dual-openyam-grasp-sim` is `dual-openyam-grasp` with the connection and the
+three RealSense cameras switched off and the simulated rig in their place. The
+planner, the self filter, the voxel map, `SelfClearedManipulationLocalize`, the
+heuristic grasp and `PickAndPlaceModule` are the ones the rig runs, with the
+rig's settings.
+
+```bash
+MUJOCO_GL=egl dimos run dual-openyam-grasp-sim
+```
+
+The simulated overhead camera also publishes `pointcloud`, built as the
+RealSense builds it: every second pixel put back through the pinhole, in
+`camera_color_optical_frame`, five times a second. The planner publishes that
+camera's mount, `world` to `camera_link`, from the transform the simulated
+camera is placed by, so the simulated rig leaves that edge to it. The stack
+needs what it needs on the rig apart from the hardware: a CUDA GPU, the scan's
+weights and the native voxel mapper.
+
+Scan and pick as on the rig, from `dimos shell` or a script:
+
+```python skip
+from dimos.porcelain.dimos import Dimos
+
+app = Dimos.connect()
+scan = app.SelfClearedManipulationLocalize
+print(scan.state())  # ask again until it reads "ready"
+found = scan.scan(names=["cup", "bottle", "rubiks cube"])
+cube = next(hit for hit in found if hit["label"] == "rubiks cube")
+print(app.PickAndPlaceModule.pick_object(cube["id"], planning_group="right_manipulator"))
+```
+
+The simulation knows where its objects are and can move them. Positions are
+metres in the world frame; the cup and the bottle have their frame at the foot,
+the cube at its centre.
+
+```python skip
+rig = app.DualOpenYamSimConnection
+print(rig.body_position("rubiks_cube"))
+rig.place_body("rubiks_cube", [0.37, -0.09, -0.006], 0.0)  # square to the workcell
+```
+
+The cube starts turned 30 degrees, as it lies on the rig. The heuristic grasp
+does not pick it there: it centres the jaws on the part of the cube the camera
+sees, and one finger comes down on the far corner. Stood square to the workcell
+it is picked, carried and placed. The cup's only grasp is dropped by the contact
+check. After a scene change, wait ten seconds before a scan: a scan joins every
+sighting in its window, old and new.
+
+What the simulation leaves out: depth noise and holes, the wrist cameras'
+cables, the AprilTags on the table, and the jaws' measured force and speed.
+
 ## CAN transport
 
 List the selectors accepted on the current host:

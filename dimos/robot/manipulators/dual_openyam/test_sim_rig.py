@@ -21,15 +21,17 @@ import cv2
 import numpy as np
 import pytest
 
+from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
+    DUAL_OPENYAM_CAMERA_TRANSFORM,
+    DUAL_OPENYAM_TABLE_TOP_Z,
+)
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM,
     DUAL_OPENYAM_HOME_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.sim_rig import DualOpenYamSimRig, SimCameraFrame
 from dimos.robot.manipulators.dual_openyam.sim_scene import (
-    DUAL_OPENYAM_TABLE_TOP_Z,
     OVERHEAD_CAMERA,
-    OVERHEAD_CAMERA_XYZ,
     WORKCELL_OBJECTS,
     WRIST_CAMERAS,
 )
@@ -171,7 +173,8 @@ def test_every_camera_renders_the_scene(
         assert cv2.imread(str(saved)).shape == (480, 640, 3)
 
     overhead = newest[OVERHEAD_CAMERA]
-    assert overhead.position == pytest.approx(OVERHEAD_CAMERA_XYZ, abs=1e-6)
+    mount = DUAL_OPENYAM_CAMERA_TRANSFORM.translation.to_numpy()
+    assert overhead.position == pytest.approx(mount, abs=1e-6)
     assert overhead.depth is not None
     assert overhead.depth.shape == (480, 640)
     # It looks down at the table from 0.45 m: the nearest thing it sees is the

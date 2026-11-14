@@ -25,6 +25,7 @@ comes: with fixed fingers or sliding ones, with or without collision geometry.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import pairwise
 import math
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -34,22 +35,20 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoRobot
-from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_SIDES
 
-#: Table top in the workcell frame, metres (rig calibration 2026-10-15).
-DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
+# The table's height and the overhead camera's pose are the grasp stack's: the
+# planner publishes that camera pose on tf, and the cloud has to agree with it.
+from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
+    DUAL_OPENYAM_CAMERA_TRANSFORM,
+    DUAL_OPENYAM_TABLE_TOP_Z,
+)
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_SIDES
 
 #: The model's cameras, named after the ones they stand in for.
 OVERHEAD_CAMERA = "overhead_camera"
 WRIST_CAMERAS = {side: f"{side}_wrist_camera" for side in DUAL_OPENYAM_SIDES}
 #: Vertical field of view of a D405, degrees.
 CAMERA_FOVY = 58.0
-
-#: The overhead D405's camera_link (x forward, y left, z up) in the workcell
-#: frame, metres and an xyzw quaternion, from the rig calibration of 2026-10-15.
-#: It looks at the table from between the arms, pitched 57 degrees down.
-OVERHEAD_CAMERA_XYZ = (-0.01684, 0.01262, 0.41508)
-OVERHEAD_CAMERA_XYZW = (-0.02168, 0.47733, -0.00152, 0.87845)
 
 #: The free bodies standing on the table.
 WORKCELL_OBJECTS = ("cup", "bottle", "rubiks_cube")
@@ -105,6 +104,11 @@ _CUP_XY = (0.33, 0.28)
 _BOTTLE_XY = (0.41, 0.05)
 _CUBE_XY = (0.37, -0.09)
 _CUBE_YAW = math.radians(30.0)
+# The cup's rim and foot radii and its height, metres: the rig's scan saw it
+# 9.5 cm wide and 10.5 cm tall.
+_CUP_RIM_RADIUS, _CUP_FOOT_RADIUS, _CUP_HEIGHT = 0.047, 0.030, 0.108
+# How many sides a turned mesh has.
+_LATHE_SEGMENTS = 48
 _CUBE_HALF = 0.0285
 # Each face's nine stickers, row by row, keyed by the face's outward normal.
 _CUBE_FACES = {
@@ -396,10 +400,13 @@ def _add_workcell(spec: mujoco.MjSpec) -> None:
     world.add_light(pos=(0.3, 0.0, 1.5), dir=(0.1, 0.1, -1.0), diffuse=(0.7, 0.7, 0.7))
     spec.visual.headlight.ambient = (0.35, 0.35, 0.35)
     spec.visual.headlight.diffuse = (0.3, 0.3, 0.3)
+    # The calibrated camera_link (x forward, y left, z up): it looks at the
+    # table from between the arms, pitched 57 degrees down.
+    mount = DUAL_OPENYAM_CAMERA_TRANSFORM
     world.add_camera(
         name=OVERHEAD_CAMERA,
-        pos=OVERHEAD_CAMERA_XYZ,
-        quat=_camera_quat(Rotation.from_quat(OVERHEAD_CAMERA_XYZW)),
+        pos=mount.translation.to_numpy(),
+        quat=_camera_quat(Rotation.from_quat(mount.rotation.to_numpy())),
         fovy=CAMERA_FOVY,
     )
     _housing(spec, OVERHEAD_CAMERA)
@@ -423,26 +430,87 @@ def _add_decoration(body: Any, **geom: Any) -> None:
     body.add_geom(contype=0, conaffinity=0, density=0.0, **geom)
 
 
+def _lathe(spec: mujoco.MjSpec, name: str, profile: Sequence[tuple[float, float]]) -> str:
+    """A mesh turned about z through (radius, height) points; a zero radius closes it.
+
+    Faces look outwards where the profile climbs and inwards where it
+    descends, so one profile draws a hollow vessel's outside and inside.
+    """
+    angles = np.linspace(0.0, 2.0 * math.pi, _LATHE_SEGMENTS, endpoint=False)
+    vertices: list[tuple[float, float, float]] = []
+    rings: list[list[int]] = []
+    for radius, height in profile:
+        first = len(vertices)
+        if radius == 0.0:
+            vertices.append((0.0, 0.0, height))
+            rings.append([first] * _LATHE_SEGMENTS)
+        else:
+            vertices.extend(
+                (radius * math.cos(angle), radius * math.sin(angle), height) for angle in angles
+            )
+            rings.append(list(range(first, first + _LATHE_SEGMENTS)))
+    faces: list[tuple[int, int, int]] = []
+    for lower, upper in pairwise(rings):
+        for here in range(_LATHE_SEGMENTS):
+            there = (here + 1) % _LATHE_SEGMENTS
+            if lower[here] != lower[there]:
+                faces.append((lower[here], lower[there], upper[there]))
+            if upper[here] != upper[there]:
+                faces.append((lower[here], upper[there], upper[here]))
+    mesh = spec.add_mesh(name=name)
+    mesh.uservert = np.asarray(vertices, dtype=np.float32).ravel()
+    mesh.userface = np.asarray(faces, dtype=np.int32).ravel()
+    # Its mass is in its surface: a cup is a shell, and a surface that is only
+    # drawn may be open and have no volume.
+    mesh.inertia = mujoco.mjtMeshInertia.mjMESH_INERTIA_SHELL  # type: ignore[attr-defined]
+    return name
+
+
+def _material(spec: mujoco.MjSpec, name: str, rgba: Sequence[float], shine: float) -> str:
+    """A surface colour with a highlight, 0 matt to 1 glossy."""
+    material = spec.add_material(name=name)
+    material.rgba = rgba
+    material.specular = material.shininess = shine
+    return name
+
+
 def _add_objects(spec: mujoco.MjSpec) -> None:
     """The cup, the bottle and the Rubik's cube, at the rig's sizes and places."""
     cylinder = mujoco.mjtGeom.mjGEOM_CYLINDER
+    mesh = mujoco.mjtGeom.mjGEOM_MESH
     box = mujoco.mjtGeom.mjGEOM_BOX
 
-    # A plastic cup, 8 cm wide and 10 cm tall, drawn open at the top.
-    cup = _add_object(spec, "cup", _CUP_XY, 0.05)
+    # A red party cup, wider at its rim than at its foot. It is drawn hollow,
+    # so the overhead camera looks into it, and collides as its solid hull.
+    rim, foot, height = _CUP_RIM_RADIUS, _CUP_FOOT_RADIUS, _CUP_HEIGHT
+    cup = _add_object(spec, "cup", _CUP_XY, 0.0)
     cup.add_geom(
-        name="cup", type=cylinder, size=(0.04, 0.05, 0.0), mass=0.03, rgba=(0.80, 0.08, 0.10, 1.0)
+        name="cup",
+        type=mesh,
+        meshname=_lathe(spec, "cup_hull", [(0.0, 0.0), (foot, 0.0), (rim, height), (0.0, height)]),
+        mass=0.03,
+        group=_COLLISION_ONLY_GROUP,
     )
     _add_decoration(
         cup,
+        name="cup_outside",
+        type=mesh,
+        meshname=_lathe(spec, "cup_outside", [(0.0, 0.0), (foot, 0.0), (rim, height)]),
+        material=_material(spec, "cup_red", (0.78, 0.05, 0.08, 1.0), 0.6),
+    )
+    wall = 0.0015
+    _add_decoration(
+        cup,
         name="cup_inside",
-        type=cylinder,
-        size=(0.035, 0.0005, 0.0),
-        pos=(0.0, 0.0, 0.0501),
-        rgba=(0.95, 0.80, 0.82, 1.0),
+        type=mesh,
+        meshname=_lathe(
+            spec, "cup_inside", [(rim, height), (rim - wall, height), (foot, 0.004), (0.0, 0.004)]
+        ),
+        material=_material(spec, "cup_white", (0.96, 0.93, 0.93, 1.0), 0.3),
     )
 
-    # A bottle, 6 cm wide and 17 cm tall with its neck.
+    # A dark metal bottle, 6 cm wide and 17 cm tall with its cap. It is drawn
+    # with its shoulder and collides as two cylinders, body and neck.
     bottle = _add_object(spec, "bottle", _BOTTLE_XY, 0.0)
     bottle.add_geom(
         name="bottle",
@@ -450,7 +518,7 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
         size=(0.03, 0.065, 0.0),
         pos=(0.0, 0.0, 0.065),
         mass=0.28,
-        rgba=(0.05, 0.06, 0.08, 1.0),
+        group=_COLLISION_ONLY_GROUP,
     )
     bottle.add_geom(
         name="bottle_neck",
@@ -458,15 +526,34 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
         size=(0.016, 0.02, 0.0),
         pos=(0.0, 0.0, 0.15),
         mass=0.02,
-        rgba=(0.04, 0.04, 0.05, 1.0),
+        group=_COLLISION_ONLY_GROUP,
+    )
+    shoulder = [(0.03, 0.112), (0.027, 0.124), (0.016, 0.142), (0.0145, 0.15)]
+    _add_decoration(
+        bottle,
+        name="bottle_body",
+        type=mesh,
+        meshname=_lathe(
+            spec, "bottle_body", [(0.0, 0.0), (0.027, 0.0), (0.03, 0.004), *shoulder, (0.0, 0.15)]
+        ),
+        material=_material(spec, "bottle_metal", (0.05, 0.06, 0.08, 1.0), 0.9),
+    )
+    _add_decoration(
+        bottle,
+        name="bottle_cap",
+        type=mesh,
+        meshname=_lathe(
+            spec, "bottle_cap", [(0.0, 0.15), (0.016, 0.15), (0.016, 0.168), (0.0, 0.17)]
+        ),
+        material=_material(spec, "bottle_cap", (0.12, 0.12, 0.13, 1.0), 0.7),
     )
     _add_decoration(
         bottle,
         name="bottle_label",
         type=cylinder,
-        size=(0.0303, 0.03, 0.0),
+        size=(0.0303, 0.028, 0.0),
         pos=(0.0, 0.0, 0.06),
-        rgba=(0.10, 0.30, 0.42, 1.0),
+        material=_material(spec, "bottle_label", (0.10, 0.30, 0.42, 1.0), 0.3),
     )
 
     # A 5.7 cm Rubik's cube: a black core with nine stickers drawn on each face.

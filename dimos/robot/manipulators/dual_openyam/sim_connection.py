@@ -27,6 +27,7 @@ import threading
 import time
 from typing import Any, ClassVar
 
+import numpy as np
 from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
@@ -45,6 +46,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM, DUAL_OPENYAM_SIDES
@@ -77,19 +79,25 @@ def _optical_frame(prefix: str | None) -> str:
 
 
 def _camera_transforms(
-    prefix: str | None, frame: SimCameraFrame, imagers: tuple[str, ...]
+    prefix: str | None, frame: SimCameraFrame, imagers: tuple[str, ...], mount: bool = True
 ) -> list[Transform]:
-    """A RealSense's tf tree for one frame: world to camera_link, then each imager."""
+    """A camera's tf tree for one frame: its mount, world to camera_link, then each imager.
+
+    A RealSense publishes the imagers only. ``mount`` adds where the simulated
+    camera is, for a stack in which nothing else says so.
+    """
     link = _frame(prefix, "camera_link")
-    transforms = [
-        Transform(
-            translation=Vector3(*frame.position),
-            rotation=Quaternion.from_rotation_matrix(frame.rotation @ _LINK_IN_OPTICAL),
-            frame_id=_WORLD_FRAME,
-            child_frame_id=link,
-            ts=frame.stamp,
+    transforms = []
+    if mount:
+        transforms.append(
+            Transform(
+                translation=Vector3(*frame.position),
+                rotation=Quaternion.from_rotation_matrix(frame.rotation @ _LINK_IN_OPTICAL),
+                frame_id=_WORLD_FRAME,
+                child_frame_id=link,
+                ts=frame.stamp,
+            )
         )
-    ]
     for imager in imagers:
         body = _frame(prefix, f"camera_{imager}_frame")
         transforms.append(Transform(frame_id=link, child_frame_id=body, ts=frame.stamp))
@@ -115,6 +123,16 @@ class DualOpenYamSimConnectionConfig(ConnectionConfig):
         height: Height of every camera image, in pixels.
         fps: How often the cameras are rendered, in frames per second.
         camera_info_fps: How often each camera's intrinsics are published, in Hz.
+        enable_pointcloud: Publish the overhead camera's view as a coloured
+            point cloud too, as its RealSense does with this option.
+        pointcloud_fps: How often the cloud is published, in Hz.
+        pointcloud_decimation: Every n-th pixel of a row and of a column goes
+            into the cloud.
+        depth_trunc_m: Cloud points farther than this from the camera are
+            dropped, in metres.
+        publish_overhead_mount: Publish where the overhead camera is, ``world``
+            to ``camera_link``, on tf. Off where a planner publishes that edge
+            itself, as a static transform.
     """
 
     source: str = "dual_openyam"
@@ -125,6 +143,11 @@ class DualOpenYamSimConnectionConfig(ConnectionConfig):
     height: int = Field(default=480, gt=0)
     fps: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     camera_info_fps: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    enable_pointcloud: bool = False
+    pointcloud_fps: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    pointcloud_decimation: int = Field(default=2, gt=0)
+    depth_trunc_m: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    publish_overhead_mount: bool = True
 
     @model_validator(mode="after")
     def _set_model(self) -> Self:
@@ -140,9 +163,10 @@ class DualOpenYamSimConnection(ConnectionModule):
 
     Joint commands and readings use that connection's ports, names and units.
     The overhead D405 publishes on ``color_image``, ``depth_image``,
-    ``camera_info`` and ``depth_camera_info``, and each wrist D405 on
-    ``{side}_wrist_color_image`` and ``{side}_wrist_camera_info``. Every camera's
-    frames are on ``tf`` under the world frame, named as a RealSense names them.
+    ``camera_info``, ``depth_camera_info`` and, if asked to, ``pointcloud``,
+    and each wrist D405 on ``{side}_wrist_color_image`` and
+    ``{side}_wrist_camera_info``. Every camera's frames are on ``tf`` under the
+    world frame, named as a RealSense names them.
     """
 
     #: The robot this connection simulates: joints, gains, grippers and models.
@@ -154,6 +178,7 @@ class DualOpenYamSimConnection(ConnectionModule):
     depth_image: Out[Image]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
+    pointcloud: Out[PointCloud2]
     left_wrist_color_image: Out[Image]
     left_wrist_camera_info: Out[CameraInfo]
     right_wrist_color_image: Out[Image]
@@ -180,8 +205,11 @@ class DualOpenYamSimConnection(ConnectionModule):
         self._state_frame = ""
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
-        # When the intrinsics are next due; only the rendering thread reads it.
+        # When the intrinsics are next due, on the monotonic clock, and the
+        # stamp of the first frame the next cloud may be built from; only the
+        # rendering thread reads them.
         self._camera_info_due = 0.0
+        self._pointcloud_due = 0.0
 
     def connect(self) -> None:
         """Check the deployed model against the robot's joints, then start the rig."""
@@ -219,6 +247,29 @@ class DualOpenYamSimConnection(ConnectionModule):
             self._rig.disconnect()
         finally:
             super().stop()
+
+    @rpc
+    def body_position(self, name: str) -> list[float]:
+        """Where a body of the simulated workcell is, by the simulation itself.
+
+        Args:
+            name: A body of the workcell, e.g. "rubiks_cube", "cup" or "bottle".
+
+        Returns its frame's position, metres in the world frame.
+        """
+        return [float(value) for value in self._rig.body_position(name)]
+
+    @rpc
+    def place_body(self, name: str, position: list[float], yaw: float = 0.0) -> None:
+        """Stand one of the simulated objects somewhere, upright and at rest.
+
+        Args:
+            name: An object on the table, e.g. "rubiks_cube", "cup" or "bottle".
+            position: Where its frame goes, metres in the world frame. The cup
+                and the bottle have theirs at the foot, the cube at its centre.
+            yaw: How far it is turned about the vertical, rad.
+        """
+        self._rig.place_body(name, position, yaw)
 
     def _on_position(self, message: JointState) -> None:
         try:
@@ -272,20 +323,25 @@ class DualOpenYamSimConnection(ConnectionModule):
 
         overhead = frames[OVERHEAD_CAMERA]
         optical = _optical_frame(None)
-        self.color_image.publish(
-            Image(data=overhead.color, format=ImageFormat.RGB, frame_id=optical, ts=overhead.stamp)
+        color = Image(
+            data=overhead.color, format=ImageFormat.RGB, frame_id=optical, ts=overhead.stamp
         )
+        self.color_image.publish(color)
         assert overhead.depth is not None, "the overhead camera is RGB-D"
-        self.depth_image.publish(
-            Image(
-                data=overhead.depth, format=ImageFormat.DEPTH, frame_id=optical, ts=overhead.stamp
-            )
+        depth = Image(
+            data=overhead.depth, format=ImageFormat.DEPTH, frame_id=optical, ts=overhead.stamp
         )
+        self.depth_image.publish(depth)
         if with_info:
             info = self._camera_info(optical, overhead.stamp)
             self.camera_info.publish(info)
             self.depth_camera_info.publish(info)
-        transforms = _camera_transforms(None, overhead, ("color", "depth"))
+        if self.config.enable_pointcloud and overhead.stamp >= self._pointcloud_due:
+            self._pointcloud_due = overhead.stamp + 1.0 / self.config.pointcloud_fps
+            self.pointcloud.publish(self._point_cloud(color, depth))
+        transforms = _camera_transforms(
+            None, overhead, ("color", "depth"), mount=self.config.publish_overhead_mount
+        )
 
         for side in DUAL_OPENYAM_SIDES:
             frame = frames[WRIST_CAMERAS[side]]
@@ -306,3 +362,34 @@ class DualOpenYamSimConnection(ConnectionModule):
         return CameraInfo.from_fov(
             CAMERA_FOVY, self.config.width, self.config.height, frame_id=frame_id
         ).with_ts(stamp)
+
+    def _point_cloud(self, color: Image, depth: Image) -> PointCloud2:
+        """An RGB-D frame as coloured points in its optical frame, as a RealSense builds them.
+
+        Every n-th pixel is put back through the pinhole. The cloud has the
+        depth image's frame and stamp, and no point past ``depth_trunc_m``.
+        """
+        step = self.config.pointcloud_decimation
+        thinned_color, thinned_depth = (
+            Image(
+                data=np.ascontiguousarray(image.data[::step, ::step]),
+                format=image.format,
+                frame_id=image.frame_id,
+                ts=image.ts,
+            )
+            for image in (color, depth)
+        )
+        full = self._camera_info(depth.frame_id, depth.ts)
+        # Pixel n of a thinned image is pixel n * step of the full one.
+        thinned = CameraInfo.from_intrinsics(
+            fx=full.K[0] / step,
+            fy=full.K[4] / step,
+            cx=full.K[2] / step,
+            cy=full.K[5] / step,
+            width=thinned_depth.width,
+            height=thinned_depth.height,
+            frame_id=depth.frame_id,
+        )
+        return PointCloud2.from_rgbd(
+            thinned_color, thinned_depth, thinned, depth_trunc=self.config.depth_trunc_m
+        )

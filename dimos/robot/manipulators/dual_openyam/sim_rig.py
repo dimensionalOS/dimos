@@ -23,8 +23,9 @@ those calls.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+import math
 import queue
 import threading
 import time
@@ -148,6 +149,9 @@ class DualOpenYamSimRig:
         self._engine: MujocoEngine | None = None
         self._snapshot: _Snapshot | None = None
         self._frames: dict[str, SimCameraFrame] = {}
+        # Bodies waiting to be put somewhere, as (first qpos index, first dof
+        # index, position and wxyz quaternion, set once it is done).
+        self._placements: list[tuple[int, int, list[float], threading.Event]] = []
         self._stepped = threading.Event()
         self._stop = threading.Event()
         self._renderer: threading.Thread | None = None
@@ -194,7 +198,7 @@ class DualOpenYamSimRig:
             assert limits is not None, "every jaw has an actuator"
             # The fingers' zero is closed and their lower end is fully open.
             self._jaws[name] = (travel[name], (limits[1], limits[0]))
-        engine.set_step_hooks(after=self._after_step)
+        engine.set_step_hooks(before=self._before_step, after=self._after_step)
         self._stepped.clear()
         self._stop.clear()
         with self._lock:
@@ -296,12 +300,49 @@ class DualOpenYamSimRig:
             raise ValueError(f"the workcell has no body named {name!r}")
         return pose[0]
 
+    def place_body(self, name: str, position: Sequence[float], yaw: float = 0.0) -> None:
+        """Stand one of the workcell's objects somewhere, upright and at rest.
+
+        Args:
+            name: A free body of the workcell, e.g. "rubiks_cube".
+            position: Where its frame goes, metres in the workcell frame.
+            yaw: How far it is turned about the vertical, rad.
+
+        Raises:
+            ValueError: If the workcell has no free body of that name.
+            RuntimeError: If the rig is not connected or its physics stopped
+                stepping.
+        """
+        model = self._connected_engine().model
+        body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+        joint = model.body_jntadr[body] if body >= 0 else -1
+        free = mujoco.mjtJoint.mjJNT_FREE  # type: ignore[attr-defined]
+        if joint < 0 or model.jnt_type[joint] != free:
+            raise ValueError(f"the workcell has no free body named {name!r}")
+        pose = [*map(float, position), math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)]
+        placed = threading.Event()
+        with self._lock:
+            self._placements.append(
+                (int(model.jnt_qposadr[joint]), int(model.jnt_dofadr[joint]), pose, placed)
+            )
+        if not placed.wait(_STALLED_AFTER_S):
+            raise RuntimeError("the MuJoCo simulation stopped stepping")
+
     def _connected_engine(self) -> MujocoEngine:
         with self._lock:
             engine = self._engine
         if engine is None:
             raise RuntimeError("the simulated rig is not connected")
         return engine
+
+    def _before_step(self, engine: MujocoEngine) -> None:
+        """Runs on the physics thread before every step: the only safe place to move a body."""
+        with self._lock:
+            placements, self._placements = self._placements, []
+        for qpos, dof, pose, placed in placements:
+            engine.data.qpos[qpos : qpos + 7] = pose
+            engine.data.qvel[dof : dof + 6] = 0.0
+            placed.set()
 
     def _after_step(self, engine: MujocoEngine) -> None:
         """Runs on the physics thread after every step."""
