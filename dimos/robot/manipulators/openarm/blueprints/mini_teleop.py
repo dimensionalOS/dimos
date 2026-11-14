@@ -39,7 +39,11 @@ from dimos.robot.manipulators.openarm.config import (
     openarm_bimanual_model_config,
 )
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
-from dimos.robot.manipulators.openarm.mini_connection import OpenArmMiniConnection
+from dimos.robot.manipulators.openarm.mini_connection import (
+    OpenArmMiniArmConnection,
+    OpenArmMiniConnection,
+)
+from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
 
 # Leader-follower needs human arm speeds, well above the WebXR IK profile.
 _ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)
@@ -77,11 +81,16 @@ class OpenArmLeaderCoordinator(DamiaoCoordinator):
 _JAWS = {jaw.name.removesuffix("_gripper"): jaw for jaw in OpenArmConnection.robot.grippers}
 
 
-def _leader() -> Blueprint:
+def _leader(connection: type[OpenArmMiniConnection] = OpenArmMiniConnection) -> Blueprint:
     """The leaders' connection: the arms' joint targets and jaw openings."""
-    return OpenArmMiniConnection.blueprint(
+    return connection.blueprint(
         state_rate_hz=_LEADER_RATE_HZ, filter_cutoff_hz=_COMMAND_FILTER_CUTOFF_HZ
-    ).remappings([(OpenArmMiniConnection, "joint_state", "leader_joint_command")])
+    ).remappings([(connection, "joint_state", "leader_joint_command")])
+
+
+def _joycon_leader() -> Blueprint:
+    """Leaders without triggers, and a Joy-Con on each for its jaw, episodes and pause."""
+    return autoconnect(_leader(OpenArmMiniArmConnection), JoyConTeleopModule.blueprint())
 
 
 def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:
@@ -124,6 +133,14 @@ teleop_openarm_mini = autoconnect(_leader(), _follower())
 # Split deployment: leaders on an operator machine, follower on the robot.
 # The robot stack owns the Coordinator name, so the leader half does not claim it.
 teleop_openarm_mini_leader = _leader().global_config(
+    zenoh_mode="client", serve_coordinator_rpc=False
+)
+
+# Joy-Cons in place of the trigger servos: ZL / ZR close the jaws, B / Y run
+# episodes, plus pauses and resumes following.
+teleop_openarm_mini_joycon = autoconnect(_joycon_leader(), _follower())
+
+teleop_openarm_mini_joycon_leader = _joycon_leader().global_config(
     zenoh_mode="client", serve_coordinator_rpc=False
 )
 

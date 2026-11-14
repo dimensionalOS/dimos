@@ -74,6 +74,55 @@ dimos run teleop-openarm-mini-leader --robot-ip <robot-ip> \
 Start the router before the follower. If the link drops, the follower holds its
 last target.
 
+## Joy-Cons in place of the triggers
+
+With the trigger servos removed, a Nintendo Joy-Con on each leader (L on the
+left, R on the right) drives the jaws, the episodes and a pause.
+`teleop-openarm-mini-joycon` runs everything on one machine;
+`teleop-openarm-mini-joycon-leader` is the operator half, next to
+`teleop-openarm-mini-follower` or `openarm-mini-follower-collection` on the robot.
+`JoyConTeleopModule` (`dimos/teleop/joycon/joycon_module.py`) reads the Joy-Cons
+through the Linux `hid-nintendo` driver, so no extra package is needed.
+
+| Joy-Con | does |
+|---|---|
+| ZL / ZR held | close the left / right jaw |
+| B / Y | start or save / discard an episode (the episode monitor's defaults) |
+| plus | pause and resume following |
+
+While paused the follower arms hold where they are and the jaws keep following
+ZL and ZR. On resume the follower drives straight to the leaders' pose at its
+speed limit, so line the leaders up with the follower before pressing plus.
+
+`OpenArmMiniArmConnection` reads only the seven arm motors per leader, so each
+calibration file must list only those. To reuse files that include the
+trigger, write copies without it and point `--calibration-root` at them:
+
+```bash
+for side in left right; do
+  mkdir -p ~/joycon-leaders/$side
+  jq 'del(.motors.gripper)' ~/.local/state/dimos/teleop/leader/$side/calibration.json \
+    > ~/joycon-leaders/$side/calibration.json
+done
+dimos run teleop-openarm-mini-joycon-leader --robot-ip <robot-ip> \
+  --left-serial-port <left-feetech-port> --right-serial-port <right-feetech-port> \
+  --calibration-root ~/joycon-leaders
+```
+
+Pair each Joy-Con once by holding the sync button on its rail until the lights
+run. bluez refuses a Joy-Con's input connection by default, so allow it first:
+
+```bash
+sudo sed -i 's/^#ClassicBondedOnly=true/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
+sudo systemctl restart bluetooth
+bluetoothctl   # power on; agent on; scan on; pair <MAC>; trust <MAC>; connect <MAC>
+```
+
+A Joy-Con that was refused once goes to sleep; connect it again from the
+Bluetooth settings. If a button does nothing, `evtest` shows the key codes the
+driver reports. A Joy-Con that drops off Bluetooth leaves its jaw where it is
+until it is back.
+
 ## Record demonstrations
 
 `openarm-mini-collection` wraps the one-machine stack in the collection

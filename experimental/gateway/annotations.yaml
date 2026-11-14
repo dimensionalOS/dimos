@@ -999,6 +999,12 @@ robots:
         teleop-openarm-mini-leader:
           title: OpenArm Mini leaders (operator machine)
           description: The leader half of a split OpenArm Mini setup; joins the robot's network as a client.
+        teleop-openarm-mini-joycon:
+          title: OpenArm Mini leader teleop with Joy-Cons
+          description: OpenArm Mini leaders without triggers drive the bimanual OpenArm; a Joy-Con on each runs its jaw, episodes and pause, on one machine.
+        teleop-openarm-mini-joycon-leader:
+          title: OpenArm Mini leaders with Joy-Cons (operator machine)
+          description: The leader half of a split OpenArm Mini setup with Joy-Cons; joins the robot's network as a client.
         teleop-openarm-mini-follower:
           title: OpenArm Mini follower (robot machine)
           description: The OpenArm half of a split OpenArm Mini setup; follows leaders on another machine.
