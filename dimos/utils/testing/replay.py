@@ -275,7 +275,7 @@ class MemoryReplayAdapter(Generic[T]):
 
     def first_timestamp(self) -> float | None:
         try:
-            return float(self._stream.first().ts)
+            return float(self._stream.order_by("ts").first().ts)
         except LookupError:
             return None
 

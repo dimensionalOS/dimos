@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
+import heapq
 from itertools import islice
 from typing import TYPE_CHECKING, Any
 
@@ -182,13 +183,18 @@ class StreamQuery:
                     ".order_by() requires finite data — cannot sort an infinite live stream."
                 )
             key = self.order_field
-            desc = self.order_desc
-            items = sorted(
-                list(it),
-                key=lambda obs: getattr(obs, key) if getattr(obs, key, None) is not None else 0,
-                reverse=desc,
-            )
-            it = iter(items)
+
+            def sort_key(obs: Observation[Any]) -> Any:
+                value = getattr(obs, key, None)
+                return value if value is not None else 0
+
+            if self.limit_val is not None:
+                # Keep only the rows the limit can return. Same order as a full
+                # sort, without holding every observation in memory.
+                select = heapq.nlargest if self.order_desc else heapq.nsmallest
+                it = iter(select(self.limit_val + (self.offset_val or 0), it, key=sort_key))
+            else:
+                it = iter(sorted(it, key=sort_key, reverse=self.order_desc))
 
         # Offset + limit
         if self.offset_val:
