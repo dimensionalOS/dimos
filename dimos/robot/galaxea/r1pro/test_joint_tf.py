@@ -19,14 +19,14 @@ from scipy.spatial.transform import Rotation
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 
 HEAD = "camera_head_left_link"
 
 
 @pytest.fixture(scope="module")
-def fk() -> UrdfManager:
-    return UrdfManager(model=R1PRO_MODEL)
+def fk() -> UsdManager:
+    return UsdManager(model=R1PRO_MODEL)
 
 
 def joint_state(**positions: float) -> JointState:
@@ -58,12 +58,12 @@ def pose_in_root(transforms: list, link: str) -> tuple[np.ndarray, Rotation]:
     return position, rotation
 
 
-def test_motor_states_joint_names_all_exist_in_the_model(fk: UrdfManager) -> None:
+def test_motor_states_joint_names_all_exist_in_the_model(fk: UsdManager) -> None:
     """A mismatch is silent: unknown joints are skipped and the camera never moves."""
     assert set(R1PRO_UPPER_BODY_JOINTS) <= set(fk.joints)
 
 
-def test_head_camera_moves_when_the_torso_bends(fk: UrdfManager) -> None:
+def test_head_camera_moves_when_the_torso_bends(fk: UsdManager) -> None:
     """The head sits past four revolute torso joints, so it cannot be static."""
     upright, _ = pose_in_root(fk.joint_transforms(joint_state()), HEAD)
     bent, _ = pose_in_root(fk.joint_transforms(joint_state(torso_joint2=0.5)), HEAD)
@@ -72,7 +72,7 @@ def test_head_camera_moves_when_the_torso_bends(fk: UrdfManager) -> None:
     assert bent[2] - upright[2] == pytest.approx(-0.144, abs=0.01)
 
 
-def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UrdfManager) -> None:
+def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UsdManager) -> None:
     """Only joint edges change with the torso; head_link -> camera stays a fixed mount."""
 
     def edges(state: JointState) -> dict[str, tuple[float, ...]]:
@@ -93,7 +93,7 @@ def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UrdfManager
     assert bent["torso_link2"] != pytest.approx(upright["torso_link2"])
 
 
-def test_transforms_hang_off_base_link(fk: UrdfManager) -> None:
+def test_transforms_hang_off_base_link(fk: UsdManager) -> None:
     transforms = fk.joint_transforms(joint_state())
     children = [transform.child_frame_id for transform in transforms]
     parents = {transform.frame_id for transform in transforms}

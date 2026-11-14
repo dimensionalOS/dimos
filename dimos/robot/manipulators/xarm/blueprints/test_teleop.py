@@ -54,7 +54,7 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     xarm7_teleop,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConfig, XArmConnection
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 # Each blueprint's gripper joint: the adapter's "arm/gripper", or the URDF's
@@ -169,7 +169,7 @@ def test_connection_blueprint_shares_the_contract_declaration(blueprint: Bluepri
     assert config.connections[0].model == driver.model
 
     assert "model" not in ControlCoordinatorConfig.model_fields
-    assert any(atom.module is UrdfManager for atom in blueprint.blueprints)
+    assert any(atom.module is UsdManager for atom in blueprint.blueprints)
     gripper_cfg = next(task for task in _coordinator_tasks(blueprint) if task.type == "gripper")
     assert gripper_cfg.joint_names == ["arm/drive_joint"]
     assert gripper_cfg.stream_bind == {"gripper_command": "right_gripper_command"}

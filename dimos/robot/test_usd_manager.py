@@ -50,15 +50,15 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-import dimos.robot.urdf_manager as urdf_manager_module
-from dimos.robot.urdf_manager import (
+import dimos.robot.usd_manager as usd_manager_module
+from dimos.robot.usd_manager import (
     USD,
     CircularMountError,
     Mount,
-    UrdfManager,
+    UsdManager,
     _is_circular_mount,
 )
-from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
 
 # A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
@@ -91,12 +91,12 @@ _TWO_ARM_URDF = """<?xml version="1.0"?>
 
 
 @pytest.fixture
-def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManagerPointClearing]]:
+def make_filter(tmp_path: Path) -> Iterator[Callable[..., UsdManagerPointClearing]]:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_URDF)
-    modules: list[UrdfManagerPointClearing] = []
+    modules: list[UsdManagerPointClearing] = []
 
-    def make(**overrides: Any) -> UrdfManagerPointClearing:
+    def make(**overrides: Any) -> UsdManagerPointClearing:
         urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {
             "model": RobotModel.from_file(urdf),
@@ -105,7 +105,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManagerPointCleari
             "tf_forward_tolerance_s": 0.0,
         }
         settings.update(overrides)
-        module = UrdfManagerPointClearing(**settings)
+        module = UsdManagerPointClearing(**settings)
         cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         modules.append(module)
         return module
@@ -116,7 +116,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManagerPointCleari
         module.dispose()
 
 
-def _place_arm(module: UrdfManagerPointClearing, at: tuple[float, float, float], ts: float) -> None:
+def _place_arm(module: UsdManagerPointClearing, at: tuple[float, float, float], ts: float) -> None:
     """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
@@ -138,7 +138,7 @@ def _cloud(points: list[list[float]], ts: float = 1.0) -> PointCloud2:
 
 
 def test_points_on_the_robot_are_dropped_and_the_rest_survive(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
@@ -151,7 +151,7 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 
 
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     # Half-filtering would let the arm into the map. Better to lose the frame.
     module = make_filter()
@@ -433,7 +433,7 @@ def test_render_file_request_serves_the_usd_and_only_files_it_names(
 
 
 def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_capture_is_still_filtered(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 2.0)
@@ -459,7 +459,7 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
     pytest.importorskip("roboplan.core")
     description = R1PRO_MODEL.load()
     roboplan = RoboPlanBodyFilter(description, padding_m=0.0)
-    module = UrdfManager(model=R1PRO_MODEL)
+    module = UsdManager(model=R1PRO_MODEL)
     rng = np.random.default_rng(0)
     positions = {
         joint.name: rng.uniform(
@@ -591,16 +591,16 @@ class _FakeClient:
 
 
 @pytest.fixture
-def make_manager(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
+def make_manager(tmp_path: Path) -> Iterator[Callable[..., UsdManager]]:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_URDF)
-    modules: list[UrdfManager] = []
+    modules: list[UsdManager] = []
 
-    def make(**overrides: Any) -> UrdfManager:
+    def make(**overrides: Any) -> UsdManager:
         urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {"model": RobotModel.from_file(urdf)}
         settings.update(overrides)
-        module = UrdfManager(**settings)
+        module = UsdManager(**settings)
         modules.append(module)
         return module
 
@@ -623,23 +623,23 @@ def _link_of(stage: Any, path: str) -> str:
     return str(prim.GetDisplayName() or prim.GetName())
 
 
-def _asset(module: UrdfManager, name: str) -> bytes:
+def _asset(module: UsdManager, name: str) -> bytes:
     owner = type(module)
     coroutine = cast("Any", owner.get_asset).aio.__get__(module, owner)
     return cast("bytes", asyncio.run(coroutine(name)))
 
 
-def _scene(module: UrdfManager) -> str:
+def _scene(module: UsdManager) -> str:
     return _scene_answer(module)[1]
 
 
-def _scene_answer(module: UrdfManager) -> list[str]:
-    coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+def _scene_answer(module: UsdManager) -> list[str]:
+    coroutine = cast("Any", UsdManager.get_scene).aio.__get__(module, UsdManager)
     return cast("list[str]", asyncio.run(coroutine()))
 
 
 def test_get_usd_is_this_robots_own_urdf_with_nothing_attached(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager()
@@ -650,7 +650,7 @@ def test_get_usd_is_this_robots_own_urdf_with_nothing_attached(
     assert stage.GetPrimAtPath("/box_robot/base/arm")
 
 
-def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UrdfManager]) -> None:
+def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UsdManager]) -> None:
     pytest.importorskip("pxr")
     module = make_manager()
 
@@ -658,7 +658,7 @@ def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UrdfManage
 
 
 def test_get_scene_without_mounts_is_just_the_robot(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager()
@@ -667,7 +667,7 @@ def test_get_scene_without_mounts_is_just_the_robot(
 
 
 def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -679,7 +679,7 @@ def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
 
 
 def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
@@ -693,7 +693,7 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
 
 
 def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
@@ -701,7 +701,7 @@ def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
     module._subtree_clients["_FakeArm"] = cast("Any", client)
 
     async def wait_a_moment() -> None:
-        coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+        coroutine = cast("Any", UsdManager.get_scene).aio.__get__(module, UsdManager)
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(coroutine(), 0.2)
 
@@ -711,13 +711,13 @@ def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
 
 
 def test_a_mount_frame_is_not_checked_until_the_scene_is_assembled(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     make_manager(mounts={"elbow": _FakeArm}).dispose()
 
 
 def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     with pytest.raises(ValueError, match="neither an @rpc get_usd"):
         make_manager(mounts={"arm": _NoUsd})
@@ -800,7 +800,7 @@ def test_a_value_that_is_neither_a_module_a_blueprint_nor_a_name_is_rejected() -
 
 
 def test_each_namespaced_arm_is_asked_under_its_own_name(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(
@@ -860,7 +860,7 @@ def test_an_instance_name_falls_back_to_the_namespace_in_the_name(
 
 
 def test_each_namespaced_arm_is_asked_under_its_own_name_and_renamed_to_it(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(
@@ -885,7 +885,7 @@ def test_each_namespaced_arm_is_asked_under_its_own_name_and_renamed_to_it(
 
 
 def test_an_un_namespaced_subtree_keeps_the_link_names_its_description_gave_it(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -897,7 +897,7 @@ def test_an_un_namespaced_subtree_keeps_the_link_names_its_description_gave_it(
 
 
 def test_the_roots_own_links_are_never_renamed(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(
@@ -913,7 +913,7 @@ def test_the_roots_own_links_are_never_renamed(
 
 
 def test_get_usd_reports_the_directory_its_asset_paths_resolve_against(
-    make_manager: Callable[..., UrdfManager], tmp_path: Path
+    make_manager: Callable[..., UsdManager], tmp_path: Path
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager()
@@ -922,7 +922,7 @@ def test_get_usd_reports_the_directory_its_asset_paths_resolve_against(
 
 
 def test_a_scene_naming_an_asset_that_cannot_be_opened_says_so_once(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
     mocker: MockerFixture,
 ) -> None:
     pytest.importorskip("pxr")
@@ -931,7 +931,7 @@ def test_a_scene_naming_an_asset_that_cannot_be_opened_says_so_once(
     module._subtree_clients["_FakeArm"] = cast(
         "Any", _FakeClient(subtree, asset_root="/opt/arm/desc")
     )
-    warn = mocker.patch.object(urdf_manager_module.logger, "warning")
+    warn = mocker.patch.object(usd_manager_module.logger, "warning")
 
     _scene(module)
 
@@ -941,7 +941,7 @@ def test_a_scene_naming_an_asset_that_cannot_be_opened_says_so_once(
 
 
 def test_a_scene_whose_mesh_is_an_unfetched_pointer_is_refused(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
     tmp_path: Path,
 ) -> None:
     pytest.importorskip("pxr")
@@ -963,7 +963,7 @@ def test_a_scene_whose_mesh_is_an_unfetched_pointer_is_refused(
 
 
 def test_a_mesh_a_mounted_scene_already_published_is_fetched_from_it(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """A mount answering get_scene hands back published names; no such file exists here."""
     pytest.importorskip("pxr")
@@ -982,7 +982,7 @@ def test_a_mesh_a_mounted_scene_already_published_is_fetched_from_it(
 
 
 def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -1000,7 +1000,7 @@ def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(
 
 
 def test_a_subtree_texture_is_rebased_the_same_as_its_mesh(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -1030,7 +1030,7 @@ def test_a_subtree_texture_is_rebased_the_same_as_its_mesh(
 
 
 def test_a_published_asset_is_named_from_where_it_first_appears(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -1045,7 +1045,7 @@ def test_a_published_asset_is_named_from_where_it_first_appears(
 
 
 def test_get_asset_serves_a_published_mesh_and_nothing_else(
-    make_manager: Callable[..., UrdfManager], tmp_path: Path
+    make_manager: Callable[..., UsdManager], tmp_path: Path
 ) -> None:
     pytest.importorskip("pxr")
     mesh = tmp_path / "meshes" / "arm.stl"
@@ -1066,7 +1066,7 @@ def test_get_asset_serves_a_published_mesh_and_nothing_else(
 
 
 def test_one_mesh_on_two_mounts_is_published_once(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(
@@ -1090,7 +1090,7 @@ def test_one_mesh_on_two_mounts_is_published_once(
 
 
 def test_a_subtree_with_no_root_keeps_its_paths_untouched(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -1106,7 +1106,7 @@ def test_a_subtree_with_no_root_keeps_its_paths_untouched(
     "answer", [[], ["only-a-root"], ["root", "usd", "extra"], ["root", ""], [1, 2]]
 )
 def test_an_answer_that_is_not_a_root_and_a_usd_is_retried(
-    make_manager: Callable[..., UrdfManager], answer: Any
+    make_manager: Callable[..., UsdManager], answer: Any
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
@@ -1119,14 +1119,14 @@ def test_an_answer_that_is_not_a_root_and_a_usd_is_retried(
     assert stage.GetPrimAtPath("/box_robot/base/arm/fake_arm")
 
 
-def _namespaced_arm(make_manager: Callable[..., UrdfManager], **overrides: Any) -> UrdfManager:
+def _namespaced_arm(make_manager: Callable[..., UsdManager], **overrides: Any) -> UsdManager:
     module = make_manager(mounts={"arm": _FakeArm.blueprint().namespace("left")}, **overrides)
     module._subtree_clients["left/_fakearm"] = cast("Any", _FakeClient(_SUBTREE_USD))
     return module
 
 
 def test_frames_are_not_renamed_by_default(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = _namespaced_arm(make_manager)
@@ -1137,7 +1137,7 @@ def test_frames_are_not_renamed_by_default(
 
 
 def test_a_pre_namespace_rename_happens_before_the_prefix_goes_on(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = _namespaced_arm(make_manager, tf_renames_pre_namespace={"fake_arm_base": "arm_base"})
@@ -1148,7 +1148,7 @@ def test_a_pre_namespace_rename_happens_before_the_prefix_goes_on(
 
 
 def test_a_post_namespace_rename_happens_after_the_prefix_goes_on(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = _namespaced_arm(make_manager, tf_renames={"left/fake_arm_base": "left_arm"})
@@ -1159,7 +1159,7 @@ def test_a_post_namespace_rename_happens_after_the_prefix_goes_on(
 
 
 def test_both_renames_apply_around_the_prefix(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = _namespaced_arm(
@@ -1174,7 +1174,7 @@ def test_both_renames_apply_around_the_prefix(
 
 
 def test_a_rename_meant_for_one_subtree_does_not_upset_the_others(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(
@@ -1199,7 +1199,7 @@ def test_a_rename_meant_for_one_subtree_does_not_upset_the_others(
 
 
 def test_a_rename_matching_no_subtree_at_all_fails_the_scene(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = _namespaced_arm(make_manager, tf_renames_pre_namespace={"elbow": "wrist"})
@@ -1209,7 +1209,7 @@ def test_a_rename_matching_no_subtree_at_all_fails_the_scene(
 
 
 def test_a_lidar_mounts_onto_a_g1_that_is_itself_mounted_on_the_root(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(
@@ -1225,7 +1225,7 @@ def test_a_lidar_mounts_onto_a_g1_that_is_itself_mounted_on_the_root(
 
 
 def test_a_mounted_manager_is_asked_for_its_whole_scene_not_just_its_own_layer(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
 
@@ -1238,7 +1238,7 @@ def test_an_instance_name_on_its_own_is_asked_for_its_own_layer() -> None:
 
 
 def test_mounting_at_a_frame_nothing_will_ever_provide_lists_every_frame_there_is(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm, "nowhere/at_all": _FakeArm})
@@ -1254,7 +1254,7 @@ def test_mounting_at_a_frame_nothing_will_ever_provide_lists_every_frame_there_i
 
 
 def test_a_frame_that_only_a_later_wave_provides_is_not_reported_as_missing(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"g1/head_mount": _FakeArm, "arm": _FakeG1})
@@ -1267,30 +1267,30 @@ def test_a_frame_that_only_a_later_wave_provides_is_not_reported_as_missing(
 
 
 def test_a_circular_mount_is_refused_with_the_whole_chain(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeG1})
 
     async def ask_as_if_from_itself() -> None:
-        coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+        coroutine = cast("Any", UsdManager.get_scene).aio.__get__(module, UsdManager)
         with pytest.raises(ValueError, match="circular mount"):
-            await coroutine(["UrdfManager", "SomeOther"])
+            await coroutine(["UsdManager", "SomeOther"])
 
     asyncio.run(ask_as_if_from_itself())
 
 
 def test_the_circular_mount_error_names_every_manager_in_the_loop(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager()
 
     async def ask() -> None:
-        coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+        coroutine = cast("Any", UsdManager.get_scene).aio.__get__(module, UsdManager)
         with pytest.raises(ValueError) as caught:
-            await coroutine(["A", "UrdfManager", "B"])
-        assert "A -> UrdfManager -> B -> UrdfManager" in str(caught.value)
+            await coroutine(["A", "UsdManager", "B"])
+        assert "A -> UsdManager -> B -> UsdManager" in str(caught.value)
 
     asyncio.run(ask())
 
@@ -1298,13 +1298,13 @@ def test_the_circular_mount_error_names_every_manager_in_the_loop(
 class _ForwardingClient:
     """A client that really calls the other manager's get_scene, so a cycle has to end itself."""
 
-    def __init__(self, other: UrdfManager) -> None:
+    def __init__(self, other: UsdManager) -> None:
         self.other = other
         self.hops = 0
 
     def get_scene(self, visited: list[str] | None = None) -> Any:
         self.hops += 1
-        coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(self.other, UrdfManager)
+        coroutine = cast("Any", UsdManager.get_scene).aio.__get__(self.other, UsdManager)
         return asyncio.run(coroutine(list(visited or [])))
 
     def get_usd(self) -> Any:
@@ -1314,15 +1314,15 @@ class _ForwardingClient:
 
 
 def test_a_manager_mounted_on_a_manager_recurses_once_per_mount_and_no_further(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """Mounting a manager on a manager *is* recursion, so the chain is what has to bound it."""
     pytest.importorskip("pxr")
-    left = make_manager(instance_name="left_scene", mounts={"arm": UrdfManager})
-    right = make_manager(instance_name="right_scene", mounts={"arm": UrdfManager})
+    left = make_manager(instance_name="left_scene", mounts={"arm": UsdManager})
+    right = make_manager(instance_name="right_scene", mounts={"arm": UsdManager})
     to_right, to_left = _ForwardingClient(right), _ForwardingClient(left)
-    left._subtree_clients["UrdfManager"] = cast("Any", to_right)
-    right._subtree_clients["UrdfManager"] = cast("Any", to_left)
+    left._subtree_clients["UsdManager"] = cast("Any", to_right)
+    right._subtree_clients["UsdManager"] = cast("Any", to_left)
 
     with pytest.raises(ValueError, match="left_scene -> right_scene -> left_scene"):
         _scene(left)
@@ -1333,7 +1333,7 @@ def test_a_manager_mounted_on_a_manager_recurses_once_per_mount_and_no_further(
 
 
 def test_the_mount_chain_travels_to_a_mounted_manager(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeG1})
@@ -1342,12 +1342,12 @@ def test_the_mount_chain_travels_to_a_mounted_manager(
 
     _scene(module)
 
-    assert client.chains == [["UrdfManager"]]
+    assert client.chains == [["UsdManager"]]
 
 
 def test_a_manager_with_no_model_stands_on_a_world_link() -> None:
     pytest.importorskip("pxr")
-    module = UrdfManager()
+    module = UsdManager()
     try:
         stage = _usd_stage(module.get_usd()[1])
 
@@ -1359,7 +1359,7 @@ def test_a_manager_with_no_model_stands_on_a_world_link() -> None:
 
 def test_a_world_manager_has_no_asset_root_to_offer() -> None:
     pytest.importorskip("pxr")
-    module = UrdfManager()
+    module = UsdManager()
     try:
         assert module.get_usd()[0] == ""
     finally:
@@ -1367,7 +1367,7 @@ def test_a_world_manager_has_no_asset_root_to_offer() -> None:
 
 
 def test_a_world_manager_still_publishes_no_joint_tf() -> None:
-    module = UrdfManager()
+    module = UsdManager()
     try:
         assert module.joint_transforms(JointState()) == []
     finally:
@@ -1375,10 +1375,10 @@ def test_a_world_manager_still_publishes_no_joint_tf() -> None:
 
 
 def test_mounts_hang_off_the_world_link_of_a_manager_with_no_model(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = UrdfManager(mounts={"world": _FakeG1, "g1/head_mount": _FakeArm})
+    module = UsdManager(mounts={"world": _FakeG1, "g1/head_mount": _FakeArm})
     try:
         module._subtree_clients["_FakeG1"] = cast("Any", _FakeClient(_G1_WITH_HEAD_USD))
         module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
@@ -1391,7 +1391,7 @@ def test_mounts_hang_off_the_world_link_of_a_manager_with_no_model(
 
 
 def test_tf_renames_reach_this_robots_own_frames_on_tf(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     module = make_manager(tf_renames={"base": "world", "arm": "gripper"})
 
@@ -1401,7 +1401,7 @@ def test_tf_renames_reach_this_robots_own_frames_on_tf(
 
 
 def test_tf_renames_reach_this_robots_own_frames_in_its_usd(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(tf_renames={"arm": "gripper"})
@@ -1412,7 +1412,7 @@ def test_tf_renames_reach_this_robots_own_frames_in_its_usd(
 
 
 def test_a_pre_namespace_rename_also_reaches_this_robots_own_frames(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     module = make_manager(
         tf_renames_pre_namespace={"arm": "forearm"}, tf_renames={"forearm": "gripper"}
@@ -1424,7 +1424,7 @@ def test_a_pre_namespace_rename_also_reaches_this_robots_own_frames(
 
 
 def test_a_post_namespace_rename_reaches_this_robots_own_frames_too(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """tf_renames names a frame as the rest of the system sees it, mounted or not."""
     module = make_manager(frame_id_prefix="left", tf_renames={"left/arm": "gripper"})
@@ -1435,7 +1435,7 @@ def test_a_post_namespace_rename_reaches_this_robots_own_frames_too(
 
 
 def test_a_rename_of_an_own_frame_by_its_bare_name_under_a_prefix_is_refused(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """The bare name is the pre-namespace spelling, and that is the other option's job."""
     with pytest.raises(ValueError, match="which is neither a link or joint of this robot"):
@@ -1443,7 +1443,7 @@ def test_a_rename_of_an_own_frame_by_its_bare_name_under_a_prefix_is_refused(
 
 
 def test_renaming_a_joint_leaves_the_name_its_joint_state_arrives_under(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     module = make_manager(tf_renames={"shoulder": "elbow"}, urdf_xml=_joint_robot("revolute"))
 
@@ -1457,7 +1457,7 @@ def test_renaming_a_joint_leaves_the_name_its_joint_state_arrives_under(
 
 
 def test_a_rename_of_this_robots_own_frame_needs_no_mounts(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(tf_renames={"arm": "gripper"})
@@ -1466,14 +1466,14 @@ def test_a_rename_of_this_robots_own_frame_needs_no_mounts(
 
 
 def test_a_rename_matching_neither_this_robot_nor_a_subtree_fails_at_construction(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     with pytest.raises(ValueError, match="which is neither a link or joint of this robot"):
         make_manager(tf_renames={"nothing": "here"})
 
 
 def test_a_tf_lookup_takes_description_names_and_finds_the_published_ones(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     module = make_filter(tf_renames={"base": "chassis", "arm": "forearm"})
     module.tfbuffer.receive_transform(
@@ -1507,7 +1507,7 @@ def test_an_ordinary_rpc_failure_is_not_mistaken_for_a_cycle() -> None:
 
 
 def test_a_cycle_stays_a_cycle_over_a_second_process_boundary(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """A -> B -> A is recognised at B, and the manager past B has to hear a cycle, not a retry."""
     from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
@@ -1525,7 +1525,7 @@ def test_a_cycle_stays_a_cycle_over_a_second_process_boundary(
 
 
 def test_render_file_request_serves_the_whole_scene_once_one_is_assembled(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -1540,7 +1540,7 @@ def test_render_file_request_serves_the_whole_scene_once_one_is_assembled(
 
 
 def test_the_published_scene_carries_no_asset_root_to_resolve_against(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -1550,7 +1550,7 @@ def test_the_published_scene_carries_no_asset_root_to_resolve_against(
 
 
 def test_the_body_mask_still_cuts_the_robot_out_when_its_frames_are_renamed(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     module = make_filter(tf_renames={"base": "chassis", "arm": "forearm"})
     for parent in ("camera", "world"):
@@ -1570,7 +1570,7 @@ def test_the_body_mask_still_cuts_the_robot_out_when_its_frames_are_renamed(
 
 
 def test_a_renamed_multidof_joint_is_still_found_on_tf(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     urdf = _joint_robot("floating")
     module = make_filter(urdf_xml=urdf, tf_renames={"base": "chassis", "arm": "forearm"})
@@ -1633,7 +1633,7 @@ def scene_file(tmp_path: Path) -> Path:
 
 def test_a_usd_model_is_served_as_it_is(scene_file: Path) -> None:
     pytest.importorskip("pxr")
-    module = UrdfManager(model=UsdModel.from_file(scene_file))
+    module = UsdManager(model=UsdModel.from_file(scene_file))
     try:
         root, usd = module.get_usd()
 
@@ -1647,7 +1647,7 @@ def test_a_usd_model_serves_the_files_its_layer_names(scene_file: Path) -> None:
     pytest.importorskip("pxr")
     (scene_file.parent / "meshes").mkdir()
     (scene_file.parent / "meshes" / "table.stl").write_bytes(b"stl bytes")
-    module = UrdfManager(model=UsdModel.from_file(scene_file))
+    module = UsdManager(model=UsdModel.from_file(scene_file))
     try:
         sent: list[File] = []
         module.file_info.publish = sent.append  # type: ignore[method-assign]
@@ -1661,7 +1661,7 @@ def test_a_usd_model_serves_the_files_its_layer_names(scene_file: Path) -> None:
 
 def test_a_usd_model_poses_its_own_frames_on_tf(scene_file: Path) -> None:
     pytest.importorskip("pxr")
-    module = UrdfManager(model=UsdModel.from_file(scene_file))
+    module = UsdManager(model=UsdModel.from_file(scene_file))
     try:
         posed = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[1.0]))
 
@@ -1672,7 +1672,7 @@ def test_a_usd_model_poses_its_own_frames_on_tf(scene_file: Path) -> None:
 
 def test_a_usd_model_is_renamed(scene_file: Path) -> None:
     pytest.importorskip("pxr")
-    module = UrdfManager(model=UsdModel.from_file(scene_file), tf_renames={"table": "desk"})
+    module = UsdManager(model=UsdModel.from_file(scene_file), tf_renames={"table": "desk"})
     try:
         usd = module.get_usd()[USD]
 
@@ -1683,7 +1683,7 @@ def test_a_usd_model_is_renamed(scene_file: Path) -> None:
 
 def test_point_clearing_converts_a_usd_model_back_to_urdf(scene_file: Path) -> None:
     pytest.importorskip("pxr")
-    module = UrdfManagerPointClearing(model=UsdModel.from_file(scene_file))
+    module = UsdManagerPointClearing(model=UsdModel.from_file(scene_file))
     try:
         description = module._filter_description()
 
@@ -1724,7 +1724,7 @@ def test_point_clearing_resolves_a_usd_models_meshes_before_the_filter(tmp_path:
     scene = tmp_path / "robot.usda"
     scene.write_text(RobotModel.from_file(urdf).to_usd().usd)
 
-    module = UrdfManagerPointClearing(model=UsdModel.from_file(scene))
+    module = UsdManagerPointClearing(model=UsdModel.from_file(scene))
     try:
         named = re.findall(r'filename="([^"]+)"', module._filter_description().xml)
     finally:
@@ -1738,7 +1738,7 @@ def test_point_clearing_resolves_a_usd_models_meshes_before_the_filter(tmp_path:
 def test_point_clearing_hands_over_the_urdf_it_already_has(tmp_path: Path) -> None:
     source = tmp_path / "robot.urdf"
     source.write_text(_URDF)
-    module = UrdfManagerPointClearing(model=RobotModel.from_file(source))
+    module = UsdManagerPointClearing(model=RobotModel.from_file(source))
     try:
         assert module._filter_description().xml == RobotModel.from_file(source).load().xml
     finally:
@@ -1751,7 +1751,7 @@ def test_a_usd_model_wants_a_usd_file(tmp_path: Path) -> None:
 
 
 def test_a_manager_needs_no_usd_until_a_layer_is_asked_for(
-    make_manager: Callable[..., UrdfManager], monkeypatch: pytest.MonkeyPatch
+    make_manager: Callable[..., UsdManager], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def refuse(*args: Any, **kwargs: Any) -> str:
         raise AssertionError("the layer was built before anything asked for it")
@@ -1766,15 +1766,15 @@ def test_a_manager_needs_no_usd_until_a_layer_is_asked_for(
 
 
 def test_the_usd_layer_is_built_off_the_event_loop_thread(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager()
     loop_thread: list[int] = []
     built_on: list[int] = []
-    real = UrdfManager.get_usd
+    real = UsdManager.get_usd
 
-    def record(self: UrdfManager) -> str:
+    def record(self: UsdManager) -> str:
         built_on.append(threading.get_ident())
         return real(self)
 
@@ -1783,7 +1783,7 @@ def test_the_usd_layer_is_built_off_the_event_loop_thread(
         await module.handle_render_file_request(String("scene.usda"))
 
     module.file_info.publish = lambda *_: None  # type: ignore[method-assign]
-    with patch.object(UrdfManager, "get_usd", record):
+    with patch.object(UsdManager, "get_usd", record):
         asyncio.run(ask())
 
     assert built_on, "get_usd was never called"
@@ -1797,7 +1797,7 @@ def test_a_usd_native_robot_cuts_itself_out_of_its_own_cloud(tmp_path: Path) -> 
     scene = tmp_path / "robot.usda"
     scene.write_text(RobotModel.from_file(urdf).to_usd().usd)
 
-    module = UrdfManagerPointClearing(model=UsdModel.from_file(scene), tf_tolerance_s=0.0)
+    module = UsdManagerPointClearing(model=UsdModel.from_file(scene), tf_tolerance_s=0.0)
     try:
         cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         _place_arm(module, (0.0, 0.0, 0.0), 1.0)
