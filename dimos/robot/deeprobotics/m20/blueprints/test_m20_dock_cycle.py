@@ -21,7 +21,6 @@ from pathlib import Path
 
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
 from dimos_lcm.std_msgs import Time
-import pytest
 
 from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -66,17 +65,36 @@ def test_the_dock_cycle_file_fits_the_planner_and_the_connection() -> None:
     assert _checked().problems == ()
 
 
-def test_the_robot_docks_five_times_and_the_mission_ends() -> None:
+def _pose(x: float, y: float, z: float, yaw_deg: float) -> PoseStamped:
+    half_yaw = math.radians(yaw_deg) / 2
+    return PoseStamped(
+        frame_id="map",
+        position=[x, y, z],
+        orientation=[0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw)],
+    )
+
+
+# On the dock at (2, 1) facing 30 degrees. The undock leaves the robot 1.2 m back along the
+# dock's axis, 0.4 m to its left and turned to 40 degrees.
+DOCKED = _pose(2.0, 1.0, 0.2, 30.0)
+UNDOCKED = _pose(0.7608, 0.7464, 0.48, 40.0)
+
+
+def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], list[FaultReport]]:
     checked = _checked()
     calls: list[str] = []
-    records: list[tuple[str, str | None, str]] = []
+    records: list[TransitionRecord] = []
+    faults: list[FaultReport] = []
     queue: deque[QueueItem] = deque()
 
     def perform(effects: Sequence[Effect]) -> None:
+        nonlocal docks_that_raise
         for effect in effects:
             match effect:
-                case TransitionRecord(node, trigger, goto):
-                    records.append((node, trigger, goto))
+                case TransitionRecord(goto=goto):
+                    records.append(effect)
+                    if goto == "OnDock":
+                        queue.append(SignalItem("odom", to_plain(DOCKED)))
                 case SendStart(call) if call.rpc == "MLSPlannerNative.go_to":
                     goal = call.args["pose"]
                     position = goal["pose"]["position"]
@@ -89,40 +107,52 @@ def test_the_robot_docks_five_times_and_the_mission_ends() -> None:
                     queue.append(ReturnItem(call, to_plain(stamp)))
                     status = GoalStatus(goal_id=GoalID(stamp=stamp), status=GoalStatus.SUCCEEDED)
                     queue.append(SignalItem("nav_status", to_plain(status)))
+                case SendStart(call) if call.rpc == "M20Connection.undock":
+                    calls.append("undock")
+                    queue.append(SignalItem("odom", to_plain(UNDOCKED)))
+                    queue.append(ReturnItem(call))
+                case SendStart(call) if call.rpc == "M20Connection.dock":
+                    calls.append("dock")
+                    queue.append(ReturnItem(call, raised=docks_that_raise > 0))
+                    docks_that_raise -= 1
                 case SendStart(call) | SendCancel(call):
                     calls.append(call.rpc.split(".")[1])
                     queue.append(ReturnItem(call))
                 case SetTimer(timer):
                     queue.append(TimerItem(timer))
                 case FaultReport():
-                    pytest.fail(f"the dock cycle faulted: {effect}")
+                    faults.append(effect)
 
-    # The robot stands at (2, 1) on its way off the dock, facing 30 degrees.
-    half_yaw = math.radians(30.0) / 2
-    odom = PoseStamped(
-        frame_id="map",
-        position=[2.0, 1.0, 0.48],
-        orientation=[0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw)],
-    )
-    queue.append(SignalItem("odom", to_plain(odom)))
-
+    queue.append(SignalItem("odom", to_plain(DOCKED)))
     runtime, effects = engine.start(checked, 0.0)
     perform(effects)
     while queue:
         runtime, effects = engine.step(checked, runtime, queue.popleft(), 0.0)
         perform(effects)
+    return calls, records, faults
 
-    assert (
-        calls
-        == [
-            "undock",
-            "go_to(map, -0.60, -0.50, 0.00)",
-            "stop_navigation",
-            "go_to(map, 2.00, 1.00, 0.00)",
-            "stop_navigation",
-            "dock",
-        ]
-        * 5
-    )
-    assert records[-1] == ("NextCycle", None, "done")
-    assert runtime.active == frozenset({"Mission"})
+
+# Both spots sit on the dock's axis, the predock spot level with the undock spot.
+APPROACH = [
+    "go_to(map, -5.97, -3.60, 0.00)",
+    "stop_navigation",
+    "go_to(map, 0.96, 0.40, 0.00)",
+    "stop_navigation",
+    "dock",
+]
+
+
+def test_the_robot_docks_five_times_and_the_mission_ends() -> None:
+    calls, records, faults = _walk(docks_that_raise=0)
+
+    assert faults == []
+    assert calls == ["undock", *APPROACH] * 5
+    assert records[-1] == TransitionRecord("NextCycle", None, "done")
+
+
+def test_a_dock_that_keeps_failing_is_tried_three_times_then_faults() -> None:
+    calls, records, faults = _walk(docks_that_raise=3)
+
+    assert calls[: 1 + 3 * len(APPROACH)] == ["undock", *APPROACH * 3]
+    assert [record.node for record in records].count("Docking") == 3
+    assert len(faults) == 1

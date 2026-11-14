@@ -3,18 +3,23 @@ resources = ["base"]
 
 [constants]
 cycles = 5
-back_m = 3.0
+back_m = 8.0
 base_height_m = 0.48
 pause_s = 5.0
 settle_s = 2.0
 rest_s = 10.0
 retry_s = 1.0
+dock_attempts = 3
 PREEMPTED = 2
 SUCCEEDED = 3
 ABORTED = 4
 
 [vars]
 "cycle.count" = 0
+"dock.tries" = 0
+"spot.dock" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
+"axis.x" = 1.0
+"axis.y" = 0.0
 "spot.predock" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
 "spot.position_a" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
 
@@ -50,23 +55,37 @@ start = "M20Connection.undock"
 
 [[node]]
 name = "Mission"
-children = ["Undocking", "GoingAway", "AwayRetry", "Pausing", "Returning", "ReturnRetry", "Settling", "Docking", "Resting", "NextCycle"]
-initial = "Undocking"
+children = ["OnDock", "Undocking", "GoingAway", "AwayRetry", "Pausing", "Returning", "ReturnRetry", "Settling", "Docking", "Resting", "NextCycle"]
+initial = "OnDock"
 outcomes = ["done", "failed"]
+
+[[node]]
+name = "OnDock"
+
+# The robot sits square on the dock, so its pose there gives the dock's axis.
+[[node.transition]]
+trigger = "odom"
+goto = "Undocking"
+
+[node.transition.set]
+"spot.dock" = "odom"
+"axis.x" = "1.0 - 2.0 * (odom.pose.orientation.y * odom.pose.orientation.y + odom.pose.orientation.z * odom.pose.orientation.z)"
+"axis.y" = "2.0 * (odom.pose.orientation.x * odom.pose.orientation.y + odom.pose.orientation.z * odom.pose.orientation.w)"
+"dock.tries" = "0"
 
 [[node]]
 name = "Undocking"
 activity = "undock"
 
-# The robot backs off the dock facing it, so the spot it stops on is the predock spot.
-# Position A is back_m behind that along the robot's heading, and both sit on the floor.
+# The predock spot is the undock spot moved onto the dock's axis.
+# Position A is back_m farther back along the axis, and both sit on the floor.
 [[node.transition]]
 trigger = "succeeded"
 goto = "GoingAway"
 
 [node.transition.set]
-"spot.predock" = "{'header': odom.header, 'pose': {'position': {'x': odom.pose.position.x, 'y': odom.pose.position.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': odom.pose.orientation}}"
-"spot.position_a" = "{'header': odom.header, 'pose': {'position': {'x': odom.pose.position.x - back_m * (1.0 - 2.0 * (odom.pose.orientation.y * odom.pose.orientation.y + odom.pose.orientation.z * odom.pose.orientation.z)), 'y': odom.pose.position.y - back_m * 2.0 * (odom.pose.orientation.x * odom.pose.orientation.y + odom.pose.orientation.z * odom.pose.orientation.w), 'z': odom.pose.position.z - base_height_m}, 'orientation': odom.pose.orientation}}"
+"spot.predock" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + ((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) * axis.x, 'y': spot.dock.pose.position.y + ((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
+"spot.position_a" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - back_m) * axis.x, 'y': spot.dock.pose.position.y + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - back_m) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
 
 [[node]]
 name = "GoingAway"
@@ -141,6 +160,17 @@ trigger = "succeeded"
 goto = "Resting"
 set = { "cycle.count" = "cycle.count + 1" }
 
+# The robot drifts while standing, so a dock that fails approaches again from position A.
+[[node.transition]]
+trigger = "failed"
+if = "dock.tries + 1 < dock_attempts"
+goto = "GoingAway"
+set = { "dock.tries" = "dock.tries + 1" }
+
+[[node.transition]]
+trigger = "failed"
+goto = "failed"
+
 [[node]]
 name = "Resting"
 
@@ -153,7 +183,7 @@ name = "NextCycle"
 
 [[node.transition]]
 if = "cycle.count < cycles"
-goto = "Undocking"
+goto = "OnDock"
 
 [[node.transition]]
 goto = "done"
