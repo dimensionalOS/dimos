@@ -53,7 +53,7 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
             ["left_joint", "right_joint"],
             [damiao.MotorType.DM4340] * 3 + [damiao.MotorType.DM4310] * 3,
             [80, 80, 80, 10, 10, 10],
-            [5, 5, 5, 1.5, 1.5, 1.5],
+            [1, 1, 1, 1.5, 1.5, 1.5],
             "decreasing_position",
             0.15,
             marks=pytest.mark.self_hosted,
