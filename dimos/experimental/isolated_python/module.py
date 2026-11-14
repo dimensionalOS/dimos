@@ -206,6 +206,9 @@ class IsolatedPythonModule(NativeModule):
             assert self._process.stdin is not None
             kwargs = self.config.model_dump()
             kwargs["instance_name"] = self._runtime_name
+            # The runtime answers on its own name, not on the address the
+            # worker manager gave this module.
+            kwargs["rpc_address"] = self._runtime_name
             # The same codec as the worker pipe; the runtime reads stdin to EOF.
             self._process.stdin.write(encode(kwargs))
             self._process.stdin.close()
