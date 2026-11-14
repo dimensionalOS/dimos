@@ -49,6 +49,9 @@ class JoyloConfig(ModuleConfig):
     enabled_sides: tuple[JoyConSide, ...] = ("left", "right")
     arm_only: bool = False
     input_timeout_s: float = Field(default=0.25, gt=0, allow_inf_nan=False)
+    # Stop motion at input_timeout_s, but retain enable intent across a brief
+    # transport gap. Fresh inputs are required before any motion resumes.
+    input_recovery_timeout_s: float = Field(default=1.0, gt=0, le=2, allow_inf_nan=False)
     tick_period_s: float = Field(default=0.01, gt=0, le=0.05)
     height_rate: float = Field(default=0.03, gt=0, le=0.05)
     pitch_rate: float = Field(default=0.1, gt=0, le=0.2)
@@ -62,6 +65,8 @@ class JoyloConfig(ModuleConfig):
 
     @model_validator(mode="after")
     def _validate_sides(self) -> "JoyloConfig":
+        if self.input_recovery_timeout_s < self.input_timeout_s:
+            raise ValueError("input_recovery_timeout_s must be at least input_timeout_s")
         if not self.enabled_sides or len(set(self.enabled_sides)) != len(self.enabled_sides):
             raise ValueError("enabled_sides must name one or two distinct sides")
         if not all(math.isfinite(v) and v > 0 for v in self.torso_link_lengths):
@@ -134,6 +139,8 @@ class JoyloController:
         self.pause_button = "capture" if self.left_only else "home"
         self.authority_index = 0 if self.left_only else 1
         self.active = False
+        self.recovery_deadline: float | None = None
+        self.hold_count = 0
         self.pause_count = 0
         self.last_pause_reason: str | None = None
         self.reason = f"Press {self.enable_button} to enable tracking"
@@ -151,13 +158,27 @@ class JoyloController:
         self.capture_hold = True
 
     def pause(self, reason: str) -> None:
-        if self.active:
+        if self.active or self.recovery_deadline is not None:
             self.pause_count += 1
             self.last_pause_reason = reason
         self.capture_hold |= self.active
         self.active = False
+        self.recovery_deadline = None
         self.reason = reason
         self.enable_released = False
+
+    def _hold_for_input(self, now: float, reason: str) -> None:
+        if self.active:
+            self.recovery_deadline = (
+                min(self.receipts.values()) + self.config.input_recovery_timeout_s
+            )
+            self.active = False
+            self.capture_hold = True
+            self.hold_count += 1
+        if self.recovery_deadline is not None and now < self.recovery_deadline:
+            self.reason = "Holding for fresh " + reason
+        else:
+            self.pause("Waiting for fresh " + reason)
 
     def set_leader(self, positions: dict[str, float], now: float) -> None:
         if set(positions) != set(self.arm_names) or not all(map(math.isfinite, positions.values())):
@@ -175,11 +196,8 @@ class JoyloController:
             }
         if self.active and age > self.config.input_timeout_s:
             # A new sample can arrive before the watchdog tick notices the gap.
-            # Recover the reading, but require a fresh enable press to resume following.
-            self.pause(
-                f"Leader input resumed after timeout; release {self.enable_button} and re-enable"
-            )
-        elif self.leader and self.active:
+            self._hold_for_input(now, "leader")
+        if self.leader and (self.active or self.recovery_deadline is not None):
             joint = max(positions, key=lambda name: abs(positions[name] - self.leader[name]))
             delta = positions[joint] - self.leader[joint]
             if abs(delta) > self.config.max_leader_jump:
@@ -221,15 +239,25 @@ class JoyloController:
             if now - receipt > self.config.input_timeout_s
         ]
         left, right = self.readings
-        healthy = not stale and all(
+        present = all(
             self.readings[SIDES.index(side)] is not None for side in self.config.enabled_sides
         )
+        healthy = not stale and present
+        authority_reading = self.readings[self.authority_index]
+        if (
+            "joycon" not in stale
+            and authority_reading is not None
+            and self.pause_button in authority_reading.pressed
+        ):
+            self.pause(f"Paused; release {self.enable_button} before enabling")
+        if self.recovery_deadline is not None and now >= self.recovery_deadline:
+            self.pause("Input interruption exceeded recovery window; re-enable tracking")
         if not healthy:
-            self.pause(
-                "Waiting for fresh "
-                + (", ".join(stale) if stale else "/".join(self.config.enabled_sides) + " Joy-Con")
-            )
-            self.previous_buttons = (frozenset(), frozenset())
+            if not present:
+                missing = [*stale, "/".join(self.config.enabled_sides) + " Joy-Con"]
+                self.pause("Waiting for fresh " + ", ".join(missing))
+            else:
+                self._hold_for_input(now, ", ".join(stale))
             if "robot" in stale:
                 return None
         if self.capture_hold:
@@ -237,6 +265,14 @@ class JoyloController:
         if healthy:
             left, right = left or JoyConReading(), right or JoyConReading()
             buttons = (left.pressed, right.pressed)
+            if self.recovery_deadline is not None:
+                self.recovery_deadline = None
+                self.active = True
+                self.reason = "Following calibrated OpenArm joint positions"
+                # Buttons held across a gap are not new toggle presses.
+                self.previous_buttons = buttons
+                for i, label in enumerate(("ZL", "ZR")):
+                    self.grippers[i].trigger_was_down = label in buttons[i]
             authority = buttons[self.authority_index]
             x = self.enable_button in authority
             enable_edge = (

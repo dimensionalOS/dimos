@@ -18,7 +18,7 @@ import json
 import math
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from reactivex.disposable import Disposable
 
@@ -41,6 +41,7 @@ logger = setup_logger()
 
 
 class R1ProJoylo(Module):
+    dedicated_worker: ClassVar[bool] = True
     config: JoyloConfig
     _motion_limits: MotionLimitsSpec
     motion_settings: In[String]
@@ -210,6 +211,8 @@ class R1ProJoylo(Module):
                 reason = f"Ready; release and press {c.enable_button} to enable tracking"
             return {
                 "active": c.active if c else False,
+                "recovering": c.recovery_deadline is not None if c else False,
+                "hold_count": c.hold_count if c else 0,
                 "arm_speed_rad_s": self._speed_settings.get("arm_rate", {}).get("rate"),
                 "torso_speed_rad_s": self._speed_settings.get("torso_rate", {}).get("rate"),
                 "drive_speed_m_s": self.config.base_speed,

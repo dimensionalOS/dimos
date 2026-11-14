@@ -45,6 +45,15 @@ nominal 5 Hz. Results older than 0.5 seconds are discarded. The Desktop's generi
 RGB-D layer makes the textured depth surface.
 `R1SpatialSensors.get_status()` reports counts and capture ages.
 
+For operator camera screens, select `head_left_color` (or `head_right_color`),
+`wrist_left_color` and `wrist_right_color`. These forward the cameras' existing
+JPEG frames at acquisition rate, independently of depth, with latest-frame
+delivery and no decode/resize/re-encode on the robot. In particular, wrist
+video does not wait for the vendor's irregular aligned-depth stream.
+`color_image`, `left_wrist` and `right_wrist` remain the paired, rectified
+5 Hz RGB-D colors for the mesh and existing recorder schema. Choosing a faster
+operator screen does not change dataset calibration or camera timestamps.
+
 `UsdManager` uses upstream `JointTf` for measured hardware transforms. Simulation
 body poses are published separately by `SimTfModule`; the model manager has no
 simulation observation port. The file server retains Desktop's `*.urdf` discovery
@@ -54,8 +63,10 @@ The connection's wheel odometry supplies the robot's base transform.
 Control samples use best-effort delivery with interactive-high priority, ahead
 of image traffic. Run namespace assignment must preserve these publisher QoS
 settings. Compressed camera streams also drop under congestion rather than
-queueing obsolete frames. The 250 ms input watchdog and explicit X re-enable
-after a real dropout remain in effect.
+queueing obsolete frames. JoyLo runs in a dedicated worker. The 250 ms input
+watchdog holds motion; a brief transport gap can recover automatically within
+one second of the last fresh input. Longer outages and missing controllers
+require explicit X re-enable.
 
 Enable `dimos host config compression=true` on both the robot and operator Host,
 then restart the Hosts before launching this run. This negotiates Zenoh's existing
@@ -133,11 +144,13 @@ sets `leader_angle_period=2*pi` so successive samples are unwrapped before
 absolute targeting and jump detection. A captured joint-3 crossing from -3.13392275 to
 +pi was only -0.0076699 rad of physical movement, but previously triggered the
 0.75 rad jump guard as a +6.2755 rad discontinuity. Input gaps over 250 ms still
-pause and require re-enabling; recovery preserves the nearest continuous angle
+hold motion; brief gaps recover on fresh input, while sustained outages require
+re-enabling. Recovery preserves the nearest continuous angle
 branch instead of resetting it. A single-turn encoder cannot resolve extra full
 turns made while input is missing.
-`R1ProJoylo.status()` retains `pause_count` and `last_pause_reason` after recovery,
-and every active-to-paused transition is logged with input ages. Real jumps
+`R1ProJoylo.status()` exposes `recovering` and `hold_count` for temporary holds,
+and retains `pause_count` and `last_pause_reason` for latched pauses. Latched
+pauses are logged with input ages. Real jumps
 include the offending joint and delta in the reason.
 
 Separate observed input faults remain hardware/transport issues: the Feetech
@@ -191,8 +204,13 @@ measured arm feedback, locked joints and URDF limit clipping. Coupled wrist
 clipping happens separately in the downstream servo.
 
 In the two-arm profile, both seven-joint leaders, both Joy-Cons and robot feedback must be fresh.
-Loss of any input for 250 ms latches a pause; reconnecting while X is held
-does not enable. Release and press X again. Input timestamps reject queued
+Loss of fresh input for 250 ms holds motion. If all inputs recover within
+`input_recovery_timeout_s` (one second from the last fresh input), tracking
+resumes from current inputs without another X press. During the gap the base
+command is zero and arms hold measured positions; stale robot feedback emits
+no new arm target. Held gripper/lock buttons are not replayed as new presses.
+Missing controllers, malformed input, Home/manual pause, and longer outages
+clear enable intent: release and press X again. Input timestamps reject queued
 old commands, so synchronize clocks when using two machines. A leader jump
 over 0.75 rad also requires re-engagement. Initial arm targets and jaw openings
 come from measured feedback, with no automatic home movement.
@@ -453,7 +471,8 @@ change only the relevant `flip` fields while following is paused, and restart
 the operator to reload it. Apply each direction correction only in the calibration, so it is not applied twice. Re-engage after the reload
 and check each joint individually.
 
-Missing/stale input pauses following and requires release and a fresh Minus
+Brief stale-input gaps hold motion and recover as in the two-arm profile.
+Missing controllers or longer outages require release and a fresh Minus
 press after reconnection. HID silence is detected after 200 ms, in addition to
 the profile's 250 ms stream timeout. `dimos shell` exposes `R1ProJoylo.status()`
 with input ages, readiness and the pause reason; `dimos stop` ends the run.

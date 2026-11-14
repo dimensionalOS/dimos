@@ -38,6 +38,7 @@ from dimos.robot.galaxea.r1pro._connection_test_fakes import (
     RosHeader,
     RosImu,
     RosStatusError,
+    RosTime,
     chassis_speed,
     feed_all_segments,
     feed_chassis_interval,
@@ -148,6 +149,28 @@ def rig(fake_ros: FakeRos, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable
     yield build
     for each in made:
         each.module.stop()
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_operator_video_forwards_compressed_color_without_depth(rig, side):
+    r = rig(enable_wrist_color=True, enable_wrist_depth=False, color_publish_hz=0)
+    output = r.ports[f"wrist_{side}_color"].sent
+    for index in range(3):
+        # No depth or calibration messages: an operator frame must stand alone.
+        jpeg = bytes([index, 10, 20])
+        r.fake.sensors.feed(
+            f"/hdas/camera_wrist_{side}/color/image_raw/compressed",
+            SimpleNamespace(
+                header=RosHeader(
+                    stamp=RosTime(sec=100, nanosec=index * 10_000_000), frame_id="optical"
+                ),
+                data=jpeg,
+            ),
+        )
+        wait_until(lambda index=index: len(output) == index + 1, timeout=2)
+        assert bytes(output[-1].data) == jpeg
+        assert output[-1].ts == pytest.approx(100 + index * 0.01)
+        assert output[-1].frame_id == "optical"
 
 
 def test_nothing_is_published_until_every_segment_has_reported(

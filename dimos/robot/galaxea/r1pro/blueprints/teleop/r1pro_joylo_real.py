@@ -30,7 +30,9 @@ _declaration = R1ProConnectionConfig(
     boot_vendor_stack=False,
     tracking_speed=1.0,
     enable_wrist_color=True,
-    color_publish_hz=10.0,
+    # Forward the camera's compressed frames as they arrive. RGB-D has its own
+    # slower processing rate and must not set the operator video's cadence.
+    color_publish_hz=0.0,
     enable_wrist_depth=False,
     publish_odom_tf=True,
 )

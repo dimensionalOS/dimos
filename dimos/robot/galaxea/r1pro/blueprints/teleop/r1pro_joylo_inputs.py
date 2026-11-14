@@ -64,6 +64,8 @@ _camera_transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
     for name in (
         "head_left_color",
         "head_right_color",
+        "wrist_left_color",
+        "wrist_right_color",
         "color_image",
         "left_wrist",
         "right_wrist",

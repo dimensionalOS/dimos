@@ -88,7 +88,9 @@ _vision = (
 r1pro_openarm_joylo_real = autoconnect(
     autoconnect(
         r1pro_collection(),
-        make_joylo_real(publish_odom_tf=True, enable_wrist_color=False, webxr=True),
+        # Operator video uses head_*_color / wrist_*_color independently of
+        # the paired, rectified RGB-D streams used by the mesh and recorder.
+        make_joylo_real(publish_odom_tf=True, enable_wrist_color=True, webxr=True),
         _webxr_joystick_blueprint(),
         _vision,
     ).hosted(tags={"r1pro": True}),

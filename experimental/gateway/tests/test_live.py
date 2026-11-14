@@ -322,3 +322,30 @@ def test_connect_follows_remote_endpoint_and_resets_it_for_next_run(terminal_run
         defaults.zenoh_mode,
         defaults.zenoh_domain,
     )
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        ({}, "tcp/desktop-router:7447"),
+        ({"config_overrides": {"zenoh_connect": "tcp/robot:7447"}}, "tcp/robot:7447"),
+        (
+            {"original_argv": ["dimos", "--zenoh-connect=tcp/robot:7447", "run", "demo"]},
+            "tcp/robot:7447",
+        ),
+        ({"config_overrides": {"zenoh_connect": ""}}, ""),
+    ],
+)
+def test_connect_uses_desktop_router_unless_the_run_selects_an_endpoint(
+    terminal_run, home, monkeypatch, fields, expected
+):
+    for name in ("robot_ip", "robot_ips", "zenoh_connect", "zenoh_mode", "zenoh_domain"):
+        monkeypatch.setattr(global_config, name, getattr(global_config, name))
+    config_dir = home / "dimos_home"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text("zenoh: {connect: 'tcp/desktop-router:7447'}\n")
+    registered(terminal_run.pid, **fields)
+
+    live.connect_dimos()
+
+    assert global_config.zenoh_connect == expected

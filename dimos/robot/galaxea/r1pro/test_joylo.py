@@ -103,6 +103,78 @@ def test_stale_source_latches_pause_even_when_other_inputs_continue(controller):
     assert output.velocity == (0, 0, 0)
 
 
+@pytest.mark.parametrize("source", ["leader", "joycon", "robot"])
+def test_brief_gap_holds_motion_then_resumes_only_on_fresh_input(controller, source):
+    engage(controller)
+    feed(controller, 0.04, leader=dict.fromkeys(ARMS, 0.4))
+    controller.receipts.update(dict.fromkeys(controller.receipts, 0.34))
+    controller.receipts[source] = 0.04
+
+    held = controller.step(0.34, 0.01)
+
+    assert not controller.active
+    assert controller.recovery_deadline == pytest.approx(1.04)
+    if source == "robot":
+        assert held is None
+    else:
+        assert held.positions == dict.fromkeys(UPPER, 0)
+        assert held.velocity == (0, 0, 0)
+    resumed = feed(controller, 0.36, leader=dict.fromkeys(ARMS, 0.2))
+    assert controller.active
+    assert controller.recovery_deadline is None
+    assert {name: resumed.positions[name] for name in ARMS} == dict.fromkeys(ARMS, 0.2)
+    assert controller.hold_count == 1
+    assert controller.pause_count == 0
+
+
+def test_input_returning_before_watchdog_tick_still_checks_gap_and_jump(controller):
+    engage(controller)
+    feed(controller, 0.35, leader=dict.fromkeys(ARMS, 0.2))
+    assert controller.active
+    assert controller.hold_count == 1
+    feed(controller, 0.7, leader=dict.fromkeys(ARMS, 1.5))
+    assert not controller.active
+    assert controller.recovery_deadline is None
+    assert "discontinuity" in controller.reason
+
+
+def test_long_gap_requires_reenable_even_if_next_tick_has_fresh_inputs(controller):
+    engage(controller)
+    controller.step(0.35, 0.01)
+    feed(controller, 1.1)
+    assert not controller.active
+    assert controller.recovery_deadline is None
+    feed(controller, 1.12, right=JoyConReading(frozenset({"X"})))
+    assert controller.active
+
+
+@pytest.mark.parametrize("reason", ["operator", "disconnect", "home"])
+def test_explicit_pause_or_controller_loss_cancels_pending_recovery(controller, reason):
+    engage(controller)
+    controller.step(0.35, 0.01)
+    if reason == "operator":
+        controller.pause("Paused by operator")
+    elif reason == "disconnect":
+        feed(controller, 0.36, left=None)
+    else:
+        # Home must work even while the leader and robot streams are stale.
+        controller.set_joycon(JoyConReading(), JoyConReading(frozenset({"home"})), 0.36)
+        controller.step(0.36, 0.01)
+    feed(controller, 0.38)
+    assert not controller.active
+    assert controller.recovery_deadline is None
+
+
+def test_recovery_does_not_replay_gripper_or_arm_lock_button_edges(controller):
+    engage(controller)
+    controller.step(0.35, 0.01)
+    held_buttons = JoyConReading(frozenset({"ZL", "minus"}))
+    resumed = feed(controller, 0.36, left=held_buttons)
+    assert controller.active
+    assert resumed.openings == (0.5, 0.5)
+    assert controller.arm_locked == [False, False]
+
+
 def test_wrist_lock_release_returns_to_absolute_leader_target(controller):
     engage(controller)
     leader = dict.fromkeys(ARMS, 0.0)

@@ -24,6 +24,7 @@ from fastapi.encoders import jsonable_encoder
 import psutil
 
 from dimos.core.run_registry import RunEntry
+from experimental.gateway import shared_config
 from experimental.gateway.errors import ApiError
 
 
@@ -87,6 +88,10 @@ def connect_dimos() -> Any:
         value = entry.config_overrides.get(field) if entry else None
         if value is None and entry is not None:
             value = flag_value(list(entry.original_argv), "--" + field.replace("_", "-"))
+        if value is None and field == "zenoh_connect":
+            # Hosted modules live behind Desktop's router even when the root
+            # coordinator is discoverable through local peer scouting.
+            value = shared_config.shared_config().zenoh_connect
         settings[field] = getattr(defaults, field) if value is None else value
     global_config.update(**settings)
     return Dimos.connect()
