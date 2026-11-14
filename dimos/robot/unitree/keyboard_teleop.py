@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -80,6 +82,19 @@ _JOY_KEYS = (
 )
 _JOY_KEY_SET = frozenset(key for keys in _JOY_KEYS for key in keys)
 
+# What the macOS window process shares with the module: the outputs it prints
+# messages for, and the settings it is started with.
+_OUTPUTS = ("cmd_vel", "joystick", "operator_command", "e_max")
+_WINDOW_SETTINGS = (
+    "linear_speed",
+    "angular_speed",
+    "boost_multiplier",
+    "slow_multiplier",
+    "publish_only_when_active",
+    "disable_movement",
+    "_window_title",
+)
+
 
 def joy_buttons(keys_held: set[int]) -> list[int]:
     return [int(any(key in keys_held for key in keys)) for keys in _JOY_KEYS]
@@ -111,6 +126,7 @@ class KeyboardTeleop(Module):
     _keys_held: set[int] | None = None
     _keys_down: set[int]
     _thread: threading.Thread | None = None
+    _window: subprocess.Popen[str] | None = None
     _screen: pygame.Surface | None = None
     _clock: pygame.time.Clock | None = None
     _fonts: dict[tuple[int, bool], pygame.font.Font] | None = None
@@ -155,7 +171,18 @@ class KeyboardTeleop(Module):
         self._keys_down = set()
         self._stop_event.clear()
 
-        self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
+        if sys.platform == "darwin":
+            # macOS only allows windows on a process's main thread, so the loop
+            # runs in a child process and this module publishes what it prints.
+            settings = {name: getattr(self, name) for name in _WINDOW_SETTINGS}
+            self._window = subprocess.Popen(
+                [sys.executable, "-m", __name__, json.dumps(settings)],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            self._thread = threading.Thread(target=self._publish_window_messages, daemon=True)
+        else:
+            self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
         self._thread.start()
 
     @rpc
@@ -167,6 +194,8 @@ class KeyboardTeleop(Module):
 
         self._stop_event.set()
 
+        if self._window is not None:
+            self._window.terminate()
         if self._thread is not None:
             self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
@@ -281,6 +310,17 @@ class KeyboardTeleop(Module):
 
         pygame.quit()
 
+    def _publish_window_messages(self) -> None:
+        assert self._window is not None and self._window.stdout is not None
+        for line in self._window.stdout:
+            name, _, data = line.strip().partition(" ")
+            # Once stop() has been asked for, what the window still sends is dropped.
+            if name in _OUTPUTS and not self._stop_event.is_set():
+                output = getattr(self, name)
+                output.publish(output.type.lcm_decode(bytes.fromhex(data)))
+        # The window has ended: whatever it sent last, the last command is a stop.
+        self.cmd_vel.publish(Twist())
+
     def _font(self, size: int, bold: bool = False) -> pygame.font.Font:
         if self._fonts is None:
             raise RuntimeError("Not initialized correctly")
@@ -368,3 +408,37 @@ class KeyboardTeleop(Module):
         screen.blit(self._font(12).render(help_text, True, _DIM), (20, _WINDOW_HEIGHT - 28))
 
         pygame.display.flip()
+
+
+class _PrintedOutput:
+    """An output of the macOS child: prints each message for the module to publish."""
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def publish(self, msg: Any) -> None:
+        print(self._name, msg.lcm_encode().hex(), flush=True)
+
+
+class _WindowProcess:
+    """The macOS child: runs the module's pygame loop and prints what it publishes."""
+
+    _pygame_loop = KeyboardTeleop._pygame_loop
+    _update_display = KeyboardTeleop._update_display
+    _keycap = KeyboardTeleop._keycap
+    _font = KeyboardTeleop._font
+
+    def __init__(self, settings: dict[str, Any]) -> None:
+        vars(self).update(settings)
+        self._stop_event = threading.Event()
+        self._keys_held: set[int] = set()
+        self._keys_down: set[int] = set()
+        self._was_active = False
+        self._estop_at = 0.0
+        for name in _OUTPUTS:
+            setattr(self, name, _PrintedOutput(name))
+
+
+if __name__ == "__main__":
+    # The module's loop only uses the attributes _WindowProcess provides.
+    _WindowProcess(json.loads(sys.argv[1]))._pygame_loop()  # type: ignore[misc]

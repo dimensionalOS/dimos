@@ -14,10 +14,29 @@
 
 import pygame
 
-from dimos.robot.unitree.keyboard_teleop import JOY_BUTTONS, joy_buttons
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.unitree.keyboard_teleop import JOY_BUTTONS, KeyboardTeleop, joy_buttons
 
 
 def test_joy_buttons_follow_held_keys() -> None:
     assert joy_buttons(set()) == [0] * len(JOY_BUTTONS)
     assert joy_buttons({pygame.K_w, pygame.K_RSHIFT}) == [1, 0, 0, 0, 0, 0, 1, 0, 0]
     assert joy_buttons({pygame.K_d, pygame.K_LCTRL, pygame.K_SPACE}) == [0, 0, 0, 1, 0, 0, 0, 1, 1]
+
+
+def test_window_forwarding_ends_on_a_stop(mocker) -> None:
+    """The window's last message can be a movement, e.g. with a key held at shutdown."""
+    module = KeyboardTeleop()
+    try:
+        publish = mocker.patch.object(module.cmd_vel, "publish")
+        moving = Twist(linear=Vector3(0.5, 0, 0))
+        module._window = mocker.Mock(stdout=[f"cmd_vel {moving.lcm_encode().hex()}\n"])
+
+        module._publish_window_messages()
+        module._stop_event.set()  # stop() was asked for: the movement is not forwarded
+        module._publish_window_messages()
+
+        assert [call.args[0].linear.x for call in publish.call_args_list] == [0.5, 0.0, 0.0]
+    finally:
+        module.stop()
