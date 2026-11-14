@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tracemalloc
 
 from dimos_lcm.std_msgs import String as LcmString
 import numpy as np
@@ -423,3 +424,78 @@ def test_a_name_two_topics_fold_to_fails_only_when_read(tmp_path):
         assert store.stream("imu").count() == 1
         with pytest.raises(ValueError, match="pass streams="):
             store.stream("camera_info")
+
+
+@pytest.mark.parametrize(
+    ("native_times", "legacy_times", "expected"),
+    [
+        pytest.param(
+            [(13.0, 12.5), (14.0, 11.5)], [(20.0, 1.0), (12.0, 2.0)], 11.5, id="native-first"
+        ),
+        pytest.param(
+            [(13.0, 12.5), (14.0, 11.5)], [(20.0, 1.0), (10.0, 2.0)], 10.0, id="legacy-first"
+        ),
+        pytest.param([], [], None, id="empty"),
+    ],
+)
+def test_first_ts_is_the_earliest_observation_time(
+    tmp_path: Path,
+    native_times: list[tuple[float, float]],
+    legacy_times: list[tuple[float, float]],
+    expected: float | None,
+) -> None:
+    path = tmp_path / "recording.mcap"
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start(profile="dimos", library="test")
+        # A native channel is timed by publish_time, which can run against log order.
+        native = writer.register_channel(
+            topic="native",
+            message_encoding="raw",
+            schema_id=0,
+            metadata={"dimos.observation_time": "publish_time"},
+        )
+        # A channel without the metadata is timed by log_time, whatever its publish_time.
+        legacy = writer.register_channel(topic="legacy", message_encoding="raw", schema_id=0)
+        for channel, times in ((native, native_times), (legacy, legacy_times)):
+            for log_time, publish_time in times:
+                writer.add_message(
+                    channel_id=channel,
+                    log_time=int(log_time * 1e9),
+                    publish_time=int(publish_time * 1e9),
+                    data=b"",
+                )
+        writer.finish()
+
+    with McapStore(path=str(path)) as store:
+        assert store.first_ts() == expected
+
+
+def test_first_ts_does_not_hold_a_native_channel_in_memory(tmp_path: Path) -> None:
+    path = tmp_path / "recording.mcap"
+    payload = bytes(64 * 1024)
+    total = 256
+    with path.open("wb") as output:
+        # Small chunks, so one chunk in memory stays far below the whole channel.
+        writer = mcap_writer.Writer(output, chunk_size=4 * len(payload))
+        writer.start(profile="dimos", library="test")
+        channel = writer.register_channel(
+            topic="camera",
+            message_encoding="raw",
+            schema_id=0,
+            metadata={"dimos.observation_time": "publish_time"},
+        )
+        for i in range(total):
+            writer.add_message(channel_id=channel, log_time=i, publish_time=total - i, data=payload)
+        writer.finish()
+
+    with McapStore(path=str(path)) as store:
+        tracemalloc.start()
+        try:
+            first = store.first_ts()
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+    assert first == 1e-9
+    assert peak < len(payload) * total // 4, peak

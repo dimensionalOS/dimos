@@ -343,6 +343,36 @@ class McapStore(Store):
         """Stream names two topics fold to (name -> error), left out of :meth:`list_streams`."""
         return dict(self._ambiguous)
 
+    def first_ts(self) -> float | None:
+        """Read the recording origin without holding or sorting any channel's messages."""
+        from mcap.reader import make_reader  # optional mcap dependency
+
+        names = self.list_streams()
+        publish_time_topics = [
+            self._stream_topic[name] for name in names if self._observation_uses_publish_time[name]
+        ]
+        log_time_topics = [
+            self._stream_topic[name]
+            for name in names
+            if not self._observation_uses_publish_time[name]
+        ]
+        first: int | None = None
+        with open(self.config.path, "rb") as f:
+            reader = make_reader(f)
+            if log_time_topics:
+                # Messages arrive in log-time order, so the first one is the earliest.
+                head = next(iter(reader.iter_messages(topics=log_time_topics)), None)
+                if head is not None:
+                    first = head[2].log_time
+            if publish_time_topics:
+                # publish_time has no index and can run against log order, so every
+                # message is visited once and only the smallest time is kept. File
+                # order would be no cheaper: the reader then loads every chunk first.
+                for _schema, _channel, message in reader.iter_messages(topics=publish_time_topics):
+                    if first is None or message.publish_time < first:
+                        first = message.publish_time
+        return None if first is None else first / 1e9
+
     def summary(self) -> str:
         """Base summary, tagging codecless streams with ``[raw bytes: <schema>]``."""
         lines = []
