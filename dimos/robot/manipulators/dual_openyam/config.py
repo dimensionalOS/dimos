@@ -164,7 +164,7 @@ DUAL_OPENYAM_JOINT_LIMITS = (
 DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS = 1.5
 
 
-def _leader_bus(side: str) -> FeetechBus:
+def _leader_bus(side: str, *, trigger: bool = True) -> FeetechBus:
     # Leader servos joint_1 to joint_6 drive the arm joints in order; joint_7
     # is the gripper trigger.
     return FeetechBus(
@@ -175,9 +175,17 @@ def _leader_bus(side: str) -> FeetechBus:
                 zip(dual_openyam_arm_joints(side), DUAL_OPENYAM_JOINT_LIMITS, strict=True), start=1
             )
         ),
-        trigger=FeetechTrigger("joint_7", DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS),
+        trigger=(
+            FeetechTrigger("joint_7", DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS)
+            if trigger
+            else None
+        ),
     )
 
 
 #: The two YAM leader arms, one Feetech bus each.
 DUAL_OPENYAM_LEADERS = FeetechRobot(buses=tuple(_leader_bus(side) for side in DUAL_OPENYAM_SIDES))
+#: The two YAM leader arms without their trigger servos.
+DUAL_OPENYAM_ARM_LEADERS = FeetechRobot(
+    buses=tuple(_leader_bus(side, trigger=False) for side in DUAL_OPENYAM_SIDES)
+)

@@ -3,7 +3,7 @@
 Two YAM leader arms (seven Feetech STS3215 servos each, IDs 1 to 6 on the
 joints and 7 on the gripper trigger) drive the two OpenYAM followers joint for
 joint. The leaders are read by `DualOpenYamLeaderConnection`
-(`dimos/robot/manipulators/dual_openyam/leader_connection.py`), a Feetech connection.
+(`dimos/robot/manipulators/dual_openyam/blueprints/leader_teleop.py`), a Feetech connection.
 Each leader motor names the follower joint it drives and that joint's limits
 (`DUAL_OPENYAM_LEADERS` in `dimos/robot/manipulators/dual_openyam/config.py`),
 so the connection publishes the followers' joint targets and jaw openings
@@ -58,6 +58,31 @@ dimos run dual-openyam-leader-teleop \
 The ports given select the sides. The coordinator's `joint_trajectory` task
 reads the leader's port as a guarded stream, so the leader owns the joints while
 it publishes and releases them when it stops.
+
+## Joy-Cons in place of the triggers
+
+With the trigger servos removed, `dual-openyam-joycon-leader-teleop` reads only
+joint_1 to joint_6 per leader (`DualOpenYamLeaderArmConnection`) and a Joy-Con
+per side drives the jaws and a pause. The buttons, the pause behaviour and the
+Bluetooth pairing are the same as for the
+[OpenArm Mini](/docs/capabilities/manipulation/openarm_mini_teleop.md#joy-cons-in-place-of-the-triggers):
+ZL / ZR held close the left / right jaw, plus pauses and resumes following.
+Pair each Joy-Con once with `dimos/hardware/controllers/joycon/pair_joycon.sh L` (then `R`).
+
+Each calibration file must list only joint_1 to joint_6. To reuse files that
+include the trigger, write copies without it:
+
+```bash
+for side in left right; do
+  mkdir -p ~/joycon-leaders/$side
+  jq 'del(.motors.joint_7)' ~/.local/state/dimos/teleop/leader/$side/calibration.json \
+    > ~/joycon-leaders/$side/calibration.json
+done
+dimos run dual-openyam-joycon-leader-teleop \
+  --left-serial-port /dev/ttyACM1 --right-serial-port /dev/ttyACM0 \
+  --left-can-port follower_l --right-can-port follower_r \
+  --calibration-root ~/joycon-leaders
+```
 
 ## Record demonstrations
 
