@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dimos.memory.stream import Stream
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.protocol.tf.tf import MultiTBuffer, TBuffer
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -36,18 +36,27 @@ def tf_stream(store: Any, stream: str = "tf") -> Stream[TFMessage] | None:
     return cast("Stream[TFMessage]", store.stream(stream, TFMessage))
 
 
+class _StaticTBuffer(TBuffer):
+    """A ``tf_static`` edge: published once, it holds at every time."""
+
+    def get(self, time_point: float | None = None, time_tolerance: float = 1.0) -> Transform | None:
+        return self.last()
+
+
 class StreamTF(MultiTBuffer):
     def __init__(
         self,
         stream: Stream[TFMessage] | None = None,
         cache_span: float = 300.0,
         default_tolerance: float = 10.0,
+        static: Stream[TFMessage] | None = None,
     ) -> None:
         MultiTBuffer.__init__(self, buffer_size=math.inf)
 
         if stream is None:
             raise ValueError("Stream configuration is missing")
         self.stream = stream
+        self._static = [t for obs in static or () for t in obs.data.transforms]
         self.cache_span = cache_span
         self.default_tolerance = default_tolerance
 
@@ -55,8 +64,11 @@ class StreamTF(MultiTBuffer):
 
     @classmethod
     def from_store(cls, store: Any, stream: str = "tf") -> StreamTF | None:
+        static = tf_stream(store, f"{stream}_static")
+        # a recording with only static transforms still has a tree (a camera's mount)
         recorded = tf_stream(store, stream)
-        return None if recorded is None else cls(recorded)
+        recorded = static if recorded is None else recorded
+        return None if recorded is None else cls(recorded, static=static)
 
     def publish(self, *args: Transform) -> None:
         raise NotImplementedError("StreamTF is a read-only replay service.")
@@ -64,6 +76,10 @@ class StreamTF(MultiTBuffer):
     def _load(self, lo: float, hi: float) -> None:
         for obs in self.stream.at((lo + hi) / 2, (hi - lo) / 2):
             self.receive_transform(*obs.data.transforms)
+        for t in self._static:
+            edge = _StaticTBuffer()
+            edge.add(t)
+            self.buffers[(t.frame_id, t.child_frame_id)] = edge
         self._covered = (lo, hi)
 
     def _ensure(self, lo: float, hi: float) -> None:
