@@ -122,7 +122,7 @@ class M20ConnectionConfig(ModuleConfig):
     auto_stand: bool = False
     dock_settle_s: float = Field(default=1.0, ge=0.0)
     dock_start_timeout_s: float = Field(default=5.0, gt=0.0)
-    dock_timeout_s: float = Field(default=150.0, gt=0.0)
+    dock_timeout_s: float = Field(default=60.0, gt=0.0)
     undock_timeout_s: float = Field(default=45.0, gt=0.0)
 
 
