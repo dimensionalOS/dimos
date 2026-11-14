@@ -76,6 +76,7 @@ all_blueprints = {
     "dual-openyam-grasp-agent": "dimos.robot.manipulators.dual_openyam.blueprints.agentic:dual_openyam_grasp_agent",
     "dual-openyam-grasp-graspgenx": "dimos.robot.manipulators.dual_openyam.blueprints.grasp:dual_openyam_grasp_graspgenx",
     "dual-openyam-grasp-graspgenx-agent": "dimos.robot.manipulators.dual_openyam.blueprints.agentic:dual_openyam_grasp_graspgenx_agent",
+    "dual-openyam-grasp-sim": "dimos.robot.manipulators.dual_openyam.blueprints.simulation:dual_openyam_grasp_sim",
     "dual-openyam-joycon-leader-teleop": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop:dual_openyam_joycon_leader_teleop",
     "dual-openyam-leader-teleop": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop:dual_openyam_leader_teleop",
     "dual-openyam-planner-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic:dual_openyam_planner_coordinator",

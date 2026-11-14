@@ -21,6 +21,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+from dimos.robot.manipulators.dual_openyam.blueprints.grasp import DUAL_OPENYAM_TABLE_TOP_Z
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM,
     DUAL_OPENYAM_HOME_JOINTS,
@@ -30,7 +31,6 @@ from dimos.robot.manipulators.dual_openyam.config import (
 from dimos.robot.manipulators.dual_openyam.conftest import PlannedFrame
 from dimos.robot.manipulators.dual_openyam.sim_scene import (
     CAMERA_FOVY,
-    DUAL_OPENYAM_TABLE_TOP_Z,
     FINGER_TRAVEL,
     OVERHEAD_CAMERA,
     WORKCELL_OBJECTS,
@@ -41,9 +41,10 @@ from dimos.robot.manipulators.dual_openyam.sim_scene import (
 pytestmark = pytest.mark.self_hosted
 
 # How high each object's body frame rests above the table top, metres.
-REST_HEIGHT = {"cup": 0.05, "bottle": 0.0, "rubiks_cube": 0.0285}
-# How wide each object is where the jaws close on it, metres.
-WIDTH = {"cup": 0.08, "rubiks_cube": 0.057}
+REST_HEIGHT = {"cup": 0.0, "bottle": 0.0, "rubiks_cube": 0.0285}
+# How wide each object is where the jaws close on it, metres: the cube across
+# two faces, the cup just under its rim, where the fingers' shanks meet it.
+WIDTH = {"cup": 0.090, "rubiks_cube": 0.057}
 # The MIT torque range of each Damiao motor type, Nm.
 MOTOR_TORQUE = {"DM4340": 28.0, "DM4310": 10.0}
 HOME = np.array(DUAL_OPENYAM_HOME_JOINTS[:6])

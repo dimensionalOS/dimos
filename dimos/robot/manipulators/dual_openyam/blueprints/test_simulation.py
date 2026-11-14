@@ -15,9 +15,6 @@
 """The simulated blueprints move the MuJoCo rig: trajectories, the planner and teleop."""
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -25,14 +22,14 @@ import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
-from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_spec import CommandStatus, ExecutionStatus, PlanStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.manipulators.damiao._damiao_test_helpers import LocalTransport
+from dimos.robot.manipulators.dual_openyam._sim_test_helpers import Deployed, deployed
+from dimos.robot.manipulators.dual_openyam.blueprints.grasp import DUAL_OPENYAM_TABLE_TOP_Z
 from dimos.robot.manipulators.dual_openyam.blueprints.simulation import (
     dual_openyam_sim,
     teleop_webxr_dual_openyam_sim,
@@ -44,74 +41,23 @@ from dimos.robot.manipulators.dual_openyam.config import (
 )
 from dimos.robot.manipulators.dual_openyam.conftest import PlannedFrame
 from dimos.robot.manipulators.dual_openyam.sim_connection import DualOpenYamSimConnection
-from dimos.robot.manipulators.dual_openyam.sim_scene import DUAL_OPENYAM_TABLE_TOP_Z
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
 
 ARM = [f"arm/{name}" for name in DUAL_OPENYAM.arm_joint_names]
-
-
-@dataclass
-class Deployed:
-    """Modules of a blueprint running in this process, and the transport of every topic."""
-
-    modules: dict[type, Any]
-    topics: dict[str, LocalTransport[Any]]
-
-    def measured(self) -> dict[str, float]:
-        """The rig's newest joint positions, by joint name."""
-        reading = self.topics["joint_state"].latest
-        return dict(zip(reading.name, reading.position, strict=True))
-
-    def distance_from(self, targets: dict[str, float]) -> float:
-        """How far the farthest of the named joints is from its target."""
-        now = self.measured()
-        return max(abs(now[name] - target) for name, target in targets.items())
-
-
-@contextmanager
-def deployed(blueprint: Blueprint, *wanted: type) -> Iterator[Deployed]:
-    """Run the blueprint's modules of the wanted types in this process.
-
-    They are wired topic by topic as the blueprint wires them, with in-memory
-    transports, and started in the order given.
-    """
-    stack = Deployed({}, {})
-    try:
-        for atom in blueprint.active_blueprints:
-            kinds = [kind for kind in wanted if issubclass(atom.module, kind)]
-            if not kinds:
-                continue
-            kwargs = dict(atom.kwargs)
-            if atom.module is DualOpenYamSimConnection:
-                # Physics alone: these checks need no OpenGL context.
-                kwargs["cameras"] = False
-            module = atom.module(**kwargs)
-            stack.modules[kinds[0]] = module
-            for stream in atom.streams:
-                topic = blueprint.remapping_map.get((atom.name, stream.name), stream.name)
-                module.set_transport(stream.name, stack.topics.setdefault(topic, LocalTransport()))
-        if ManipulationModule in stack.modules:
-            planner = stack.modules[ManipulationModule]
-            # The blueprint hands the planner its coordinator; here it is the object itself.
-            planner.set_module_ref("_control_coordinator", stack.modules[ControlCoordinator])
-            # Nothing here publishes a voxel map or objects. Without the ports the planner
-            # starts no handler for them, as in dimos/manipulation's fixtures.
-            planner.voxel_map = None
-            planner.objects = None
-        for kind in wanted:
-            stack.modules[kind].start()
-        yield stack
-    finally:
-        for module in reversed(stack.modules.values()):
-            module.stop()
+# These checks need no camera, and so no OpenGL context.
+PHYSICS_ALONE = {DualOpenYamSimConnection: {"cameras": False}}
 
 
 @pytest.fixture
 def planning_stack(no_rpc: None) -> Iterator[Deployed]:
     """dual-openyam-sim: the rig, its coordinator and the planner."""
     with deployed(
-        dual_openyam_sim, DualOpenYamSimConnection, ControlCoordinator, ManipulationModule
+        dual_openyam_sim,
+        DualOpenYamSimConnection,
+        ControlCoordinator,
+        ManipulationModule,
+        settings=PHYSICS_ALONE,
     ) as stack:
         # The planner has the rig's joints once they have passed through the coordinator.
         planner = stack.modules[ManipulationModule]
@@ -123,7 +69,10 @@ def planning_stack(no_rpc: None) -> Iterator[Deployed]:
 def teleop_stack(no_rpc: None) -> Iterator[Deployed]:
     """teleop-webxr-dual-openyam-sim's rig and coordinator, without its WebXR server and viewer."""
     with deployed(
-        teleop_webxr_dual_openyam_sim, DualOpenYamSimConnection, ControlCoordinator
+        teleop_webxr_dual_openyam_sim,
+        DualOpenYamSimConnection,
+        ControlCoordinator,
+        settings=PHYSICS_ALONE,
     ) as stack:
         coordinator = stack.modules[ControlCoordinator]
         wait_until(lambda: set(ARM) <= set(coordinator.get_joint_positions()), timeout=10.0)

@@ -16,17 +16,20 @@
 
 Each blueprint is the real one with its connection switched off and the
 simulated rig in its place, so the coordinator, its tasks, the planner and the
-teleop modules are the ones the robot runs.
+teleop modules are the ones the robot runs. The grasp stack has its three
+RealSense cameras switched off as well: the simulated rig renders them.
 """
 
 from typing import Any
 
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.robot.manipulators.damiao.damiao_blueprint import arm_declaration
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     dual_openyam_planner_coordinator,
 )
+from dimos.robot.manipulators.dual_openyam.blueprints.grasp import dual_openyam_grasp
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.dual_openyam.sim_connection import DualOpenYamSimConnection
@@ -36,13 +39,14 @@ from dimos.robot.manipulators.dual_openyam.sim_connection import DualOpenYamSimC
 _ROBOT_CONNECTIONS = (DualOpenYamConnection, MockJointConnection)
 
 
-def dual_openyam_sim_connection(**config: Any) -> Blueprint:
+def dual_openyam_sim_connection(**options: Any) -> Blueprint:
     """The MuJoCo rig, declared and remapped as the connection it stands in for.
 
-    ``config`` sets the rig's own options, e.g. ``enable_pointcloud=True``.
+    Args:
+        **options: Settings of the simulated rig, e.g. ``enable_pointcloud``.
     """
     return DualOpenYamSimConnection.blueprint(
-        **arm_declaration(DualOpenYamConnection).model_dump(), **config
+        **arm_declaration(DualOpenYamConnection).model_dump(), **options
     ).remappings([(DualOpenYamSimConnection, "position_command", "arm_position_command")])
 
 
@@ -53,4 +57,10 @@ dual_openyam_sim = autoconnect(
 teleop_webxr_dual_openyam_sim = autoconnect(
     teleop_webxr_dual_openyam.disabled_modules(*_ROBOT_CONNECTIONS),
     dual_openyam_sim_connection(),
+)
+dual_openyam_grasp_sim = autoconnect(
+    dual_openyam_grasp.disabled_modules(*_ROBOT_CONNECTIONS, RealSenseCamera),
+    # The planner's map is built from the overhead cloud, and the planner
+    # publishes that camera's mount itself, as a static transform.
+    dual_openyam_sim_connection(enable_pointcloud=True, publish_overhead_mount=False),
 )
