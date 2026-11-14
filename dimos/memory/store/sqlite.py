@@ -226,6 +226,17 @@ class SqliteStore(Store):
                 for name in self._registry.list_streams()
             }
 
+    def first_ts(self) -> float | None:
+        """Read the recording origin without loading any stream's payload type or codec."""
+        starts: list[float] = []
+        with self._registry_lock:
+            for name in self.list_streams():
+                validate_identifier(name)
+                row = self._registry_conn.execute(f'SELECT MIN(ts) FROM "{name}"').fetchone()
+                if row[0] is not None:
+                    starts.append(float(row[0]))
+        return min(starts, default=None)
+
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)
         with self._registry_lock:

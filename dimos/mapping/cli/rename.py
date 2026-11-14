@@ -35,6 +35,7 @@ from dimos.memory.codecs.base import resolve_payload_type
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.observation import Observation
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.data import resolve_named_path
 
 
@@ -153,13 +154,12 @@ def main(
 
     src = SqliteStore(path=str(src_path))
     with src:
+        window = RecordingWindow.from_store(src, seek=seek, duration=duration)
         dst = SqliteStore(path=str(out))
         with dst:
             for src_name, dst_name in kept.items():
                 ptype = payload_types[src_name]
-                src_s: Stream[Any] = (
-                    src.stream(src_name, ptype).from_time(seek or None).to_time(duration)
-                )
+                src_s: Stream[Any] = window.apply(src.stream(src_name, ptype))
                 dst_s: Stream[Any] = dst.stream(dst_name, ptype)
                 total = src_s.count()
                 cb = progress(total, f"{dst_name:>16s}")

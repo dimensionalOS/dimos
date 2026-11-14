@@ -203,6 +203,16 @@ class Store(Configurable, CompositeResource):
         """Return names of all streams in this store."""
         return list(self._streams.keys())
 
+    def first_ts(self) -> float | None:
+        """Earliest timestamp across all non-empty streams, regardless of insertion order."""
+        starts: list[float] = []
+        for name in self.list_streams():
+            stream: Stream[Any] = self.stream(name)
+            first = next(iter(stream.order_by("ts").limit(1)), None)
+            if first is not None:
+                starts.append(first.ts)
+        return min(starts, default=None)
+
     def summary(self) -> str:
         """One line per stream — name, count, ts range. See :meth:`Stream.summary`."""
         return "\n".join(stream.summary() for _, stream in self.streams.items())

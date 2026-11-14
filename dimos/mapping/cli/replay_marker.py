@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
@@ -90,8 +91,9 @@ def main(
     rr.log("world/camera", pinhole, static=True)
 
     with store:
-        color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
-        lidar = store.stream("lidar", PointCloud2).from_time(seek or None).to_time(duration)
+        window = RecordingWindow.from_store(store, seek=seek, duration=duration)
+        color_image = window.apply(store.stream("color_image", Image))
+        lidar = window.apply(store.stream("lidar", PointCloud2))
 
         # Pass 1: robot base pose over time (from lidar.pose).
         for lidar_obs in lidar:
@@ -143,8 +145,9 @@ def main(
         # Each 3D detection gets its own entity path so it persists from its
         # ts onward — earlier detections stay visible as new ones appear.
         # Color by ts (turbo) across the recording's full image-time range.
-        ts_min = color_image.first().ts
-        ts_max = color_image.last().ts
+        # A shared recording window can precede the camera's first frame.
+        ts_min = color_image.first().ts if n_img else 0.0
+        ts_max = color_image.last().ts if n_img else 0.0
         ts_span = ts_max - ts_min if ts_max > ts_min else 1.0
         n_det = 0
         for det_obs in pipeline.transform(xf):

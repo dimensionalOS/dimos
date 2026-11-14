@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
@@ -465,7 +466,8 @@ def main(
     if export_cloud or full_pgo:
         pgo = True
 
-    lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
+    window = RecordingWindow.from_store(store, seek=seek, duration=duration)
+    lidar = window.apply(store.stream(lidar_stream, PointCloud2))
 
     print(lidar.summary())
 
@@ -573,7 +575,7 @@ def main(
     pgo_map = None
     pgo_path: list[tuple[float, float, float]] = []
     graph: PoseGraph | None = None
-    if pgo:
+    if pgo and total:
         print("running PGO twopass map...")
         with progress(total, "pgo pass 1 (optimizing)") as bar:
             # keyframe like the live mapper, so a premap and a live run are one kind of graph
@@ -598,7 +600,7 @@ def main(
             )
 
     full_pgo_map = None
-    if full_pgo:
+    if full_pgo and total:
         assert graph is not None
         with progress(total, "full pgo (rebuilding)") as bar:
             full_pgo_map = _accumulate(
@@ -637,14 +639,12 @@ def main(
         # (verified: matches lidar_base_pose + BASE_TO_OPTICAL to ~1mm). With
         # --image-pose, swap that stored pose for a different source (e.g.
         # fastlio_odometry), composing the base→optical mount onto it first.
-        color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
+        color_image = window.apply(store.stream("color_image", Image))
         n_images = color_image.count()
         if image_pose is not None:
             from dimos.mapping.cli.pose_fill import pose_fill
 
-            src_pose: Stream[Any] = (
-                store.stream(image_pose).from_time(seek or None).to_time(duration)
-            )
+            src_pose: Stream[Any] = window.apply(store.stream(image_pose))
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
         cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
