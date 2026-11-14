@@ -93,11 +93,18 @@ def dual_openyam_leader_collection_profile(
     )
 
 
-def _collection_parts(cameras: tuple[str, ...]) -> tuple[Blueprint, ...]:
-    """The recorder, episode monitor and cameras every collection blueprint shares."""
+def collection_recorder_parts(cameras: tuple[str, ...]) -> tuple[Blueprint, ...]:
+    """The recorder and episode monitor for the named camera streams, without camera modules."""
     return (
         collect(profile=dual_openyam_leader_collection_profile(cameras)),
         EpisodeMonitorModule.blueprint(instance_name="episodes"),
+    )
+
+
+def _collection_parts(cameras: tuple[str, ...]) -> tuple[Blueprint, ...]:
+    """The recorder, episode monitor and cameras every collection blueprint shares."""
+    return (
+        *collection_recorder_parts(cameras),
         *[dual_openyam_collection_camera(name) for name in cameras],
     )
 
