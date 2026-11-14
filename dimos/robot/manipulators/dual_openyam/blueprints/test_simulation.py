@@ -21,7 +21,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-import pinocchio
 import pytest
 from pytest_mock import MockerFixture
 
@@ -54,8 +53,8 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_HOME_JOINTS,
     dual_openyam_arm_joints,
 )
+from dimos.robot.manipulators.dual_openyam.conftest import PlannedFrame
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
-from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL_PATH
 from dimos.robot.manipulators.dual_openyam.sim_connection import DualOpenYamSimConnection
 from dimos.robot.manipulators.dual_openyam.sim_scene import DUAL_OPENYAM_TABLE_TOP_Z
 from dimos.teleop.webxr.controller_types import Buttons
@@ -279,15 +278,14 @@ def test_planner_plans_and_the_rig_executes(planning_stack: Deployed) -> None:
 
 
 @pytest.mark.self_hosted
-def test_a_held_grip_moves_that_arm_with_its_controller(teleop_stack: Deployed) -> None:
-    model = pinocchio.buildModelFromUrdf(str(DUAL_OPENYAM_MODEL_PATH))
-    placements = model.createData()
-
+def test_a_held_grip_moves_that_arm_with_its_controller(
+    teleop_stack: Deployed, planned_frame: PlannedFrame
+) -> None:
     def grasp_frame(side: str) -> NDArray[np.float64]:
         """Where the rig's joints put that arm's grasp frame, by the planning model."""
         now = teleop_stack.measured()
-        pinocchio.framesForwardKinematics(model, placements, np.array([now[n] for n in ARM]))
-        return placements.oMf[model.getFrameId(f"{side}_grasp_frame")].translation.copy()
+        joints = {name.removeprefix("arm/"): now[name] for name in ARM}
+        return np.array(planned_frame(f"{side}_grasp_frame", joints).translation)
 
     def operator(raised: float) -> None:
         """One sample of an operator holding the left grip, the controller ``raised`` metres."""
