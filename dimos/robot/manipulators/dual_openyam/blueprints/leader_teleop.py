@@ -26,6 +26,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
+from dimos.hardware.controllers.joycon.joycon_module import JoyConTeleopModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -47,7 +48,6 @@ from dimos.robot.manipulators.dual_openyam.leader_connection import (
     DualOpenYamLeaderArmConnection,
     DualOpenYamLeaderConnection,
 )
-from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
 
 # Following a human arm needs more than the URDF's 2 rad/s.
 DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 3.0

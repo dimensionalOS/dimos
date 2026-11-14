@@ -24,6 +24,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import In
+from dimos.hardware.controllers.joycon.joycon_module import JoyConTeleopModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -43,7 +44,6 @@ from dimos.robot.manipulators.openarm.mini_connection import (
     OpenArmMiniArmConnection,
     OpenArmMiniConnection,
 )
-from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
 
 # Leader-follower needs human arm speeds, well above the WebXR IK profile.
 _ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)

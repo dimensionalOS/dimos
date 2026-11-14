@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from dimos.teleop.joycon.joycon_module import JoyConTeleopModule, _JoyConDevices
+from dimos.hardware.controllers.joycon.joycon_module import JoyConTeleopModule, _JoyConDevices
 
 ZR = 313
 PLUS = 315

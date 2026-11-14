@@ -67,7 +67,7 @@ per side drives the jaws and a pause. The buttons, the pause behaviour and the
 Bluetooth pairing are the same as for the
 [OpenArm Mini](/docs/capabilities/manipulation/openarm_mini_teleop.md#joy-cons-in-place-of-the-triggers):
 ZL / ZR held close the left / right jaw, plus pauses and resumes following.
-Pair each Joy-Con once with `dimos/teleop/joycon/pair_joycon.sh L` (then `R`).
+Pair each Joy-Con once with `dimos/hardware/controllers/joycon/pair_joycon.sh L` (then `R`).
 
 Each calibration file must list only joint_1 to joint_6. To reuse files that
 include the trigger, write copies without it:

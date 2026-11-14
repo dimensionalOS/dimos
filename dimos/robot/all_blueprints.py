@@ -320,7 +320,7 @@ all_modules = {
     "hosted-stats-module": "dimos.teleop.hosted.hosted_stats.HostedStatsModule",
     "hybrid-teleop-coordinator": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim.HybridTeleopCoordinator",
     "joint-trajectory-controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller.JointTrajectoryController",
-    "joy-con-teleop-module": "dimos.teleop.joycon.joycon_module.JoyConTeleopModule",
+    "joy-con-teleop-module": "dimos.hardware.controllers.joycon.joycon_module.JoyConTeleopModule",
     "keyboard-teleop": "dimos.robot.unitree.keyboard_teleop.KeyboardTeleop",
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
     "le-robot-policy-module": "dimos.imitation.policy.lerobot.module.LeRobotPolicyModule",

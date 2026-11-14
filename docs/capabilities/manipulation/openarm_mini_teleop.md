@@ -81,7 +81,7 @@ left, R on the right) drives the jaws, the episodes and a pause.
 `teleop-openarm-mini-joycon` runs everything on one machine;
 `teleop-openarm-mini-joycon-leader` is the operator half, next to
 `teleop-openarm-mini-follower` or `openarm-mini-follower-collection` on the robot.
-`JoyConTeleopModule` (`dimos/teleop/joycon/joycon_module.py`) reads the Joy-Cons
+`JoyConTeleopModule` (`dimos/hardware/controllers/joycon/joycon_module.py`) reads the Joy-Cons
 through the Linux `hid-nintendo` driver, so no extra package is needed.
 
 | Joy-Con | does |
@@ -112,8 +112,8 @@ dimos run teleop-openarm-mini-joycon-leader --robot-ip <robot-ip> \
 Pair each Joy-Con once, pressing its sync button when asked:
 
 ```bash
-dimos/teleop/joycon/pair_joycon.sh L
-dimos/teleop/joycon/pair_joycon.sh R
+dimos/hardware/controllers/joycon/pair_joycon.sh L
+dimos/hardware/controllers/joycon/pair_joycon.sh R
 ```
 
 The first run adds you to the `input` group (log in again after) and asks
