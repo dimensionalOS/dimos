@@ -11,27 +11,27 @@ Start with the OpenYAM hand-teaching tutorial or choose a guide for your task.
 
 ## Quick Start
 
-Recent addition: the A-750 keyboard teleop blueprint is now available via:
-
-```bash
-dimos run keyboard-teleop-a750
-```
-
 ### Keyboard Teleop (single command)
 
 Each blueprint launches the full stack: keyboard UI, mock controller, IK solver, and Drake visualization:
 
 ```bash
-dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
-dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
+
+The Galaxea A1Z runs only on the real arm, through `A1ZConnection`:
+`dimos run a1z-keyboard-teleop --a1zconnection.can-port a1zcan`. See the
+[A1Z guide](/docs/capabilities/manipulation/a1z.md) for its other blueprints.
+
+The A-750 also runs only on the real arm, through `A750Connection`:
+`dimos run keyboard-teleop-a750 --a750connection.device-path /dev/ttyACM0`. See the
+[A-750 guide](/docs/capabilities/manipulation/a750.md).
 
 YAM and OpenArm now use direct connection modules. The coordinator sends joint
 commands over streams; the connection owns the complete native robot and CAN
@@ -507,8 +507,8 @@ planner is locked for its whole native call.
 
 | Blueprint | Description |
 |-----------|-------------|
-| `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
-| `keyboard-teleop-a1z` | Galaxea A1Z keyboard teleop, planning, and hardware control |
+| `keyboard-teleop-a750` | A-750 keyboard teleop on the real arm, through `A750Connection` |
+| `a1z-keyboard-teleop` | Galaxea A1Z keyboard teleop on the real arm, through `A1ZConnection` |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
@@ -542,7 +542,7 @@ planner is locked for its whole native call.
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
 | [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, mapping, and task helpers |
-| [`robot/manipulators/a750/config.py`](/dimos/robot/manipulators/a750/config.py) | A-750 model and hardware config |
+| [`robot/manipulators/a750/config.py`](/dimos/robot/manipulators/a750/config.py) | A-750 model and coordinator connection config |
 | [`robot/manipulators/a750/blueprints/teleop.py`](/dimos/robot/manipulators/a750/blueprints/teleop.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints/basic.py`](/dimos/robot/manipulators/piper/blueprints/basic.py) | Piper coordinator blueprint |
 | [`robot/manipulators/piper/blueprints/teleop.py`](/dimos/robot/manipulators/piper/blueprints/teleop.py) | Piper teleop blueprints |

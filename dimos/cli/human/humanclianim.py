@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import threading
 import time
 
@@ -21,11 +20,10 @@ from terminaltexteffects import Color  # type: ignore[attr-defined]
 from terminaltexteffects.effects.effect_expand import Expand
 
 from dimos.cli import theme
+from dimos.cli.tui_args import parse_tui_args
 
 _humancli_main = None
 _import_complete = threading.Event()
-
-print(theme.ACCENT)
 
 
 def import_cli_in_background() -> None:
@@ -42,6 +40,7 @@ def import_cli_in_background() -> None:
 
 
 def run_banner_animation() -> None:
+    print(theme.ACCENT)
     ascii_art = "\n" + theme.ascii_logo.replace("\n", "\n ")
 
     # Clear screen before starting animation
@@ -64,12 +63,13 @@ def run_banner_animation() -> None:
 
 
 def main() -> None:
+    args = parse_tui_args("Chat with the running DimOS agent.")
     # Start importing CLI in background (this is slow)
     import_thread = threading.Thread(target=import_cli_in_background, daemon=True)
     import_thread.start()
 
     # Run the animation while imports happen (if not in web mode)
-    if not (len(sys.argv) > 1 and sys.argv[1] == "web"):
+    if args.mode != "web":
         run_banner_animation()
 
     _import_complete.wait(timeout=10)

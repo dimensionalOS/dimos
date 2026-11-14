@@ -147,15 +147,20 @@ export class TopicEgress {
           index++;
           continue;
         }
-        const due = this.#nextDue.get(frame.key) ?? 0;
-        if (due > this.now()) {
+        const due = this.#nextDue.get(frame.key);
+        if (due !== undefined && due > this.now()) {
           next = Math.min(next, due);
           index++;
           continue;
         }
         this.#queue.splice(index, 1);
         if (Number.isFinite(this.maxHz)) {
-          this.#nextDue.set(frame.key, this.now() + 1000 / this.maxHz);
+          // Anchored to the schedule, not to this (late) send: a timer that
+          // fires a millisecond late must not push every later due time, or
+          // a source at the viewer's own rate loses one frame per period of
+          // accumulated lateness. After a gap the schedule restarts from now.
+          const period = 1000 / this.maxHz;
+          this.#nextDue.set(frame.key, Math.max(this.now() - period, (due ?? this.now()) + period));
         }
         const send = this.sink.sendFrame(frame.bytes);
         const pending: LatestSend = {

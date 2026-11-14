@@ -19,6 +19,7 @@ from functools import cache
 import sys
 import time
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
+import warnings
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -204,7 +205,24 @@ class Stream(CompositeResource, Generic[T, O]):
         """Iterate a transform source, applying query filters in Python."""
         assert isinstance(self._source, Stream) and self._transform is not None
         it = self._transform(iter(self._source))
+        if any(isinstance(f, NearFilter) for f in self._query.filters):
+            it = self._warn_if_unposed_transform(it)
         return cast("Iterator[O]", self._query.apply(it, live=self.is_live()))
+
+    def _warn_if_unposed_transform(self, it: Iterator[Observation[T]]) -> Iterator[Observation[T]]:
+        """Check transformed observations as they pass through, warning only at exhaustion."""
+        seen = False
+        has_pose = False
+        for obs in it:
+            seen = True
+            has_pose = has_pose or obs.pose_tuple is not None
+            yield obs
+        if seen and not has_pose:
+            warnings.warn(
+                f"Transformed stream {self.name!r} has no attached poses, so near() "
+                "cannot return results. Attach poses before applying near().",
+                stacklevel=1,
+            )
 
     def _replace_query(self, **overrides: Any) -> Stream[T, O]:
         q = self._query

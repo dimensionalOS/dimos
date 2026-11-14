@@ -34,6 +34,7 @@ import dimos.core.daemon as core_daemon
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 import dimos.core.run_registry as run_registry
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
 import dimos.utils.cache as cache_utils
@@ -360,6 +361,61 @@ def stubbed_run(
         global_config.update(**original_global_config)
 
 
+@pytest.mark.parametrize("run_options", [[], ["--daemon"]])
+@pytest.mark.parametrize(
+    "import_error",
+    ["No module named roboplan", "libroboplan_core.so: undefined symbol: example"],
+)
+def test_run_reports_missing_dependency_before_starting(
+    stubbed_run: dict[str, Any],
+    mocker: MockerFixture,
+    run_options: list[str],
+    import_error: str,
+) -> None:
+    hint = (
+        f"Failed to import roboplan.core: {import_error}. "
+        "Install the manipulation extra before selecting the roboplan backend."
+    )
+    mocker.patch.object(
+        RunModuleA, "check_dependencies", side_effect=ManipulationModule.check_dependencies
+    )
+    mocker.patch(
+        "dimos.manipulation.manipulation_module.import_module",
+        side_effect=ImportError(import_error),
+    )
+    fork_daemon = mocker.patch.object(lifecycle, "fork_daemon")
+
+    result = CliRunner().invoke(main, ["run", "alpha", "beta", *run_options])
+
+    assert result.exit_code == 1
+    assert f"Error: {hint}" in result.output
+    assert result.output.count(hint) == 1
+    assert stubbed_run == {}
+    fork_daemon.assert_not_called()
+
+
+def test_run_leaves_hosted_dependency_checks_to_the_host(
+    stubbed_run: dict[str, Any],
+    mocker: MockerFixture,
+) -> None:
+    check_dependencies = mocker.patch.object(
+        RunModuleA, "check_dependencies", side_effect=ImportError("dependency missing locally")
+    )
+    mocker.patch.object(
+        get_all_blueprints,
+        "get_by_name_or_exit",
+        return_value=RunModuleA.blueprint().hosted(host="robot-host"),
+    )
+    run_hosted = mocker.patch.object(lifecycle, "_run_hosted")
+
+    result = CliRunner().invoke(main, ["run", "alpha"])
+
+    assert result.exit_code == 0, result.output
+    check_dependencies.assert_not_called()
+    run_hosted.assert_called_once()
+    assert "blueprint" not in stubbed_run
+
+
 @pytest.mark.parametrize(
     ("exec_handoff", "expected_run_id"),
     [(True, "launcher-run"), (False, "test-alpha")],
@@ -556,10 +612,17 @@ def test_run_options_still_work_after_dynamic_config_flags(
     assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
 
 
-def test_run_help_lists_dynamic_flags_without_starting(stubbed_run: dict[str, Any]) -> None:
+def test_run_help_lists_dynamic_flags_without_starting(
+    stubbed_run: dict[str, Any], mocker: MockerFixture
+) -> None:
+    check_dependencies = mocker.patch.object(
+        RunModuleA, "check_dependencies", side_effect=AssertionError("help checked dependencies")
+    )
+
     result = CliRunner().invoke(main, ["run", "alpha", "--help"])
 
     assert result.exit_code == 0, result.output
+    check_dependencies.assert_not_called()
     # In CI, GITHUB_ACTIONS makes typer emit ANSI styling that splits option
     # names mid-string, so strip the escape codes before matching.
     output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
