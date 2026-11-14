@@ -52,12 +52,12 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.robot.manipulators.dual_openyam.leader_urdf_manager import DualOpenYamLeaderUrdfManager
 from dimos.robot.manipulators.feetech.connection import (
     GUARDED_JOINT_FRAME_ID,
     FeetechConnection,
     FeetechConnectionConfig,
 )
-from dimos.robot.urdf_manager import UrdfManager
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -258,8 +258,11 @@ def _manipulation() -> Blueprint:
 
 
 def _urdf_manager() -> Blueprint:
-    """Serves the URDF and its meshes to viewers; the planner already puts the links on tf."""
-    return UrdfManager.blueprint(
+    """Serves the URDF and its meshes to viewers, with a "leader" copy posed by the leader arms.
+
+    The planner already puts the follower's links on tf.
+    """
+    return DualOpenYamLeaderUrdfManager.blueprint(
         model=dual_openyam_model_config(robot="arm").model, publish_joint_tf=False
     )
 
