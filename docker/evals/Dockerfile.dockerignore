@@ -16,4 +16,6 @@
 **/*.pyc
 misc/DimSim/node_modules
 misc/DimSim/dist
+dimos/agents/node_modules
+dimos/agents/dist
 dimos/**/*.so

@@ -13,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # The self-hosted CI job's apt list plus Chromium's runtime libs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git unzip build-essential pkg-config \
-    libgl1 libturbojpeg portaudio19-dev libusb-1.0-0 \
+    libgl1 libegl1 libopengl0 libturbojpeg portaudio19-dev libusb-1.0-0 \
     libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
     libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
     libxkbcommon-x11-0 libnss3 libnspr4 libasound2t64 libatspi2.0-0 \
@@ -40,8 +40,9 @@ RUN deno run --allow-all "npm:playwright@${PLAYWRIGHT_VERSION}" install chromium
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-# The Pi eval agent (dimos/evals/agents/pi.py) shells out to the `pi` coding-agent CLI.
-ARG NODE_MAJOR=22
+# The Pi eval agent (dimos/evals/agents/pi.py) shells out to the `pi` coding-agent CLI;
+# the dimos agent (dimos/evals/agents/dimos_agent.py) needs Node 24 or 26.
+ARG NODE_MAJOR=24
 RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @earendil-works/pi-coding-agent \
@@ -66,6 +67,9 @@ RUN cd misc/DimSim \
     && deno install --no-lock \
     && deno run -A --no-lock "npm:vite@^5.4.10" build \
     && cd /app && deno install --entrypoint misc/DimSim/cli/cli.ts
+
+# The dimos agent's npm install and build, so its preflight does nothing at run time.
+RUN /app/.venv/bin/dimos agent version
 
 # Habitat's conda env (python 3.9) and HM3D example via the module's installer,
 # with micromamba in place of its nix shell.
