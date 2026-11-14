@@ -230,20 +230,22 @@ def _transition_problems(tree: Tree) -> Iterator[str]:
 
 
 def _started_on_entering(tree: Tree, name: str, seen: set[str]) -> set[str]:
-    """The activities that can start in the step that enters a node."""
+    """The activities that can start in the step that enters a node or falls back from it."""
     node = tree.nodes.get(name)
     if node is None or name in seen:
         return set()
     seen.add(name)
+    following = [check.fallback for check in node.requires if check.fallback is not None]
+    started: set[str] = set()
     if node.activity is not None:
-        return {node.activity} & tree.activities.keys()
-    if node.is_switch:
-        following = [transition.goto for transition in node.transitions]
-    elif node.children:
-        following = [node.initial] if node.initial is not None else []
+        started = {node.activity} & tree.activities.keys()
+    elif node.is_switch:
+        following += [transition.goto for transition in node.transitions]
+    elif node.initial is not None:
+        following.append(node.initial)
     else:
-        following = list(node.parallel)
-    return {activity for inner in following for activity in _started_on_entering(tree, inner, seen)}
+        following += node.parallel
+    return started.union(*(_started_on_entering(tree, inner, seen) for inner in following))
 
 
 def _fallback_problems(tree: Tree) -> Iterator[str]:
