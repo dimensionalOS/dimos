@@ -80,7 +80,8 @@ def test_a_low_battery_sends_the_patrol_to_the_charger_and_back() -> None:
                 case TransitionRecord(node, trigger, goto):
                     records.append((node, trigger, goto))
                 case SendStart(call) if call.rpc == "MLSPlannerNative.go_to":
-                    calls.append(f"go_to({call.args['x']}, {call.args['y']})")
+                    position = call.args["pose"]["pose"]["position"]
+                    calls.append(f"go_to({position['x']}, {position['y']})")
                     # Each goal's stamp is its place in the calls made.
                     queue.append(ReturnItem(call, to_plain(Time(len(calls), 0))))
                 case SendStart(call) | SendCancel(call):
