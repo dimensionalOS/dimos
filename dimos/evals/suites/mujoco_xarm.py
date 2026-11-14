@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""xArm7 at a table with a red ball (``apple``) and a cylinder (``cup``): two picks,
-planner skills and the wrist camera only, graded on the bodies' recorded poses.
+"""xArm7 on a table with gripper-sized shapes and bowls: a pick and a pick-and-place,
+driven through the Python API with the planner and the wrist camera only, graded on the
+bodies' recorded poses.
 
     dimos evals run dimos.evals.suites.mujoco_xarm --agent dimos.evals.agents.pi
 """
@@ -21,31 +22,28 @@ planner skills and the wrist camera only, graded on the bodies' recorded poses.
 from __future__ import annotations
 
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.scorers import lifted, stacked_on
+from dimos.evals.scorers import inside, lifted
 from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 
-TRACKED = ("apple", "cup")
+TRACKED = ("orange_cylinder", "red_cube", "blue_bowl")
 
 PERCEPTION_MODULES = (
-    "object-scene-registration-module",
+    "manipulation-localize",
     "pick-and-place-module",
     "heuristic-grasp-module",
 )
 
 SCENE = (
-    "The table top is at z=0.13 m in the world frame and spans roughly x=0.30 to 0.60 m "
-    "ahead of the arm base. On it are a red ball about 8 cm wide, an orange ball about 9 cm "
-    "wide and a cylinder about 7 cm wide and 12 cm tall; find where they are by looking "
-    "through the wrist camera. The gripper starts pointing straight down: for top-down moves "
-    "omit roll/pitch/yaw in move_to_pose to keep the current orientation, or pass "
-    "roll=3.1416, pitch=0. roll=pitch=yaw=0 points the gripper up."
+    "The arm stands on a table with a few small objects and some containers to put them "
+    "in. Find them through the wrist camera. The gripper starts pointing straight down: "
+    "for top-down moves omit the orientation in arm.move_pose to keep it."
 )
 
 
 def environment() -> MujocoEnvironment:
     return MujocoEnvironment(
-        blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
+        blueprint=["xarm-perception-sim", "observe-skill"],
         disable=PERCEPTION_MODULES,
         scene=LfsPath("xarm7/scene.xml"),
         tracked_bodies=TRACKED,
@@ -55,17 +53,18 @@ def environment() -> MujocoEnvironment:
 SUITE: Suite = [
     EvalCase(
         id="xarm_pick_cylinder",
-        inputs=f"Pick up the cylinder from the table and hold it in the air. {SCENE}",
+        inputs=f"Pick up the orange cylinder from the table and hold it in the air. {SCENE}",
         environment=environment(),
-        grade=lifted("cup", by_m=0.05),
+        grade=lifted("orange_cylinder", by_m=0.05),
         timeout_s=600.0,
         tags=frozenset({"mujoco", "manipulation", "pick"}),
     ),
     EvalCase(
-        id="xarm_ball_on_cylinder",
-        inputs=f"Pick up the red ball and place it on top of the cylinder. {SCENE}",
+        id="xarm_cube_in_bowl",
+        inputs=f"Pick up the red cube and put it in the blue bowl. {SCENE}",
         environment=environment(),
-        grade=stacked_on("apple", "cup", rise_m=(0.08, 0.12), band_m=0.07),
+        # Bowl floor 10.4 x 14.4 cm; a resting cube's centre is 2.8 cm above the bowl.
+        grade=inside("red_cube", "blue_bowl", half_extents_m=(0.052, 0.072), rise_m=(0.02, 0.04)),
         timeout_s=900.0,
         threshold=0.5,
         tags=frozenset({"mujoco", "manipulation", "pick", "place"}),

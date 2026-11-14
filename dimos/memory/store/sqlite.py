@@ -216,6 +216,16 @@ class SqliteStore(Store):
         db_names = set(self._registry.list_streams())
         return sorted(db_names | set(self._streams.keys()))
 
+    def pose_counts(self) -> dict[str, int]:
+        """Observations with an attached pose, per stream."""
+        with self._registry_lock:
+            return {
+                name: self._registry_conn.execute(
+                    f'SELECT COUNT(*) FROM "{name}_rtree"'
+                ).fetchone()[0]
+                for name in self._registry.list_streams()
+            }
+
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)
         with self._registry_lock:

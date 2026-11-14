@@ -39,7 +39,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir dimos-app && cd dimos-app
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
+uv pip install --torch-backend cpu 'dimos[base,unitree,sim,drone]'
 uv run dimos --help
 ```
 

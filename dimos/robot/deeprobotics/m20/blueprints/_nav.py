@@ -27,7 +27,7 @@ from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 
 VOXEL_SIZE_M = 0.08
-WALL_CLEARANCE_M = 0.3
+WALL_CLEARANCE_M = 0.07
 PLANNER_VIZ_HZ = 2.0
 PLANNER_VIZ_SWEEP_CELLS = 1
 

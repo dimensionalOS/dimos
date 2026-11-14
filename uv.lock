@@ -1,6 +1,6 @@
 version = 1
 revision = 3
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.10.12, !=3.11.0, !=3.11.1, !=3.11.2, !=3.11.3, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
     "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'win32'",
@@ -32,21 +32,21 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-11-07T01:13:40.343231374Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-roboplan = false
-dimos-cdrgen = false
-dimos-viewer = false
-dimos-lcm = false
-lcm = false
-edgetam-dimos = false
-eclipse-zenoh = false
 can-motor-control = false
-md-babel-py = false
 dim-odom = false
+dimos-cdrgen = false
+dimos-lcm = false
+dimos-viewer = false
+eclipse-zenoh = false
+edgetam-dimos = false
+lcm = false
+md-babel-py = false
 mjcf-to-urdf = false
+roboplan = false
 
 [manifest]
 constraints = [
@@ -1883,6 +1883,7 @@ dependencies = [
     { name = "lz4" },
     { name = "matplotlib" },
     { name = "mcap" },
+    { name = "mcap-ros2-support" },
     { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2608,6 +2609,7 @@ requires-dist = [
     { name = "mcap", specifier = ">=1.2.0" },
     { name = "mcap", marker = "extra == 'learning'", specifier = ">=1.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
+    { name = "mcap-ros2-support", specifier = ">=0.5" },
     { name = "mjcf-to-urdf", marker = "extra == 'sim'", specifier = ">=0.1.1" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
@@ -2655,7 +2657,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = "==0.32.0" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
     { name = "rich", specifier = ">=14.3" },
-    { name = "roboplan", marker = "extra == 'planning'", specifier = ">=0.7.0,<0.8.0" },
+    { name = "roboplan", marker = "extra == 'planning'", specifier = "==0.8.0" },
     { name = "safetensors", marker = "extra == 'perception'", specifier = ">=0.8" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
@@ -2733,7 +2735,7 @@ lint = [
     { name = "pytest", specifier = "==8.3.5" },
     { name = "python-can", specifier = ">=4" },
     { name = "python-socketio", specifier = ">=5.16.1" },
-    { name = "roboplan", specifier = ">=0.7.0,<0.8.0" },
+    { name = "roboplan", specifier = "==0.8.0" },
     { name = "ruff", specifier = "==0.14.3" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "sounddevice", specifier = ">=0.5.5" },
@@ -2816,7 +2818,7 @@ tests = [
     { name = "python-lsp-ruff", specifier = "==2.3.0" },
     { name = "python-lsp-server", extras = ["all"], specifier = "==1.14.0" },
     { name = "requests-mock", specifier = "==1.12.1" },
-    { name = "roboplan-core", specifier = ">=0.7.0,<0.8.0" },
+    { name = "roboplan-core", specifier = "==0.8.0" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tokenizers", specifier = ">=0.21" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
@@ -2877,7 +2879,7 @@ tests-self-hosted = [
     { name = "python-lsp-ruff", specifier = "==2.3.0" },
     { name = "python-lsp-server", extras = ["all"], specifier = "==1.14.0" },
     { name = "requests-mock", specifier = "==1.12.1" },
-    { name = "roboplan-core", specifier = ">=0.7.0,<0.8.0" },
+    { name = "roboplan-core", specifier = "==0.8.0" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tokenizers", specifier = ">=0.21" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
@@ -5550,6 +5552,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8b/38/8bd73953b9c37dd7a2c590e72ab4fa4682a43864fe1d55f7209f2536fa64/mcap-1.3.1.tar.gz", hash = "sha256:2878879a786021aa7f7f36319276396a778717ccd013b2191fe94d37572d7551", size = 21676, upload-time = "2025-12-24T21:31:35.476Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/63/22/dad47e86047344f110a9d589d90de49d9c54db7a7ea4f0ef91fb3e8e9f3f/mcap-1.3.1-py3-none-any.whl", hash = "sha256:9098685d67288a8087166504cf4adf617cfa8639bb60e936af113f62c11c293f", size = 20678, upload-time = "2025-12-24T21:31:33.959Z" },
+]
+
+[[package]]
+name = "mcap-ros2-support"
+version = "0.5.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mcap" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/84/0d/f6da01d8e4b73861dba17fd2ebd9a78d2fd4fa582ad348cf18d16a79a7e1/mcap_ros2_support-0.5.7.tar.gz", hash = "sha256:8ddb67e452a6e2963664e29bc8868e61d7011b72feb2b62832ed444e27ca3ab8", size = 23295, upload-time = "2025-12-24T21:25:37.614Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/c5/8e8636099c180031436a011908a22216c25e6cb7790ba748212e203317c4/mcap_ros2_support-0.5.7-py3-none-any.whl", hash = "sha256:349f0e0f7af8ebeb516003e801ea5c5de5b4b65359ce4a17a8d98b25a9cea260", size = 22086, upload-time = "2025-12-24T21:25:36.425Z" },
 ]
 
 [[package]]
@@ -9193,7 +9207,7 @@ wheels = [
 
 [[package]]
 name = "roboplan"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
@@ -9206,14 +9220,14 @@ dependencies = [
     { name = "roboplan-simple-ik" },
     { name = "roboplan-toppra" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f4/b6/c839aa9cad3defa99995a908260e338f23827b9989cc665e3cd6a59b38fd/roboplan-0.7.0.tar.gz", hash = "sha256:2c447641391205ac5e5b72a7066a9ad6a65f0951107eebe4d5a9b42da5dec239", size = 49004132, upload-time = "2026-09-20T01:12:03.959Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/e3/067738b1a35eab0fb5bf33ab2c2994811605bb321bdba002b977a1788363/roboplan-0.8.0.tar.gz", hash = "sha256:07c3032b3dc1b78a32087c4504b11cbb2bbc9c87c2ad20b2349d340ab7e6f178", size = 52664001, upload-time = "2026-10-31T20:53:45.875Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/f4/3cc7afa1c6c66996f74c0586475a505e7a648423831702a66e17ab3018d0/roboplan-0.7.0-0-py3-none-any.whl", hash = "sha256:c5e17ad67d889d7524982d9ed981db47b57263ebb6c671413979acdb07559f0d", size = 2022, upload-time = "2026-09-20T01:12:02.113Z" },
+    { url = "https://files.pythonhosted.org/packages/42/9f/3ecba31942679dc5f4690cb8acbb99c7314d0198e0deef83290a1c8dc7e4/roboplan-0.8.0-0-py3-none-any.whl", hash = "sha256:eae20b9436cf2f3470a5f5ec1f8909ad1fd595a17144a25665759b2bf397658c", size = 2095, upload-time = "2026-10-31T20:53:44.184Z" },
 ]
 
 [[package]]
 name = "roboplan-cartesian-planning"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
@@ -9222,36 +9236,36 @@ dependencies = [
     { name = "roboplan-oink" },
     { name = "roboplan-toppra" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/94/7c/fb8741f8d1174fd4135282bea34f5a762f9cedfa51a86695f64138a75661/roboplan_cartesian_planning-0.7.0.tar.gz", hash = "sha256:ba00ca02ed7fe470af6a86a041465abfeded40f4cc0e3d152b6b895069434551", size = 49006968, upload-time = "2026-09-20T01:12:26.883Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/de/977ce27e9e4a68c27005ca61df89c74166906ea69b45691288bf4749c9ed/roboplan_cartesian_planning-0.8.0.tar.gz", hash = "sha256:6e479185e8e92df318dbed035e04162f7f87ba9fb909fd036fd0e12cbfb42294", size = 52667954, upload-time = "2026-10-31T20:54:18.258Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/ab/29c46bd3e12f0031bfd5fcb70b6b350e7ef1665ff2e0a0e37d3909787771/roboplan_cartesian_planning-0.7.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:870e1306c23f2ad70af2574c0ae4dd9be725c2ffc1227b8ab8bde89b71460e9e", size = 122231, upload-time = "2026-09-20T01:12:07.927Z" },
-    { url = "https://files.pythonhosted.org/packages/35/fc/44ee3bdb462aa9df5df14d0d09692eae81ac5f2d361ea2a844e3fa6b26bf/roboplan_cartesian_planning-0.7.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:5dc0a528e8d9de3f5978be506ed900606dd85d7f1170c3ef3383dc982d379f29", size = 154979, upload-time = "2026-09-20T01:12:09.187Z" },
-    { url = "https://files.pythonhosted.org/packages/27/0b/3a1781bc46418dee68b7c61c2833d46ceb9b4d36c1beb9d950b473aa5f33/roboplan_cartesian_planning-0.7.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:36c49682189353e639b77cfa1e7257bc98f56d0a5aa0b62514fac805937c5167", size = 166709, upload-time = "2026-09-20T01:12:10.392Z" },
-    { url = "https://files.pythonhosted.org/packages/e0/9e/383a8f02a2cf45dcf69220cda0e26e964ffeeaa692b7f36c3cea1284e904/roboplan_cartesian_planning-0.7.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:2dc12c477dc755d45b3b48a9af613c560f776a192712d7a42751e5f39ba0ffd5", size = 122809, upload-time = "2026-09-20T01:12:11.575Z" },
-    { url = "https://files.pythonhosted.org/packages/93/2f/ab9fe14daa3737422f465d90fb445b7c0c192931892cfa0898c113aa19f1/roboplan_cartesian_planning-0.7.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:938c773dcef72c2fab8d891d82df86bdf3ff851bee9c99813f5ee8b2c2005402", size = 155316, upload-time = "2026-09-20T01:12:12.89Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/ec/967443203422dfbc4b3411ff3474bd063b8d6b3999c3ee9b217acef13710/roboplan_cartesian_planning-0.7.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:ab02f55c4565d124b7aba4aefbd4b61f03a14f2adaa1ba89483f008b7b4f3a3e", size = 167176, upload-time = "2026-09-20T01:12:14.058Z" },
-    { url = "https://files.pythonhosted.org/packages/91/54/7c01728c4fb71a0dd77857166cf506036455739bee4c7335471c4b32d619/roboplan_cartesian_planning-0.7.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:478ca1246903afcf9b3c673f156976270ca165ff2061c9096a3c594b630b3b78", size = 120725, upload-time = "2026-09-20T01:12:15.399Z" },
-    { url = "https://files.pythonhosted.org/packages/64/f4/a257b87c6640bd5912a603ede2c0aafdb63d9efbebe3631a1e90d289ff44/roboplan_cartesian_planning-0.7.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:200527ef691152bd88e61caace704fb348e19ce9ad74260829ae973cff87a642", size = 150814, upload-time = "2026-09-20T01:12:16.49Z" },
-    { url = "https://files.pythonhosted.org/packages/a3/70/e68d0fec1520e0d2a67c1a7d432290a5650ea27bef2c02d09d1ef712be07/roboplan_cartesian_planning-0.7.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:95553f4b1b4c0460190d6d70bb70332adc5a90d6cd1e692078ebda3f507fbd7a", size = 162445, upload-time = "2026-09-20T01:12:17.765Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/ca/5e94a6c43b06bea4008f02eb5d134d15f2bf6745cc8e392c71ef6614199a/roboplan_cartesian_planning-0.8.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:6e56f088e99183cff548918bea87202a0cb8afdab8a2fa1eb4b385d4ad36ef70", size = 127341, upload-time = "2026-10-31T20:53:59.333Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/ce/91300ab5d3f04026931b6775a495d61110efe156d6b97b99ac168bd5c746/roboplan_cartesian_planning-0.8.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:b57e63b375890a2c58de44425380c38a15a2dadf6e576f40cb779fbe33302b6f", size = 166817, upload-time = "2026-10-31T20:54:00.552Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/a7/c11eca781499dd1b50aa6edbc275efa416f7248cf1e9e8a81b4d366b18ae/roboplan_cartesian_planning-0.8.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:8145fa676887a1b7165d15f866df072ff07103720e41e996373e62ffd6279571", size = 180237, upload-time = "2026-10-31T20:54:01.779Z" },
+    { url = "https://files.pythonhosted.org/packages/51/dc/2afe573ccce84cedcb01c714baff1f5f2685bc8087737402c1d4dd67db69/roboplan_cartesian_planning-0.8.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:8301cb0774372e118dd258635f8d371f49a58ab744c663a3f275a88807e4411e", size = 127867, upload-time = "2026-10-31T20:54:02.939Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/20/68763d0c4cb41e231eb2004e7ae399d83263da7e8537504077f85a7df4a2/roboplan_cartesian_planning-0.8.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:56554ff35a6234dc3f9ed82e33784f73b0a41d86d075f4cff26a6f3d5de65d6c", size = 167199, upload-time = "2026-10-31T20:54:04.039Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/93/020935e961467464083f4f5a9d769d49f22387154811ee1253f84b96de84/roboplan_cartesian_planning-0.8.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:793b442e9747f4998d57dd6dd75746acbe47a0115f7aad34e634ca41d531063c", size = 180700, upload-time = "2026-10-31T20:54:05.31Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/7d/5e9646131415111c87d8b427eaa5bd045ff7c83edc19a3cfa0645da45808/roboplan_cartesian_planning-0.8.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:4e372a1329a51979492c39ebc8a8340157eab555c6fec6482dabc3e88fc9b247", size = 125602, upload-time = "2026-10-31T20:54:06.599Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/84/f0e32f4acba26862145a960434b800cb4cf559d16e1aa28097ed0a233170/roboplan_cartesian_planning-0.8.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:19c22e2aae669a0a1ae0ee467c46dcc36f9f03cfd0e53fc8b77fe7923754a104", size = 162630, upload-time = "2026-10-31T20:54:07.934Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/d7/6b053f052cd845d077389da5576096782997662bbf72b80447cbbdbf3d5e/roboplan_cartesian_planning-0.8.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:950873f1bdba14105fab667c8cd99b497f0ed92225da566fca53576d0e57595a", size = 175904, upload-time = "2026-10-31T20:54:09.081Z" },
 ]
 
 [[package]]
 name = "roboplan-common"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/c6/8a259c5fbaf937445e7733a885901256cecf8a3d28837210b9c8e02cc5a2/roboplan_common-0.7.0.tar.gz", hash = "sha256:2a6efb93af35b64bebd5917a5c336f1ff94a935643673d3e1e79f6f9574ae4af", size = 49004190, upload-time = "2026-09-20T01:12:09.885Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/1f/e54b844c650b356fb0bdd04725b1c53bb923612faef30e9fefba6770c055/roboplan_common-0.8.0.tar.gz", hash = "sha256:515c753d63cae62b82249e95ba3a200bdaf6c467f525a990c17040e1f0eefd01", size = 52664887, upload-time = "2026-10-31T20:53:52.977Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/00/4c7bf1734df9780c8b672994176ccf797768edf6e34b618fdc914fd923c4/roboplan_common-0.7.0-0-py310-none-any.whl", hash = "sha256:bf352a96d323426a15d542c01540c9524aa16028c016d10d44d5c99c039342f8", size = 2403, upload-time = "2026-09-20T01:12:04.316Z" },
-    { url = "https://files.pythonhosted.org/packages/8a/40/c20b966c749cb96783cea1fed901604fbc0097b6c037b2688b00dd152ced/roboplan_common-0.7.0-0-py311-none-any.whl", hash = "sha256:89b60f830643d396cf80c746af490c4362f062c4407e22f462ee071b1bf385f4", size = 2401, upload-time = "2026-09-20T01:12:05.508Z" },
-    { url = "https://files.pythonhosted.org/packages/14/cd/5c2160f67a0bfe8e1f596edfe1e6ed972fdab534f91ee06fbb0943c5fc14/roboplan_common-0.7.0-0-py312-none-any.whl", hash = "sha256:3da009529ce15521744d49b0964be0e0b4fd5364998797c09cfa32957ad3b528", size = 2401, upload-time = "2026-09-20T01:12:06.409Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/48/c5a733f34bd079a466d05ed083a516a237b089edb151833016b2a1c77c0a/roboplan_common-0.8.0-0-py310-none-any.whl", hash = "sha256:c05e143b7fb7e5503a736295aa3ac2056b03e3df57527eb5b832949bc1b77241", size = 2406, upload-time = "2026-10-31T20:53:46.743Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/06/ed8459002e2917c163a4f7d3a7b7e86e9fb93a840ddc8c5bb553b06b748a/roboplan_common-0.8.0-0-py311-none-any.whl", hash = "sha256:8fb6ba74aa4d06eeeb849859f5527f68ee1a292b9e3454ca7731f63eac080531", size = 2405, upload-time = "2026-10-31T20:53:48.033Z" },
+    { url = "https://files.pythonhosted.org/packages/86/3d/bbe25b3ca7a81d7de51cfec2022275fea39a377e627e330e8cf1d5419f82/roboplan_common-0.8.0-0-py312-none-any.whl", hash = "sha256:5c497a07730cf6fb17a4f9b661d7138d00495b938eada7791f172c0a3508344f", size = 2406, upload-time = "2026-10-31T20:53:49.234Z" },
 ]
 
 [[package]]
 name = "roboplan-core"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
@@ -9261,65 +9275,65 @@ dependencies = [
     { name = "pin" },
     { name = "roboplan-common" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3e/06/9ba7ca2a071a74fda2c6b838279337d32c4f97001f5a5ec85f54cc5b5d58/roboplan_core-0.7.0.tar.gz", hash = "sha256:b49abfa99b9ee12906b92b6087c0a38ed3c2f4916a3818d93986d33170b1fd9e", size = 49003842, upload-time = "2026-09-20T01:12:42.823Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/61/75ead1b1d39416bd2d66c88c0cd678782e0ef29a36a8cc8650ed98b4eafa/roboplan_core-0.8.0.tar.gz", hash = "sha256:3c54e1815506b2b26461e170049b5bb8fed48f4bf57fb32d7c4361c9ef334bbe", size = 52664195, upload-time = "2026-10-31T20:54:12.887Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/77/2268897018be50789098eba09fc215c0bb2f911a42457b2ce9a1d28ac291/roboplan_core-0.7.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:783672fefbf3876e20779dad8452487fa4d7da67de544af1cebf5a11274d7f28", size = 623395, upload-time = "2026-09-20T01:12:18.977Z" },
-    { url = "https://files.pythonhosted.org/packages/d8/60/dd5f29695516bfdd7dbcdaee55639dde0ce9016f0aa25179bec1e0f6afc2/roboplan_core-0.7.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:6141d53b502cf8f7626ebb2ea89abb4ead8835238d53a4d90aa018ec8b72c9ab", size = 825897, upload-time = "2026-09-20T01:12:20.672Z" },
-    { url = "https://files.pythonhosted.org/packages/17/4d/5b09cc8a99230fdfc0064e8916c7ffbcd809f576d6cd31884aa139044951/roboplan_core-0.7.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:928f104161a3a6124497a56d582bbcf78b13be2ec9672da4eaa2d292b64713a1", size = 889829, upload-time = "2026-09-20T01:12:22.266Z" },
-    { url = "https://files.pythonhosted.org/packages/67/a5/9f6e3fc4bfb7e45467065dd3339fa13e8641d773bed87356b2d40a5d25ad/roboplan_core-0.7.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:97231e9ec1d57fbb3b8563e2db7402413e0e7c9e953865a3e52387c882d6a0c3", size = 623556, upload-time = "2026-09-20T01:12:23.992Z" },
-    { url = "https://files.pythonhosted.org/packages/55/67/65373b34ba99ab05bdc068f10754e60d6baed633b3dfe406d1761f925943/roboplan_core-0.7.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:ec600fd579142011ce26bf43365b3dc008420acbbeed15875a6f91f1f41ffd99", size = 825750, upload-time = "2026-09-20T01:12:25.558Z" },
-    { url = "https://files.pythonhosted.org/packages/26/55/ebba74beb3ef998ddea26a37736f46452618ab95d5f93cf9ea6aef3344d6/roboplan_core-0.7.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:28c59e7095ca4aaea170cc760cc4da282a8ec5c6991d848b15db8da3e2e8a7a1", size = 889488, upload-time = "2026-09-20T01:12:27.023Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/7e/867f14d9419c0bba9ca7b1a1fad9dd07b9b2878b9fb0113473fc31cfa5ac/roboplan_core-0.7.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:72b52926e287017fbe5042bc3b964ccc15fff279b0d99116501c597c200052ae", size = 619035, upload-time = "2026-09-20T01:12:28.565Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/13/c6f169116a9653bc9cb2bb052c982aafdf650c8f55d265f17f338c379c88/roboplan_core-0.7.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:e6a2c029d07792f6d2aa6b6a11781a6c76f7fa97619c96cfb55c1dfcba35ae1c", size = 816005, upload-time = "2026-09-20T01:12:30.054Z" },
-    { url = "https://files.pythonhosted.org/packages/6c/c5/de2ffe938100e70e8dd08201d05ebb5a7b1015609032dcbb914a58e83704/roboplan_core-0.7.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:3004f9b9102351050e714cb0122b51cdaedd166ac99905ab711b4e667b12a4f7", size = 879695, upload-time = "2026-09-20T01:12:31.641Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/8f/7faf5876e1bf995191a9c52af70a9de8383ebffe6274f06b7e46618fd22d/roboplan_core-0.8.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:89b85c4f95c6de4a50a7799eae4238b9d928fc206198e5c174b1ce0d96721fea", size = 654780, upload-time = "2026-10-31T20:53:49.648Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/45/7b0efed50ad8b697717bc50f85bd99b0d5b598d29219a4a77f913a63bef4/roboplan_core-0.8.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:957d5264d023aa38b587c47130c962902fe396308bac74bcd4b45c0a64c2f278", size = 890181, upload-time = "2026-10-31T20:53:51.096Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/f1/a2a66d3166005620beae4bd9a1fb7f42a19cbd4a6472045d99695b0f9c45/roboplan_core-0.8.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:eb6d2156a9896a4061ed373a6c5344fa64b07d85af6bf5eead850d20033685db", size = 964270, upload-time = "2026-10-31T20:53:52.438Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/b6/a4e76415086578f592e7fbc943b0878b0d83e57f213b7b061ba473c6236a/roboplan_core-0.8.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:234251972134431536fa5d7a6ae9f2860b6e9756c96398fc0b4c72c39fe83d00", size = 654860, upload-time = "2026-10-31T20:53:53.757Z" },
+    { url = "https://files.pythonhosted.org/packages/19/36/7eb5f0614af6cd480a3fc911c081e5bda15877c90dadf6267a9fbae93ed8/roboplan_core-0.8.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:edef43c127771b1174866cef5b72fca9e22e4b77d46a278623c48028fecbf2ad", size = 889852, upload-time = "2026-10-31T20:53:55.645Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/27/82f8e3f4dd8c4becdb9f0e5dd6e976bca93b6b4ccce5f796e829dbcc8306/roboplan_core-0.8.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:7f0532d00ff2317f21ad4a9ba87409b6c7adbe834bf4db0f3adb1da3a92576a7", size = 963994, upload-time = "2026-10-31T20:53:57Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/20/a62f857cfeb61f2547124c685715c87f3a9da7d6abaaa5816ca318fa482b/roboplan_core-0.8.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:5496c3c6125c1513f088a0c50e8313656f92bb808ef77cdde0b48c90389d41ec", size = 650618, upload-time = "2026-10-31T20:53:58.263Z" },
+    { url = "https://files.pythonhosted.org/packages/33/f6/b3872b8f8e5c2d3c17761f368d352880ccc5f39df2cee0b9176ebdb67af7/roboplan_core-0.8.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:364bc93b7f0ac81c2a36be3c6cc8f6798ddf5d700a53595296a526730ce8e9b9", size = 880435, upload-time = "2026-10-31T20:53:59.704Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/2c/c317a8e7b84c30d0f86dee21922043ea471fa42853967b21d0ec006c682d/roboplan_core-0.8.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:284c2ce7068ed600b3e6157ff54b86ad06377660c38f07dcbf94f2071d8f00d1", size = 953985, upload-time = "2026-10-31T20:54:00.908Z" },
 ]
 
 [[package]]
 name = "roboplan-example-models"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
     { name = "roboplan-common" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/61/8e/bb6d95a94e2cdc237155d1270cbc56cf91008f71b218149c6078bca0e127/roboplan_example_models-0.7.0.tar.gz", hash = "sha256:d9a4b9039987c951c757781a222a021b87678a74b78b120c9405241bc7a2ce84", size = 49004282, upload-time = "2026-09-20T01:13:12.962Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/7a/da49eadbe775ebd171f0a73494d28525a456d8dae1e5f2a6924707521813/roboplan_example_models-0.8.0.tar.gz", hash = "sha256:8587c68fafbd1cf7db88cf2ba9ca86a5d00d63f151812470cb082798bf9d447d", size = 52664887, upload-time = "2026-10-31T20:54:49.735Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e9/c3/c8b642717cdd8eea7e1ce3c30867a2de0b3808c64241011d10343f90c64b/roboplan_example_models-0.7.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e03c840f9c207af1fb316eb48e59e6a39c268d9117cc4685cfafd27f12045380", size = 29772692, upload-time = "2026-09-20T01:12:19.417Z" },
-    { url = "https://files.pythonhosted.org/packages/7d/b6/b322ed2ca7de0c97d3cec44562c91b562a38cfbd83ff5b1c1765e41a423d/roboplan_example_models-0.7.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:7dc2afa66860ac1abfb4d7fbed2a5566dd707a890c5701f5c1c88f3e0b9490bd", size = 29865419, upload-time = "2026-09-20T01:12:22.654Z" },
-    { url = "https://files.pythonhosted.org/packages/dd/7d/751eded323b0b930acb8c2e4595c3657108bafb8f17e46716a894c6b7e55/roboplan_example_models-0.7.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:459e3ff6f2d8aa344b627456219bd2f122f23005dfddb56b7250d348ecc6f000", size = 29874641, upload-time = "2026-09-20T01:12:25.847Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/b0/c46dc7b1bcea41c2318d82952ad5b4cbccc92164197aeb1020d5de27622f/roboplan_example_models-0.7.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:66bee735a39bf6b44da90b760c099c2317ee8911345acf95d735858e29717831", size = 29772383, upload-time = "2026-09-20T01:12:28.864Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/60/f50108884c675a1f3890f854a9ff266166ef0e8493a4d39d7bb3a1fa02ce/roboplan_example_models-0.7.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:ba23d8efb1a49a797ed9ce1f0f2195f1c61ee99081c499b2dee3ec91c9bf3c0a", size = 29865212, upload-time = "2026-09-20T01:12:31.872Z" },
-    { url = "https://files.pythonhosted.org/packages/86/d6/33eb00ac9f3a414bc416ab4b4647bbb027c9602c04f8176641cfcc34d9f6/roboplan_example_models-0.7.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:a1b839735cdf1933d39a5211ac5cd2071ac1498052d06453e61743474e94b3c5", size = 29874411, upload-time = "2026-09-20T01:12:35.149Z" },
-    { url = "https://files.pythonhosted.org/packages/67/34/635f887fdbaaec06b0848c4a3962b529be245907c6788bd0ac45c89ef857/roboplan_example_models-0.7.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:4e4e13072802feefaf2ef631492483226a834b45dec42ffba65dcd13d6eb5e6d", size = 29770206, upload-time = "2026-09-20T01:12:39.097Z" },
-    { url = "https://files.pythonhosted.org/packages/5e/27/6512564ccc8eef0a0614d8e262e99c0da1abe25e2bbef2f13c4a357bb608/roboplan_example_models-0.7.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:35292fd7e7f2b6989b4efdc8c4d5fbe2bd2a38b6b8b8ef15c99cdfb8b8dbfed2", size = 29862087, upload-time = "2026-09-20T01:12:42.7Z" },
-    { url = "https://files.pythonhosted.org/packages/b9/ae/4f048730056ae4a11e3d2480d0d821ab90bbb028e428d3ae9e0922c55c40/roboplan_example_models-0.7.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:34ddd9ceb37739baa674db59033be161ae8241a530a4ff25d01b49b1518ce54c", size = 29870921, upload-time = "2026-09-20T01:12:46.211Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/61/45cf6b1ce46f5dad52da7db30a257176f433a1f6ca16b7aff5f7f2471314/roboplan_example_models-0.8.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:7e3f27cb9461636d529f2fb4ba106f73930d664704ba58832507fb501a67cb1a", size = 33402455, upload-time = "2026-10-31T20:53:58.927Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/75/0948722fecf34fcc0480c1ff3d9a3fcdacc114c1f48c54e2ec5d5250cbf0/roboplan_example_models-0.8.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:eaa1344577bd76e9aefd4b05e5a496f924794716eae3e7ab63743b8834a87ca0", size = 33494816, upload-time = "2026-10-31T20:54:02.424Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/b4/3f0d2f7b4321a76374795831f0b4cab7eaa4e1f6eee600a695342ae3fcd8/roboplan_example_models-0.8.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:40cea5c437f99782028362f2cdc1d130160c6eea007cb7ebc0379190183e1647", size = 33504034, upload-time = "2026-10-31T20:54:05.304Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/96/6cac82ef1c39b558f8f2e4c7d4c5ff4aadee57c1ecb22202579a1b2b79f0/roboplan_example_models-0.8.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:07e3c7c77030a72ae8bda595134d7addc4c4096c98491f3f56d2d6cdab030dac", size = 33402266, upload-time = "2026-10-31T20:54:08.494Z" },
+    { url = "https://files.pythonhosted.org/packages/24/43/0e6244981e9fcad36068c5395c8ef918dac70e903fe7449ead8e4e4e5d9c/roboplan_example_models-0.8.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:11d1f29c29a5b6868ab8e207d381e74c1fb352c8c99a5bbca4af621b7fac47ca", size = 33494608, upload-time = "2026-10-31T20:54:11.85Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/f0/31b65f046830d476b5e54d3c59bb92055ed65ff7e61b9dbde4b2b4339e15/roboplan_example_models-0.8.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:673ff69a6462d6215e09567bb68f867f21a7e768e77aba74455d647f18c3ff96", size = 33503808, upload-time = "2026-10-31T20:54:14.988Z" },
+    { url = "https://files.pythonhosted.org/packages/05/ae/f89b6b1bf3095eca0cefb29b11f9ff595fc2c71cb35b9759ff36d21ddab5/roboplan_example_models-0.8.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:2154714cfd73566fc5fd101a959241d2fd49fb9fff5aabffb5972842ed15888b", size = 33399874, upload-time = "2026-10-31T20:54:18.499Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/e4/b8c15f83f768824f9acaed609424d5a3a9d2ae01aaf8f609a7561822bc8e/roboplan_example_models-0.8.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:24898a2094b596e484ebfc37883deb84fe53cf83185230f011c0c1c474f03120", size = 33491487, upload-time = "2026-10-31T20:54:22.123Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/2b/adfb4302f2db4972c62e372570ca07a23ecf7474e7b2fa05e4d7f6200593/roboplan_example_models-0.8.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:ffaef924d769c3dd6b4dde35428cc4e632854ccece49ed777e9eecafeda34bd4", size = 33500319, upload-time = "2026-10-31T20:54:25.48Z" },
 ]
 
 [[package]]
 name = "roboplan-oink"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
     { name = "roboplan-common" },
     { name = "roboplan-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/0c/cdb72ec6cf9a1a1b4a4619d462bdacec6a2c662c7a22a35a7b85cdcce10b/roboplan_oink-0.7.0.tar.gz", hash = "sha256:b0db558aad98988b507ab9b108ee202f145f8023d2dcc9813b1d41133a56157b", size = 49004240, upload-time = "2026-09-20T01:12:45.839Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/52/af89246900463d90f606c310165c218e1929089c5a482ec7acff000b8ca9/roboplan_oink-0.8.0.tar.gz", hash = "sha256:ec6afb58cf266c8cbf8e62b6ed48df1aac973e44b033c52dcb0bf3b0d6d1a1a1", size = 52664714, upload-time = "2026-10-31T20:54:13.471Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/b0/ebda8c854e407351c5a2982781fd2c9e77ab95d203b29a9d679d401d3210/roboplan_oink-0.7.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:7793f3ccd3fa69fd2b7291b2457d50b2dd6704559ca0acc90eb9c30d957bc9a4", size = 372861, upload-time = "2026-09-20T01:12:22.352Z" },
-    { url = "https://files.pythonhosted.org/packages/5a/ff/7a19acf1f95adeb707478169cf259398bc146cde2c34fa3dd71104c2c6e1/roboplan_oink-0.7.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:d385bd53b07e941c26bcc3f688476c1c0f145b3d01b4cdca57f2b020bfdf5da8", size = 468293, upload-time = "2026-09-20T01:12:23.867Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/2d/916a0955b71c63a83ffba1702f940d57121abf2b5efea3713ef630afc5c8/roboplan_oink-0.7.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:a627253402d689ba859d38b4155abec49d8917bdb05887fd745ca077c2b73d59", size = 514109, upload-time = "2026-09-20T01:12:25.408Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/ad/d81c3827776e4e456d1e60becaeed53a9ac63416f59a25f7f3bd6673a408/roboplan_oink-0.7.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:e0df4102323d59265e7111afa07fa9fdbace3bcd9d8ddc80e5ceea483773e9d8", size = 372415, upload-time = "2026-09-20T01:12:26.998Z" },
-    { url = "https://files.pythonhosted.org/packages/dd/53/cc51d30d1257feef9bfcb8f2db83d8d48dd2fa7a0566a05071c9a9c6fb0d/roboplan_oink-0.7.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:eb1e76806a4efdd7ef3754196cc0a13eb479fe7d67383c2900e1d1ab33c812f5", size = 467929, upload-time = "2026-09-20T01:12:28.769Z" },
-    { url = "https://files.pythonhosted.org/packages/2b/eb/b6881773f578ecbb9898fbb46bc9db2f85720f59acea886e5f3631fef77a/roboplan_oink-0.7.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:ca813b16b4e2117439acb7f810ecb34f276181ea3315831420da8d169af5e61e", size = 513665, upload-time = "2026-09-20T01:12:30.223Z" },
-    { url = "https://files.pythonhosted.org/packages/5e/5a/80ebadca9093e0b032b79d97560bc66b602df0d90fe96415a4de12ff4dcf/roboplan_oink-0.7.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:877a464792875cb1149be0ec866a510d978e9fa397d816def0867a57511b053d", size = 370218, upload-time = "2026-09-20T01:12:31.706Z" },
-    { url = "https://files.pythonhosted.org/packages/69/25/2206953115eabb61103bff97a2d9be832b225c5493e280a9a04dc3867576/roboplan_oink-0.7.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:cdd34d82e2b541e0e95b12518d279f093b123eee64b086302f7d5e15f00b5380", size = 463541, upload-time = "2026-09-20T01:12:33.135Z" },
-    { url = "https://files.pythonhosted.org/packages/25/a6/cd428beb4250753240b8cb1ed69a5a83a68912fbce923b5c07fdc2fcee5b/roboplan_oink-0.7.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:580fde3d5f84737aefdf9ac35e9818657ea3a4727e1c0336864bf6ab33df401f", size = 509145, upload-time = "2026-09-20T01:12:34.544Z" },
+    { url = "https://files.pythonhosted.org/packages/af/c3/5cc395b36e991a8089895561c90d22a42752ef00ee7686f045994eceece5/roboplan_oink-0.8.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:a9b74d0db2f745ede82ea09eb058492cfae24a9edeb16d8a4eaafcfa391577b6", size = 435315, upload-time = "2026-10-31T20:53:52.003Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/01/a29220bff1e3882a82aecaa71832f2754bdf75356bab6941cb09f12c97b3/roboplan_oink-0.8.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:66775b03fe5f640008655d237fbfba1ac6351dfa430b75a5f5c0c5780b9de404", size = 525877, upload-time = "2026-10-31T20:53:53.584Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/5c/b060e0e96e44dcfb508a07984e1bd38d985ea7db33a9998603b6730aeb90/roboplan_oink-0.8.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:13be9d277e61ff7e39c640803d9a490d55026fc11263544291520b43d57b35f8", size = 576752, upload-time = "2026-10-31T20:53:54.865Z" },
+    { url = "https://files.pythonhosted.org/packages/63/6b/fa0b2160a69a1c80a47b24f09256e5b15d588f535fb7d81f8d794a7f2482/roboplan_oink-0.8.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:3e11b854061efa47f5d90580b87b58793ff573dfe08c9624ece8171092b4cf8d", size = 434945, upload-time = "2026-10-31T20:53:56.108Z" },
+    { url = "https://files.pythonhosted.org/packages/74/28/94f78c69447f662080921168e9352ce8fbe9f52d810787eaff45dc142c4c/roboplan_oink-0.8.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:b6f75d622b588345ce06b4f730d4827523ff0f6533835042cc34cf3b20c5aed3", size = 525423, upload-time = "2026-10-31T20:53:57.404Z" },
+    { url = "https://files.pythonhosted.org/packages/11/af/f8b42cd63c35af006cb96e6e26dc21878f825d349a0e795de255c86672ea/roboplan_oink-0.8.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:8aae8b35259223b067ef6897d1b4d446994f6aec468411092909013fd540e1ae", size = 576376, upload-time = "2026-10-31T20:53:59.484Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/cb/e02bf8a0e42d6b4ab01ed8325a4ce4cf9879e3e904cf5287bd9419126df6/roboplan_oink-0.8.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:fe20cc1ea6f8fe14fa99d399811c13d2384f9c3256fcec6e44d485a34ba1586c", size = 433250, upload-time = "2026-10-31T20:54:00.756Z" },
+    { url = "https://files.pythonhosted.org/packages/84/be/be2fded08980b6e9ddf02affd6b17d36e39f0289de09f91993ddd7cfda06/roboplan_oink-0.8.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:0f0c4054a6d22904581a2996cf409116c2ad32e8b6b96169cda843826978b02f", size = 521266, upload-time = "2026-10-31T20:54:02.01Z" },
+    { url = "https://files.pythonhosted.org/packages/31/c3/b335a3ea6eb3cf2ed8a222f6196b33c490ae9b07be2ce2c94f7b8a753016/roboplan_oink-0.8.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:d8aab6ba214ac98d4ef20f7a8c3b95ab21d5bbf01ef5755815c6b94a9a2b503a", size = 571809, upload-time = "2026-10-31T20:54:03.466Z" },
 ]
 
 [[package]]
 name = "roboplan-rrt"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
@@ -9328,44 +9342,44 @@ dependencies = [
     { name = "roboplan-common" },
     { name = "roboplan-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/77/f65d20aba0646694601e66ee14188479971bd48b4b0df80c3edaed5c99f6/roboplan_rrt-0.7.0.tar.gz", hash = "sha256:029ab92dace70a0f99b809594e861eb48fbf7e656407b509eb2eaa571a9642bb", size = 49003681, upload-time = "2026-09-20T01:12:32.619Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e1/48/b63732a0adaa4e7086134a10245809070335bb30d1935b4292e4abc7dd7d/roboplan_rrt-0.8.0.tar.gz", hash = "sha256:7499df80826e6cb780a735e6767a3d7013993b97f61ca2f217d5c8afc474f987", size = 52664152, upload-time = "2026-10-31T20:54:09.367Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/52/9bd195fb101a2333d1b3c8457b4e074b39b1d1176be66b588891aa572f4e/roboplan_rrt-0.7.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:78bbdc5915a62cba388f36299055dffb1716728f257cc526a66af1561f26344d", size = 309817, upload-time = "2026-09-20T01:12:12.959Z" },
-    { url = "https://files.pythonhosted.org/packages/06/97/53adc17033fee66afb26ad19e12ee9650b2c9bc659caf86cf9d70d069439/roboplan_rrt-0.7.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:bf8c4aab8c4fe21c286b6048983ab194371643ed9bc60bbcdfc5b7972801ea1e", size = 351095, upload-time = "2026-09-20T01:12:14.498Z" },
-    { url = "https://files.pythonhosted.org/packages/f3/51/b9f049e8525ef6afc32bad09e62b59cc6e67146ad06fd9fad42f15f09d0f/roboplan_rrt-0.7.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:c17df5ae185f773f0ea92e71fc43d0035ae8bb7f2fbcde0cc87ddbb461a2ce14", size = 376449, upload-time = "2026-09-20T01:12:15.808Z" },
-    { url = "https://files.pythonhosted.org/packages/7a/4d/3e0d88611676c590a109f0968fc4a3a0490c4751731826ac6bd5928ac031/roboplan_rrt-0.7.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:a435abe968b19aa91c2ff01330075d953fd716115e42489447000f3989e0604f", size = 309481, upload-time = "2026-09-20T01:12:16.99Z" },
-    { url = "https://files.pythonhosted.org/packages/c5/4d/99faeebc52881d35cc71c68c9f8086367f165876ac519830a50ee9497dd9/roboplan_rrt-0.7.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:874d3d5dc7cd7ab3a09699b11c81a2c9dfc316a58bdd0563ebf4714fc7608759", size = 350689, upload-time = "2026-09-20T01:12:18.172Z" },
-    { url = "https://files.pythonhosted.org/packages/35/0c/7aa7ef2f811c66736b25915bb87a15e2ab51f71151296ea672de62677eff/roboplan_rrt-0.7.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:d9b2c0ee89653bf25ec8ba2686df4ab330e72e091c5b6ef241c9db130a8e7b58", size = 376002, upload-time = "2026-09-20T01:12:19.43Z" },
-    { url = "https://files.pythonhosted.org/packages/b2/6d/cc735d907750b79fda5f9b6631bce99bbddf183a268c988866712852ac61/roboplan_rrt-0.7.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:089c6cb7c5dbdd0b9a2a8052a23ae40cb64e1e1d45c10b214a4dc1ce372c2b8b", size = 307553, upload-time = "2026-09-20T01:12:20.649Z" },
-    { url = "https://files.pythonhosted.org/packages/08/2a/172b89325fd1e42830e872b0dfb18d1f328f5ffa75b82e2e99f5b6542c0b/roboplan_rrt-0.7.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:b572cbf24261cdd058463ada2a0b86fcce3179a568d8dc013f960df9364caac5", size = 346504, upload-time = "2026-09-20T01:12:21.79Z" },
-    { url = "https://files.pythonhosted.org/packages/57/84/d017516cc81db1c3e4a91d503ed8299b145e824269edf1b4b1b28b608a7d/roboplan_rrt-0.7.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:576160004c6bd41bf011c732779eeb1e5fbc7e0556ae4f8b045e4115f1c60b9b", size = 371507, upload-time = "2026-09-20T01:12:23.207Z" },
+    { url = "https://files.pythonhosted.org/packages/13/92/bd473d9cf0bfdf82d65f1f94b659a25e79f8ce40e4a08f79b0c39233968d/roboplan_rrt-0.8.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:78e88b5fe99e03751f204a8ddafb696f1fc23e74692f3da0418afe09fa19dd47", size = 142545, upload-time = "2026-10-31T20:53:48.345Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/3f/d110bf638ed8969c8d3cec5fe5e34a367750677674c6ad74836a7692a404/roboplan_rrt-0.8.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:094ee6a0e608c7e982de573b70e219c84f26c018305e84cfc063ffb119049aac", size = 180551, upload-time = "2026-10-31T20:53:50.167Z" },
+    { url = "https://files.pythonhosted.org/packages/45/e5/bb68a1fe749f9b40351ee318ff51ef544eb654dd1884daa985f8c15753d2/roboplan_rrt-0.8.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:b0e5fe495c64f7aab8438c1467960557ff2e87b495ac0290cf40bf2692db0dcf", size = 188120, upload-time = "2026-10-31T20:53:51.386Z" },
+    { url = "https://files.pythonhosted.org/packages/15/c0/25452168c469aa4537ae852ee538b486f356fdb7af4f1bfe815b23c6c60a/roboplan_rrt-0.8.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:7380f12fb33483db77c31bb8f75ab8abe5e0253e69a43a0eaf81c788929ef017", size = 141999, upload-time = "2026-10-31T20:53:52.635Z" },
+    { url = "https://files.pythonhosted.org/packages/39/5f/8ccb2d1213632ebf47c11241d579085a0310d31b34b1aeae325cfc6b4e88/roboplan_rrt-0.8.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:cecd5803e9e4b1240624e87d78d2f2e7e9da83a529e7bec756bf5c94700273d6", size = 180203, upload-time = "2026-10-31T20:53:55.576Z" },
+    { url = "https://files.pythonhosted.org/packages/90/1e/0471d7f860baf45a0f38329952d537f96c3f124382ed93c82671705447e5/roboplan_rrt-0.8.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:68fe078a827698a98dba01d600e155dbbc80e577f0037a823a567e9d5f21a506", size = 187690, upload-time = "2026-10-31T20:53:56.906Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/eb/a551265e365c8ea82f20370f8f2a399142007b82ff12c8c58a991e6924ee/roboplan_rrt-0.8.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:190acca9f5a663257a3ea5d6f8e69d1dcd396a7b86d3d38eed73d7f18269f3f9", size = 140101, upload-time = "2026-10-31T20:53:58.057Z" },
+    { url = "https://files.pythonhosted.org/packages/57/3a/3cb386ee31d8173e1f5e5d1333e45ee7b19e183f928037f53c4ccde718ff/roboplan_rrt-0.8.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:298c06214c388e5abd8d6e29185f9d23711b4ad71296e7abbddb0f2e32895e19", size = 175808, upload-time = "2026-10-31T20:53:59.175Z" },
+    { url = "https://files.pythonhosted.org/packages/92/8c/57f7884760f2a3a22b4fbfd53d3e1fa7447b6dedaba4c44005d837f02d9d/roboplan_rrt-0.8.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:64a975fd5de05cbcb538ac6e27403af4f0640767468bf8158586a4e559c06276", size = 182868, upload-time = "2026-10-31T20:54:00.373Z" },
 ]
 
 [[package]]
 name = "roboplan-simple-ik"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
     { name = "roboplan-common" },
     { name = "roboplan-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/11/56144bef1a3fe92630dc9d3da9e5afd50831d5873eee606eec9f58fb118d/roboplan_simple_ik-0.7.0.tar.gz", hash = "sha256:f28f58780a05c4f73f1aa6badfa6f44041f9323baf50df734c88f67aee6d98fb", size = 49005093, upload-time = "2026-09-20T01:12:28.904Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/4b/3b128c95bc435054af380650a0aef60d58ea66885fce6717855820e3e831/roboplan_simple_ik-0.8.0.tar.gz", hash = "sha256:8a031ba89d663f17ec523e8557bf9d3ac2adbdf24c3eaef2b500d65d7132795b", size = 52665812, upload-time = "2026-10-31T20:54:13.086Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/25/1ec811ca607e96b91de0114db72f2e8327310e511bc805b090240e3b45d1/roboplan_simple_ik-0.7.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:5234a3e531c9e43dc5c26af4858d2d9c49b352bc16d0e4bb8a80d03fcb2eea60", size = 167419, upload-time = "2026-09-20T01:12:09.987Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/63/98d5bb26aff5766ac3fa3cd1a996dab3894ec19f478b5091352e13b7f9f8/roboplan_simple_ik-0.7.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:070f5a2fdd24b8219a897020d8da58caac0bc46effd7618de98cdf4f171f3e2c", size = 182814, upload-time = "2026-09-20T01:12:11.189Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/d2/0382ea34768a213b7158259b6bba66c83e7153b3b1ac3245b9d02c8ddb3a/roboplan_simple_ik-0.7.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:de6baf3a6289ae650700b6499c8a77d896e832b40d5164a22aea228ead48a640", size = 195883, upload-time = "2026-09-20T01:12:12.595Z" },
-    { url = "https://files.pythonhosted.org/packages/ed/55/8de1e63f3d909b249b47948561c92131d8dc84737ad4fa025223aab4dbc4/roboplan_simple_ik-0.7.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:fe5bb4308194814e5cf8f17c874a0f350840718a2f267e6018de7e27344569fe", size = 167215, upload-time = "2026-09-20T01:12:13.993Z" },
-    { url = "https://files.pythonhosted.org/packages/12/33/677daaf588a7a94e41fde45215f80e3d73da81c1e1f6e835ff3ccaaa80ff/roboplan_simple_ik-0.7.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:267d53d018d1fdb3d9999b36c109db61ea363acba209f59c6069392d4163f637", size = 182610, upload-time = "2026-09-20T01:12:15.098Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/21/65e20dc30d9149fc180be89f29864f3e2602f418657bf1cb50797d1d1af7/roboplan_simple_ik-0.7.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:0686356824429789ac9635557b571e7c20d684b684d391a497c84ebe44ed2c36", size = 195656, upload-time = "2026-09-20T01:12:16.374Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/26/f3dacc72006e5f3db1b315a2987b5a6a7ea0490abfc0f76ad317a0fe51ad/roboplan_simple_ik-0.7.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:54449f86354a9d396c78405315a465e70fecbb17b7127dab87281bc148c0a806", size = 165403, upload-time = "2026-09-20T01:12:17.476Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/1d/4bb1ffe0672fdd579de8a605cfae4c9bfc56d14409f8a47e1f5af4db8013/roboplan_simple_ik-0.7.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:c155283ed2a7c33563d15aa64e36d901500ee81c411d79e6f96320d51cae1aa4", size = 179049, upload-time = "2026-09-20T01:12:18.88Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/32/1a5733b28f3e6a2a8e331f7d3c37d56e78358b66dc315b3432578eb4dd73/roboplan_simple_ik-0.7.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:67f1d704d9754b05bf1bd89e36c2cb262b3b21aeb366209c4344f121534519ec", size = 191921, upload-time = "2026-09-20T01:12:19.996Z" },
+    { url = "https://files.pythonhosted.org/packages/51/a2/4c024adf8569f40b31b9d4c17c02d987d617100ae4753994ed18acf32987/roboplan_simple_ik-0.8.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:b51a236e2674908df57c5b8e269d0c7d69725de582752d0687ae5f041b45d991", size = 169406, upload-time = "2026-10-31T20:53:48.374Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/5b/c2d2212ead96fb98334655ad9e35fd2b51747910954e3827b9d1e1ba25c7/roboplan_simple_ik-0.8.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:89cde3212994b8da5cd4f3a9767a0336201cb9f6b997da6bc68afc761ed938a0", size = 182851, upload-time = "2026-10-31T20:53:49.949Z" },
+    { url = "https://files.pythonhosted.org/packages/54/14/deb11e3764262224eabd0f8e30e2580819101dd9856177229d7d73cc8d75/roboplan_simple_ik-0.8.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:eeec9f1086b0c16e206f681fd36f98c7c28b0ac9b1ff37e897cb0ce305c71a19", size = 195907, upload-time = "2026-10-31T20:53:51.335Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/13/aa8ecfa28da019b41067ceb027a7248209d6e465998db51b8a43d8ef327c/roboplan_simple_ik-0.8.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:d3d5149812a044619569527d93caed428448de8ec40f6acd64909cf1c13788f8", size = 169195, upload-time = "2026-10-31T20:53:52.659Z" },
+    { url = "https://files.pythonhosted.org/packages/39/2d/70ef295ebf656f1fa1510ce8717dd9d4e2147dd95ea29ad702d21ed4c040/roboplan_simple_ik-0.8.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:b1b0f8b01193183b7623b3c333caadb215c9d0538a7affed8db121093f9abc4d", size = 182646, upload-time = "2026-10-31T20:53:55.186Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/be/3cbcdda74330afc65a22501e3d8180496aa340e5f2429c30d375e049ece7/roboplan_simple_ik-0.8.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:9e1dc3ff2e582fb4cfe0747bf6f28659a3a6d248014c8aabc240b56c1be3eb6a", size = 195674, upload-time = "2026-10-31T20:53:57.082Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/da/1a3995b4fb4c201cf95c93937b5611f519bef880e01382019f390fe3d172/roboplan_simple_ik-0.8.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:4e6d89d54168fc0450073eb61dfdf410169e0b425ce08ba015c868c754771bdf", size = 167498, upload-time = "2026-10-31T20:53:58.558Z" },
+    { url = "https://files.pythonhosted.org/packages/06/da/2990d470b0752c4b53893c8d9c7d3c6d4e541075abe3debb6fa0aea71970/roboplan_simple_ik-0.8.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:01e030385fa06a1c59bc124fa77fad83607fa50d158773e5aff5e1031c520efa", size = 179080, upload-time = "2026-10-31T20:53:59.876Z" },
+    { url = "https://files.pythonhosted.org/packages/16/1d/a38626babab91bf22ec3894f6a3e9be42ae2c5afcc5a23867a614830eb56/roboplan_simple_ik-0.8.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:8b1cc8569d4b4947a7dcc0135f976ce368338107b98a5e164a0c5835194637a9", size = 191945, upload-time = "2026-10-31T20:54:01.224Z" },
 ]
 
 [[package]]
 name = "roboplan-toppra"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cmeel" },
@@ -9373,17 +9387,17 @@ dependencies = [
     { name = "roboplan-common" },
     { name = "roboplan-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/24/e2/bdf3fffd86d08cfe4a5d7fd8defd51a990e2b435854c1d134121f23a0ef0/roboplan_toppra-0.7.0.tar.gz", hash = "sha256:67053ee63ba0e4b7468bd85c00f3beb6d3305ad9736825c5a56cc905818a301e", size = 49004729, upload-time = "2026-09-20T01:13:47.386Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/37/de75f9daf2f2c966620055f993be11b441f336244c44ac96a961049b379c/roboplan_toppra-0.8.0.tar.gz", hash = "sha256:0dada2c82621b0e00e587ca8d90e80084fe801f4840eaaec5329d7d9bbd90c3f", size = 52665354, upload-time = "2026-10-31T20:54:20.395Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/54/b7599964a9804c56edb0bc19a848621820a4b3d909de53b7db11e3feb1ed/roboplan_toppra-0.7.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:50231c44e8a3a2705e7e67790a5b40197f008721585209b757522100f1e1fbdc", size = 113840, upload-time = "2026-09-20T01:13:24.448Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/49/c1cf601ec6a8835f3a5b630e79706a5cf72899f59283908dacb844585dc1/roboplan_toppra-0.7.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:d4a3bdc74f5fd3c0b40f74862440f96b14765b14e84f94d0880095f3856f0f5e", size = 149184, upload-time = "2026-09-20T01:13:25.938Z" },
-    { url = "https://files.pythonhosted.org/packages/41/3f/036cb24469b93ad4fe4a14c47e73b08f994dcd87bbea0ee97220797eac7e/roboplan_toppra-0.7.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:80518eac96d052c4dcf3fe16b2eea6864b6fcf4ae216e7eb1c64d1dcdb3acb19", size = 159898, upload-time = "2026-09-20T01:13:27.518Z" },
-    { url = "https://files.pythonhosted.org/packages/1b/5a/5c7676ca69084ca23d45ad647249fa8765b5d13ad5a86735f71a69b8e290/roboplan_toppra-0.7.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:f101e63fa5f320ddcf34a11d7c09ca3d47b7c17cdec775a213197381e40511d2", size = 114423, upload-time = "2026-09-20T01:13:28.846Z" },
-    { url = "https://files.pythonhosted.org/packages/62/72/fe59e81db9013d69363dd982bf4675dd3ad7514bc17b4c6d0435dac4938e/roboplan_toppra-0.7.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:b7b4ccd3e8878e8fefc42dce7d17a4be56c7f147e4a7901de949fef20098d61e", size = 149414, upload-time = "2026-09-20T01:13:30.373Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/f8/712d8648f4c9a26bc7e07f67d328b15880af24dcdfcab45cbb0536fafe60/roboplan_toppra-0.7.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:2413bffd313ed90165f7ecf48aa59359835349fdc984662142a7cb377bc31e5b", size = 160347, upload-time = "2026-09-20T01:13:31.605Z" },
-    { url = "https://files.pythonhosted.org/packages/c7/92/c63a6777de06f81e9ea269b2def76607f2e87b736854ec5c166dfe5e39a8/roboplan_toppra-0.7.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:bc0ee343c565129c7ce04f209bce54ba0cb80bf6beb4972218f3f9f96f92efbe", size = 112221, upload-time = "2026-09-20T01:13:32.979Z" },
-    { url = "https://files.pythonhosted.org/packages/77/12/a70deb76166c3f14f077b4d3657d4014b89eac71420110f9058c8420ed8c/roboplan_toppra-0.7.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:803126578315f4ea03a54f5fe1cf0a1d12c69425b7f3f39af67531fa5946c2f8", size = 144889, upload-time = "2026-09-20T01:13:34.353Z" },
-    { url = "https://files.pythonhosted.org/packages/35/43/9b71410177f5080c1a87777b109354debd56ae0589b4bb3f252a21ffb195/roboplan_toppra-0.7.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:147bc93f2f0c77fda51ca37bd3c34229f8bbc94e5cf2786a88dcf967c1303804", size = 155343, upload-time = "2026-09-20T01:13:35.999Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/c7/ae8cdeb530292a68ef7abeea3af99d84bcb06eaabe9cbcbbd622f43a0ec4/roboplan_toppra-0.8.0-0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:2e62b88acb884478d4f74ec7d92537cbd0051de73c6608bf5fad2f3f65e49da0", size = 114624, upload-time = "2026-10-31T20:53:57.804Z" },
+    { url = "https://files.pythonhosted.org/packages/54/c4/8aefd9e3dbdbdf27506781e4eb8ad802f4bfcd1394a774ac495056a2fbca/roboplan_toppra-0.8.0-0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:e91dba4d532a9e1c92a6cfb18a5c072dde78aaeb0950359281626adbde2b51d0", size = 151672, upload-time = "2026-10-31T20:53:59.795Z" },
+    { url = "https://files.pythonhosted.org/packages/99/8d/b84059211895adb2aea66d46a1d3ee10939caf2face1131b571af23d0077/roboplan_toppra-0.8.0-0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:8eee443de39de1448d2db7c82c5bcdca2d7a09f9d8b6031fa76e72a9e8082814", size = 162801, upload-time = "2026-10-31T20:54:01.204Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/9f/fbdf5a6a8d697bc442bc5a7af661c26bbe7368bee3f733b5eaf0312c64b0/roboplan_toppra-0.8.0-0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:f996be94e7138a4abeb2f7c4ecbc9cb8cfdc0720708dd43826090ce327750e6b", size = 115240, upload-time = "2026-10-31T20:54:02.528Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/7a/814580602bfc436a86fb2694ee52b7520489603b5d1b9f0fe8843c925195/roboplan_toppra-0.8.0-0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:4988469bfa4c5aaa16f10c6d14f8d8c7f2d9447e0f234afd8e4eeb83f5bde858", size = 151919, upload-time = "2026-10-31T20:54:03.842Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/44/6b7ede631bf3ede7b2ae9f720433ca2bd5e5b873ed39f89710258fe36973/roboplan_toppra-0.8.0-0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:83d31b277411a82096ab683e51ffd8a448c7135cef33a31dcd5b281bea94be55", size = 163246, upload-time = "2026-10-31T20:54:05.308Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/d7/0a61bb7dd33006ae489b1afd853304afc3d98b030b74668dfa9fcb91733e/roboplan_toppra-0.8.0-0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:912a0f7c43a725c4156d88e4f1a64a310ba00c35cc48d92ddb97f248757e5980", size = 112968, upload-time = "2026-10-31T20:54:06.698Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/e7/a97c31a272bde1cb22c2a279796d9a9c58ed8abd0e98ef61eff25dba2d7f/roboplan_toppra-0.8.0-0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:d6764affd94f6466106b05ee76ce17a5bcd6e348237aafbd356592898513cb14", size = 147362, upload-time = "2026-10-31T20:54:07.99Z" },
+    { url = "https://files.pythonhosted.org/packages/95/e3/2f915143cb1946e31f2e2acc4d20b1d4b3514fb335c70779da6d77dc4cdb/roboplan_toppra-0.8.0-0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:f117ead346e308c8d9c77128092ffe57679e9a62d58c5cc68024044c9caf8cdf", size = 158258, upload-time = "2026-10-31T20:54:09.312Z" },
 ]
 
 [[package]]

@@ -82,9 +82,11 @@ topic operation with `topic_read_denied` or `topic_write_denied`.
 
 A standalone provider connects to `/robot` with
 `hello {v:8, role:"robot", token?, topicSource, topicsVersion:1, topicCapabilities}`.
-The optional capabilities contain `read`, `write` and up to 16 fixed `profiles`;
-the relay enforces them and advertises them to viewers. An older raw provider
-omits them and supports `raw`. With an auth file, `token` must be the key bound
+The optional capabilities contain `read`, `write`, up to 16 fixed `profiles`
+and `profileOptions`, the settings each profile takes as
+`{kind, min?, max?, values?, default?}` with the profile value as the default
+and the ceiling; the relay enforces them and advertises them to viewers. An
+older raw provider omits them and supports `raw`. With an auth file, `token` must be the key bound
 to that source in `topicSources`. This hello carries neither robot identity nor
 manifest, and the source never appears in `robots`. Its initial carrier message
 is `topic_sources`, carrying the source's fresh generation. Viewers negotiate
@@ -93,24 +95,51 @@ and is sent again whenever a source connects or leaves.
 
 | Direction | Message | Meaning |
 |---|---|---|
-| Viewer → relay | `topic_sub {id, source, keyExpr, delivery, profile, maxHz}` | Desired subscription, independent of robot watch |
-| Relay → provider | `topic_open {route, gen, keyExpr, delivery, profile, maxHz}` | Server-stamped, shared source request |
+| Viewer → relay | `topic_sub {id, source, keyExpr, delivery, profile, maxHz, settings?}` | Desired subscription, independent of robot watch; `settings` starts it beyond the profile defaults |
+| Relay → provider | `topic_open {route, gen, keyExpr, delivery, profile, maxHz, settings?}` | Server-stamped, shared source request; `settings` is the route's first variant, `v1` |
 | Provider → relay | `topic_opened {route, gen}` | Zenoh subscription installed; publisher may not exist |
-| Relay → viewer | `topic_ready {id, source, route, gen}` | Install this viewer's route before activation |
+| Relay → viewer | `topic_ready {id, source, route, gen, settings}` | Install this viewer's route before activation; `settings` are in force |
 | Viewer → relay → provider | `topic_activate {route, gen}` | Relay maps the viewer route to its provider route; data may begin |
 | Viewer → relay | `topic_credit {route, gen, frames, bytes}` | Cumulative browser receipts for reliable route bytes |
+| Viewer → relay | `topic_update {id, revision, options}` | Change the settings of one desired subscription; `null` resets a key. The revision returns on the acknowledgement or rejection |
+| Relay → viewer | `topic_applied {id, revision, settings}` | The viewer now receives frames with these settings, also when the relay moved it itself |
+| Relay → provider | `topic_variant {route, gen, variant, settings}` | Open an encode variant of a media route, or change its rate. Ids count up from `v1` and a route never reuses one |
+| Provider → relay | `topic_variant_ready {route, gen, variant, settings}` | The variant encodes with these settings |
+| Relay → provider | `topic_variant_close {route, gen, variant}` | No viewer uses the variant any more |
 | Viewer → relay | `topic_unsub {id}` | Drop only this connection's desired subscription |
 | Relay → provider | `topic_close {route, gen}` | Last consumer released the source subscription |
+| Viewer → relay → provider | `topic_rtc_offer {id, route, gen, sdp, variant?}` | A direct video offer for a `video.*` route. The relay checks it like `topic_activate`, then forwards it with a private peer id, the provider route and the viewer's variant |
+| Provider → relay → viewer | `topic_rtc_answer {id, route, gen, sdp}` | The provider's answer, mapped back to the subscription id and viewer route |
+| Either leg | `topic_rtc_candidate {id, route, gen, candidate, mid}` | A trickled ICE candidate; an empty candidate ends them |
+| Either leg | `topic_rtc_close {id, route, gen, reason}` | The peer ended, with the reason (`rtc_limit`, `rtc_unavailable`, `ice_failed`, `encoder_failed`, `settings_changed`, `route_closed`, `rtc_answer_timeout`, `rtc_candidate_limit`) |
 | Viewer → relay → provider | `topic_list {id, source, prefix, cursor, limit}` | Bounded catalog page; relay substitutes a private request ID |
 | Provider → relay → viewer | `topic_page {id, source, gen, entries, cursor}` | Known/observed/advertised descriptors, not proof of live payloads |
-| Either leg | `topic_error {id, code, message, outcome}` | Rejected, interrupted, or unknown result |
+| Either leg | `topic_error {id, revision?, code, message, outcome}` | Rejected, interrupted, or unknown result; with a revision, one rejected update |
 
-Dynamic sample metadata is `{key, encoding, gen, ingressTs, sourceTs?}`.
-Relay-to-provider `topic_activate` carries `maxHz`, including on repeated
-activations. The relay shares one route per source, key expression, delivery
-and profile, and updates its rate to the highest requested by its consumers.
+Dynamic sample metadata is `{key, encoding, gen, ingressTs, sourceTs?, variant?}`.
+The relay shares one route per source, key expression, delivery and profile.
 Each latest viewer retains its own rate gate and newest pending sample per key.
 Viewer-supplied activation rates never change the rate calculated by the relay.
+
+Settings are `maxHz`, `maxResolution`, `quality`, `keepEvery` and `fields`.
+The relay validates a `topic_sub` `settings` object or a `topic_update`
+against the provider's `profileOptions` for the profile: an unknown name
+rejects with `unsupported_option`, a value outside its range with
+`option_out_of_range`, and the normalized settings (clamped to the profile
+value) go to the provider and back to the viewer. A media route serves up to
+four variants keyed by their encode settings; each samples at the highest
+rate among its viewers and stamps its frames with `variant`, which the relay
+dispatches on and strips. A video variant also has its rate in the key, since
+a peer takes every packet of its encoder. Variant ids are never reused on a
+route, so a frame delayed past its variant's retirement matches nothing and is
+dropped. A viewer keeps its old variant until the new one
+acknowledges, then gets `topic_applied`; a `topic_update` sent before that
+merges into the request still waiting. A fifth settings set rejects with
+`variant_limit` unless a variant nobody uses can be retired, and such a
+variant closes after a two second grace. Raw routes have no variants: `maxHz`
+is their only setting, gated per viewer by the relay, which acknowledges the
+change itself and sends the route's highest rate on `topic_activate`, as it
+does for a provider without `profileOptions`.
 
 `key` is concrete even on wildcard subscriptions; source and ingress times
 remain distinct from header send time. Payloads remain opaque bytes.
@@ -141,9 +170,13 @@ globally. A `topic_pub_result` acknowledges a checked local Zenoh put, never rob
 execution. Disconnect/timeouts are unknown outcomes and are never retried.
 
 Fixed media profiles are `image.jpeg.{low,balanced,high}.v1`,
-`depth.lossless.v1`, and `cloud.q16.{low,balanced,full}.v1`. They require latest
-delivery. Identical subscriptions share the provider's conversion; two global
-worker permits are acquired before selecting from the newest raw mailbox.
+`depth.lossless.v1`, `cloud.q16.{low,balanced,full}.v1` and, from a provider
+with video enabled, `video.h264.v1`. They require latest delivery. A video
+route carries no data frames: the relay drops any, and the provider sends
+H.264 to each viewer over a direct WebRTC peer signaled with the four
+`topic_rtc_*` messages (see [WebRTC video](#webrtc-video)). Subscriptions with the same settings share the provider's
+conversion; two global worker permits are held one per encode, never across
+a route's variants, and the newest raw sample is selected with the permit.
 Color uses JPEG; depth uses zlib-compressed little-endian numeric samples with
 shape, original encoding and units; clouds use zlib-compressed int16 xyz with
 origin/scale, optional float32 intensity and RGB bytes. LCM acquisition time
@@ -288,6 +321,34 @@ the queue, credit or expiry limits.
 ## WebRTC video
 
 Protocol v7 adds `rtc_ice`, `rtc_offer` and `rtc_answer` for `video.webrtc.v1` track channels. A relay started with `--rtc-file` (a Cloudflare Realtime SFU app id and secret, plus an optional TURN key) brokers one SFU session per peer and never touches media. It hands each peer its ICE servers in `rtc_ice` right after `welcome`, and again after every TURN credential refresh (hourly, half the credentials' lifetime): a peer's next peer connection uses the latest set it received, so a connection that dies when its TURN allocation expires with its credentials comes back with fresh ones. The robot offers once, with its sendonly video transceivers and a `tracks` list saying which mid carries which channel, and the relay answers. The viewer offers once with a recvonly transceiver and the relay answers. Every later pull of a subscribed track channel arrives as a relay-sent `rtc_offer` carrying the pulled tracks and the robot they belong to (`robotId`), which the viewer answers; a viewer that switched robots meanwhile answers it but ignores the tracks. The SFU collects a track after 30 s without media, across every session pulling it, so a bridge whose track carried no media that long sends `rtc_stalled {ch}` when its video resumes; the relay closes that track's pulls, declares it again and pulls it onto its viewers, who receive it as a new `rtc_offer`. An SDP is at most `MAX_SDP_LEN` (48 KiB) and an offer names at most `MAX_RTC_TRACKS` (8) tracks. A frame a bridge sends on a track channel anyway is dropped and counted (`rtc.framesOnTrack` in `/api/stats`), never forwarded. A relay without Cloudflare rejects a robot that declares a track channel (`rtc_unavailable`). A failed Cloudflare call surfaces to the viewer as the non-terminal `rtc_failed` error and the relay retries it with backoff; `rtc_session_gone` means the viewer's SFU session no longer exists and the viewer must send a new `rtc_offer`.
+
+### Direct video for topics
+
+A `video.h264.v1` topic subscription is signaled like any other and then
+carries its media on a peer connection between the browser and the provider,
+with the relay as the signaling path only. After `topic_ready` the viewer
+sends `topic_rtc_offer {id, route, gen, sdp}` for its subscription and viewer
+route. The relay applies the `topic_activate` binding (this viewer's route, on
+the generation it was readied with), admits one offer in flight per route, and
+forwards `{id: <peer id>, route: <provider route>, gen, sdp, variant}`. The
+provider answers with `topic_rtc_answer` on the same peer id, both sides
+trickle `topic_rtc_candidate`, and `topic_rtc_close {reason}` ends a peer from
+either side. The relay maps every reply back to the subscription id and viewer
+route, closes the peer with the subscription (`route_closed`), when a settings
+change moves the viewer to another encoder (`settings_changed`, the viewer
+offers again), after 64 candidates (`rtc_candidate_limit`) and when no answer
+arrives within 10 s (`rtc_answer_timeout`).
+
+Both sides use host candidates only, with an empty ICE server list: direct
+video needs the provider's UDP ports reachable from the browser, and nothing
+of it rides the relay or Cloudflare. The provider answers with one sendonly
+H.264 transceiver (constrained baseline, level 3.1, no B-frames, a safety
+keyframe every 4 s) fed from one encoder per route and settings, rate included;
+a viewer joining mid-stream, and a PLI or FIR from any viewer, force the next
+frame to be an IDR. An offer without a compatible H.264 codec ends with
+`rtc_unavailable`. Bounds: an SDP of at most `MAX_SDP_LEN` (48 KiB), 64 candidates of
+at most 512 bytes per peer, `max_peers` (16) and `max_encoders` (4) on the
+provider, which refuses beyond them with `rtc_limit`.
 
 ## Golden fixtures
 

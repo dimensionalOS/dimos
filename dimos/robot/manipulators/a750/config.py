@@ -19,15 +19,14 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType
-from dimos.hardware.spec import JointLimits
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
-from dimos.robot.manipulators._modeling import (
-    joint_names,
-)
+from dimos.robot.manipulators._modeling import joint_names, named_for_robot
 
 A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("base_link", "link1"),
@@ -51,6 +50,9 @@ A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "right_finger_link"),
 ]
 
+A750_DOF = 6
+# The gripper's joint "finger" is fully open at this many metres.
+A750_GRIPPER_OPEN_M = 0.06
 A750_HOME_JOINTS = [0.0, 0.0, -math.radians(90), 0.0, 0.0, 0.0]
 A750_DESCRIPTION_REPO = "https://github.com/adob/a750_description"
 A750_DESCRIPTION_REF = "3e4b7fe6ea0550e1f13d3dbd62f8d800ef348b14"
@@ -64,58 +66,40 @@ A750_PACKAGE_PATHS: dict[str, Path] = {
 }
 
 
-def make_a750_hardware(
-    hw_id: str = "arm",
-    *,
-    adapter_type: str = "a750",
-    address: str | None = None,
-    gripper: bool = True,
-    auto_enable: bool = True,
-    home_joints: list[float] | None = None,
-    mock_without_address: bool = False,
-) -> HardwareComponent:
-    gripper_joints = [f"{hw_id}/finger"] if gripper else []
-    initial_positions = [*(home_joints or A750_HOME_JOINTS), *([0.0] * len(gripper_joints))]
-    adapter_kwargs: dict[str, object] = {"initial_positions": initial_positions}
-    mock_limits = JointLimits(
-        position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
-        position_upper=[*([math.pi] * 6), *([0.06] * len(gripper_joints))],
-        velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
+def a750_model(*, robot: str | None = None) -> RobotModel:
+    """The A-750's URDF with its gripper, the joint ``finger`` (0 to 0.06 m open).
+
+    Args:
+        robot: Name the moving joints under this robot, as the coordinator
+            wants them, e.g. "arm" gives "arm/joint1". Links keep their names.
+    """
+    model = (
+        RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS)
+        .with_joint_position_limits("finger", lower=0.0, upper=A750_GRIPPER_OPEN_M)
+        .with_joint_position_limits("finger_mimic", lower=0.0, upper=A750_GRIPPER_OPEN_M)
     )
-    return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=[*joint_names(6), *gripper_joints],
-        adapter_type=adapter_type,
-        address=address,
-        auto_enable=auto_enable,
-        limits=mock_limits if adapter_type == "mock" else None,
-        adapter_kwargs=adapter_kwargs,
-        mock_limits=mock_limits if mock_without_address else None,
+    if not robot:
+        return model
+    moving = [*joint_names(A750_DOF), "finger"]
+    return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
+
+
+def a750_coordinator_connection(source: str = "arm") -> ConnectionConfig:
+    """What a coordinator needs to know about the A-750 connection named ``source``:
+    its model, with every joint (the finger too) taking positions."""
+    model = a750_model(robot=source)
+    return ConnectionConfig(
+        source=source,
+        model=model,
+        joint_commands={joint.name: (Interface.POSITION,) for joint in movable_joints(model)},
     )
 
 
-def a750_hardware(
-    hw_id: str = "arm", *, mock_without_address: bool = False, address: str | None = None
-) -> HardwareComponent:
-    """The A-750 on a serial port; with ``mock_without_address`` a mock stands in until one is configured."""
-    return make_a750_hardware(
-        hw_id,
-        address=address if mock_without_address else address or "/dev/ttyACM0",
-        mock_without_address=mock_without_address,
-    )
-
-
-def make_a750_model_config() -> RobotModelConfig:
-    dof = 6
-    model_joint_names = joint_names(dof)
-    return RobotModelConfig(
-        model=(
-            RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS)
-            .with_joint_position_limits("finger", lower=0.0, upper=0.06)
-            .with_joint_position_limits("finger_mimic", lower=0.0, upper=0.06)
-            .with_default_joint_acceleration_limit(2.0)
-        ),
+def make_a750_model_config(robot: str | None = None) -> RobotModelConfig:
+    """The A-750's planning model; ``robot`` names its joints under that robot, e.g. "arm/joint1"."""
+    model_joint_names = joint_names(A750_DOF)
+    config = RobotModelConfig(
+        model=a750_model().with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
         base_link="base_link",
         planning_groups=[
@@ -130,3 +114,4 @@ def make_a750_model_config() -> RobotModelConfig:
         collision_exclusion_pairs=A750_GRIPPER_COLLISION_EXCLUSIONS,
         home_joints=A750_HOME_JOINTS,
     )
+    return named_for_robot(config, robot, fingers=("finger",))

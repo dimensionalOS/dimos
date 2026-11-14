@@ -17,10 +17,11 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from experimental.gateway import responses
 from experimental.gateway.state import ApiError, FreshQuery, GatewayState
+from experimental.gateway.uploads import TRANSFER_SETTINGS
 
 router = APIRouter()
 
@@ -30,11 +31,22 @@ class UploadRequest(BaseModel):
     robotId: str | None = None
     kind: str | None = None
     retry: str | None = None
+    # this upload's own transfer settings, over the DIMOS_CLOUD_* ones; kept through its retries
+    httpTimeout: float | None = Field(default=None, gt=0)
+    uploadRetries: int | None = Field(default=None, ge=0)
+    # S3's smallest part (every part but the last)
+    uploadChunkMb: int | None = Field(default=None, ge=5)
 
 
 @router.get("/cloud/account", response_model=responses.Account)
 async def account(state: GatewayState, fresh: FreshQuery = False) -> responses.Account:
     return {**await state.uploads.account(fresh), "login": state.uploads.login_state()}
+
+
+@router.get("/cloud/login", response_model=responses.Login)
+async def login(state: GatewayState, after: str | None = None) -> responses.Login:
+    """`?after=` (a login state) answers only once the login's state isn't that one, so a page waits instead of polling."""
+    return await state.uploads.next_login(after) if after else state.uploads.login_state()
 
 
 @router.post("/cloud/login", response_model=responses.Login)
@@ -61,10 +73,14 @@ async def upload_list(state: GatewayState) -> dict[str, Any]:
 async def enqueue(state: GatewayState, request: UploadRequest) -> responses.Upload:
     if (request.path is None) == (request.retry is None):
         raise ApiError(400, "give either path or retry")
+    # only what the request names; a null puts that setting back to its default
+    settings = {
+        name: getattr(request, name) for name in request.model_fields_set & set(TRANSFER_SETTINGS)
+    }
     if request.path is None:
         assert request.retry is not None
-        return state.uploads.retry(request.retry)
-    return state.uploads.enqueue(request.path, request.robotId, request.kind)
+        return state.uploads.retry(request.retry, settings)
+    return state.uploads.enqueue(request.path, request.robotId, request.kind, settings)
 
 
 @router.delete("/cloud/uploads", response_model=responses.Uploads)

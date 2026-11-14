@@ -28,6 +28,7 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
+from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec
 from dimos.types.robot_location import RobotLocation
 
@@ -215,7 +216,8 @@ def test_goal_reached_reports_where_the_robot_stopped_and_closes_the_tool(contai
 
 def test_arrival_is_reported(container) -> None:
     container.navigate_with_text("bed")
-    container._latest_odom = PoseStamped(position=make_vector3(1.0, 2.0, 0.0))
+    # Odometry is at body height. The distance to the goal is measured in the plane.
+    container._latest_odom = PoseStamped(position=make_vector3(1.0, 2.0, 0.3))
 
     container._on_goal_reached(Bool(True))
 
@@ -349,3 +351,20 @@ def test_stop_navigation_with_nothing_under_way(container) -> None:
 
     container._navigation.cancel_goal.assert_called_once_with()
     container.stop_tool.assert_called_once_with("navigate_with_text")
+
+
+def test_object_navigation_does_not_use_tracking_retained_after_stop_timeout(
+    container, mocker
+) -> None:
+    tracker = mocker.Mock(spec=ObjectTrackingSpec)
+    tracker.track.return_value = {"status": "stop_timeout"}
+    tracker.is_tracking.return_value = True
+    mocker.patch.object(container, "_object_tracking", tracker)
+    mocker.patch.object(container, "_get_bbox_for_current_frame", return_value=[16, 16, 48, 48])
+    # A stale tracker must not make the caller start polling the old navigation.
+    container._navigation.get_state.side_effect = AssertionError("Old tracking was used")
+
+    assert container._navigate_to_object("chair") is None
+
+    tracker.track.assert_called_once_with([16, 16, 48, 48])
+    tracker.is_tracking.assert_not_called()

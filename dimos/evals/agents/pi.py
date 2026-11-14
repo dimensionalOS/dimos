@@ -252,6 +252,10 @@ class PiAdapter(EvalSubject):
             files = dict(env.artifacts)
             if env.streams:
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
+            if env.python_guide is not None:
+                guide = run_dir / "DIMOS.md"
+                guide.write_text(env.python_guide)
+                files["robot"] = guide
         parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
         if self.config.no_dimos:
