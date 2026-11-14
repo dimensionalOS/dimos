@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-07T01:03:06.05804897Z"
+exclude-newer = "2026-11-07T01:13:40.343231374Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -40,18 +40,10 @@ roboplan = false
 dimos-cdrgen = false
 dimos-viewer = false
 dimos-lcm = false
-roboplan-simple-ik = false
+lcm = false
 edgetam-dimos = false
 eclipse-zenoh = false
 can-motor-control = false
-roboplan-common = false
-lcm = false
-roboplan-toppra = false
-roboplan-rrt = false
-roboplan-example-models = false
-roboplan-core = false
-roboplan-cartesian-planning = false
-roboplan-oink = false
 md-babel-py = false
 dim-odom = false
 mjcf-to-urdf = false
