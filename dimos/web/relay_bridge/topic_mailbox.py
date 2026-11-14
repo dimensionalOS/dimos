@@ -205,6 +205,17 @@ class TopicMailbox:
             )
             return batch, delay
 
+    def refresh(self, key: str) -> TopicSample | None:
+        """The sample of ``key`` that arrived since its take, past the rate gate.
+
+        It replaces the taken one, not encoded yet, rather than adding a
+        selection: the key's schedule stays where the take left it.
+        """
+        with self._budget.lock:
+            if self._closed or self._error is not None:
+                return None
+            return self._latest.pop(key, None)
+
     def release(self, sample: TopicSample) -> None:
         with self._budget.lock:
             if not self._closed:
