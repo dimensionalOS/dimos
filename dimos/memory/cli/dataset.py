@@ -90,11 +90,22 @@ def open_store(path: str | Path, *, decode_metadata: bool = False) -> Store:
     raise ValueError(f"unsupported dataset {s!r}: expected a .db or .mcap path")
 
 
-def resolve_dataset(dataset: str | Path) -> Path:
-    """Resolve a path, existing LFS name, recording folder, or downloaded dataset name."""
+def resolve_dataset(dataset: str | Path, *, suffix: str | None = None) -> Path:
+    """Resolve a path, existing LFS name, recording folder, or downloaded dataset name.
+
+    Existing cwd, project, and data/LFS lookup takes precedence over recording
+    and download aliases. LFS lookup may need network access before local fallback.
+
+    Args:
+        dataset: Path or name of the dataset to resolve.
+        suffix: Suffix to try after the exact input. Defaults to the input's
+            extension, or ``.db`` for an extensionless input.
+    """
     name = str(dataset)
+    if suffix is None:
+        suffix = Path(dataset).suffix or ".db"
     try:
-        return data.resolve_named_path(dataset, Path(dataset).suffix or ".db")
+        return data.resolve_named_path(dataset, suffix)
     except FileNotFoundError:
         if Path(name).name != name:
             raise

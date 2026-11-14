@@ -26,7 +26,13 @@ mem_app.command("summary")(_summary_main)
 
 @mem_app.command()
 def rerun(
-    path: str = typer.Argument(..., help="Store: bare name (cwd, data/, LFS), .db or .mcap path"),
+    path: str = typer.Argument(
+        ...,
+        help=(
+            "Store .db/.mcap: path, cwd/data/LFS name, recording folder, or downloaded name. "
+            "Upload ID prefixes match only the first 8 characters stored in download filenames."
+        ),
+    ),
     out: str = typer.Option(None, "--out", help="Output .rrd (default: alongside the source)"),
     seconds: float = typer.Option(None, "--seconds", help="Only the first N seconds"),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't open the viewer"),

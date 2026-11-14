@@ -50,8 +50,8 @@ _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
 
 
 def resolve_db_path(dataset: str | Path) -> Path:
-    """Map a dataset name to its on-disk recording path."""
-    return resolve_dataset(dataset)
+    """Resolve a recording, trying the exact input before appending ``.db``."""
+    return resolve_dataset(dataset, suffix=".db")
 
 
 class ReplayConfig(BaseConfig):
