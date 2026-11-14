@@ -15,9 +15,11 @@
 from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
+import io
 import os
 from pathlib import Path
 import subprocess
+import tarfile
 from threading import Barrier
 from typing import Any
 from unittest.mock import call
@@ -34,6 +36,64 @@ from dimos.utils.data import LfsPath, backup_file, resolve_named_path
 def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
     for ts in timestamps:
         (dir_path / f"{stem}.{ts}{suffix}").write_text(ts)
+
+
+def test_decompress_archive_keeps_data_and_internal_symlinks(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    archive = tmp_path / "sample.tar.gz"
+    target = tmp_path / "data"
+    target.mkdir()
+    mocker.patch.object(data, "get_data_dir", return_value=target)
+    payload = b"robot asset\n"
+    with tarfile.open(archive, "w:gz") as tar:
+        member = tarfile.TarInfo("sample/model.txt")
+        member.size = len(payload)
+        member.mode = 0o666
+        tar.addfile(member, io.BytesIO(payload))
+        link = tarfile.TarInfo("sample/model-link.txt")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "model.txt"
+        tar.addfile(link)
+
+    result = data._decompress_archive(archive)
+
+    assert result == target / "sample"
+    assert (result / "model.txt").read_bytes() == payload
+    assert (result / "model-link.txt").is_symlink()
+    assert (result / "model-link.txt").read_bytes() == payload
+    assert (result / "model.txt").stat().st_mode & 0o777 == 0o644
+    assert list(target.iterdir()) == [result]
+
+
+@pytest.mark.parametrize(
+    ("name", "member_type", "linkname"),
+    [
+        ("../escaped", tarfile.REGTYPE, ""),
+        ("sample/link", tarfile.SYMTYPE, "../../escaped"),
+        ("sample/device", tarfile.CHRTYPE, ""),
+    ],
+)
+def test_decompress_archive_rejects_unsafe_members_and_cleans_staging(
+    mocker: MockerFixture, tmp_path: Path, name: str, member_type: bytes, linkname: str
+) -> None:
+    archive = tmp_path / "sample.tar.gz"
+    target = tmp_path / "data"
+    target.mkdir()
+    mocker.patch.object(data, "get_data_dir", return_value=target)
+    with tarfile.open(archive, "w:gz") as tar:
+        safe = tarfile.TarInfo("sample/model.txt")
+        tar.addfile(safe)
+        unsafe = tarfile.TarInfo(name)
+        unsafe.type = member_type
+        unsafe.linkname = linkname
+        tar.addfile(unsafe)
+
+    with pytest.raises(tarfile.FilterError):
+        data._decompress_archive(archive)
+
+    assert list(target.iterdir()) == []
+    assert not (tmp_path / "escaped").exists()
 
 
 def test_initialize_git_lfs_configures_only_repository(
@@ -100,12 +160,10 @@ def test_pull_lfs_archive_initializes_lfs_before_pull(
 
 
 def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
-    (tmp_path / "premap.pc2.lcm").touch()
-    assert resolve_named_path(tmp_path / "premap", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
-    assert (
-        resolve_named_path(tmp_path / "premap.pc2.lcm", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
-    )
-    assert resolve_named_path("/nowhere/premap", ".pc2.lcm") == Path("/nowhere/premap.pc2.lcm")
+    (tmp_path / "premap.map.db").touch()
+    assert resolve_named_path(tmp_path / "premap", ".map.db") == tmp_path / "premap.map.db"
+    assert resolve_named_path(tmp_path / "premap.map.db", ".map.db") == tmp_path / "premap.map.db"
+    assert resolve_named_path("/nowhere/premap", ".map.db") == Path("/nowhere/premap.map.db")
 
 
 def test_resolve_named_path_without_must_exist_says_where_a_new_file_goes(
@@ -127,10 +185,10 @@ def test_resolve_named_path_without_must_exist_says_where_a_new_file_goes(
 
 
 def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> None:
-    pulled = Path("/lfs/maps/office.pc2.lcm")
+    pulled = Path("/lfs/maps/office.map.db")
     get_data = mocker.patch.object(data, "get_data", return_value=pulled)
-    assert resolve_named_path("maps/office", ".pc2.lcm") == pulled
-    get_data.assert_called_once_with("maps/office.pc2.lcm")
+    assert resolve_named_path("maps/office", ".map.db") == pulled
+    get_data.assert_called_once_with("maps/office.map.db")
 
 
 def test_resolve_named_path_falls_back_to_the_basename(mocker: MockerFixture) -> None:
@@ -613,10 +671,34 @@ def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
         with pytest.raises(Timeout), FileLock(data_dir / "repo.lock", timeout=0):
             pass
         (data_dir / "repo" / ".git").mkdir(parents=True)
+        (data_dir / "repo" / ".git" / "index").touch()
 
     mocker.patch.object(data, "_get_user_data_dir", side_effect=user_data_dir)
     run = mocker.patch.object(data.subprocess, "run", side_effect=clone)
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: data.get_project_root.__wrapped__(), range(4)))
     assert results == [data_dir / "repo"] * 4
+    run.assert_called_once()
+
+
+def test_project_root_clones_again_after_unfinished_clone(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    repo_dir = tmp_path / "data" / "repo"
+    # What a clone stopped while writing files leaves, plus the data directory
+    # that the failed run after it creates.
+    (repo_dir / ".git").mkdir(parents=True)
+    (repo_dir / "README.md").write_text("partial")
+    (repo_dir / "data").mkdir()
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path / "installed")
+    mocker.patch.object(data, "_get_user_data_dir", return_value=tmp_path / "data")
+
+    def clone(*args: Any, **kwargs: Any) -> None:
+        assert not repo_dir.exists()  # git only clones into an empty directory
+        (repo_dir / ".git").mkdir(parents=True)
+        (repo_dir / ".git" / "index").touch()
+
+    run = mocker.patch.object(data.subprocess, "run", side_effect=clone)
+
+    assert data.get_project_root.__wrapped__() == repo_dir
     run.assert_called_once()

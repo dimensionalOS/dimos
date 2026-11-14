@@ -16,6 +16,9 @@
 
 import importlib.util
 from pathlib import Path
+import shutil
+
+from filelock import FileLock
 
 SIM_INSTALL_HINT = "Simulation dependencies are not installed. Run `uv sync --extra sim --inexact` to install them."
 
@@ -30,11 +33,26 @@ def menagerie_path() -> Path:
     return package_dir / "external_deps" / "mujoco_menagerie"
 
 
-def ensure_menagerie() -> None:
-    """Clone the menagerie on first use; a no-op once it is on disk."""
-    if menagerie_path().exists():
-        return
-    # mujoco_playground: 4 s import (torch, jax, mjx), only needed to clone once.
-    from mujoco_playground._src import mjx_env
+def _is_cloned(path: Path) -> bool:
+    # mujoco_playground clones the menagerie, then checks out a pinned commit. git
+    # detaches HEAD at the end of that checkout, so a download that was stopped
+    # part-way is still on a branch.
+    head = path / ".git" / "HEAD"
+    return head.is_file() and not head.read_text().startswith("ref:")
 
-    mjx_env.ensure_menagerie_exists()
+
+def ensure_menagerie() -> None:
+    """Clone the menagerie on first use, and again if the last clone did not finish."""
+    path = menagerie_path()
+    if _is_cloned(path):
+        return
+    # A second launch waits here for the first one to finish cloning.
+    with FileLock(path.with_suffix(".lock")):
+        if _is_cloned(path):
+            return
+        # mujoco_playground: 4 s import (torch, jax, mjx), only needed to clone.
+        from mujoco_playground._src import mjx_env
+
+        # The mujoco_playground helper skips a directory that exists, even an unfinished clone.
+        shutil.rmtree(path, ignore_errors=True)
+        mjx_env.ensure_menagerie_exists()

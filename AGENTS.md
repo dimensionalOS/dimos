@@ -224,7 +224,7 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | `dimos run <blueprint> [--daemon]` | Start a blueprint |
 | `dimos shell` | Open an attached IPython session for live module/RPC discovery and calls |
 | `dimos status` | Show running instance (run ID, PID, blueprint, uptime, log path) |
-| `dimos stop [--force]` | SIGTERM → SIGKILL after 5s; `--force` = immediate SIGKILL |
+| `dimos stop [--force]` | SIGTERM → SIGKILL after 30s; `--force` = immediate SIGKILL |
 | `dimos restart [--force]` | Stop + re-exec with original args |
 | `dimos list` | List all non-demo blueprints |
 | `dimos show-config` | Print resolved GlobalConfig values |
@@ -233,7 +233,7 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
 | `dimos agent-send "<text>"` | Send text to the running agent via LCM |
 | `dimos lcmspy / agentspy / humancli / top` | Debug/diagnostic tools |
-| `dimos topic echo <topic> / send <topic> <expr>` | LCM topic pub/sub |
+| `dimos topic echo <topic> / send <topic> <expr>` | Topic pub/sub on the active transport |
 | `dimos rerun-bridge` | Launch Rerun visualization standalone |
 
 Log files: `logs/<run-id>/main.jsonl` under the checkout when running from a Git clone, `~/.local/state/dimos/logs/<run-id>/main.jsonl` for an installed package

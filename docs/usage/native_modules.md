@@ -336,3 +336,7 @@ locally to skip cold compiles when the cache has them:
 extra-substituters = https://dimensionalos.cachix.org
 extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
 ```
+
+The cache holds the native modules that ship in the `dimos` package, the ones
+`bin/native-modules --build` builds. CI does not publish the examples under
+[/examples/native-modules/](/examples/native-modules/), so their first run compiles them.

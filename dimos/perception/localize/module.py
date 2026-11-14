@@ -43,6 +43,7 @@ from typing import Any, Literal
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -118,6 +119,8 @@ class PerceptionLocalize(Module):
 
     detections: Out[Detection3DArray]
 
+    _thread: threading.Thread | None = None
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -126,7 +129,10 @@ class PerceptionLocalize(Module):
         self._camera_seen = threading.Event()
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
+        # Unsubscribe inputs before closing the stores they write to.
+        subscriptions = self.register_disposable(CompositeDisposable())
         self._memento = Memento()
+        self.register_disposable(Disposable(self._memento.close))
 
         embed_hz = (
             WALK_EMBED_HZ
@@ -163,6 +169,7 @@ class PerceptionLocalize(Module):
             observation_store=ListObservationStore(name=GEOMETRY_STREAM, max_size=memory_frames),
         )
         self._tf_buffer = TF(self.tf, buffer_size=self.config.horizon_s)
+        subscriptions.add(Disposable(self._tf_buffer.dispose))
 
         def on_camera_info(info: CameraInfo) -> None:
             if self._camera is None:
@@ -173,23 +180,23 @@ class PerceptionLocalize(Module):
             self._geometry_feed.append(msg, ts=msg.ts)
 
         geometry = self.depth_image if self.config.geometry == "depth" else self.lidar
-        self._unsubs = [
-            self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts)),
-            geometry.subscribe(on_geometry),
-            self.camera_info.subscribe(on_camera_info),
-        ]
+        subscriptions.add(
+            Disposable(
+                self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts))
+            )
+        )
+        subscriptions.add(Disposable(geometry.subscribe(on_geometry)))
+        subscriptions.add(Disposable(self.camera_info.subscribe(on_camera_info)))
         self._thread = threading.Thread(target=self._warm, name="localize-warmup", daemon=True)
         self._thread.start()
 
     @rpc
     def stop(self) -> None:
-        self._stop.set()
-        self._ready.clear()
-        self._thread.join(timeout=5.0)
-        for unsubscribe in self._unsubs:
-            unsubscribe()
-        self._tf_buffer.dispose()
-        self._memento.close()
+        if self._thread is not None:
+            self._stop.set()
+            self._ready.clear()
+            if self._thread.is_alive():
+                self._thread.join(timeout=5.0)
         super().stop()
 
     def _pair_geometry(self, upstream: Iterator[Any]) -> Iterator[Any]:
@@ -280,34 +287,12 @@ class PerceptionLocalize(Module):
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
         queries = [q.strip() for q in objects.split(",") if q.strip()]
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        hi = lo + duration
-        # frames older than the feed's memory can no longer be asked for
-        self._memento.forget(first)
-        index = self.index.time_range(lo, hi)
-        for cam in self.rig.cameras.values():
-            if cam.hz is None:
-                cam.hz = camera_hz(self._color_feed)
-        rig = self.rig
-        if rig.lidar is not None:
-            rig = replace(rig, lidar=rig.lidar.time_range(lo, hi))
         overrides = json.loads(params) if params.strip() else None
-        results = self.detector.localize(
-            queries,
-            index=index,
-            window=(lo, hi),
-            head=head,
-            rig=rig,
-            params=self.config.params,
-            fields=overrides,
-            memento=self._memento,
-        )
-        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        results, (lo, hi, first, head, frames) = self._localize(queries, start, duration, overrides)
 
         lines: list[str] = [
             f"window {lo - first:.1f}s to {hi - first:.1f}s of "
-            f"{head - first:.1f}s of feed, {index.count()} frames"
+            f"{head - first:.1f}s of feed, {frames} frames"
         ]
         for query, hits in zip(queries, results, strict=True):
             if not hits:
@@ -321,6 +306,39 @@ class PerceptionLocalize(Module):
                     f"first {max(0.0, head - hit.first_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
+
+    def _localize(
+        self,
+        queries: list[str],
+        start: float,
+        duration: float,
+        overrides: dict[str, Any] | None,
+    ) -> tuple[list[list[Localization]], tuple[float, float, float, float, int]]:
+        """One localize call: the instances per query, and the window it read."""
+        first, head = self.index.get_time_range()
+        lo = max(first, head + start if start < 0 else first + start)
+        hi = lo + duration
+        # frames older than the feed's memory can no longer be asked for
+        self._memento.forget(first)
+        index = self.index.time_range(lo, hi)
+        for cam in self.rig.cameras.values():
+            if cam.hz is None:
+                cam.hz = camera_hz(self._color_feed)
+        rig = self.rig
+        if rig.lidar is not None:
+            rig = replace(rig, lidar=rig.lidar.time_range(lo, hi))
+        results = self.detector.localize(
+            queries,
+            index=index,
+            window=(lo, hi),
+            head=head,
+            rig=rig,
+            params=self.config.params,
+            fields=overrides,
+            memento=self._memento,
+        )
+        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        return results, (lo, hi, first, head, index.count())
 
 
 def as_detection_array(

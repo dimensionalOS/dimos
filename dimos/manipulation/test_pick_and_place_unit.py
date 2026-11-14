@@ -76,12 +76,15 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.execute.return_value = COMPLETED
     instance._manipulation.move_linear.return_value = _linear_move()
     instance._manipulation.set_gripper_position.return_value = ACCEPTED
-    instance._objects = {"cup-1": {"object_id": "cup-1", "name": "cup"}}
+    instance._scene.get_id.side_effect = _resolved
     # The cup's points: a 4 cm cube centred on the grasp at (0.1, 0.0, 0.2).
-    instance._scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
-        np.asarray([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]], dtype=np.float32),
-        frame_id="world",
-        timestamp=1.0,
+    instance._scene.get_pointcloud.side_effect = _localized(
+        "cup-1",
+        PointCloud2.from_numpy(
+            np.asarray([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]], dtype=np.float32),
+            frame_id="world",
+            timestamp=1.0,
+        ),
     )
     instance._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1)]
@@ -99,29 +102,28 @@ def settled_gripper(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
 
 
+def _resolved(asked: str) -> str:
+    """A localize get_id that knows one object: the cup cup-1."""
+    if asked not in ("cup", "cup-1"):
+        raise LookupError(f"No {asked!r} among the localized objects. They are: cup cup-1.")
+    return "cup-1"
+
+
+def _localized(instance_id: str, cloud: PointCloud2) -> Any:
+    """A localize get_pointcloud that gives this cloud for one id and no other."""
+
+    def get_pointcloud(asked: str) -> PointCloud2:
+        assert asked == instance_id
+        return cloud
+
+    return get_pointcloud
+
+
 def _candidate(x: float, score: float = 1.0) -> GraspCandidate:
     return GraspCandidate(
         Pose(Vector3(x, 0.0, 0.2), Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0))),
         score,
     )
-
-
-def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
-    scene: Any = module._scene
-    scene.scan_scene.return_value = SimpleNamespace(
-        detections_length=1,
-        detections=[
-            SimpleNamespace(
-                id="cup-1", results=[SimpleNamespace(hypothesis=SimpleNamespace(class_id="cup"))]
-            )
-        ],
-    )
-
-    result = module.scan_objects([" cup "])
-
-    assert result.message == "Detected 1 object(s)"
-    assert module.get_object("cup-1") == {"object_id": "cup-1", "name": "cup"}
-    scene.scan_scene.assert_called_once_with(text=["cup"])
 
 
 def test_pick_object_uses_first_provider_candidate(
@@ -133,9 +135,13 @@ def test_pick_object_uses_first_provider_candidate(
         Header(1.0, "world"), [first, second]
     )
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object("cup")
 
     assert result.message == "Pick complete"
+    assert result.metadata["object_id"] == "cup-1"
+    # Localize no longer has the cup where it was.
+    scene: Any = module._scene
+    scene.forget.assert_called_once_with("cup-1")
     assert module.get_grasp_candidates().candidates == [first, second]
     assert module._selected_grasp is not None
     assert module._selected_grasp.position.x == pytest.approx(0.1)
@@ -245,18 +251,6 @@ def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule)
     assert module._selected_grasp is None
 
 
-def test_scan_failure_clears_stale_selection(module: PickAndPlaceModule) -> None:
-    scene: Any = module._scene
-    module._selected_grasp = PoseStamped(frame_id="world")
-    scene.scan_scene.side_effect = RuntimeError("No aligned RGB-D frame")
-
-    with pytest.raises(RuntimeError, match="No aligned RGB-D frame"):
-        module.scan_objects(["cup"])
-
-    assert module._selected_grasp is None
-    assert module.get_object("cup-1") is None
-
-
 def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     module._holding_object = True
@@ -278,10 +272,11 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
     result = module.pick_object("missing")
 
     assert result.message == (
-        "No object with id missing in the latest scan. Scanned ids: cup-1. "
-        "Use scan_objects to refresh the list."
+        "No 'missing' among the localized objects. They are: cup cup-1. Did not start the pick."
     )
     assert module._selected_grasp is None
+    scene: Any = module._scene
+    scene.forget.assert_not_called()
 
 
 def test_pick_retains_held_state_when_retract_fails(module: PickAndPlaceModule) -> None:
@@ -542,8 +537,9 @@ def test_a_release_whose_retract_stops_still_clears_the_box(module: PickAndPlace
 def test_an_empty_target_cloud_sets_no_box(module: PickAndPlaceModule) -> None:
     box_filter: Any = module._box_filter
     scene: Any = module._scene
-    scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
-        np.zeros((0, 3), dtype=np.float32), frame_id="world", timestamp=1.0
+    scene.get_pointcloud.side_effect = _localized(
+        "cup-1",
+        PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32), frame_id="world", timestamp=1.0),
     )
 
     assert module.pick_object("cup-1").message == "Pick complete"
@@ -604,3 +600,106 @@ def test_pick_and_place_work_without_a_box_filter(module: PickAndPlaceModule) ->
 
     assert module.pick_object("cup-1").message == "Pick complete"
     assert module.place_at(0.4, 0.0, 0.2).message == "Place complete"
+
+
+def _given(x: float, **extra: Any) -> dict[str, Any]:
+    """A grasp handed to pick_object, as propose_grasps_for gives it: a top-down grasp at ``x``."""
+    pose = _candidate(x).pose
+    return {
+        "position": list(pose.position.to_tuple()),
+        "orientation": list(pose.orientation.to_tuple()),
+        **extra,
+    }
+
+
+def test_a_reachable_given_grasp_is_picked_without_generating_any(
+    module: PickAndPlaceModule,
+) -> None:
+    grasp_generator: Any = module._grasp_generator
+
+    result = module.pick_object("cup-1", grasp=_given(0.12, rank=2, score=0.4))
+
+    assert result.message == "Pick complete"
+    assert (result.metadata["source"], result.metadata["rank"]) == ("operator", 2)
+    assert result.metadata["score"] == 0.4
+    assert module._selected_grasp is not None
+    assert module._selected_grasp.position.to_tuple() == pytest.approx((0.12, 0.0, 0.2))
+    grasp_generator.propose_grasps.assert_not_called()
+
+
+def test_a_given_grasp_rotation_is_made_unit_length(module: PickAndPlaceModule) -> None:
+    given = _given(0.12)
+    given["orientation"] = [2.0 * q for q in given["orientation"]]
+
+    result = module.pick_object("cup-1", grasp=given)
+
+    assert result.message == "Pick complete"
+    manipulation: Any = module._manipulation
+    pregrasp = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
+    # The configured 10 cm above the top-down grasp at z = 0.2.
+    assert pregrasp.position.to_tuple() == pytest.approx((0.12, 0.0, 0.3))
+
+
+def test_the_source_names_the_generator_the_given_grasp_came_from(
+    module: PickAndPlaceModule,
+) -> None:
+    result = module.pick_object("cup-1", grasp=_given(0.12, generator="GraspGenXModule"))
+
+    assert result.metadata["source"] == "GraspGenXModule"
+
+
+def test_a_given_grasp_with_no_path_is_reported_and_no_other_is_tried(
+    module: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = module._manipulation
+    grasp_generator: Any = module._grasp_generator
+    manipulation.plan_to_poses.return_value = NO_PATH
+
+    result = module.pick_object("cup-1", grasp=_given(0.5, generator="HeuristicGraspModule"))
+
+    assert result.message.startswith("The planner found no path to any of the 1 grasp")
+    assert result.metadata["no_path"] is True
+    assert result.metadata["source"] == "HeuristicGraspModule"
+    assert manipulation.plan_to_poses.call_count == 1
+    grasp_generator.propose_grasps.assert_not_called()
+    assert not module._holding_object
+
+
+def test_a_given_grasp_that_does_not_hold_says_where_it_came_from(
+    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
+        position = 0.0 if target == config.closed_position else target
+        return GripperSettle(True, position, True, 0.1)
+
+    monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
+
+    result = module.pick_object("cup-1", grasp=_given(0.12, generator="GraspGenXModule", rank=1))
+
+    assert result.message.startswith("Closed the gripper on object cup-1.")
+    assert (result.metadata["source"], result.metadata["rank"]) == ("GraspGenXModule", 1)
+
+
+def _generator_client(name: str) -> MagicMock:
+    """A running grasp generator as on_system_modules hands it over."""
+    client = MagicMock(remote_name=name, rpcs=frozenset({"propose_grasps_for"}))
+    client.propose_grasps_for.return_value = {"generator": name, "grasps": []}
+    return client
+
+
+def test_propose_grasps_asks_the_generator_the_agent_names(module: PickAndPlaceModule) -> None:
+    graspgenx = _generator_client("GraspGenXModule")
+    heuristic = _generator_client("HeuristicGraspModule")
+    planner = MagicMock(remote_name="ManipulationModule", rpcs=frozenset({"plan_to_pose"}))
+    module.on_system_modules([graspgenx, heuristic, planner])
+
+    answer = module.propose_grasps("cup", "HeuristicGraspModule", approach=[0.0, 0.0, -1.0])
+
+    assert answer == {"object_id": "cup-1", "generator": "HeuristicGraspModule", "grasps": []}
+    heuristic.propose_grasps_for.assert_called_once_with(
+        cloud=module._scene.get_pointcloud("cup-1"),
+        approach=[0.0, 0.0, -1.0],
+        max_angle_deg=30.0,
+        limit=3,
+    )
+    graspgenx.propose_grasps_for.assert_not_called()

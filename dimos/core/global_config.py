@@ -135,13 +135,23 @@ class GlobalConfig(BaseSettings):
             setattr(self, key, value)
 
     @property
+    def parsed_robot_ips(self) -> tuple[str, ...]:
+        """Parse robot IPs without requiring them during blueprint discovery."""
+        return tuple(x.strip() for x in (self.robot_ips or "").split(",") if x.strip())
+
+    @property
     def processed_robot_ips(self) -> tuple[str, ...]:
-        ips = [x.strip() for x in (self.robot_ips or "").split(",") if x.strip()]
-        if not ips:
-            raise ValueError(
-                "No robot IPs specified. Set ROBOT_IPS or --robot-ips to at least one IP."
-            )
-        return tuple(ips)
+        ips = self.parsed_robot_ips
+        if error := require_robot_ips(ips):
+            raise ValueError(error)
+        return ips
 
 
 global_config = GlobalConfig()
+
+
+def require_robot_ips(ips: tuple[str, ...]) -> str | None:
+    """Validate the IPs used to compose a blueprint, independent of runtime globals."""
+    if not ips:
+        return "No robot IPs specified. Set ROBOT_IPS or --robot-ips to at least one IP."
+    return None
