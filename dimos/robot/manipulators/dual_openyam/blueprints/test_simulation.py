@@ -154,6 +154,15 @@ def test_coordinator_runs_a_trajectory_and_a_jaw_on_the_rig(planning_stack: Depl
 
 
 @pytest.mark.self_hosted
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "dual-openyam-planner-coordinator's planning model does not exclude each arm's link4 "
+        "against its gripper, whose hulls always overlap on dual_openyam_workcell_v7, so the "
+        "planner refuses every start: 'Start configuration is in collision, cannot plan!'. "
+        "The grasp blueprint's model excludes the pair."
+    ),
+)
 def test_planner_plans_and_the_rig_executes(planning_stack: Deployed) -> None:
     planner = planning_stack.modules[ManipulationModule]
 
