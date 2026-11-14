@@ -3,7 +3,7 @@ resources = ["base"]
 
 [constants]
 cycles = 5
-back_m = 8.0
+step_m = 4.0
 base_height_m = 0.48
 pause_s = 5.0
 settle_s = 2.0
@@ -22,6 +22,7 @@ ABORTED = 4
 "axis.y" = 0.0
 "spot.predock" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
 "spot.position_a" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
+"spot.position_b" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
 
 [[signal]]
 name = "nav_status"
@@ -55,7 +56,7 @@ start = "M20Connection.undock"
 
 [[node]]
 name = "Mission"
-children = ["OnDock", "Undocking", "GoingAway", "AwayRetry", "Pausing", "Returning", "ReturnRetry", "Settling", "Docking", "Resting", "NextCycle"]
+children = ["OnDock", "Undocking", "GoingToA", "GoingToARetry", "GoingToB", "GoingToBRetry", "Pausing", "BackToA", "BackToARetry", "Returning", "ReturnRetry", "Settling", "Docking", "Resting", "NextCycle"]
 initial = "OnDock"
 outcomes = ["done", "failed"]
 
@@ -78,19 +79,45 @@ name = "Undocking"
 activity = "undock"
 
 # The predock spot is the undock spot moved onto the dock's axis.
-# Position A is back_m farther back along the axis, and both sit on the floor.
+# Positions A and B are one and two steps farther back along the axis, and all three sit on the floor.
 [[node.transition]]
 trigger = "succeeded"
-goto = "GoingAway"
+goto = "GoingToA"
 
 [node.transition.set]
 "spot.predock" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + ((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) * axis.x, 'y': spot.dock.pose.position.y + ((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
-"spot.position_a" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - back_m) * axis.x, 'y': spot.dock.pose.position.y + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - back_m) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
+"spot.position_a" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - step_m) * axis.x, 'y': spot.dock.pose.position.y + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - step_m) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
+"spot.position_b" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - 2.0 * step_m) * axis.x, 'y': spot.dock.pose.position.y + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - 2.0 * step_m) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
 
 [[node]]
-name = "GoingAway"
+name = "GoingToA"
 activity = "navigate"
 args = { pose = "spot.position_a" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "GoingToB"
+
+[[node.transition]]
+trigger = "gave_up"
+goto = "failed"
+
+[[node.transition]]
+trigger = "failed"
+goto = "GoingToARetry"
+
+[[node]]
+name = "GoingToARetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "GoingToA"
+
+[[node]]
+name = "GoingToB"
+activity = "navigate"
+args = { pose = "spot.position_b" }
 result = "nav.goal"
 
 [[node.transition]]
@@ -103,21 +130,46 @@ goto = "failed"
 
 [[node.transition]]
 trigger = "failed"
-goto = "AwayRetry"
+goto = "GoingToBRetry"
 
 [[node]]
-name = "AwayRetry"
+name = "GoingToBRetry"
 
 [[node.transition]]
 after = "retry_s"
-goto = "GoingAway"
+goto = "GoingToB"
 
 [[node]]
 name = "Pausing"
 
 [[node.transition]]
 after = "pause_s"
+goto = "BackToA"
+
+[[node]]
+name = "BackToA"
+activity = "navigate"
+args = { pose = "spot.position_a" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
 goto = "Returning"
+
+[[node.transition]]
+trigger = "gave_up"
+goto = "failed"
+
+[[node.transition]]
+trigger = "failed"
+goto = "BackToARetry"
+
+[[node]]
+name = "BackToARetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "BackToA"
 
 [[node]]
 name = "Returning"
@@ -164,7 +216,7 @@ set = { "cycle.count" = "cycle.count + 1" }
 [[node.transition]]
 trigger = "failed"
 if = "dock.tries + 1 < dock_attempts"
-goto = "GoingAway"
+goto = "BackToA"
 set = { "dock.tries" = "dock.tries + 1" }
 
 [[node.transition]]

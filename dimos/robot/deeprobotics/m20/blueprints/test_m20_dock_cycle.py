@@ -132,9 +132,16 @@ def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], lis
     return calls, records, faults
 
 
-# Both spots sit on the dock's axis, the predock spot level with the undock spot.
-APPROACH = [
+# All three spots sit on the dock's axis, the predock spot level with the undock spot and
+# positions A and B 4 m and 8 m behind it.
+GOING_OUT = [
+    "go_to(map, -2.50, -1.60, 0.00)",
+    "stop_navigation",
     "go_to(map, -5.97, -3.60, 0.00)",
+    "stop_navigation",
+]
+COMING_BACK = [
+    "go_to(map, -2.50, -1.60, 0.00)",
     "stop_navigation",
     "go_to(map, 0.96, 0.40, 0.00)",
     "stop_navigation",
@@ -146,13 +153,18 @@ def test_the_robot_docks_five_times_and_the_mission_ends() -> None:
     calls, records, faults = _walk(docks_that_raise=0)
 
     assert faults == []
-    assert calls == ["undock", *APPROACH] * 5
+    assert calls == ["undock", *GOING_OUT, *COMING_BACK] * 5
     assert records[-1] == TransitionRecord("NextCycle", None, "done")
 
 
 def test_a_dock_that_keeps_failing_is_tried_three_times_then_faults() -> None:
     calls, records, faults = _walk(docks_that_raise=3)
 
-    assert calls[: 1 + 3 * len(APPROACH)] == ["undock", *APPROACH * 3]
+    # Each failed dock approaches again from position A.
+    assert calls[: 1 + len(GOING_OUT) + 3 * len(COMING_BACK)] == [
+        "undock",
+        *GOING_OUT,
+        *COMING_BACK * 3,
+    ]
     assert [record.node for record in records].count("Docking") == 3
     assert len(faults) == 1
