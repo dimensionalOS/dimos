@@ -129,6 +129,8 @@ class ModuleConfig(BaseConfig):
     # Optional RPC-only address. Unlike instance_name, this does not change the
     # module's Blueprint identity, configuration key, or stream namespace.
     rpc_name: str | None = None
+    # Assigned by the worker manager without replacing the public RPC name.
+    rpc_address: str | None = None
     g: GlobalConfig = global_config
 
 
@@ -172,6 +174,8 @@ class ModuleBase(Configurable, CompositeResource):
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
+        self._module_start_lock = threading.Lock()
+        self._module_started = False
         self._loop_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
@@ -186,7 +190,7 @@ class ModuleBase(Configurable, CompositeResource):
             self.rpc.start()  # type: ignore[attr-defined]
             self.rpc.serve_module_rpc(
                 self,
-                name=self.config.rpc_name or self.config.instance_name,
+                name=self.rpc_address,
             )
         except ValueError:
             ...
@@ -195,6 +199,16 @@ class ModuleBase(Configurable, CompositeResource):
     def name(self) -> str:
         """Name for this module to be used for blueprint configs."""
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
+
+    @property
+    def rpc_address(self) -> str:
+        """The deployed RPC endpoint, separate from the module's public name."""
+        return (
+            self.config.rpc_address
+            or self.config.rpc_name
+            or self.config.instance_name
+            or type(self).__name__
+        )
 
     @property
     def frame_id(self) -> str:
@@ -223,8 +237,12 @@ class ModuleBase(Configurable, CompositeResource):
 
     @rpc
     def start(self) -> None:
-        self._start_main()
-        self._auto_bind_handlers()
+        with self._module_start_lock:
+            if self._module_started:
+                return
+            self._start_main()
+            self._auto_bind_handlers()
+            self._module_started = True
 
     @rpc
     def stop(self) -> None:

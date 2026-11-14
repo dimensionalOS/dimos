@@ -28,6 +28,7 @@ get_loop), which corrupts pytest-asyncio's function-scoped loop teardown.
 
 import asyncio
 from collections.abc import Iterator
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from ipaddress import IPv4Address
 import json
@@ -45,13 +46,19 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 import numpy as np
 import pytest
+import requests
+import zenoh
 
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.transport import pLCMTransport
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.encode.cbor import decode, encode
+from dimos.protocol.rpc.rpc_utils import deserialize_exception
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest
 from dimos.web.relay_bridge.e2e_support import (
     arm_teleop,
@@ -218,6 +225,62 @@ def test_local_relay_port_collision_does_not_kill_listener() -> None:
             listener.wait(timeout=5)
         if listener.stdout is not None:
             listener.stdout.close()
+
+
+@pytest.mark.parametrize("same_port", [True, False], ids=["port-collision", "separate-ports"])
+def test_second_run_keeps_first_relay_alive(unused_tcp_port_factory, same_port) -> None:
+    global_config.update(transport="zenoh", viewer="none")
+    config = GlobalConfig(n_workers=1, viewer="none", transport="zenoh")
+    port = unused_tcp_port_factory()
+    second_port = port if same_port else unused_tcp_port_factory()
+    url = f"http://127.0.0.1:{port}/api/info"
+    with ExitStack() as cleanup:
+        first_manager = WorkerManagerPython(g=config)
+        cleanup.callback(first_manager.stop)
+        first = first_manager.deploy(
+            RelayBridgeModule,
+            config,
+            {"local_port": port, "open_browser": False, "web_build": False},
+        )
+        cleanup.callback(first.stop_rpc_client)
+        first.start()
+        assert requests.get(url, timeout=5).status_code == 200
+
+        second_manager = WorkerManagerPython(g=config)
+        cleanup.callback(second_manager.stop)
+        second = second_manager.deploy(
+            RelayBridgeModule,
+            config,
+            {"local_port": second_port, "open_browser": False, "web_build": False},
+        )
+        cleanup.callback(second.stop_rpc_client)
+        # Drain every reply so the health check cannot race a stray start()
+        # still tearing down the first relay after the second has replied.
+        replies = list(
+            second.rpc.session.get(
+                f"dimos/rpc/{second.rpc_address}/start",
+                payload=encode(([], {})),
+                target=zenoh.QueryTarget.ALL,
+                consolidation=zenoh.ConsolidationMode.NONE,
+                timeout=10,
+            )
+        )
+        assert first_manager.health_check()
+        assert requests.get(url, timeout=5).status_code == 200
+        assert len(replies) == 1
+        if same_port:
+            assert replies[0].err is not None
+            error = deserialize_exception(decode(replies[0].err.payload.to_bytes()))
+            assert str(error) == f"cannot start local relay: port {port} is unavailable"
+        else:
+            assert replies[0].ok is not None
+            assert (
+                requests.get(f"http://127.0.0.1:{second_port}/api/info", timeout=5).status_code
+                == 200
+            )
+
+        second_manager.stop()
+        assert requests.get(url, timeout=5).status_code == 200
 
 
 @pytest.mark.flaky(reruns=1)

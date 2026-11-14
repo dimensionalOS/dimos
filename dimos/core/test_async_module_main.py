@@ -107,6 +107,15 @@ def test_main_teardown_runs_only_once():
     assert m.resource.stop_count == 1
 
 
+def test_repeated_start_keeps_the_original_main_running():
+    with HappyMain() as module:
+        module.start()
+        assert module.events == ["setup"]
+        assert module.resource.stop_count == 0
+    assert module.events == ["setup", "teardown"]
+    assert module.resource.stop_count == 1
+
+
 def test_concurrent_stops_let_main_tear_down():
     # The coordinator stops a module twice: the fire-and-forget stop RPC and
     # the worker's undeploy/shutdown handler.

@@ -48,10 +48,13 @@ class RpcCall:
         remote_name: str,
         unsub_fns: list,  # type: ignore[type-arg]
         stop_client: Callable[[], None] | None = None,
+        *,
+        rpc_address: str | None = None,
     ) -> None:
         self._rpc = rpc
         self._name = name
         self._remote_name = remote_name
+        self._rpc_address = rpc_address or remote_name
         self._unsub_fns = unsub_fns
         self._stop_rpc_client = stop_client
 
@@ -86,12 +89,12 @@ class RpcCall:
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)
         if self._name == "stop":
-            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))
+            self._rpc.call_nowait(f"{self._rpc_address}/{self._name}", (args, kwargs))
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
 
-        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))
+        result, unsub_fn = self._rpc.call_sync(f"{self._rpc_address}/{self._name}", (args, kwargs))
         self._unsub_fns.append(unsub_fn)
         return result
 
@@ -100,6 +103,7 @@ class ModuleProxyProtocol(Protocol):
     """Protocol for host-side handles to remote modules (worker or Docker)."""
 
     remote_name: str
+    rpc_address: str
 
     def build(self) -> None: ...
     def start(self) -> None: ...
@@ -120,6 +124,7 @@ class RPCClient:
         rpcs: Iterable[str] | None = None,
         *,
         rpc: RPCSpec | None = None,
+        rpc_address: str | None = None,
         stream_lookup: Callable[[str], RemoteOut[Any]] | None = None,
     ) -> None:
         if rpc is None:
@@ -137,6 +142,7 @@ class RPCClient:
             rpcs = actor_class.rpcs if rpcs is None else rpcs
         self.actor_class = actor_class
         self.remote_name = remote_name
+        self.rpc_address = rpc_address or remote_name
         self.actor_instance = actor_instance
         self.rpcs = frozenset(rpcs)
         self._unsub_fns: list = []  # type: ignore[type-arg]
@@ -175,11 +181,17 @@ class RPCClient:
         # signature. remote_name must be included or proxies sent into workers
         # would fall back to class-name RPC topics. The parent-side Actor stays
         # behind too: receivers only call @rpc methods.
-        return {"remote_name": self.remote_name, "rpcs": sorted(self.rpcs)}
+        return {
+            "remote_name": self.remote_name,
+            "rpc_address": self.rpc_address,
+            "rpcs": sorted(self.rpcs),
+        }
 
     @classmethod
     def cbor_decode(cls, data: dict[str, Any]) -> RPCClient:
-        return cls(None, None, data["remote_name"], data["rpcs"])
+        return cls(
+            None, None, data["remote_name"], data["rpcs"], rpc_address=data.get("rpc_address")
+        )
 
     def __dir__(self) -> list[str]:
         return sorted(set(super().__dir__()) | set(self.rpcs))
@@ -214,6 +226,7 @@ class RPCClient:
                 self.remote_name,
                 self._unsub_fns,
                 self.stop_rpc_client,
+                rpc_address=self.rpc_address,
             )
 
         if self.actor_instance is None:

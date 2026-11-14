@@ -96,11 +96,11 @@ class DescriptorPublisher:
         for module in modules:
             if self._stopped.is_set():
                 break
-            if module.remote_name == self._own_name or "get_stream_descriptors" not in module.rpcs:
+            if module.rpc_address == self._own_name or "get_stream_descriptors" not in module.rpcs:
                 continue
             try:
                 streams, release = module.rpc.call_sync(
-                    f"{module.remote_name}/get_stream_descriptors", ((), {}), rpc_timeout=1
+                    f"{module.rpc_address}/get_stream_descriptors", ((), {}), rpc_timeout=1
                 )
                 try:
                     for stream in streams:
@@ -186,8 +186,7 @@ class TopicMetadataModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        name = self.config.rpc_name or self.config.instance_name or type(self).__name__
-        self._publisher = DescriptorPublisher(name)
+        self._publisher = DescriptorPublisher(self.rpc_address)
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:

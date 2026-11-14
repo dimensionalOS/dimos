@@ -70,9 +70,10 @@ class ModuleDescriptor(NamedTuple):
     class_name: str
     qualified_path: str
     rpc_names: list[str]
-    # RPC topic prefix. Usually the class/instance name; hosted modules may
-    # advertise a run- and Host-scoped address. Defaulted for wire compatibility.
+    # Public instance name. Defaults preserve older descriptors on the wire.
     rpc_name: str = ""
+    # Private address used for RPC calls, separate from display/lookup names.
+    rpc_address: str = ""
 
 
 class ModuleCoordinator(Resource):
@@ -193,6 +194,7 @@ class ModuleCoordinator(Resource):
                         qualified_path=qualified,
                         rpc_names=list(cls.rpcs.keys()),
                         rpc_name=self._deployed_modules[name].remote_name,
+                        rpc_address=self._deployed_modules[name].rpc_address,
                     )
                 )
             return descriptors
