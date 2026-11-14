@@ -83,6 +83,7 @@ _HELD_KEYS_BYTES = 96
 _EVIOCGKEY = (2 << 30) | (_HELD_KEYS_BYTES << 16) | (ord("E") << 8) | 0x18
 _RESCAN_PERIOD_S = 1.0
 _DEVICES_FILE = Path("/proc/bus/input/devices")
+_PAIR_SCRIPT = "dimos/hardware/controllers/joycon/pair_joycon.sh"
 
 # The keys held on each Joy-Con, or None for one that is not connected.
 Pressed = Mapping[JoyConSide, frozenset[int] | None]
@@ -197,6 +198,8 @@ class _JoyConDevices:
         # reads still shows up once.
         self._tapped: dict[JoyConSide, set[int]] = {side: set() for side in JOYCON_SIDES}
         self._next_scan = 0.0
+        # Sides already told how to connect, so the hint is logged once per absence.
+        self._hinted: set[JoyConSide] = set()
 
     def read(self) -> dict[JoyConSide, frozenset[int] | None]:
         """The keys held on each Joy-Con now, or None for one that is not connected."""
@@ -227,7 +230,18 @@ class _JoyConDevices:
                 ),
                 None,
             )
-            if side in self._fds or path is None:
+            if side in self._fds:
+                continue
+            if path is None:
+                if side not in self._hinted:
+                    self._hinted.add(side)
+                    logger.warning(
+                        "Joy-Con %s is not connected. Press any button on it; if it was never "
+                        "paired with this computer, run: %s %s",
+                        side,
+                        _PAIR_SCRIPT,
+                        side[0].upper(),
+                    )
                 continue
             try:
                 fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
@@ -237,6 +251,7 @@ class _JoyConDevices:
             self._fds[side] = fd
             # A trigger already held when the Joy-Con connects must not open the jaw.
             self._held[side] = _held_keys(fd)
+            self._hinted.discard(side)
             logger.info("Joy-Con %s connected at %s", side, path)
 
     def _drain(self, side: JoyConSide) -> bool:
