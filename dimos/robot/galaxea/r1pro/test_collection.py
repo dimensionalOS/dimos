@@ -18,15 +18,21 @@ import h5py
 import numpy as np
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema
+from dimos.robot.assets.model import UsdModel
 from dimos.robot.galaxea.r1pro._collection_test_fakes import write_collection
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_openarm_joylo_sim2
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_desktop import (
     r1pro_openarm_joylo_real,
 )
 from dimos.robot.galaxea.r1pro.collection import CAMERAS, r1pro_collection
+from dimos.robot.galaxea.r1pro.sim.config import JOINTS
+from dimos.robot.galaxea.r1pro.sim.office import SCENE as OFFICE_SCENE
+from dimos.robot.usd_manager import UsdManagerConfig
+from dimos.sim2.scenes.compose import blueprint_robot
 
 # What stands for the robot and its cameras in each blueprint; nothing else may differ.
 HARDWARE = {
@@ -194,3 +200,29 @@ def test_simulation_is_the_hardware_stack_on_a_simulated_robot():
     # Only the simulation starts with no leader arms attached.
     assert simulated["r1proleaderconnection"].kwargs["required"] is False
     assert "required" not in hardware["r1proleaderconnection"].kwargs
+
+
+def test_a_launch_option_puts_the_simulation_in_another_scene(tmp_path):
+    scene = tmp_path / "kitchen" / "scene.usda"
+    parsed = BlueprintConfigParser(r1pro_openarm_joylo_sim2).parse(
+        [
+            f"--usdmanager.model={scene}",
+            f"--recorder.recording={tmp_path / 'take'}",
+            "--episodes.task=pick up the bottle",
+        ],
+        environ={},
+    )
+    kwargs = parsed.module_kwargs("usdmanager")
+    config = UsdManagerConfig(**kwargs)
+    assert isinstance(config.model, UsdModel)
+    assert config.model.source_path == scene
+    # Nothing else about the scene manager changes with the scene.
+    assert config.publish_joint_tf is False
+
+
+def test_the_simulation_names_its_scene_and_joints_for_another_environment():
+    scene, joints = blueprint_robot(r1pro_openarm_joylo_sim2)
+    assert scene.source_path == OFFICE_SCENE
+    assert joints == JOINTS
+    with pytest.raises(ValueError, match="not a sim2 blueprint"):
+        blueprint_robot(r1pro_openarm_joylo_real)

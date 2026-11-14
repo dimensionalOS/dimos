@@ -10,7 +10,7 @@ the hardware blueprint below connects the same operator inputs to vendor ROS.
 | Run | Blueprint | The robot behind it |
 | --- | --- | --- |
 | Hardware | `r1pro-openarm-joylo-real` | CC's ROS connection and the head and wrist cameras, hosted on the robot |
-| Simulation | `r1pro-openarm-joylo-sim2` | A sim2 world in the SF555 office and three Unreal cameras |
+| Simulation | `r1pro-openarm-joylo-sim2` | A sim2 world (the SF555 office unless another scene is named) and three MuJoCo cameras |
 
 Both are the same composition (`blueprints/teleop/r1pro_joylo_inputs.py`): the
 operator devices, the headset page, JoyLo, `R1ProTeleopCoordinator` with its
@@ -29,6 +29,45 @@ without a leader port.
 `r1pro-joylo-real` and `teleop-openarm-r1pro-joylo` remain as the two halves of
 the earlier two-host hardware launch (robot control only, and operator devices
 only). They add nothing that `r1pro-openarm-joylo-real` lacks.
+
+## Another scene
+
+The simulation takes its scene as a launch option. A scene is one USD file with
+the robot in it:
+
+```bash
+dimos run r1pro-openarm-joylo-sim2 --usdmanager.model ~/kitchen-r1.usda \
+  --recorder.recording <new-session-folder> --episodes.task "<task>"
+```
+
+Two commands make such a file from any MuJoCo (MJCF) environment, for example a
+scene directory of the PimSim starter pack. Neither is specific to this robot:
+
+```bash
+# The environment as a USD scene with no robot in it, and a free place to stand.
+python -m dimos.sim2.scenes.mjcf ~/pimsim-starter/libero-kitchen-scene-1 \
+  --output ~/scenes/libero-kitchen-1 --near 0 0
+# The robot of a sim2 blueprint, taken out of its own scene and put in that one.
+python -m dimos.sim2.scenes.compose --blueprint r1pro-openarm-joylo-sim2 \
+  --environment ~/scenes/libero-kitchen-1/scene.usda --place -1.0 0 0 \
+  --output ~/kitchen-r1.usda
+```
+
+Each takes a few seconds. `mjcf.py` reads the compiled MuJoCo model: what is
+welded to the world becomes fixed parts, and each free object or jointed piece of
+furniture its own component, with the masses, joints, joint damping and contact
+masks MuJoCo simulates. Textures do not carry over (a textured surface keeps its
+mean color), nor do lights, actuators, sensors and joints other than one free,
+hinge or slide joint per body; the command reports what it welded or left out.
+`compose.py` needs nothing stated for a robot: the blueprint names its scene and
+the joints its simulation drives, and the part of the scene that holds those
+joints is the robot. Spatial Desktop runs both from its Scenes panel.
+
+The cameras render with MuJoCo, which draws any scene. In an in-process check
+on an M4 Max it drew the three views in 30 to 90 ms, against the 200 ms that
+5 Hz allows. Unreal (`sim.office.office_renderer`) draws the office with its
+materials but ran the three views at 3.4 to 3.8 Hz on that machine; to use it,
+pass it as the `renderer` of `CameraRenderModule` in `r1pro_joylo.py`.
 
 ## Real hardware spatial view
 
@@ -553,7 +592,7 @@ collisions. The office-specific robot model decomposes the four finger meshes
 into convex pieces; single whole-finger hulls bridge their concave openings and
 push bottles out. All robot joint frames, limits, inertias and visuals are unchanged.
 
-A single Unreal process renders head-left RGB-D and both wrist RGB-D views.
+With the Unreal renderer, a single Unreal process renders head-left RGB-D and both wrist RGB-D views.
 Switching views resets temporal history to prevent cross-camera ghosting;
 render targets are cached by resolution. Source pose timestamps and camera calibration accompany every pair.
 The 2025 robot's head and uppercase `left_D405_link`/`right_D405_link` frames

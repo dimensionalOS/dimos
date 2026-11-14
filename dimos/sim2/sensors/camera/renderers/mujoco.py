@@ -14,8 +14,6 @@
 
 """Native camera objects are private to this renderer, never physics config."""
 
-import math
-
 from dimos_lcm.sim_msgs import WorldState
 import mujoco
 import numpy as np
@@ -27,6 +25,12 @@ from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 from dimos.sim2.geometry.mujoco import build_scene
 from dimos.sim2.geometry.query import MujocoGeometry
 from dimos.sim2.sensors.camera.config import CameraConfig
+
+# The sensor's pixel pitch, in metres. Only its ratio to the focal length matters.
+_PIXEL_M = 1e-5
+# Headlight strength (RGB, 0 to 1) for a scene with no authored light.
+_UNLIT_AMBIENT = (0.45, 0.45, 0.45)
+_UNLIT_DIFFUSE = (0.7, 0.7, 0.7)
 
 
 class MujocoRenderer:
@@ -40,21 +44,27 @@ class MujocoRenderer:
             raise RuntimeError("close the existing camera scene before loading another")
         if not cameras or len({c.frame_id for c in cameras}) != len(cameras):
             raise ValueError("cameras require distinct, nonempty frame IDs")
-        for camera in cameras:
-            if not camera.frame_id or not (
-                math.isclose(camera.fx, camera.fy)
-                and camera.cx == camera.width / 2
-                and camera.cy == camera.height / 2
-            ):
-                raise ValueError(
-                    "this renderer currently supports centered square-pixel pinhole cameras"
-                )
+        if not all(camera.frame_id for camera in cameras):
+            raise ValueError("cameras require distinct, nonempty frame IDs")
         spec = build_scene(scene, kinematic=True)
         _load_lights(spec, scene)
+        if not spec.lights:
+            # A scene that authors no light is lit by the camera's own headlight
+            # alone. MuJoCo's default leaves such a view too dark to work in.
+            spec.visual.headlight.ambient = _UNLIT_AMBIENT
+            spec.visual.headlight.diffuse = _UNLIT_DIFFUSE
         for i, camera in enumerate(cameras):
+            # The full pinhole model: MuJoCo builds the frustum from the sensor size,
+            # both focal lengths and the principal point, so fx != fy and an
+            # off-center principal point render as CameraInfo states them.
             spec.worldbody.add_camera(
                 name=f"sim2_view_{i}",
-                fovy=math.degrees(2 * math.atan(camera.height / (2 * camera.fy))),
+                resolution=[camera.width, camera.height],
+                sensor_size=[camera.width * _PIXEL_M, camera.height * _PIXEL_M],
+                focal_pixel=[camera.fx, camera.fy],
+                # MuJoCo measures the principal point from the image center, toward
+                # decreasing pixel coordinates on both axes.
+                principal_pixel=[camera.width / 2 - camera.cx, camera.height / 2 - camera.cy],
             )
         spec.visual.global_.offwidth = max(c.width for c in cameras)
         spec.visual.global_.offheight = max(c.height for c in cameras)

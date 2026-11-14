@@ -176,6 +176,20 @@ class UsdManagerConfig(ModuleConfig):
     tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
     scene_retry_s: float = Field(default=0.5, gt=0.0)
 
+    @field_validator("model", mode="before")
+    @classmethod
+    def _model_from_file(cls, value: object) -> object:
+        """A launch option names the description by its file: a USD scene or a URDF.
+
+        ``--usdmanager.model ~/scenes/kitchen/scene.usda`` puts a run in another scene.
+        """
+        if not isinstance(value, (str, Path)):
+            return value
+        path = Path(value).expanduser()
+        if path.suffix in (".usd", ".usda"):
+            return UsdModel.from_file(path)
+        return RobotModel.from_file(path)
+
     @field_validator("mounts", mode="before")
     @classmethod
     def _normalize_mounts(cls, value: object) -> object:

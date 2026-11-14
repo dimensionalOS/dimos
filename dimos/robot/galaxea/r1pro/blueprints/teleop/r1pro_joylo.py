@@ -15,7 +15,7 @@
 """r1pro-openarm-joylo-real on the simulated robot; see docs/development/r1pro-joylo.md.
 
 The hardware blueprint and this one are the same stack. Only the robot differs:
-here a sim2 world stands behind CC's connection contract, and Unreal renders the
+here a sim2 world stands behind CC's connection contract, and MuJoCo renders the
 head and wrist cameras on the hardware's stream names, types and sizes. The
 operator devices, the headset page, the coordinator and the recorder are those
 of the hardware run, so an app or a dataset tool cannot tell the two apart.
@@ -49,12 +49,13 @@ from dimos.robot.galaxea.r1pro.sim.config import (
 from dimos.robot.galaxea.r1pro.sim.connection import R1ProSimConnection
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
 from dimos.robot.galaxea.r1pro.sim.model import TORSO_LINK_LENGTHS
-from dimos.robot.galaxea.r1pro.sim.office import SCENE, office_renderer
+from dimos.robot.galaxea.r1pro.sim.office import SCENE
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.module import SimCompressedCameraModule
 from dimos.sim2.sensors.camera.render_module import CameraRenderModule
+from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
 from dimos.sim2.sensors.tf import SimTfModule
 
@@ -107,7 +108,10 @@ def _camera_blueprint() -> Blueprint:
         CameraRenderModule.blueprint(
             scene_manager=UsdManager,
             cameras=("head_camera", "left_wrist_camera", "right_wrist_camera"),
-            renderer=office_renderer,
+            # MuJoCo draws any scene and keeps the camera rate on a laptop. Unreal
+            # (sim.office.office_renderer) draws the office with its materials, at
+            # a cost that wants a larger machine.
+            renderer=MujocoRenderer,
         ),
     ).transports(_camera_transports)
 

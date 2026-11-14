@@ -98,6 +98,25 @@ def test_different_resolutions_keep_intrinsics_and_share_the_model(poses, make_r
     assert all(r.model is renderer.geometry.model for r in renderer._renderers.values())
 
 
-def test_unsupported_projection_fails_instead_of_changing_calibration(make_renderer):
-    with pytest.raises(ValueError, match="centered square-pixel"):
-        make_renderer((CameraConfig("left/camera", cx=150),))
+def test_any_pinhole_calibration_renders_where_its_camera_info_says(poses, make_renderer):
+    # The same view through an ordinary camera and through one with unequal focal
+    # lengths and an off-center principal point: every surface point one sees must
+    # be where the other's calibration puts it.
+    centered = CameraConfig("left/camera")
+    skewed = CameraConfig("left/camera", width=300, height=200, fx=150, fy=230, cx=170, cy=80)
+    sample = poses()
+    _, reference = make_renderer((centered,)).render(sample, ("left/camera",))["left/camera"]
+    _, depth = make_renderer((skewed,)).render(sample, ("left/camera",))["left/camera"]
+    assert depth.shape == (200, 300)
+    v, u = np.mgrid[5:195:7, 5:295:7]
+    z = depth[v, u]
+    x = (u + 0.5 - skewed.cx) / skewed.fx * z
+    y = (v + 0.5 - skewed.cy) / skewed.fy * z
+    ur = np.floor(centered.fx * x / z + centered.cx).astype(int)
+    vr = np.floor(centered.fy * y / z + centered.cy).astype(int)
+    seen = (z > 0) & (ur >= 0) & (ur < centered.width) & (vr >= 0) & (vr < centered.height)
+    assert seen.sum() > 200
+    error = np.abs(reference[vr[seen], ur[seen]] - z[seen])
+    # Object edges land on the neighbouring surface; everything else agrees to a centimetre.
+    assert np.mean(error < 0.01) > 0.95
+    assert np.unique(np.round(z[seen], 2)).size > 20  # A real scene, not one flat depth.

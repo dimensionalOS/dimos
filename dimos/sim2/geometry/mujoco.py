@@ -16,6 +16,7 @@
 """Load the composed USD directly with MuJoCo's native USD importer."""
 
 from importlib import import_module
+import math
 from pathlib import Path
 
 import mujoco
@@ -75,6 +76,17 @@ def build_scene(
     local = materialize_scene(usd, lambda name: Path(name).read_bytes())
     spec = mujoco.MjSpec.from_file(str(local.source_path))
     _bind_names(spec, local)
+    # The importer asks every mesh for a volume. One that is only drawn (no collider
+    # uses it and its geoms weigh nothing) needs none, and a flat surface such as a
+    # wall quad has none to give: its inertia is never read, so take it from the shell.
+    weighed = {
+        geom.meshname
+        for geom in spec.geoms
+        if geom.contype or geom.conaffinity or geom.density > 0 or not math.isnan(geom.mass)
+    }
+    for mesh in spec.meshes:
+        if mesh.name not in weighed:
+            mesh.inertia = mujoco.mjtMeshInertia.mjMESH_INERTIA_SHELL  # type: ignore[attr-defined]  # MuJoCo 4.0
     spec.option.timestep = dt_ns / 1e9
     spec.option.gravity = gravity_world
     spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
