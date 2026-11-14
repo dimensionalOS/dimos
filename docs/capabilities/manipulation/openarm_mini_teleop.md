@@ -109,17 +109,15 @@ dimos run teleop-openarm-mini-joycon-leader --robot-ip <robot-ip> \
   --calibration-root ~/joycon-leaders
 ```
 
-Pair each Joy-Con once by holding the sync button on its rail until the lights
-run. bluez refuses a Joy-Con's input connection by default, so allow it first:
+Pair each Joy-Con once, pressing its sync button when asked:
 
 ```bash
-sudo sed -i 's/^#ClassicBondedOnly=true/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
-sudo systemctl restart bluetooth
-bluetoothctl   # power on; agent on; scan on; pair <MAC>; trust <MAC>; connect <MAC>
+dimos/teleop/joycon/pair_joycon.sh L
+dimos/teleop/joycon/pair_joycon.sh R
 ```
 
-A Joy-Con that was refused once goes to sleep; connect it again from the
-Bluetooth settings. If a button does nothing, `evtest` shows the key codes the
+The first run also lets bluez accept Joy-Cons and adds you to the `input` group
+(log in again after). If a button does nothing, `evtest` shows the key codes the
 driver reports. A Joy-Con that drops off Bluetooth leaves its jaw where it is
 until it is back.
 
