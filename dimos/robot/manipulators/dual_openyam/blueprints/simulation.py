@@ -19,6 +19,8 @@ simulated rig in its place, so the coordinator, its tasks, the planner and the
 teleop modules are the ones the robot runs.
 """
 
+from typing import Any
+
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.damiao.damiao_blueprint import arm_declaration
@@ -34,10 +36,13 @@ from dimos.robot.manipulators.dual_openyam.sim_connection import DualOpenYamSimC
 _ROBOT_CONNECTIONS = (DualOpenYamConnection, MockJointConnection)
 
 
-def dual_openyam_sim_connection() -> Blueprint:
-    """The MuJoCo rig, declared and remapped as the connection it stands in for."""
+def dual_openyam_sim_connection(**config: Any) -> Blueprint:
+    """The MuJoCo rig, declared and remapped as the connection it stands in for.
+
+    ``config`` sets the rig's own options, e.g. ``enable_pointcloud=True``.
+    """
     return DualOpenYamSimConnection.blueprint(
-        **arm_declaration(DualOpenYamConnection).model_dump()
+        **arm_declaration(DualOpenYamConnection).model_dump(), **config
     ).remappings([(DualOpenYamSimConnection, "position_command", "arm_position_command")])
 
 
