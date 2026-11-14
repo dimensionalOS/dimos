@@ -58,6 +58,9 @@ def test_launch_flags(monkeypatch):
         "color_image,camera_info,coordinator_joint_state,tf,body_poses,odom",
     ]
     assert proc.extra_env["PEEK_HIDDEN_STREAMS"] == "body_poses"
+    assert proc.extra_env["REMOTE_HIDDEN_RPCS"] == (
+        "MujocoSimModule.reset,MujocoSimModule.respawn_at,MujocoSimModule.scene_path"
+    )
 
     proc = DimosCliCall()
     environment().configure_launch(proc)

@@ -211,6 +211,14 @@ def test_peek_stream_hidden_stream_reads_as_absent(app, monkeypatch):
         app.peek_stream("tick", timeout=2.0)
 
 
+def test_remote_hidden_rpc_is_not_callable_from_a_client(client, monkeypatch):
+    monkeypatch.setattr(global_config, "remote_hidden_rpcs", "StressTestModule.echo")
+    module = client.get_module("StressTestModule")
+    assert module.ping() == "pong"
+    with pytest.raises(AttributeError, match="echo"):
+        _ = module.echo
+
+
 @pytest.mark.parametrize("transport", ["lcm", "zenoh"])
 @pytest.mark.parametrize("remote", [False, True])
 def test_peek_stream_receives_external_odometry(app, transport, remote):

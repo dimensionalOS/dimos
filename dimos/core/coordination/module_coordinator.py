@@ -185,13 +185,14 @@ class ModuleCoordinator(Resource):
     def list_modules(self) -> list[ModuleDescriptor]:
         with self._modules_lock:
             descriptors: list[ModuleDescriptor] = []
+            hidden = set(self._global_config.remote_hidden_rpcs.split(","))
             for name, cls in self._instance_classes.items():
                 qualified = f"{cls.__module__}.{cls.__name__}"
                 descriptors.append(
                     ModuleDescriptor(
                         class_name=cls.__name__,
                         qualified_path=qualified,
-                        rpc_names=list(cls.rpcs.keys()),
+                        rpc_names=[r for r in cls.rpcs if f"{cls.__name__}.{r}" not in hidden],
                         rpc_name=self._deployed_modules[name].remote_name,
                     )
                 )
