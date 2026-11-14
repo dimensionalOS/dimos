@@ -29,7 +29,19 @@ use crate::transport::{Deliver, Dispatch, Transport};
 
 /// Marker trait for a config checked by `#[native_config]`: every field required,
 /// no Rust-side defaults, no unknown fields. Implemented only by the macro.
-pub trait NativeConfig {}
+pub trait NativeConfig {
+    /// The module's TF namespace prefix, for a config that declares the field.
+    fn frame_id_prefix(&self) -> Option<&str> {
+        None
+    }
+
+    /// Hand the config the namespace off the launch line, before `build`.
+    ///
+    /// Does nothing unless the config declares `frame_id_prefix`; the key is
+    /// not part of any config on the wire, so declaring the field is a module
+    /// asking to be told, for a frame it names outside tf.
+    fn set_frame_id_prefix(&mut self, _prefix: Option<String>) {}
+}
 
 /// Trait required by `Module::Config`s to ensure that configurations are
 /// validated correctly. `Send` because a config is parsed on the host's main
@@ -43,7 +55,6 @@ impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send> M
 /// Default config type used by `#[derive(Module)]` when no `#[config]` field
 /// is used. Just a stand in for modules that don't use configurations.
 #[derive(Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct NoConfig;
 
 impl NativeConfig for NoConfig {}
@@ -206,6 +217,14 @@ pub(crate) fn parse_config_value<C: DeserializeOwned + Serialize>(
     Ok((topics, config))
 }
 
+/// The namespace the coordinator launched this module under, if any.
+///
+/// A sibling of `config` on the launch line, like `topics`: it reaches every
+/// native module whatever its own config declares.
+pub(crate) fn launch_frame_prefix(json: &serde_json::Value) -> Option<&str> {
+    json.get("frame_id_prefix")?.as_str()
+}
+
 fn object_keys(value: &serde_json::Value) -> BTreeSet<String> {
     value
         .as_object()
@@ -321,6 +340,7 @@ pub struct Builder {
     // One publish queue per output channel, drained by its own worker.
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
     tf: Option<crate::tf::Tf>,
+    frame_prefix: Option<Arc<str>>,
 }
 
 impl Builder {
@@ -331,7 +351,22 @@ impl Builder {
             routes: HashMap::new(),
             outputs: Vec::new(),
             tf: None,
+            frame_prefix: None,
         }
+    }
+
+    /// The TF namespace every frame named through [`Builder::tf`] goes under.
+    pub(crate) fn with_frame_prefix(mut self, prefix: Option<&str>) -> Self {
+        self.frame_prefix = prefix.filter(|p| !p.is_empty()).map(Arc::from);
+        self
+    }
+
+    /// The namespace this module was launched under, if any.
+    ///
+    /// Where a module reads the namespace as a string, for a frame it names
+    /// outside tf. [`crate::tf::Tf`] applies it to tf itself.
+    pub fn frame_prefix(&self) -> Option<&str> {
+        self.frame_prefix.as_deref()
     }
 
     fn topic_for(&mut self, port: &str) -> String {
@@ -431,8 +466,12 @@ impl Builder {
         }
         let topic = self.topic_for("tf");
         let sender = self.add_publisher(&topic);
-        let (tf, route) =
-            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, sender);
+        let (tf, route) = crate::tf::tf_subscription(
+            topic.clone(),
+            crate::tf::DEFAULT_TF_WINDOW_SECS,
+            sender,
+            self.frame_prefix.clone(),
+        );
         self.routes.entry(topic).or_default().push(route);
         self.tf = Some(tf.clone());
         tf
@@ -542,6 +581,7 @@ where
 pub(crate) async fn run_module_core<M, T>(
     transport: Arc<T>,
     topics: HashMap<String, String>,
+    frame_prefix: Option<String>,
     config: M::Config,
     mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()>
@@ -549,7 +589,9 @@ where
     M: Module,
     T: Transport,
 {
-    let mut builder = Builder::new(topics);
+    let mut builder = Builder::new(topics).with_frame_prefix(frame_prefix.as_deref());
+    let mut config = config;
+    config.set_frame_id_prefix(frame_prefix);
     let mut module = M::build(&mut builder, config);
     builder.enforce_topics_match_ports()?;
 
@@ -610,7 +652,8 @@ where
         }
     });
 
-    run_module_core::<M, T>(Arc::new(transport), topics, config, rx).await
+    let frame_prefix = launch_frame_prefix(&json).map(str::to_owned);
+    run_module_core::<M, T>(Arc::new(transport), topics, frame_prefix, config, rx).await
 }
 
 #[cfg(unix)]
@@ -759,6 +802,27 @@ mod tests {
         name: String,
     }
 
+    impl NativeConfig for TestConfig {}
+
+    /// A config that asks for the namespace as a string, as `#[native_config]`
+    /// expands one that declares the field.
+    #[derive(Debug, Deserialize, Serialize, Default, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    struct PrefixedTestConfig {
+        value: i64,
+        #[serde(skip)]
+        frame_id_prefix: Option<String>,
+    }
+
+    impl NativeConfig for PrefixedTestConfig {
+        fn frame_id_prefix(&self) -> Option<&str> {
+            self.frame_id_prefix.as_deref()
+        }
+        fn set_frame_id_prefix(&mut self, prefix: Option<String>) {
+            self.frame_id_prefix = prefix;
+        }
+    }
+
     // parse_config_json
     #[test]
     fn parses_topics_and_config() {
@@ -799,6 +863,68 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("missing 'config' field"));
+    }
+
+    // A namespaced module with no config of its own still has no config: the
+    // namespace is not part of one.
+    #[test]
+    fn a_module_with_no_config_still_gets_its_namespace() {
+        let json = r#"{"topics": {}, "config": null, "frame_id_prefix": "robot0"}"#;
+        let (_topics, _config) = parse_config_json::<NoConfig>(json).expect("no config is fine");
+        assert_eq!(
+            launch_frame_prefix(&parse_launch_config(json).unwrap()),
+            Some("robot0")
+        );
+    }
+
+    // The namespace rides beside the config, like topics, so no config has to
+    // name a field for the module to be namespaced.
+    #[test]
+    fn the_namespace_is_read_from_beside_the_config() {
+        let json =
+            r#"{"topics": {}, "config": {"value": 1, "name": "x"}, "frame_id_prefix": "robot0"}"#;
+        let (_topics, config) = parse_config_json::<TestConfig>(json).expect("config is its own");
+        assert_eq!(
+            config,
+            TestConfig {
+                value: 1,
+                name: "x".into()
+            }
+        );
+        assert_eq!(
+            launch_frame_prefix(&parse_launch_config(json).unwrap()),
+            Some("robot0")
+        );
+    }
+
+    #[test]
+    fn an_unnamespaced_module_is_sent_no_namespace() {
+        let json = r#"{"topics": {}, "config": {"value": 1, "name": "x"}}"#;
+        assert_eq!(
+            launch_frame_prefix(&parse_launch_config(json).unwrap()),
+            None
+        );
+    }
+
+    // A config that declares the field is handed the namespace before `build`,
+    // for the frames it names outside tf.
+    #[test]
+    fn a_config_that_declares_the_prefix_is_given_it() {
+        let mut config = PrefixedTestConfig {
+            value: 1,
+            frame_id_prefix: None,
+        };
+        config.set_frame_id_prefix(Some("robot0".into()));
+        assert_eq!(config.frame_id_prefix(), Some("robot0"));
+    }
+
+    // Nothing on the wire carries it, so the one-to-one key check never sees it.
+    #[test]
+    fn a_declared_prefix_is_not_a_config_key() {
+        let json = r#"{"topics": {}, "config": {"value": 1}}"#;
+        let (_topics, config) =
+            parse_config_json::<PrefixedTestConfig>(json).expect("no key is fine");
+        assert_eq!(config.frame_id_prefix(), None);
     }
 
     #[test]
@@ -861,6 +987,8 @@ mod tests {
         maybe: Option<i64>,
     }
 
+    impl NativeConfig for OptionalConfig {}
+
     type MaybeI = Option<i64>;
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -869,6 +997,11 @@ mod tests {
         required: i64,
         maybe: MaybeI,
     }
+
+    impl NativeConfig for AliasedConfig {}
+
+    // The unit type stands in for a module with no config at all.
+    impl NativeConfig for () {}
 
     #[test]
     fn missing_optional_field_is_rejected() {

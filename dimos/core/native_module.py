@@ -329,6 +329,8 @@ class NativeModule(Module):
             "config": config_dict or None,
             "session": self._session().to_wire(),
         }
+        if self.config.frame_id_prefix:
+            blob["frame_id_prefix"] = self.config.frame_id_prefix
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos

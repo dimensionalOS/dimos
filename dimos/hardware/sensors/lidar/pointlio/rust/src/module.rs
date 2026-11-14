@@ -15,7 +15,7 @@
 //! Point-LIO native module: PointCloud2 + Imu in, odometry + body cloud + tf out.
 
 use dimos_module::nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion};
-use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
+use dimos_module::{native_config, prefix_frame, Input, Module, Output, Tf, Transform};
 
 /// The driver publishes linear acceleration in m/s^2; Point-LIO wants it in g.
 const GRAVITY_MS2: f64 = 9.80665;
@@ -25,15 +25,8 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use pointlio_core::{LivoxPoint, PointLio, PointXYZI};
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use validator::ValidationError;
-
-/// Python's `None`, sent as a JSON null under a key that is always present.
-/// native_config forbids `Option`, so an absent key cannot pass as None.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(transparent)]
-struct Nullable<T>(Option<T>);
 
 /// The Python `PointLioConfig` tuning fields, 1:1. The tuning block is handed to
 /// `pointlio_core::Config` by a JSON round trip, so it stays name-compatible
@@ -43,7 +36,9 @@ struct Nullable<T>(Option<T>);
 #[validate(schema(function = core_config_parses))]
 pub struct Config {
     frame_id: String,
-    frame_id_prefix: Nullable<String>,
+    /// The namespace, for the frames this module stamps on its messages. A
+    /// config that does not declare it is not sent the key.
+    frame_id_prefix: Option<String>,
     sensor_frame_id: String,
     #[validate(range(exclusive_min = 0.0))]
     pointcloud_freq: f64,
@@ -339,12 +334,9 @@ fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>, String> {
 }
 
 impl Config {
-    /// `<frame_id_prefix>/<name>`, as Module.frame_id composes it.
+    /// `<frame_id_prefix>/<name>`, by the rule `Tf` publishes under.
     fn namespaced(&self, name: &str) -> String {
-        match self.frame_id_prefix.0.as_deref() {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{name}"),
-            _ => name.to_string(),
-        }
+        prefix_frame(self.frame_id_prefix.as_deref(), name)
     }
     fn world_frame(&self) -> String {
         self.namespaced(&self.frame_id)
@@ -425,6 +417,7 @@ fn cloud_message(frame_id: &str, ts: f64, cloud: &[PointXYZI]) -> PointCloud2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dimos_module::NativeConfig;
 
     fn field(name: &str, offset: usize, datatype: i8) -> PointField {
         PointField {
@@ -545,11 +538,9 @@ mod tests {
         assert_eq!(plain.world_frame(), "odom");
         assert_eq!(plain.sensor_frame(), "mid360_link");
 
-        let prefixed: Config = serde_json::from_str(&SAMPLE.replace(
-            r#""frame_id":"odom""#,
-            r#""frame_id":"odom","frame_id_prefix":"r1""#,
-        ))
-        .unwrap();
+        // Not a config key: the host sets it from the launch line before build.
+        let mut prefixed: Config = serde_json::from_str(SAMPLE).unwrap();
+        prefixed.set_frame_id_prefix(Some("r1".into()));
         assert_eq!(prefixed.world_frame(), "r1/odom");
         assert_eq!(prefixed.sensor_frame(), "r1/mid360_link");
     }

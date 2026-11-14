@@ -30,7 +30,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::clock::HostClock;
 use cyclonedds_rs::{DdsWriter, SampleBuffer, TopicType};
 use dimos_module::nalgebra::{Isometry3, Quaternion as NQuaternion, Translation3, UnitQuaternion};
-use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
+use dimos_module::{native_config, prefix_frame, Input, Module, Output, Tf, Transform};
 use lcm_msgs::builtin_interfaces::Time as VideoTime;
 use lcm_msgs::control_msgs::{DynamicJointState, InterfaceValue};
 use lcm_msgs::foxglove_msgs::CompressedVideo;
@@ -91,6 +91,9 @@ const SILENT_REJOIN: Duration = Duration::from_secs(30);
 #[native_config]
 #[derive(Clone)]
 pub struct Config {
+    /// The namespace, for the frames this module stamps on its messages. The
+    /// host fills it from the launch line; it is not a config key.
+    frame_id_prefix: Option<String>,
     /// The interface CycloneDDS binds: the Go2's own eth0, or the Jetson's Go2 link.
     pub iface: String,
     pub domain_id: u32,
@@ -419,6 +422,7 @@ impl Go2Dds {
                     .parse()
                     .expect("video_group is an IPv4 address"),
                 port: self.config.video_port,
+                frame_id: prefix_frame(self.config.prefix(), CAMERA_FRAME),
                 video: self.video.clone(),
                 stop: self.stop.clone(),
                 handle,
@@ -578,18 +582,29 @@ impl Cadence {
     }
 }
 
-fn header(frame_id: &str, ts: f64) -> Header {
-    Header {
-        seq: 0,
-        stamp: time_of_secs(ts),
-        frame_id: frame_id.into(),
+impl Config {
+    /// The namespace this module was launched under, if any.
+    fn prefix(&self) -> Option<&str> {
+        self.frame_id_prefix.as_deref()
     }
 }
 
-pub fn joint_state(s: &types::LowState, ts: f64) -> JointState {
+/// A header naming `frame_id` under the module's namespace.
+///
+/// Every frame this module stamps on a message is one of its own, so it goes
+/// under the prefix exactly as `Tf` publishes it.
+fn header(prefix: Option<&str>, frame_id: &str, ts: f64) -> Header {
+    Header {
+        seq: 0,
+        stamp: time_of_secs(ts),
+        frame_id: prefix_frame(prefix, frame_id),
+    }
+}
+
+pub fn joint_state(prefix: Option<&str>, s: &types::LowState, ts: f64) -> JointState {
     let m = &s.motor_state[..JOINTS.len()];
     JointState {
-        header: header(BODY_FRAME, ts),
+        header: header(prefix, BODY_FRAME, ts),
         name: JOINTS.iter().map(|n| n.to_string()).collect(),
         position: m.iter().map(|j| j.q as f64).collect(),
         velocity: m.iter().map(|j| j.dq as f64).collect(),
@@ -616,7 +631,7 @@ fn dynamic_joint_state<'a>(
         })
         .unzip();
     DynamicJointState {
-        header: header("", ts),
+        header: header(None, "", ts),
         joint_names,
         interface_values,
     }
@@ -664,7 +679,7 @@ pub fn joint_command(c: &types::LowCmd, ts: f64) -> DynamicJointState {
 }
 
 /// The known cells as an xyz float32 cloud in the map's own frame.
-pub fn height_map(s: &types::HeightMap, ts: f64) -> PointCloud2 {
+pub fn height_map(prefix: Option<&str>, s: &types::HeightMap, ts: f64) -> PointCloud2 {
     let (w, r) = (s.width as usize, s.resolution);
     let mut data = Vec::with_capacity(s.data.len() * 12);
     let mut n = 0i32;
@@ -684,7 +699,7 @@ pub fn height_map(s: &types::HeightMap, ts: f64) -> PointCloud2 {
         count: 1,
     };
     PointCloud2 {
-        header: header(&s.frame_id, ts),
+        header: header(prefix, &s.frame_id, ts),
         height: 1,
         width: n,
         fields: vec![field("x", 0), field("y", 4), field("z", 8)],
@@ -697,7 +712,7 @@ pub fn height_map(s: &types::HeightMap, ts: f64) -> PointCloud2 {
 }
 
 /// Unitree's quaternion is `[w, x, y, z]`; covariances unknown (-1 on the diagonal).
-pub fn imu(s: &types::IMUState, ts: f64) -> Imu {
+pub fn imu(prefix: Option<&str>, s: &types::IMUState, ts: f64) -> Imu {
     let unknown = [-1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, -1.0];
     let [w, x, y, z] = s.quaternion;
     let v3 = |a: [f32; 3]| Vector3 {
@@ -706,7 +721,7 @@ pub fn imu(s: &types::IMUState, ts: f64) -> Imu {
         z: a[2] as f64,
     };
     Imu {
-        header: header(BODY_FRAME, ts),
+        header: header(prefix, BODY_FRAME, ts),
         orientation: Quaternion {
             x: x as f64,
             y: y as f64,
@@ -722,7 +737,7 @@ pub fn imu(s: &types::IMUState, ts: f64) -> Imu {
 }
 
 /// Pass-through of a ROS2 `sensor_msgs/Imu` sample (the L1's own IMU).
-pub fn lidar_imu(s: &types::Imu, ts: f64) -> Imu {
+pub fn lidar_imu(prefix: Option<&str>, s: &types::Imu, ts: f64) -> Imu {
     let q = &s.orientation;
     let v3 = |v: &types::Vector3| Vector3 {
         x: v.x,
@@ -730,7 +745,7 @@ pub fn lidar_imu(s: &types::Imu, ts: f64) -> Imu {
         z: v.z,
     };
     Imu {
-        header: header(&s.header.frame_id, ts),
+        header: header(prefix, &s.header.frame_id, ts),
         orientation: Quaternion {
             x: q.x,
             y: q.y,
@@ -746,7 +761,7 @@ pub fn lidar_imu(s: &types::Imu, ts: f64) -> Imu {
 }
 
 /// SI units as ROS wants them; charge and capacities are not reported (NaN).
-pub fn battery(s: &types::LowState, ts: f64) -> BatteryState {
+pub fn battery(prefix: Option<&str>, s: &types::LowState, ts: f64) -> BatteryState {
     let b = &s.bms_state;
     let status = match b.current.signum() {
         1 => BatteryState::POWER_SUPPLY_STATUS_CHARGING,
@@ -754,7 +769,7 @@ pub fn battery(s: &types::LowState, ts: f64) -> BatteryState {
         _ => BatteryState::POWER_SUPPLY_STATUS_NOT_CHARGING,
     };
     BatteryState {
-        header: header(BODY_FRAME, ts),
+        header: header(prefix, BODY_FRAME, ts),
         voltage: s.power_v,
         temperature: b.bq_ntc[0] as f32,
         current: b.current as f32 / 1000.0,
@@ -779,26 +794,26 @@ pub fn battery(s: &types::LowState, ts: f64) -> BatteryState {
 }
 
 /// Sticks as axes, the 16-bit key mask as 16 buttons, bit 0 first.
-pub fn joy(s: &types::WirelessController, ts: f64) -> Joy {
+pub fn joy(prefix: Option<&str>, s: &types::WirelessController, ts: f64) -> Joy {
     Joy {
-        header: header(BODY_FRAME, ts),
+        header: header(prefix, BODY_FRAME, ts),
         axes: vec![s.lx, s.ly, s.rx, s.ry],
         buttons: (0..16).map(|i| ((s.keys >> i) & 1) as i32).collect(),
     }
 }
 
 /// The dimos odometry and its tf edge, at `ts`.
-pub fn odometry(s: &types::Odometry, ts: f64) -> (Odometry, Transform) {
+pub fn odometry(prefix: Option<&str>, s: &types::Odometry, ts: f64) -> (Odometry, Transform) {
     let p = &s.pose.pose.position;
     let q = &s.pose.pose.orientation;
     let (l, a) = (&s.twist.twist.linear, &s.twist.twist.angular);
+    let (parent, child) = (
+        prefix_frame(prefix, &s.header.frame_id),
+        prefix_frame(prefix, &s.child_frame_id),
+    );
     let odom = Odometry {
-        header: Header {
-            seq: 0,
-            stamp: time_of_secs(ts),
-            frame_id: s.header.frame_id.clone(),
-        },
-        child_frame_id: s.child_frame_id.clone(),
+        header: header(prefix, &s.header.frame_id, ts),
+        child_frame_id: child.clone(),
         pose: PoseWithCovariance {
             pose: Pose {
                 position: Point {
@@ -835,17 +850,13 @@ pub fn odometry(s: &types::Odometry, ts: f64) -> (Odometry, Transform) {
         Translation3::new(p.x, p.y, p.z),
         UnitQuaternion::from_quaternion(NQuaternion::new(q.w, q.x, q.y, q.z)),
     );
-    let edge = Transform::new(s.header.frame_id.clone(), s.child_frame_id.clone(), ts, iso);
+    let edge = Transform::new(parent, child, ts, iso);
     (odom, edge)
 }
 
-pub fn pointcloud(s: &types::PointCloud2, ts: f64) -> PointCloud2 {
+pub fn pointcloud(prefix: Option<&str>, s: &types::PointCloud2, ts: f64) -> PointCloud2 {
     PointCloud2 {
-        header: Header {
-            seq: 0,
-            stamp: time_of_secs(ts),
-            frame_id: s.header.frame_id.clone(),
-        },
+        header: header(prefix, &s.header.frame_id, ts),
         height: s.height as i32,
         width: s.width as i32,
         fields: s
@@ -905,8 +916,10 @@ pub fn mount_tree(c: &Config, ts: f64) -> Vec<Transform> {
     }
 }
 
-fn stamped(info: &CameraInfo, ts: f64) -> CameraInfo {
+fn stamped(prefix: Option<&str>, info: &CameraInfo, ts: f64) -> CameraInfo {
+    let frame_id = prefix_frame(prefix, &info.header.frame_id);
     let mut info = info.clone();
+    info.header.frame_id = frame_id;
     info.header.stamp = time_of_secs(ts);
     info
 }
@@ -932,10 +945,11 @@ impl StaticLoop {
                 let _ = self.handle.block_on(self.tf.publish(&tree));
             }
             if info_tick.due(now) {
-                let _ = self.handle.block_on(
-                    self.camera_info
-                        .publish(&stamped(&c.camera_info, now_secs())),
-                );
+                let _ = self.handle.block_on(self.camera_info.publish(&stamped(
+                    c.prefix(),
+                    &c.camera_info,
+                    now_secs(),
+                )));
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -1067,7 +1081,7 @@ impl DdsLoop {
 
             let n = odom_reader.take_now(&mut odom_buf).unwrap_or(0);
             for s in odom_buf.iter().take(n) {
-                let (odom, edge) = odometry(s, clock.pinned(stamp_ns(&s.header.stamp)));
+                let (odom, edge) = odometry(c.prefix(), s, clock.pinned(stamp_ns(&s.header.stamp)));
                 let _ = self.handle.block_on(self.odometry.publish(&odom));
                 if c.tf_root == BODY_FRAME {
                     let _ = self.handle.block_on(self.tf.publish(&[edge]));
@@ -1079,16 +1093,18 @@ impl DdsLoop {
                     let Some(ts) = clock.map(stamp_ns(&s.header.stamp)) else {
                         continue;
                     };
-                    let _ = self.handle.block_on(self.lidar.publish(&pointcloud(s, ts)));
+                    let _ =
+                        self.handle
+                            .block_on(self.lidar.publish(&pointcloud(c.prefix(), s, ts)));
                 }
             }
             if let Some((cloud, imu_r, map_r)) = &raw_readers {
                 let n = imu_r.take_now(&mut imu_buf).unwrap_or(0);
                 for s in imu_buf.iter().take(n) {
                     let ts = clock.pinned(stamp_ns(&s.header.stamp));
-                    let _ = self
-                        .handle
-                        .block_on(self.lidar_imu.publish(&lidar_imu(s, ts)));
+                    let _ =
+                        self.handle
+                            .block_on(self.lidar_imu.publish(&lidar_imu(c.prefix(), s, ts)));
                 }
                 // Header stamps, not arrival: a cloud can land seconds late after a stall.
                 let n = cloud.take_now(&mut raw_buf).unwrap_or(0);
@@ -1096,18 +1112,22 @@ impl DdsLoop {
                     let Some(ts) = clock.map(stamp_ns(&s.header.stamp)) else {
                         continue;
                     };
-                    let _ = self
-                        .handle
-                        .block_on(self.lidar_raw.publish(&pointcloud(s, ts)));
+                    let _ = self.handle.block_on(self.lidar_raw.publish(&pointcloud(
+                        c.prefix(),
+                        s,
+                        ts,
+                    )));
                 }
                 let n = map_r.take_now(&mut map_buf).unwrap_or(0);
                 for s in map_buf.iter().take(n) {
                     let Some(ts) = clock.map((s.stamp.max(0.0) * 1e9) as u64) else {
                         continue;
                     };
-                    let _ = self
-                        .handle
-                        .block_on(self.height_map.publish(&height_map(s, ts)));
+                    let _ = self.handle.block_on(self.height_map.publish(&height_map(
+                        c.prefix(),
+                        s,
+                        ts,
+                    )));
                 }
             }
             if let Some(reader) = &low_reader {
@@ -1120,18 +1140,24 @@ impl DdsLoop {
                     let ts = clock.pinned(ns);
                     let now = Instant::now();
                     if low_tick.due(now) {
-                        let _ = self
-                            .handle
-                            .block_on(self.joint_state.publish(&joint_state(s, ts)));
+                        let _ = self.handle.block_on(self.joint_state.publish(&joint_state(
+                            c.prefix(),
+                            s,
+                            ts,
+                        )));
                         let _ = self
                             .handle
                             .block_on(self.motor_state.publish(&motor_state(s, ts)));
-                        let _ = self
-                            .handle
-                            .block_on(self.imu.publish(&imu(&s.imu_state, ts)));
+                        let _ = self.handle.block_on(self.imu.publish(&imu(
+                            c.prefix(),
+                            &s.imu_state,
+                            ts,
+                        )));
                     }
                     if battery_tick.due(now) {
-                        let _ = self.handle.block_on(self.battery.publish(&battery(s, ts)));
+                        let _ =
+                            self.handle
+                                .block_on(self.battery.publish(&battery(c.prefix(), s, ts)));
                     }
                 }
             }
@@ -1155,7 +1181,9 @@ impl DdsLoop {
                 .last()
             {
                 let ts = clock.pinned(ns);
-                let _ = self.handle.block_on(self.joy.publish(&joy(s, ts)));
+                let _ = self
+                    .handle
+                    .block_on(self.joy.publish(&joy(c.prefix(), s, ts)));
             }
             if let Some((req, resp)) = &mut videohub {
                 if jpeg_poll.due(Instant::now()) {
@@ -1166,11 +1194,7 @@ impl DdsLoop {
                     .filter_map(|(r, ns)| Some((r.binary.as_slice(), clock.map(ns)?)));
                 if let Some((data, ts)) = newest_jpeg(replies) {
                     let msg = CompressedImage {
-                        header: Header {
-                            seq: 0,
-                            stamp: time_of_secs(ts),
-                            frame_id: CAMERA_FRAME.to_string(),
-                        },
+                        header: header(c.prefix(), CAMERA_FRAME, ts),
                         format: "jpeg".to_string(),
                         data: data.to_vec(),
                     };
@@ -1185,6 +1209,7 @@ impl DdsLoop {
 struct VideoLoop {
     group: Ipv4Addr,
     port: u16,
+    frame_id: String,
     video: Output<CompressedVideo>,
     stop: Arc<AtomicBool>,
     handle: Handle,
@@ -1250,7 +1275,7 @@ impl VideoLoop {
                         sec: (ts_ns / 1_000_000_000) as i32,
                         nanosec: (ts_ns % 1_000_000_000) as i32,
                     },
-                    frame_id: CAMERA_FRAME.to_string(),
+                    frame_id: self.frame_id.clone(),
                     data: au.data,
                     format: "h264".to_string(),
                 };
@@ -1349,7 +1374,7 @@ mod tests {
         s.bms_state.current = -1500;
         s.bms_state.cell_vol[0] = 4100;
         s.power_v = 28.5;
-        let js = joint_state(&s, 1.0);
+        let js = joint_state(None, &s, 1.0);
         assert_eq!(js.name.len(), 12);
         assert_eq!(js.name[2], "FR_calf_joint");
         assert_eq!(
@@ -1383,10 +1408,10 @@ mod tests {
             ["force", "force_est"]
         );
         assert_eq!(ms.interface_values[15].values, [120.0, 0.0]);
-        let i = imu(&s.imu_state, 1.0);
+        let i = imu(None, &s.imu_state, 1.0);
         assert_eq!((i.orientation.w, i.orientation.z), (0.0, 1.0));
         assert!((i.angular_velocity.y - 0.2).abs() < 1e-6);
-        let b = battery(&s, 1.0);
+        let b = battery(None, &s, 1.0);
         assert_eq!((b.percentage, b.voltage, b.current), (0.8, 28.5, -1.5));
         assert_eq!(b.cell_voltage, vec![4.1]);
         assert_eq!(
@@ -1400,7 +1425,7 @@ mod tests {
             ry: -1.0,
             keys: 0b101,
         };
-        let j = joy(&remote, 1.0);
+        let j = joy(None, &remote, 1.0);
         assert_eq!(j.axes, vec![0.5, 0.0, 0.0, -1.0]);
         assert_eq!(&j.buttons[..3], &[1, 0, 1]);
     }
@@ -1464,7 +1489,7 @@ mod tests {
             data: vec![0.1, 1e9, f32::NAN, 0.3],
             ..Default::default()
         };
-        let pc = height_map(&s, 1.0);
+        let pc = height_map(None, &s, 1.0);
         assert_eq!(
             (pc.width, pc.point_step, pc.header.frame_id.as_str()),
             (2, 12, "odom")
@@ -1557,7 +1582,7 @@ mod tests {
             z: 1.0,
             w: 0.0,
         };
-        let (odom, edge) = odometry(&s, 1234.5);
+        let (odom, edge) = odometry(None, &s, 1234.5);
         assert_eq!(odom.header.frame_id, "odom");
         assert_eq!(odom.child_frame_id, "base_link");
         assert_eq!(

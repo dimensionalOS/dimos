@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+#include <optional>
 #include <string>
 
 #include "dimos/native/config.hpp"
@@ -194,4 +195,14 @@ TEST_CASE("parse handles a struct past the 64-field macro limit") {
     CHECK(c.f00 == 0);
     CHECK(c.f42 == 42);
     CHECK(c.f69 == 69);
+}
+
+TEST_CASE("prefix_frame names a frame under a namespace") {
+    using dimos::native::prefix_frame;
+    CHECK(prefix_frame("r1", "base_link") == "r1/base_link");
+    // Already prefixed, so a frame read off the stream can be handed back.
+    CHECK(prefix_frame("r1", "r1/base_link") == "r1/base_link");
+    CHECK(prefix_frame(std::nullopt, "base_link") == "base_link");
+    CHECK(prefix_frame("", "base_link") == "base_link");
+    CHECK(prefix_frame("r1", "") == "");
 }

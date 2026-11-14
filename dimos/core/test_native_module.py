@@ -37,7 +37,11 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, TransportBackend
 from dimos.core.module import Module
-from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
+from dimos.core.native_module import (
+    LogFormat,
+    NativeModule,
+    NativeModuleConfig,
+)
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, rpc_backend, transport_topic
@@ -362,7 +366,23 @@ def test_a_native_can_be_opened_as_the_router(monkeypatch) -> None:
 
 def test_a_pinned_session_is_not_a_module_config_field(monkeypatch) -> None:
     """Native config structs reject unknown keys, so it stays out of config."""
+    # A module with nothing of its own to send gets a null config.
     assert _launch(monkeypatch, "zenoh", session=ZenohConfig())["config"] is None
+
+
+def test_the_frame_prefix_rides_beside_the_config(monkeypatch) -> None:
+    """Like the topics: it reaches a module whatever that module's config says.
+
+    A module outside a namespace is sent no key at all, and the native side
+    reads that as no prefix.
+    """
+    plain = _launch(monkeypatch, "lcm")
+    assert "frame_id_prefix" not in plain
+    assert plain["config"] is None
+    namespaced = _launch(monkeypatch, "lcm", frame_id_prefix="robot0")
+    assert namespaced["frame_id_prefix"] == "robot0"
+    # Still not a config key, so no native config struct has to declare it.
+    assert namespaced["config"] is None
 
 
 def test_a_session_for_another_transport_is_rejected(monkeypatch) -> None:
@@ -393,7 +413,7 @@ def test_base_field_sent_when_opted_in() -> None:
 def test_framework_fields_never_sent() -> None:
     """Opting one base field in must not carry the subprocess plumbing with it."""
     config = StubFrameIdConfig(frame_id="odom", extra_args=["--x"])
-    plumbing = set(NativeModuleConfig.model_fields) - {"frame_id"}
+    plumbing = set(NativeModuleConfig.model_fields) - {"frame_id", "frame_id_prefix"}
     assert not plumbing & set(config.to_config_dict())
     assert not plumbing & set(parse_cli_args(config.to_cli_args()))
 

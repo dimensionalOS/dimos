@@ -11,6 +11,7 @@
 #include <pfr.hpp>
 
 #include <cstddef>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -68,6 +69,17 @@ inline std::string quoted_list(const std::vector<std::string>& items) {
         out += (i == 0 ? "\"" : ", \"") + items[i] + "\"";
     }
     return out + "]";
+}
+
+/// `frame` under a TF namespace prefix, left alone if it already carries it.
+/// The rust and python tf APIs apply the same rule; the three must agree.
+inline std::string prefix_frame(const std::optional<std::string>& prefix,
+                                const std::string& frame) {
+    if (!prefix.has_value() || prefix->empty() || frame.empty() ||
+        frame.rfind(*prefix + "/", 0) == 0) {
+        return frame;
+    }
+    return *prefix + "/" + frame;
 }
 
 /// Throw unless `value` is greater than zero. For a rate a module divides by,

@@ -19,6 +19,7 @@
 //! a tolerance, not interpolated. [`Tf::publish`] sends transforms onto the same
 //! topic and feeds the local graph.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::atomic::AtomicU64;
@@ -34,6 +35,16 @@ use crate::time::now_secs;
 
 /// How many seconds of history each edge keeps.
 pub(crate) const DEFAULT_TF_WINDOW_SECS: f64 = 10.0;
+
+/// `frame` under a TF namespace prefix, left alone if it already carries it.
+pub fn prefix_frame(prefix: Option<&str>, frame: &str) -> String {
+    match prefix {
+        Some(p) if !p.is_empty() && !frame.is_empty() && !frame.starts_with(&format!("{p}/")) => {
+            format!("{p}/{frame}")
+        }
+        _ => frame.to_string(),
+    }
+}
 
 const WARN_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -346,9 +357,14 @@ impl Graph {
 pub struct Tf {
     graph: Arc<Graph>,
     sender: mpsc::Sender<Vec<u8>>,
+    /// Applied to every frame named through this handle unless the call opts out.
+    frame_prefix: Option<Arc<str>>,
 }
 
 impl Tf {
+    pub fn prefixed(&self, frame: &str) -> String {
+        prefix_frame(self.frame_prefix.as_deref(), frame)
+    }
     /// Start a lookup of the transform from `parent` to `child`.
     ///
     /// Refine it with [`Lookup::at`] and [`Lookup::tolerance`], then finish with
@@ -364,6 +380,7 @@ impl Tf {
             child,
             time: None,
             tolerance: None,
+            prefix: true,
         }
     }
 
@@ -374,11 +391,31 @@ impl Tf {
         self.lookup(parent, child).get()
     }
 
-    /// Publish transforms on the `tf` topic.
+    /// Publish on the `tf` topic, both frame ids under the frame prefix.
     ///
     /// The transforms also feed the local graph, so a lookup right after sees
     /// them without waiting for the transport round trip.
     pub async fn publish(&self, transforms: &[Transform]) -> io::Result<()> {
+        self.send(transforms, true).await
+    }
+
+    /// Publish with the frame ids exactly as given, for an edge off a shared
+    /// root like `world` or `map`.
+    pub async fn publish_unprefixed(&self, transforms: &[Transform]) -> io::Result<()> {
+        self.send(transforms, false).await
+    }
+
+    async fn send(&self, transforms: &[Transform], prefix: bool) -> io::Result<()> {
+        let owned: Vec<Transform>;
+        let transforms = if prefix && self.frame_prefix.is_some() {
+            owned = transforms
+                .iter()
+                .map(|t| self.prefixed_transform(t))
+                .collect();
+            &owned
+        } else {
+            transforms
+        };
         self.graph.update(|buffer| {
             for t in transforms {
                 buffer.receive(&t.parent, &t.child, t.ts, t.iso);
@@ -389,6 +426,15 @@ impl Tf {
         };
         crate::module::publish_encoded(&self.sender, msg.encode()).await
     }
+
+    fn prefixed_transform(&self, transform: &Transform) -> Transform {
+        Transform {
+            parent: self.prefixed(&transform.parent),
+            child: self.prefixed(&transform.child),
+            ts: transform.ts,
+            iso: transform.iso,
+        }
+    }
 }
 
 /// A transform lookup being built. Created by [`Tf::lookup`].
@@ -398,6 +444,7 @@ pub struct Lookup<'a> {
     child: &'a str,
     time: Option<f64>,
     tolerance: Option<f64>,
+    prefix: bool,
 }
 
 impl Lookup<'_> {
@@ -413,21 +460,40 @@ impl Lookup<'_> {
         self
     }
 
+    /// Name the frames exactly as given: a shared root, or one you prefixed
+    /// yourself.
+    pub fn unprefixed(mut self) -> Self {
+        self.prefix = false;
+        self
+    }
+
+    fn frames(&self) -> (Cow<'_, str>, Cow<'_, str>) {
+        if !self.prefix || self.tf.frame_prefix.is_none() {
+            return (Cow::Borrowed(self.parent), Cow::Borrowed(self.child));
+        }
+        (
+            Cow::Owned(self.tf.prefixed(self.parent)),
+            Cow::Owned(self.tf.prefixed(self.child)),
+        )
+    }
+
     fn resolve(&self) -> Option<Transform> {
+        let (parent, child) = self.frames();
         self.tf
             .graph
-            .get(self.parent, self.child, self.time, self.tolerance)
+            .get(&parent, &child, self.time, self.tolerance)
     }
 
     // A lookup that resolves to nothing is otherwise invisible: the caller sees
     // None and the buffer says nothing about which frames or stamp missed.
     fn warn_unresolved(&self) {
-        if !self.tf.graph.should_warn(self.parent, self.child) {
+        let (parent, child) = self.frames();
+        if !self.tf.graph.should_warn(&parent, &child) {
             return;
         }
         warn!(
-            parent = %self.parent,
-            child = %self.child,
+            parent = %parent,
+            child = %child,
             at = self.time.unwrap_or_else(now_secs),
             tolerance = self.tolerance.unwrap_or(f64::NAN),
             "No transform found between frames",
@@ -567,11 +633,13 @@ pub(crate) fn tf_subscription(
     topic: String,
     window_secs: f64,
     sender: mpsc::Sender<Vec<u8>>,
+    frame_prefix: Option<Arc<str>>,
 ) -> (Tf, Box<dyn Route>) {
     let graph = Arc::new(Graph::new(window_secs));
     let tf = Tf {
         graph: Arc::clone(&graph),
         sender,
+        frame_prefix,
     };
     let route = Box::new(TfRoute { topic, graph });
     (tf, route)
@@ -588,12 +656,20 @@ mod tests {
     }
 
     fn tf_with_publish(window_secs: f64) -> (Tf, mpsc::Receiver<Vec<u8>>, MultiHandle) {
+        tf_prefixed(window_secs, None)
+    }
+
+    fn tf_prefixed(
+        window_secs: f64,
+        frame_prefix: Option<&str>,
+    ) -> (Tf, mpsc::Receiver<Vec<u8>>, MultiHandle) {
         let graph = Arc::new(Graph::new(window_secs));
         let (tx, rx) = mpsc::channel(8);
         (
             Tf {
                 graph: Arc::clone(&graph),
                 sender: tx,
+                frame_prefix: frame_prefix.map(Arc::from),
             },
             rx,
             MultiHandle { graph },
@@ -843,7 +919,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn within_is_woken_by_a_transform_dispatched_through_the_route() {
         let (tx, _rx) = mpsc::channel(8);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(30)).await;
             route.dispatch(&stamped_message("a", "b", 5.0, 1.0));
@@ -902,7 +978,7 @@ mod tests {
     #[test]
     fn a_zero_rotation_on_the_wire_is_dropped_rather_than_stored_as_nan() {
         let (tx, _rx) = mpsc::channel(4);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
         route.dispatch(&rotated_message("a", "b", 5.0, 1.0, (0.0, 0.0, 0.0, 0.0)));
         assert!(tf.get_latest("a", "b").is_none());
 
@@ -1027,7 +1103,7 @@ mod tests {
         use lcm_msgs::tf2_msgs::TFMessage;
 
         let (tx, _rx) = mpsc::channel(8);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
         let msg = TFMessage {
             transforms: vec![lcm_msgs::geometry_msgs::TransformStamped {
                 header: Header {
@@ -1095,7 +1171,7 @@ mod tests {
         let bytes = rx.recv().await.unwrap();
 
         let (tx, _rx2) = mpsc::channel(8);
-        let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
         route.dispatch(&bytes);
 
         let t = tf_in.get_latest("a", "b").unwrap();
@@ -1187,7 +1263,7 @@ mod tests {
     #[test]
     fn dispatch_of_undecodable_bytes_leaves_the_graph_empty() {
         let (tx, _rx) = mpsc::channel(8);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
         route.dispatch(b"garbage");
         assert!(tf.get_latest("a", "b").is_none());
     }
@@ -1201,5 +1277,83 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn a_prefix_is_applied_once_and_only_to_a_name_without_it() {
+        assert_eq!(
+            prefix_frame(Some("robot0"), "base_link"),
+            "robot0/base_link"
+        );
+        assert_eq!(
+            prefix_frame(Some("robot0"), "robot0/base_link"),
+            "robot0/base_link"
+        );
+        assert_eq!(prefix_frame(None, "base_link"), "base_link");
+        assert_eq!(prefix_frame(Some(""), "base_link"), "base_link");
+        assert_eq!(prefix_frame(Some("robot0"), ""), "");
+    }
+
+    #[tokio::test]
+    async fn publish_names_both_frames_under_the_prefix() {
+        let (tf, _rx, _h) = tf_prefixed(DEFAULT_TF_WINDOW_SECS, Some("robot0"));
+        tf.publish(&[Transform::new("base", "camera", 1.0, Isometry3::identity())])
+            .await
+            .expect("published");
+
+        assert!(tf
+            .lookup("robot0/base", "robot0/camera")
+            .unprefixed()
+            .get()
+            .is_some());
+        assert!(tf.lookup("base", "camera").unprefixed().get().is_none());
+    }
+
+    #[tokio::test]
+    async fn publish_unprefixed_leaves_the_frames_alone() {
+        let (tf, _rx, _h) = tf_prefixed(DEFAULT_TF_WINDOW_SECS, Some("robot0"));
+        tf.publish_unprefixed(&[Transform::new(
+            "world",
+            "robot0/base",
+            1.0,
+            Isometry3::identity(),
+        )])
+        .await
+        .expect("published");
+
+        assert!(tf
+            .lookup("world", "robot0/base")
+            .unprefixed()
+            .get()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn publish_does_not_rewrite_the_callers_transform() {
+        let (tf, _rx, _h) = tf_prefixed(DEFAULT_TF_WINDOW_SECS, Some("robot0"));
+        let edge = Transform::new("base", "camera", 1.0, Isometry3::identity());
+        tf.publish(std::slice::from_ref(&edge))
+            .await
+            .expect("published");
+
+        assert_eq!(
+            (edge.parent.as_str(), edge.child.as_str()),
+            ("base", "camera")
+        );
+    }
+
+    #[test]
+    fn a_lookup_takes_its_frames_under_the_prefix_unless_it_opts_out() {
+        let (tf, _rx, handle) = tf_prefixed(DEFAULT_TF_WINDOW_SECS, Some("robot0"));
+        handle.add("robot0/base", "robot0/camera", 1.0, (1.0, 0.0, 0.0), 0.0);
+        handle.add("world", "robot0/base", 1.0, (0.0, 0.0, 0.0), 0.0);
+
+        assert!(tf.get_latest("base", "camera").is_some());
+        assert!(tf.lookup("world", "robot0/base").get().is_none());
+        assert!(tf
+            .lookup("world", "robot0/base")
+            .unprefixed()
+            .get()
+            .is_some());
     }
 }

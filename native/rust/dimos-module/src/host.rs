@@ -32,8 +32,8 @@ use tracing::{error, info, warn};
 
 use crate::lcm::LcmTransport;
 use crate::module::{
-    init_tracing, log_wiring, parse_config_value, read_launch_config, run_module_core,
-    validate_config, Module,
+    init_tracing, launch_frame_prefix, log_wiring, parse_config_value, read_launch_config,
+    run_module_core, validate_config, Module,
 };
 use crate::transport::{SharedTransport, Transport};
 use crate::zenoh::{ZenohTransport, SESSION_KEY};
@@ -95,12 +95,14 @@ fn prepare_module<M: Module>(section: &Value) -> io::Result<Prepared> {
     let (topics, config) = parse_config_value::<M::Config>(section)?;
     validate_config(&config)?;
     let module_topics = topics.clone();
+    let frame_prefix = launch_frame_prefix(section).map(str::to_owned);
     Ok(Prepared {
         topics,
         run: Box::new(move |transport, shutdown| {
             Box::pin(run_module_core::<M, SharedTransport>(
                 transport,
                 module_topics,
+                frame_prefix,
                 config,
                 shutdown,
             ))

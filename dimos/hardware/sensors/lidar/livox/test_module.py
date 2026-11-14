@@ -58,7 +58,9 @@ def test_rust_struct_has_every_config_key() -> None:
         for line in struct.splitlines()
         if ": " in line and not line.strip().startswith("//")
     }
-    assert declared == _wire_fields()
+    # The lidar stamps the namespace on its cloud and imu frames, so it declares
+    # frame_id_prefix. That one is not a config key: it rides beside the config.
+    assert declared == _wire_fields() | {"frame_id_prefix"}
 
 
 def test_empty_pcap_is_rejected() -> None:
