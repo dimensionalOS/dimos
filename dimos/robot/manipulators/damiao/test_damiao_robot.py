@@ -103,7 +103,7 @@ DUAL_OPENYAM_WIRING = [
         f"{side}_arm",
         _motors(f"{side}_joint", ["DM4340"] * 3 + ["DM4310"] * 3),
         [80.0, 80.0, 80.0, 10.0, 10.0, 10.0],
-        [5.0, 5.0, 5.0, 1.5, 1.5, 1.5],
+        [1.0, 1.0, 1.0, 1.5, 1.5, 1.5],
         [None] * 6,
         _gripper(
             f"{side}_gripper",

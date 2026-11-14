@@ -969,6 +969,12 @@ robots:
         teleop-webxr-dual-openyam:
           title: Dual OpenYAM VR teleop
           description: Coupled VR teleoperation of both OpenYAM arms.
+        dual-openyam-leader-teleop:
+          title: Dual OpenYAM leader teleop
+          description: Two YAM leader arms drive both OpenYAM arms joint for joint.
+        learning-collect-leader-dual-openyam:
+          title: Dual OpenYAM leader demonstration recording
+          description: Drive both OpenYAM arms from the leader arms and record demonstrations.
     openarm:
       name: OpenArm
       description: The bimanual OpenArm, over CAN.
