@@ -181,7 +181,7 @@ lcmspy = "dimos.cli.spy.run_spy:lcm_main"
 agentspy = "dimos.cli.agentspy.agentspy:main"
 humancli = "dimos.cli.human.humanclianim:main"
 dimos = "dimos.cli.entry:main"
-rerun-bridge = "dimos.visualization.rerun.bridge:app"
+rerun-bridge = "dimos.cli.entry:rerun_bridge"
 doclinks = "dimos.cli.doclinks:main"
 dtop = "dimos.cli.dtop:main"
 
