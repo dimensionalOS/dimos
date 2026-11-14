@@ -102,3 +102,10 @@ def test_stop_navigation_sends_the_cancel_with_no_go_to_under_way(rig: _Rig) -> 
 
     (cancel,) = rig.sent
     assert all(math.isnan(v) for v in (cancel.x, cancel.y, cancel.z))
+
+
+def test_stopping_the_planner_cancels_the_goal(rig: _Rig) -> None:
+    rig.module.stop()
+
+    (cancel,) = rig.sent
+    assert all(math.isnan(v) for v in (cancel.x, cancel.y, cancel.z))

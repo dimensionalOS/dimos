@@ -1,0 +1,163 @@
+root = "Mission"
+resources = ["base"]
+
+[constants]
+route = [
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 4.0, y = 4.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 7.4, y = 4.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 9.5, y = 5.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 8.0, y = 8.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 8.5, y = 11.3, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 6.5, y = 11.3, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 3.5, y = 10.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 3.0, y = 7.1, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+]
+charger = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 1.0, y = 1.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
+low_battery = 0.20
+full_battery = 0.95
+pause_s = 3.0
+retry_s = 1.0
+PREEMPTED = 2
+SUCCEEDED = 3
+ABORTED = 4
+
+[vars]
+"patrol.index" = 0
+
+[[signal]]
+name = "nav_status"
+stream = "MLSPlannerNative.nav_status"
+
+[[signal]]
+name = "battery_level"
+stream = "FakeBattery.battery"
+field = "percentage"
+
+[[event]]
+name = "arrived"
+when = "nav_status.status == SUCCEEDED && nav_status.goal_id.stamp == nav.goal"
+
+[[event]]
+name = "gave_up"
+when = "(nav_status.status == ABORTED || nav_status.status == PREEMPTED) && nav_status.goal_id.stamp == nav.goal"
+
+[[event]]
+name = "battery_low"
+when = "battery_level < low_battery"
+
+[[event]]
+name = "charged"
+when = "battery_level >= full_battery"
+
+[[activity]]
+name = "navigate"
+start = "MLSPlannerNative.go_to"
+cancel = "MLSPlannerNative.stop_navigation"
+uses = ["base"]
+
+[[activity]]
+name = "charge"
+start = "FakeBattery.start_charging"
+cancel = "FakeBattery.stop_charging"
+
+[[node]]
+name = "Mission"
+children = ["Patrolling", "Charging"]
+initial = "Patrolling"
+
+[[node]]
+name = "Patrolling"
+children = ["NextWaypoint", "Navigating", "Retrying", "Pausing"]
+initial = "NextWaypoint"
+
+[[node.transition]]
+trigger = "battery_low"
+goto = "Charging"
+
+[[node]]
+name = "NextWaypoint"
+
+[[node.transition]]
+if = "patrol.index < size(route)"
+goto = "Navigating"
+
+[[node.transition]]
+goto = "Navigating"
+set = { "patrol.index" = 0 }
+
+[[node]]
+name = "Navigating"
+activity = "navigate"
+args = { pose = "route[patrol.index]" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "Pausing"
+set = { "patrol.index" = "patrol.index + 1" }
+
+[[node.transition]]
+trigger = "gave_up"
+goto = "NextWaypoint"
+set = { "patrol.index" = "patrol.index + 1" }
+
+[[node.transition]]
+trigger = "failed"
+goto = "Retrying"
+
+[[node]]
+name = "Retrying"
+
+[[node.transition]]
+after = "retry_s"
+goto = "Navigating"
+
+[[node]]
+name = "Pausing"
+
+[[node.transition]]
+after = "pause_s"
+goto = "NextWaypoint"
+
+[[node]]
+name = "Charging"
+children = ["ReturnToCharger", "ReturnRetry", "OnCharger"]
+initial = "ReturnToCharger"
+outcomes = ["done"]
+
+[[node.transition]]
+trigger = "done"
+goto = "Patrolling"
+
+[[node]]
+name = "ReturnToCharger"
+activity = "navigate"
+args = { pose = "charger" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "OnCharger"
+
+[[node.transition]]
+trigger = "gave_up"
+goto = "ReturnRetry"
+
+[[node.transition]]
+trigger = "failed"
+goto = "ReturnRetry"
+
+[[node]]
+name = "ReturnRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "ReturnToCharger"
+
+[[node]]
+name = "OnCharger"
+activity = "charge"
+
+[[node.transition]]
+trigger = "charged"
+goto = "done"
