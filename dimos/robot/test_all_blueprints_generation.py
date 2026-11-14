@@ -52,7 +52,6 @@ _EXCLUDED_MODULE_NAMES = {
     "ConnectionModule",
     "DamiaoConnection",
     "FeetechConnection",
-    "FeetechLeaderConnection",
     "SimWorld",
     "CollectionModule",  # Requires profile-owned ports; compose with collect(profile=...).
 }

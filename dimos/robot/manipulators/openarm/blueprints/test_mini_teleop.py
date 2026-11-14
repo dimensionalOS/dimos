@@ -15,7 +15,7 @@
 from typing import Any
 
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.robot.manipulators.openarm.mini_connection import OpenArmMiniArmConnection
+from dimos.robot.manipulators.openarm.blueprints.mini_teleop import OpenArmMiniArmConnection
 
 
 def test_follow_off_holds_the_follower_until_follow_is_on_again(mocker: Any) -> None:
