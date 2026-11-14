@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections import deque
 import threading
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from dimos_lcm.control_msgs import DynamicJointState
 import numpy as np
@@ -81,6 +81,13 @@ class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
     video_port: int = 1720
     # StopMove once cmd_vel has been silent this long.
     deadman_ms: int = 500
+
+    def to_config_dict(self) -> dict[str, Any]:
+        """The mount knobs cross as the resolved tree, `mount_frames()`."""
+        knobs = ("camera_xyz", "mid360_xyz", "mid360_mount", "l1_xyz", "l1_mount")
+        config = {k: v for k, v in super().to_config_dict().items() if k not in knobs}
+        config["mount"] = self.mount_frames()
+        return config
 
 
 class GO2DDS(NativeModule, Go2Base):
