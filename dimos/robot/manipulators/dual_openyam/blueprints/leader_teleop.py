@@ -26,7 +26,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.hardware.controllers.joycon.joycon_module import JoyConTeleopModule
+from dimos.hardware.controllers.joycon.joycon_module import JoyconConnectionModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -165,7 +165,7 @@ dual_openyam_leader_teleop = autoconnect(
 # Leaders without trigger servos; Joy-Cons drive the jaws and pause following.
 dual_openyam_joycon_leader_teleop = autoconnect(
     dual_openyam_leaders(DualOpenYamLeaderArmConnection),
-    JoyConTeleopModule.blueprint(),
+    JoyconConnectionModule.blueprint(),
     dual_openyam_leader_control(),
     _manipulation(),
 )

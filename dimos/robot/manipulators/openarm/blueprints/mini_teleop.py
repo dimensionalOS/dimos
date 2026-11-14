@@ -24,7 +24,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import In
-from dimos.hardware.controllers.joycon.joycon_module import JoyConTeleopModule
+from dimos.hardware.controllers.joycon.joycon_module import JoyconConnectionModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -90,7 +90,7 @@ def _leader(connection: type[OpenArmMiniConnection] = OpenArmMiniConnection) -> 
 
 def _joycon_leader() -> Blueprint:
     """Leaders without triggers, and a Joy-Con on each for its jaw, episodes and pause."""
-    return autoconnect(_leader(OpenArmMiniArmConnection), JoyConTeleopModule.blueprint())
+    return autoconnect(_leader(OpenArmMiniArmConnection), JoyconConnectionModule.blueprint())
 
 
 def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:

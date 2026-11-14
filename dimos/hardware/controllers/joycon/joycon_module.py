@@ -88,7 +88,7 @@ _DEVICES_FILE = Path("/proc/bus/input/devices")
 Pressed = Mapping[JoyConSide, frozenset[int] | None]
 
 
-class JoyConTeleopModuleConfig(ModuleConfig):
+class JoyconConnectionModuleConfig(ModuleConfig):
     """Settings for the Joy-Con module.
 
     Attributes:
@@ -101,10 +101,10 @@ class JoyConTeleopModuleConfig(ModuleConfig):
     jaw_speed_per_s: float = Field(default=3.0, gt=0, allow_inf_nan=False)
 
 
-class JoyConTeleopModule(Module):
+class JoyconConnectionModule(Module):
     """Read both Joy-Cons and publish jaw openings, buttons and follow on/off."""
 
-    config: JoyConTeleopModuleConfig
+    config: JoyconConnectionModuleConfig
     teleop_buttons: Out[Buttons]
     # Jaw openings, 1 = open, for the follower coordinator's gripper tasks.
     left_gripper_command: Out[Float32]

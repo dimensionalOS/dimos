@@ -18,14 +18,14 @@ from typing import Any
 
 import pytest
 
-from dimos.hardware.controllers.joycon.joycon_module import JoyConTeleopModule, _JoyConDevices
+from dimos.hardware.controllers.joycon.joycon_module import JoyconConnectionModule, _JoyConDevices
 
 ZR = 313
 PLUS = 315
 
 
 def test_zr_held_closes_the_right_jaw_at_the_jaw_speed(mocker: Any) -> None:
-    joycons = JoyConTeleopModule(jaw_speed_per_s=3.0)
+    joycons = JoyconConnectionModule(jaw_speed_per_s=3.0)
     left = mocker.patch.object(joycons.left_gripper_command, "publish")
     right = mocker.patch.object(joycons.right_gripper_command, "publish")
     try:
@@ -40,7 +40,7 @@ def test_zr_held_closes_the_right_jaw_at_the_jaw_speed(mocker: Any) -> None:
 
 
 def test_each_plus_press_flips_follow_once(mocker: Any) -> None:
-    joycons = JoyConTeleopModule()
+    joycons = JoyconConnectionModule()
     follow = mocker.patch.object(joycons.follow, "publish")
     held, released = frozenset({PLUS}), frozenset[int]()
     try:
