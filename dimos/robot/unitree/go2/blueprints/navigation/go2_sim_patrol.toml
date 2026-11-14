@@ -3,16 +3,16 @@ resources = ["base"]
 
 [constants]
 route = [
-    { x = 4.0, y = 4.0 },
-    { x = 7.4, y = 4.0 },
-    { x = 9.5, y = 5.0 },
-    { x = 8.0, y = 8.0 },
-    { x = 8.5, y = 11.3 },
-    { x = 6.5, y = 11.3 },
-    { x = 3.5, y = 10.0 },
-    { x = 3.0, y = 7.1 },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 4.0, y = 4.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 7.4, y = 4.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 9.5, y = 5.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 8.0, y = 8.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 8.5, y = 11.3, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 6.5, y = 11.3, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 3.5, y = 10.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
+    { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 3.0, y = 7.1, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } },
 ]
-charger = { x = 1.0, y = 1.0 }
+charger = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 1.0, y = 1.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
 low_battery = 0.20
 full_battery = 0.95
 pause_s = 3.0
@@ -88,7 +88,7 @@ set = { "patrol.index" = 0 }
 [[node]]
 name = "Navigating"
 activity = "navigate"
-args = { x = "route[patrol.index].x", y = "route[patrol.index].y" }
+args = { pose = "route[patrol.index]" }
 result = "nav.goal"
 
 [[node.transition]]
@@ -132,7 +132,7 @@ goto = "Patrolling"
 [[node]]
 name = "ReturnToCharger"
 activity = "navigate"
-args = { x = "charger.x", y = "charger.y" }
+args = { pose = "charger" }
 result = "nav.goal"
 
 [[node.transition]]
