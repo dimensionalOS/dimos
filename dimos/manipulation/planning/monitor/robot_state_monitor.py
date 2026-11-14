@@ -44,6 +44,9 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+# Radians past a joint limit that feedback is clamped back onto it.
+LIMIT_CLAMP_TOLERANCE = 0.01
+
 
 class RobotStateMonitor:
     """Monitors joint state updates and syncs them to WorldSpec.
@@ -128,6 +131,7 @@ class RobotStateMonitor:
                 logger.debug(f"  Received joints: {msg.name}")
                 return  # Not all joints present in message
 
+            positions = self._clamp_near_limits(positions)
             velocities = self._extract_velocities(msg)
 
             # Track message count for debugging
@@ -192,6 +196,23 @@ class RobotStateMonitor:
             positions.append(msg.position[idx])
 
         return np.array(positions, dtype=np.float64)
+
+    def _clamp_near_limits(self, positions: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Pull positions a hair past a joint limit onto it.
+
+        Feedback that reads just past a limit (sim or encoder noise) makes IK and the
+        planner reject the start state. Larger violations are left for them to report.
+        """
+        try:
+            lower, upper = self._world.get_prepared_model().joint_space.position_limits()
+        except Exception:
+            return positions
+        if lower.shape != positions.shape:
+            return positions
+        near = (positions >= lower - LIMIT_CLAMP_TOLERANCE) & (
+            positions <= upper + LIMIT_CLAMP_TOLERANCE
+        )
+        return np.where(near, np.clip(positions, lower, upper), positions)
 
     def _extract_velocities(self, msg: JointState) -> NDArray[np.float64] | None:
         """Extract velocities for our joints.

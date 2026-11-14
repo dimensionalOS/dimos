@@ -60,7 +60,10 @@ class HeuristicGraspModule(GraspGeneratorModule):
     @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
         if object_pointcloud.ts is None or not math.isfinite(float(object_pointcloud.ts)):
-            raise ValueError("object pointcloud must have a finite timestamp")
+            raise ValueError(
+                "object pointcloud must have a finite timestamp; pass timestamp= to "
+                "PointCloud2.from_numpy, or use the ts of the cloud it came from"
+            )
         if not object_pointcloud.frame_id:
             raise ValueError("object pointcloud frame_id must not be empty")
         points = object_pointcloud.points_f32()

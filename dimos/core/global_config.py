@@ -80,6 +80,12 @@ class GlobalConfig(BaseSettings):
     # Isolates this run's zenoh streams under dimos-domains/<name>/; a hosted run pins its run id.
     zenoh_domain: str = Field(default="", pattern=r"^[A-Za-z0-9_.-]*$")
     viewer: ViewerBackend = "rerun"
+    # comma-separated stream names peek_stream refuses: an eval hides the scene's ground truth
+    # (exact object poses) from the agent while modules still subscribe to it
+    peek_hidden_streams: str = ""
+    # comma-separated "Class.rpc" names left out of list_modules, so remote clients (the
+    # porcelain an eval agent uses) cannot call them; in-process callers still can
+    remote_hidden_rpcs: str = ""
     n_workers: int = 2
     scene_package: str | None = None
     robot_model: str | None = None

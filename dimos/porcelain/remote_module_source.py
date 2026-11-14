@@ -119,6 +119,8 @@ class RemoteModuleSource(ModuleSource):
                     None,
                     cls,
                     remote_name,
+                    # The coordinator's list, not cls.rpcs: it leaves out remote_hidden_rpcs.
+                    descriptor.rpc_names,
                     rpc=self._coord.rpc,
                     stream_lookup=functools.partial(self._get_stream, remote_name),
                 )

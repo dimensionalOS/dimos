@@ -528,6 +528,15 @@ with Pi and `--set no_dimos=true --set max_steps=120`.
 recorded body poses. See `data/robosuite/README.md` in the downloaded data
 package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
+`dimos.evals.suites.abc_sim` has all 33 [ABC Sim](https://github.com/amazon-far/abc)
+tasks with both OpenYAM arms (`dual-openyam-abc-sim`), one case per ABC task spec, graded
+on recorded body poses following ABC's own evaluators. Tags select by ABC scene
+(`--tags chess`), by family (`count`, `spell`, `sorting`, `mugs`, `drawer`, `bottles`), and
+by `dual_arm` or `single_arm`. Scenes use one fixed layout, not ABC's randomized
+episodes; the conveyor belt does not move (`static_belt`), and two graders ABC lacks are
+ours (`ours_grader`). See the suite's docstring and `data/abc_yam/SOURCE.md`.
+`dimos.evals.suites.abc_sim_single_arm` keeps three of them with one arm, the other parked.
+
 ### Hardware
 
 `HardwareEnvironment` runs a real robot the same way: it launches `dimos --record
