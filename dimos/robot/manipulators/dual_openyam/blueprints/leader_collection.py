@@ -93,27 +93,26 @@ def dual_openyam_leader_collection_profile(
     )
 
 
-def _collection(teleop: Blueprint, cameras: tuple[str, ...]) -> Blueprint:
-    return autoconnect(
+def _collection_parts(cameras: tuple[str, ...]) -> tuple[Blueprint, ...]:
+    """The recorder, episode monitor and cameras every collection blueprint shares."""
+    return (
         collect(profile=dual_openyam_leader_collection_profile(cameras)),
         EpisodeMonitorModule.blueprint(instance_name="episodes"),
-        teleop,
         *[dual_openyam_collection_camera(name) for name in cameras],
     )
 
 
 # The leaders have no buttons; episodes are marked with dimos imitation control.
-learning_collect_leader_dual_openyam = _collection(
-    dual_openyam_leader_teleop, DUAL_OPENYAM_CAMERAS
-).remappings([])
+learning_collect_leader_dual_openyam = autoconnect(
+    *_collection_parts(DUAL_OPENYAM_CAMERAS), dual_openyam_leader_teleop
+)
 
-# The registry finds a blueprint by a line ending in a call like `.remappings`.
 # Joy-Con B starts and saves an episode, Y discards it.
-learning_collect_joycon_leader_dual_openyam = _collection(
-    dual_openyam_joycon_leader_teleop, DUAL_OPENYAM_CAMERAS
-).remappings([])
+learning_collect_joycon_leader_dual_openyam = autoconnect(
+    *_collection_parts(DUAL_OPENYAM_CAMERAS), dual_openyam_joycon_leader_teleop
+)
 
 # The same without cameras, for a PC or sim.
-learning_collect_joycon_leader_dual_openyam_nocam = _collection(
-    dual_openyam_joycon_leader_teleop, ()
-).remappings([])
+learning_collect_joycon_leader_dual_openyam_nocam = autoconnect(
+    *_collection_parts(()), dual_openyam_joycon_leader_teleop
+)
