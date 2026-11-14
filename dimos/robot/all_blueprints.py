@@ -281,6 +281,7 @@ all_modules = {
     "dual-open-yam-leader-arm-connection": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop.DualOpenYamLeaderArmConnection",
     "dual-open-yam-leader-connection": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop.DualOpenYamLeaderConnection",
     "dual-open-yam-leader-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop.DualOpenYamLeaderCoordinator",
+    "dual-open-yam-leader-urdf-manager": "dimos.robot.manipulators.dual_openyam.leader_urdf_manager.DualOpenYamLeaderUrdfManager",
     "dual-open-yam-sim-connection": "dimos.robot.manipulators.dual_openyam.sim_connection.DualOpenYamSimConnection",
     "episode-driver": "dimos.navigation.bench.driver.EpisodeDriver",
     "episode-monitor-module": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
