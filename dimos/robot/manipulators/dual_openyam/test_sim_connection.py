@@ -109,7 +109,7 @@ def test_stands_in_for_the_damiao_connection_port_for_port(no_rpc: None) -> None
 
     assert set(real) == {"position_command", "joint_state"}
     assert [stream for stream in simulated if stream.name in real] == list(real.values())
-    assert {stream.name for stream in simulated} - set(real) == set(CAMERA_PORTS)
+    assert {stream.name for stream in simulated} - set(real) == {*CAMERA_PORTS, "pointcloud"}
     assert DualOpenYamSimConnection.robot is DualOpenYamConnection.robot
 
     connection = DualOpenYamSimConnection()
@@ -256,3 +256,41 @@ def test_publishes_each_camera_on_its_realsense_port_and_frames(
     first = published["color_image"][0]
     assert {edge.ts for edge in edges.values()} == {first.ts}
     assert published["left_wrist_color_image"][0].ts == first.ts
+
+
+@pytest.mark.self_hosted
+def test_publishes_the_overhead_view_as_a_realsense_builds_its_point_cloud(
+    deploy: Deploy, mujoco_gl: None
+) -> None:
+    published = deploy(deadman_timeout_s=30.0, enable_pointcloud=True, depth_trunc_m=0.6).published
+    wait_until(
+        lambda: len(published["pointcloud"]) >= 3 and bool(published["camera_info"]), timeout=20.0
+    )
+
+    cloud = published["pointcloud"][-1]
+    # It has the frame and the stamp of the depth image it was built from.
+    [depth] = [image for image in published["depth_image"] if image.ts == cloud.ts]
+    [color] = [image for image in published["color_image"] if image.ts == cloud.ts]
+    assert cloud.frame_id == depth.frame_id == "camera_color_optical_frame"
+    # Every second pixel is put back through the pinhole, and nothing past the cut-off.
+    info = published["camera_info"][-1]
+    rows, columns = np.mgrid[0:480:2, 0:640:2]
+    distance = depth.data[::2, ::2]
+    near = distance <= 0.6
+    assert 0.0 < near.mean() < 1.0
+    points = cloud.points_f32()
+    assert points == pytest.approx(
+        np.column_stack(
+            [
+                (columns[near] - info.K[2]) * distance[near] / info.K[0],
+                (rows[near] - info.K[5]) * distance[near] / info.K[4],
+                distance[near],
+            ]
+        ),
+        abs=1e-6,
+    )
+    colors = cloud.pointcloud_tensor.point["colors"].numpy()
+    assert colors == pytest.approx(color.data[::2, ::2][near] / 255.0, abs=1e-6)
+    # Clouds come at their own rate, 5 Hz by default, not with every frame.
+    stamps = [cloud.ts for cloud in published["pointcloud"]]
+    assert np.diff(stamps).min() >= 0.2

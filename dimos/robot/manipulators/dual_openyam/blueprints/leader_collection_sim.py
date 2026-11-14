@@ -34,11 +34,12 @@ from dimos.robot.manipulators.dual_openyam.blueprints.simulation import (
 from dimos.robot.manipulators.dual_openyam.sim_connection import DualOpenYamSimConnection
 
 # The sim's overhead color stream is named as the real overhead camera's; its tf
-# stays unremapped for the viewer.
+# stays unremapped for the viewer, and its overhead point cloud is published for
+# it too (the recorder records only the streams of its profile).
 learning_collect_joycon_leader_dual_openyam_sim = autoconnect(
     *collection_recorder_parts(DUAL_OPENYAM_CAMERAS),
     dual_openyam_joycon_leader_teleop.disabled_modules(*_ROBOT_CONNECTIONS),
-    dual_openyam_sim_connection().remappings(
+    dual_openyam_sim_connection(enable_pointcloud=True).remappings(
         [(DualOpenYamSimConnection, "color_image", "overhead_color_image")]
     ),
 )
