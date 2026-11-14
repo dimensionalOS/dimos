@@ -116,8 +116,17 @@ dimos/teleop/joycon/pair_joycon.sh L
 dimos/teleop/joycon/pair_joycon.sh R
 ```
 
-The first run also lets bluez accept Joy-Cons and adds you to the `input` group
-(log in again after). If a button does nothing, `evtest` shows the key codes the
+The first run adds you to the `input` group (log in again after) and asks
+before setting `ClassicBondedOnly=false` in `/etc/bluetooth/input.conf`, which
+bluez needs to accept a Joy-Con. That setting applies to the whole computer:
+any classic Bluetooth keyboard, mouse or controller can then connect without
+bonding first. To undo it when the Joy-Cons are no longer used:
+
+```bash
+sudo sed -i 's/^ClassicBondedOnly=false/#ClassicBondedOnly=true/' /etc/bluetooth/input.conf
+sudo systemctl restart bluetooth
+```
+ If a button does nothing, `evtest` shows the key codes the
 driver reports. A Joy-Con that drops off Bluetooth leaves its jaw where it is
 until it is back.
 

@@ -28,6 +28,7 @@ the follower and the episode monitor already listen to:
 from __future__ import annotations
 
 from collections.abc import Mapping
+import fcntl
 import os
 from pathlib import Path
 import re
@@ -76,6 +77,10 @@ _PLUS_KEY = 315
 _EVENT_FORMAT = "llHHi"
 _EVENT_SIZE = struct.calcsize(_EVENT_FORMAT)
 _EV_KEY = 1
+# EVIOCGKEY from linux/input.h: read the keys held right now, as one bit per
+# key code. 96 bytes cover every code up to KEY_MAX (0x2ff).
+_HELD_KEYS_BYTES = 96
+_EVIOCGKEY = (2 << 30) | (_HELD_KEYS_BYTES << 16) | (ord("E") << 8) | 0x18
 _RESCAN_PERIOD_S = 1.0
 _DEVICES_FILE = Path("/proc/bus/input/devices")
 
@@ -188,16 +193,23 @@ class _JoyConDevices:
     def __init__(self) -> None:
         self._fds: dict[JoyConSide, int] = {}
         self._held: dict[JoyConSide, set[int]] = {side: set() for side in JOYCON_SIDES}
+        # Keys pressed since the last read, so a press and release between two
+        # reads still shows up once.
+        self._tapped: dict[JoyConSide, set[int]] = {side: set() for side in JOYCON_SIDES}
         self._next_scan = 0.0
 
     def read(self) -> dict[JoyConSide, frozenset[int] | None]:
         """The keys held on each Joy-Con now, or None for one that is not connected."""
         if len(self._fds) < len(JOYCON_SIDES) and time.monotonic() >= self._next_scan:
             self._scan()
-        return {
-            side: frozenset(self._held[side]) if side in self._fds and self._drain(side) else None
-            for side in JOYCON_SIDES
-        }
+        pressed: dict[JoyConSide, frozenset[int] | None] = {}
+        for side in JOYCON_SIDES:
+            if side in self._fds and self._drain(side):
+                pressed[side] = frozenset(self._held[side] | self._tapped[side])
+            else:
+                pressed[side] = None
+            self._tapped[side].clear()
+        return pressed
 
     def close(self) -> None:
         for side in list(self._fds):
@@ -218,11 +230,13 @@ class _JoyConDevices:
             if side in self._fds or path is None:
                 continue
             try:
-                self._fds[side] = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
             except OSError as error:
                 logger.warning("Joy-Con %s at %s cannot be opened: %s", side, path, error)
                 continue
-            self._held[side] = set()
+            self._fds[side] = fd
+            # A trigger already held when the Joy-Con connects must not open the jaw.
+            self._held[side] = _held_keys(fd)
             logger.info("Joy-Con %s connected at %s", side, path)
 
     def _drain(self, side: JoyConSide) -> bool:
@@ -243,6 +257,7 @@ class _JoyConDevices:
                 if kind == _EV_KEY:
                     if value:
                         self._held[side].add(code)
+                        self._tapped[side].add(code)
                     else:
                         self._held[side].discard(code)
 
@@ -250,6 +265,15 @@ class _JoyConDevices:
         fd = self._fds.pop(side, None)
         if fd is not None:
             os.close(fd)
+
+
+def _held_keys(fd: int) -> set[int]:
+    """The key codes held on an input device right now; empty if it cannot say."""
+    try:
+        bits = fcntl.ioctl(fd, _EVIOCGKEY, bytes(_HELD_KEYS_BYTES))
+    except OSError:
+        return set()
+    return {code for code in range(len(bits) * 8) if bits[code // 8] >> (code % 8) & 1}
 
 
 def _input_devices(devices_file: Path = _DEVICES_FILE) -> dict[str, str]:

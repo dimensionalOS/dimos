@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pairs and connects Nintendo Joy-Con $1 (L or R) with this computer over Bluetooth, forgetting any
-# old pairing first. The first run also lets bluez accept Joy-Cons and lets this user read them;
-# both need root, so they run under sudo. Run it once per Joy-Con; after that it reconnects when
+# old pairing first. The first run also asks to let bluez accept Joy-Cons and lets this user read
+# them; both need root, so they run under sudo. Run it once per Joy-Con; after that it reconnects when
 # woken by any button.
 set -euo pipefail
 side=${1:?usage: pair_joycon.sh <L or R>}
@@ -12,8 +12,16 @@ esac
 name="Joy-Con ($side)"
 input_conf=/etc/bluetooth/input.conf
 
-# bluez refuses a Joy-Con's input connection unless ClassicBondedOnly is off.
+# bluez refuses a Joy-Con's input connection unless ClassicBondedOnly is off. That setting covers
+# every classic Bluetooth input device on this computer, so ask first.
 if ! grep -q '^ClassicBondedOnly=false' "$input_conf"; then
+    echo "Joy-Cons need ClassicBondedOnly=false in $input_conf. It lets any classic Bluetooth"
+    echo "keyboard, mouse or controller connect without bonding first, not only Joy-Cons."
+    read -rp "Change it and restart Bluetooth? [y/N] " answer
+    case $answer in
+        y | Y) ;;
+        *) echo "pair_joycon.sh: left unchanged, so the Joy-Con cannot connect" >&2; exit 1 ;;
+    esac
     if grep -q 'ClassicBondedOnly=' "$input_conf"; then
         sudo sed -i 's/^#\?ClassicBondedOnly=.*/ClassicBondedOnly=false/' "$input_conf"
     else

@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import struct
 from typing import Any
 
 import pytest
 
-from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
+from dimos.teleop.joycon.joycon_module import JoyConTeleopModule, _JoyConDevices
 
 ZR = 313
 PLUS = 315
@@ -48,3 +50,21 @@ def test_each_plus_press_flips_follow_once(mocker: Any) -> None:
         joycons.stop()
 
     assert [call.args[0].data for call in follow.call_args_list] == [False, True]
+
+
+def test_a_press_and_release_between_two_reads_is_still_seen() -> None:
+    reader, writer = os.pipe()
+    os.set_blocking(reader, False)
+    devices = _JoyConDevices()
+    devices._fds = {"right": reader}
+    devices._next_scan = float("inf")
+    try:
+        for value in (1, 0):
+            os.write(writer, struct.pack("llHHi", 0, 0, 1, PLUS, value))
+        first, second = devices.read()["right"], devices.read()["right"]
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+    assert first == frozenset({PLUS})
+    assert second == frozenset()
