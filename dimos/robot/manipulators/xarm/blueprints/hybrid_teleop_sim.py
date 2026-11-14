@@ -52,13 +52,13 @@ from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import DEFAULT_FPS, FeatureSpec
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     eef_twist_task,
@@ -207,8 +207,7 @@ hybrid_teleop_sim = autoconnect(
     ),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
     # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
-    # world-frame points at 5 Hz. Renamed so they do not mix with the object
-    # clouds ObjectSceneRegistrationModule sends on "pointcloud".
+    # world-frame points at 5 Hz, renamed for the Desktop page's scene view.
     MujocoSimModule.blueprint(
         **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
         width=_CAMERA_WIDTH,
@@ -220,15 +219,7 @@ hybrid_teleop_sim = autoconnect(
         mujoco_lidar_raycast_height=60,
         mujoco_lidar_voxel_size=0.01,
     ).remappings([(MujocoSimModule, "pointcloud", "scene_pointcloud")]),
-    ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
-        # Detections closer than this (metres) count as one object. The objects
-        # on the table are 10 to 17 cm apart; the 0.2 m default merges them.
-        distance_threshold=0.05,
-    ),
+    ManipulationLocalize.blueprint(world_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[

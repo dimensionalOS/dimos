@@ -27,6 +27,8 @@ import typer
 from dimos.cloud import cli, data as cd
 from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
 
 
 class FakeTransport:
@@ -39,6 +41,7 @@ class FakeTransport:
         self.fail_at = 0  # fail the Nth put, once
         self.epoch = 0  # presign generation; URLs from older epochs are expired
         self.expire_at = 0  # bump epoch before the Nth put, once
+        self.previews: dict[str, dict[str, Any]] = {}
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         if path.endswith("/uploads") and method == "POST":
@@ -67,6 +70,10 @@ class FakeTransport:
                 "limits": {"total_gb": 250, "daily_gb": 25, "max_file_gb": 50, "trust": "new"},
                 "message": "storage at 0% of quota",
             }
+        if path.endswith("/preview") and method == "PUT":
+            assert body
+            self.previews[path.split("/")[4]] = body
+            return {}
         if path.endswith("/uploads"):
             return {"uploads": [dict(id=k, **v) for k, v in self.uploads.items()]}
         uid = path.split("/")[4]
@@ -549,3 +556,80 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_mcap_recording_sends_preview_with_joystick(
+    env: tuple[CloudData, FakeTransport, Path],
+) -> None:
+    writer_mod = pytest.importorskip("mcap.writer")
+    cloud, t, db = env
+    path = db.parent / "teleop.mcap"
+    with path.open("wb") as f:
+        w = writer_mod.Writer(f)
+        w.start(profile="dimos", library="test")
+        chans = {
+            name: w.register_channel(
+                topic=name,
+                message_encoding="lcm",
+                schema_id=0,
+                metadata={
+                    "dimos.payload_type": payload,
+                    "dimos.observation_time": "publish_time",
+                },
+            )
+            for name, payload in (
+                ("odom", "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped"),
+                ("joy", "dimos.msgs.sensor_msgs.Joy.Joy"),
+            )
+        }
+        for i in range(3):
+            ns = (100 + i) * 10**9
+            pose = PoseStamped(ts=100.0 + i, position=[i, 0, 0.3], frame_id="world")
+            joy = Joy(ts=100.0 + i, axes=[0.0, 0.5, -1.0, 0.0], buttons=[1, 0, 0])
+            for name, msg in (("odom", pose), ("joy", joy)):
+                w.add_message(
+                    channel_id=chans[name], log_time=ns, publish_time=ns, data=msg.lcm_encode()
+                )
+        w.finish()
+
+    r = cloud.upload(path, robot_id="go2")
+    assert r["preview"].startswith("sent")
+    doc = t.previews[r["upload_id"]]
+    assert doc["streams"]["joystick"]["count"] == 3
+    assert [s[1:] for s in doc["joy"]] == [[[0.0, 0.5, -1.0, 0.0], [1, 0, 0]]] * 3
+
+
+def test_mcap_upload_sends_its_preview(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    from dimos.memory.store.test_mcap import ros2_odom, write_ros2_mcap
+
+    cloud, _t, db = env
+    mcap = db.parent / "run.mcap"
+    write_ros2_mcap(mcap, [("/odometry", "nav_msgs/Odometry", 1.0, ros2_odom(1.0, 0, 0))])
+    before = mcap.read_bytes()
+    assert cloud.upload(mcap)["preview"] == "sent"  # opened read-only in place, not as SQLite
+    assert mcap.read_bytes() == before
+
+
+def test_an_mcap_recording_gets_a_manifest_so_it_can_be_previewed(tmp_path: Path) -> None:
+    """No manifest means no console preview, and the manifest used to be read by opening the
+    recording as sqlite — which every .mcap fails, whatever the preview could have made of it."""
+    writer = pytest.importorskip("mcap.writer")
+    path = tmp_path / "run.mcap"
+    with path.open("wb") as out:
+        w = writer.Writer(out)
+        w.start(profile="dimos", library="test")
+        w.register_channel(
+            topic="dimos/lidar/sensor_msgs.PointCloud2", message_encoding="lcm", schema_id=0
+        )
+        w.finish()
+
+    manifest = cd._manifest(path)
+    assert manifest is not None
+    assert [s["name"] for s in manifest["streams"]] == ["lidar"]
+    assert manifest["streams"][0]["payload_module"].endswith("PointCloud2")
+
+
+def test_a_file_that_is_no_recording_has_no_manifest(tmp_path: Path) -> None:
+    junk = tmp_path / "notes.txt"
+    junk.write_text("not a recording")
+    assert cd._manifest(junk) is None

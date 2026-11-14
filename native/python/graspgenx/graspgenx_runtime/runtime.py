@@ -119,13 +119,13 @@ class GraspGenXRuntimeModule(GraspGenXModule):
     @rpc
     def propose_grasps_for(
         self,
-        object_id: str,
+        cloud: PointCloud2,
         approach: list[float] | None = None,
         max_angle_deg: float = 30.0,
         limit: int = 3,
     ) -> dict[str, Any]:
         """The host contract's propose_grasps_for, run in this process beside the model."""
-        return self._propose_for(object_id, approach, max_angle_deg, limit)
+        return self._propose_for(cloud, approach, max_angle_deg, limit)
 
     def _generator_name(self) -> str:
         # This process answers to "__isolated_python__/<host name>/<id>"

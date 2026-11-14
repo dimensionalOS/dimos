@@ -162,7 +162,6 @@ modules:
   mujoco-sim-module: {abilities: [simulation]}
   navigation-skill-container: {abilities: [navigation]}
   object-db-module: {abilities: [object-detection]}
-  object-scene-registration-module: {abilities: [object-detection]}
   object-tracker2-d: {abilities: [object-tracking]}
   object-tracker3-d: {abilities: [object-tracking]}
   object-tracking: {abilities: [object-tracking]}
@@ -994,6 +993,21 @@ robots:
         teleop-webxr-openarm:
           title: OpenArm VR teleop
           description: Both VR controllers drive the bimanual OpenArm; requires both CAN selectors, or simulation for a mock connection.
+        teleop-openarm-mini:
+          title: OpenArm Mini leader teleop
+          description: Two OpenArm Mini leader arms drive the bimanual OpenArm joint for joint, on one machine.
+        teleop-openarm-mini-leader:
+          title: OpenArm Mini leaders (operator machine)
+          description: The leader half of a split OpenArm Mini setup; joins the robot's network as a client.
+        teleop-openarm-mini-follower:
+          title: OpenArm Mini follower (robot machine)
+          description: The OpenArm half of a split OpenArm Mini setup; follows leaders on another machine.
+        openarm-mini-collection:
+          title: OpenArm Mini demonstration recording
+          description: Drive the OpenArm from the Mini leaders and record demonstrations, on one machine.
+        openarm-mini-follower-collection:
+          title: OpenArm Mini follower recording
+          description: Record demonstrations on the robot machine while the Mini leaders run on another.
     seeed_b601_dm:
       name: Seeed reBot B601-DM
       description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
@@ -1024,21 +1038,31 @@ robots:
       defaults:
         recommended_config: *can_arm_config
       blueprints:
-        keyboard-teleop-a1z:
-          title: A1Z keyboard driving
-          description: Move a Galaxea A1Z arm with this computer's keyboard.
         a1z-planner-coordinator:
           title: A1Z motion planning
-          description: Motion planning and execution for a Galaxea A1Z arm.
+          description: Motion planning and execution for a real Galaxea A1Z arm, through A1ZConnection.
+          recommended_config: &a1z_connection_config
+          - {module: a1zconnection, field: can_port, label: CAN port, placeholder: a1zcan, required: true}
         coordinator-a1z:
           title: A1Z coordinator
-          description: An A1Z behind a ControlCoordinator (a building block).
+          description: A real A1Z behind a ControlCoordinator, through A1ZConnection (a building block).
+          recommended_config: *a1z_connection_config
+        a1z-teleop:
+          title: A1Z teleop
+          description: Move a real A1Z's end and its gripper from the Desktop Manipulation app, through A1ZConnection.
+          recommended_config: *a1z_connection_config
+        a1z-keyboard-teleop:
+          title: A1Z keyboard teleop
+          description: Move a real A1Z's end and its gripper with this computer's keyboard, through A1ZConnection.
+          recommended_config: *a1z_connection_config
         coordinator-teleop-a1z:
           title: A1Z teleop coordinator
-          description: The A1Z teleop coordinator (a building block).
+          description: A real A1Z behind the VR teleop coordinator, through A1ZConnection (a building block).
+          recommended_config: *a1z_connection_config
         teleop-webxr-a1z:
           title: A1Z VR teleop
-          description: Move an A1Z with a VR headset's left controller.
+          description: Move a real A1Z with a VR headset's left controller, through A1ZConnection.
+          recommended_config: *a1z_connection_config
     a750:
       name: A-750
       description: The A-750 arm, over a serial port.
@@ -1050,10 +1074,7 @@ robots:
           title: A-750 keyboard driving
           description: Move an A-750 arm with this computer's keyboard.
           recommended_config:
-          - module: controlcoordinator
-            field: addresses.arm
-            label: Device
-            placeholder: /dev/ttyUSB0
+          - {module: a750connection, field: device_path, label: Serial port, placeholder: /dev/ttyACM0, required: true}
     coordinators:
       name: Coordinators and mocks
       description: Arm combinations, mobile bases and mock hardware behind dimos's ControlCoordinator.
@@ -1225,8 +1246,4 @@ robots:
         demo-error-on-name-conflicts:
           title: Name conflict error demo
           description: Shows the error dimos gives when two modules' streams collide.
-          hidden: true
-        demo-object-scene-registration:
-          title: Object scene registration demo
-          description: Registers objects into a scene from a ZED camera (needs the ZED SDK).
           hidden: true

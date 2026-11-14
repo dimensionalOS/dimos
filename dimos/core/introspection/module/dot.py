@@ -21,6 +21,7 @@ from dimos.core.introspection.utils import (
     SKILL_COLOR,
     TYPE_COLORS,
     color_for_string,
+    render_dot_svg,
     sanitize_id,
 )
 
@@ -190,14 +191,5 @@ def render_svg(info: ModuleInfo, output_path: str) -> None:
         info: ModuleInfo structure to render.
         output_path: Path to write the SVG file.
     """
-    import subprocess
-
     dot_code = render(info)
-    result = subprocess.run(
-        ["dot", "-Tsvg", "-o", output_path],
-        input=dot_code,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"graphviz failed: {result.stderr}")
+    render_dot_svg(dot_code, output_path)

@@ -188,14 +188,33 @@ class TopicMailbox:
                 batch = [self._fifo.popleft() for _ in range(min(limit, len(self._fifo)))]
                 return batch, 0.0 if self._fifo else None
             for key, sample in list(self._latest.items()):
-                if self._next_due.get(key, 0) <= now and len(batch) < limit:
+                due = self._next_due.get(key)
+                if (due is None or due <= now) and len(batch) < limit:
                     batch.append(sample)
                     del self._latest[key]
-                    self._next_due[key] = now + self._period
+                    # Anchored to the schedule, not to this (late) take: a wake
+                    # that runs a millisecond late must not push every later
+                    # due time, or a same-rate source loses one frame per
+                    # period of accumulated lateness. After a gap the schedule
+                    # restarts from now.
+                    self._next_due[key] = max(
+                        now - self._period, (now if due is None else due) + self._period
+                    )
             delay = min(
                 (max(0.0, self._next_due.get(key, 0) - now) for key in self._latest), default=None
             )
             return batch, delay
+
+    def refresh(self, key: str) -> TopicSample | None:
+        """The sample of ``key`` that arrived since its take, past the rate gate.
+
+        It replaces the taken one, not encoded yet, rather than adding a
+        selection: the key's schedule stays where the take left it.
+        """
+        with self._budget.lock:
+            if self._closed or self._error is not None:
+                return None
+            return self._latest.pop(key, None)
 
     def release(self, sample: TopicSample) -> None:
         with self._budget.lock:

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
+import threading
 import time
 from typing import Any, Generic, TypeVar, cast
 
@@ -99,6 +100,8 @@ def timed_playback(
     the current timer — assigning a new one disposes the previous and prevents
     cancelled/fired timers from accumulating along with their captured frame
     data.
+
+    Source failures close the iterator before notifying on_error.
     """
 
     def subscribe(
@@ -107,13 +110,33 @@ def timed_playback(
     ) -> DisposableBase:
         sched = scheduler or TimeoutScheduler()
         disp = SerialDisposable()
-        is_disposed = False
+        disposed = threading.Event()
+        emission_lock = threading.RLock()
         iterator = source()
+        iterator_disposable = Disposable(getattr(iterator, "close", None))
+
+        def dispose() -> None:
+            disposed.set()
+            disp.dispose()
+            with emission_lock:
+                iterator_disposable.dispose()
+
+        def terminate(error: Exception | None = None) -> None:
+            if disposed.is_set():
+                return
+            dispose()
+            if error is None:
+                observer.on_completed()
+            else:
+                observer.on_error(error)
 
         try:
             first_ts, first_data = next(iterator)
         except StopIteration:
-            observer.on_completed()
+            terminate()
+            return Disposable()
+        except Exception as error:
+            terminate(error)
             return Disposable()
 
         start_local_time = time.time()
@@ -121,18 +144,25 @@ def timed_playback(
 
         observer.on_next(first_data)
 
-        try:
-            next_message: tuple[float, T] | None = next(iterator)
-        except StopIteration:
-            observer.on_completed()
-            return disp
-
         prev_ts = first_ts
 
-        def schedule_emission(message: tuple[float, T]) -> None:
-            nonlocal next_message, start_local_time, start_replay_time, prev_ts
+        def advance() -> None:
+            if disposed.is_set():
+                return
+            try:
+                message = next(iterator)
+            except StopIteration:
+                terminate()
+                return
+            except Exception as error:
+                terminate(error)
+                return
+            schedule_emission(message)
 
-            if is_disposed:
+        def schedule_emission(message: tuple[float, T]) -> None:
+            nonlocal start_local_time, start_replay_time, prev_ts
+
+            if disposed.is_set():
                 return
 
             ts, data = message
@@ -142,22 +172,15 @@ def timed_playback(
                 start_replay_time = ts
             prev_ts = ts
 
-            try:
-                next_message = next(iterator)
-            except StopIteration:
-                next_message = None
-
             target_time = start_local_time + (ts - start_replay_time) / speed
             delay = max(0.0, target_time - time.time())
 
             def emit(_scheduler: SchedulerBase, _state: object) -> DisposableBase | None:
-                if is_disposed:
-                    return None
-                observer.on_next(data)
-                if next_message is not None:
-                    schedule_emission(next_message)
-                else:
-                    observer.on_completed()
+                with emission_lock:
+                    if disposed.is_set():
+                        return None
+                    observer.on_next(data)
+                    advance()
                 return None
 
             # A timer that fires right away can schedule its successor before this
@@ -167,13 +190,7 @@ def timed_playback(
             disp.disposable = scheduled
             scheduled.disposable = sched.schedule_relative(delay, emit)
 
-        if next_message is not None:
-            schedule_emission(next_message)
-
-        def dispose() -> None:
-            nonlocal is_disposed
-            is_disposed = True
-            disp.dispose()
+        advance()
 
         return Disposable(dispose)
 

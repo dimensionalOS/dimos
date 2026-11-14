@@ -18,9 +18,11 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 import inspect
+from itertools import pairwise
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import signal
 import subprocess
@@ -37,6 +39,7 @@ from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
 from experimental.gateway import constants, shared_config, store
 from experimental.gateway.errors import ApiError, StatusError
 from experimental.gateway.introspect import is_secret_name
+from experimental.gateway.names import check_name
 
 ModuleValues = dict[str, dict[str, Any]]
 
@@ -377,9 +380,57 @@ def _save(record: dict[str, Any]) -> None:
     store.write_atomic(launch_file(), json.dumps(record))
 
 
+# dimos' console format: `HH:MM:SS.mmm [lvl][file]`
+FATAL_LOG_LINE = re.compile(r"^\d\d:\d\d:\d\d\.\d+ \[(?:err|cri)\]")
+# a record of dimos' console, or of a native library (zenoh's start with an ISO date)
+LOG_LINE = re.compile(r"^(?:\d\d:\d\d:\d\d\.\d+ \[|\d{4}-\d\d-\d\dT)")
+EXCEPTION_LINE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:: .*)?")
+
+
 def last_error(output: str) -> str:
-    lines = [line.strip() for line in output.splitlines()[1:] if line.strip()]
-    return lines[-1] if lines else "dimos exited during startup"
+    """The cause of a failed launch: a native abort, else the last fatal line or the exception
+    ending the last traceback.
+
+    Shutdown chatter (`Stopping module...`, `All workers shut down`) follows a crash, so the
+    last line alone names the wrong thing. The last recognized cause wins, including shutdown
+    errors. A native abort wins over all that follows it: dimos reports the worker it killed
+    as a failed health check. Without a recognized cause, the last line still stands, as before.
+
+    Rich draws tracebacks and CLI errors in panels. A panel's text is read without its frame,
+    a wrapped message as one line, and a border is never the answer."""
+    lines: list[str] = []
+    wraps = False  # the line before is text Rich may have wrapped onto this one
+    for line in output.splitlines()[1:]:
+        framed = line.startswith("│")
+        text = line.strip("│ ") if framed else line.rstrip()
+        is_text = text[:1] not in ("", "╭", "╰") and not LOG_LINE.match(text)
+        if wraps and is_text:
+            lines[-1] += f" {text}"
+            continue
+        # Rich wraps the text inside a panel, and the exception it prints right below one.
+        wraps = is_text and (framed or (bool(lines) and lines[-1].startswith("╰")))
+        if text:
+            lines.append(text)
+    cause = None
+    in_traceback = False
+    for above, line in pairwise(["", *lines]):
+        if line.startswith("Traceback (most recent call last):"):
+            in_traceback = True
+        elif line.startswith("*** Terminating app"):
+            return line
+        elif FATAL_LOG_LINE.match(line):
+            cause = line.strip()
+        # Rich prints the exception right below the panel of frames.
+        elif (in_traceback or above.startswith("╰")) and EXCEPTION_LINE.fullmatch(line):
+            # Other workers' output can land between the frames and the exception.
+            if re.match(r"(?:DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL|NOTSET):", line):
+                continue
+            cause = line.strip()
+            in_traceback = False
+    if cause is None:
+        lines = [line for line in lines if not line.startswith(("╭", "╰"))]
+        return lines[-1].strip() if lines else "dimos exited during startup"
+    return cause
 
 
 def current_launch() -> dict[str, Any] | None:
@@ -508,6 +559,7 @@ def check_idle() -> None:
 
 
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
+    check_name(blueprint)
     with _lock:
         check_idle()
         program = store.dimos_bin(dimos_dir)
@@ -559,6 +611,7 @@ def copy_of(entry: Any) -> dict[str, Any]:
 
 
 def start_copy(blueprint: str, copy: dict[str, Any]) -> dict[str, Any]:
+    check_name(blueprint)
     with _lock:
         check_idle()
         command = [str(arg) for arg in copy["command"]]
@@ -604,7 +657,7 @@ def stop() -> str:
         return f"Stopping {entry.run_id} (PID {entry.pid}) with SIGTERM...\n  {message}"
 
 
-def relaunch(dimos_dir: Path) -> dict[str, Any]:
+def relaunch(dimos_dir: Path, check_known: Callable[[str], None]) -> dict[str, Any]:
     """Stop the running blueprint and start it again: the gateway's own launch as it was POSTed, another one
     (`dimos run` in a terminal) as a copy of its process."""
     # one change: nothing else starts in between the stop and the start
@@ -619,12 +672,15 @@ def relaunch(dimos_dir: Path) -> dict[str, Any]:
             raise ApiError(
                 409, "nothing running, and the gateway hasn't launched anything to relaunch"
             )
+        blueprint = check_name(request.get("blueprint"))
+        # A copied process may belong to another checkout, outside this catalog.
+        if "copy" not in request:
+            check_known(blueprint)
         if entry is not None or (
             (launch := current_launch()) is not None and launch["phase"] == "starting"
         ):
             # a stuck or slow startup too: start()'s idle check would refuse while it lives
             stop()
-        blueprint = str(request["blueprint"])
         if "copy" in request:
             return start_copy(blueprint, request["copy"])
         return start(dimos_dir, blueprint, LaunchConfig.from_json(request))

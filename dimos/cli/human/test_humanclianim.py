@@ -12,6 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "a750": "dimos.hardware.manipulators.a750.adapter:A750Adapter",
-}
+import subprocess
+import sys
+
+import pytest
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_exits_without_banner_or_tui(flag):
+    result = subprocess.run(
+        [sys.executable, "-m", "dimos.cli.human.humanclianim", flag],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+    assert "--transport" in result.stdout
+    assert "web" in result.stdout
+    assert "\x1b" not in result.stdout

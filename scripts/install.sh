@@ -21,8 +21,8 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config"
-MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit libsndfile pkg-config"
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config graphviz"
+MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit libsndfile pkg-config graphviz"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
@@ -536,7 +536,9 @@ verify_nix_develop() {
 # A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension: update the Command Line Tools.
 update_command_line_tools() {
     { ! has_cmd c++ || c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; } && return
-    run_cmd sudo softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
+    run_cmd "${privilege[@]}" softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
 }
 
 # ─── system dependencies ─────────────────────────────────────────────────────
@@ -827,21 +829,23 @@ configure_system() {
 }
 
 configure_lcm_buffers() {
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
     local current_rmem; current_rmem="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
     if [[ "$current_rmem" -ge 67108864 ]]; then ok "LCM buffers already configured"; return; fi
 
     printf "\n"
     info "DimOS uses LCM transport which needs larger UDP buffers:"
-    dim "  sudo sysctl -w net.core.rmem_max=67108864"
-    dim "  sudo sysctl -w net.core.rmem_default=67108864"
+    dim "  ${privilege[*]} sysctl -w net.core.rmem_max=67108864"
+    dim "  ${privilege[*]} sysctl -w net.core.rmem_default=67108864"
     printf "\n"
 
     if prompt_confirm "Apply sysctl changes?" "yes"; then
-        run_cmd sudo sysctl -w net.core.rmem_max=67108864
-        run_cmd sudo sysctl -w net.core.rmem_default=67108864
+        run_cmd "${privilege[@]}" sysctl -w net.core.rmem_max=67108864
+        run_cmd "${privilege[@]}" sysctl -w net.core.rmem_default=67108864
         if prompt_confirm "Persist across reboots?" "yes"; then
             if [[ "$DRY_RUN" != "1" ]]; then
-                printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | sudo tee /etc/sysctl.d/99-dimos.conf >/dev/null
+                printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | "${privilege[@]}" tee /etc/sysctl.d/99-dimos.conf >/dev/null
             else dim "[dry-run] would write /etc/sysctl.d/99-dimos.conf"; fi
         fi
         ok "LCM buffers configured"

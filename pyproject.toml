@@ -166,6 +166,7 @@ dependencies = [
     # (wrong ELF class), which fails to load on aarch64. Fixed from 0.1.7 on.
     "sqlite-vec>=0.1.7",
     "lz4>=4.4.5",
+    "mcap-ros2-support>=0.5",  # ROS 2 (CDR) mcap channels decode from their embedded schema
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
@@ -300,7 +301,7 @@ planning = [
     "dimos[control]",
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-    "roboplan>=0.7.0,<0.8.0",
+    "roboplan==0.8.0",
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
@@ -312,6 +313,9 @@ planning = [
 # Complete manipulation workflow: control, planning, perception, agents, and simulation.
 manipulation = [
     "dimos[planning,base,sim,cpu]",
+]
+leader-teleop = [
+    "ftservo-python-sdk",  # robot/manipulators/feetech/arm.py
 ]
 
 cpu = [
@@ -465,7 +469,7 @@ tests = [
     # RoboPlan 0.7 splits its bindings into packages. The roboplan meta-package
     # in the manipulation extra includes core, RRT, Cartesian and TOPPRA.
     # Tests-only installs need core for native point-cloud Narrowphase queries.
-    "roboplan-core>=0.7.0,<0.8.0",
+    "roboplan-core==0.8.0",
     "mujoco>=3.3.4",
     "mjcf-to-urdf>=0.1.1",
     "pygame>=2.6.1",
@@ -497,7 +501,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan>=0.7.0,<0.8.0",
+    "roboplan==0.8.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -654,6 +658,7 @@ bosdyn-client = "bosdyn"
 drake = "pydrake"
 eclipse-zenoh = "zenoh"
 edgetam-dimos = "sam2"
+ftservo-python-sdk = "scservo_sdk"
 GitPython = "git"
 gtsam-extended = "gtsam"
 hydra-core = "hydra"
@@ -768,6 +773,7 @@ module = [
     "h5py.*",
     "mcap",
     "mcap.*",
+    "mcap_ros2.*",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
@@ -793,6 +799,8 @@ module = [
     "sam2.*",
     "scipy",
     "scipy.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "sensor_msgs.*",
     "sqlite_vec",
     "std_msgs.*",
