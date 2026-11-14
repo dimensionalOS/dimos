@@ -392,7 +392,7 @@ all_modules = {
     "rust-recorder": "dimos.experimental.memory.rust_recorder.RustRecorder",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "seeed-b601-dm-coordinator": "dimos.robot.manipulators.seeed_b601_dm.coordinator.SeeedB601DMCoordinator",
-    "self-cleared-scene-registration-module": "dimos.robot.manipulators.dual_openyam.scene_registration.SelfClearedSceneRegistrationModule",
+    "self-cleared-manipulation-localize": "dimos.robot.manipulators.dual_openyam.scene_registration.SelfClearedManipulationLocalize",
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",
     "sim-go2-world": "dimos.simulation.go2_sim.world.SimGo2World",
     "sim-m20-world": "dimos.simulation.m20_sim.world.SimM20World",

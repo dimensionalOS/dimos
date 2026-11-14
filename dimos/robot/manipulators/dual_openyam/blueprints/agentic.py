@@ -39,8 +39,12 @@ _DUAL_ARM_ADDENDUM = """\
 
 # This rig
 Two OpenYAM arms and a fixed overhead RealSense on a post between them, not a single xArm \
-with a wrist camera. Every skill that moves an arm or a gripper takes planning_group: \
-left_manipulator when the object's Y is positive, right_manipulator when it is negative.
+with a wrist camera. localize reads that overhead camera's memory, and here one view confirms \
+an object: skip step 1 of the pick workflow and never move an arm to look. The camera always \
+sees the scene, so ask for the last few seconds, e.g. start=-5, duration=5, while no arm is \
+over the objects: an arm hides what is under it. Every skill that moves an arm or a gripper \
+takes planning_group: left_manipulator when the object's Y is positive, right_manipulator \
+when it is negative.
 World frame (meters): origin midway between the arm bases at the height of their mounting \
 blocks, X forward (away from the arms), Y toward the left arm, Z up. The table top is at \
 Z={table_z}. Each arm has its own place square near its base, outside the scene: after a \
@@ -71,8 +75,8 @@ def _place_args(side: str, pose: tuple[float, float, float]) -> str:
 
 
 # Assigned through autoconnect so the registry generator sees it. The stack already
-# carries a detector, a segmenter and the grasp generator; adding the agent on top
-# packs them into one worker, where the MCP server's skill discovery waits on their
+# carries localize's models and the grasp generator; adding the agent on top packs
+# them into one worker, where the MCP server's skill discovery waits on their
 # warm-up past its timeout, so give them room.
 dual_openyam_grasp_agent = autoconnect(
     dual_openyam_grasp,

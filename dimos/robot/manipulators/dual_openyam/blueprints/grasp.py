@@ -20,9 +20,9 @@
 The planning model is the calibrated workcell model with both arms, a fingertip
 tcp per arm and a gripper task bound to each planning group. Everything else is
 the stack as it exists: pick_object and place_at from the pick-and-place module,
-one top-down heuristic grasp, scene registration from the overhead D405, the
-planner with the workcell as its collision world, and a Rerun layout for a
-headless rig. The camera serials come from the run config.
+one top-down heuristic grasp, localize on the overhead D405, the planner with
+the workcell as its collision world, and a Rerun layout for a headless rig. The
+camera serials come from the run config.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.blueprints import manipulation_mapping, planner
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
@@ -56,7 +57,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.scene_registration import (
-    SelfClearedSceneRegistrationModule,
+    SelfClearedManipulationLocalize,
 )
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -74,6 +75,11 @@ DUAL_OPENYAM_SELF_PADDING = 0.02
 DUAL_OPENYAM_MAP_PADDING = 0.08
 # One period of the planner's tf, so a cloud is not dropped for landing between publishes.
 DUAL_OPENYAM_MAP_TF_TOLERANCE = 0.2
+# Where localize leaves its desk-scale defaults. The overhead camera never moves, so one
+# view has to confirm an object. Benchmark scenes put objects 9 cm apart, so sightings
+# count as one object within 3 cm, not 8 cm: the value scene registration needed on this
+# rig to keep neighbours apart, not yet tuned for localize.
+DUAL_OPENYAM_LOCALIZE_PARAMS = LocalizeParams(min_views=1, cluster_radius_m=0.03)
 # Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock.
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
@@ -200,7 +206,7 @@ def dual_openyam_grasp_view() -> Any:
         rrb.Spatial2DView(
             origin=overhead[0],
             name=overhead[1],
-            contents=["$origin/**", "/world/detections_3d/**"],
+            contents=["$origin/**", "/world/detections/**"],
         ),
         *[rrb.Spatial2DView(origin=path, name=name) for path, name in others],
     ]
@@ -228,7 +234,7 @@ DUAL_OPENYAM_VIEW_TOPICS = [
     "left_wrist_color_image",
     "right_wrist_color_image",
     "tf",
-    "detections_3d",
+    "detections",
 ]
 
 
@@ -287,7 +293,7 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
             planning_frame="world",
             # The contact check drops grasps the arm cannot reach or that would hit the
             # table, a neighbour, or the object off the fingertips, before any IK. Its
-            # scene comes from the self-cleared registration below.
+            # scene comes from the self-cleared localize below.
             robot=model,
             pregrasp_offset=0.05,
             # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object
@@ -316,21 +322,14 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         ),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),
-        # The overhead camera sees the arms, so the scene the contact check reads has
-        # the robot's returns removed, as the planner's map has.
-        SelfClearedSceneRegistrationModule.blueprint(
+        # Finds the objects pick_object takes by id, on the overhead camera. That camera
+        # sees the arms, so the scene the contact check reads has the robot's returns
+        # removed, as the planner's map has.
+        SelfClearedManipulationLocalize.blueprint(
             model=dual_openyam_self_filter_model(),
             padding_m=DUAL_OPENYAM_SELF_PADDING,
-            target_frame="world",
-            detector_backend="moondream",
-            segmentation_backend="edgetam",
-            detect_on_request=True,
-            # Benchmark scenes put objects 9 cm apart; 8 cm merged neighbours into one id.
-            distance_threshold=0.03,
-            min_detections_for_permanent=1,
-            max_distance=1.5,
-            use_aabb=True,
-            max_obstacle_width=0.06,
+            world_frame="world",
+            params=DUAL_OPENYAM_LOCALIZE_PARAMS,
         ),
         dual_openyam_grasp_rerun(),
         # Trajectory and gripper tasks over the two-bus connection; --simulation swaps in

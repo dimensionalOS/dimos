@@ -12,21 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The grasp blueprint's pick check on the dual OpenYAM workcell model."""
+"""The grasp blueprint's pick check and scene wiring on the dual OpenYAM workcell model."""
 
 from __future__ import annotations
 
 import numpy as np
 from numpy.typing import NDArray
+import pytest
 from scipy.spatial.transform import Rotation
 
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.manipulation.planning.gripper_contact import GraspContactChecker
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_TABLE_TOP_Z,
+    dual_openyam_grasp,
+    dual_openyam_grasp_graspgenx,
     dual_openyam_grasp_model_config,
+)
+from dimos.robot.manipulators.dual_openyam.scene_registration import (
+    SelfClearedManipulationLocalize,
 )
 
 # A can 5 cm wide and 8 cm tall in the right arm's reach, world frame, metres.
@@ -74,3 +82,14 @@ def test_pick_check_keeps_a_top_down_grasp_and_drops_one_into_the_table() -> Non
     ]
     kept = checker.check(grasps, _can(), _table(), "world", 0.005, 0.003)
     assert list(kept) == [True, False]
+
+
+@pytest.mark.parametrize(
+    "blueprint", [dual_openyam_grasp, dual_openyam_grasp_graspgenx], ids=["heuristic", "graspgenx"]
+)
+def test_pick_reads_its_scene_from_the_self_cleared_localize(blueprint: Blueprint) -> None:
+    provider = resolve_module_refs(blueprint)["pickandplacemodule", "_scene"]
+    atom = next(atom for atom in blueprint.blueprints if atom.name == provider)
+    assert issubclass(atom.module, SelfClearedManipulationLocalize)
+    # The overhead camera never moves, and localize's default asks for two camera positions.
+    assert atom.kwargs["params"].min_views == 1
