@@ -31,13 +31,21 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_MODEL,
 )
+from dimos.robot.manipulators.feetech.robot import (
+    FeetechBus,
+    FeetechMotor,
+    FeetechRobot,
+    FeetechTrigger,
+)
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
 DUAL_OPENYAM_SIDES = ("left", "right")
 DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 DUAL_OPENYAM_KP = [80.0, 80.0, 80.0, 10.0, 10.0, 10.0]
-DUAL_OPENYAM_KD = [5.0, 5.0, 5.0, 1.5, 1.5, 1.5]
+# Arm damping 1.0 (was 5.0): under leader teleop the DM4340s trailed the target by 90-120 ms
+# at 5.0 and by 40-50 ms at 1.0, with no hum; OpenArm runs the same motors at 1.0.
+DUAL_OPENYAM_KD = [1.0, 1.0, 1.0, 1.5, 1.5, 1.5]
 
 
 def dual_openyam_arm_joints(side: str) -> list[str]:
@@ -142,3 +150,34 @@ DUAL_OPENYAM = DamiaoRobot(
     gravity=True,
     home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
 )
+
+# dual_openyam.urdf position limits for joint1 to joint6; both arms share them.
+DUAL_OPENYAM_JOINT_LIMITS = (
+    (-2.618, 3.1416),
+    (0.0, 3.6652),
+    (0.0, 3.1416),
+    (-1.693, 1.5708),
+    (-1.5708, 1.5708),
+    (-2.0944, 2.0944),
+)
+# Trigger angle from released to fully squeezed on the Dimensional leaders.
+DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS = 1.5
+
+
+def _leader_bus(side: str) -> FeetechBus:
+    # Leader servos joint_1 to joint_6 drive the arm joints in order; joint_7
+    # is the gripper trigger.
+    return FeetechBus(
+        side,
+        tuple(
+            FeetechMotor(f"joint_{index}", joint, lower=lower, upper=upper)
+            for index, (joint, (lower, upper)) in enumerate(
+                zip(dual_openyam_arm_joints(side), DUAL_OPENYAM_JOINT_LIMITS, strict=True), start=1
+            )
+        ),
+        trigger=FeetechTrigger("joint_7", DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS),
+    )
+
+
+#: The two YAM leader arms, one Feetech bus each.
+DUAL_OPENYAM_LEADERS = FeetechRobot(buses=tuple(_leader_bus(side) for side in DUAL_OPENYAM_SIDES))
