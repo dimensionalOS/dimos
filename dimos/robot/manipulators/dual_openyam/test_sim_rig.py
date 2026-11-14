@@ -84,7 +84,7 @@ def test_starts_at_home_with_jaws_closed_and_stays_there(rig: DualOpenYamSimRig)
 
 def test_joint_state_follows_a_position_command_on_both_arms(rig: DualOpenYamSimRig) -> None:
     rig.command(dict(zip(ARM_JOINTS, REACHING, strict=True)))
-    wait_until(lambda: arm_error(rig, REACHING) < 0.01, timeout=10.0)
+    wait_until(lambda: arm_error(rig, REACHING) < 2e-3, timeout=10.0)
 
     reading = rig.read()
     assert np.abs(reading.velocity).max() < 0.2
@@ -131,13 +131,13 @@ def test_objects_stay_on_the_table_while_the_arms_move(rig: DualOpenYamSimRig) -
 
 def test_hold_stops_an_arm_on_its_way(rig: DualOpenYamSimRig) -> None:
     # Swing the left arm outwards about its base, away from the other arm.
-    rig.command({"left_joint1": 2.5})
+    rig.command({"left_joint1": 1.5})
     wait_until(lambda: positions(rig)["left_joint1"] > 0.3, timeout=10.0, interval=0.01)
 
     rig.hold()
     wait_until(lambda: np.abs(rig.read().velocity).max() < 0.01, timeout=10.0)
 
-    assert 0.3 < positions(rig)["left_joint1"] < 2.0
+    assert 0.3 < positions(rig)["left_joint1"] < 1.3
 
 
 def test_rejects_unknown_joints_and_reads_nothing_once_disconnected(
@@ -175,8 +175,9 @@ def test_every_camera_renders_the_scene(
     assert overhead.depth is not None
     assert overhead.depth.shape == (480, 640)
     # It looks down at the table from 0.45 m: the nearest thing it sees is the
-    # plate the arms stand on, the farthest the wall behind the table.
-    assert 0.25 < overhead.depth.min() < 0.45
+    # foot of an arm or the plate they stand on, the farthest the wall behind
+    # the table.
+    assert 0.2 < overhead.depth.min() < 0.45
     assert 0.6 < overhead.depth.max() < 1.0
     # The white table fills the middle of the picture and the red cup stands left of it.
     assert overhead.color[300, 320].min() > 180
