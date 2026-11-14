@@ -45,8 +45,8 @@ class R1ProLeaderConfig(OpenArmMiniConnectionConfig):
 class R1ProLeaderConnection(OpenArmMiniConnection):
     config: R1ProLeaderConfig
     # These are raw leader readings, not OpenArm follower targets. Do not clamp
-    # them to the follower before JoyLo's discontinuity guard. Its turn history
-    # preserves absolute tracking across +/-pi, including after a pause.
+    # them to the follower before JoyLo resolves periodic angles against the
+    # follower's limits and checks for discontinuities.
     robot = FeetechRobot(
         buses=tuple(
             FeetechBus(

@@ -339,3 +339,34 @@ def test_repeated_pause_enable_cycles_never_accumulate_an_offset(controller):
         assert {n: output.positions[n] for n in ARMS} == pytest.approx(leader)
         feed(controller, t + 1.6, leader=leader, right=JoyConReading(frozenset({"home"})))
         assert not controller.active
+
+
+@pytest.mark.parametrize("paused", [False, True])
+@pytest.mark.parametrize("direction, neutral", [(1, -0.050621366), (-1, 0.214757310)])
+@pytest.mark.parametrize("joint", [ARMS[2], ARMS[4]])
+def test_returning_leader_to_neutral_after_a_turn_does_not_pin_robot_at_limit(
+    controller, paused, direction, neutral, joint
+):
+    controller.config.leader_angle_period = math.tau
+    controller.limits[joint] = (-2.321289415, 2.321289415)
+    engage(controller)
+    leader = dict.fromkeys(ARMS, 0.0)
+    for i in range(1, 41):
+        leader[joint] = math.remainder((direction * math.tau + neutral) * i / 40, math.tau)
+        buttons = frozenset({"home"}) if paused and i == 10 else frozenset()
+        output = feed(controller, 0.02 + i * 0.02, leader=leader, right=JoyConReading(buttons))
+    if paused:
+        output = feed(controller, 0.84, leader=leader, right=JoyConReading(frozenset({"X"})))
+
+    assert controller.active
+    assert controller.leader[joint] == pytest.approx(neutral)
+    assert output.positions[joint] == pytest.approx(neutral)
+
+
+def test_periodic_leader_still_rejects_a_real_discontinuity(controller):
+    controller.config.leader_angle_period = math.tau
+    engage(controller)
+    feed(controller, 0.04, leader={**dict.fromkeys(ARMS, 0.0), ARMS[2]: 2.0})
+
+    assert not controller.active
+    assert "Leader discontinuity" in controller.reason

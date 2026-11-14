@@ -59,8 +59,8 @@ class JoyloConfig(ModuleConfig):
     yaw_speed: float = Field(default=0.25, ge=0, le=2.0)
     deadzone: float = Field(default=0.15, ge=0, lt=1)
     max_leader_jump: float = Field(default=0.75, gt=0)
-    # Feetech calibrated readings wrap at +/-pi. Unwrap successive samples,
-    # before absolute targeting and the discontinuity guard; None is nonperiodic.
+    # Feetech calibrated readings wrap at +/-pi. Resolve equivalent angles
+    # against joint limits and use periodic deltas for the discontinuity guard.
     leader_angle_period: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
@@ -187,19 +187,31 @@ class JoyloController:
             return
         age = now - self.receipts["leader"]
         period = self.config.leader_angle_period
-        # Preserve the angle branch across pauses and input gaps. The watchdog
-        # still pauses on a gap; it must not also change the absolute mapping.
-        if self.leader and period is not None:
-            positions = {
-                name: self.leader[name] + math.remainder(value - self.leader[name], period)
-                for name, value in positions.items()
-            }
+        if period is not None:
+            resolved = {}
+            for name, value in positions.items():
+                previous = self.leader.get(name, value)
+                value = previous + math.remainder(value - previous, period)
+                lo, hi = self.limits[name]
+                # Keep continuity when possible, but never clamp a remembered
+                # full turn if the same physical angle fits the robot's range.
+                # Otherwise returning a leader to neutral can pin its follower
+                # at a limit, including after pausing and re-enabling.
+                first_turn = math.ceil((lo - value) / period)
+                last_turn = math.floor((hi - value) / period)
+                if first_turn <= last_turn:
+                    value += min(last_turn, max(first_turn, 0)) * period
+                resolved[name] = value
+            positions = resolved
         if self.active and age > self.config.input_timeout_s:
             # A new sample can arrive before the watchdog tick notices the gap.
             self._hold_for_input(now, "leader")
         if self.leader and (self.active or self.recovery_deadline is not None):
-            joint = max(positions, key=lambda name: abs(positions[name] - self.leader[name]))
-            delta = positions[joint] - self.leader[joint]
+            deltas = {name: value - self.leader[name] for name, value in positions.items()}
+            if period is not None:
+                deltas = {name: math.remainder(delta, period) for name, delta in deltas.items()}
+            joint = max(deltas, key=lambda name: abs(deltas[name]))
+            delta = deltas[joint]
             if abs(delta) > self.config.max_leader_jump:
                 self.pause(
                     f"Leader discontinuity at {joint}: {delta:+.3f} rad; "
