@@ -13,14 +13,9 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-import sys
 from typing import Literal
 
 import pytest
-
-# TODO: remove this skip once the pin is cel-expr-python 0.1.4, which supports Python 3.10.
-if sys.version_info < (3, 11):
-    pytest.skip("cel-expr-python 0.1.3 needs Python 3.11", allow_module_level=True)
 
 from dimos.orchestration.checks import check
 from dimos.orchestration.definition import (
@@ -163,6 +158,16 @@ TIMERS = OrchestratorDefinition(
                 Transition(trigger="again", goto="Wait"),
             ],
         ),
+        Node(name="Go", transitions=[Transition(after=5, goto="Wait")]),
+    ],
+)
+
+NEVER = OrchestratorDefinition(
+    root="Top",
+    constants={"rate": 0.0},
+    nodes=[
+        Node(name="Top", children=["Wait", "Go"], initial="Wait"),
+        Node(name="Wait", transitions=[Transition(after="1.0 / rate", goto="Go")]),
         Node(name="Go", transitions=[Transition(after=5, goto="Wait")]),
     ],
 )
@@ -451,6 +456,15 @@ CASES = [
         ],
         [],
         Limits(transition_cap=3),
+    ),
+    Case(
+        "an `after` that is not a finite number is a fault",
+        NEVER,
+        [
+            "fault at Wait on startup: an expression error: "
+            "`1.0 / rate` gave inf, not a finite number",
+        ],
+        [],
     ),
     Case(
         "an expression error is a fault, and a fault clears the timers of earlier steps",

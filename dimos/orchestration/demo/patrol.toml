@@ -1,0 +1,194 @@
+root = "Demo"
+resources = ["base"]
+
+[constants]
+route = ["lobby", "lab", "kitchen"]
+dock_location = "dock"
+low_battery = 20.0
+full_battery = 95.0
+dwell_s = 2.0
+max_tries = 1
+SUCCEEDED = 3
+
+[vars]
+"patrol.index" = 0
+"patrol.tries" = 0
+
+[[signal]]
+name = "estop_button"
+stream = "FakeEstop.pressed"
+field = "data"
+
+[[signal]]
+name = "battery_pct"
+stream = "FakeBattery.percent"
+field = "data"
+
+[[signal]]
+name = "nav_status"
+stream = "FakeBase.status"
+
+[[event]]
+name = "estop"
+when = "estop_button"
+
+[[event]]
+name = "estop_cleared"
+when = "!estop_button"
+
+[[event]]
+name = "battery_low"
+when = "battery_pct < low_battery"
+
+[[event]]
+name = "charged"
+when = "battery_pct >= full_battery"
+
+[[event]]
+name = "arrived"
+when = "nav_status.status == SUCCEEDED && nav_status.goal_id.id == nav.goal"
+
+[[activity]]
+name = "motors"
+start = "FakeBase.enable"
+cancel = "FakeBase.disable"
+
+[[activity]]
+name = "go_to"
+start = "FakeBase.go_to"
+cancel = "FakeBase.halt"
+uses = ["base"]
+
+[[activity]]
+name = "spin"
+start = "FakeBase.spin"
+cancel = "FakeBase.halt"
+uses = ["base"]
+
+[[activity]]
+name = "charge"
+start = "FakeBattery.start_charging"
+cancel = "FakeBattery.stop_charging"
+
+[[node]]
+name = "Demo"
+children = ["Operating", "Estopped"]
+initial = "Operating"
+
+[[node]]
+name = "Operating"
+activity = "motors"
+children = ["Patrolling", "Charging"]
+initial = "Patrolling"
+
+[[node.requires]]
+expect = ["!estop_button"]
+fallback = "Estopped"
+
+[[node.transition]]
+trigger = "estop"
+mode = "immediate"
+goto = "Estopped"
+
+[[node]]
+name = "Estopped"
+
+[[node.transition]]
+trigger = "estop_cleared"
+goto = "Operating"
+
+[[node]]
+name = "Patrolling"
+children = ["NextWaypoint", "Navigating", "Scanning"]
+initial = "NextWaypoint"
+
+[[node.transition]]
+trigger = "battery_low"
+goto = "Charging"
+
+[[node]]
+name = "NextWaypoint"
+
+[[node.transition]]
+if = "patrol.index < size(route)"
+goto = "Navigating"
+
+[[node.transition]]
+goto = "Navigating"
+set = { "patrol.index" = 0 }
+
+[[node]]
+name = "Navigating"
+activity = "go_to"
+args = { name = "route[patrol.index]" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "Scanning"
+set = { "patrol.tries" = 0 }
+
+[[node.transition]]
+trigger = "failed"
+if = "patrol.tries < max_tries"
+goto = "Navigating"
+set = { "patrol.tries" = "patrol.tries + 1" }
+
+[[node.transition]]
+trigger = "failed"
+goto = "NextWaypoint"
+set = { "patrol.index" = "patrol.index + 1", "patrol.tries" = 0 }
+
+[[node]]
+name = "Scanning"
+parallel = ["Sweeping", "Dwelling"]
+outcomes = ["done"]
+
+[[node.transition]]
+trigger = "done"
+goto = "NextWaypoint"
+set = { "patrol.index" = "patrol.index + 1" }
+
+[[node]]
+name = "Sweeping"
+activity = "spin"
+args = { turns = 1.0 }
+
+[[node.transition]]
+trigger = "succeeded"
+goto = "done"
+
+[[node]]
+name = "Dwelling"
+
+[[node.transition]]
+after = "dwell_s"
+goto = "done"
+
+[[node]]
+name = "Charging"
+children = ["ReturnToDock", "OnCharger"]
+initial = "ReturnToDock"
+outcomes = ["done"]
+
+[[node.transition]]
+trigger = "done"
+goto = "Patrolling"
+
+[[node]]
+name = "ReturnToDock"
+activity = "go_to"
+args = { name = "dock_location" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "OnCharger"
+
+[[node]]
+name = "OnCharger"
+activity = "charge"
+
+[[node.transition]]
+trigger = "charged"
+goto = "done"

@@ -12,8 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable, Iterator, Mapping
+
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.orchestration.definition import (
     Activity,
     Event,
@@ -80,3 +85,21 @@ def patrol() -> OrchestratorDefinition:
             ),
         ],
     )
+
+
+@pytest.fixture
+def build() -> Iterator[Callable[..., ModuleCoordinator]]:
+    """Builds a blueprint with no viewer, and stops it after the test."""
+    built: list[ModuleCoordinator] = []
+
+    def _build(
+        blueprint: Blueprint, overrides: Mapping[str, object] | None = None
+    ) -> ModuleCoordinator:
+        settings = {"g": {"viewer": "none"}, **(overrides or {})}
+        parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=settings)
+        built.append(ModuleCoordinator.build(blueprint, parsed))
+        return built[-1]
+
+    yield _build
+    for coordinator in built:
+        coordinator.stop()
