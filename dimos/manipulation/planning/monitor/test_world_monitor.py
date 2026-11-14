@@ -435,6 +435,18 @@ def test_current_group_joint_state_uses_public_names_in_group_order() -> None:
     assert state.position == [0.2, 0.1]
 
 
+def test_joint_state_a_hair_past_a_limit_is_clamped_onto_it() -> None:
+    fake_world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
+    monitor.load_model(_three_joint_reordered_group_config())
+    monitor.start_state_monitor()
+    monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[-1.000007, 0.5, 1.5]))
+
+    state = monitor.current_model_joint_state()
+
+    assert state.position == [-1.0, 0.5, 1.5]
+
+
 def test_current_model_joint_state_rejects_stale_state(mocker) -> None:
     fake_world = FakeWorld()
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
