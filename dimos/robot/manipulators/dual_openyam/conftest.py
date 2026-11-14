@@ -14,9 +14,16 @@
 
 """Opt-in fixtures for the simulated Dual OpenYAM tests."""
 
+from collections.abc import Callable, Mapping
+
 import mujoco
+import pinocchio
 import pytest
 from pytest_mock import MockerFixture
+
+from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL_PATH
+
+PlannedFrame = Callable[[str, Mapping[str, float]], pinocchio.SE3]
 
 
 @pytest.fixture(scope="session")
@@ -26,6 +33,22 @@ def mujoco_gl() -> None:
         mujoco.Renderer(mujoco.MjModel.from_xml_string("<mujoco/>"), height=8, width=8).close()
     except mujoco.FatalError:
         pytest.skip("no GL backend renders here")
+
+
+@pytest.fixture(scope="session")
+def planned_frame() -> PlannedFrame:
+    """Where the planning model puts a frame, given joint positions by name; other joints are at zero."""
+    model = pinocchio.buildModelFromUrdf(str(DUAL_OPENYAM_MODEL_PATH))
+    placements = model.createData()
+
+    def placement(frame: str, joints: Mapping[str, float]) -> pinocchio.SE3:
+        posture = pinocchio.neutral(model)
+        for name, position in joints.items():
+            posture[model.joints[model.getJointId(name)].idx_q] = position
+        pinocchio.framesForwardKinematics(model, placements, posture)
+        return placements.oMf[model.getFrameId(frame)].copy()
+
+    return placement
 
 
 @pytest.fixture

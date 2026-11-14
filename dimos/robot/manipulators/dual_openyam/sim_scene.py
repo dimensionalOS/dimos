@@ -15,10 +15,11 @@
 """The Dual OpenYAM workcell as a MuJoCo model, composed from the robot's own URDF.
 
 The arms come from the URDF the planner and the gravity compensation use, so
-the simulated rig cannot drift from the planning model. That URDF has fixed
-fingers, no collision geometry and no environment, so this module adds what a
-simulation needs: actuators that repeat the motors' MIT loop, sliding jaws
-with gripping pads, the table, the objects on it and the rig's three cameras.
+the simulated rig cannot drift from the planning model. That URDF has no
+actuators and no table, so this module adds what a simulation needs: actuators
+that repeat the motors' MIT loop, jaws that slide and grip through pads, the
+table, the objects on it and the rig's three cameras. It takes the URDF as it
+comes: with fixed fingers or sliding ones, with or without collision geometry.
 """
 
 from __future__ import annotations
@@ -57,8 +58,9 @@ WORKCELL_OBJECTS = ("cup", "bottle", "rubiks_cube")
 #: stand 98 mm apart at full open.
 FINGER_TRAVEL = 0.049
 
-# The dual URDF fixes the fingers that i2rt's yam.urdf slides along the gripper
-# link's y axis (joint7 and joint8). Zero is closed and negative opens.
+# The fingers slide along the gripper link's y axis, as joint7 and joint8 of
+# i2rt's yam.urdf do: zero is closed and negative opens. A dual URDF that fixes
+# its fingers has them freed here; one that slides them keeps its own joints.
 _FINGER_AXES = {"left": (0.0, 1.0, 0.0), "right": (0.0, -1.0, 0.0)}
 # The jaw drive: stiffness (N/m) and damping (N s/m) on the jaws' mean travel,
 # and the most each pad squeezes with (N). Chosen for a firm close in about
@@ -82,8 +84,8 @@ _PAD_SOLIMP = (0.95, 0.99, 0.001)
 _MOTOR_TORQUE = {"DM4340": 28.0, "DM4310": 10.0}
 
 # Collision bits. An arm collides with the world and with the other arm, not
-# with itself: its links collide as the convex hulls of their visual meshes,
-# and the hulls of neighbouring links overlap.
+# with itself: its links collide as convex hulls, and the hulls of neighbouring
+# links overlap.
 _WORLD, _LEFT, _RIGHT = 1, 2, 4
 _ARM_BITS = {"left": (_LEFT, _WORLD | _RIGHT), "right": (_RIGHT, _WORLD | _LEFT)}
 # MuJoCo draws geom groups 0 to 2 by default, so the cameras never see group 3.
@@ -127,8 +129,8 @@ _ARM_RGBA = (0.10, 0.10, 0.11, 1.0)
 
 # A wrist D405 on top of its gripper body, in the gripper link's frame (fingers
 # along -z, top along -x): where its lens sits, how far it tips towards the
-# fingertips, and half its housing's depth, width and height. Placed by eye;
-# the rig's wrist mounts are not calibrated.
+# fingertips, and half its housing's depth, width and height. Placed by eye for
+# a URDF without the camera; one that has it says where it is.
 _WRIST_CAMERA_XYZ = (-0.060, 0.0, -0.055)
 _WRIST_CAMERA_TILT = math.radians(20.0)
 _D405_HALF_SIZE = (0.0115, 0.021, 0.021)
@@ -187,10 +189,27 @@ def _dress_arm(spec: mujoco.MjSpec, side: str) -> None:
         body.gravcomp = 1.0
         for geom in body.geoms:
             geom.rgba = _ARM_RGBA
+        for geom in _colliders(body):
             # The fingertips collide through their pads instead: each tip's
             # hull reaches across the gap the jaws close on.
-            if body.name not in fingertips:
-                geom.contype, geom.conaffinity = contype, conaffinity
+            touches = body.name not in fingertips
+            geom.contype, geom.conaffinity = (contype, conaffinity) if touches else (0, 0)
+
+
+def _colliders(body: Any) -> list[Any]:
+    """The geoms a link of the URDF collides through.
+
+    Its collision geometry, or in a URDF without any its visual mesh. A
+    collision mesh is not drawn, because the link draws its visual one. A
+    collision box, such as a camera bracket's, is all the URDF has of that
+    part and stays drawn.
+    """
+    visuals = [geom for geom in body.geoms if not geom.contype]
+    colliders = [geom for geom in body.geoms if geom.contype]
+    for geom in colliders:
+        if visuals and geom.meshname:
+            geom.group = _COLLISION_ONLY_GROUP
+    return colliders or visuals
 
 
 def _add_arm_actuators(spec: mujoco.MjSpec, bus: DamiaoBus) -> None:
@@ -233,21 +252,23 @@ def _add_position_actuator(
 
 
 def _add_jaw(spec: mujoco.MjSpec, side: str, bus: DamiaoBus) -> None:
-    """Free one gripper's two fingers and drive them together through its gripper joint."""
+    """Let one gripper's two fingers slide and drive them together through its gripper joint."""
     if bus.gripper is None:
         raise ValueError(f"bus {bus.name!r} has no gripper to simulate")
     contype, conaffinity = _ARM_BITS[side]
     fingers = []
     for jaw, axis in _FINGER_AXES.items():
         tip = spec.body(f"{side}_tip_{jaw}")
-        finger = f"{tip.name}_slide"
-        tip.add_joint(
-            name=finger,
-            type=mujoco.mjtJoint.mjJNT_SLIDE,
-            axis=axis,
-            range=(-FINGER_TRAVEL, 0.0),
-        )
-        fingers.append(finger)
+        # A URDF with sliding fingers brings this joint; a fixed finger is freed.
+        slides = tip.joints or [
+            tip.add_joint(
+                name=f"{tip.name}_slide",
+                type=mujoco.mjtJoint.mjJNT_SLIDE,
+                axis=axis,
+                range=(-FINGER_TRAVEL, 0.0),
+            )
+        ]
+        fingers.append(slides[0].name)
         # The tip links are translations of the gripper link's frame.
         mirror = np.array([1.0, axis[1], 1.0])
         for index, (centre, half) in enumerate(_PAD_BOXES):
@@ -278,6 +299,7 @@ def _add_jaw(spec: mujoco.MjSpec, side: str, bus: DamiaoBus) -> None:
         name1=fingers[0],
         name2=fingers[1],
     )
+    travel = spec.joint(fingers[0]).range
     _add_position_actuator(
         spec,
         gripper,
@@ -285,7 +307,7 @@ def _add_jaw(spec: mujoco.MjSpec, side: str, bus: DamiaoBus) -> None:
         gripper,
         stiffness=_GRIP_STIFFNESS,
         damping=_GRIP_DAMPING,
-        ctrlrange=(-FINGER_TRAVEL, 0.0),
+        ctrlrange=(float(travel[0]), float(travel[1])),
         # Each finger takes half the tendon's force.
         force=2.0 * _GRIP_FORCE,
     )
@@ -297,19 +319,38 @@ def _camera_quat(link: Rotation) -> list[float]:
     return [w, x, y, z]
 
 
+def _housing(spec: mujoco.MjSpec, camera: str) -> Any:
+    """The box a URDF stands that camera in, or None if it has none.
+
+    The planner keeps clear of the box; the camera sits inside it, so it
+    collides and is not drawn.
+    """
+    box = spec.geom(camera)
+    if box is not None:
+        box.group = _COLLISION_ONLY_GROUP
+    return box
+
+
 def _add_wrist_camera(spec: mujoco.MjSpec, side: str) -> None:
     """A D405 on top of the gripper, looking along the fingers."""
     forward = np.array([math.sin(_WRIST_CAMERA_TILT), 0.0, -math.cos(_WRIST_CAMERA_TILT)])
+    lens = np.asarray(_WRIST_CAMERA_XYZ)
+    box = _housing(spec, WRIST_CAMERAS[side])
+    if box is not None:
+        # The camera's back is flat on its bracket, the box's z face: it looks
+        # along the box's -z, from the housing in the middle of the box.
+        w, x, y, z = box.quat
+        forward = -Rotation.from_quat([x, y, z, w]).as_matrix()[:, 2]
+        lens = np.asarray(box.pos) + forward * _D405_HALF_SIZE[0]
     left = np.array([0.0, -1.0, 0.0])
     link = Rotation.from_matrix(np.column_stack([forward, left, np.cross(forward, left)]))
-    lens = np.asarray(_WRIST_CAMERA_XYZ)
     gripper = spec.body(f"{side}_gripper")
     gripper.add_camera(
         name=WRIST_CAMERAS[side], pos=lens, quat=_camera_quat(link), fovy=CAMERA_FOVY
     )
     x, y, z, w = link.as_quat()
-    # Drawn behind the lens so the overhead camera sees it; it collides with
-    # nothing, like the planning model, which has no wrist cameras.
+    # Drawn behind the lens so the overhead camera sees it. It collides with
+    # nothing: a planning model with wrist cameras brings the box that does.
     gripper.add_geom(
         name=f"{WRIST_CAMERAS[side]}_housing",
         type=mujoco.mjtGeom.mjGEOM_BOX,
@@ -361,6 +402,7 @@ def _add_workcell(spec: mujoco.MjSpec) -> None:
         quat=_camera_quat(Rotation.from_quat(OVERHEAD_CAMERA_XYZW)),
         fovy=CAMERA_FOVY,
     )
+    _housing(spec, OVERHEAD_CAMERA)
 
 
 def _add_object(

@@ -19,7 +19,6 @@ import math
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
-import pinocchio
 import pytest
 
 from dimos.robot.manipulators.dual_openyam.config import (
@@ -28,7 +27,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_arm_joints,
 )
-from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL_PATH
+from dimos.robot.manipulators.dual_openyam.conftest import PlannedFrame
 from dimos.robot.manipulators.dual_openyam.sim_scene import (
     CAMERA_FOVY,
     DUAL_OPENYAM_TABLE_TOP_Z,
@@ -80,8 +79,9 @@ class Workcell:
 
     def jaw_gap(self, side: str) -> float:
         """How far apart the two fingers' gripping faces are, metres."""
-        slides = [self.model.joint(f"{side}_tip_{jaw}_slide") for jaw in ("left", "right")]
-        return -float(sum(self.data.qpos[slide.qposadr[0]] for slide in slides))
+        tips = [self.model.body(f"{side}_tip_{jaw}") for jaw in ("left", "right")]
+        slides = [self.model.jnt_qposadr[tip.jntadr[0]] for tip in tips]
+        return -float(self.data.qpos[slides].sum())
 
     def step(self, seconds: float) -> None:
         for _ in range(round(seconds / self.model.opt.timestep)):
@@ -173,13 +173,13 @@ def test_actuators_are_the_robots_joints_with_its_gains_and_torque_ranges(
             ]
 
 
-def test_grasp_frames_are_where_the_planning_model_puts_them(workcell: Workcell) -> None:
-    planning = pinocchio.buildModelFromUrdf(str(DUAL_OPENYAM_MODEL_PATH))
-    placements = planning.createData()
-    pinocchio.framesForwardKinematics(planning, placements, np.array(DUAL_OPENYAM_HOME_JOINTS))
+def test_grasp_frames_are_where_the_planning_model_puts_them(
+    workcell: Workcell, planned_frame: PlannedFrame
+) -> None:
+    home = dict(zip(DUAL_OPENYAM.arm_joint_names, DUAL_OPENYAM_HOME_JOINTS, strict=True))
 
     for side in DUAL_OPENYAM_SIDES:
-        planned = placements.oMf[planning.getFrameId(f"{side}_grasp_frame")]
+        planned = planned_frame(f"{side}_grasp_frame", home)
         simulated = workcell.data.body(f"{side}_grasp_frame")
         assert simulated.xpos == pytest.approx(planned.translation, abs=1e-6)
         assert simulated.xmat.reshape(3, 3) == pytest.approx(planned.rotation, abs=1e-6)
@@ -199,12 +199,13 @@ def test_home_posture_touches_nothing_and_holds(workcell: Workcell) -> None:
 
 def test_no_two_links_of_an_arm_overlap_at_home() -> None:
     # The workcell does not collide an arm with itself, so check its links here:
-    # let every link hull collide with every other and look at the home posture.
+    # let every link hull collide with every other, and with nothing else of the
+    # arms, and look at the home posture.
     spec = dual_openyam_workcell(DUAL_OPENYAM)
     for body in spec.bodies:
         for geom in body.geoms:
-            if body.name.startswith(DUAL_OPENYAM_SIDES) and geom.meshname and geom.contype:
-                geom.contype = geom.conaffinity = 1
+            if body.name.startswith(DUAL_OPENYAM_SIDES):
+                geom.contype = geom.conaffinity = int(bool(geom.meshname and geom.contype))
     everything_collides = Workcell(spec)
 
     touching = {

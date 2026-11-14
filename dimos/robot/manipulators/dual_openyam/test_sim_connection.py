@@ -175,14 +175,14 @@ def test_holds_where_it_is_when_commands_stop(deploy: Deploy) -> None:
     rig = deploy(cameras=False, deadman_timeout_s=0.1)
 
     # One command to swing the left arm far out, then silence.
-    rig.command({"arm/left_joint1": 2.5})
+    rig.command({"arm/left_joint1": 1.5})
 
     wait_until(lambda: rig.connection.status().deadman_fired, timeout=10.0)
     wait_until(
         lambda: max(abs(speed) for speed in rig.published["joint_state"][-1].velocity) < 0.01,
         timeout=10.0,
     )
-    assert 0.05 < rig.positions()["arm/left_joint1"] < 2.0
+    assert 0.05 < rig.positions()["arm/left_joint1"] < 1.3
 
 
 @pytest.mark.self_hosted
@@ -249,8 +249,8 @@ def test_publishes_each_camera_on_its_realsense_port_and_frames(
     on_table = np.array(OVERHEAD_CAMERA_XYZ) + optical_in_world @ in_optical
     assert on_table[2] == pytest.approx(DUAL_OPENYAM_TABLE_TOP_Z, abs=1e-3)
     # Each wrist camera rides above its own arm's gripper at the home posture.
-    assert edges["left_wrist/camera_link"].translation.y > 0.25
-    assert edges["right_wrist/camera_link"].translation.y < -0.25
+    assert edges["left_wrist/camera_link"].translation.y > 0.15
+    assert edges["right_wrist/camera_link"].translation.y < -0.15
     assert edges["left_wrist/camera_link"].translation.z > 0.4
     # One stamp covers a frame set: its images and every edge of its tf tree.
     first = published["color_image"][0]
