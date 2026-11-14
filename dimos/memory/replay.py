@@ -237,6 +237,7 @@ class ReplayStream(Generic[T]):
 
         Disposing cancels pending emissions and waits for an active callback
         before releasing its iterator, so the store can then be closed safely.
+        Read and decode failures close the iterator before notifying on_error.
         """
         replay = self._replay
         speed = replay.config.speed
@@ -257,18 +258,44 @@ class ReplayStream(Generic[T]):
                 while True:
                     emitted = False
                     obs: Any
-                    for obs in base():
-                        emitted = True
-                        yield (obs.ts, obs)  # decoded at emission, keeping subscribe cheap
+                    rows = iter(base())
+                    try:
+                        for obs in rows:
+                            emitted = True
+                            yield (obs.ts, obs)  # decoded at emission, keeping subscribe cheap
+                    finally:
+                        close = getattr(rows, "close", None)
+                        if close is not None:
+                            close()
                     if not loop or not emitted:
                         break
 
             iterator = make_iterator()
 
+            def dispose() -> None:
+                disposed.set()
+                pending.dispose()
+                # Reentrant for disposal from observer callbacks. An external
+                # stop waits here until decoding and cursor reads have finished.
+                with emission_lock:
+                    iterator.close()
+
+            def terminate(error: Exception | None = None) -> None:
+                if disposed.is_set():
+                    return
+                dispose()
+                if error is None:
+                    observer.on_completed()
+                else:
+                    observer.on_error(error)
+
             try:
                 first_ts, first_data = next(iterator)
             except StopIteration:
-                observer.on_completed()
+                terminate()
+                return Disposable()
+            except Exception as error:
+                terminate(error)
                 return Disposable()
 
             wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
@@ -283,7 +310,10 @@ class ReplayStream(Generic[T]):
                 try:
                     cand_ts, cand_data = next(iterator)
                 except StopIteration:
-                    observer.on_completed()
+                    terminate()
+                    return Disposable()
+                except Exception as error:
+                    terminate(error)
                     return Disposable()
                 if cand_ts < prev_skip:
                     wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
@@ -308,7 +338,12 @@ class ReplayStream(Generic[T]):
                     with emission_lock:
                         if disposed.is_set():
                             return None
-                        observer.on_next(decode(data))
+                        try:
+                            value = decode(data)
+                        except Exception as error:
+                            terminate(error)
+                            return None
+                        observer.on_next(value)
                         # An observer may dispose from on_next, including closing
                         # the store. Do not advance its cursor after that.
                         if disposed.is_set():
@@ -316,7 +351,10 @@ class ReplayStream(Generic[T]):
                         try:
                             nxt = next(iterator)
                         except StopIteration:
-                            observer.on_completed()
+                            terminate()
+                            return None
+                        except Exception as error:
+                            terminate(error)
                             return None
                         wrap_offset = wrap_off
                         prev_ts = ts
@@ -331,14 +369,6 @@ class ReplayStream(Generic[T]):
                 scheduled.disposable = sched.schedule_relative(delay, emit)
 
             schedule((first_ts, first_data), wrap_offset, prev_ts)
-
-            def dispose() -> None:
-                disposed.set()
-                pending.dispose()
-                # Reentrant for disposal from on_next/on_completed. An external
-                # stop waits here until decoding and cursor reads have finished.
-                with emission_lock:
-                    iterator.close()
 
             return Disposable(dispose)
 

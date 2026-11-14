@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from itertools import chain
 import json
 import re
@@ -38,7 +39,7 @@ from dimos.memory.type.observation import _UNLOADED, Observation, PoseTuple
 from dimos.memory.utils.sqlite import conn_lock, open_disposable_sqlite_connection
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
     from dimos.memory.type.filter import Filter, StreamQuery
 
@@ -179,7 +180,9 @@ def _compile_query(
     return (sql, params, python_filters)
 
 
-def _locked_rows(lock: threading.RLock, cur: sqlite3.Cursor) -> Iterator[tuple[Any, ...]]:
+def _locked_rows(
+    lock: threading.RLock, cur: sqlite3.Cursor
+) -> Generator[tuple[Any, ...], None, None]:
     """Yield rows lazily, holding ``lock`` only while fetching ``cur.arraysize`` rows."""
 
     def fetch_page() -> list[tuple[Any, ...]]:
@@ -434,9 +437,13 @@ class SqliteObservationStore(ObservationStore[T]):
             cur = self._conn.execute(sql, params)
             # Joined rows carry blob bytes, so fetch them one at a time.
             cur.arraysize = 1 if join else self._page_size
-        it: Iterator[Observation[T]] = (
-            self._row_to_obs(r, has_blob=join) for r in _locked_rows(self._lock, cur)
-        )
+
+        def observations() -> Iterator[Observation[T]]:
+            # Decode failures can retain this frame through their traceback.
+            # Close the cursor now, before a replay error handler stops the store.
+            with closing(_locked_rows(self._lock, cur)) as rows:
+                for row in rows:
+                    yield self._row_to_obs(row, has_blob=join)
 
         # Don't apply python post-filters here — Backend._attach_loaders must
         # run first so that obs.data works for PredicateFilter etc.
@@ -444,7 +451,7 @@ class SqliteObservationStore(ObservationStore[T]):
         self._tls.python_filters = python_filters
         self._tls.query = q
 
-        return it
+        return observations()
 
     def count(self, q: StreamQuery) -> int:
         if q.search_vec:
