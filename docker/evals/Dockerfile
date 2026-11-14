@@ -21,6 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 xvfb x11-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# MuJoCo's MUJOCO_GL=egl on the GPU: the NVIDIA runtime mounts libEGL_nvidia only with the
+# graphics capability, and glvnd finds it only through this vendor file.
+ENV NVIDIA_DRIVER_CAPABILITIES=all
+RUN echo '{"file_format_version": "1.0.0", "ICD": {"library_path": "libEGL_nvidia.so.0"}}' \
+    > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
 # Recordings and results land under /state, which compose bind-mounts.
 ENV XDG_CACHE_HOME=/cache \
     XDG_STATE_HOME=/state \
@@ -34,12 +40,6 @@ RUN curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSIO
     && unzip -q /tmp/deno.zip -d /usr/local/bin && rm /tmp/deno.zip \
     && chmod +x /usr/local/bin/deno
 
-# The same install dimos runs before each DimSim launch, so it is a no-op then.
-RUN deno run --allow-all "npm:playwright@${PLAYWRIGHT_VERSION}" install chromium
-
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
-
 # The Pi eval agent (dimos/evals/agents/pi.py) shells out to the `pi` coding-agent CLI;
 # the dimos agent (dimos/evals/agents/dimos_agent.py) needs Node 24 or 26.
 ARG NODE_MAJOR=24
@@ -47,6 +47,13 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @earendil-works/pi-coding-agent \
     && rm -rf /var/lib/apt/lists/* /root/.npm
+
+# The same browser dimos installs before each DimSim launch, so that is a no-op then.
+# Through npx: the deno install stalls after the download.
+RUN npx -y "playwright@${PLAYWRIGHT_VERSION}" install chromium && rm -rf /root/.npm
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
 
 WORKDIR /app
 
