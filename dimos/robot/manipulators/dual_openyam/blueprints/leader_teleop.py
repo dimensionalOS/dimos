@@ -43,7 +43,11 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
-from dimos.robot.manipulators.dual_openyam.leader_connection import DualOpenYamLeaderConnection
+from dimos.robot.manipulators.dual_openyam.leader_connection import (
+    DualOpenYamLeaderArmConnection,
+    DualOpenYamLeaderConnection,
+)
+from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
 
 # Following a human arm needs more than the URDF's 2 rad/s.
 DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 3.0
@@ -89,7 +93,9 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
 _JAWS = {jaw.name.removesuffix("_gripper"): jaw for jaw in DualOpenYamConnection.robot.grippers}
 
 
-def dual_openyam_leaders() -> Blueprint:
+def dual_openyam_leaders(
+    connection: type[DualOpenYamLeaderConnection] = DualOpenYamLeaderConnection,
+) -> Blueprint:
     """The leader arms' connection; --simulation without ports parks mock leaders at home."""
     mock_positions = (
         {
@@ -102,11 +108,11 @@ def dual_openyam_leaders() -> Blueprint:
         if global_config.simulation
         else None
     )
-    return DualOpenYamLeaderConnection.blueprint(
+    return connection.blueprint(
         state_rate_hz=DUAL_OPENYAM_LEADER_RATE_HZ,
         filter_cutoff_hz=DUAL_OPENYAM_LEADER_FILTER_CUTOFF_HZ,
         mock_positions=mock_positions,
-    ).remappings([(DualOpenYamLeaderConnection, "joint_state", "leader_joint_command")])
+    ).remappings([(connection, "joint_state", "leader_joint_command")])
 
 
 def dual_openyam_leader_control() -> Blueprint:
@@ -142,14 +148,24 @@ def dual_openyam_leader_control() -> Blueprint:
     ).remappings(arm_remaps(DualOpenYamConnection, DualOpenYamLeaderCoordinator))
 
 
-# The leader serial ports given select the sides; --simulation mocks the CAN, and
-# the leaders too when no serial port is given.
-dual_openyam_leader_teleop = autoconnect(
-    dual_openyam_leaders(),
-    dual_openyam_leader_control(),
-    ManipulationModule.blueprint(
+def _manipulation() -> Blueprint:
+    return ManipulationModule.blueprint(
         gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS,
         model=dual_openyam_model_config(robot="arm"),
         visualization=ViserVisualizationConfig(),
-    ),
+    )
+
+
+# The leader serial ports given select the sides; --simulation mocks the CAN, and
+# the leaders too when no serial port is given.
+dual_openyam_leader_teleop = autoconnect(
+    dual_openyam_leaders(), dual_openyam_leader_control(), _manipulation()
+)
+
+# Leaders without trigger servos; Joy-Cons drive the jaws and pause following.
+dual_openyam_joycon_leader_teleop = autoconnect(
+    dual_openyam_leaders(DualOpenYamLeaderArmConnection),
+    JoyConTeleopModule.blueprint(),
+    dual_openyam_leader_control(),
+    _manipulation(),
 )

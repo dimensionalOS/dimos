@@ -59,6 +59,30 @@ The ports given select the sides. The coordinator's `joint_trajectory` task
 reads the leader's port as a guarded stream, so the leader owns the joints while
 it publishes and releases them when it stops.
 
+## Joy-Cons in place of the triggers
+
+With the trigger servos removed, `dual-openyam-joycon-leader-teleop` reads only
+joint_1 to joint_6 per leader (`DualOpenYamLeaderArmConnection`) and a Joy-Con
+per side drives the jaws and a pause. The buttons, the pause behaviour and the
+Bluetooth pairing are the same as for the
+[OpenArm Mini](/docs/capabilities/manipulation/openarm_mini_teleop.md#joy-cons-in-place-of-the-triggers):
+ZL / ZR held close the left / right jaw, plus pauses and resumes following.
+
+Each calibration file must list only joint_1 to joint_6. To reuse files that
+include the trigger, write copies without it:
+
+```bash
+for side in left right; do
+  mkdir -p ~/joycon-leaders/$side
+  jq 'del(.motors.joint_7)' ~/.local/state/dimos/teleop/leader/$side/calibration.json \
+    > ~/joycon-leaders/$side/calibration.json
+done
+dimos run dual-openyam-joycon-leader-teleop \
+  --left-serial-port /dev/ttyACM1 --right-serial-port /dev/ttyACM0 \
+  --left-can-port follower_l --right-can-port follower_r \
+  --calibration-root ~/joycon-leaders
+```
+
 ## Record demonstrations
 
 `learning-collect-leader-dual-openyam` adds the recorder, the episode monitor

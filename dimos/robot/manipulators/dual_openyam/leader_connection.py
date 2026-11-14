@@ -18,11 +18,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_LEADERS
-from dimos.robot.manipulators.feetech.connection import (
-    FeetechConnection,
-    FeetechConnectionConfig,
+from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM_ARM_LEADERS,
+    DUAL_OPENYAM_LEADERS,
 )
+from dimos.robot.manipulators.feetech.connection import FeetechConnectionConfig
+from dimos.robot.manipulators.feetech.leader_connection import FeetechLeaderConnection
 
 
 class DualOpenYamLeaderConnectionConfig(FeetechConnectionConfig):
@@ -42,7 +43,7 @@ class DualOpenYamLeaderConnectionConfig(FeetechConnectionConfig):
     right_calibration_path: Path | None = None
 
 
-class DualOpenYamLeaderConnection(FeetechConnection):
+class DualOpenYamLeaderConnection(FeetechLeaderConnection):
     """The two YAM leader arms; the serial ports given select which are read."""
 
     config: DualOpenYamLeaderConnectionConfig
@@ -57,3 +58,12 @@ class DualOpenYamLeaderConnection(FeetechConnection):
             "right": self.config.right_calibration_path,
         }.get(bus)
         return explicit if explicit is not None else super().calibration_path(bus)
+
+
+class DualOpenYamLeaderArmConnection(DualOpenYamLeaderConnection):
+    """The two YAM leader arms without their trigger servos; the jaws are driven elsewhere.
+
+    Each side's calibration file must list only joint_1 to joint_6.
+    """
+
+    robot = DUAL_OPENYAM_ARM_LEADERS
