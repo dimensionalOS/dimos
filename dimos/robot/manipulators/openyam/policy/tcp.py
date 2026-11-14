@@ -115,8 +115,9 @@ class MjcfTcpFk:
         mujoco = self._mujoco
         mujoco.mj_kinematics(self.model, self.data)
         position = np.asarray(self.data.xpos[self._body], dtype=np.float64).copy()
-        x, y, z, w = (float(value) for value in self.data.xquat[self._body])
-        return position, np.array([w, x, y, z], dtype=np.float64)
+        # MuJoCo xquat is already wxyz; copy it before the next FK mutates data.
+        quaternion = np.asarray(self.data.xquat[self._body], dtype=np.float64).copy()
+        return position, quaternion
 
     def body_names(self) -> list[str]:
         mujoco = self._mujoco
