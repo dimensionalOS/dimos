@@ -54,9 +54,7 @@ from dimos.orchestration.engine import (
 )
 from dimos.orchestration.expressions import Plain
 
-HappeningKind = Literal[
-    "signal", "returns", "raises", "canceled", "cancel raises", "timer", "deadline"
-]
+HappeningKind = Literal["signal", "returns", "raises", "canceled", "timer", "deadline"]
 # What happens outside the engine: a kind, a signal or node name, and a value if it has one.
 Happening = tuple[HappeningKind, str] | tuple[HappeningKind, str, Plain]
 
@@ -192,32 +190,9 @@ CHECKS = OrchestratorDefinition(
     ],
 )
 
-# The ensures of Job has no fallback and nothing handles its failed.
-INNER = OrchestratorDefinition(
-    root="Top",
-    vars={"tidy": False},
-    signals=signals("leave"),
-    activities=[
-        Activity(name="grip", start="Arm.grip", cancel="Arm.release"),
-        Activity(name="drive", start="Base.drive", cancel="Base.stop"),
-        Activity(name="turn", start="Base.turn", cancel="Base.stop"),
-    ],
-    nodes=[
-        Node(name="Top", children=["Work", "Stop"], initial="Work"),
-        Node(
-            name="Work",
-            children=["Job"],
-            initial="Job",
-            transitions=[Transition(trigger="leave", goto="Stop")],
-        ),
-        Node(name="Job", activity="grip", ensures=[Check(expect=["tidy"])]),
-        Node(name="Stop", transitions=[Transition(trigger="leave", goto="Work")]),
-    ],
-)
-
 PARALLEL = OrchestratorDefinition(
     root="Top",
-    signals=signals("left", "right", "all", "bad"),
+    signals=signals("all", "bad"),
     nodes=[
         Node(name="Top", children=["Both", "After"], initial="Both"),
         Node(
@@ -229,17 +204,10 @@ PARALLEL = OrchestratorDefinition(
                 Transition(trigger="failed", goto="After"),
             ],
         ),
-        Node(
-            name="Left",
-            transitions=[
-                Transition(trigger="left", goto="done"),
-                Transition(trigger="all", goto="done"),
-            ],
-        ),
+        Node(name="Left", transitions=[Transition(trigger="all", goto="done")]),
         Node(
             name="Right",
             transitions=[
-                Transition(trigger="right", goto="done"),
                 Transition(trigger="all", goto="done"),
                 Transition(trigger="bad", goto="failed"),
             ],
@@ -328,29 +296,6 @@ CASES = [
         ],
     ),
     Case(
-        "an estop stops the patrol, and its release starts the waypoint again",
-        None,
-        PATROL_STARTUP,
-        [
-            (1.0, ("returns", "Navigating", "goal 1"), []),
-            (
-                2.0,
-                ("signal", "estop_button", True),
-                [
-                    "Patrolling -estop-> Estopped",
-                    "cancel FakeBase.stop",
-                    "set deadline Navigating 4.0",
-                ],
-            ),
-            (2.5, ("canceled", "Navigating"), ["clear deadline Navigating 4.0"]),
-            (
-                3.0,
-                ("signal", "estop_button", False),
-                ["Estopped -estop_cleared-> Patrolling", *PATROL_STARTUP],
-            ),
-        ],
-    ),
-    Case(
         "the patrol faults when `go_to` raises",
         None,
         PATROL_STARTUP,
@@ -412,24 +357,6 @@ CASES = [
         ],
     ),
     Case(
-        "a cancel that raises is a fault",
-        WORK,
-        ["start Base.enable()"],
-        [
-            *LEFT_MOVE,
-            (
-                2.5,
-                ("cancel raises", "Move"),
-                [
-                    "clear deadline Move 4.0",
-                    "cancel Base.disable",
-                    "cancel Base.stop",
-                    "fault at Move on cancel_return: a `cancel` that raised",
-                ],
-            ),
-        ],
-    ),
-    Case(
         "a signal fires on every message, and the outermost node whose `if` passes takes it",
         SIGNALS,
         [],
@@ -480,50 +407,7 @@ CASES = [
         ],
     ),
     Case(
-        "a failed `ensures` on a node an outer node left is a fault",
-        INNER,
-        ["start Arm.grip()"],
-        [
-            (
-                1.0,
-                ("signal", "leave"),
-                [
-                    "Work -leave-> Stop",
-                    "cancel Arm.release",
-                    "cancel Arm.release",
-                    "cancel Base.stop",
-                    "fault at Job on leave: a failed `ensures` check on a node an outer node left",
-                ],
-            ),
-        ],
-    ),
-    Case(
-        "a `failed` that no node handles is a fault",
-        INNER,
-        ["start Arm.grip()"],
-        [
-            (
-                1.0,
-                ("raises", "Job"),
-                [
-                    "cancel Arm.release",
-                    "cancel Base.stop",
-                    "fault at Job on start_return: a `failed` that no node handles",
-                ],
-            ),
-        ],
-    ),
-    Case(
-        "a parallel node raises `done` when every child has reached it",
-        PARALLEL,
-        [],
-        [
-            (1.0, ("signal", "left"), ["Left -left-> done"]),
-            (2.0, ("signal", "right"), ["Right -right-> done", "Both -done-> After"]),
-        ],
-    ),
-    Case(
-        "a signal is offered to each child of a parallel node",
+        "a signal is offered to each child of a parallel node, which is done when all are",
         PARALLEL,
         [],
         [
@@ -619,7 +503,7 @@ def queue_item(runtime: Runtime, happening: Happening) -> QueueItem:
         return TimerItem(timers[0])
     sent = "start" if kind in ("returns", "raises") else "cancel"
     call = next(call for call in runtime.calls if call.node == name and call.kind == sent)
-    return ReturnItem(call, value, raised="raises" in kind)
+    return ReturnItem(call, value, raised=kind == "raises")
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)

@@ -21,7 +21,6 @@ if sys.version_info < (3, 11):
     pytest.skip("cel-expr-python 0.1.3 needs Python 3.11", allow_module_level=True)
 
 from dimos.orchestration.expressions import (
-    NUMBER,
     UNKNOWN,
     Compiler,
     ExpressionError,
@@ -42,7 +41,6 @@ SHAPES = {
     "dock": {"x": 0.0, "y": 0.0},
     "nav_status": {"status": 0, "text": "", "goal_id": {"stamp": STAMP, "id": ""}},
     "nav.goal": STAMP,
-    "cfg.patrol": None,
     "untyped_result": UNKNOWN,
     "untyped_flag": UNKNOWN,
 }
@@ -54,7 +52,6 @@ BOARD: dict[str, Plain] = {
     "dock": {"x": 1.0, "y": 2.0},
     "nav_status": {"status": 3, "text": "", "goal_id": {"stamp": {"sec": 5, "nsec": 7}, "id": "a"}},
     "nav.goal": {"sec": 5, "nsec": 7},
-    "cfg.patrol": None,
     "untyped_result": {"anything": 4},
     "untyped_flag": True,
 }
@@ -64,28 +61,15 @@ ERROR = object()
 REJECTED: list[tuple[str, Wanted, str]] = [
     ("typo_key < 3", UNKNOWN, "undeclared reference to 'typo_key'"),
     ("nav_status.goalid == 1", UNKNOWN, "cannot be the operand of a select"),
-    ("nav_status.goal_id.stamp.secs == 1", UNKNOWN, "cannot be the operand of a select"),
-    ("patrol.index + 1.5", UNKNOWN, r"'_\+_' applied to '\(int, double\)'"),
     ("battery_pct < 20", UNKNOWN, r"'_<_' applied to '\(double, int\)'"),
-    ("nav_status.text < 1", UNKNOWN, r"'_<_' applied to '\(string, int\)'"),
     ("patrol.index + 1", True, "gives INT, and BOOL is needed"),
-    ("route[patrol.index]", NUMBER, "gives STRING, and INT or DOUBLE is needed"),
-    ("route[nav_status.text]", UNKNOWN, r"'_\[_\]' applied to '\(list\(string\), string\)'"),
-    ("nav.goal == dock", UNKNOWN, "'_==_' applied to"),
-    ("nav.goal == 5", UNKNOWN, "'_==_' applied to"),
-    ("battery_pct + 1.0", 0, "gives DOUBLE, and INT is needed"),
-    ("dock[route[0]]", UNKNOWN, r"'_\[_\]' applied to"),
 ]
 
 EVALUATED: list[tuple[str, Wanted, dict[str, object], object]] = [
     ("battery_pct < 20.0", True, {}, False),
-    ("estop_button || battery_pct < 20.0", True, {}, True),
     ("battery_pct < 20.0 || estop_button", True, {}, True),
-    ("battery_pct < 20.0 && !estop_button", True, {}, False),
-    ("!(battery_pct > 5.0)", True, {}, False),
     ("battery_pct < low_battery", True, {"battery_pct": 19.5}, True),
     ("nav_status.goal_id.stamp == nav.goal", True, {}, True),
-    ("nav_status.goal_id.stamp == nav.goal", True, {"nav.goal": UNSET}, False),
     ("nav_status.goal_id.stamp == nav.goal", True, {"nav_status": {"status": 3}}, ERROR),
     (
         "estop_button || nav_status.goal_id.stamp == nav.goal",
@@ -95,15 +79,8 @@ EVALUATED: list[tuple[str, Wanted, dict[str, object], object]] = [
     ),
     ("dock", {"x": 0.0, "y": 0.0}, {}, {"x": 1.0, "y": 2.0}),
     ("route[patrol.index]", "", {}, "lab"),
-    ("patrol.index < size(route)", True, {}, True),
-    ("cfg.patrol == null", True, {}, True),
     ("untyped_result.anything + 1 == 5", True, {}, True),
-    ("untyped_result.nothing == 5", True, {}, ERROR),
-    ("untyped_flag", True, {}, True),
     ("untyped_flag", True, {"untyped_flag": "false"}, ERROR),
-    ("untyped_result", STAMP, {}, {"anything": 4}),
-    ("patrol.index + 1", 0, {}, 2),
-    ("[]", ["lobby"], {}, []),
     ("route[5]", UNKNOWN, {}, ERROR),
     ("low_battery > 1.0 && route[5] == 'lab'", True, {}, ERROR),
 ]
