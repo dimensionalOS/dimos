@@ -57,6 +57,7 @@ from dimos.robot.manipulators.feetech.connection import (
     FeetechConnection,
     FeetechConnectionConfig,
 )
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -256,10 +257,17 @@ def _manipulation() -> Blueprint:
     )
 
 
+def _urdf_manager() -> Blueprint:
+    """Serves the URDF and its meshes to viewers; the planner already puts the links on tf."""
+    return UrdfManager.blueprint(
+        model=dual_openyam_model_config(robot="arm").model, publish_joint_tf=False
+    )
+
+
 # The leader serial ports given select the sides; --simulation mocks the CAN, and
 # the leaders too when no serial port is given.
 dual_openyam_leader_teleop = autoconnect(
-    dual_openyam_leaders(), dual_openyam_leader_control(), _manipulation()
+    dual_openyam_leaders(), dual_openyam_leader_control(), _manipulation(), _urdf_manager()
 )
 
 # Leaders without trigger servos; Joy-Cons drive the jaws and pause following.
@@ -268,4 +276,5 @@ dual_openyam_joycon_leader_teleop = autoconnect(
     JoyconConnectionModule.blueprint(),
     dual_openyam_leader_control(),
     _manipulation(),
+    _urdf_manager(),
 )
