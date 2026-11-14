@@ -549,7 +549,6 @@ def _wait_for_warm_up(module) -> tuple[str | None, str | None]:
     return module.warmed_on()
 
 
-@pytest.mark.skipif_macos_bug
 def test_deploy_warms_up_inputs_and_skills_on_a_background_thread(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=1)
     module = worker_manager.deploy(WarmedModule, global_config, {})
@@ -560,7 +559,6 @@ def test_deploy_warms_up_inputs_and_skills_on_a_background_thread(create_worker_
     module.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_module_can_opt_out_of_input_warm_up(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=1)
     module = worker_manager.deploy(UnwarmedInputsModule, global_config, {})

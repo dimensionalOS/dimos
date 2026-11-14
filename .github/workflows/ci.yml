@@ -547,6 +547,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_INCREMENTAL: "0"
+      # Needed because runner's Python does not include sqlite extensions.
+      UV_PYTHON_PREFERENCE: only-managed
     permissions:
       contents: read  # For checkout
     steps:
