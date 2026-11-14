@@ -86,12 +86,22 @@ The optional capabilities contain `read`, `write`, up to 16 fixed `profiles`
 and `profileOptions`, the settings each profile takes as
 `{kind, min?, max?, values?, default?}` with the profile value as the default
 and the ceiling; the relay enforces them and advertises them to viewers. An
-older raw provider omits them and supports `raw`. With an auth file, `token` must be the key bound
+older raw provider omits them and supports `raw`. `videoReconfigure` says an
+open video variant takes new settings in place (below); without it every
+settings change opens another variant. With an auth file, `token` must be the key bound
 to that source in `topicSources`. This hello carries neither robot identity nor
 manifest, and the source never appears in `robots`. Its initial carrier message
 is `topic_sources`, carrying the source's fresh generation. Viewers negotiate
 `topicsVersion:1`; their `topic_sources` snapshot lists the connected sources
 and is sent again whenever a source connects or leaves.
+
+A pong to a viewer that negotiated topics also carries optional `aborted`,
+a cumulative non-negative safe integer for that viewer's congested latest
+sends. Bound aborts and expirations with unaccepted bytes increment it;
+per-key replacement, disposal and cleanup of already accepted streams do not.
+Providers and viewers without topics receive the unchanged pong. Older peers
+can omit or ignore the field. The SDK takes deltas without changing the
+three-second ping cadence.
 
 | Direction | Message | Meaning |
 |---|---|---|
@@ -121,7 +131,15 @@ The relay shares one route per source, key expression, delivery and profile.
 Each latest viewer retains its own rate gate and newest pending sample per key.
 Viewer-supplied activation rates never change the rate calculated by the relay.
 
-Settings are `maxHz`, `maxResolution`, `quality`, `keepEvery` and `fields`.
+Settings are `maxHz`, `maxResolution`, `quality`, `keepEvery`, `fields` and
+`maxBitrate`. Only `video.h264.v1` accepts `maxBitrate`: an integer target in
+bit/s, advertised from 100,000 to 4,500,000 with default 4,500,000. Targets
+above the ceiling clamp; normalization also caps the target at the class of
+the normalized resolution (360p: 1,000,000; 720p: 2,500,000; 1080p: 4,500,000).
+Thus 10,000,000 at 720p acknowledges 2,500,000. The encoder's target is the
+smaller of this and the class of the picture it actually encodes: a 640×360
+camera under the default 1080p box keeps 1,000,000. SDK adaptation options
+(`adapt`, `priority`, `keep`) never cross the wire.
 The relay validates a `topic_sub` `settings` object or a `topic_update`
 against the provider's `profileOptions` for the profile: an unknown name
 rejects with `unsupported_option`, a value outside its range with
@@ -140,6 +158,18 @@ variant closes after a two second grace. Raw routes have no variants: `maxHz`
 is their only setting, gated per viewer by the relay, which acknowledges the
 change itself and sends the route's highest rate on `topic_activate`, as it
 does for a provider without `profileOptions`.
+
+A video variant serving only one subscription can change settings in place
+once it is no longer the route's opening variant, when the provider advertised
+`videoReconfigure` and no other variant of the route already encodes the
+requested settings. Pending viewers also count as sharing it. The relay
+re-announces that variant with `ready = false`, waits for matching
+`topic_variant_ready` settings and acknowledges the update without closing the
+peer. The provider resets the encoder at a frame boundary, emits an IDR with
+new SPS/PPS and preserves its timestamp clock. Shared video variants, settings
+another variant already encodes, and providers without the capability keep the
+move and re-offer path with `settings_changed`; data variants still reject a
+changed encode key on the same variant id.
 
 `key` is concrete even on wildcard subscriptions; source and ingress times
 remain distinct from header send time. Payloads remain opaque bytes.

@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
@@ -528,3 +529,89 @@ async def test_closing_routes_returns_the_registry_to_empty(harness: Harness) ->
         assert not harness.video.peers
         assert not harness.video._routes
     assert {close.reason for close in harness.closes()} == {"route_closed"}
+
+
+async def test_the_target_bitrate_follows_the_encoded_size_under_the_request(harness):
+    pc = await harness.offer("r1")
+    pc.connect()
+    route = harness.video._routes["@t:p1"]
+    encoder = route.encoders["v1"]
+    assert encoder.max_bitrate == 4_500_000  # the default box is 1080p
+    for size, bitrate in (((640, 360), 1_000_000), ((1280, 720), 2_500_000)):
+        async with harness.transforms.slots:
+            await route.encode("v1", frame(1, *size))
+        assert encoder._codec is not None
+        assert encoder._codec.bit_rate == bitrate
+
+
+async def test_reconfigure_keeps_the_peer_and_emits_an_idr_with_monotonic_pts(harness):
+    pc = await harness.offer("r1")
+    pc.connect()
+    route = harness.video._routes["@t:p1"]
+    track = pc.transceivers[0].track
+    await harness.encode(1)
+    first = await track.recv()
+    await harness.encode(2)  # queued old settings must not follow the acknowledgement
+    encoder = route.encoders["v1"]
+    route.reconfigure(
+        "v1",
+        normalize_settings(
+            PROFILE,
+            {
+                "maxResolution": [32, 32],
+                "maxHz": 15,
+                "maxBitrate": 200_000,
+            },
+        ),
+    )
+    await harness.encode(3)
+    second = await track.recv()
+    assert second.is_keyframe
+    assert second.pts > first.pts
+    decoder = av.CodecContext.create("h264", "r")
+    decoded = decoder.decode(second)
+    assert (decoded[0].width, decoded[0].height) == (32, 24)
+    assert encoder.max_bitrate == 200_000
+    assert encoder._codec.bit_rate == 200_000
+    assert pc.transceivers[0].track is track
+    assert len(harness.answers()) == 1
+    assert harness.closes() == []
+
+
+async def test_a_reconfigure_the_queued_worker_applies_keeps_that_idr(
+    harness: Harness, mocker: MockerFixture
+) -> None:
+    pc = await harness.offer("r1")
+    pc.connect()
+    route = harness.video._routes["@t:p1"]
+    track = pc.transceivers[0].track
+    await harness.encode(1)
+    await track.recv()
+    original = SharedEncoder.encode
+    entered, proceed = threading.Event(), threading.Event()
+
+    def held(self: SharedEncoder, payload: bytes) -> list[av.Packet]:
+        entered.set()
+        assert proceed.wait(5)
+        return original(self, payload)
+
+    mocker.patch.object(SharedEncoder, "encode", held)
+    encoding = asyncio.create_task(harness.encode(2))
+    await asyncio.to_thread(entered.wait, 5)
+    # The settings land while the worker is queued, before it applies them:
+    # the frame it encodes is the acknowledged configuration's IDR, not a
+    # stale one to drop (that left the peer waiting for the safety keyframe).
+    route.reconfigure(
+        "v1",
+        normalize_settings(
+            PROFILE, {"maxResolution": [32, 32], "maxHz": 15, "maxBitrate": 200_000}
+        ),
+    )
+    proceed.set()
+    await encoding
+    async with timeout(2):
+        packet = await track.recv()
+    assert packet.is_keyframe
+    decoded = av.CodecContext.create("h264", "r").decode(packet)
+    assert (decoded[0].width, decoded[0].height) == (32, 24)
+    assert route.encoders["v1"].frames == 2
