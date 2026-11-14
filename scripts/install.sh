@@ -336,12 +336,15 @@ detect_os() {
     else
         die "unsupported operating system: $uname_s"
     fi
+    # the disk the project is installed onto (its nearest existing folder), not necessarily $HOME's
+    local disk_dir="${PROJECT_DIR:-$HOME}"
+    while [[ ! -d "$disk_dir" ]]; do disk_dir="$(dirname "$disk_dir")"; done
     if [[ "$uname_s" == "Darwin" ]]; then
         DETECTED_RAM_GB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1073741824 ))
-        DETECTED_DISK_GB=$(df -g "${HOME}" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+        DETECTED_DISK_GB=$(df -g "${disk_dir}" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
     else
         DETECTED_RAM_GB=$(( $(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0) / 1048576 ))
-        DETECTED_DISK_GB=$(df -BG "${HOME}" 2>/dev/null | awk 'NR==2 {gsub(/G/,"",$4); print $4}' || echo 0)
+        DETECTED_DISK_GB=$(df -BG "${disk_dir}" 2>/dev/null | awk 'NR==2 {gsub(/G/,"",$4); print $4}' || echo 0)
     fi
 }
 
