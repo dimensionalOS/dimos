@@ -23,7 +23,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
@@ -47,6 +47,9 @@ pub fn prefix_frame(prefix: Option<&str>, frame: &str) -> String {
 }
 
 const WARN_INTERVAL: Duration = Duration::from_secs(1);
+
+/// The channel a declared tf handler receives on, shared with the route.
+type HandlerSlot = Arc<OnceLock<async_channel::Sender<Vec<Transform>>>>;
 
 /// A rigid transform from `parent` to `child` at a point in time.
 ///
@@ -359,11 +362,33 @@ pub struct Tf {
     sender: mpsc::Sender<Vec<u8>>,
     /// Applied to every frame named through this handle unless the call opts out.
     frame_prefix: Option<Arc<str>>,
+    /// Present only when the module declared a tf handler; the route feeds it.
+    updates: Option<async_channel::Receiver<Vec<Transform>>>,
+    handler: HandlerSlot,
 }
 
 impl Tf {
     pub fn prefixed(&self, frame: &str) -> String {
         prefix_frame(self.frame_prefix.as_deref(), frame)
+    }
+
+    /// Start feeding [`Tf::recv`]. Idempotent, and independent of port order.
+    pub(crate) fn enable_handler(&mut self) {
+        if self.updates.is_some() {
+            return;
+        }
+        // The same bounded-and-blocking shape as an `#[input]` port, so a slow
+        // handler pushes back on the transport instead of dropping transforms
+        // behind the publisher's QoS.
+        let (tx, rx) = async_channel::bounded(crate::module::INPUT_BUFFER_LEN);
+        if self.handler.set(tx).is_ok() {
+            self.updates = Some(rx);
+        }
+    }
+
+    /// The transforms from the next `tf` message; only a handler port gets them.
+    pub async fn recv(&self) -> Option<Vec<Transform>> {
+        self.updates.as_ref()?.recv().await.ok()
     }
     /// Start a lookup of the transform from `parent` to `child`.
     ///
@@ -546,7 +571,7 @@ impl Lookup<'_> {
     }
 }
 
-fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
+pub(crate) fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
     let mut sec = t.ts.floor();
     let mut nsec = ((t.ts - sec) * 1e9).round();
     if nsec >= 1e9 {
@@ -586,10 +611,13 @@ fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
 struct TfRoute {
     topic: String,
     graph: Arc<Graph>,
+    updates: HandlerSlot,
 }
 
-impl Route for TfRoute {
-    fn dispatch(&self, data: &[u8]) {
+impl TfRoute {
+    // Fills the graph, and returns the transforms for a declared handler. A
+    // plain `#[tf]` port gets `None`, so it never pays for the second copy.
+    fn receive(&self, data: &[u8]) -> Option<Vec<Transform>> {
         let msg = match lcm_msgs::tf2_msgs::TFMessage::decode(data) {
             Ok(msg) => msg,
             Err(e) => {
@@ -599,9 +627,13 @@ impl Route for TfRoute {
                     error = %e,
                     "tf decode error"
                 );
-                return;
+                return None;
             }
         };
+        let mut received = self
+            .updates
+            .get()
+            .map(|_| Vec::with_capacity(msg.transforms.len()));
         self.graph.update(|buffer| {
             for st in &msg.transforms {
                 let t = &st.transform.translation;
@@ -622,8 +654,46 @@ impl Route for TfRoute {
                 let iso = Isometry3::from_parts(Translation3::new(t.x, t.y, t.z), rotation);
                 let ts = st.header.stamp.sec as f64 + st.header.stamp.nsec as f64 * 1e-9;
                 buffer.receive(&st.header.frame_id, &st.child_frame_id, ts, iso);
+                if let Some(received) = &mut received {
+                    received.push(Transform::new(
+                        st.header.frame_id.clone(),
+                        st.child_frame_id.clone(),
+                        ts,
+                        iso,
+                    ));
+                }
             }
         });
+        received.filter(|received| !received.is_empty())
+    }
+}
+
+// The graph is filled before the handler is fed, so a handler that looks a
+// transform up sees the message that woke it. Feeding it follows the same rule
+// as an `#[input]` port: blocking on a reliable transport, so congestion
+// reaches the publisher's QoS, and dropped where the transport asks for that.
+impl Route for TfRoute {
+    fn dispatch(&self, data: &[u8]) {
+        let Some(received) = self.receive(data) else {
+            return;
+        };
+        if let Some(updates) = self.updates.get() {
+            // A closed channel means the module is stopping.
+            let _ = updates.send_blocking(received);
+        }
+    }
+
+    fn try_dispatch(&self, data: &[u8]) -> bool {
+        let Some(received) = self.receive(data) else {
+            return true;
+        };
+        let Some(updates) = self.updates.get() else {
+            return true;
+        };
+        match updates.try_send(received) {
+            Err(async_channel::TrySendError::Full(_)) => false,
+            Ok(()) | Err(async_channel::TrySendError::Closed(_)) => true,
+        }
     }
 }
 
@@ -636,12 +706,19 @@ pub(crate) fn tf_subscription(
     frame_prefix: Option<Arc<str>>,
 ) -> (Tf, Box<dyn Route>) {
     let graph = Arc::new(Graph::new(window_secs));
+    let handler: HandlerSlot = Arc::new(OnceLock::new());
     let tf = Tf {
         graph: Arc::clone(&graph),
         sender,
         frame_prefix,
+        updates: None,
+        handler: Arc::clone(&handler),
     };
-    let route = Box::new(TfRoute { topic, graph });
+    let route = Box::new(TfRoute {
+        topic,
+        graph,
+        updates: handler,
+    });
     (tf, route)
 }
 
@@ -670,6 +747,8 @@ mod tests {
                 graph: Arc::clone(&graph),
                 sender: tx,
                 frame_prefix: frame_prefix.map(Arc::from),
+                updates: None,
+                handler: Arc::new(OnceLock::new()),
             },
             rx,
             MultiHandle { graph },
@@ -1355,5 +1434,51 @@ mod tests {
             .unprefixed()
             .get()
             .is_some());
+    }
+
+    // An LCM transport asks each route to take a message without blocking, and
+    // a full handler has to say no so the transport reports the drop.
+    #[tokio::test]
+    async fn a_full_handler_refuses_a_try_dispatch() {
+        let (tx, _rx) = mpsc::channel(8);
+        let (mut tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
+        tf.enable_handler();
+        for i in 0..crate::module::INPUT_BUFFER_LEN {
+            assert!(
+                route.try_dispatch(&stamped_message("a", "b", i as f64, 1.0)),
+                "the buffer takes the first {} messages",
+                crate::module::INPUT_BUFFER_LEN
+            );
+        }
+        assert!(!route.try_dispatch(&stamped_message("a", "b", 99.0, 1.0)));
+        // The graph took it even so, and draining one makes room again.
+        assert!(tf.get_latest("a", "b").is_some());
+        tf.recv().await.expect("a buffered message");
+        assert!(route.try_dispatch(&stamped_message("a", "b", 100.0, 1.0)));
+    }
+
+    #[tokio::test]
+    async fn a_declared_handler_receives_each_message_and_a_plain_port_does_not() {
+        let (tx, _rx) = mpsc::channel(8);
+        let (mut tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
+        tf.enable_handler();
+        route.dispatch(
+            &lcm_msgs::tf2_msgs::TFMessage {
+                transforms: vec![to_stamped(&Transform::new(
+                    "a",
+                    "b",
+                    1.0,
+                    Isometry3::identity(),
+                ))],
+            }
+            .encode(),
+        );
+
+        let got = tf.recv().await.expect("a handler receives the message");
+        assert_eq!((got[0].parent.as_str(), got[0].child.as_str()), ("a", "b"));
+
+        let (tx, _rx) = mpsc::channel(8);
+        let (plain, _route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx, None);
+        assert!(plain.recv().await.is_none());
     }
 }
