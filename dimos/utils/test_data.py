@@ -671,10 +671,34 @@ def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
         with pytest.raises(Timeout), FileLock(data_dir / "repo.lock", timeout=0):
             pass
         (data_dir / "repo" / ".git").mkdir(parents=True)
+        (data_dir / "repo" / ".git" / "index").touch()
 
     mocker.patch.object(data, "_get_user_data_dir", side_effect=user_data_dir)
     run = mocker.patch.object(data.subprocess, "run", side_effect=clone)
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: data.get_project_root.__wrapped__(), range(4)))
     assert results == [data_dir / "repo"] * 4
+    run.assert_called_once()
+
+
+def test_project_root_clones_again_after_unfinished_clone(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    repo_dir = tmp_path / "data" / "repo"
+    # What a clone stopped while writing files leaves, plus the data directory
+    # that the failed run after it creates.
+    (repo_dir / ".git").mkdir(parents=True)
+    (repo_dir / "README.md").write_text("partial")
+    (repo_dir / "data").mkdir()
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path / "installed")
+    mocker.patch.object(data, "_get_user_data_dir", return_value=tmp_path / "data")
+
+    def clone(*args: Any, **kwargs: Any) -> None:
+        assert not repo_dir.exists()  # git only clones into an empty directory
+        (repo_dir / ".git").mkdir(parents=True)
+        (repo_dir / ".git" / "index").touch()
+
+    run = mocker.patch.object(data.subprocess, "run", side_effect=clone)
+
+    assert data.get_project_root.__wrapped__() == repo_dir
     run.assert_called_once()
