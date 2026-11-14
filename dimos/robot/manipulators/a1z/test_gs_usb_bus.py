@@ -25,7 +25,7 @@ from typing import Any
 import can
 import pytest
 
-from dimos.hardware.manipulators.galaxea_a1z import gs_usb_bus
+from dimos.robot.manipulators.a1z import gs_usb_bus
 
 
 class _UsbError(Exception):

@@ -37,7 +37,7 @@ Device quirks handled here:
 
 Requires ``gs-usb``, ``pyusb``, and system libusb. Run
 ``dimos hardware a1z doctor`` before connecting.
-Lives in galaxea_a1z/ because it is the only user today; promote to a shared
+Lives in a1z/ because it is the only user today; promote to a shared
 location when a second CAN arm needs it.
 """
 

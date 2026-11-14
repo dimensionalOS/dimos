@@ -46,7 +46,15 @@ MEDIA_PROFILES = {
     "cloud.q16.low.v1": MediaProfile("cloud", 5, keep_every=4),
     "cloud.q16.balanced.v1": MediaProfile("cloud", 20),
     "cloud.q16.full.v1": MediaProfile("cloud", 30),
+    # Direct WebRTC H.264, advertised only by a provider with video enabled.
+    "video.h264.v1": MediaProfile("h264", 30, 1920, 1080),
 }
+VIDEO_PROFILES = frozenset(
+    name for name, profile in MEDIA_PROFILES.items() if profile.kind == "h264"
+)
+# Constrained-baseline H.264 target per output size class, in bits per second.
+# docs/web/benchmarks/topic-video.md records the measurement that set them.
+VIDEO_BITRATES = ((640 * 360, 1_000_000), (1280 * 720, 2_500_000), (1920 * 1080, 4_500_000))
 
 SETTING_NAMES = ("maxHz", "maxResolution", "quality", "keepEvery", "fields")
 CLOUD_FIELDS = ["intensity", "color"]
@@ -61,13 +69,14 @@ def _options(profile: MediaProfile | None) -> dict[str, Any]:
             "default": profile.max_hz if profile else MAX_RATE,
         }
     }
-    if profile is not None and profile.kind == "jpeg":
+    if profile is not None and profile.kind in ("jpeg", "h264"):
         options["maxResolution"] = {
             "kind": "size",
             "min": 16,
             "max": 4096,
             "default": [profile.width, profile.height],
         }
+    if profile is not None and profile.kind == "jpeg":
         options["quality"] = {"kind": "int", "min": 1, "max": 100, "default": profile.quality}
     elif profile is not None and profile.kind == "cloud":
         options["keepEvery"] = {"kind": "int", "min": 1, "max": 64, "default": profile.keep_every}
@@ -152,3 +161,11 @@ def normalize_settings(profile_name: str, requested: Mapping[str, Any] | None) -
             continue
         settings[name] = _clamp(name, option, value)
     return settings
+
+
+def video_bitrate(width: int, height: int) -> int:
+    """The fixed target for an encoder emitting ``width`` x ``height`` frames."""
+    for pixels, bitrate in VIDEO_BITRATES:
+        if width * height <= pixels:
+            return bitrate
+    return VIDEO_BITRATES[-1][1]

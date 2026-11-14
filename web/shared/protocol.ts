@@ -21,6 +21,8 @@
 
 import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 import {
+  MAX_MID_LEN,
+  MAX_SDP_LEN,
   type TopicCapabilities,
   topicCapabilitiesOk,
   type TopicMsg,
@@ -89,12 +91,8 @@ export const MAX_REQUEST_ID_LEN = 64;
 // Bound for hello.token (a robot key or viewer token, see relay/auth.ts).
 export const MAX_TOKEN_LEN = 256;
 
-// An SDP rides a control frame or an @control payload, so it stays well under
-// MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section, at most
-// MAX_RTC_TRACKS of them). SDP is ASCII, so this length and the Python
-// mirror's character count agree.
-export const MAX_SDP_LEN = 48 * 1024;
-export const MAX_MID_LEN = 16;
+// MAX_SDP_LEN and MAX_MID_LEN live in topics.ts, which the direct topic video
+// signaling shares with the SFU messages here.
 export const MAX_RTC_TRACKS = 8;
 
 // Reject absurd header lengths before allocating.

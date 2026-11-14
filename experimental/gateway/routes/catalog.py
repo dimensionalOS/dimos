@@ -22,14 +22,10 @@ from typing import Any
 from fastapi import APIRouter
 
 from experimental.gateway import catalog, constants, introspect, launches, responses
+from experimental.gateway.names import check_name
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter(prefix="/catalog")
-
-
-def check_name(name: str) -> None:
-    if not name or name.startswith("-") or any(char.isspace() for char in name):
-        raise ApiError(400, f"bad name: {name}")
 
 
 def picked(answer: dict[str, Any], fields: str | None) -> dict[str, Any]:

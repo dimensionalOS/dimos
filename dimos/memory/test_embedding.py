@@ -16,11 +16,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import EmbeddedObservation, Observation
+from dimos.memory.vectorstore.sqlite import SqliteVectorStore
 from dimos.models.embedding.base import Embedding
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _emb(vec: list[float]) -> Embedding:
@@ -394,3 +401,20 @@ class TestPluggableVectorStore:
         assert "s1" not in vs_override._vectors
         assert "s2" in vs_override._vectors
         assert "s2" not in vs_default._vectors
+
+
+def test_external_sqlite_vectors_search_after_reopen(tmp_path: Path) -> None:
+    metadata = tmp_path / "recording.db"
+    vectors = str(tmp_path / "vectors.db")
+    query = _emb([0, 1, 0])
+    with SqliteStore(path=metadata) as store:
+        stream = store.stream("notes", str, vector_store=SqliteVectorStore(path=vectors))
+        stream.append("north", ts=1.0, embedding=query)
+        stream.append("east", ts=2.0, embedding=_emb([1, 0, 0]))
+        # Each write is committed, so a second connection sees it before the store closes.
+        with SqliteVectorStore(path=vectors) as reader:
+            assert [key for key, _ in reader.search("notes", query, k=2)] == [1, 2]
+
+    with SqliteStore(path=metadata, must_exist=True) as store:
+        reopened = store.stream("notes", str)
+        assert [obs.data for obs in reopened.search(query, k=2).to_list()] == ["north", "east"]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+from functools import partial
 from typing import Any
 
 from fastapi import APIRouter
@@ -24,6 +25,7 @@ from pydantic import BaseModel, JsonValue
 from experimental.gateway import catalog, launches, responses
 from experimental.gateway.launches import LaunchConfig
 from experimental.gateway.live import NothingRunningError
+from experimental.gateway.names import check_name
 from experimental.gateway.routes.history import read_log
 from experimental.gateway.state import ApiError, GatewayState, State
 
@@ -113,9 +115,7 @@ async def active_log(
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
     if (request.blueprint is None) == (request.module is None):
         raise ApiError(400, "give exactly one of blueprint or module")
-    name = str(request.blueprint or request.module)
-    if not name or name.startswith("-"):
-        raise ApiError(400, f"bad name: {name}")
+    name = check_name(request.module if request.blueprint is None else request.blueprint)
     launch_config = launches.parse(request.config)
     launches.check_global(launch_config.global_)
     return await started(state, name, launch_config)
@@ -123,15 +123,17 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
 
 @router.post("/exec", response_model=responses.Launch)
 async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
-    if not request.args or request.args[0].startswith("-"):
+    if not request.args:
         raise ApiError(400, "args must start with a blueprint or module name")
     name, *rest = request.args
-    return await started(state, name, LaunchConfig(args=rest, exact=True))
+    return await started(state, check_name(name), LaunchConfig(args=rest, exact=True))
 
 
 @router.post("/relaunch", response_model=responses.Launch)
 async def relaunch(state: GatewayState) -> dict[str, Any]:
-    launch = await asyncio.to_thread(launches.relaunch, state.dimos_dir)
+    launch = await asyncio.to_thread(
+        launches.relaunch, state.dimos_dir, partial(check_known, state)
+    )
     state.bus.launch(launch)
     return launch
 

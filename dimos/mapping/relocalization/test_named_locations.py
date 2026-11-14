@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import pytest
 
+from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.mapping.relocalization.module import PremapModule, map_names, resolve_map
 from dimos.mapping.relocalization.named_locations import load_locations
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -407,3 +408,33 @@ def test_a_premap_recording_also_seeds_its_named_locations(make, tmp_path):
     assert module.premap is not None and len(module.premap) == 7
     assert module.premap.frame_id == "map/v1"
     assert list(module._locations) == ["dock"]
+
+
+def test_a_location_is_answered_by_name_in_the_map_frame(make):
+    module, _ = make()
+    begin(module)
+    publish(module, {"dock": at(1, 2, "map", yaw=0.3)})
+
+    dock = module.location("dock")
+    assert (dock.x, dock.y) == (1, 2)
+    assert dock.frame_id == "map"
+    assert round(dock.orientation.to_euler().z, 6) == 0.3
+    assert extract_rpc_info(PremapModule.location).return_annotation is PoseStamped
+
+
+@pytest.mark.parametrize(
+    "lists, name, known",
+    [
+        ([{"dock": at(1, 2, "map"), "desk": at(3, 4, "map")}], "lamp", "desk, dock"),
+        ([{"dock": at(1, 2, "map")}, {"desk": at(3, 4, "map")}], "dock", "desk"),
+        ([{}], "dock", "none"),
+    ],
+)
+def test_an_unknown_location_names_the_ones_the_map_has(make, lists, name, known):
+    module, _ = make()
+    begin(module)
+    for poses in lists:
+        publish(module, poses)
+
+    with pytest.raises(LookupError, match=f"the map has: {known}$"):
+        module.location(name)

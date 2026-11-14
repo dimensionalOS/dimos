@@ -20,6 +20,7 @@ import re
 import sqlite3
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
+import warnings
 
 from pydantic import Field, model_validator
 
@@ -394,6 +395,23 @@ class SqliteObservationStore(ObservationStore[T]):
     def rollback(self) -> None:
         with self._lock:
             self._conn.rollback()
+
+    def warn_if_unposed(self, q: StreamQuery) -> None:
+        if not any(isinstance(f, NearFilter) for f in q.filters):
+            return
+        with self._lock:
+            unposed = self._conn.execute(
+                f'SELECT EXISTS(SELECT 1 FROM "{self._name}") '
+                f'AND NOT EXISTS(SELECT 1 FROM "{self._name}_rtree")'
+            ).fetchone()[0]
+        if unposed:
+            # No stacklevel reaches the caller: the depth differs per query path.
+            warnings.warn(
+                f"Stream {self._name!r} has no attached poses, so near() cannot return results. "
+                f"Run dimos map pose-fill <recording.db> --target {self._name} "
+                "--pose-source <pose stream> to write a posed copy.",
+                stacklevel=1,
+            )
 
     @property
     def _pending_python_filters(self) -> list[Any]:

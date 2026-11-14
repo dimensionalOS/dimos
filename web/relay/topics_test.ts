@@ -15,6 +15,7 @@ import {
   topicMsgFromUnknown,
   type TopicOpenMsg,
   type TopicReadyMsg,
+  type TopicRtcOfferMsg,
   type TopicSettings,
   type TopicSettingsUpdate,
   type TopicSubMsg,
@@ -187,6 +188,31 @@ Deno.test("different latest rates share one provider route and retain each viewe
     send({ t: "topic_unsub", id: "fast" });
     assertEquals(provider.messages.filter((m) => m.t === "topic_activate").at(-1)?.maxHz, 5);
     assertEquals(provider.opens().length, 1);
+  } finally {
+    registry.viewerClosed(viewer);
+  }
+});
+
+Deno.test("a source at the viewer's own rate loses no frames to late deliveries", async () => {
+  using time = new FakeTime(0);
+  const { registry, viewer, send, opened, activate, sample } = setup();
+  try {
+    send({ ...spec, delivery: "latest", maxHz: 30 });
+    opened();
+    activate();
+    const period = 1000 / 30;
+    let at = 0;
+    for (let seq = 1; seq <= 300; seq++) {
+      // Every third frame reaches the relay 1.5 ms late, as a busy event loop delivers it.
+      const arrival = (seq - 1) * period + (seq % 3 === 0 ? 1.5 : 0);
+      time.tick(arrival - at);
+      at = arrival;
+      sample(seq);
+      await flush();
+    }
+    time.tick(2 * period);
+    await flush();
+    assertEquals(viewer.sink.decoded().length, 300);
   } finally {
     registry.viewerClosed(viewer);
   }
@@ -830,14 +856,17 @@ const rejection = (revision: number, code: string, id = "cam"): Msg => ({
   message: code.replaceAll("_", " "),
   outcome: "rejected",
 });
-function mediaSetup(profileOptions: Record<string, OptionRanges> | null = OPTIONS) {
+function mediaSetup(
+  profileOptions: Record<string, OptionRanges> | null = OPTIONS,
+  profiles = ["raw", "image.jpeg.low.v1"],
+) {
   let clock = 1000;
   const registry = new TopicRegistry(() => clock);
   const provider = new Provider();
   registry.registerSource(provider, "workspace", {
     read: true,
     write: false,
-    profiles: ["raw", "image.jpeg.low.v1"],
+    profiles,
     ...(profileOptions === null ? {} : { profileOptions }),
   });
   provider.messages = [];
@@ -1001,13 +1030,13 @@ Deno.test("an update moves the viewer once the new variant encodes, and the idle
     gen: open.gen,
     variant: "v1",
   });
-  // A reset returns to the profile settings, in a fresh variant on the freed slot.
+  // A reset returns to the profile settings, in a fresh variant: ids are never reused.
   h.update(a, 2, { quality: null });
   assertEquals(h.variants().at(-1), {
     t: "topic_variant",
     route: open.route,
     gen: open.gen,
-    variant: "v1",
+    variant: "v3",
     settings: LOW,
   });
   h.variantReady();
@@ -1126,7 +1155,40 @@ Deno.test("a fifth settings set rejects with variant_limit until a variant in it
     "topic_variant_close",
     "topic_variant",
   ]);
-  assertEquals(h.variants().at(-1)?.variant, "v4");
+  assertEquals(h.variants().at(-1)?.variant, "v5");
+  h.close();
+});
+
+Deno.test("a frame delayed past its variant's retirement never reaches a viewer of the replacement", async () => {
+  const h = mediaSetup();
+  const viewers = [10, 20, 30, 40].map((quality, i) => h.subscribe(`viewer${i}`, { quality }));
+  h.opened();
+  for (const announced of h.variants()) h.variantReady(announced);
+  h.activate(viewers[0]);
+  // v4 at quality 40 retires at once to make room, while its frames may still fly.
+  h.registry.viewerClosed(viewers[3]);
+  h.update(viewers[0], 1, { quality: 50 });
+  assertEquals(h.provider.messages.at(-2), {
+    t: "topic_variant_close",
+    route: h.provider.opens()[0].route,
+    gen: h.provider.opens()[0].gen,
+    variant: "v4",
+  });
+  assertEquals(h.variants().at(-1)?.variant, "v5");
+  h.variantReady();
+  assertEquals(h.last(viewers[0]), {
+    t: "topic_applied",
+    id: "cam",
+    revision: 1,
+    settings: { ...LOW, quality: 50 },
+  });
+  h.frame(1, "v4");
+  await flush();
+  assertEquals(h.received(viewers[0]), []);
+  h.tick(100);
+  h.frame(2, "v5");
+  await flush();
+  assertEquals(h.received(viewers[0]), [2]);
   h.close();
 });
 
@@ -1216,8 +1278,8 @@ Deno.test("a late variant acknowledgement is ignored and a source restart reopen
   h.tick(VARIANT_GRACE_MS);
   assertEquals(h.provider.messages.at(-1)?.t, "topic_variant_close");
   h.update(a, 2, { quality: 50 });
-  assertEquals(h.variants().at(-1)?.variant, "v1");
-  // The provider answers for the retired v1 first; its settings do not match.
+  assertEquals(h.variants().at(-1)?.variant, "v3");
+  // The provider answers for the retired v1 first; that id is gone for good.
   h.registry.onProviderMsg(h.provider, {
     t: "topic_variant_ready",
     route: open.route,
@@ -1277,4 +1339,364 @@ Deno.test("a raw route takes rate updates in the relay and a reliable route stil
   h.send({ t: "topic_update", id: "nope", revision: 3, options: {} });
   assertEquals(h.viewer.messages.at(-1), rejection(3, "unknown_topic_handle", "nope"));
   h.registry.viewerClosed(h.viewer);
+});
+
+// Direct video (PLAN_2b): the relay signals one peer per subscription and
+// never carries the media.
+const VIDEO_OPTIONS: Record<string, OptionRanges> = {
+  ...OPTIONS,
+  "video.h264.v1": {
+    maxHz: { kind: "number", max: 1000, default: 30 },
+    maxResolution: { kind: "size", min: 16, max: 4096, default: [1920, 1080] },
+  },
+};
+function videoSetup() {
+  const h = mediaSetup(VIDEO_OPTIONS, ["raw", "image.jpeg.low.v1", "video.h264.v1"]);
+  const v = h.subscribe("cam", undefined, { profile: "video.h264.v1" });
+  h.opened();
+  const ready = v.ready()[0];
+  const open = h.provider.opens()[0];
+  const offer = (over: Partial<TopicRtcOfferMsg> = {}, target: Viewer = v) =>
+    h.registry.onViewerMsg(
+      target,
+      {
+        t: "topic_rtc_offer",
+        id: "cam",
+        route: ready.route,
+        gen: ready.gen,
+        sdp: "v=0 β",
+        ...over,
+      },
+      target.sendMsg,
+    );
+  const forwarded = () =>
+    h.provider.messages.filter((m): m is TopicRtcOfferMsg => m.t === "topic_rtc_offer");
+  const rtc = (target: Viewer = v) => target.messages.filter((m) => m.t.startsWith("topic_rtc_"));
+  const fromProvider = (msg: TopicMsg) => h.registry.onProviderMsg(h.provider, msg);
+  return { ...h, v, ready, open, offer, forwarded, rtc, fromProvider };
+}
+
+Deno.test("a video offer reaches the provider with a private id, its route and variant, and replies map back", () => {
+  const h = videoSetup();
+  assertEquals(h.ready.settings, { maxHz: 30, maxResolution: [1920, 1080] });
+  h.offer();
+  const [upstream] = h.forwarded();
+  assertNotEquals(upstream.id, "cam");
+  assertEquals(upstream, {
+    t: "topic_rtc_offer",
+    id: upstream.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    sdp: "v=0 β",
+    variant: "v1",
+  });
+  const peer = { id: upstream.id, route: h.open.route, gen: h.open.gen };
+  h.fromProvider({ t: "topic_rtc_answer", ...peer, sdp: "answer" });
+  h.fromProvider({ t: "topic_rtc_candidate", ...peer, candidate: "candidate:1 host", mid: "0" });
+  h.registry.onViewerMsg(h.v, {
+    t: "topic_rtc_candidate",
+    id: "cam",
+    route: h.ready.route,
+    gen: h.ready.gen,
+    candidate: "",
+    mid: "0",
+  }, h.v.sendMsg);
+  const viewer = { id: "cam", route: h.ready.route, gen: h.ready.gen };
+  assertEquals(h.rtc(), [
+    { t: "topic_rtc_answer", ...viewer, sdp: "answer" },
+    { t: "topic_rtc_candidate", ...viewer, candidate: "candidate:1 host", mid: "0" },
+  ]);
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_rtc_candidate",
+    ...peer,
+    candidate: "",
+    mid: "0",
+  });
+  h.fromProvider({ t: "topic_rtc_close", ...peer, reason: "ice_failed" });
+  assertEquals(h.rtc().at(-1), { t: "topic_rtc_close", ...viewer, reason: "ice_failed" });
+  // The peer is gone: a late candidate is dropped, a provider reply too.
+  const sent = h.provider.messages.length;
+  const received = h.v.messages.length;
+  h.registry.onViewerMsg(
+    h.v,
+    { t: "topic_rtc_candidate", ...viewer, candidate: "x", mid: "0" },
+    h.v.sendMsg,
+  );
+  h.fromProvider({ t: "topic_rtc_answer", ...peer, sdp: "late" });
+  assertEquals([h.provider.messages.length, h.v.messages.length], [sent, received]);
+  h.close();
+});
+
+Deno.test("a video offer binds to this viewer's route, id and generation, and one offer is in flight per route", () => {
+  const h = videoSetup();
+  const stranger = new Viewer();
+  h.registry.addViewer(stranger, stranger.sendMsg);
+  h.offer({}, stranger);
+  assertEquals(stranger.messages.at(-1), {
+    t: "topic_error",
+    id: "cam",
+    code: "unknown_topic_handle",
+    message: "unknown topic handle",
+    outcome: "rejected",
+  });
+  h.offer({ gen: h.ready.gen + 1 });
+  h.offer({ id: "other" });
+  h.offer({ route: "@t:v999" });
+  assertEquals(h.v.messages.filter((m) => m.t === "topic_error").length, 3);
+  assertEquals(h.forwarded(), []);
+  h.offer();
+  h.offer();
+  assertEquals(h.v.messages.at(-1), {
+    t: "topic_error",
+    id: "cam",
+    code: "rtc_offer_pending",
+    message: "rtc offer pending",
+    outcome: "rejected",
+  });
+  assertEquals(h.forwarded().length, 1);
+  // Answered, a new offer replaces the peer: the provider sees the old one close.
+  const [first] = h.forwarded();
+  h.fromProvider({
+    t: "topic_rtc_answer",
+    id: first.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    sdp: "a",
+  });
+  h.offer();
+  assertEquals(h.provider.messages.slice(-2).map((m) => m.t), [
+    "topic_rtc_close",
+    "topic_rtc_offer",
+  ]);
+  assertEquals(h.provider.messages.at(-2), {
+    t: "topic_rtc_close",
+    id: first.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    reason: "replaced",
+  });
+  assertNotEquals(h.forwarded()[1].id, first.id);
+  h.registry.viewerClosed(stranger);
+  h.close();
+});
+
+Deno.test("dropping the viewer or its subscription closes the peer at the provider", () => {
+  const h = videoSetup();
+  h.offer();
+  const [upstream] = h.forwarded();
+  h.registry.onViewerMsg(h.v, { t: "topic_unsub", id: "cam" }, h.v.sendMsg);
+  assertEquals(h.provider.messages.slice(-2), [
+    {
+      t: "topic_rtc_close",
+      id: upstream.id,
+      route: h.open.route,
+      gen: h.open.gen,
+      reason: "route_closed",
+    },
+    { t: "topic_close", route: h.open.route, gen: h.open.gen },
+  ]);
+  const received = h.v.messages.length;
+  h.fromProvider({
+    t: "topic_rtc_answer",
+    id: upstream.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    sdp: "late",
+  });
+  assertEquals(h.v.messages.length, received);
+  const again = h.subscribe("cam", undefined, { profile: "video.h264.v1" });
+  h.opened();
+  const ready = again.ready().at(-1)!;
+  h.offer({ route: ready.route, gen: ready.gen }, again);
+  const second = h.forwarded()[1];
+  h.registry.viewerClosed(again);
+  assertEquals(h.provider.messages.at(-2), {
+    t: "topic_rtc_close",
+    id: second.id,
+    route: h.provider.opens()[1].route,
+    gen: h.open.gen,
+    reason: "route_closed",
+  });
+  h.close();
+});
+
+Deno.test("rtc_limit from the provider ends the peer at the viewer, who may offer again", () => {
+  const h = videoSetup();
+  h.offer();
+  const [first] = h.forwarded();
+  h.fromProvider({
+    t: "topic_rtc_close",
+    id: first.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    reason: "rtc_limit",
+  });
+  assertEquals(h.rtc().at(-1), {
+    t: "topic_rtc_close",
+    id: "cam",
+    route: h.ready.route,
+    gen: h.ready.gen,
+    reason: "rtc_limit",
+  });
+  assertEquals(h.provider.messages.filter((m) => m.t === "topic_rtc_close"), []);
+  h.offer();
+  assertEquals(h.forwarded().length, 2);
+  assertNotEquals(h.forwarded()[1].id, first.id);
+  h.close();
+});
+
+Deno.test("an unanswered video offer times out on both sides and the 65th candidate closes the peer", () => {
+  const h = videoSetup();
+  h.activate(h.v);
+  h.offer();
+  const [first] = h.forwarded();
+  h.tick(9_999);
+  assertEquals(h.rtc(), []);
+  h.tick(1);
+  assertEquals(h.rtc(), [{
+    t: "topic_rtc_close",
+    id: "cam",
+    route: h.ready.route,
+    gen: h.ready.gen,
+    reason: "rtc_answer_timeout",
+  }]);
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_rtc_close",
+    id: first.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    reason: "rtc_answer_timeout",
+  });
+  h.offer();
+  const second = h.forwarded()[1];
+  h.fromProvider({
+    t: "topic_rtc_answer",
+    id: second.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    sdp: "a",
+  });
+  h.tick(60_000);
+  assertEquals(h.rtc().length, 2);
+  for (let n = 0; n < 64; n++) {
+    h.registry.onViewerMsg(h.v, {
+      t: "topic_rtc_candidate",
+      id: "cam",
+      route: h.ready.route,
+      gen: h.ready.gen,
+      candidate: `candidate:${n}`,
+      mid: "0",
+    }, h.v.sendMsg);
+  }
+  assertEquals(h.provider.messages.filter((m) => m.t === "topic_rtc_candidate").length, 64);
+  h.registry.onViewerMsg(h.v, {
+    t: "topic_rtc_candidate",
+    id: "cam",
+    route: h.ready.route,
+    gen: h.ready.gen,
+    candidate: "candidate:64",
+    mid: "0",
+  }, h.v.sendMsg);
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_rtc_close",
+    id: second.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    reason: "rtc_candidate_limit",
+  });
+  assertEquals(h.rtc().at(-1), {
+    t: "topic_rtc_close",
+    id: "cam",
+    route: h.ready.route,
+    gen: h.ready.gen,
+    reason: "rtc_candidate_limit",
+  });
+  h.close();
+});
+
+Deno.test("a settings change to another encoder closes the peer with settings_changed and the new offer names the new variant", async () => {
+  const h = videoSetup();
+  h.activate(h.v);
+  h.offer();
+  const [first] = h.forwarded();
+  h.fromProvider({
+    t: "topic_rtc_answer",
+    id: first.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    sdp: "a",
+  });
+  h.update(h.v, 1, { maxResolution: [640, 360] });
+  assertEquals(h.variants().at(-1)?.variant, "v2");
+  h.variantReady();
+  assertEquals(h.provider.messages.at(-1), {
+    t: "topic_rtc_close",
+    id: first.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    reason: "settings_changed",
+  });
+  assertEquals(h.v.messages.slice(-2), [
+    {
+      t: "topic_rtc_close",
+      id: "cam",
+      route: h.ready.route,
+      gen: h.ready.gen,
+      reason: "settings_changed",
+    },
+    {
+      t: "topic_applied",
+      id: "cam",
+      revision: 1,
+      settings: { maxHz: 30, maxResolution: [640, 360] },
+    },
+  ]);
+  h.offer();
+  assertEquals(h.forwarded()[1].variant, "v2");
+  // No data frames ever flow on a video route.
+  h.frame(1, "v2");
+  await flush();
+  assertEquals(h.received(h.v), []);
+  h.close();
+});
+
+Deno.test("a video rate is part of the encoder: viewers at one rate share it, another rate gets its own", () => {
+  const h = videoSetup();
+  const profile = "video.h264.v1";
+  const full: TopicSettings = { maxHz: 30, maxResolution: [1920, 1080] };
+  const slow = h.subscribe("slow", undefined, { profile, maxHz: 5 });
+  assertEquals(h.variants().map((m) => [m.variant, m.settings]), [["v2", { ...full, maxHz: 5 }]]);
+  h.variantReady();
+  assertEquals(slow.ready()[0].settings, { ...full, maxHz: 5 });
+  assertEquals(h.v.ready()[0].settings, full);
+  const slower = h.subscribe("slower", undefined, { profile, maxHz: 5 });
+  assertEquals(slower.ready()[0].settings, { ...full, maxHz: 5 });
+  assertEquals(h.variants().length, 1);
+  // v1 stays at 30 and v2 at 5: neither viewer raises the other's encoder.
+  h.registry.viewerClosed(slower);
+  assertEquals(h.variants().length, 1);
+  // A rate change moves the viewer to another encoder, like any other setting.
+  h.offer();
+  const [first] = h.forwarded();
+  h.fromProvider({
+    t: "topic_rtc_answer",
+    id: first.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    sdp: "a",
+  });
+  h.update(h.v, 1, { maxHz: 5 });
+  assertEquals(h.v.messages.slice(-2), [
+    {
+      t: "topic_rtc_close",
+      id: "cam",
+      route: h.ready.route,
+      gen: h.ready.gen,
+      reason: "settings_changed",
+    },
+    { t: "topic_applied", id: "cam", revision: 1, settings: { ...full, maxHz: 5 } },
+  ]);
+  h.offer();
+  assertEquals(h.forwarded()[1].variant, "v2");
+  h.close();
 });

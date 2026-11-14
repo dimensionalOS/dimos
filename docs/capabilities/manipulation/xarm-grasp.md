@@ -1,7 +1,7 @@
 # xArm Grasping
 
 Two blueprints, differing only in which grasp provider they compose. Both carry
-the control coordinator, the wrist camera, scene registration and
+the control coordinator, the wrist camera, localize and
 pick-and-place; both run on the real arm by default and switch to the MuJoCo
 room scene with `--simulation`:
 
@@ -38,7 +38,7 @@ for test and type-check commands.
 
 What differs between the arm and the sim is decided at import time: the hardware
 adapter, the base pose, the camera (RealSense plus its mount edge, versus the
-MuJoCo wrist camera), the detector backends, and the home pose.
+MuJoCo wrist camera), and the home pose.
 
 The manipulation viewer is on viser at `http://127.0.0.1:8095`. To watch the
 MuJoCo scene itself, add `--headless false` with `MUJOCO_GL=glfw`. On a host
@@ -126,7 +126,7 @@ designated pick smoke target. The blueprint starts the arm at an elevated,
 collision-free top-down scan pose so all six visual meshes fit in the
 wrist-camera frame.
 
-OWL-ViT labels these synthetic renders unreliably, so match objects by position,
+Detectors label these synthetic renders unreliably, so match objects by position,
 not label. A visible point-cloud centroid can differ from the body origin in the
 table, particularly in height.
 
@@ -138,32 +138,32 @@ In a second terminal, connect to the running blueprint:
 dimos shell
 ```
 
-Then run this complete scan and obstacle-inspection sequence:
+`ManipulationLocalize` is `PerceptionLocalize` that keeps the objects it found, for
+picks. It embeds the wrist camera's feed into memory and finds objects in it. It
+verifies an object from two or more camera positions, so look at the table from a
+second arm pose before asking. Wait until `state()` reads ready:
 
 ```python skip
+import time
+
+from dimos.manipulation.sdk import Arm
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
 
-app.ManipulationSkills.go_init()
-scan = app.PickAndPlaceModule.scan_objects(XARM_GRASP_PROMPTS)
-print(scan)
-
-print(app.ObjectSceneRegistrationModule.get_detected_objects())
-print(app.ManipulationModule.refresh_obstacles())
-print(app.ManipulationModule.get_obstacles())
+localize = app.ManipulationLocalize
+print(localize.state())
+Arm.from_app(app).move_linear(dy=0.08)  # a second camera pose, 8 cm to the side
+time.sleep(2.0)  # let the second view reach memory
+print(localize.localize(",".join(XARM_GRASP_PROMPTS), -30.0, 30.0))
 ```
 
-CPU OWL-ViT inference takes about 11 seconds per prompt/frame on the validation
-host, so let a scan finish rather than issuing another concurrently.
-
-To pick, hand `pick_object` an `object_id` from that scan. Choose the target by
-where its point cloud actually is rather than by name:
+`scan` returns the same answer as data, one entry per object: `id`, `label`,
+`position`, `size`, `score`, `views` and `seen_s_ago`. To pick, hand `pick_object`
+an `id`, or a label only one object has. Choose the target by where it actually is
+rather than by name:
 
 ```python skip
-scene = app.ObjectSceneRegistrationModule
-
-for obj in scan.metadata["objects"]:
-    cloud = scene.get_object_pointcloud_by_object_id(obj["object_id"])
-    print(obj, cloud.points_f32().mean(axis=0) if cloud else None)
+for obj in localize.scan(XARM_GRASP_PROMPTS, window_s=30.0):
+    print(obj["id"], obj["label"], obj["position"])
 
 # the can sits at roughly (0.57, 0.00). Pick whichever id landed there
 pick = app.PickAndPlaceModule.pick_object("<object_id>")
@@ -180,7 +180,7 @@ candidate count. To inspect grasps without moving the arm, call `propose_grasps`
 on the provider directly:
 
 ```python skip
-cloud = scene.get_object_pointcloud_by_object_id("<object_id>")
+cloud = localize.get_pointcloud("<object_id>")
 candidates = app.GraspGenXModule.propose_grasps(cloud)   # HeuristicGraspModule in the base blueprint
 print(len(candidates.candidates), [c.score for c in candidates.candidates[:5]])
 ```

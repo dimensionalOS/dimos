@@ -52,6 +52,9 @@ class SqliteVectorStore(VectorStore):
 
     - ``SqliteVectorStore(conn=conn)`` — borrows an externally-managed connection.
     - ``SqliteVectorStore(path="file.db")`` — opens and owns its own connection.
+
+    Owned connections autocommit writes. For borrowed connections, the caller
+    (typically Backend) is responsible for commit and rollback.
     """
 
     config: SqliteVectorStoreConfig
@@ -80,6 +83,7 @@ class SqliteVectorStore(VectorStore):
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
             self.register_disposable(disposable)
+            self._conn.isolation_level = None
             self._lock = conn_lock(self._conn)
 
     def put(self, stream_name: str, key: int, embedding: Embedding) -> None:

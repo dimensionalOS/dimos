@@ -22,6 +22,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import TYPE_CHECKING
+import warnings
 
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
@@ -131,6 +132,47 @@ class TestSpatialFilter:
 
         result = stream.near((0, 0, 0), radius=10.0).to_list()
         assert [o.data for o in result] == ["has_pose"]
+
+    @pytest.mark.parametrize("pose", [None, (0, 0, 0)], ids=["missing-pose", "removed-pose"])
+    @pytest.mark.parametrize(
+        ("operation", "expected"),
+        [(lambda q: q.to_list(), []), (lambda q: q.count(), 0)],
+        ids=["to-list", "count"],
+    )
+    def test_near_warns_for_unposed_transform_output(self, session, pose, operation, expected):
+        stream = session.stream("spatial", float)
+        stream.append(1.0, ts=1.0, pose=pose)
+        query = stream.map(lambda obs: obs.with_pose(None)).near((0, 0, 0), 1.0)
+
+        with pytest.warns(UserWarning, match="Transformed stream 'spatial' has no attached poses"):
+            assert operation(query) == expected
+
+    def test_near_accepts_poses_added_by_transform(self, make_stream):
+        query = make_stream(2).map(lambda obs: obs.with_pose((0, 0, 0))).near((0, 0, 0), 1.0)
+
+        with warnings.catch_warnings(record=True) as emitted:
+            warnings.simplefilter("always")
+            assert [obs.data for obs in query] == [0, 10]
+        assert not emitted
+
+    def test_near_does_not_warn_for_empty_transform(self, make_stream):
+        query = make_stream(2).transform(FnTransformer(lambda obs: None)).near((0, 0, 0), 1.0)
+
+        with warnings.catch_warnings(record=True) as emitted:
+            warnings.simplefilter("always")
+            assert query.to_list() == []
+        assert not emitted
+
+    def test_near_does_not_warn_for_posed_transform_without_spatial_match(self, session):
+        stream = session.stream("spatial", float)
+        stream.append(1.0, ts=1.0)
+        stream.append(2.0, ts=2.0, pose=(10, 0, 0))
+        query = stream.map(lambda obs: obs).near((0, 0, 0), 1.0)
+
+        with warnings.catch_warnings(record=True) as emitted:
+            warnings.simplefilter("always")
+            assert query.to_list() == []
+        assert not emitted
 
 
 class TestTagsFilter:

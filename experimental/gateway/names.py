@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "galaxea_a1z": ("dimos.hardware.manipulators.galaxea_a1z.adapter:create_galaxea_a1z_adapter"),
-}
+from typing import Any
+
+from experimental.gateway.errors import ApiError
+
+
+def check_name(name: Any) -> str:
+    """Validate a catalog or launch name, including one read from a saved request."""
+    if (
+        not isinstance(name, str)
+        or not name
+        or name.startswith("-")
+        or any(char.isspace() for char in name)
+    ):
+        raise ApiError(400, f"bad name: {name}")
+    return name

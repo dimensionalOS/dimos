@@ -39,6 +39,7 @@ from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
 from experimental.gateway import constants, shared_config, store
 from experimental.gateway.errors import ApiError, StatusError
 from experimental.gateway.introspect import is_secret_name
+from experimental.gateway.names import check_name
 
 ModuleValues = dict[str, dict[str, Any]]
 
@@ -558,6 +559,7 @@ def check_idle() -> None:
 
 
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
+    check_name(blueprint)
     with _lock:
         check_idle()
         program = store.dimos_bin(dimos_dir)
@@ -609,6 +611,7 @@ def copy_of(entry: Any) -> dict[str, Any]:
 
 
 def start_copy(blueprint: str, copy: dict[str, Any]) -> dict[str, Any]:
+    check_name(blueprint)
     with _lock:
         check_idle()
         command = [str(arg) for arg in copy["command"]]
@@ -654,7 +657,7 @@ def stop() -> str:
         return f"Stopping {entry.run_id} (PID {entry.pid}) with SIGTERM...\n  {message}"
 
 
-def relaunch(dimos_dir: Path) -> dict[str, Any]:
+def relaunch(dimos_dir: Path, check_known: Callable[[str], None]) -> dict[str, Any]:
     """Stop the running blueprint and start it again: the gateway's own launch as it was POSTed, another one
     (`dimos run` in a terminal) as a copy of its process."""
     # one change: nothing else starts in between the stop and the start
@@ -669,12 +672,15 @@ def relaunch(dimos_dir: Path) -> dict[str, Any]:
             raise ApiError(
                 409, "nothing running, and the gateway hasn't launched anything to relaunch"
             )
+        blueprint = check_name(request.get("blueprint"))
+        # A copied process may belong to another checkout, outside this catalog.
+        if "copy" not in request:
+            check_known(blueprint)
         if entry is not None or (
             (launch := current_launch()) is not None and launch["phase"] == "starting"
         ):
             # a stuck or slow startup too: start()'s idle check would refuse while it lives
             stop()
-        blueprint = str(request["blueprint"])
         if "copy" in request:
             return start_copy(blueprint, request["copy"])
         return start(dimos_dir, blueprint, LaunchConfig.from_json(request))
