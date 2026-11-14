@@ -950,11 +950,14 @@ class MujocoSimModule(
                 )
 
             # Read on a fixed schedule, so a frame that comes late does not
-            # delay the ones after it. When a whole interval behind, restart.
+            # delay the ones after it. Past the next read's time, read again at
+            # once and count the schedule from now.
             now = time.monotonic()
-            next_read = next_read + interval if now - next_read < interval else now + interval
+            next_read += interval
             if next_read > now:
                 time.sleep(next_read - now)
+            else:
+                next_read = now
 
     def _publish_camera_info(self) -> None:
         with self._state_lock:
