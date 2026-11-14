@@ -10,6 +10,7 @@ mode=${1:?expected library or dev}
 case "$mode" in library|dev) ;; *) exit 2;; esac
 : "${INSTALL_TEST_ROOT:?set INSTALL_TEST_ROOT to an empty temporary directory}"
 mkdir -p "$INSTALL_TEST_ROOT/logs"
+INSTALL_TEST_ROOT=$(cd "$INSTALL_TEST_ROOT" && pwd)
 project="$INSTALL_TEST_ROOT/$mode"
 export GIT_LFS_SKIP_SMUDGE=1
 export UV_PYTHON_PREFERENCE=only-managed
@@ -28,3 +29,8 @@ cat "$repo/scripts/install.sh" | /bin/bash -s -- \
     --non-interactive --no-nix --no-sysctl --skip-tests --no-cuda \
     --mode "$mode" --project-dir "$project" \
     2>&1 | tee "$INSTALL_TEST_ROOT/logs/install.log"
+
+# Graph rendering needs the system Graphviz executable.
+# Its Python worker must import from the installed project, not the caller's checkout.
+cd "$project"
+.venv/bin/dimos graph unitree-go2 --output "$INSTALL_TEST_ROOT/logs/graph.svg"
