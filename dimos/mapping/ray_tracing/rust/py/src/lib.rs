@@ -275,7 +275,7 @@ impl VoxelRayMapper {
         let mapper = &mut self.mapper;
         let points = py.allow_threads(|| {
             for tile in &region.tiles {
-                mapper.seed_tile(tile, &part.live);
+                mapper.seed_tile(tile, &part.non_premap);
             }
             mapper.local_points(&region.cylinder.bounds())
         });

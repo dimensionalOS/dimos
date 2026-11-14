@@ -1784,10 +1784,10 @@ fn non_premap_seed_points_land_non_premap() {
     seed_all(&mut map, &[(1.5, 0.5, 0.5), (2.5, 0.5, 0.5)], &cfg);
 
     let points = [(2.5, 0.5, 0.5), (3.5, 0.5, 0.5), (4.5, 0.5, 0.5)];
-    let live = non_premap_voxels(&points, &[false, false, true], cfg.voxel_size);
+    let non_premap = non_premap_voxels(&points, &[false, false, true], cfg.voxel_size);
     let region_m = CHUNK_EDGE as f32 * cfg.voxel_size;
     for tile in partition_seed(&points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m).tiles() {
-        seed_tile(&mut map, tile, &live, &cfg);
+        seed_tile(&mut map, tile, &non_premap, &cfg);
     }
 
     assert!(
