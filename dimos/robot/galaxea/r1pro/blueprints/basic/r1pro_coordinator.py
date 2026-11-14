@@ -180,21 +180,25 @@ _WRIST_V4L2 = (
 
 
 def _wrist_cameras() -> list[Blueprint]:
-    """Both wrists' colour as 848x480 JPEG at 30 fps, encoded on the CPU.
+    """Both wrists' colour as 640x480 JPEG at 30 fps, encoded by the Jetson.
 
-    The CPU encoder costs about 9% of one core per wrist. The Jetson encoder
-    cannot take these frames: its buffers have 1792-byte rows, the camera writes
-    1696-byte rows (848 px), and the image comes out scrambled with no error.
-    The rate must be set: a D405 defaults to 90 fps, at which its colour stream
-    on this controller never delivers a frame.
+    The Jetson encoder costs about 4% of one core per wrist. It needs 640 px
+    rows: the camera writes 1280-byte rows, the same as the encoder's buffers;
+    at 848 px (1696-byte rows into 1792-byte buffer rows) the image comes out
+    scrambled with no error. 640x480 at 30 fps is also the largest size at
+    which both wrists can send colour and depth together through their shared
+    USB controller. The rate must be set: a D405 defaults to 90 fps, at which
+    its colour stream on this controller never delivers a frame.
     """
     return [
         V4L2Camera.blueprint(
             instance_name=f"wrist_{side}",
             device=_WRIST_V4L2.format(port=port),
             frame_id=f"{side}_d405_link",
+            width=640,
+            height=480,
             fps=30.0,
-            hardware=False,
+            hardware=True,
         )
         for side, port in (("left", 2), ("right", 1))
     ]

@@ -18,8 +18,8 @@ needed. Pick a vendor profile instead with
 `--r1proconnection.vendor-profile ATCStandard/R1PROVRTeleop`.
 
 **Wrist cameras.** dimos reads both wrist D405s' colour straight off V4L2
-(`r1pro_control`), 848x480 JPEG on `wrist_{left,right}_color`. Galaxea's wrist
-driver opens colour and depth on both at 1280x720, more than their shared USB
+(`r1pro_control`), 640x480 JPEG at 30 fps on `wrist_{left,right}_color`. Galaxea's
+wrist driver opens colour and depth on both at 1280x720, more than their shared USB
 controller carries, so every stream stalls. If a vendor profile or a reboot started
 it (`start_realsense_camera_r1pro.sh` in the `hdas` tmux session), stop it with Ctrl-C
 in that pane; until then the wrist cameras log and retry.
