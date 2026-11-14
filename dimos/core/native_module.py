@@ -87,12 +87,6 @@ else:
 
 logger = setup_logger()
 
-# Sent beside the config, like the topics, so it reaches every native module
-# whatever its own config declares and no module needs a `base_fields` opt-in to
-# be namespaced. The native side hands it to `Builder::frame_prefix`, and to the
-# config of a module that declares the field for frames it names outside tf.
-FRAME_PREFIX_FIELD = "frame_id_prefix"
-
 
 class LogFormat(enum.Enum):
     TEXT = "text"
@@ -336,7 +330,7 @@ class NativeModule(Module):
             "session": self._session().to_wire(),
         }
         if self.config.frame_id_prefix:
-            blob[FRAME_PREFIX_FIELD] = self.config.frame_id_prefix
+            blob["frame_id_prefix"] = self.config.frame_id_prefix
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos
