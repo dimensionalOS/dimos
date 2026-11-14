@@ -49,6 +49,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
+from dimos.robot.manipulators.dual_openyam import _gl  # noqa: F401  (before mujoco is imported)
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM, DUAL_OPENYAM_SIDES
 from dimos.robot.manipulators.dual_openyam.sim_rig import DualOpenYamSimRig, SimCameraFrame
 from dimos.robot.manipulators.dual_openyam.sim_scene import (
