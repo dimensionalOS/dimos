@@ -1,0 +1,159 @@
+root = "Mission"
+resources = ["base"]
+
+[constants]
+cycles = 5
+back_m = 3.0
+base_height_m = 0.48
+pause_s = 5.0
+settle_s = 2.0
+rest_s = 10.0
+retry_s = 1.0
+PREEMPTED = 2
+SUCCEEDED = 3
+ABORTED = 4
+
+[vars]
+"cycle.count" = 0
+"spot.predock" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
+"spot.position_a" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
+
+[[signal]]
+name = "nav_status"
+stream = "MLSPlannerNative.nav_status"
+
+[[signal]]
+name = "odom"
+stream = "M20Connection.odom"
+
+[[event]]
+name = "arrived"
+when = "nav_status.status == SUCCEEDED && nav_status.goal_id.stamp == nav.goal"
+
+[[event]]
+name = "gave_up"
+when = "(nav_status.status == ABORTED || nav_status.status == PREEMPTED) && nav_status.goal_id.stamp == nav.goal"
+
+[[activity]]
+name = "navigate"
+start = "MLSPlannerNative.go_to"
+cancel = "MLSPlannerNative.stop_navigation"
+uses = ["base"]
+
+[[activity]]
+name = "dock"
+start = "M20Connection.dock"
+
+[[activity]]
+name = "undock"
+start = "M20Connection.undock"
+
+[[node]]
+name = "Mission"
+children = ["Undocking", "GoingAway", "AwayRetry", "Pausing", "Returning", "ReturnRetry", "Settling", "Docking", "Resting", "NextCycle"]
+initial = "Undocking"
+outcomes = ["done", "failed"]
+
+[[node]]
+name = "Undocking"
+activity = "undock"
+
+# The robot backs off the dock facing it, so the spot it stops on is the predock spot.
+# Position A is back_m behind that along the robot's heading, and both sit on the floor.
+[[node.transition]]
+trigger = "succeeded"
+goto = "GoingAway"
+
+[node.transition.set]
+"spot.predock" = "{'header': odom.header, 'pose': {'position': {'x': odom.pose.position.x, 'y': odom.pose.position.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': odom.pose.orientation}}"
+"spot.position_a" = "{'header': odom.header, 'pose': {'position': {'x': odom.pose.position.x - back_m * (1.0 - 2.0 * (odom.pose.orientation.y * odom.pose.orientation.y + odom.pose.orientation.z * odom.pose.orientation.z)), 'y': odom.pose.position.y - back_m * 2.0 * (odom.pose.orientation.x * odom.pose.orientation.y + odom.pose.orientation.z * odom.pose.orientation.w), 'z': odom.pose.position.z - base_height_m}, 'orientation': odom.pose.orientation}}"
+
+[[node]]
+name = "GoingAway"
+activity = "navigate"
+args = { pose = "spot.position_a" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "Pausing"
+
+[[node.transition]]
+trigger = "gave_up"
+goto = "failed"
+
+[[node.transition]]
+trigger = "failed"
+goto = "AwayRetry"
+
+[[node]]
+name = "AwayRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "GoingAway"
+
+[[node]]
+name = "Pausing"
+
+[[node.transition]]
+after = "pause_s"
+goto = "Returning"
+
+[[node]]
+name = "Returning"
+activity = "navigate"
+args = { pose = "spot.predock" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "Settling"
+
+[[node.transition]]
+trigger = "gave_up"
+goto = "failed"
+
+[[node.transition]]
+trigger = "failed"
+goto = "ReturnRetry"
+
+[[node]]
+name = "ReturnRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "Returning"
+
+[[node]]
+name = "Settling"
+
+[[node.transition]]
+after = "settle_s"
+goto = "Docking"
+
+[[node]]
+name = "Docking"
+activity = "dock"
+
+[[node.transition]]
+trigger = "succeeded"
+goto = "Resting"
+set = { "cycle.count" = "cycle.count + 1" }
+
+[[node]]
+name = "Resting"
+
+[[node.transition]]
+after = "rest_s"
+goto = "NextCycle"
+
+[[node]]
+name = "NextCycle"
+
+[[node.transition]]
+if = "cycle.count < cycles"
+goto = "Undocking"
+
+[[node.transition]]
+goto = "done"
