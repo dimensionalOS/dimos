@@ -40,6 +40,7 @@ from dimos.protocol.encode.cbor import (
     TAG_DIMOSMSG,
     TAG_ENUM,
     TAG_GENERIC_ALIAS,
+    TAG_NAMEDTUPLE,
     TAG_REGISTERED,
     TAG_UNION,
     CborDecodeError,
@@ -56,6 +57,11 @@ T = TypeVar("T")
 class Point(NamedTuple):
     x: int
     y: str
+
+
+class Versioned(NamedTuple):
+    name: str
+    added: str = "default"
 
 
 class Color(enum.Enum):
@@ -529,6 +535,17 @@ def test_registered_codec_payload_cannot_name_its_own_decoder() -> None:
 def test_type_form_payloads_must_hold_types(payload: Any) -> None:
     with pytest.raises(CborDecodeError):
         decode(dumps(payload))
+
+
+def test_namedtuple_from_an_older_sender_takes_defaults_for_added_fields() -> None:
+    older = dumps(CBORTag(TAG_NAMEDTUPLE, [f"{__name__}:Versioned", ["a"]]))
+
+    assert decode(older) == Versioned("a", "default")
+
+
+def test_namedtuple_missing_a_required_field_is_rejected() -> None:
+    with pytest.raises(CborDecodeError, match="Expected 2 arguments, got 1"):
+        decode(dumps(CBORTag(TAG_NAMEDTUPLE, [f"{__name__}:Point", [1]])))
 
 
 def test_missing_dataclass_field_names_class_and_field() -> None:
