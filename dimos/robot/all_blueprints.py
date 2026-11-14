@@ -103,6 +103,7 @@ all_blueprints = {
     "learning-collect-webxr-xarm7": "dimos.imitation.collection.blueprint:learning_collect_webxr_xarm7",
     "lite6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:lite6_planner_coordinator",
     "m20": "dimos.robot.deeprobotics.m20.blueprints.m20:m20",
+    "m20-dock-cycle": "dimos.robot.deeprobotics.m20.blueprints.m20_dock_cycle:m20_dock_cycle",
     "m20-sim-nav": "dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav:m20_sim_nav",
     "m20-sim-nav-episode": "dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav_episode:m20_sim_nav_episode",
     "makermods-metal-connection-control": "dimos.robot.manipulators.makermods_metal.blueprints.connection:makermods_metal_connection_control",
