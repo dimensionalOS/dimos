@@ -1,0 +1,308 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""The Dual OpenYAM in MuJoCo, behind the ports of its Damiao connection and its cameras.
+
+The simulation lives in :mod:`dimos.robot.manipulators.dual_openyam.sim_rig`.
+This module only translates streams into targets, publishes readings at a
+fixed rate, and publishes each rendered frame on the port and under the frame
+names the rig's RealSense modules use.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+import threading
+import time
+from typing import Any, ClassVar
+
+from pydantic import Field, model_validator
+from reactivex.disposable import Disposable
+from typing_extensions import Self
+
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule, Values
+from dimos.control.contract.convert import joint_state_to_values
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
+from dimos.core.core import rpc
+from dimos.core.stream import In, Out
+from dimos.hardware.sensors.camera.spec import OPTICAL_ROTATION
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.manipulators.damiao.robot import DamiaoRobot
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM, DUAL_OPENYAM_SIDES
+from dimos.robot.manipulators.dual_openyam.sim_rig import DualOpenYamSimRig, SimCameraFrame
+from dimos.robot.manipulators.dual_openyam.sim_scene import (
+    CAMERA_FOVY,
+    OVERHEAD_CAMERA,
+    WRIST_CAMERAS,
+)
+
+# The frame every camera pose is published in: the planner's world frame, where
+# the workcell's base link sits at the origin.
+_WORLD_FRAME = "world"
+# A camera_link (x forward, y left, z up) as seen from its optical frame.
+_LINK_IN_OPTICAL = OPTICAL_ROTATION.to_rotation_matrix().T
+
+
+def _wrist_frame_prefix(side: str) -> str:
+    """The frame namespace the rig's wrist RealSense of that side publishes in."""
+    return f"{side}_wrist"
+
+
+def _frame(prefix: str | None, name: str) -> str:
+    return f"{prefix}/{name}" if prefix else name
+
+
+def _optical_frame(prefix: str | None) -> str:
+    """The frame a camera's images are stamped with; depth is aligned to colour."""
+    return _frame(prefix, "camera_color_optical_frame")
+
+
+def _camera_transforms(
+    prefix: str | None, frame: SimCameraFrame, imagers: tuple[str, ...]
+) -> list[Transform]:
+    """A RealSense's tf tree for one frame: world to camera_link, then each imager."""
+    link = _frame(prefix, "camera_link")
+    transforms = [
+        Transform(
+            translation=Vector3(*frame.position),
+            rotation=Quaternion.from_rotation_matrix(frame.rotation @ _LINK_IN_OPTICAL),
+            frame_id=_WORLD_FRAME,
+            child_frame_id=link,
+            ts=frame.stamp,
+        )
+    ]
+    for imager in imagers:
+        body = _frame(prefix, f"camera_{imager}_frame")
+        transforms.append(Transform(frame_id=link, child_frame_id=body, ts=frame.stamp))
+        transforms.append(
+            Transform(
+                rotation=OPTICAL_ROTATION,
+                frame_id=body,
+                child_frame_id=_frame(prefix, f"camera_{imager}_optical_frame"),
+                ts=frame.stamp,
+            )
+        )
+    return transforms
+
+
+class DualOpenYamSimConnectionConfig(ConnectionConfig):
+    """Settings of the simulated Dual OpenYAM.
+
+    Attributes:
+        state_rate_hz: How often joint readings are published, in Hz.
+        headless: Run without MuJoCo's viewer window.
+        cameras: Render and publish the three cameras; needs an OpenGL context.
+        width: Width of every camera image, in pixels.
+        height: Height of every camera image, in pixels.
+        fps: How often the cameras are rendered, in frames per second.
+        camera_info_fps: How often each camera's intrinsics are published, in Hz.
+    """
+
+    source: str = "dual_openyam"
+    state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
+    headless: bool = True
+    cameras: bool = True
+    width: int = Field(default=640, gt=0)
+    height: int = Field(default=480, gt=0)
+    fps: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    camera_info_fps: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _set_model(self) -> Self:
+        if any(interfaces != (Interface.POSITION,) for interfaces in self.joint_commands.values()):
+            raise ValueError("the simulated Dual OpenYAM accepts position commands only")
+        if self.model is None:
+            self.model = DUAL_OPENYAM.model
+        return self
+
+
+class DualOpenYamSimConnection(ConnectionModule):
+    """Both OpenYAM arms and jaws in MuJoCo, where ``DualOpenYamConnection`` drives the robot.
+
+    Joint commands and readings use that connection's ports, names and units.
+    The overhead D405 publishes on ``color_image``, ``depth_image``,
+    ``camera_info`` and ``depth_camera_info``, and each wrist D405 on
+    ``{side}_wrist_color_image`` and ``{side}_wrist_camera_info``. Every camera's
+    frames are on ``tf`` under the world frame, named as a RealSense names them.
+    """
+
+    #: The robot this connection simulates: joints, gains, grippers and models.
+    robot: ClassVar[DamiaoRobot] = DUAL_OPENYAM
+    config: DualOpenYamSimConnectionConfig
+    position_command: In[JointState]
+    joint_state: Out[JointState]
+    color_image: Out[Image]
+    depth_image: Out[Image]
+    camera_info: Out[CameraInfo]
+    depth_camera_info: Out[CameraInfo]
+    left_wrist_color_image: Out[Image]
+    left_wrist_camera_info: Out[CameraInfo]
+    right_wrist_color_image: Out[Image]
+    right_wrist_camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault(
+            "joint_commands", {name: (Interface.POSITION,) for name in self.robot.joint_names}
+        )
+        super().__init__(**kwargs)
+        config = self.config
+        self._rig = DualOpenYamSimRig(
+            self.robot,
+            headless=config.headless,
+            camera_size=(config.width, config.height) if config.cameras else None,
+            camera_fps=config.fps,
+            on_frames=self._publish_frames,
+        )
+        self._wrist_ports = {
+            "left": (self.left_wrist_color_image, self.left_wrist_camera_info),
+            "right": (self.right_wrist_color_image, self.right_wrist_camera_info),
+        }
+        self._state_frame = ""
+        self._stop_reading = threading.Event()
+        self._reader: threading.Thread | None = None
+        # When the intrinsics are next due; only the rendering thread reads it.
+        self._camera_info_due = 0.0
+
+    def connect(self) -> None:
+        """Check the deployed model against the robot's joints, then start the rig."""
+        assert self.config.model is not None
+        joints = {joint.name for joint in movable_joints(self.config.model)}
+        if joints != set(self.robot.joint_names):
+            raise ValueError("connection model joints must match the robot's joints")
+        self._state_frame = self.frame(self.config.model.load().root_link)
+        self._rig.connect()
+
+    @rpc
+    def start(self) -> None:
+        try:
+            super().start()
+            self.register_disposable(Disposable(self.position_command.subscribe(self._on_position)))
+            self._reader = threading.Thread(
+                target=self._read_loop, daemon=True, name=f"{self.config.source}-read"
+            )
+            self._reader.start()
+        except Exception:
+            self.stop()
+            raise
+
+    @rpc
+    def stop(self) -> None:
+        self._stop_reading.set()
+        if (
+            self._reader is not None
+            and self._reader.is_alive()
+            and self._reader is not threading.current_thread()
+        ):
+            self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        try:
+            # The rig goes first: its rendering thread publishes on these ports.
+            self._rig.disconnect()
+        finally:
+            super().stop()
+
+    def _on_position(self, message: JointState) -> None:
+        try:
+            values = joint_state_to_values(message, (Interface.POSITION,))
+        except ValueError as error:
+            self._report(str(error), rejection=True)
+            return
+        self.command(values)
+
+    def write(self, values: Values) -> None:
+        prefix = f"{self.config.source}/"
+        self._rig.command(
+            {
+                key.removeprefix(prefix).removesuffix("/position"): value
+                for key, value in values.items()
+            }
+        )
+
+    def halt(self) -> None:
+        self._rig.hold()
+
+    def _read_loop(self) -> None:
+        period = 1.0 / self.config.state_rate_hz
+        names = [f"{self.config.source}/{name}" for name in self.robot.joint_names]
+        while not self._stop_reading.is_set():
+            started = time.monotonic()
+            try:
+                reading = self._rig.read()
+            except RuntimeError as error:
+                # Without readings the coordinator stops commanding the robot.
+                self._report(f"feedback failed: {error}")
+            else:
+                self.joint_state.publish(
+                    JointState(
+                        ts=time.time(),
+                        frame_id=self._state_frame,
+                        name=names,
+                        position=reading.position,
+                        velocity=reading.velocity,
+                        effort=reading.effort,
+                    )
+                )
+            self._stop_reading.wait(max(0.0, period - (time.monotonic() - started)))
+
+    def _publish_frames(self, frames: Mapping[str, SimCameraFrame]) -> None:
+        """Runs on the rig's rendering thread with every camera's new frame."""
+        now = time.monotonic()
+        with_info = now >= self._camera_info_due
+        if with_info:
+            self._camera_info_due = now + 1.0 / self.config.camera_info_fps
+
+        overhead = frames[OVERHEAD_CAMERA]
+        optical = _optical_frame(None)
+        self.color_image.publish(
+            Image(data=overhead.color, format=ImageFormat.RGB, frame_id=optical, ts=overhead.stamp)
+        )
+        assert overhead.depth is not None, "the overhead camera is RGB-D"
+        self.depth_image.publish(
+            Image(
+                data=overhead.depth, format=ImageFormat.DEPTH, frame_id=optical, ts=overhead.stamp
+            )
+        )
+        if with_info:
+            info = self._camera_info(optical, overhead.stamp)
+            self.camera_info.publish(info)
+            self.depth_camera_info.publish(info)
+        transforms = _camera_transforms(None, overhead, ("color", "depth"))
+
+        for side in DUAL_OPENYAM_SIDES:
+            frame = frames[WRIST_CAMERAS[side]]
+            prefix = _wrist_frame_prefix(side)
+            image_port, info_port = self._wrist_ports[side]
+            optical = _optical_frame(prefix)
+            image_port.publish(
+                Image(data=frame.color, format=ImageFormat.RGB, frame_id=optical, ts=frame.stamp)
+            )
+            if with_info:
+                info_port.publish(self._camera_info(optical, frame.stamp))
+            transforms.extend(_camera_transforms(prefix, frame, ("color",)))
+
+        self.tf.publish(TFMessage(*transforms))
+
+    def _camera_info(self, frame_id: str, stamp: float) -> CameraInfo:
+        """Pinhole intrinsics of a rendered image: square pixels, no distortion."""
+        return CameraInfo.from_fov(
+            CAMERA_FOVY, self.config.width, self.config.height, frame_id=frame_id
+        ).with_ts(stamp)
