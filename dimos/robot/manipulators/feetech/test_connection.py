@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.manipulators.feetech.connection import GUARDED_JOINT_FRAME_ID, FeetechConnection
 from dimos.robot.manipulators.feetech.robot import (
     FeetechBus,
@@ -73,6 +74,26 @@ def test_the_filter_moves_each_target_a_fraction_toward_the_reading(mocker: Any)
         connection.stop()
 
     assert 0.0 < joints.call_args.args[0].position[0] < 0.5
+
+
+def test_follow_off_holds_the_follower_until_follow_is_on_again(mocker: Any) -> None:
+    connection = _Leaders(mock_positions={})
+    joints = mocker.patch.object(connection.joint_state, "publish")
+    try:
+        connection._on_follow(Bool(data=False))
+        connection.publish_reading({"right": {"joint_1": 0.5}})
+        sent_while_off = [call.args[0] for call in joints.call_args_list]
+        connection._on_follow(Bool(data=True))
+        connection.publish_reading({"right": {"joint_1": 0.5}})
+    finally:
+        connection.stop()
+
+    # One hold for every joint (names, zero speed, no positions), then nothing.
+    [hold] = sent_while_off
+    assert hold.name == ["arm/left_joint1", "arm/left_joint2", "arm/right_joint1"]
+    assert hold.position == []
+    assert hold.velocity == [0.0, 0.0, 0.0]
+    assert joints.call_args.args[0].position == pytest.approx([0.5])
 
 
 def test_a_joint_whose_range_crosses_half_a_turn_follows_the_leader_across_it() -> None:
