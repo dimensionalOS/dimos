@@ -76,7 +76,7 @@ pub(crate) fn init_tracing() {
 
 // Only absorbs jitter between the transport and the handler. A full buffer
 // blocks the transport so congestion reaches the publisher's QoS.
-pub(crate) const INPUT_BUFFER_LEN: usize = 8;
+const INPUT_BUFFER_LEN: usize = 8;
 const PUBLISH_CHANNEL_CAPACITY: usize = 32;
 
 // Each input() call produces a TypedRoute that decodes its message type
@@ -461,34 +461,20 @@ impl Builder {
     /// The graph fills in the background as `tf` messages arrive. Repeated calls
     /// share one graph.
     pub fn tf(&mut self) -> crate::tf::Tf {
-        self.tf_port(false)
-    }
-
-    /// The same handle, but one whose [`Tf::recv`](crate::tf::Tf::recv) yields
-    /// each incoming message. `#[tf(handler = ...)]` calls this.
-    pub fn tf_with_handler(&mut self) -> crate::tf::Tf {
-        self.tf_port(true)
-    }
-
-    fn tf_port(&mut self, with_handler: bool) -> crate::tf::Tf {
-        if self.tf.is_none() {
-            let topic = self.topic_for("tf");
-            let sender = self.add_publisher(&topic);
-            let (tf, route) = crate::tf::tf_subscription(
-                topic.clone(),
-                crate::tf::DEFAULT_TF_WINDOW_SECS,
-                sender,
-                self.frame_prefix.clone(),
-            );
-            self.routes.entry(topic).or_default().push(route);
-            self.tf = Some(tf);
+        if let Some(tf) = &self.tf {
+            return tf.clone();
         }
-        // On the shared handle, so port order cannot cost a handler its messages.
-        let tf = self.tf.as_mut().expect("the handle was just built");
-        if with_handler {
-            tf.enable_handler();
-        }
-        tf.clone()
+        let topic = self.topic_for("tf");
+        let sender = self.add_publisher(&topic);
+        let (tf, route) = crate::tf::tf_subscription(
+            topic.clone(),
+            crate::tf::DEFAULT_TF_WINDOW_SECS,
+            sender,
+            self.frame_prefix.clone(),
+        );
+        self.routes.entry(topic).or_default().push(route);
+        self.tf = Some(tf.clone());
+        tf
     }
 }
 
@@ -1216,31 +1202,6 @@ mod tests {
         builder.tf();
         assert_eq!(builder.outputs.len(), 1);
         assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
-    }
-
-    // This used to hand back the plain handle, whose recv() ended the loop.
-    #[tokio::test]
-    async fn a_handler_asked_for_after_a_plain_tf_port_still_receives() {
-        let mut builder = builder_with_topics(&[("tf", "/tf")]);
-        let plain = builder.tf();
-        let handled = builder.tf_with_handler();
-        assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
-
-        builder.routes["/tf"][0].dispatch(
-            &lcm_msgs::tf2_msgs::TFMessage {
-                transforms: vec![crate::tf::to_stamped(&crate::tf::Transform::new(
-                    "a",
-                    "b",
-                    1.0,
-                    nalgebra::Isometry3::identity(),
-                ))],
-            }
-            .encode(),
-        );
-
-        let got = handled.recv().await.expect("the handler receives it");
-        assert_eq!((got[0].parent.as_str(), got[0].child.as_str()), ("a", "b"));
-        assert!(plain.get_latest("a", "b").is_some());
     }
 
     // recv/publish concurrency
