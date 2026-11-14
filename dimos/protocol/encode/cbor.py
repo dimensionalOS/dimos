@@ -358,7 +358,11 @@ def _decode_namedtuple(value: Any, _: bool) -> Any:
     cls = _resolve_class(ref, tuple)
     if not hasattr(cls, "_fields"):
         raise CborDecodeError(f"{ref!r} is not a NamedTuple")
-    return cls._make(items)
+    # A sender on an older version leaves out the fields added since. They are
+    # the trailing ones and take their defaults, as the constructor would give.
+    defaults = cls._field_defaults
+    added = [defaults[name] for name in cls._fields[len(items) :] if name in defaults]
+    return cls._make([*items, *added])
 
 
 def _decode_set(value: Any, _: bool) -> Any:

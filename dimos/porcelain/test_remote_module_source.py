@@ -22,10 +22,11 @@ import threading
 from typing import Protocol
 import uuid
 
+from cbor2 import CBORTag, dumps
 import pytest
 from reactivex.disposable import Disposable
 
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 from dimos.core.core import rpc
 from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import GlobalConfig
@@ -36,6 +37,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import RemoteModuleProxy
 from dimos.porcelain.remote_module_source import RemoteModuleSource
+from dimos.protocol.encode.cbor import TAG_NAMEDTUPLE, decode
 from dimos.spec.utils import Spec
 
 
@@ -106,6 +108,27 @@ def test_connect_uses_default_timeout_without_registry_precondition(mocker):
         source.assert_called_once_with(timeout=5.0)
     finally:
         app.stop()
+
+
+def test_older_daemon_descriptors_resolve_to_public_rpc_names(mocker):
+    """An older daemon sends four descriptor values and serves a module at its public name."""
+    module_path = f"{NamedRemoteModule.__module__}.{NamedRemoteModule.__qualname__}"
+    older = dumps(
+        CBORTag(
+            TAG_NAMEDTUPLE,
+            [
+                f"{ModuleDescriptor.__module__}:{ModuleDescriptor.__qualname__}",
+                ["NamedRemoteModule", module_path, ["ping_name"], "robot0/named"],
+            ],
+        )
+    )
+    connect = mocker.patch("dimos.porcelain.remote_module_source.CoordinatorRPC.connect")
+    connect.return_value.call.return_value = [decode(older)]
+    source = RemoteModuleSource()
+
+    module = source.get_module("robot0/named")
+
+    assert module.rpc_address == "robot0/named"
 
 
 def test_connect_skill_call(running_app, client):
