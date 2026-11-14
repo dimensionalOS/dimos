@@ -18,8 +18,7 @@ The motor layer lives in :mod:`dimos.robot.manipulators.feetech.arm` and the
 robot's data in :mod:`dimos.robot.manipulators.feetech.robot`. Each reading
 is published as targets for the follower joints the motors drive, kept inside
 their limits, and each trigger as its jaw's opening. The motors are only
-read: a Feetech connection takes no commands. While ``follow`` is off, no
-targets are sent and the follower holds still.
+read: a Feetech connection takes no commands.
 """
 
 from __future__ import annotations
@@ -33,16 +32,14 @@ from typing import Any, ClassVar
 import uuid
 
 from pydantic import Field, model_validator
-from reactivex.disposable import Disposable
 from typing_extensions import Self
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule, Values
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.feetech.arm import FeetechArm, MockFeetechArm
 from dimos.robot.manipulators.feetech.calibration import (
@@ -100,15 +97,10 @@ class FeetechConnection(ConnectionModule):
     # Jaw openings, 1 = open, for the follower coordinator's gripper tasks.
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
-    # Off stops the joint targets so the leaders can be moved while the
-    # follower holds; on (the start state) sends them again.
-    follow: In[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._arm: FeetechArm | MockFeetechArm | None = None
-        self._following = True
-        self._follow_lock = threading.Lock()
         self._last_read_error: str | None = None
         self._filtered: dict[str, float] = {}
         self._stop_reading = threading.Event()
@@ -151,7 +143,6 @@ class FeetechConnection(ConnectionModule):
             self.connect()
             with self._hardware_lock:
                 self._connected = True
-            self.register_disposable(Disposable(self.follow.subscribe(self._on_follow)))
             self._reader = threading.Thread(
                 target=self._read_loop, daemon=True, name=f"{self.config.source}-read"
             )
@@ -190,16 +181,6 @@ class FeetechConnection(ConnectionModule):
             readings: Motor angles in radians, by bus name, then motor name,
                 as :meth:`FeetechArm.read` returns them.
         """
-        with self._follow_lock:
-            if self._following:
-                self._publish_targets(readings)
-        outputs = {"left": self.left_gripper_command, "right": self.right_gripper_command}
-        for bus in self.robot.buses:
-            if bus.trigger is not None and bus.name in readings:
-                opening = bus.trigger.opening(readings[bus.name][bus.trigger.name])
-                outputs[bus.name].publish(Float32(data=opening))
-
-    def _publish_targets(self, readings: dict[str, dict[str, float]]) -> None:
         targets = {
             motor.joint: motor.target(readings[bus.name][motor.name])
             for bus in self.robot.buses
@@ -226,31 +207,11 @@ class FeetechConnection(ConnectionModule):
                 position=list(targets.values()),
             )
         )
-
-    def _on_follow(self, msg: Bool) -> None:
-        with self._follow_lock:
-            if msg.data == self._following:
-                return
-            self._following = msg.data
-            # A resumed stream starts at the leaders' reading, not the old pose.
-            self._filtered.clear()
-            if not msg.data:
-                # A jog with no positions and zero speed tells the trajectory
-                # task to hold every joint now, not 0.4 s after the last target.
-                joints = [
-                    f"{self.config.source}/{motor.joint}"
-                    for bus in self.robot.buses
-                    for motor in bus.motors
-                ]
-                self.joint_state.publish(
-                    JointState(
-                        ts=time.time(),
-                        frame_id=GUARDED_JOINT_FRAME_ID,
-                        name=joints,
-                        velocity=[0.0] * len(joints),
-                    )
-                )
-        logger.info("Leader targets %s", "resumed" if msg.data else "paused")
+        outputs = {"left": self.left_gripper_command, "right": self.right_gripper_command}
+        for bus in self.robot.buses:
+            if bus.trigger is not None and bus.name in readings:
+                opening = bus.trigger.opening(readings[bus.name][bus.trigger.name])
+                outputs[bus.name].publish(Float32(data=opening))
 
     def _read_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz
