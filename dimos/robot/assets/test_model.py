@@ -21,6 +21,7 @@ from pytest_mock import MockerFixture
 
 from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.assets.model as robot_model
+from dimos.robot.assets.model import UsdModel
 from dimos.utils.data import LfsPath
 
 
@@ -794,6 +795,178 @@ def test_joint_velocity_limits_replace_only_requested_limits(tmp_path: Path) -> 
         ).with_joint_velocity_limits({"slide": 0.3}).load()
 
 
+_URDF_WITH_FILES = """<?xml version="1.0"?>
+<robot name="box_robot">
+  <link name="base"/>
+  <link name="arm">
+    <visual>
+      <geometry><mesh filename="meshes/arm.stl"/></geometry>
+      <material name="skin"><texture filename="textures/skin.png"/></material>
+    </visual>
+  </link>
+  <joint name="shoulder" type="fixed">
+    <parent link="base"/><child link="arm"/>
+  </joint>
+</robot>
+"""
+
+_SCENE_USDA = """#usda 1.0
+(
+    defaultPrim = "room"
+)
+
+def Xform "room" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+)
+{
+}
+"""
+
+
+def _urdf(tmp_path: Path) -> robot_model.RobotModel:
+    (tmp_path / "meshes").mkdir()
+    (tmp_path / "meshes" / "arm.stl").write_text("mesh")
+    (tmp_path / "textures").mkdir()
+    (tmp_path / "textures" / "skin.png").write_text("texture")
+    source = tmp_path / "robot.urdf"
+    source.write_text(_URDF_WITH_FILES)
+    return robot_model.RobotModel.from_file(source)
+
+
+def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
+    model = _urdf(tmp_path).to_usd()
+
+    assert [joint.name for joint in model.joints] == ["shoulder"]
+    assert model.root_link == "base"
+    assert model.source_path == tmp_path / "robot.urdf"
+    assert model.referenced_files() == {
+        str(tmp_path / "meshes/arm.stl"),
+        str(tmp_path / "textures/skin.png"),
+    }
+
+
+def test_to_usd_does_not_convert_until_the_layer_is_asked_for(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    import dimos.robot.assets.usd_utils.from_urdf as conversion
+
+    convert = mocker.patch.object(conversion, "urdf_to_usd", return_value="#usda 1.0\n")
+
+    model = _urdf(tmp_path).to_usd()
+    assert model.joints
+    assert model.referenced_files()
+    convert.assert_not_called()
+
+    assert model.usd == "#usda 1.0\n"
+    convert.assert_called_once()
+
+
+def test_a_usd_model_from_a_file_is_read_lazily(tmp_path: Path) -> None:
+    scene = tmp_path / "room.usda"
+    model = robot_model.UsdModel.from_file(scene)
+
+    scene.write_text(_SCENE_USDA)
+
+    assert model.usd == _SCENE_USDA
+
+
+def test_a_usd_model_from_a_file_names_its_root_link(tmp_path: Path) -> None:
+    pytest.importorskip("pxr")
+    scene = tmp_path / "room.usda"
+    scene.write_text(_SCENE_USDA)
+
+    assert robot_model.UsdModel.from_file(scene).root_link == "room"
+
+
+_JOINTED_USDA = """#usda 1.0
+(
+    defaultPrim = "arm"
+)
+
+def Xform "arm"
+{
+    def Xform "base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Xform "forearm" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            double3 xformOp:translate = (0, 0, 0.5)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def PhysicsRevoluteJoint "shoulder"
+        {
+            uniform token physics:axis = "Z"
+            float physics:lowerLimit = -90
+            float physics:upperLimit = 90
+            rel physics:body0 = </arm/base>
+            rel physics:body1 = </arm/base/forearm>
+            point3f physics:localPos0 = (0, 0, 0.5)
+            point3f physics:localPos1 = (0, 0, 0)
+        }
+    }
+}
+"""
+
+
+def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
+    pytest.importorskip("pxr")
+    source = tmp_path / "arm.usda"
+    source.write_text(_JOINTED_USDA)
+    model = robot_model.UsdModel.from_file(source)
+
+    (joint,) = model.joints
+    assert joint.name == "shoulder"
+    assert joint.type == "revolute"
+    assert joint.parent_link == "base"
+    assert joint.child_link == "forearm"
+    assert model.get_joint("shoulder") is joint
+
+
+def test_a_usd_model_converted_from_a_urdf_never_reads_the_layer_to_pose(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    import dimos.robot.assets.usd_utils.to_urdf_mask as usd_to_urdf_module
+
+    convert = mocker.patch.object(usd_to_urdf_module, "usd_to_urdf")
+    model = _urdf(tmp_path).to_usd()
+
+    assert [joint.name for joint in model.joints] == ["shoulder"]
+    convert.assert_not_called()
+
+
+def test_a_usd_model_from_a_file_is_its_own_loaded_form(tmp_path: Path) -> None:
+    scene = tmp_path / "room.usda"
+    scene.write_text(_SCENE_USDA)
+    model = robot_model.UsdModel.from_file(scene)
+
+    assert model.load() is model
+
+
+def test_a_usd_model_wants_a_usd_file(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="RobotModel.from_file"):
+        robot_model.UsdModel.from_file(tmp_path / "robot.urdf")
+
+
+def test_a_missing_usd_file_says_so_when_the_layer_is_asked_for(tmp_path: Path) -> None:
+    model = robot_model.UsdModel.from_file(tmp_path / "gone.usda")
+
+    with pytest.raises(FileNotFoundError, match="no USD file at"):
+        model.usd  # noqa: B018 - reading the property is what reads the file
+
+
+def test_a_binary_usd_layer_is_refused_with_what_to_do(tmp_path: Path) -> None:
+    crate = tmp_path / "room.usd"
+    crate.write_bytes(b"PXR-USDC\x00\x81\xff\xfe")
+    model = robot_model.UsdModel.from_file(crate)
+
+    with pytest.raises(ValueError, match="export it as .usda"):
+        model.usd  # noqa: B018 - reading the property is what reads the file
+
+
 def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(
@@ -817,3 +990,37 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
     transferred_joint = decode(encode(limited)).load().get_joint("arm/slide")
     assert transferred_joint is not None
     assert transferred_joint.velocity == 0.2
+
+
+def test_an_added_frame_is_a_joint_of_the_description_too(tmp_path: Path) -> None:
+    """with_frames welds the frame into the layer, so joints and frame_names have to say so."""
+    source = tmp_path / "arm.urdf"
+    source.write_text('<robot name="arm"><link name="base_link"/></robot>')
+    model = (
+        robot_model.RobotModel.from_file(source)
+        .to_usd()
+        .with_frames({"tool": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0))})
+    )
+
+    joint = model.get_joint("tool_joint")
+    assert joint is not None, "the added frame is welded in the layer but absent from joints"
+    assert (joint.type, joint.parent_link, joint.child_link) == ("fixed", "base_link", "tool")
+    assert joint.origin_xyz == (0.1, 0.0, 0.2)
+    assert {"tool", "tool_joint"} <= model.frame_names()
+
+
+def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path) -> None:
+    scene = tmp_path / "room.usda"
+    model = UsdModel.from_file(scene).with_frames(
+        {"spot": ("room", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
+    )
+
+    assert not scene.exists()
+
+    scene.write_text(
+        '#usda 1.0\n(\n    defaultPrim = "room"\n)\n\n'
+        'def Xform "room" (prepend apiSchemas = ["PhysicsRigidBodyAPI"])\n{\n}\n'
+    )
+    pytest.importorskip("pxr")
+
+    assert 'displayName = "spot"' in model.usd
