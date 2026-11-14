@@ -74,6 +74,7 @@ class Replay(Configurable):
     def __init__(self, store: Store, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.store = store
+        self._first_ts: float | None = None
         self._anchor: tuple[float, float] | None = None
         self._anchor_lock = threading.Lock()
 
@@ -88,14 +89,21 @@ class Replay(Configurable):
         return ReplayStream(replay=self, name=name, autocast=autocast)
 
     def first_ts(self) -> float | None:
-        """Earliest source timestamp across non-empty streams in the underlying store."""
-        candidates: list[float] = []
-        for name in self.store.list_streams():
-            try:
-                candidates.append(float(self.store.stream(name).order_by("ts").first().ts))
-            except (LookupError, ImportError, AttributeError):
-                continue
-        return min(candidates) if candidates else None
+        """Earliest source timestamp across non-empty streams in the underlying store.
+
+        Found once and reused. A replay reads a finished recording, and every
+        stream measures seek and duration from the same start.
+        """
+        if self._first_ts is None:
+            candidates: list[float] = []
+            for name in self.store.list_streams():
+                try:
+                    candidates.append(float(self.store.stream(name).order_by("ts").first().ts))
+                except (LookupError, ImportError, AttributeError):
+                    continue
+            if candidates:
+                self._first_ts = min(candidates)
+        return self._first_ts
 
     def _resolve_anchor(self, candidate_first_ts: float) -> tuple[float, float]:
         """Pin (wall_t0, replay_t0) on first call; return shared anchor."""

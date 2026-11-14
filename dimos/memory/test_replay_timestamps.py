@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.memory.store.base import Store
 from dimos.memory.store.mcap import McapStore
@@ -89,6 +90,16 @@ def test_seek_uses_shared_recording_start(recording: Store) -> None:
     replay = recording.replay(seek=0.005)
 
     assert [ts for ts, _ in replay.stream("camera").iterate_ts()] == [10.006, 10.014, 10.025]
+
+
+def test_recording_start_is_found_once(recording: Store, mocker: MockerFixture) -> None:
+    replay = recording.replay(seek=0.005, duration=0.015)
+    list_streams = mocker.spy(recording, "list_streams")
+
+    for name in ("odom", "camera"):
+        list(replay.stream(name).iterate_ts())
+
+    assert list_streams.call_count == 1
 
 
 def test_duration_uses_earliest_source_timestamp(recording: Store) -> None:

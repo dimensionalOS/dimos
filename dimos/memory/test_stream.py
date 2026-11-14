@@ -171,6 +171,18 @@ class TestOrderLimitOffset:
         result = make_stream(5).order_by("ts", desc=True).to_list()
         assert [o.ts for o in result] == [4.0, 3.0, 2.0, 1.0, 0.0]
 
+    @pytest.mark.parametrize("desc", [False, True])
+    def test_ordered_limit_matches_the_full_sort(self, memory_session, desc):
+        stream = memory_session.stream("unordered", int)
+        for i, ts in enumerate([3.0, 1.0, 2.0, 1.0, 0.0, 2.0]):
+            stream.append(i, ts=ts)
+        ordered = stream.order_by("ts", desc=desc)
+
+        limited = ordered.offset(1).limit(3).to_list()
+
+        # Equal timestamps keep their stored order, as in the full sort.
+        assert [o.data for o in limited] == [o.data for o in ordered.to_list()][1:4]
+
     def test_first(self, make_stream):
         obs = make_stream(5).first()
         assert obs.data == 0
