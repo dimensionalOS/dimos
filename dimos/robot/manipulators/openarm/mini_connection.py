@@ -20,7 +20,10 @@ from dimos.robot.manipulators.feetech.connection import (
     FeetechConnection,
     FeetechConnectionConfig,
 )
-from dimos.robot.manipulators.openarm.config import OPENARM_MINI_LEADERS
+from dimos.robot.manipulators.openarm.config import (
+    OPENARM_MINI_ARM_LEADERS,
+    OPENARM_MINI_LEADERS,
+)
 
 
 class OpenArmMiniConnectionConfig(FeetechConnectionConfig):
@@ -44,3 +47,12 @@ class OpenArmMiniConnection(FeetechConnection):
 
     def serial_ports(self) -> dict[str, str]:
         return {"left": self.config.left_serial_port, "right": self.config.right_serial_port}
+
+
+class OpenArmMiniArmConnection(OpenArmMiniConnection):
+    """The two leader arms without their trigger servos; the jaws are driven elsewhere.
+
+    Each side's calibration file must list only the seven arm motors.
+    """
+
+    robot = OPENARM_MINI_ARM_LEADERS
