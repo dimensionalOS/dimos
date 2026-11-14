@@ -140,6 +140,10 @@ BROKEN: list[tuple[Edits, str]] = [
         "the immediate transition to `Patrolling` starts `go_to`, which uses a resource",
     ),
     (
+        {"Estopped": {"requires": (Check(expect=["true"], fallback="Patrolling"),)}},
+        "the immediate transition to `Estopped` starts `go_to`, which uses a resource",
+    ),
+    (
         {"Navigating": {"requires": (Check(expect=["true"], fallback="Estopped"),)}},
         "fallback `Estopped` is not a sibling",
     ),
