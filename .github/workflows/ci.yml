@@ -400,7 +400,7 @@ jobs:
               )
           PY
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -456,7 +456,7 @@ jobs:
             cargo fmt --manifest-path "$root" --all -- --check
           done
       - name: Restore cargo build cache
-        uses: actions/cache/restore@v4.3.0
+        uses: actions/cache/restore@v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -468,7 +468,7 @@ jobs:
           restore-keys: |
             cargo-test-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -484,7 +484,7 @@ jobs:
 
       - name: Save cargo build cache
         if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4.3.0
+        uses: actions/cache/save@v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -516,7 +516,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -555,7 +555,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Restore cargo build cache
-        uses: actions/cache/restore@v4.3.0
+        uses: actions/cache/restore@v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -565,7 +565,7 @@ jobs:
           key: pyo3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: pyo3-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -586,7 +586,7 @@ jobs:
         run: uv run python bin/pyo3-extensions --test
       - name: Save cargo build cache
         if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4.3.0
+        uses: actions/cache/save@v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -611,7 +611,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libturbojpeg portaudio19-dev
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -795,7 +795,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -1003,7 +1003,7 @@ jobs:
         if: matrix.os == 'Linux'
         run: echo "UV_CACHE_DIR=$(dirname "$RUNNER_WORKSPACE")/uv-cache" >> "$GITHUB_ENV"
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           # We persist on disk above, cache would clean some of this up.
           enable-cache: false
@@ -1256,7 +1256,7 @@ jobs:
           # own processes in user space.
           sudo sysctl -w kernel.perf_event_paranoid=2
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -1371,7 +1371,7 @@ jobs:
           git fetch --depth=1 origin gh-pages
           git show FETCH_HEAD:dev/bench/data.js > data.js
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           # Nothing worth caching: Otava's dependencies are all prebuilt wheels.
           enable-cache: false
