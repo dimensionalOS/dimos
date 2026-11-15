@@ -77,6 +77,10 @@ class LaunchConfig:
     # POST /active/exec: exactly these args (a relaunch keeps it that way)
     exact: bool = False
 
+    def normalized(self) -> LaunchConfig:
+        """Normalize global overrides without changing raw exec requests or adding defaults."""
+        return self if self.exact else replace(self, global_=normalize_global(self.global_))
+
     def secret_paths(self) -> list[str]:
         return secret_paths(self.global_, self.modules, self.secrets)
 
@@ -211,7 +215,8 @@ def flag_fields() -> set[str]:
     return set(inspect.signature(callback).parameters) - {"ctx"}
 
 
-def check_global(values: dict[str, Any]) -> None:
+def normalize_global(values: dict[str, Any]) -> dict[str, Any]:
+    """Return typed overrides, preserving the request's keys and omitted (null) values."""
     from dimos.core.global_config import GlobalConfig
 
     unknown = sorted(set(values) - flag_fields())
@@ -227,9 +232,9 @@ def check_global(values: dict[str, Any]) -> None:
         )
         raise LaunchConfigError(f"bad GlobalConfig value: {problems}") from error
     # as GlobalConfig types them (a "true" is True, 3.0 is 3): the flags are spelled from these
-    values.update(
-        {key: getattr(validated, key) for key, value in values.items() if value is not None}
-    )
+    return {
+        key: getattr(validated, key) if value is not None else None for key, value in values.items()
+    }
 
 
 def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[str]:
@@ -564,6 +569,11 @@ def check_idle() -> None:
 
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
     check_name(blueprint)
+    return _start(dimos_dir, blueprint, launch.normalized())
+
+
+def _start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
+    """Spawn a prepared launch; relaunch also prepares before stopping the current process."""
     with _lock:
         check_idle()
         program = store.dimos_bin(dimos_dir)
@@ -680,6 +690,7 @@ def relaunch(dimos_dir: Path, check_known: Callable[[str], None]) -> dict[str, A
         # A copied process may belong to another checkout, outside this catalog.
         if "copy" not in request:
             check_known(blueprint)
+        config = None if "copy" in request else LaunchConfig.from_json(request).normalized()
         if entry is not None or (
             (launch := current_launch()) is not None and launch["phase"] == "starting"
         ):
@@ -687,4 +698,5 @@ def relaunch(dimos_dir: Path, check_known: Callable[[str], None]) -> dict[str, A
             stop()
         if "copy" in request:
             return start_copy(blueprint, request["copy"])
-        return start(dimos_dir, blueprint, LaunchConfig.from_json(request))
+        assert config is not None
+        return _start(dimos_dir, blueprint, config)
