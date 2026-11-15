@@ -18,7 +18,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use ahash::AHashSet;
+use crate::fixed_hash::AHashSet;
 use rayon::prelude::*;
 
 use crate::adjacency::{CellId, SurfaceCells, NO_CELL};
@@ -743,7 +743,7 @@ pub fn reattach_descendants(
         state.source[i] = 0;
     }
     let mut heap: BinaryHeap<Scored<u128>> = BinaryHeap::new();
-    let mut seeded: AHashSet<CellId> = AHashSet::new();
+    let mut seeded: AHashSet<CellId> = AHashSet::default();
     for &c in &patch {
         for edge in cells.neighbors(c) {
             let n = edge.dest;
@@ -781,7 +781,7 @@ pub fn reattach_descendants(
 pub fn walk_preds(state: &DijkstraState, start: CellId) -> Vec<CellId> {
     let mut cells = vec![start];
     let mut cur = start;
-    let mut seen: AHashSet<CellId> = AHashSet::new();
+    let mut seen: AHashSet<CellId> = AHashSet::default();
     seen.insert(start);
     loop {
         let p = state.pred[cur as usize];
@@ -827,7 +827,7 @@ mod tests {
         let cells: Vec<VoxelKey> = (0..n)
             .flat_map(|x| (0..n).map(move |y| (x, y, 0)))
             .collect();
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&cells, &mut lookup);
         let mut sc = SurfaceCells::default();
         build_whole_voxel_cells(&mut sc, &lookup, 0.1, 2);
@@ -849,7 +849,7 @@ mod tests {
         let cells: Vec<VoxelKey> = (-20i32..20)
             .flat_map(|x| (-15..15).map(move |y| (x, y, (x * y).rem_euclid(3))))
             .collect();
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&cells, &mut lookup);
         let mut sc = SurfaceCells::default();
         build_whole_voxel_cells(&mut sc, &lookup, 0.1, 2);
@@ -893,7 +893,7 @@ mod tests {
                 std::iter::once((x, y, floor)).chain((x % 7 == 0).then_some((x, y, floor + 9)))
             })
             .collect();
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&cells, &mut lookup);
         let mut sc = SurfaceCells::default();
         build_whole_voxel_cells(&mut sc, &lookup, 0.1, 2);
@@ -926,7 +926,7 @@ mod tests {
             .filter(|&(x, y)| x % 9 != 0 && (y + x) % 13 != 0)
             .map(|(x, y)| (x, y, (x * y).rem_euclid(5)))
             .collect();
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&cells, &mut lookup);
         let mut sc = SurfaceCells::default();
         build_whole_voxel_cells(&mut sc, &lookup, 0.1, 2);

@@ -16,7 +16,7 @@
 //!
 //! A slot map: inserts reuse freed slots marked with a tombstone, or grow.
 
-use ahash::AHashMap;
+use crate::fixed_hash::AHashMap;
 use rayon::prelude::*;
 
 use crate::lazy::Version;
@@ -64,7 +64,7 @@ impl Default for CoordIndex {
     fn default() -> Self {
         Self {
             hasher: ahash::RandomState::with_seeds(1, 2, 3, 4),
-            shards: (0..COORD_SHARDS).map(|_| AHashMap::new()).collect(),
+            shards: (0..COORD_SHARDS).map(|_| AHashMap::default()).collect(),
         }
     }
 }
@@ -760,7 +760,7 @@ mod tests {
     }
 
     fn build(cells: &[VoxelKey]) -> (SurfaceLookup, SurfaceCells) {
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(cells, &mut lookup);
         let mut sc = SurfaceCells::default();
         build_whole_voxel_cells(&mut sc, &lookup, VOXEL, 2);

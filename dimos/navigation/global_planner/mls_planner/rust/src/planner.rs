@@ -14,7 +14,7 @@
 
 use std::collections::{BinaryHeap, VecDeque};
 
-use ahash::{AHashMap, AHashSet};
+use crate::fixed_hash::{AHashMap, AHashSet};
 
 use crate::adjacency::{CellId, SurfaceCells, SurfaceLookup};
 use crate::dijkstra::{walk_preds, Scored};
@@ -321,7 +321,7 @@ pub fn plan_reusing(
         .map(|&i| plg.cells.coord(cells[i]))
         .collect();
     let layers = cells.iter().map(|&id| plg.cells.layer(id)).collect();
-    let mut cell_at = AHashMap::with_capacity(cells.len());
+    let mut cell_at = AHashMap::with_capacity_and_hasher(cells.len(), Default::default());
     for (i, &id) in cells.iter().enumerate() {
         cell_at.insert(id, i);
     }
@@ -921,9 +921,9 @@ fn robot_search(
     sources: &[CellId],
     radius_m: f32,
 ) -> (AHashMap<CellId, f32>, AHashMap<CellId, CellId>) {
-    let mut dist: AHashMap<CellId, f32> = AHashMap::new();
-    let mut geo: AHashMap<CellId, f32> = AHashMap::new();
-    let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
+    let mut dist: AHashMap<CellId, f32> = AHashMap::default();
+    let mut geo: AHashMap<CellId, f32> = AHashMap::default();
+    let mut pred: AHashMap<CellId, CellId> = AHashMap::default();
     let mut heap: BinaryHeap<Scored<CellId>> = BinaryHeap::new();
     for &source in sources {
         dist.insert(source, 0.0);
@@ -963,8 +963,8 @@ fn nearest_node(
     if node_cells.has(from) {
         return Some((from, vec![from]));
     }
-    let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
-    let mut seen: AHashSet<CellId> = AHashSet::new();
+    let mut pred: AHashMap<CellId, CellId> = AHashMap::default();
+    let mut seen: AHashSet<CellId> = AHashSet::default();
     let mut queue: VecDeque<CellId> = VecDeque::new();
     seen.insert(from);
     queue.push_back(from);
@@ -1021,9 +1021,9 @@ fn node_dijkstra(
     source: NodeId,
     targets: &AHashSet<NodeId>,
 ) -> (AHashMap<NodeId, f32>, AHashMap<NodeId, NodeId>) {
-    let mut tentative: AHashMap<NodeId, f32> = AHashMap::new();
-    let mut dist: AHashMap<NodeId, f32> = AHashMap::new();
-    let mut pred: AHashMap<NodeId, NodeId> = AHashMap::new();
+    let mut tentative: AHashMap<NodeId, f32> = AHashMap::default();
+    let mut dist: AHashMap<NodeId, f32> = AHashMap::default();
+    let mut pred: AHashMap<NodeId, NodeId> = AHashMap::default();
     tentative.insert(source, 0.0);
     let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
     heap.push(Scored(0.0, source));
@@ -1450,7 +1450,7 @@ mod tests {
 
     /// A staircase corridor 5 cells wide: `steps` legs along x, each 20 cells and then 10 up, with a node per leg and turn.
     fn staircase(steps: i32) -> (PlannerGraph, (f32, f32, f32), (f32, f32, f32)) {
-        let mut cells: AHashSet<VoxelKey> = AHashSet::new();
+        let mut cells: AHashSet<VoxelKey> = AHashSet::default();
         let mut nodes: Vec<VoxelKey> = Vec::new();
         for s in 0..steps {
             let (x0, y0) = (20 * s, 10 * s);
@@ -1956,7 +1956,7 @@ mod tests {
 
     #[test]
     fn snap_picks_in_column_cell() {
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&strip(20), &mut lookup);
         let cell = snap_pose_to_cell(&lookup, (0.5, 0.0, 0.1), VOXEL, Z_TOL).unwrap();
         assert_eq!(cell, (5, 0, 0));
@@ -1966,7 +1966,7 @@ mod tests {
     fn snap_falls_back_to_nearby_column() {
         let mut cells = strip(20);
         cells.retain(|c| c.0 != 2);
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&cells, &mut lookup);
         let cell = snap_pose_to_cell(&lookup, (0.25, 0.0, 0.1), VOXEL, Z_TOL).unwrap();
         assert!(cell == (1, 0, 0) || cell == (3, 0, 0));
@@ -1974,7 +1974,7 @@ mod tests {
 
     #[test]
     fn snap_rejects_outside_z_tolerance() {
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&strip(20), &mut lookup);
         assert!(snap_pose_to_cell(&lookup, (0.5, 0.0, 2.0), VOXEL, 1.5).is_none());
     }

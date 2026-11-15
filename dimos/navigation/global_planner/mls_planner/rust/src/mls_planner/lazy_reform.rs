@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use ahash::AHashMap;
+use crate::fixed_hash::{AHashMap, AHashSet};
 
 use super::{Config, MapPoint, Planner, RegionBounds};
 use crate::adjacency::{CellId, Edge, SurfaceCells};
@@ -125,7 +125,7 @@ impl LazyState {
             self.layers.stale.get(&layer),
         ) {
             // One carry per anchor, not per cell.
-            let mut carries: AHashMap<u32, Pose> = AHashMap::new();
+            let mut carries: AHashMap<u32, Pose> = AHashMap::default();
             for &id in &sub.cells {
                 if !cells.is_live(id) || cells.layer(id) != layer {
                     continue;
@@ -200,7 +200,7 @@ impl Planner {
             voxel_size: config.voxel_size,
             pending: BTreeSet::new(),
             urgent: BTreeSet::new(),
-            carried: AHashMap::new(),
+            carried: AHashMap::default(),
             index_credit: 0,
         });
         for record in records {
@@ -389,7 +389,7 @@ impl Planner {
                 snap(goal).is_some()
             );
         };
-        let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
+        let mut pred: AHashMap<CellId, CellId> = AHashMap::default();
         pred.insert(a, a);
         let mut queue = VecDeque::from([a]);
         while let Some(c) = queue.pop_front() {
@@ -410,7 +410,7 @@ impl Planner {
         };
         if !pred.contains_key(&b) {
             let key = |id: CellId| voxelize(now(id), vs);
-            let mut by_key: AHashMap<VoxelKey, Vec<CellId>> = AHashMap::new();
+            let mut by_key: AHashMap<VoxelKey, Vec<CellId>> = AHashMap::default();
             for id in g.cells.ids() {
                 by_key.entry(key(id)).or_default().push(id);
             }
@@ -445,7 +445,7 @@ impl Planner {
                 })
                 .collect();
             // where the goal's component comes closest to the start's, by where cells are now
-            let mut from_goal: AHashMap<CellId, ()> = AHashMap::new();
+            let mut from_goal: AHashMap<CellId, ()> = AHashMap::default();
             from_goal.insert(b, ());
             let mut queue = VecDeque::from([b]);
             while let Some(c) = queue.pop_front() {
@@ -456,7 +456,7 @@ impl Planner {
                     }
                 }
             }
-            let mut goal_keys: AHashMap<(i32, i32), Vec<CellId>> = AHashMap::new();
+            let mut goal_keys: AHashMap<(i32, i32), Vec<CellId>> = AHashMap::default();
             for &c in from_goal.keys() {
                 let k = key(c);
                 goal_keys.entry((k.0, k.1)).or_default().push(c);
@@ -791,7 +791,7 @@ impl Planner {
         let tolerance = vs as f64;
         // Stale cells standing now in a landing column, with their z now, each once.
         let mut near: Vec<((i32, i32), CellId, f32)> = Vec::new();
-        let mut taken: ahash::AHashSet<CellId> = ahash::AHashSet::new();
+        let mut taken: AHashSet<CellId> = AHashSet::default();
         let mut read = 0usize;
         for key in &indexed {
             let layer = key.0;
@@ -1007,7 +1007,7 @@ impl Planner {
         let params = config.placement_params();
         let mut out = Migrated::default();
         let mut flipped: BTreeSet<(i32, i32)> = BTreeSet::new();
-        let mut changed: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
+        let mut changed: AHashMap<(i32, i32), Vec<i32>> = AHashMap::default();
         let lazy = self.lazy.as_mut().expect("migrate needs the lazy state");
         let current = lazy.layers.current;
         let mut left = budget;

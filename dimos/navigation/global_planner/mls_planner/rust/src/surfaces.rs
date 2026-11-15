@@ -16,7 +16,7 @@
 //! standable, then morphologically close per-z-level holes without bridging
 //! across walls.
 
-use ahash::AHashMap;
+use crate::fixed_hash::AHashMap;
 use rayon::prelude::*;
 
 use crate::bit_grid::BitGrid;
@@ -111,12 +111,14 @@ fn close_surface_holes(
         return;
     }
 
-    let mut by_z: AHashMap<i32, Vec<(i32, i32)>> = AHashMap::new();
+    let mut by_z: AHashMap<i32, Vec<(i32, i32)>> = AHashMap::default();
     for &(ix, iy, iz) in &standable {
         by_z.entry(iz).or_default().push((ix, iy));
     }
 
-    let slices: Vec<(i32, Vec<(i32, i32)>)> = by_z.into_iter().collect();
+    // Slices and their clusters in coordinate order, so the cells come out in an order no hasher picks.
+    let mut slices: Vec<(i32, Vec<(i32, i32)>)> = by_z.into_iter().collect();
+    slices.sort_unstable_by_key(|s| s.0);
     let tasks: Vec<(i32, Vec<(i32, i32)>)> = slices
         .into_par_iter()
         .flat_map_iter(|(iz, xys)| {
@@ -138,7 +140,7 @@ fn interaction_clusters(xys: &[(i32, i32)], closing_passes: u32) -> Vec<Vec<(i32
     // Separate clusters end up more than 2 closing passes apart, so each closes
     // to the same cells it would as part of the whole slice.
     let side = (4 * closing_passes as i32).max(MIN_TILE_SIDE);
-    let mut tiles: AHashMap<(i32, i32), Vec<(i32, i32)>> = AHashMap::new();
+    let mut tiles: AHashMap<(i32, i32), Vec<(i32, i32)>> = AHashMap::default();
     for &(x, y) in xys {
         tiles
             .entry((x.div_euclid(side), y.div_euclid(side)))
@@ -148,7 +150,8 @@ fn interaction_clusters(xys: &[(i32, i32)], closing_passes: u32) -> Vec<Vec<(i32
 
     let mut clusters = Vec::new();
     let mut stack = Vec::new();
-    let keys: Vec<(i32, i32)> = tiles.keys().copied().collect();
+    let mut keys: Vec<(i32, i32)> = tiles.keys().copied().collect();
+    keys.sort_unstable();
     for key in keys {
         if !tiles.contains_key(&key) {
             continue;

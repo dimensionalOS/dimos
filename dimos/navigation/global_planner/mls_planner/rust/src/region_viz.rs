@@ -17,10 +17,10 @@
 //! map in messages a lossy link can carry, and a change costs its cell only.
 
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Bound::{Excluded, Unbounded};
 
-use ahash::{AHashMap, AHashSet, AHasher};
+use crate::fixed_hash::{AHashMap, AHashSet, FixedState};
 
 use crate::columns::ColumnWindow;
 use crate::voxel::VoxelKey;
@@ -79,7 +79,7 @@ fn order_free(len: usize, hashes: impl Iterator<Item = u64>) -> u64 {
 }
 
 fn hash_item<T: Hash>(item: T) -> u64 {
-    let mut h = AHasher::default();
+    let mut h = FixedState.build_hasher();
     item.hash(&mut h);
     h.finish()
 }
@@ -120,7 +120,7 @@ fn bucket(
     wanted: Option<&AHashSet<Cell>>,
 ) -> AHashMap<Cell, RegionContent> {
     let want = |cell: &Cell| wanted.is_none_or(|w| w.contains(cell));
-    let mut cells: AHashMap<Cell, RegionContent> = AHashMap::new();
+    let mut cells: AHashMap<Cell, RegionContent> = AHashMap::default();
     for entry in surface {
         let cell = cell_of(entry.0, pitch);
         if want(&cell) {
@@ -157,7 +157,7 @@ impl RegionViz {
             pitch: pitch_voxels.max(1),
             reach: reach_voxels.max(0),
             sweep,
-            dirty: Dirty::Cells(AHashSet::new()),
+            dirty: Dirty::Cells(AHashSet::default()),
             published: BTreeMap::new(),
             cursor: None,
         }
@@ -198,7 +198,7 @@ impl RegionViz {
         segments: impl Iterator<Item = Segment>,
         near: VoxelKey,
     ) -> Vec<(Cell, RegionUpdate)> {
-        let dirty = std::mem::replace(&mut self.dirty, Dirty::Cells(AHashSet::new()));
+        let dirty = std::mem::replace(&mut self.dirty, Dirty::Cells(AHashSet::default()));
         let candidates = self.sweep_candidates(&dirty);
         let wanted = match dirty {
             Dirty::All => None,
@@ -238,7 +238,7 @@ impl RegionViz {
             (di * di + dj * dj, (i, j))
         });
         let mut due: Vec<(Cell, RegionUpdate)> = Vec::new();
-        let mut unchanged: AHashMap<Cell, RegionContent> = AHashMap::new();
+        let mut unchanged: AHashMap<Cell, RegionContent> = AHashMap::default();
         for (cell, content) in cells {
             let fp = content.fingerprints();
             match self.published.insert(cell, Some(fp)) {

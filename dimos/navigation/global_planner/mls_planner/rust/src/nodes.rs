@@ -18,7 +18,7 @@
 
 use std::cmp::Ordering;
 
-use ahash::AHashMap;
+use crate::fixed_hash::AHashMap;
 use rayon::prelude::*;
 
 use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
@@ -817,7 +817,7 @@ mod tests {
     }
 
     fn build_cells(surface: &[VoxelKey], step_cells: i32) -> SurfaceCells {
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(surface, &mut lookup);
         let mut sc = SurfaceCells::default();
         build_whole_voxel_cells(&mut sc, &lookup, VOXEL, step_cells);
@@ -829,7 +829,7 @@ mod tests {
         // The node's cell (5, 5, 0) died and the surviving surface is the
         // same column one voxel up. The node must move there, not vanish.
         let surface = [(5, 5, 1)];
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&surface, &mut lookup);
         let sc = build_cells(&surface, 2);
         let list = vec![NodeData {
@@ -856,7 +856,7 @@ mod tests {
         // relocation target, so the relocation is rejected and the node
         // dropped.
         let surface = [(5, 5, 1), (5, 6, 0)];
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&surface, &mut lookup);
         let sc = build_cells(&surface, 2);
         let live_id = sc.id((5, 6, 0)).unwrap();
@@ -889,7 +889,7 @@ mod tests {
         // The second relocation must see the first and die instead of landing
         // within the crowding radius of it.
         let surface = [(5, 5, 1), (5, 6, 1)];
-        let mut lookup = SurfaceLookup::new();
+        let mut lookup = SurfaceLookup::default();
         build_surface_lookup(&surface, &mut lookup);
         let sc = build_cells(&surface, 2);
         let list = vec![

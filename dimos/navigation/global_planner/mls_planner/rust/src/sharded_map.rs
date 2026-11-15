@@ -17,7 +17,7 @@
 
 use std::hash::Hash;
 
-use ahash::AHashMap;
+use crate::fixed_hash::AHashMap;
 
 const SHARDS: usize = 64;
 
@@ -30,7 +30,7 @@ impl<K: Hash + Eq, V> Default for ShardedMap<K, V> {
     fn default() -> Self {
         Self {
             hasher: ahash::RandomState::with_seeds(5, 6, 7, 8),
-            shards: (0..SHARDS).map(|_| AHashMap::new()).collect(),
+            shards: (0..SHARDS).map(|_| AHashMap::default()).collect(),
         }
     }
 }
