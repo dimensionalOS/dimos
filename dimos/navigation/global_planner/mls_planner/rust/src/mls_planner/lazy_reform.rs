@@ -46,6 +46,8 @@ pub struct LazyState {
     /// Per stale submesh, the frame it was indexed in and its cells (with their z now) by the column they stand in now,
     /// sorted: a stale cell moves only when a closure starts a frame, so a stitch reads the columns it needs.
     carried: AHashMap<(Version, (i32, i32)), (Version, CarriedCells)>,
+    /// Landing columns stitches in this frame have read without an index, which the next indexes spend.
+    index_credit: usize,
 }
 
 /// Stale cells with the current-frame column they stand in and their z there, sorted by column (by id within one).
@@ -199,6 +201,7 @@ impl Planner {
             pending: BTreeSet::new(),
             urgent: BTreeSet::new(),
             carried: AHashMap::new(),
+            index_credit: 0,
         });
         for record in records {
             lazy.table.add(record);
@@ -266,6 +269,7 @@ impl Planner {
         self.route = None;
         // The waiting columns' voxels froze with the layer; a migration re-extracts them when it moves them in.
         self.region_pending.clear();
+        lazy.index_credit = 0;
         self.clock.add("freeze", stage);
 
         let stage = Instant::now();
@@ -753,11 +757,10 @@ impl Planner {
             return Vec::new();
         }
         self.clock.count("stitch_submeshes", found.len());
-        // A submesh indexed in this frame is read through its index. One not yet indexed is indexed now while the cells
-        // indexed this call stay within the landing columns' count, so the work stays what the call touches; the rest
-        // are read around the landing columns carried back, until a later call indexes them.
+        // A submesh indexed in this frame is read through its index. One not yet indexed is indexed once the landing
+        // columns stitches read without an index add up to its cells, so indexing costs no more than what the calls
+        // touched; until then it is read around the landing columns carried back.
         let frame = lazy.table.frame_version();
-        let mut budget = landing.len();
         let mut indexed: Vec<(Version, (i32, i32))> = Vec::new();
         let mut windowed: Vec<(Version, (i32, i32))> = Vec::new();
         let mut built = 0usize;
@@ -767,14 +770,17 @@ impl Planner {
                 continue;
             }
             let size = lazy.layers.submeshes.get(&key).map_or(0, |s| s.cells.len());
-            if size <= budget {
-                budget -= size;
+            if size <= lazy.index_credit {
+                lazy.index_credit -= size;
                 built += size;
                 lazy.index_carried(key, frame, cells, vs);
                 indexed.push(key);
             } else {
                 windowed.push(key);
             }
+        }
+        if !windowed.is_empty() {
+            lazy.index_credit += landing.len();
         }
         self.clock.count("stitch_indexed", built);
         self.clock.count("stitch_windowed", windowed.len());
