@@ -38,7 +38,7 @@ use crate::nodes::{
 };
 use crate::planner;
 use crate::region_viz::SurfaceEntry;
-use crate::surfaces::{extract_surfaces, extract_surfaces_region, RISER_REACH};
+use crate::surfaces::{extract_surfaces, extract_surfaces_region, riser_reach};
 use crate::terrain::{PlaneMap, SurfacePlane, Terrain};
 use crate::voxel::{voxelize, VoxelKey, Xyz};
 
@@ -546,7 +546,7 @@ impl Planner {
             // A changed column shifts surfaces only within pad of it (and a
             // riser bridge one column more), and the extraction reads as much again.
             let bbox = bounds.column_bbox(voxel_size);
-            let reach = pad + RISER_REACH;
+            let reach = pad + riser_reach(config.closing_passes());
             let mut footprint = ColumnMask::new(bbox, 2 * reach);
             for col in edits.columns() {
                 footprint.set(col);

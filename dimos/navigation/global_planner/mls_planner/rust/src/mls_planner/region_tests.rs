@@ -134,7 +134,7 @@ fn a_goal_over_a_lone_cell_plans_to_the_floor_beside_it() {
 
 /// A floor, a flight of stairs going up in x and the floor above, 1.5 m wide: each tread 4 columns deep and 2 voxels
 /// above the last, with the riser between them unseen, as a lidar looking down the stairs leaves it; a column with no
-/// voxel at all between treads.
+/// voxel at all between treads, two before the top floor.
 fn unseen_riser_stairs(vs: f32) -> Vec<(f32, f32, f32)> {
     let half = 0.5 * vs;
     let mut points = Vec::new();
@@ -156,7 +156,7 @@ fn unseen_riser_stairs(vs: f32) -> Vec<(f32, f32, f32)> {
             add(21 + 5 * step + ix, 2 * (step + 1));
         }
     }
-    for ix in 46..66 {
+    for ix in 47..66 {
         add(ix, 12);
     }
     points

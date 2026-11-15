@@ -23,11 +23,11 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use ahash::AHashMap;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 
 use crate::adjacency::{CellId, SurfaceLookup};
 use crate::columns::ColumnIz;
+use crate::sharded_map::ShardedMap;
 use crate::terrain::{PlaneMap, SurfacePlane};
 use crate::voxel::VoxelKey;
 
@@ -688,7 +688,7 @@ pub struct Element {
 pub struct FrozenLayer {
     pub by_col: ColumnIz,
     pub planes: PlaneMap,
-    pub voxels: AHashMap<VoxelKey, Element>,
+    pub voxels: ShardedMap<VoxelKey, Element>,
     pub surface_lookup: SurfaceLookup,
     pub anchor_poses: BTreeMap<u32, Pose>,
 }
@@ -739,9 +739,9 @@ pub struct Layers {
     pub params: LayerParams,
     pub current: Version,
     /// The current layer's voxels' elements.
-    pub voxels: AHashMap<VoxelKey, Element>,
+    pub voxels: ShardedMap<VoxelKey, Element>,
     /// Every live cell's element, any layer.
-    pub cells: AHashMap<CellId, Element>,
+    pub cells: ShardedMap<CellId, Element>,
     /// Anchors the current layer holds elements of.
     pub anchors: BTreeSet<u32>,
     pub stale: BTreeMap<Version, FrozenLayer>,
@@ -755,8 +755,8 @@ impl Layers {
         Self {
             params,
             current: 0,
-            voxels: AHashMap::new(),
-            cells: AHashMap::new(),
+            voxels: ShardedMap::new(),
+            cells: ShardedMap::new(),
             anchors: BTreeSet::new(),
             stale: BTreeMap::new(),
             submeshes: BTreeMap::new(),

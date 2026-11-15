@@ -14,8 +14,6 @@
 
 //! Surface heights from the ray tracer's per-voxel planes; a voxel without one stands at its top face.
 
-use ahash::AHashMap;
-
 use crate::columns::ColumnIz;
 use crate::voxel::VoxelKey;
 
@@ -88,7 +86,7 @@ pub type Slope = [f32; 2];
 pub type Surface = (f32, Option<Slope>);
 
 /// The usable plane of each mapped voxel that has one.
-pub type PlaneMap = AHashMap<VoxelKey, SurfacePlane>;
+pub type PlaneMap = crate::sharded_map::ShardedMap<VoxelKey, SurfacePlane>;
 
 /// The occupied columns and their planes, with the robot's headroom and step.
 pub struct Terrain<'a> {
