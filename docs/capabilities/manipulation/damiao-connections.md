@@ -12,10 +12,9 @@ Direct-connection coordinators communicate through
 
 ## Run software tests first
 
-From the checkout of [PR #4960](https://github.com/dimensionalOS/dimos/pull/4960), run:
+From a current checkout, run:
 
 ```bash
-gh pr checkout 4960
 uv run pytest dimos/robot/manipulators/damiao/test_damiao_connection.py \
     dimos/robot/manipulators/damiao/test_damiao_native.py \
     dimos/robot/manipulators/damiao/test_damiao_startup.py \
@@ -199,9 +198,9 @@ coordinator as zero-stiffness joints. Its seven-coordinate recording schema uses
 the deployed `arm/...` names. The direct stacks take
 `--openyamconnection.can-port` (or `--can-port`).
 
-Hand guiding refuses to start unless the robot declares zero stiffness. For a
-connection, `connect_damiao` derives that declaration from the connection's own
-gains: a whole arm group counts when every `kp` is zero, and a gripper counts
-when it is listed in `passive_grippers`. The coordinator carries it as
-`zero_stiffness_joints` and hands it to the task factory; a position-holding
-connection such as `OpenYamConnection` declares nothing and is rejected.
+Hand guiding refuses to start unless the robot declares zero stiffness. The
+blueprint passes `zero_stiffness_joints(OPENYAM, teach=True)` to the coordinator,
+listing every arm joint and each jaw in `passive_grippers`. The coordinator
+carries it as `zero_stiffness_joints` and hands it to the task factory. A
+position-holding stack, such as `OpenYamConnection` without `teach=True`, declares
+nothing and is rejected.

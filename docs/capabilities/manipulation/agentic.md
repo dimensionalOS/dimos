@@ -80,7 +80,7 @@ Move 10 cm above the detected object's pose.
 
 ## Debugging and testing interfaces
 
-Use `agent-send` for one-shot LCM input when testing or diagnosing the agent:
+Use `agent-send` for one-shot input through the MCP server when testing or diagnosing the agent:
 
 ```bash
 uv run dimos agent-send "Report the current robot state and visible objects; do not move the arm or gripper."

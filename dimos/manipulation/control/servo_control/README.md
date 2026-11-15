@@ -70,17 +70,19 @@ The `CartesianMotionController` provides closed-loop Cartesian pose tracking by:
 The controller needs an arm driver module that implements `ArmDriverSpec`. No arm in dimos ships one today (the xArm
 driver this example used was removed in January 2026), so `MyArmDriver` below is yours: see [Adding a New Arm](#adding-a-new-arm).
 
-```python
+Save the example alongside your driver implementation, import `MyArmDriver` from
+that module, and keep process startup inside the `__main__` guard.
+
+```python skip
 import time
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.manipulation.control.servo_control.cartesian_motion_controller import CartesianMotionController
 
-# Modules run in worker processes that import this script again, so everything
-# that builds or drives them goes under the __main__ guard.
+# Workers import this script again, so build and drive modules under the guard.
 if __name__ == "__main__":
-    # 1. Build your arm driver and the controller; autoconnect connects their streams by name
+    # 1. Build your driver and controller; autoconnect connects their streams by name
     coordinator = ModuleCoordinator.build(autoconnect(
         MyArmDriver.blueprint(),
         CartesianMotionController.blueprint(
@@ -89,24 +91,26 @@ if __name__ == "__main__":
             max_linear_velocity=0.15,  # m/s
         ),
     ))
-    controller = coordinator.get_instance(CartesianMotionController)
+    try:
+        controller = coordinator.get_instance(CartesianMotionController)
 
-    # 2. Send Cartesian goal (move 10cm in X)
-    controller.set_target_pose(
-        position=[0.3, 0.0, 0.5],  # xyz in meters
-        orientation=[0, 0, 0],     # roll, pitch, yaw in radians
-        frame_id="world"
-    )
+        # 2. Send an absolute Cartesian goal
+        controller.set_target_pose(
+            position=[0.3, 0.0, 0.5],  # xyz in meters
+            orientation=[0, 0, 0],     # roll, pitch, yaw in radians
+            frame_id="world",
+        )
 
-    # 3. Wait for convergence
-    while not controller.is_converged():
-        time.sleep(0.1)
+        # 3. Wait for convergence
+        while not controller.is_converged():
+            time.sleep(0.1)
 
-    print("Target reached!")
-    coordinator.stop()
+        print("Target reached!")
+    finally:
+        coordinator.stop()
 ```
 
-The snippets below continue from this one: in a script, put them inside the `__main__` block, before `coordinator.stop()`.
+The following goal examples replace step 2 inside the `__main__` block above, before `coordinator.stop()`.
 
 ### Using Quaternions
 
@@ -152,6 +156,8 @@ Target poses can be published to the controller's `/target_pose` topic on the ac
 ## Configuration
 
 ```python
+from dimos.core.module import ModuleConfig
+
 class CartesianMotionControllerConfig(ModuleConfig):
     # Control loop
     control_frequency: float = 20.0  # Hz (recommend 10-50Hz)
@@ -178,8 +184,8 @@ class CartesianMotionControllerConfig(ModuleConfig):
     orientation_tolerance: float = 0.01  # rad (~0.57°)
 
     # Control mode
-    velocity_control_mode: bool = True  # Use velocity-based control
-    control_frame: str = "world"  # Frame for target poses
+    velocity_control_mode: bool = True  # Logged only, not used yet
+    control_frame: str = "world"  # Not used yet
 ```
 
 ## Hardware Abstraction
@@ -187,15 +193,21 @@ class CartesianMotionControllerConfig(ModuleConfig):
 The controller uses the **Protocol pattern** for hardware abstraction:
 
 ```python
+from typing import Protocol
+
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.spec.utils import Spec
+
 # The RPCs are ArmDriverSpec (dimos/manipulation/control/arm_driver_spec.py); the topics are what autoconnect connects
-class ArmDriverSpec(Protocol):
+class ArmDriverSpec(Spec, Protocol):
     # Required RPC methods
     def get_inverse_kinematics(self, pose: list[float]) -> tuple[int, list[float] | None]: ...
-    def get_forward_kinematics(self, angles: list[float]) -> tuple[int, list[float] | None]: ...
+    def get_forward_kinematics(self, joint_positions: list[float]) -> tuple[int, list[float] | None]: ...
 
     # Required topics
     joint_state: Out[JointState]
-    robot_state: Out[RobotState]
     joint_position_command: In[JointCommand]
 ```
 
@@ -205,17 +217,31 @@ class ArmDriverSpec(Protocol):
 
 1. Implement `ArmDriverSpec` protocol:
    ```python
+   from dimos.core.core import rpc
+   from dimos.core.module import Module
+   from dimos.core.stream import In, Out
+   from dimos.msgs.sensor_msgs.JointState import JointState
+   from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+
    class MyArmDriver(Module):
+       joint_state: Out[JointState]
+       joint_position_command: In[JointCommand]
+
        @rpc
        def get_inverse_kinematics(self, pose: list[float]) -> tuple[int, list[float] | None]:
            # Your IK implementation; pose is [x, y, z] in mm, then roll, pitch, yaw in radians
            return (0, joint_angles)
 
        @rpc
-       def get_forward_kinematics(self, angles: list[float]) -> tuple[int, list[float] | None]:
+       def get_forward_kinematics(self, joint_positions: list[float]) -> tuple[int, list[float] | None]:
            # Your FK implementation; return the pose in the same units as IK's
            return (0, tcp_pose)
    ```
+
+   Implement the IK/FK bodies for your arm. In the driver's lifecycle, subscribe
+   to `joint_position_command` and send its positions to the hardware. Publish
+   measured positions on `joint_state` continuously so the controller has feedback.
+   Dispose subscriptions and stop hardware polling in `stop()`.
 
 2. Use with controller:
    ```python
@@ -261,7 +287,7 @@ def is_converged() -> bool
 | Topic | Type | Description |
 |-------|------|-------------|
 | `joint_state` | `JointState` | Current joint positions/velocities (from driver) |
-| `robot_state` | `RobotState` | Robot status (from driver) |
+| `robot_state` | `RobotState` | Optional robot status; stored but not read by the control loop |
 | `target_pose` | `PoseStamped` | Desired TCP pose (from planner) |
 
 ### Outputs (Publications)
@@ -294,7 +320,7 @@ def is_converged() -> bool
 
 ### Conservative (Safe)
 ```python
-config = CartesianMotionControllerConfig(
+controller_blueprint = CartesianMotionController.blueprint(
     control_frequency=10.0,
     position_kp=0.5,
     max_linear_velocity=0.1,  # Slow!
@@ -303,7 +329,7 @@ config = CartesianMotionControllerConfig(
 
 ### Moderate (Recommended)
 ```python
-config = CartesianMotionControllerConfig(
+controller_blueprint = CartesianMotionController.blueprint(
     control_frequency=20.0,
     position_kp=1.0,
     position_kd=0.1,
@@ -313,7 +339,7 @@ config = CartesianMotionControllerConfig(
 
 ### Aggressive (Fast)
 ```python
-config = CartesianMotionControllerConfig(
+controller_blueprint = CartesianMotionController.blueprint(
     control_frequency=50.0,
     position_kp=2.0,
     position_kd=0.2,
@@ -356,9 +382,8 @@ config = CartesianMotionControllerConfig(
 ## Troubleshooting
 
 ### Controller not moving
-- Check `arm_driver` is started and publishing `joint_state`
-- Verify topic connections are set up
-- Check robot is in correct mode (servo mode for xArm)
+- Check your arm driver is in the blueprint and publishing `joint_state`
+- Check the robot is in the mode that accepts joint position commands
 
 ### Oscillation / Instability
 - Reduce `position_kp` or `orientation_kp`
@@ -380,10 +405,10 @@ config = CartesianMotionControllerConfig(
 
 ```
 dimos/manipulation/control/
-├── __init__.py                          # Module exports
-├── cartesian_motion_controller.py       # Main controller
-├── example_cartesian_control.py         # Usage example
-└── README.md                            # This file
+├── arm_driver_spec.py                   # ArmDriverSpec protocol
+└── servo_control/
+    ├── cartesian_motion_controller.py   # Main controller
+    └── README.md                        # This file
 ```
 
 ## Related Modules

@@ -40,9 +40,12 @@ manipulators/
 ├── xarm/
 │   ├── _registry.py
 │   ├── adapter.py       # XArmAdapter (SDK wrapper)
-└── piper/
+├── piper/
+│   ├── _registry.py
+│   └── adapter.py       # PiperAdapter (SDK wrapper)
+└── sim/
     ├── _registry.py
-    ├── adapter.py       # PiperAdapter (SDK wrapper)
+    └── adapter.py       # ShmMujocoAdapter (sim_mujoco)
 ```
 
 ## Quick Start
@@ -96,6 +99,10 @@ ADAPTER_FACTORIES = {
 }
 ```
 
+Update `EXPECTED_NAMES["manipulators"]` in `dimos/hardware/test_adapter_registries.py`
+with the new adapter name. Add the SDK's top-level module to `OPTIONAL_VENDOR_MODULES`
+if CI does not install it.
+
 3. **Add it to a blueprint** with a `HardwareComponent` whose `adapter_type` is the manifest name. The coordinator
    creates the adapter with `address`, `dof` (the number of joints), `hardware_id` and the component's
    `adapter_kwargs`:
@@ -134,7 +141,7 @@ A gripper has no methods of its own: it is the last entry of the joint arrays (`
 
 ## Unit Conventions
 
-All adapters convert to/from SI units:
+All adapters convert to/from SI units, except a gripper entry, which stays in the gripper's own unit (the xArm gripper uses the SDK's 0 to 850 scale):
 
 | Quantity | Unit |
 |----------|------|

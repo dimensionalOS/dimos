@@ -43,8 +43,8 @@ from reactivex import operators as ops
 import reactivex as rx
 
 # Load recorded Go2 sensor streams
-video_replay = TimedSensorReplay("go2_sf_office/video")
-lidar_replay = TimedSensorReplay("go2_sf_office/lidar")
+video_replay = TimedSensorReplay("go2_bigoffice/color_image")
+lidar_replay = TimedSensorReplay("go2_bigoffice/lidar")
 
 # This is a bit tricky. We find the first video frame timestamp, then add 2 seconds to it.
 seek_ts = video_replay.first_timestamp() + 2
@@ -97,7 +97,7 @@ if aligned_pairs:
 Video: 29 frames, Lidar: 15 scans
 Aligned pairs: 11 out of 29 video frames
 
-First matched pair: Δ11.3ms
+First matched pair: Δ12.1ms
 ```
 
 <details>
@@ -178,7 +178,7 @@ print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video fra
 
 ```results
 Video: 58 frames, Lidar: 30 scans
-Aligned pairs: 23 out of 58 video frames
+Aligned pairs: 24 out of 58 video frames
 ```
 
 ```python skip session=align output=assets/alignment_timeline2.png
@@ -221,7 +221,7 @@ print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video fra
 
 ```results
 Video: 6 frames, Lidar: 15 scans
-Aligned pairs: 1 out of 6 video frames
+Aligned pairs: 3 out of 6 video frames
 ```
 
 ```python skip session=align output=assets/alignment_timeline3.png

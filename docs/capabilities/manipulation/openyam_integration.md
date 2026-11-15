@@ -87,13 +87,14 @@ Single YAM retains a separate physical model for gravity compensation. Dual
 YAM uses its arm-only combined model for planning and gravity compensation.
 
 `OpenYamConnection()` and `DualOpenYamConnection()` default to sources `yam` and
-`dual_openyam` when used directly. For a custom stack, the coordinator's model is
-`make_openyam_model_config(robot="arm").model` or
-`dual_openyam_control_model(robot="arm")`.
+`dual_openyam` when used directly. For a custom stack, declare the connection on
+the coordinator with `connections=[arm_declaration(OpenYamConnection)]` or
+`connections=[arm_declaration(DualOpenYamConnection)]`. The `arm_declaration` helper
+in `dimos/robot/manipulators/damiao/damiao_blueprint.py` sets source `arm` for both.
 
-New Quest recordings and policy rollout use the deployed seven-coordinate names.
-Hand-guided teaching retains its original bare names, PD gains and passive-jaw
-behavior; its CAN override is `--can-port`, as for the other single-arm stacks.
+Quest recordings, policy rollout and hand-guided teaching all use the deployed
+seven-coordinate names. Hand-guided teaching keeps its zero-stiffness gains and
+passive-jaw behavior. Its CAN override is `--can-port`, as for the other single-arm stacks.
 
 Planner gripper routing is explicit through `ManipulationModuleConfig.gripper_tasks`:
 single YAM binds `manipulator` to `arm_gripper`; dual YAM binds

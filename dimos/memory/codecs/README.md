@@ -51,12 +51,8 @@ class MyCodec:
 
 2. Add a branch in `codec_for()` in `base.py` to auto-select it for the relevant type.
 
-3. Add a test case to `test_codecs.py` — the grid fixture makes this easy:
-
-```python
-@pytest.fixture(params=[..., ("mycodec", MyCodec(), sample_value)])
-def codec_case(request):
-    ...
-```
+3. Add a factory returning `Case` to `_case_factories` in `test_codecs.py`, and
+   add its key to `case_params`. The `case` fixture resolves that key, and the
+   parametrized round-trip tests exercise the codec.
 
 No base class needed — `Codec` is a protocol. Just implement `encode` and `decode`.

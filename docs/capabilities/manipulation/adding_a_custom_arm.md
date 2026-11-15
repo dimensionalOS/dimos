@@ -10,23 +10,23 @@ dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is re
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│              ManipulationModule (Planning)                    │
-│  - Plans collision-free trajectories using Drake             │
+│              ManipulationModule (Planning)                   │
+│  - Plans collision-free trajectories (RoboPlan or Drake)     │
 │  - Sends trajectories to coordinator via RPC                 │
 └───────────────────────┬──────────────────────────────────────┘
                         │ RPC: execute trajectory
 ┌───────────────────────▼──────────────────────────────────────┐
-│              ControlCoordinator (100Hz control loop)          │
+│              ControlCoordinator (100Hz control loop)         │
 │  - Reads state from all adapters                             │
-│  - Runs tasks (trajectory, servo, velocity)                  │
+│  - Runs tasks (trajectory, velocity, gripper, ...)           │
 │  - Arbitrates per-joint conflicts (priority-based)           │
 │  - Routes commands to the correct adapter                    │
 │  - Publishes aggregated joint state                          │
 └───────────────────────┬──────────────────────────────────────┘
                         │ uses
 ┌───────────────────────▼──────────────────────────────────────┐
-│              Your Adapter (implements Protocol)               │
-│  - Wraps vendor SDK (TCP/IP, CAN, serial, etc.)             │
+│              Your Adapter (implements Protocol)              │
+│  - Wraps vendor SDK (TCP/IP, CAN, serial, etc.)              │
 │  - Converts between vendor units and SI units                │
 │  - Handles connection lifecycle                              │
 └──────────────────────────────────────────────────────────────┘
@@ -159,6 +159,7 @@ dimos/hardware/manipulators/
 ├── mock/
 ├── xarm/
 ├── piper/
+├── sim/                 # MuJoCo adapter (sim_mujoco)
 └── yourarm/             # ← New directory
     ├── _registry.py  # Declares your adapter (name → import path)
     └── adapter.py
@@ -336,7 +337,7 @@ class YourArmAdapter:
         """Read current joint velocities in rad/s.
 
         If your SDK doesn't provide velocity feedback, return zeros.
-        The coordinator can estimate velocity via finite differences.
+        The coordinator publishes these zeros as they are.
         """
         if not self._sdk:
             return [0.0] * self._dof
@@ -468,18 +469,7 @@ ADAPTER_FACTORIES = {
 - **Unsupported features**: Return `None` for reads and `False` for writes. Never raise exceptions for optional features.
 - **Velocity/effort feedback**: If your SDK doesn't provide these, return zeros. The coordinator handles this gracefully.
 - **Gripper**: there are no gripper methods. A gripper is the last joint: `dof` counts it, `get_limits()` gives its range in the gripper's own unit (meters of opening above), and the joint arrays carry it last. A gripper task opens it toward the `upper` end of that range unless the task has `params={"open_at": "lower"}`.
-- **Lazy SDK import**: If the vendor SDK is an optional dependency, you can import it inside `connect()` instead of at module level (see Piper adapter for this pattern):
-
-  ```py
-  def connect(self) -> bool:
-      try:
-          from yourarm_sdk import YourArmSDK
-          self._sdk = YourArmSDK(self._address)
-          ...
-      except ImportError:
-          print("ERROR: yourarm-sdk not installed. Run: pip install yourarm-sdk")
-          return False
-  ```
+- **SDK import**: Import the vendor SDK at module level, as the xArm and Piper adapters do. The manifest keeps the registry importable when the SDK is missing.
 
 ## Step 2: Create Package Files
 
@@ -491,7 +481,7 @@ The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` discovers ada
 2. For each subpackage, it loads `<subpackage>._registry` and records each `ADAPTER_FACTORIES` entry (name → `"module:attr"` import path)
 3. Your adapter module is imported only when `create("yourarm")` is first called
 
-The manifest must import nothing beyond stdlib. It is loaded even when your vendor SDK is missing, so the name always shows up in `available()` and a missing SDK fails loudly at `create()` instead of silently dropping the adapter. A CI test (`dimos/hardware/test_adapter_registries.py`) fails if an adapter directory has no manifest or a manifest path doesn't resolve.
+The manifest must import nothing beyond stdlib. It is loaded even when your vendor SDK is missing, so the name always shows up in `available()` and a missing SDK fails loudly at `create()` instead of silently dropping the adapter. A CI test (`dimos/hardware/test_adapter_registries.py`) checks manifests and pins the available adapter names. Add `"yourarm"` to `EXPECTED_NAMES["manipulators"]`, and add the SDK's top-level module to `OPTIONAL_VENDOR_MODULES` if CI does not install it.
 
 You can verify discovery works:
 
@@ -569,7 +559,8 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 If your arm has a gripper, list its joint last (`joints=[*make_joints("arm", 6), "arm/gripper"]`), pass
 `adapter_kwargs={"arm_dof": 6}` so the adapter knows which entry is the gripper, and add
 `TaskConfig(name="arm_gripper", type="gripper", joint_names=["arm/gripper"])` (from `dimos.control.coordinator`) to
-`tasks`.
+`tasks`. With a planner (Step 4c), also pass
+`gripper_tasks={"manipulator": "arm_gripper"}` to `planner(...)`.
 
 ### Blueprint field reference
 
@@ -598,7 +589,7 @@ robot asset cache. Use `LfsPath` only when the description is intentionally
 vendored, locally modified, or has no suitable upstream source.
 
 If the planning blueprint selects the RoboPlan TOPP-RA trajectory
-parametrizer, dimOS requires RoboPlan `0.7.x`. Every movable joint in
+parametrizer, dimOS pins RoboPlan `0.8.0`. Every movable joint in
 each selected planning group must provide finite, positive velocity and
 acceleration limits. An authored extended acceleration limit is accepted:
 
@@ -701,16 +692,19 @@ def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
 ### 4b. Create a robot model config helper
 
 ```python skip
+from dimos.robot.manipulators._modeling import named_for_robot
+
+
 def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
     """Create YourArm robot config for planning.
 
     Args:
         y_offset: Y-axis offset for model placement.
     """
-    # These must match the joint names in your URDF
-    joint_names = [f"arm/joint{i}" for i in range(1, 7)]
+    # The joint names as they are in your URDF
+    joint_names = [f"joint{i}" for i in range(1, 7)]
 
-    return RobotModelConfig(
+    config = RobotModelConfig(
         model=RobotModel.from_file(
             _YOURARM_URDF_PATH,
             package_paths=_YOURARM_PACKAGE_PATHS,
@@ -729,6 +723,8 @@ def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
     )
+    # Match the arm/joint1... names make_joints("arm", 6) gives the coordinator.
+    return named_for_robot(config, "arm")
 ```
 
 ### 4c. Create a planning blueprint
@@ -964,6 +960,7 @@ Files to create:
 Files to modify:
 
 - [ ] `pyproject.toml`: Add vendor SDK to optional dependencies *(if applicable)*
+- [ ] `dimos/hardware/test_adapter_registries.py`: Add `"yourarm"` to `EXPECTED_NAMES["manipulators"]`, and the SDK's top-level module to `OPTIONAL_VENDOR_MODULES` if CI does not install it
 
 Verification:
 

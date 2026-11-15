@@ -20,7 +20,7 @@ model = QwenVlModel()
 
 image = Image.from_file("path/to/your/image.jpg")
 
-response = model.query(image.data, "What do you see in this image?")
+response = model.query(image, "What do you see in this image?")
 print(response)
 ```
 
