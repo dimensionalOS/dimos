@@ -20,11 +20,11 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
 
 
 def test_both_modules_take_the_closure_inputs_with_reform_off_by_default():
-    for module, config in [
-        (RayTracingVoxelMap, RayTracingVoxelMapConfig()),
-        (MLSPlannerNative, MLSPlannerNativeConfig()),
+    for module, config, inputs in [
+        (RayTracingVoxelMap, RayTracingVoxelMapConfig(), {"loop_closure_event"}),
+        (MLSPlannerNative, MLSPlannerNativeConfig(), {"pose_graph", "loop_closure_event"}),
     ]:
-        assert {"pose_graph", "loop_closure_event"} <= set(module.__annotations__)
+        assert inputs <= set(module.__annotations__)
         assert config.to_config_dict()["reform"] == ReformConfig().model_dump()
         assert config.reform.enabled is False
 

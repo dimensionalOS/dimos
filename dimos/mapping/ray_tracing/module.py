@@ -108,9 +108,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # An externally loaded map cloud, placed by the latest tf world_frame ->
     # cloud frame_id. Only the first cloud seeds the map.
     loaded_map: In[PointCloud2]
-    # With config.reform.enabled: one record per keyframe (x, y, z, node_id, ts, qx, qy, qz, qw), for the anchors that hold the unmoved parts.
-    pose_graph: In[PointCloud2]
-    # With config.reform.enabled: one record per keyframe a closure moved, its pose_graph record then the delta (post = delta * pre).
+    # With config.reform.enabled: one record per keyframe heard so far (x, y, z, node_id, ts, qx, qy, qz, qw, then the delta with post = delta * pre, and the optimizer's event version); every output point carries the version its map was moved to.
     loop_closure_event: In[PointCloud2]
     tf: In[TFMessage]
     global_map: Out[PointCloud2]

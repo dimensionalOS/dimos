@@ -144,7 +144,7 @@ fn a_background_warp_gives_the_map_an_in_place_one_does() {
     let (mut live, mut state) = mapper_with_keyframes(0..20);
     let mut background = BackgroundWarp::default();
     let mut job = background
-        .on_warp(closure(&mut state, 10..20, 0.5), &live)
+        .on_warp(closure(&mut state, 10..20, 0.5), 1, &live)
         .expect("nothing is running, so the warp starts");
     for i in 20..26 {
         add_live(&mut background, &mut live, i);
@@ -170,13 +170,13 @@ fn a_warp_that_arrives_mid_warp_waits_and_no_scan_is_warped_twice() {
     let (mut live, mut state) = mapper_with_keyframes(0..20);
     let mut background = BackgroundWarp::default();
     let mut first = background
-        .on_warp(closure(&mut state, 10..20, 0.5), &live)
+        .on_warp(closure(&mut state, 10..20, 0.5), 1, &live)
         .expect("nothing is running, so the warp starts");
     for i in 20..23 {
         add_live(&mut background, &mut live, i);
     }
     assert!(background
-        .on_warp(closure(&mut state, 15..20, 0.3), &live)
+        .on_warp(closure(&mut state, 15..20, 0.3), 2, &live)
         .is_none());
     for i in 23..26 {
         add_live(&mut background, &mut live, i);
@@ -191,4 +191,75 @@ fn a_warp_that_arrives_mid_warp_waits_and_no_scan_is_warped_twice() {
         .is_none());
 
     assert_eq!(sorted_centers(&live), sorted_centers(&in_place));
+}
+
+#[test]
+fn the_map_keeps_the_old_version_until_its_warp_swaps_in() {
+    let (mut live, mut state) = mapper_with_keyframes(0..20);
+    let mut background = BackgroundWarp::default();
+    assert_eq!(background.applied_version(), 0);
+    let mut job = background
+        .on_warp(closure(&mut state, 10..20, 0.5), 1, &live)
+        .expect("nothing is running, so the warp starts");
+    add_live(&mut background, &mut live, 20);
+    assert_eq!(
+        background.applied_version(),
+        0,
+        "a cloud published mid-warp is still version 0"
+    );
+    job.map.apply_warp(&job.warp);
+    background.on_done(job.epoch, job.map, &mut live);
+    assert_eq!(background.applied_version(), 1);
+}
+
+#[test]
+fn a_closure_with_nothing_to_warp_applies_after_the_warps_ahead_of_it() {
+    let (live, mut state) = mapper_with_keyframes(0..20);
+    let mut background = BackgroundWarp::default();
+    background.on_version(1);
+    assert_eq!(
+        background.applied_version(),
+        1,
+        "with no warp running it applies now"
+    );
+
+    let mut live = live;
+    let mut first = background
+        .on_warp(closure(&mut state, 10..20, 0.5), 2, &live)
+        .expect("nothing is running, so the warp starts");
+    background.on_version(3);
+    assert_eq!(background.applied_version(), 1);
+    first.map.apply_warp(&first.warp);
+    assert!(background
+        .on_done(first.epoch, first.map, &mut live)
+        .is_none());
+    assert_eq!(
+        background.applied_version(),
+        3,
+        "it rode with the running warp"
+    );
+
+    let mut second = background
+        .on_warp(closure(&mut state, 15..20, 0.3), 4, &live)
+        .expect("nothing is running, so the warp starts");
+    assert!(background
+        .on_warp(closure(&mut state, 12..20, 0.3), 5, &live)
+        .is_none());
+    background.on_version(6);
+    second.map.apply_warp(&second.warp);
+    let mut third = background
+        .on_done(second.epoch, second.map, &mut live)
+        .expect("the waiting warp starts");
+    assert_eq!(
+        background.applied_version(),
+        4,
+        "only the warp swapped in counts"
+    );
+    third.map.apply_warp(&third.warp);
+    background.on_done(third.epoch, third.map, &mut live);
+    assert_eq!(
+        background.applied_version(),
+        6,
+        "it rode with the last waiting warp"
+    );
 }

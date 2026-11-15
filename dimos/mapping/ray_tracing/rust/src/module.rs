@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use crate::background_warp::{BackgroundWarp, WarpJob};
 use crate::mapper::{register, Mapper, Pose, WarpReport};
-use crate::reform::{decode_loop_closure_event, decode_pose_graph, ReformState, Warp};
+use crate::reform::{decode_loop_closure_event, ReformState, Warp};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
@@ -43,8 +43,11 @@ enum Job {
     /// A loaded map placed in the world and split into tiles, or None when
     /// it could not be placed.
     SeedPrepared(Option<SeedPartition>),
-    /// A loop closure's warp, run on a copy of the map off the scan path.
-    Warp(Warp),
+    /// A loop closure's warp and its optimizer version, run on a copy of the
+    /// map off the scan path.
+    Warp(Warp, u32),
+    /// A loop closure's version when it moved nothing enough to warp for.
+    Version(u32),
     /// A warp finished on its copy, ready to swap in.
     WarpDone(Box<WarpJob>, WarpReport),
 }
@@ -66,11 +69,7 @@ pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
     loaded_map: Input<PointCloud2>,
 
-    // Every keyframe's pose, for the anchors that hold the unmoved parts (config.reform).
-    #[input(decode = PointCloud2::decode, handler = on_pose_graph)]
-    pose_graph: Input<PointCloud2>,
-
-    // Per closure, each keyframe it moved: its pre pose and the delta (config.reform).
+    // Per closure, every keyframe heard so far: its pre pose, the delta and the optimizer's event version (config.reform).
     #[input(decode = PointCloud2::decode, handler = on_loop_closure_event)]
     loop_closure_event: Input<PointCloud2>,
 
@@ -110,8 +109,21 @@ pub struct RayTracingVoxelMap {
     jobs: Option<mpsc::Sender<Job>>,
     worker: Option<JoinHandle<()>>,
     reform: ReformState,
-    // Whether the last pose_graph or loop_closure_event failed to decode, so a bad stream warns once.
+    // Whether the last loop_closure_event failed to decode, so a bad stream warns once.
     undecodable: bool,
+    // The last event's version, counted here for an optimizer that sends none.
+    last_version: u32,
+}
+
+/// A loop_closure_event's `version` field (the optimizer's count of published events), or None when it has none.
+fn event_version(msg: &PointCloud2) -> Option<u32> {
+    let field = msg
+        .fields
+        .iter()
+        .find(|f| f.name == "version" && f.datatype == PointField::UINT32 as u8)?;
+    let offset = field.offset as usize;
+    let bytes = msg.data.get(offset..offset + 4)?;
+    Some(u32::from_le_bytes(bytes.try_into().ok()?))
 }
 
 /// Whether transforms have already moved past a cloud's stamp, so the one it needs will never
@@ -161,15 +173,6 @@ impl RayTracingVoxelMap {
         self.enqueue(Job::LoadedMap(msg)).await;
     }
 
-    async fn on_pose_graph(&mut self, msg: PointCloud2) {
-        if !self.config.reform.enabled {
-            return;
-        }
-        if let Some(records) = self.decoded(decode_pose_graph(&msg), "pose_graph") {
-            self.reform.add_keyframes(&records);
-        }
-    }
-
     async fn on_loop_closure_event(&mut self, msg: PointCloud2) {
         if !self.config.reform.enabled {
             return;
@@ -178,12 +181,17 @@ impl RayTracingVoxelMap {
         else {
             return;
         };
+        let version = event_version(&msg).unwrap_or(self.last_version + 1);
+        self.last_version = version;
         match self.reform.closure(&moved, &self.config.reform) {
-            Some(warp) => self.enqueue(Job::Warp(warp)).await,
-            None => debug!(
-                keyframes = moved.len(),
-                "Loop closure moved nothing past reform.min_shift_m, held for the next."
-            ),
+            Some(warp) => self.enqueue(Job::Warp(warp, version)).await,
+            None => {
+                debug!(
+                    keyframes = moved.len(),
+                    "Loop closure moved nothing past reform.min_shift_m, held for the next."
+                );
+                self.enqueue(Job::Version(version)).await;
+            }
         }
     }
 
@@ -424,13 +432,16 @@ impl Worker {
                 }
                 state.seed.placed(partition);
             }
-            Job::Warp(warp) => {
+            Job::Warp(warp, version) => {
                 let background = &mut state.background_warp;
                 let live = &state.mapper;
-                if let Some(job) = tokio::task::block_in_place(|| background.on_warp(warp, live)) {
+                if let Some(job) =
+                    tokio::task::block_in_place(|| background.on_warp(warp, version, live))
+                {
                     self.spawn_warp(job);
                 }
             }
+            Job::Version(version) => state.background_warp.on_version(version),
             Job::WarpDone(job, report) => {
                 let (median_shift_m, max_shift_m) = job.warp.keyframe_shift_m();
                 warn!(
@@ -562,6 +573,7 @@ impl Worker {
 
         let out_frame_id = self.config.world_frame.as_str();
         let stamp = msg.header.stamp;
+        let version = state.background_warp.applied_version();
         state.last_frame_stamp = stamp.clone();
 
         // Bounds pair with local_map by stamp, so publish them on its cadence.
@@ -586,15 +598,15 @@ impl Worker {
         }
 
         if let Some(surfaces) = global_surfaces {
-            let global = surfaces_to_cloud(&surfaces, out_frame_id, stamp.clone());
+            let global = surfaces_to_cloud(&surfaces, out_frame_id, stamp.clone(), version);
             publish_cloud(&self.global_map, &global).await;
         }
         if let Some(surfaces) = local_surfaces {
-            let local = surfaces_to_cloud(&surfaces, out_frame_id, stamp.clone());
+            let local = surfaces_to_cloud(&surfaces, out_frame_id, stamp.clone(), version);
             publish_cloud(&self.local_map, &local).await;
         }
         if let Some(points) = fine_points {
-            let fine = points_to_cloud(&points, out_frame_id, stamp.clone());
+            let fine = points_to_cloud(&points, out_frame_id, stamp.clone(), version);
             publish_cloud(&self.local_map_fine, &fine).await;
         }
 
@@ -621,8 +633,10 @@ impl Worker {
                 self.config.viz_sweep_cells as usize,
             )
         });
+        let version = state.background_warp.applied_version();
         for (cell, points) in due {
-            let mut cloud = points_to_cloud(&points, &self.config.world_frame, stamp.clone());
+            let mut cloud =
+                points_to_cloud(&points, &self.config.world_frame, stamp.clone(), version);
             cloud.header.seq = pack_cell(cell);
             publish_cloud(&self.map_regions, &cloud).await;
         }
@@ -687,8 +701,15 @@ impl Worker {
         );
         if let Some(cylinder) = completed {
             let seq = load.next_region as i32;
-            self.publish_seed_region(&state.mapper, &cylinder, seq, &state.last_frame_stamp)
-                .await;
+            let version = state.background_warp.applied_version();
+            self.publish_seed_region(
+                &state.mapper,
+                &cylinder,
+                seq,
+                &state.last_frame_stamp,
+                version,
+            )
+            .await;
         }
         if !load.finished() {
             return;
@@ -714,10 +735,17 @@ impl Worker {
         cylinder: &Cylinder,
         seq: i32,
         stamp: &Time,
+        version: u32,
     ) {
         let surfaces = tokio::task::block_in_place(|| mapper.local_surfaces(&cylinder.bounds()));
-        let (bounds_msg, cloud) =
-            seed_region_messages(cylinder, &surfaces, seq, &self.config.world_frame, stamp);
+        let (bounds_msg, cloud) = seed_region_messages(
+            cylinder,
+            &surfaces,
+            seq,
+            &self.config.world_frame,
+            stamp,
+            version,
+        );
         publish_bounds(&self.seed_bounds, &bounds_msg).await;
         publish_cloud(&self.seed_map, &cloud).await;
     }
@@ -731,10 +759,11 @@ fn seed_region_messages(
     seq: i32,
     frame_id: &str,
     stamp: &Time,
+    version: u32,
 ) -> (PoseStamped, PointCloud2) {
     let mut bounds = bounds_to_pose(cylinder, frame_id, stamp.clone());
     bounds.header.seq = seq;
-    let mut cloud = surfaces_to_cloud(surfaces, frame_id, stamp.clone());
+    let mut cloud = surfaces_to_cloud(surfaces, frame_id, stamp.clone(), version);
     cloud.header.seq = seq;
     (bounds, cloud)
 }
@@ -855,19 +884,28 @@ fn tf_to_pose(t: &Transform) -> Pose {
     }
 }
 
-/// local_map's float32 fields: the voxel center, then its `Plane`, NaN where it has none.
-const SURFACE_FIELDS: [&str; SURFACE_STRIDE] = [
-    "x",
-    "y",
-    "z",
-    "normal_x",
-    "normal_y",
-    "normal_z",
-    "plane_offset",
+/// local_map's fields: the voxel center and its `Plane` (float32, NaN where it has none), then the closure version the map had when published (see background_warp).
+const SURFACE_FIELDS: [(&str, u8); SURFACE_STRIDE + 1] = [
+    ("x", PointField::FLOAT32 as u8),
+    ("y", PointField::FLOAT32 as u8),
+    ("z", PointField::FLOAT32 as u8),
+    ("normal_x", PointField::FLOAT32 as u8),
+    ("normal_y", PointField::FLOAT32 as u8),
+    ("normal_z", PointField::FLOAT32 as u8),
+    ("plane_offset", PointField::FLOAT32 as u8),
+    ("version", PointField::UINT32 as u8),
 ];
 
-/// The cloud's own fields, all float32 and packed in order.
-fn make_cloud(data: Vec<u8>, fields: &[&str], frame_id: &str, stamp: Time) -> PointCloud2 {
+/// A point cloud's fields: xyz (float32), then the closure version the map had when published.
+const POINT_FIELDS: [(&str, u8); 4] = [
+    ("x", PointField::FLOAT32 as u8),
+    ("y", PointField::FLOAT32 as u8),
+    ("z", PointField::FLOAT32 as u8),
+    ("version", PointField::UINT32 as u8),
+];
+
+/// The cloud's own fields, each 4 bytes and packed in order.
+fn make_cloud(data: Vec<u8>, fields: &[(&str, u8)], frame_id: &str, stamp: Time) -> PointCloud2 {
     let point_step = 4 * fields.len() as i32;
     let n = data.len() as i32 / point_step;
     PointCloud2 {
@@ -881,10 +919,10 @@ fn make_cloud(data: Vec<u8>, fields: &[&str], frame_id: &str, stamp: Time) -> Po
         fields: fields
             .iter()
             .zip((0..).step_by(4))
-            .map(|(name, offset)| PointField {
-                name: (*name).into(),
+            .map(|(&(name, datatype), offset)| PointField {
+                name: name.into(),
                 offset,
-                datatype: PointField::FLOAT32 as u8,
+                datatype,
                 count: 1,
             })
             .collect(),
@@ -896,20 +934,32 @@ fn make_cloud(data: Vec<u8>, fields: &[&str], frame_id: &str, stamp: Time) -> Po
     }
 }
 
-/// Pack flat (x, y, z) triples into an LCM cloud message.
-fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
+/// Pack flat (x, y, z) triples into an LCM cloud message, each point stamped with the map's closure `version`.
+fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time, version: u32) -> PointCloud2 {
     let mut data = Vec::with_capacity((points.len() / 3) * 16);
     for p in points.as_chunks::<3>().0 {
-        for v in [p[0], p[1], p[2], 0.0] {
+        for v in [p[0], p[1], p[2]] {
             data.extend_from_slice(&v.to_le_bytes());
         }
+        data.extend_from_slice(&version.to_le_bytes());
     }
-    make_cloud(data, &["x", "y", "z", "intensity"], frame_id, stamp)
+    make_cloud(data, &POINT_FIELDS, frame_id, stamp)
 }
 
-/// Pack `Mapper::local_surfaces` output into an LCM cloud message.
-pub fn surfaces_to_cloud(surfaces: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let data = surfaces.iter().flat_map(|v| v.to_le_bytes()).collect();
+/// Pack `Mapper::local_surfaces` output into an LCM cloud message, each surface stamped with the map's closure `version`.
+pub fn surfaces_to_cloud(
+    surfaces: &[f32],
+    frame_id: &str,
+    stamp: Time,
+    version: u32,
+) -> PointCloud2 {
+    let mut data = Vec::with_capacity(surfaces.len() / SURFACE_STRIDE * 4 * (SURFACE_STRIDE + 1));
+    for surface in surfaces.chunks_exact(SURFACE_STRIDE) {
+        for v in surface {
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+        data.extend_from_slice(&version.to_le_bytes());
+    }
     make_cloud(data, &SURFACE_FIELDS, frame_id, stamp)
 }
 
@@ -977,6 +1027,26 @@ mod tests {
         map
     }
 
+    #[test]
+    fn every_point_carries_the_maps_closure_version() {
+        let cloud = points_to_cloud(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], "map", Time::default(), 9);
+        let field = cloud
+            .fields
+            .iter()
+            .find(|f| f.name == "version")
+            .expect("a version field");
+        assert_eq!(field.datatype, PointField::UINT32 as u8);
+        let offset = field.offset as usize;
+        let step = cloud.point_step as usize;
+        let versions: Vec<u32> = (0..cloud.width as usize)
+            .map(|i| {
+                let at = i * step + offset;
+                u32::from_le_bytes(cloud.data[at..at + 4].try_into().unwrap())
+            })
+            .collect();
+        assert_eq!(versions, vec![9, 9]);
+    }
+
     fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {
         let mut out = AHashSet::new();
         let step = c.point_step as usize;
@@ -1008,7 +1078,7 @@ mod tests {
             UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::FRAC_PI_2),
         );
         let t = Transform::new("odom", "map", 0.0, iso);
-        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time::default());
+        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time::default(), 0);
 
         let part = prepare_seed(&cloud, tf_to_pose(&t), 1.0, (0.0, 0.0, 0.0), 4.0)
             .expect("loaded map must decode");
@@ -1019,7 +1089,7 @@ mod tests {
         assert_eq!(created, 1);
 
         let region = mapper.local_points(&part.regions[0].cylinder.bounds());
-        let seeded = points_to_cloud(&region, "odom", Time::default());
+        let seeded = points_to_cloud(&region, "odom", Time::default(), 0);
         assert!(cloud_points(&seeded).contains(&voxel_center(10, 3, 0)));
     }
 
@@ -1144,6 +1214,7 @@ mod tests {
                 seq,
                 "odom",
                 &stamp,
+                0,
             );
             assert_eq!((bounds.header.seq, cloud.header.seq), (seq, seq));
             assert_eq!(bounds.header.stamp, stamp);
@@ -1210,7 +1281,7 @@ mod tests {
         assert_eq!(occupied, vec![(3, -2, 1)]);
 
         // Encode and decode the occupied voxel center exactly as the port would.
-        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time::default());
+        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time::default(), 0);
         let Ok(points) = extract_xyz(&cloud) else {
             panic!("occupied cloud must decode");
         };
@@ -1238,11 +1309,13 @@ mod tests {
             &emit_points(&map, 1.0, None, &live),
             "world",
             Time::default(),
+            0,
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
+            0,
         );
         assert!(cloud_points(&global).contains(&voxel_center(0, 0, 0)));
         assert!(cloud_points(&local).contains(&voxel_center(0, 0, 0)));
@@ -1263,11 +1336,13 @@ mod tests {
             &emit_points(&map, 1.0, None, &live),
             "world",
             Time::default(),
+            0,
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
+            0,
         );
         assert!(cloud_points(&global).contains(&voxel_center(5, 0, 0)));
         assert!(!cloud_points(&local).contains(&voxel_center(5, 0, 0)));
@@ -1289,11 +1364,13 @@ mod tests {
             &emit_points(&map, 1.0, None, &live),
             "world",
             Time::default(),
+            0,
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
+            0,
         );
         assert!(cloud_points(&global).contains(&voxel_center(0, 0, 5)));
         assert!(!cloud_points(&local).contains(&voxel_center(0, 0, 5)));
@@ -1317,11 +1394,13 @@ mod tests {
             &emit_points(&map, 1.0, None, &live),
             "world",
             Time::default(),
+            0,
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
+            0,
         );
         assert!(cloud_points(&global).contains(&voxel_center(1, 0, 0)));
         assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
@@ -1355,6 +1434,7 @@ mod tests {
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
+            0,
         );
         let pts = cloud_points(&local);
         assert!(pts.contains(&voxel_center(1, 1, 0)), "dense patch kept");
