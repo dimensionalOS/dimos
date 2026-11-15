@@ -20,9 +20,11 @@ from types import ModuleType
 
 import pytest
 
+from dimos.robot.manipulators.feetech import arm as arm_module
 from dimos.robot.manipulators.feetech.arm import (
     FeetechArm,
-    _read_motor_position,
+    _read_motor,
+    calibrated_motor_radians,
 )
 from dimos.robot.manipulators.feetech.calibration import (
     FEETECH_POSITION_SPAN,
@@ -64,6 +66,14 @@ class _PositionPacketHandler:
 
     def ReadPos(self, motor_id: int) -> int | tuple[int, int, int]:
         return self._result
+
+
+class _SequencePacketHandler:
+    def __init__(self, replies: list[tuple[int, int, int]]) -> None:
+        self._replies = replies
+
+    def ReadPos(self, motor_id: int) -> tuple[int, int, int]:
+        return self._replies[-1]
 
 
 def _install_fake_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -125,4 +135,46 @@ def test_read_motor_position_wraps_multi_turn_encoder_ticks(
     result: int | tuple[int, int, int],
     expected: int,
 ) -> None:
-    assert _read_motor_position(_PositionPacketHandler(result), 3) == expected
+    assert _read_motor(_PositionPacketHandler(result), 3)[0] == expected
+
+
+def test_a_status_flag_keeps_a_plausible_position_and_a_comm_failure_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(arm_module.time, "monotonic", lambda: clock[0])
+    robot = FeetechRobot(
+        buses=(
+            FeetechBus("left", (FeetechMotor("joint_1", "left_joint1", lower=-3.0, upper=3.0),)),
+        )
+    )
+    calibration = FeetechCalibration(
+        side="left", motors={"joint_1": FeetechMotorCalibration(id=1, homing_offset=0)}
+    )
+    arm = FeetechArm(robot, {"left": "/dev/fake"}, {"left": calibration})
+    replies: list[tuple[int, int, int]] = []
+    arm._handlers = {"left": (None, _SequencePacketHandler(replies))}
+
+    def read(reply: tuple[int, int, int]) -> float:
+        replies.append(reply)
+        clock[0] += 0.01
+        return arm.read()["left"]["joint_1"]
+
+    assert read((3771, 0, 0)) == pytest.approx(
+        calibrated_motor_radians(3771, calibration.motors["joint_1"])
+    )
+    # Voltage flag with a valid position: a normal reading, and it is counted.
+    assert read((3775, 0, 1)) == pytest.approx(
+        calibrated_motor_radians(3775, calibration.motors["joint_1"])
+    )
+    assert arm.flagged_read_counts() == {("left", 1): {"voltage": 1}}
+    # A flagged read far from the last accepted position fails like any bad read.
+    with pytest.raises(RuntimeError, match="flagged read"):
+        read((1500, 0, 1))
+    # A communication failure still fails, flagged or not.
+    with pytest.raises(RuntimeError, match="failed with result"):
+        read((0, -6, 0))
+    # Unflagged reads are never second-guessed, however far they jump.
+    assert read((1500, 0, 0)) == pytest.approx(
+        calibrated_motor_radians(1500, calibration.motors["joint_1"])
+    )
