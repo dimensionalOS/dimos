@@ -213,11 +213,10 @@ fn emit(
     tracer_config: &TracerConfig,
     feed: &mut Feed,
     counts: &mut Counts,
-    closure_closed: bool,
     scan: u64,
     ts: f64,
 ) -> Result<(), String> {
-    let messages = outputs.step(pgo.key_poses(), pgo.committed_closures(), closure_closed, false, ts, "map");
+    let messages = outputs.step(pgo.key_poses(), pgo.committed_closures(), false, ts, "map");
     if let Some(records) = &messages.new_keyframe {
         counts.keyframes += records.width as usize;
         feed.message(Tag::NewKeyframe, scan, ts, &records.encode())?;
@@ -270,8 +269,8 @@ fn run() -> Result<(), String> {
     if let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(worker_threads).build_global() {
         eprintln!("lazy-feed: could not cap the GSC worker threads: {e}");
     }
+    let mut outputs = GraphOutputs::new(&pgo_config);
     let mut pgo = GscPgo::new(pgo_config);
-    let mut outputs = GraphOutputs::default();
     let mut mapper = Mapper::new(tracer_config.clone());
     mapper.track_voxel_times();
     let mut reform = ReformState::default();
@@ -352,12 +351,12 @@ fn run() -> Result<(), String> {
         // as the module's worker loop
         let keyframe = pgo.add_key_pose(&cloud_with_pose);
         if !keyframe && pgo.adopted_since_update() && pgo.update() {
-            emit(&pgo, &mut outputs, &mut mapper, &mut reform, &tracer_config, &mut feed, &mut counts, true, scan_index, scan.ts)?;
+            emit(&pgo, &mut outputs, &mut mapper, &mut reform, &tracer_config, &mut feed, &mut counts, scan_index, scan.ts)?;
         }
         if keyframe {
             pgo.step_closure_search();
-            let moved = pgo.update();
-            emit(&pgo, &mut outputs, &mut mapper, &mut reform, &tracer_config, &mut feed, &mut counts, moved, scan_index, scan.ts)?;
+            pgo.update();
+            emit(&pgo, &mut outputs, &mut mapper, &mut reform, &tracer_config, &mut feed, &mut counts, scan_index, scan.ts)?;
         }
 
         // the tracer places the scan by GSC's correction in force now, as tf map -> odom carries it
@@ -403,7 +402,7 @@ fn run() -> Result<(), String> {
     })?;
     // end of data: land every outstanding job, as the module does on stop
     if pgo.finish() {
-        emit(&pgo, &mut outputs, &mut mapper, &mut reform, &tracer_config, &mut feed, &mut counts, true, scan_index, last_ts)?;
+        emit(&pgo, &mut outputs, &mut mapper, &mut reform, &tracer_config, &mut feed, &mut counts, scan_index, last_ts)?;
     }
     let wall_s = started.elapsed().as_secs_f64();
     let summary = serde_json::json!({
