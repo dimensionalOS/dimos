@@ -18,6 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use ahash::AHashMap;
 
@@ -162,9 +163,12 @@ impl Planner {
         records: &[EventRecord],
         config: &Config,
     ) -> Option<ClosureOutcome> {
+        self.clock.start("closure");
         let lazy = self.lazy.as_mut()?;
+        let stage = Instant::now();
         let closure = lazy.table.apply_event(records)?;
         let shift = lazy.table.shift_since_frame();
+        self.clock.add("apply_event", stage);
         if closure.closing.is_empty() && shift <= config.reform.layer_shift_m(config.voxel_size) {
             if let Some(route) = &mut self.route {
                 route.note_closure(self.graph.cells.current_layer());
@@ -175,6 +179,7 @@ impl Planner {
                 carry_newest: Pose::IDENTITY,
             });
         }
+        let stage = Instant::now();
         // The anchors' poses in the frame of the layer being frozen.
         let anchor_poses = lazy
             .layers
@@ -211,7 +216,9 @@ impl Planner {
         // The cached route is in the old layer's keys, and every cell on it is stale and carried now.
         self.last_path = None;
         self.route = None;
+        self.clock.add("freeze", stage);
 
+        let stage = Instant::now();
         let rects: Vec<Rect> = closure
             .closing
             .iter()
@@ -222,6 +229,8 @@ impl Planner {
             .flat_map(|&rect| lazy.layers.lookup(&lazy.table, rect))
             .collect();
         lazy.pending.extend(found);
+        self.clock.add("lookup", stage);
+        self.clock.count("pending", lazy.pending.len());
         let pool = Arc::clone(&self.pool);
         pool.install(|| self.migrate_pending(config));
         Some(ClosureOutcome {
@@ -247,6 +256,7 @@ impl Planner {
             return;
         }
         self.migrate_pending(config);
+        let outer = self.clock.enter("near");
         let margin = bounds.radius + self.migrate_margin_m(config);
         let rect = [
             bounds.origin_x - margin,
@@ -255,6 +265,7 @@ impl Planner {
             bounds.origin_y + margin,
         ];
         self.reform_rects(&[rect], config);
+        self.clock.enter(outer);
     }
 
     /// The stale cell standing nearest `p` now, by where its anchor carries it, among the submeshes a lookup finds within
@@ -592,14 +603,18 @@ impl Planner {
         let Some(lazy) = &self.lazy else {
             return;
         };
+        let stage = Instant::now();
         let found: BTreeSet<(Version, (i32, i32))> = rects
             .iter()
             .flat_map(|&rect| lazy.layers.lookup(&lazy.table, rect))
             .collect();
+        self.clock.add("lookup", stage);
         if found.is_empty() {
             return;
         }
+        let stage = Instant::now();
         let migrated = self.migrate(&found, config);
+        self.clock.add("migrate", stage);
         self.repair_migrated(migrated, config);
     }
 
@@ -718,8 +733,12 @@ impl Planner {
         if found.is_empty() {
             return;
         }
+        let outer = self.clock.enter("pending");
+        let stage = Instant::now();
         let migrated = self.migrate(&found, config);
+        self.clock.add("migrate", stage);
         self.repair_migrated(migrated, config);
+        self.clock.enter(outer);
     }
 
     /// Move every element of the found submeshes into the current layer by its anchor's pose then and now.
@@ -838,6 +857,9 @@ impl Planner {
             })
             .collect();
         out.edits.changed.sort_unstable_by_key(|&(col, _)| col);
+        self.clock.count("submeshes", found.len());
+        self.clock.count("migrated_columns", out.columns.len());
+        self.clock.count("rekeyed", out.rekeyed.len());
         out
     }
 
@@ -846,10 +868,13 @@ impl Planner {
         let Some((&first, _)) = migrated.columns.iter().next().map(|c| (c, ())) else {
             return;
         };
+        let stage = Instant::now();
         self.graph.node_edges.redirect_cells(&migrated.merged);
         if let Some(route) = &mut self.route {
             route.note_cells(migrated.merged.iter().map(|&(id, _)| id));
         }
+        self.clock.add("redirect", stage);
+        let stage = Instant::now();
         let pad = 2 * config.closing_passes() as i32;
         let mut bbox = (first.0, first.0, first.1, first.1);
         for &(x, y) in &migrated.columns {
@@ -860,6 +885,9 @@ impl Planner {
             footprint.set(col);
         }
         let write = footprint.dilated(pad);
+        self.clock.add("mask", stage);
+        self.clock.count("mask_area", write.area());
+        let stage = Instant::now();
         let terrain = config.terrain(&self.by_col, &self.planes);
         let new_cells = extract_surfaces_region(
             &terrain,
@@ -867,7 +895,10 @@ impl Planner {
             config.max_closing_box_cells,
             &write,
         );
+        self.clock.add("extract", stage);
+        let stage = Instant::now();
         let (added, removed) = self.replace_surface_region(&write, &new_cells);
+        self.clock.add("replace_surface", stage);
         self.rebuild_region_graph(
             added,
             removed,
@@ -887,19 +918,22 @@ impl Planner {
         version: Version,
         config: &Config,
     ) -> Result<Option<crate::columns::ColumnWindow>, VersionGap> {
+        self.clock.start("region");
+        let window = config.node_window_cells();
         let Some(lazy) = &self.lazy else {
-            return Ok(self.update_region(points, bounds, config));
+            return Ok(self.update_region_within(points, bounds, config, window));
         };
         if version > lazy.table.version() {
             return Err(VersionGap::Ahead);
         }
         // A version since the current layer's frame was fixed is within reform.min_shift_m of it.
         if version >= lazy.table.frame_version() {
-            return Ok(self.update_region(points, bounds, config));
+            return Ok(self.update_region_within(points, bounds, config, window));
         }
         let Some(anchor) = lazy.table.latest() else {
-            return Ok(self.update_region(points, bounds, config));
+            return Ok(self.update_region_within(points, bounds, config, window));
         };
+        let stage = Instant::now();
         let Some(then) = lazy.table.pose_at(version, anchor) else {
             return Err(VersionGap::Forgotten);
         };
@@ -925,7 +959,8 @@ impl Planner {
             z_max: (bounds.z_max as f64 + dz) as f32,
             ..*bounds
         };
-        Ok(self.update_region(&carried, &carried_bounds, config))
+        self.clock.add("carry", stage);
+        Ok(self.update_region_within(&carried, &carried_bounds, config, window))
     }
 }
 

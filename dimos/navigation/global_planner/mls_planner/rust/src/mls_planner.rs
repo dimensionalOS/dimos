@@ -233,6 +233,54 @@ pub(crate) fn ms_since(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1e3
 }
 
+/// Wall time of one stage of the last update or closure call, under the phase it ran in (region, pending, near, closure).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StageMs {
+    pub phase: &'static str,
+    pub stage: &'static str,
+    pub ms: f64,
+}
+
+/// Per-stage wall time and sizes of the last update_region* or on_closure call, for offline profiling; nothing the planner computes reads it.
+#[derive(Default)]
+pub(crate) struct StageClock {
+    phase: &'static str,
+    stages: Vec<StageMs>,
+    counts: Vec<(&'static str, &'static str, u64)>,
+}
+
+impl StageClock {
+    pub(crate) fn start(&mut self, phase: &'static str) {
+        self.phase = phase;
+        self.stages.clear();
+        self.counts.clear();
+    }
+
+    /// Enter a phase, returning the one to restore.
+    pub(crate) fn enter(&mut self, phase: &'static str) -> &'static str {
+        std::mem::replace(&mut self.phase, phase)
+    }
+
+    /// Add the time since `since` to `stage` in the current phase.
+    pub(crate) fn add(&mut self, stage: &'static str, since: Instant) {
+        let ms = ms_since(since);
+        let phase = self.phase;
+        match self.stages.iter_mut().find(|s| s.phase == phase && s.stage == stage) {
+            Some(s) => s.ms += ms,
+            None => self.stages.push(StageMs { phase, stage, ms }),
+        }
+    }
+
+    /// Add `n` to the count `name` in the current phase.
+    pub(crate) fn count(&mut self, name: &'static str, n: usize) {
+        let phase = self.phase;
+        match self.counts.iter_mut().find(|c| c.0 == phase && c.1 == name) {
+            Some(c) => c.2 += n as u64,
+            None => self.counts.push((phase, name, n as u64)),
+        }
+    }
+}
+
 /// Cylindrical region the planner re-derives from a local map slice.
 #[derive(Clone, Copy)]
 pub struct RegionBounds {
@@ -326,6 +374,8 @@ pub struct Planner {
     lazy: Option<lazy_reform::LazyState>,
     // The last full route and what changed on it since, for the next replan to skip or reuse.
     route: Option<route::RouteWatch>,
+    // Stage times of the last update or closure call.
+    clock: StageClock,
 }
 
 /// How big the planner's containers are.
@@ -366,7 +416,18 @@ impl Planner {
             region_rejected: false,
             lazy: None,
             route: None,
+            clock: StageClock::default(),
         }
+    }
+
+    /// Wall time per stage of the last update_region* or on_closure call, in the order first reached.
+    pub fn last_stage_ms(&self) -> &[StageMs] {
+        &self.clock.stages
+    }
+
+    /// Sizes the last update_region* or on_closure call worked on: (phase, name, count).
+    pub fn last_stage_counts(&self) -> &[(&'static str, &'static str, u64)] {
+        &self.clock.counts
     }
 
     /// Rebuild the map from a whole point set. Refused once the lazy reform holds stale layers, which a rebuild would drop.
@@ -418,6 +479,7 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
+        self.clock.start("region");
         self.update_region_within(local_points, bounds, config, config.node_window_cells())
     }
 
@@ -430,6 +492,7 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
+        self.clock.start("region");
         self.update_region_within(points, bounds, config, config.buffer_window_cells())
     }
 
@@ -470,6 +533,7 @@ impl Planner {
             let stage = Instant::now();
             let edits = self.replace_region_voxels(local_points, bounds, config);
             let diff_ms = ms_since(stage);
+            self.clock.add("replace_voxels", stage);
             // No voxel changed, so surfaces and the graph are untouched.
             if edits.is_empty() {
                 return None;
@@ -492,9 +556,12 @@ impl Planner {
                 &write,
             );
             let extract_ms = ms_since(stage);
+            self.clock.add("extract", stage);
+            self.clock.count("mask_area", write.area());
             let stage = Instant::now();
             let (added, removed) = self.replace_surface_region(&write, &new_cells);
             let replace_ms = ms_since(stage);
+            self.clock.add("replace_surface", stage);
             let (cells_added, cells_removed) = (added.len(), removed.len());
 
             let stage = Instant::now();
@@ -536,7 +603,9 @@ impl Planner {
         config: &Config,
     ) {
         self.repair_region_graph(added, removed, rekeyed, edits, gone, window_steps, config);
+        let stage = Instant::now();
         self.graph.cells.recycle_freed();
+        self.clock.add("recycle", stage);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -550,12 +619,17 @@ impl Planner {
         window_steps: i32,
         config: &Config,
     ) {
+        let stage = Instant::now();
         let patch = self.patch_cells(&added, &removed, &edits.retuned, config);
+        self.clock.add("patch_cells", stage);
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
         seeds.extend_from_slice(rekeyed);
         seeds.extend(patch.retuned.iter().map(|&id| self.graph.cells.coord(id)));
+        let stage = Instant::now();
         let stitched = self.stitch_stale(&seeds, config);
+        self.clock.add("stitch_stale", stage);
+        self.clock.count("seeds", seeds.len());
         seeds.extend(stitched);
         if seeds.is_empty() && edits.is_empty() && gone.is_empty() {
             return;
@@ -569,7 +643,10 @@ impl Planner {
         let reach = config
             .terrain(&self.by_col, &self.planes)
             .step_reach_cells();
+        let stage = Instant::now();
         let affected = self.changed_neighborhood(&seeds, reach);
+        self.clock.add("neighborhood", stage);
+        let stage = Instant::now();
         let graph = &mut self.graph;
         rebuild_edges_around(
             &mut graph.cells,
@@ -577,6 +654,8 @@ impl Planner {
             &affected,
             &config.terrain(&self.by_col, &self.planes),
         );
+        self.clock.add("rebuild_edges", stage);
+        let stage = Instant::now();
         let params = config.placement_params();
         let mut gone_nodes = relocate_nodes(
             &graph.cells,
@@ -586,7 +665,13 @@ impl Planner {
             &params,
         );
         gone_nodes.extend(gone);
+        self.clock.add("relocate", stage);
+        let stage = Instant::now();
         let window_cells = self.node_window(edits, &affected, window_steps, config);
+        self.clock.add("node_window", stage);
+        self.clock.count("affected_cells", affected.len());
+        self.clock.count("window_cells", window_cells.len());
+        let stage = Instant::now();
         if let Some(route) = &mut self.route {
             let (lazy, cells) = (self.lazy.as_ref(), &self.graph.cells);
             route.note_cells(
@@ -612,9 +697,11 @@ impl Planner {
                     .chain(affected.iter().chain(&window_cells).map(now)),
             );
         }
+        self.clock.add("route_note", stage);
         if window_cells.is_empty() && patch.removed.is_empty() && gone_nodes.is_empty() {
             return;
         }
+        let stage = Instant::now();
         let graph = &mut self.graph;
         let window = RepairWindow::new(
             &graph.cells,
@@ -622,6 +709,8 @@ impl Planner {
             &mut graph.cluster_index,
             &mut graph.node_scratch.seen,
         );
+        self.clock.add("repair_window", stage);
+        let stage = Instant::now();
         let lazy = self.lazy.as_ref();
         let cells = &graph.cells;
         wall_distances_region(
@@ -631,6 +720,8 @@ impl Planner {
             &|id| lazy_reform::key_now(lazy, cells, id),
             &mut graph.wall_state,
         );
+        self.clock.add("wall_field", stage);
+        let stage = Instant::now();
         gone_nodes.extend(place_nodes_region(
             &graph.cells,
             &params,
@@ -640,6 +731,8 @@ impl Planner {
             &graph.cell_state,
             &mut graph.nodes,
         ));
+        self.clock.add("place_nodes", stage);
+        let stage = Instant::now();
         apply_wall_safe_penalty_region(
             &mut graph.cells,
             &graph.wall_state.dist,
@@ -647,6 +740,8 @@ impl Planner {
             &window_cells,
             &mut graph.node_scratch,
         );
+        self.clock.add("wall_penalty", stage);
+        let stage = Instant::now();
         let failed = build_node_edges_region(
             &graph.cells,
             &graph.nodes,
@@ -657,6 +752,7 @@ impl Planner {
             &mut graph.node_edges,
         );
         drop(window);
+        self.clock.add("node_edges", stage);
         if !failed.is_empty() {
             let stage = Instant::now();
             let report = relink_failed(
@@ -676,6 +772,7 @@ impl Planner {
                 ms = ms_since(stage),
                 "relinked node pairs whose corridor walk failed"
             );
+            self.clock.add("relink_failed", stage);
         }
     }
 

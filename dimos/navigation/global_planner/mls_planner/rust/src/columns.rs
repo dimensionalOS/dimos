@@ -277,6 +277,11 @@ impl ColumnMask {
         }
     }
 
+    /// Columns in the mask's box, set or not.
+    pub fn area(&self) -> usize {
+        self.grid.width() * self.grid.height()
+    }
+
     /// Inclusive bbox of the set columns, None when empty.
     pub fn bounds(&self) -> Option<ColumnWindow> {
         let mut bb: Option<ColumnWindow> = None;
