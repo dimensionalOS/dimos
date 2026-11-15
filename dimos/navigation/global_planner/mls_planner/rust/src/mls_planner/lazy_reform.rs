@@ -385,10 +385,27 @@ impl Planner {
                 let (p, q) = (now(c), now(o));
                 let link = g.cells.neighbors(c).iter().find(|e| e.dest == o).map_or("none".to_string(), |e| format!("{}", e.cost));
                 let w = |id: CellId| g.wall_state.dist.get(id as usize).copied().unwrap_or(f32::INFINITY);
+                let filing = |id: CellId| -> String {
+                    let Some(lazy) = self.lazy.as_ref() else { return "null".into() };
+                    let Some(el) = lazy.layers.cells.get(&id) else { return "\"no element\"".into() };
+                    let layer = g.cells.layer(id);
+                    let filed = lazy.layers.submeshes.get(&(layer, el.tile)).is_some_and(|s| s.cells.contains(&id));
+                    let p = now(id);
+                    let r = 0.5f32;
+                    let found = lazy.layers.lookup(&lazy.table, [p.0 - r, p.0 + r, p.1 - r, p.1 + r]);
+                    let cands = lazy.table.candidates([p.0 - r, p.0 + r, p.1 - r, p.1 + r]);
+                    format!(
+                        "{{\"anchor\":{},\"tile\":[{},{}],\"filed\":{filed},\"tile_layers\":{:?},\"lookup_has\":{},\"candidates\":{:?}}}",
+                        el.anchor, el.tile.0, el.tile.1,
+                        lazy.layers.tiles.get(&el.tile).map(|t| t.iter().copied().collect::<Vec<_>>()).unwrap_or_default(),
+                        found.contains(&(layer, el.tile)),
+                        cands.iter().map(|&c| lazy.table.node_id(c)).collect::<Vec<_>>()
+                    )
+                };
                 format!(
-                    "{{\"gap_m\":{d:.3},\"start_side\":[{:.2},{:.2},{:.2}],\"goal_side\":[{:.2},{:.2},{:.2}],\"layers\":[{},{}],\"link_cost\":\"{link}\",\"walls\":[{:.2},{:.2}],\"start_side_links\":{},\"goal_side_links\":{}}}",
+                    "{{\"gap_m\":{d:.3},\"start_side\":[{:.2},{:.2},{:.2}],\"goal_side\":[{:.2},{:.2},{:.2}],\"layers\":[{},{}],\"link_cost\":\"{link}\",\"walls\":[{:.2},{:.2}],\"start_side_links\":{},\"goal_side_links\":{},\"start_filing\":{},\"goal_filing\":{}}}",
                     p.0, p.1, p.2, q.0, q.1, q.2, g.cells.layer(c), g.cells.layer(o), w(c), w(o),
-                    g.cells.neighbors(c).len(), g.cells.neighbors(o).len()
+                    g.cells.neighbors(c).len(), g.cells.neighbors(o).len(), filing(c), filing(o)
                 )
             });
             return format!("{{\"cells_connect\":false,\"reached\":{reached},\"goal_component\":{},\"closest\":{near},\"boundary\":[{}]}}", from_goal.len(), list.join(","));
