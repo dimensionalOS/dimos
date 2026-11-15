@@ -29,8 +29,8 @@ use crate::mls_planner::VersionGap;
 use crate::mls_planner::{
     ms_since, Config, MapPoint, Plan, Planner, RegionBounds, DEBUG_LOG_PERIOD,
 };
-use crate::planner::snap_pose_to_cell;
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment, SurfaceEntry};
+use crate::replan::{carry_goal, pass_replans, replan, PassTrigger, Replan};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey, Xyz};
 use dimos_module::nalgebra::Vector3;
 use dimos_module::time::now;
@@ -748,7 +748,7 @@ impl Worker {
                 let closed = tokio::task::block_in_place(|| {
                     self.apply_reform(&mut planner, event, &mut viz)
                 });
-                if closed {
+                if pass_replans(PassTrigger::Closure { new_layer: closed }) {
                     self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
                         .await;
                     self.maybe_replan(&mut planner, false, &mut progress).await;
@@ -768,7 +768,10 @@ impl Worker {
                     }
                     None => false,
                 };
-                if replan_due(goal_changed, live_update) {
+                if pass_replans(PassTrigger::Update {
+                    goal_changed,
+                    live_update_applied: live_update,
+                }) {
                     self.maybe_replan(&mut planner, goal_changed, &mut progress)
                         .await;
                 }
@@ -833,19 +836,16 @@ impl Worker {
             );
             return false;
         };
-        if outcome.new_layer {
-            // Only a world-frame goal moves with the map; one in another frame follows that frame's tf.
-            let mut goal = self.active_goal.lock().expect("goal mutex");
-            if let Some(g) = goal.as_mut().filter(|g| {
-                g.frame
-                    .as_deref()
-                    .is_none_or(|f| !is_tf_frame(f) || f == &*self.config.world_frame)
-            }) {
-                let (x, y, z) = g.position;
-                let p = outcome.carry_newest.apply([x as f64, y as f64, z as f64]);
-                g.position = (p[0] as f32, p[1] as f32, p[2] as f32);
-            }
+        // Only a world-frame goal moves with the map; one in another frame follows that frame's tf.
+        let mut goal = self.active_goal.lock().expect("goal mutex");
+        if let Some(g) = goal.as_mut().filter(|g| {
+            g.frame
+                .as_deref()
+                .is_none_or(|f| !is_tf_frame(f) || f == &*self.config.world_frame)
+        }) {
+            g.position = carry_goal(g.position, &outcome);
         }
+        drop(goal);
         viz.mark_all();
         // A region held for this closure can land now.
         if let Some(held) = self.held_region.lock().expect("held mutex").take() {
@@ -1104,7 +1104,10 @@ impl Worker {
             }
             GoalStep::NoPose(goal) => progress.block(goal, NO_POSE),
             GoalStep::Plan { start, goal } => match self.goal_world_position(&goal) {
-                Some(at) => self.plan(planner, start, goal, at, progress).await,
+                Some(at) => {
+                    self.plan(planner, start, goal, at, goal_changed, progress)
+                        .await
+                }
                 None => progress.block(goal, NO_GOAL_FRAME),
             },
         }
@@ -1118,10 +1121,12 @@ impl Worker {
         start: Xyz,
         goal: Goal,
         at: Xyz,
+        goal_changed: bool,
         progress: &mut GoalProgress,
     ) {
         let plan_start = Instant::now();
-        let outcome = tokio::task::block_in_place(|| replan(planner, start, at, &self.config));
+        let outcome =
+            tokio::task::block_in_place(|| replan(planner, start, at, goal_changed, &self.config));
         let (status, reason) = outcome.status();
         let report = Report::new(goal.id, status, reason).with_remaining(distance(start, at));
         let waypoints = match outcome {
@@ -1131,6 +1136,12 @@ impl Worker {
                     publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
                 }
                 self.clear_goal(&goal);
+                self.status.report(report).await;
+                return;
+            }
+            Replan::Kept => {
+                progress.unblock();
+                progress.track(goal, start);
                 self.status.report(report).await;
                 return;
             }
@@ -1197,18 +1208,12 @@ fn goal_step(
     }
 }
 
-/// What a replan pass decided for the active goal.
-#[derive(Debug, PartialEq)]
-enum Replan {
-    Reached,
-    Planned(Plan),
-}
-
 impl Replan {
     /// The goal status this outcome reports, with its reason.
     fn status(&self) -> (i8, &'static str) {
         match self {
             Replan::Reached => (GoalStatus::SUCCEEDED, "reached"),
+            Replan::Kept => (GoalStatus::ACTIVE, "following the path"),
             Replan::Planned(Plan::Full(_)) => (GoalStatus::ACTIVE, "following the path"),
             Replan::Planned(Plan::Truncated(_)) => (
                 GoalStatus::ACTIVE,
@@ -1219,23 +1224,8 @@ impl Replan {
     }
 }
 
-/// Decide a replan pass. A goal already within tolerance needs no path. A
-/// reached goal keeps its path out, so the follower settles on its own.
-fn replan(planner: &mut Planner, start: Xyz, goal: Xyz, config: &Config) -> Replan {
-    if is_at_goal(planner, start, goal, config) {
-        return Replan::Reached;
-    }
-    Replan::Planned(planner.plan_or_truncate(start, goal, config))
-}
-
 fn distance(a: Xyz, b: Xyz) -> f32 {
     ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2) + (a.2 - b.2).powi(2)).sqrt()
-}
-
-/// Whether a worker pass replans. Seed regions never trigger one, so a pass
-/// that only applied a seed region does not.
-fn replan_due(goal_changed: bool, live_update_applied: bool) -> bool {
-    goal_changed || live_update_applied
 }
 
 /// The region a bounds message describes: position is the center, orientation
@@ -1281,25 +1271,6 @@ fn edges_message(
     let mut msg = build_segments_path(segments, voxel_size, frame, stamp);
     msg.header.seq = pack_cell(cell);
     msg
-}
-
-/// True if within tolerance of the goal on the ground plane and vertically.
-/// The goal's height is that of the surface it plans to, or its own z when it
-/// snaps to none.
-fn is_at_goal(planner: &Planner, start: Xyz, goal: Xyz, config: &Config) -> bool {
-    if (start.0 - goal.0).hypot(start.1 - goal.1) >= config.goal_tolerance {
-        return false;
-    }
-    let goal_z = snap_pose_to_cell(
-        &planner.graph().surface_lookup,
-        goal,
-        config.voxel_size,
-        config.robot_height,
-    )
-    .map_or(goal.2, |(ix, iy, iz)| {
-        surface_point_xyz(ix, iy, iz, config.voxel_size).2
-    });
-    (start.2 - goal_z).abs() < config.goal_z_tolerance
 }
 
 fn same_stamp(a: &Time, b: &Time) -> bool {
@@ -1662,6 +1633,7 @@ mod tests {
             &mut planner,
             (0.0, 0.0, 0.0),
             (0.0, 0.0, 3.0),
+            true,
             &test_config(),
         );
         assert_eq!(outcome, Replan::Planned(Plan::Blocked));
@@ -1674,6 +1646,7 @@ mod tests {
             &mut planner,
             (0.0, 0.0, 0.0),
             (0.1, 0.0, 0.0),
+            true,
             &test_config(),
         );
         assert_eq!(outcome, Replan::Reached);
@@ -1698,9 +1671,9 @@ mod tests {
         // Further above the floor than goal_z_tolerance, yet within the snap.
         let goal = (5.0, 1.0, cell + 0.62);
 
-        let far = replan(&mut planner, (1.0, 1.0, cell), goal, &config);
+        let far = replan(&mut planner, (1.0, 1.0, cell), goal, true, &config);
         assert!(matches!(far, Replan::Planned(Plan::Full(_))), "{far:?}");
-        let arrived = replan(&mut planner, (5.0, 1.0, cell), goal, &config);
+        let arrived = replan(&mut planner, (5.0, 1.0, cell), goal, false, &config);
         assert_eq!(arrived, Replan::Reached);
     }
 
@@ -1897,7 +1870,10 @@ mod tests {
         ];
         for (goal_changed, live_update_applied, replans) in passes {
             assert_eq!(
-                replan_due(goal_changed, live_update_applied),
+                pass_replans(PassTrigger::Update {
+                    goal_changed,
+                    live_update_applied
+                }),
                 replans,
                 "goal_changed {goal_changed}, live_update_applied {live_update_applied}"
             );

@@ -166,6 +166,9 @@ impl Planner {
         let closure = lazy.table.apply_event(records)?;
         let shift = lazy.table.shift_since_frame();
         if closure.closing.is_empty() && shift <= config.reform.layer_shift_m(config.voxel_size) {
+            if let Some(route) = &mut self.route {
+                route.note_closure(self.graph.cells.current_layer());
+            }
             return Some(ClosureOutcome {
                 closure,
                 new_layer: false,
@@ -205,8 +208,9 @@ impl Planner {
         lazy.layers.stale.insert(old, frozen);
         lazy.layers.current = closure.version;
         self.graph.cells.begin_layer(closure.version);
-        // The cached route is in the old layer's keys.
+        // The cached route is in the old layer's keys, and every cell on it is stale and carried now.
         self.last_path = None;
+        self.route = None;
 
         let rects: Vec<Rect> = closure
             .closing
@@ -253,15 +257,35 @@ impl Planner {
         self.reform_rects(&[rect], config);
     }
 
-    /// Migrate the stale submeshes within reach of a plan's start or goal, so it snaps to the current layer: the goal tolerance plus a node spacing around it.
-    pub fn reform_around(&mut self, p: (f32, f32, f32), config: &Config) {
-        if self.lazy.is_none() {
-            return;
-        }
-        let reach = config.goal_tolerance + config.node_spacing_m;
+    /// The stale cell standing nearest `p` now, by where its anchor carries it, among the submeshes a lookup finds within
+    /// the snap reach of `p` (and its height tolerance); None without one. For a goal no current-layer cell is near.
+    pub(crate) fn nearest_stale_cell(&self, p: (f32, f32, f32), config: &Config) -> Option<CellId> {
+        let lazy = self.lazy.as_ref()?;
+        let reach = crate::planner::SNAP_SEARCH_RADIUS_M;
         let rect = [p.0 - reach, p.0 + reach, p.1 - reach, p.1 + reach];
-        let pool = Arc::clone(&self.pool);
-        pool.install(|| self.reform_rects(&[rect], config));
+        let cells = &self.graph.cells;
+        let mut best: Option<(f32, CellId)> = None;
+        for key in lazy.layers.lookup(&lazy.table, rect) {
+            let Some(sub) = lazy.layers.submeshes.get(&key) else {
+                continue;
+            };
+            for &id in &sub.cells {
+                if !cells.is_live(id) {
+                    continue;
+                }
+                let Some(q) = lazy.stale_point(cells, id) else {
+                    continue;
+                };
+                let d2 = (q.0 - p.0).powi(2) + (q.1 - p.1).powi(2);
+                if d2 > reach * reach || (q.2 - p.2).abs() > config.robot_height {
+                    continue;
+                }
+                if best.is_none_or(|(bd, bid)| d2 < bd || d2 == bd && id < bid) {
+                    best = Some((d2, id));
+                }
+            }
+        }
+        best.map(|(_, id)| id)
     }
 
     /// Where a stale layer's cell is in the current frame, by its anchor's pose then and now; None for a current-layer cell.
@@ -821,6 +845,9 @@ impl Planner {
             return;
         };
         self.graph.node_edges.redirect_cells(&migrated.merged);
+        if let Some(route) = &mut self.route {
+            route.note_cells(migrated.merged.iter().map(|&(id, _)| id));
+        }
         let pad = 2 * config.closing_passes() as i32;
         let mut bbox = (first.0, first.0, first.1, first.1);
         for &(x, y) in &migrated.columns {

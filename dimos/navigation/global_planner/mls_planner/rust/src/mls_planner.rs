@@ -130,6 +130,9 @@ pub struct Config {
     /// A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     #[validate(range(min = 1))]
     pub max_closing_box_cells: u64,
+    /// A replan to the same goal keeps the last route from this far past both where the new cell path rejoins it and the last change on it; only the stretch before is pulled and smoothed again, m.
+    #[validate(range(min = 0.0))]
+    pub route_reuse_slack_m: f32,
 }
 
 /// The soft wall penalty needs a non-zero zone to act in.
@@ -321,6 +324,8 @@ pub struct Planner {
     region_rejected: bool,
     // The keyframe table and version layers, once the first keyframe arrives with config.reform.enabled.
     lazy: Option<lazy_reform::LazyState>,
+    // The last full route and what changed on it since, for the next replan to skip or reuse.
+    route: Option<route::RouteWatch>,
 }
 
 /// How big the planner's containers are.
@@ -360,6 +365,7 @@ impl Planner {
             last_result: None,
             region_rejected: false,
             lazy: None,
+            route: None,
         }
     }
 
@@ -581,6 +587,31 @@ impl Planner {
         );
         gone_nodes.extend(gone);
         let window_cells = self.node_window(edits, &affected, window_steps, config);
+        if let Some(route) = &mut self.route {
+            let (lazy, cells) = (self.lazy.as_ref(), &self.graph.cells);
+            route.note_cells(
+                [
+                    &patch.added,
+                    &patch.removed,
+                    &patch.retuned,
+                    &affected,
+                    &window_cells,
+                ]
+                .into_iter()
+                .flatten()
+                .copied(),
+            );
+            let now = |&id: &CellId| {
+                let k = lazy_reform::key_now(lazy, cells, id);
+                (k.0, k.1)
+            };
+            route.note_columns(
+                seeds
+                    .iter()
+                    .map(|k| (k.0, k.1))
+                    .chain(affected.iter().chain(&window_cells).map(now)),
+            );
+        }
         if window_cells.is_empty() && patch.removed.is_empty() && gone_nodes.is_empty() {
             return;
         }
@@ -868,6 +899,7 @@ impl Planner {
 
     /// Rebuild all cells from surface_lookup, then nodes and edges.
     fn rebuild_graph(&mut self, config: &Config) {
+        self.route = None;
         build_surface_cells(
             &mut self.graph.cells,
             &self.graph.surface_lookup,
@@ -955,7 +987,7 @@ impl Planner {
         );
     }
 
-    /// The path from start to goal over the whole graph, stale layers included, in current-frame points; call reform_around on the start and goal first when they may sit in a stale layer.
+    /// The path from start to goal over the whole graph, stale layers included, in current-frame points; the start snaps in the current layer, the goal there or else to the stale cell standing nearest it.
     pub fn plan(
         &self,
         start: (f32, f32, f32),
@@ -965,21 +997,36 @@ impl Planner {
         if self.graph.nodes.is_empty() {
             return None;
         }
-        let stale_point = |id| self.stale_point(id);
-        planner::plan(&self.graph, start, goal, config, &stale_point).map(|(wp, _)| wp)
+        let (point, nearest) = (
+            |id| self.stale_point(id),
+            |p| self.nearest_stale_cell(p, config),
+        );
+        let stale = planner::Stale {
+            point: &point,
+            nearest: &nearest,
+        };
+        planner::plan(&self.graph, start, goal, config, stale).map(|(wp, _)| wp)
     }
 
     /// Plan to the goal; with no full route follow the cached path while safe, or nothing with require_full_route.
     pub fn plan_or_truncate(&mut self, start: Xyz, goal: Xyz, config: &Config) -> Plan {
-        self.reform_around(start, config);
-        self.reform_around(goal, config);
         let planned = if self.graph.nodes.is_empty() {
             None
         } else {
-            let stale_point = |id| self.stale_point(id);
-            planner::plan(&self.graph, start, goal, config, &stale_point)
+            let (point, nearest) = (
+                |id| self.stale_point(id),
+                |p| self.nearest_stale_cell(p, config),
+            );
+            let stale = planner::Stale {
+                point: &point,
+                nearest: &nearest,
+            };
+            let reuse = self.route.as_ref().map(|r| (&r.cache, &r.changes));
+            planner::plan_reusing(&self.graph, start, goal, config, stale, reuse)
         };
-        if let Some((waypoints, cells)) = planned {
+        self.route = None;
+        if let Some(((waypoints, cells), cache)) = planned {
+            self.route = Some(route::RouteWatch::new(cache, config.voxel_size));
             if self.last_result != Some((goal, true)) {
                 tracing::info!(?goal, waypoints = waypoints.len(), "full path to goal");
             }
@@ -1157,7 +1204,9 @@ fn bfs_ball(
 }
 
 mod lazy_reform;
+mod route;
 pub use lazy_reform::{ClosureOutcome, VersionGap};
+pub use route::ReplanReason;
 
 #[cfg(test)]
 pub(crate) fn test_config() -> Config {
@@ -1190,6 +1239,7 @@ pub(crate) fn test_config() -> Config {
         require_full_route: false,
         max_region_columns: 10_000_000,
         max_closing_box_cells: 250_000_000,
+        route_reuse_slack_m: 3.0,
     }
 }
 
@@ -1201,3 +1251,6 @@ mod plane_tests;
 
 #[cfg(test)]
 mod reform_tests;
+
+#[cfg(test)]
+mod route_tests;
