@@ -171,35 +171,109 @@ impl<R: Read> Feed<R> {
     }
 }
 
-/// Seconds per call of one stage, for p50/p99/max.
+/// Seconds per call of one stage, for p50/p99/max; per planner stage of update_region and closure, ms per call
+/// (0 for a call that skipped it); and each call's breakdown, for the slowest.
 #[derive(Default)]
-struct Timings(BTreeMap<&'static str, Vec<f64>>);
+struct Timings {
+    calls: BTreeMap<&'static str, Vec<f64>>,
+    stages: BTreeMap<&'static str, BTreeMap<String, Vec<f64>>>,
+    breakdowns: BTreeMap<&'static str, Vec<(f64, u64, serde_json::Value)>>,
+    scan: u64,
+}
+
+fn quantiles(samples: &[f64], scale: f64) -> serde_json::Value {
+    let mut s = samples.to_vec();
+    s.sort_by(f64::total_cmp);
+    let at = |q: f64| s[((s.len() - 1) as f64 * q).round() as usize];
+    serde_json::json!({
+        "calls": s.len(), "total_s": s.iter().sum::<f64>() * scale / 1e3,
+        "p50_ms": scale * at(0.5), "p99_ms": scale * at(0.99), "max_ms": scale * at(1.0),
+    })
+}
 
 impl Timings {
-    fn time<T>(&mut self, stage: &'static str, f: impl FnOnce() -> T) -> T {
+    fn time<T>(&mut self, kind: &'static str, f: impl FnOnce() -> T) -> T {
         let start = Instant::now();
         let out = f();
-        self.0.entry(stage).or_default().push(start.elapsed().as_secs_f64());
+        self.calls.entry(kind).or_default().push(start.elapsed().as_secs_f64());
+        out
+    }
+
+    /// Time a planner call and keep its per-stage breakdown.
+    fn time_staged<T>(&mut self, kind: &'static str, planner: &mut Planner, f: impl FnOnce(&mut Planner) -> T) -> T {
+        let start = Instant::now();
+        let out = f(planner);
+        let total = start.elapsed().as_secs_f64();
+        self.calls.entry(kind).or_default().push(total);
+        let calls = self.calls[kind].len();
+        let stages = self.stages.entry(kind).or_default();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut breakdown = serde_json::Map::new();
+        for s in planner.last_stage_ms() {
+            let name = format!("{}.{}", s.phase, s.stage);
+            breakdown.insert(name.clone(), serde_json::json!((s.ms * 1e3).round() / 1e3));
+            let samples = stages.entry(name.clone()).or_default();
+            // a stage first reached now skipped every earlier call
+            samples.resize(calls - 1, 0.0);
+            samples.push(s.ms);
+            seen.insert(name);
+        }
+        for (name, samples) in stages.iter_mut() {
+            if !seen.contains(name) {
+                samples.resize(calls, 0.0);
+            }
+        }
+        let counts: serde_json::Map<String, serde_json::Value> = planner
+            .last_stage_counts()
+            .iter()
+            .map(|(phase, name, n)| (format!("{phase}.{name}"), serde_json::json!(n)))
+            .collect();
+        let slow = self.breakdowns.entry(kind).or_default();
+        slow.push((total, self.scan, serde_json::json!({ "stages_ms": breakdown, "counts": counts })));
+        if slow.len() > 200 {
+            slow.sort_by(|a, b| b.0.total_cmp(&a.0));
+            slow.truncate(SLOWEST);
+        }
         out
     }
 
     fn summary(&self) -> serde_json::Value {
         let mut out = serde_json::Map::new();
-        for (stage, samples) in &self.0 {
-            let mut s = samples.clone();
-            s.sort_by(f64::total_cmp);
-            let at = |q: f64| s[((s.len() - 1) as f64 * q).round() as usize];
-            out.insert(
-                stage.to_string(),
-                serde_json::json!({
-                    "calls": s.len(), "total_s": s.iter().sum::<f64>(),
-                    "p50_ms": 1e3 * at(0.5), "p99_ms": 1e3 * at(0.99), "max_ms": 1e3 * at(1.0),
-                }),
-            );
+        for (kind, samples) in &self.calls {
+            let mut entry = quantiles(samples, 1e3);
+            if let Some(stages) = self.stages.get(kind) {
+                let by_stage: serde_json::Map<String, serde_json::Value> =
+                    stages.iter().map(|(name, s)| (name.clone(), quantiles(s, 1.0))).collect();
+                entry["stages"] = serde_json::Value::Object(by_stage);
+            }
+            out.insert(kind.to_string(), entry);
+        }
+        serde_json::Value::Object(out)
+    }
+
+    fn slowest(&self) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        for (kind, calls) in &self.breakdowns {
+            let mut calls: Vec<_> = calls.iter().collect();
+            calls.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let list: Vec<serde_json::Value> = calls
+                .iter()
+                .take(SLOWEST)
+                .map(|(total, scan, detail)| {
+                    let mut d = detail.clone();
+                    d["scan"] = serde_json::json!(scan);
+                    d["total_ms"] = serde_json::json!((total * 1e6).round() / 1e3);
+                    d
+                })
+                .collect();
+            out.insert(kind.to_string(), serde_json::Value::Array(list));
         }
         serde_json::Value::Object(out)
     }
 }
+
+/// How many of the slowest calls of each kind slow_calls.json keeps.
+const SLOWEST: usize = 20;
 
 fn path_length(waypoints: &[(f32, f32, f32)]) -> f64 {
     waypoints
@@ -266,7 +340,7 @@ fn run() -> Result<(), String> {
         let (c, points) = region;
         let bounds = RegionBounds { origin_x: c[0], origin_y: c[1], radius: c[2], z_min: c[3], z_max: c[4] }
             .capped_at(pose[2] as f32, config.max_overhead_m);
-        timings.time("update_region", || planner.update_region_at_version(points, &bounds, version, &config))?;
+        timings.time_staged("update_region", planner, |p| p.update_region_at_version(points, &bounds, version, &config))?;
         Ok(true)
     };
 
@@ -290,7 +364,7 @@ fn run() -> Result<(), String> {
                         let cyl: Vec<_> = last_cylinder.into_iter().collect();
                         planner.snapshot_json("before", robot_xy, args.dump_radius_m, &cyl, &[])
                     });
-                    let outcome = timings.time("closure", || planner.on_closure(&records, &config));
+                    let outcome = timings.time_staged("closure", &mut planner, |p| p.on_closure(&records, &config));
                     if outcome.as_ref().is_some_and(|o| pass_replans(PassTrigger::Closure { new_layer: o.new_layer })) {
                         closure_pending = true;
                     }
@@ -314,6 +388,7 @@ fn run() -> Result<(), String> {
                 if index >= args.until_scan {
                     break serde_json::Value::Null;
                 }
+                timings.scan = index;
                 first_ts.get_or_insert(ts);
                 last_ts = ts;
                 let mut live_update_applied = false;
@@ -435,6 +510,8 @@ fn run() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let timing = serde_json::json!({ "wall_s": wall_s, "x_real_time": data_s / wall_s, "stages": timings.summary() });
     std::fs::write(args.output.join("timings.json"), serde_json::to_string_pretty(&timing).unwrap())
+        .map_err(|e| e.to_string())?;
+    std::fs::write(args.output.join("slow_calls.json"), serde_json::to_string_pretty(&timings.slowest()).unwrap())
         .map_err(|e| e.to_string())?;
     println!("{}", serde_json::to_string(&summary).unwrap());
     println!("{}", serde_json::to_string(&timing).unwrap());
