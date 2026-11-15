@@ -1,0 +1,376 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Replay the MLS planner alone from a lazy-feed file (see main.rs), in order: GSC's new_keyframe and
+//! loop_closure_event messages, each scan's version-stamped tracer region, and a replan to a goal near the start
+//! every `--replan-every` scans. Writes a deterministic per-scan record and summary, and the timings apart.
+
+use std::collections::BTreeMap;
+use std::io::{BufWriter, Read, Write};
+use std::path::PathBuf;
+use std::time::Instant;
+
+use dimos_mls_planner::lazy::{decode_cloud, decode_loop_closure_event, decode_new_keyframe, Pose};
+use dimos_mls_planner::mls_planner::{Config, MapPoint, Plan, Planner, RegionBounds, VersionGap};
+
+const NEW_KEYFRAME: u8 = 1;
+const LOOP_CLOSURE_EVENT: u8 = 2;
+const SCAN: u8 = 3;
+const END: u8 = 9;
+
+struct Args {
+    feed: PathBuf,
+    planner_config: PathBuf,
+    output: PathBuf,
+    replan_every: u64,
+    goal_along_path_m: f64,
+    until_scan: u64,
+}
+
+fn parse_args() -> Result<Args, String> {
+    let mut args = Args {
+        feed: PathBuf::new(),
+        planner_config: PathBuf::new(),
+        output: PathBuf::new(),
+        replan_every: 1,
+        goal_along_path_m: 2.0,
+        until_scan: u64::MAX,
+    };
+    let mut it = std::env::args().skip(1);
+    while let Some(flag) = it.next() {
+        let mut value = || it.next().ok_or(format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--feed" => args.feed = value()?.into(),
+            "--planner-config" => args.planner_config = value()?.into(),
+            "--output" => args.output = value()?.into(),
+            "--replan-every" => args.replan_every = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
+            "--goal-along-path-m" => {
+                args.goal_along_path_m = value()?.parse().map_err(|e| format!("{flag}: {e}"))?
+            }
+            "--until-scan" => args.until_scan = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
+            other => return Err(format!("unknown argument {other}")),
+        }
+    }
+    if args.feed.as_os_str().is_empty()
+        || args.planner_config.as_os_str().is_empty()
+        || args.output.as_os_str().is_empty()
+        || args.replan_every == 0
+    {
+        return Err("usage: lazy-replay --feed F --planner-config C.json --output DIR [--replan-every N] \
+                    [--goal-along-path-m M] [--until-scan S]"
+            .into());
+    }
+    Ok(args)
+}
+
+/// The feed's records, decoded one at a time; a region is kept as the tracer's last full set of rows.
+struct Feed<R: Read> {
+    stream: R,
+    region: BTreeMap<[u32; 3], [f32; 7]>,
+}
+
+enum Record {
+    Message { tag: u8, lcm: Vec<u8> },
+    Scan { index: u64, ts: f64, pose: [f64; 7], version: u32, region: Option<([f32; 5], Vec<MapPoint>)> },
+    End(serde_json::Value),
+}
+
+fn exact<R: Read>(stream: &mut R, n: usize) -> Result<Vec<u8>, String> {
+    let mut buf = vec![0u8; n];
+    stream.read_exact(&mut buf).map_err(|e| format!("feed ended mid-record: {e}"))?;
+    Ok(buf)
+}
+
+fn u32_at(b: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
+}
+
+fn f32_at(b: &[u8], at: usize) -> f32 {
+    f32::from_le_bytes(b[at..at + 4].try_into().unwrap())
+}
+
+impl<R: Read> Feed<R> {
+    fn open(mut stream: R) -> Result<(serde_json::Value, Self), String> {
+        if exact(&mut stream, 8)? != b"LAZYFEED" {
+            return Err("not a lazy-feed file".into());
+        }
+        let format = u32_at(&exact(&mut stream, 4)?, 0);
+        if format != 2 {
+            return Err(format!("feed format {format}, this reader knows 2"));
+        }
+        let length = u32_at(&exact(&mut stream, 4)?, 0) as usize;
+        let header = serde_json::from_slice(&exact(&mut stream, length)?).map_err(|e| e.to_string())?;
+        Ok((header, Feed { stream, region: BTreeMap::new() }))
+    }
+
+    fn next(&mut self) -> Result<Record, String> {
+        let head = exact(&mut self.stream, 17)?;
+        let tag = head[0];
+        let index = u64::from_le_bytes(head[1..9].try_into().unwrap());
+        let ts = f64::from_le_bytes(head[9..17].try_into().unwrap());
+        match tag {
+            NEW_KEYFRAME | LOOP_CLOSURE_EVENT => {
+                let n = u32_at(&exact(&mut self.stream, 4)?, 0) as usize;
+                Ok(Record::Message { tag, lcm: exact(&mut self.stream, n)? })
+            }
+            SCAN => {
+                let raw = exact(&mut self.stream, 56)?;
+                let pose: [f64; 7] =
+                    std::array::from_fn(|i| f64::from_le_bytes(raw[8 * i..8 * i + 8].try_into().unwrap()));
+                let tail = exact(&mut self.stream, 5)?;
+                let version = u32_at(&tail, 0);
+                let region = if tail[4] != 0 {
+                    let c = exact(&mut self.stream, 20)?;
+                    let cylinder: [f32; 5] = std::array::from_fn(|i| f32_at(&c, 4 * i));
+                    let removed = u32_at(&exact(&mut self.stream, 4)?, 0) as usize;
+                    let gone = exact(&mut self.stream, removed * 12)?;
+                    for k in 0..removed {
+                        self.region.remove(&std::array::from_fn(|i| u32_at(&gone, 12 * k + 4 * i)));
+                    }
+                    let upserted = u32_at(&exact(&mut self.stream, 4)?, 0) as usize;
+                    let rows = exact(&mut self.stream, upserted * 28)?;
+                    for k in 0..upserted {
+                        let row: [f32; 7] = std::array::from_fn(|i| f32_at(&rows, 28 * k + 4 * i));
+                        self.region.insert(std::array::from_fn(|i| row[i].to_bits()), row);
+                    }
+                    let points = self
+                        .region
+                        .values()
+                        .map(|r| ((r[0], r[1], r[2]), [r[3], r[4], r[5], r[6]]))
+                        .collect();
+                    Some((cylinder, points))
+                } else {
+                    None
+                };
+                Ok(Record::Scan { index, ts, pose, version, region })
+            }
+            END => {
+                let mut rest = Vec::new();
+                self.stream.read_to_end(&mut rest).map_err(|e| e.to_string())?;
+                Ok(Record::End(serde_json::from_slice(&rest).unwrap_or(serde_json::Value::Null)))
+            }
+            other => Err(format!("unknown record tag {other}")),
+        }
+    }
+}
+
+/// Seconds per call of one stage, for p50/p99/max.
+#[derive(Default)]
+struct Timings(BTreeMap<&'static str, Vec<f64>>);
+
+impl Timings {
+    fn time<T>(&mut self, stage: &'static str, f: impl FnOnce() -> T) -> T {
+        let start = Instant::now();
+        let out = f();
+        self.0.entry(stage).or_default().push(start.elapsed().as_secs_f64());
+        out
+    }
+
+    fn summary(&self) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        for (stage, samples) in &self.0 {
+            let mut s = samples.clone();
+            s.sort_by(f64::total_cmp);
+            let at = |q: f64| s[((s.len() - 1) as f64 * q).round() as usize];
+            out.insert(
+                stage.to_string(),
+                serde_json::json!({
+                    "calls": s.len(), "total_s": s.iter().sum::<f64>(),
+                    "p50_ms": 1e3 * at(0.5), "p99_ms": 1e3 * at(0.99), "max_ms": 1e3 * at(1.0),
+                }),
+            );
+        }
+        serde_json::Value::Object(out)
+    }
+}
+
+fn path_length(waypoints: &[(f32, f32, f32)]) -> f64 {
+    waypoints
+        .windows(2)
+        .map(|w| {
+            let (a, b) = (w[0], w[1]);
+            (((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2) + (b.2 - a.2).powi(2)) as f64).sqrt()
+        })
+        .sum()
+}
+
+fn run() -> Result<(), String> {
+    let args = parse_args()?;
+    let config: Config = serde_json::from_str(
+        &std::fs::read_to_string(&args.planner_config).map_err(|e| format!("{:?}: {e}", args.planner_config))?,
+    )
+    .map_err(|e| format!("{:?}: {e}", args.planner_config))?;
+    let file = std::fs::File::open(&args.feed).map_err(|e| format!("{:?}: {e}", args.feed))?;
+    let decoder = zstd::stream::read::Decoder::new(file).map_err(|e| e.to_string())?;
+    let (header, mut feed) = Feed::open(std::io::BufReader::new(decoder))?;
+    std::fs::create_dir_all(&args.output).map_err(|e| e.to_string())?;
+    let mut scans_out = BufWriter::new(
+        std::fs::File::create(args.output.join("scans.csv")).map_err(|e| e.to_string())?,
+    );
+    writeln!(scans_out, "scan,ts,version,layers,replanned,path,path_m,after_new_layer").map_err(|e| e.to_string())?;
+
+    let mut planner = Planner::new(config.worker_threads);
+    let mut timings = Timings::default();
+    // each keyframe's current pose, kept from new_keyframe and loop_closure_event, which the goal rides
+    let mut keyframes: BTreeMap<u32, Pose> = BTreeMap::new();
+    let mut goal: Option<(u32, [f64; 3])> = None;
+    let mut travelled = 0.0;
+    let mut last_xyz: Option<[f64; 3]> = None;
+    let mut held: Option<(u64, f64, [f64; 7], u32, ([f32; 5], Vec<MapPoint>))> = None;
+    let (mut first_ts, mut last_ts) = (None, 0.0);
+    let (mut replans, mut found, mut counted, mut counted_found) = (0u64, 0u64, 0u64, 0u64);
+    let (mut events, mut new_layers, mut seam_checks, mut torn) = (0u64, 0u64, 0u64, 0u64);
+    let mut pending_seam_check = false;
+    let mut last_found = false;
+    let wall = Instant::now();
+
+    let apply_region = |planner: &mut Planner,
+                        timings: &mut Timings,
+                        pose: &[f64; 7],
+                        version: u32,
+                        region: &([f32; 5], Vec<MapPoint>)|
+     -> Result<bool, VersionGap> {
+        let (c, points) = region;
+        let bounds = RegionBounds { origin_x: c[0], origin_y: c[1], radius: c[2], z_min: c[3], z_max: c[4] }
+            .capped_at(pose[2] as f32, config.max_overhead_m);
+        timings.time("update_region", || planner.update_region_at_version(points, &bounds, version, &config))?;
+        Ok(true)
+    };
+
+    let summary_in = loop {
+        match feed.next()? {
+            Record::Message { tag, lcm } => {
+                let cloud = decode_cloud(&lcm).map_err(|e| e.0)?;
+                if tag == NEW_KEYFRAME {
+                    let records = decode_new_keyframe(&cloud).map_err(|e| e.0)?;
+                    for r in &records {
+                        keyframes.insert(r.node_id, r.raw);
+                    }
+                    planner.add_keyframes(&records, &config);
+                } else {
+                    let records = decode_loop_closure_event(&cloud).map_err(|e| e.0)?;
+                    for r in &records {
+                        keyframes.insert(r.node_id, r.post());
+                    }
+                    events += 1;
+                    let outcome = timings.time("closure", || planner.on_closure(&records, &config));
+                    if outcome.is_some_and(|o| o.new_layer) {
+                        new_layers += 1;
+                        pending_seam_check = last_found;
+                    }
+                    // a cloud held for this version can go in now
+                    if let Some((_, _, pose, version, region)) = held.take() {
+                        if let Err(VersionGap::Ahead) = apply_region(&mut planner, &mut timings, &pose, version, &region)
+                        {
+                            held = Some((0, 0.0, pose, version, region));
+                        }
+                    }
+                }
+            }
+            Record::Scan { index, ts, pose, version, region } => {
+                if index >= args.until_scan {
+                    break serde_json::Value::Null;
+                }
+                first_ts.get_or_insert(ts);
+                last_ts = ts;
+                if let Some(region) = region {
+                    match apply_region(&mut planner, &mut timings, &pose, version, &region) {
+                        Err(VersionGap::Ahead) => held = Some((index, ts, pose, version, region)),
+                        Err(VersionGap::Forgotten) => {}
+                        Ok(_) => {}
+                    }
+                }
+                let xyz = [pose[0], pose[1], pose[2]];
+                if let Some(prev) = last_xyz {
+                    travelled += ((xyz[0] - prev[0]).powi(2) + (xyz[1] - prev[1]).powi(2)).sqrt();
+                }
+                last_xyz = Some(xyz);
+                // the goal: where the robot is once it has gone goal_along_path_m, held by the newest keyframe's frame
+                if goal.is_none() && travelled >= args.goal_along_path_m {
+                    if let Some((&node, kf)) = keyframes.iter().next_back() {
+                        goal = Some((node, kf.inverse().apply([xyz[0], xyz[1], xyz[2] - config.start_z_offset_m as f64])));
+                    }
+                }
+                let mut replanned = false;
+                let mut path_m = f64::NAN;
+                let mut has_path = false;
+                if let Some((node, local)) = goal {
+                    if index % args.replan_every == 0 {
+                        let g = keyframes[&node].apply(local);
+                        let goal_xyz = (g[0] as f32, g[1] as f32, g[2] as f32);
+                        let start = (pose[0] as f32, pose[1] as f32, (pose[2] - config.start_z_offset_m as f64) as f32);
+                        let plan = timings.time("replan", || planner.plan_or_truncate(start, goal_xyz, &config));
+                        replanned = true;
+                        replans += 1;
+                        if let Plan::Full(w) = &plan {
+                            has_path = true;
+                            path_m = path_length(w);
+                            found += 1;
+                        }
+                        if found > 0 {
+                            counted += 1;
+                            counted_found += u64::from(has_path);
+                        }
+                        if pending_seam_check {
+                            seam_checks += 1;
+                            torn += u64::from(!has_path);
+                            pending_seam_check = false;
+                        }
+                        last_found = has_path;
+                    }
+                }
+                writeln!(
+                    scans_out,
+                    "{index},{ts:.6},{},{},{},{},{:.3},{}",
+                    planner.reform_version(),
+                    planner.layer_count(),
+                    u8::from(replanned),
+                    u8::from(has_path),
+                    path_m,
+                    u8::from(pending_seam_check)
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Record::End(summary) => break summary,
+        }
+    };
+    scans_out.flush().map_err(|e| e.to_string())?;
+    let data_s = last_ts - first_ts.unwrap_or(last_ts);
+    let wall_s = wall.elapsed().as_secs_f64();
+    let summary = serde_json::json!({
+        "feed": args.feed, "feed_header": header, "feed_summary": summary_in,
+        "replan_every": args.replan_every, "goal_along_path_m": args.goal_along_path_m,
+        "data_s": data_s, "replans": replans, "replans_with_path": found,
+        "replans_counted": counted, "counted_with_path": counted_found,
+        "path_share": if counted > 0 { counted_found as f64 / counted as f64 } else { f64::NAN },
+        "events": events, "new_layers": new_layers, "layers": planner.layer_count(),
+        "seam_checks": seam_checks, "torn_seams": torn,
+    });
+    std::fs::write(args.output.join("summary.json"), serde_json::to_string_pretty(&summary).unwrap())
+        .map_err(|e| e.to_string())?;
+    let timing = serde_json::json!({ "wall_s": wall_s, "x_real_time": data_s / wall_s, "stages": timings.summary() });
+    std::fs::write(args.output.join("timings.json"), serde_json::to_string_pretty(&timing).unwrap())
+        .map_err(|e| e.to_string())?;
+    println!("{}", serde_json::to_string(&summary).unwrap());
+    println!("{}", serde_json::to_string(&timing).unwrap());
+    Ok(())
+}
+
+fn main() {
+    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
+    if let Err(e) = run() {
+        eprintln!("lazy-replay: {e}");
+        std::process::exit(1);
+    }
+}

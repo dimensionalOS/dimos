@@ -648,6 +648,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-mls-planner"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "dimos-module 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=30482d5b99126e5404b3c0a56dd0eddc8fcea6a8)",
+ "lcm-msgs",
+ "rayon",
+ "serde",
+ "smallvec",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "validator",
+]
+
+[[package]]
 name = "dimos-module"
 version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos?rev=30482d5b99126e5404b3c0a56dd0eddc8fcea6a8#30482d5b99126e5404b3c0a56dd0eddc8fcea6a8"
@@ -1846,6 +1862,7 @@ name = "lazy-feed"
 version = "0.1.0"
 dependencies = [
  "dimos-gsc-pgo",
+ "dimos-mls-planner",
  "dimos-voxel-ray-tracing",
  "lcm-msgs",
  "rayon",

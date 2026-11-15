@@ -9,8 +9,13 @@ license = "Apache-2.0"
 name = "lazy-feed"
 path = "src/main.rs"
 
+[[bin]]
+name = "lazy-replay"
+path = "src/replay.rs"
+
 [dependencies]
 dimos-gsc-pgo = { path = "../gsc_pgo/rust" }
+dimos-mls-planner = { path = "../../../../global_planner/mls_planner/rust" }
 dimos-voxel-ray-tracing = { path = "../../../../../mapping/ray_tracing/rust" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 rayon = "1"
