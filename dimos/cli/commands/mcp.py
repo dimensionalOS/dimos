@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
 from typing import Any
 
@@ -23,6 +25,7 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
+from dimos.core.run_registry import list_runs
 
 mcp_app = typer.Typer(help="Interact with the running MCP server")
 
@@ -32,17 +35,50 @@ def _get_adapter(timeout: int | None = None) -> McpAdapter:
     return McpAdapter.from_run_entry(timeout=timeout)
 
 
+def _connection_error(url: str) -> str:
+    """Describe a failed connection without inferring capabilities from missing metadata."""
+    error = f"Error: could not reach MCP server at {url}."
+    runs = list_runs()
+    if not runs:
+        return f"{error} No running DimOS instance found."
+    for run in reversed(runs):
+        if run.mcp_url == url:
+            return (
+                f"{error} {run.blueprint} is running and records this endpoint. "
+                "Check its MCP server and run logs."
+            )
+    if not any(run.mcp_url for run in runs):
+        return (
+            f"{error} {runs[-1].blueprint} is running, but no MCP endpoint is recorded. "
+            "Check the server's address if MCP is already configured. "
+            "If the blueprint lacks McpServer, stop the existing run with `dimos stop`, "
+            "then relaunch with `dimos run <blueprint> mcp-server`, preserving the original "
+            "blueprints and options."
+        )
+    return f"{error} DimOS is running. Check its MCP endpoint and run logs."
+
+
+@contextmanager
+def _mcp_request(timeout: int | None = None) -> Iterator[McpAdapter]:
+    adapter = _get_adapter(timeout)
+    try:
+        yield adapter
+    except requests.Timeout:
+        typer.echo(f"Error: MCP request to {adapter.url} timed out.", err=True)
+        raise typer.Exit(1) from None
+    except requests.ConnectionError:
+        typer.echo(_connection_error(adapter.url), err=True)
+        raise typer.Exit(1) from None
+    except McpError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from None
+
+
 @mcp_app.command("list-tools")
 def mcp_list_tools() -> None:
     """List available MCP tools (skills)."""
-    try:
-        tools = _get_adapter().list_tools()
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+    with _mcp_request() as adapter:
+        tools = adapter.list_tools()
     typer.echo(json.dumps(tools, indent=2))
 
 
@@ -96,14 +132,8 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid --arg: {e}", err=True)
             raise typer.Exit(1)
 
-    try:
-        result = _get_adapter(timeout).call_tool(tool_name, arguments)
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+    with _mcp_request(timeout) as adapter:
+        result = adapter.call_tool(tool_name, arguments)
 
     content = result.get("content", [])
     if not content:
@@ -116,14 +146,8 @@ def mcp_call_tool(
 @mcp_app.command("status")
 def mcp_status() -> None:
     """Show MCP server status (modules, skills)."""
-    try:
-        data = _get_adapter().call_tool_text("server_status")
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+    with _mcp_request() as adapter:
+        data = adapter.call_tool_text("server_status")
     # server_status returns JSON string -- pretty-print it
     try:
         typer.echo(json.dumps(json.loads(data), indent=2))
@@ -134,14 +158,8 @@ def mcp_status() -> None:
 @mcp_app.command("modules")
 def mcp_modules() -> None:
     """List deployed modules and their skills."""
-    try:
-        data = _get_adapter().call_tool_text("list_modules")
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+    with _mcp_request() as adapter:
+        data = adapter.call_tool_text("list_modules")
     try:
         typer.echo(json.dumps(json.loads(data), indent=2))
     except (json.JSONDecodeError, ValueError):
@@ -152,12 +170,6 @@ def agent_send_cmd(
     message: str = typer.Argument(..., help="Message to send to the running agent"),
 ) -> None:
     """Send a message to the running DimOS agent via MCP."""
-    try:
-        text = _get_adapter().call_tool_text("agent_send", {"message": message})
-    except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
-        raise typer.Exit(1)
-    except McpError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+    with _mcp_request() as adapter:
+        text = adapter.call_tool_text("agent_send", {"message": message})
     typer.echo(text)
