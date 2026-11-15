@@ -115,6 +115,7 @@ impl MLSPlanner {
         scan_period_s = 0.1,
         update_period_share = 0.4,
         repair_ms_per_column = 0.0,
+        apply_ms_per_voxel = 0.0,
         max_closing_box_cells = 250_000_000,
         route_reuse_slack_m = 3.0,
     ))]
@@ -138,6 +139,7 @@ impl MLSPlanner {
         scan_period_s: f32,
         update_period_share: f32,
         repair_ms_per_column: f32,
+        apply_ms_per_voxel: f32,
         max_closing_box_cells: u64,
         route_reuse_slack_m: f32,
     ) -> PyResult<Self> {
@@ -175,6 +177,7 @@ impl MLSPlanner {
             scan_period_s,
             update_period_share,
             repair_ms_per_column,
+            apply_ms_per_voxel,
             max_closing_box_cells,
             route_reuse_slack_m,
         };

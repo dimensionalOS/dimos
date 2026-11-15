@@ -137,11 +137,18 @@ pub struct Config {
     #[validate(range(exclusive_min = 0.0, max = 1.0))]
     pub update_period_share: f32,
     /// Calibrated ms one changed column's surface and graph repair costs (stitching to stale layers included). Changed
-    /// columns past the budget's half wait, their voxels already in, for the next updates, nearest the region's center
-    /// first, so no one update carries a whole region rewritten (the first region after a closure starts a layer);
-    /// 0 repairs all at once.
+    /// columns past what putting voxels in left of the budget's half wait, their voxels already in, for the next
+    /// updates, a patch around the waiting column nearest the region's center first, so no one update carries a whole
+    /// region rewritten (the first region after a closure starts a layer); 0 repairs all at once.
     #[validate(range(min = 0.0))]
     pub repair_ms_per_column: f32,
+    /// Calibrated ms putting one region voxel in or out of the map (or moving its plane) costs. An update's changed
+    /// columns go in nearest the region's center first while their voxels fit the repair half of the budget, the
+    /// repair taking what they leave; the rest wait for the next scans' clouds, which cover them again, so a region
+    /// rewritten whole (the first one after a closure starts a layer) goes in over several updates. 0 puts all in at
+    /// once.
+    #[validate(range(min = 0.0))]
+    pub apply_ms_per_voxel: f32,
     /// A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     #[validate(range(min = 1))]
     pub max_closing_box_cells: u64,
@@ -187,7 +194,23 @@ impl Config {
 
     /// Changed columns one region update repairs, from the budget and repair_ms_per_column.
     pub fn region_columns_per_update(&self) -> usize {
-        self.units_in_half_budget(self.repair_ms_per_column)
+        self.region_columns_after(0)
+    }
+
+    /// Changed columns a region update repairs in what putting `voxels` voxels in left of the half budget, at least 1;
+    /// unbounded at repair cost 0.
+    pub fn region_columns_after(&self, voxels: usize) -> usize {
+        if self.repair_ms_per_column <= 0.0 {
+            return usize::MAX;
+        }
+        let spent = voxels as f64 * self.apply_ms_per_voxel as f64;
+        let left = (0.5 * self.update_budget_ms() - spent).max(0.0);
+        ((left / self.repair_ms_per_column as f64).round() as usize).max(1)
+    }
+
+    /// Voxels (and moved planes) one region update puts in, from the budget and apply_ms_per_voxel.
+    pub fn voxels_per_update(&self) -> usize {
+        self.units_in_half_budget(self.apply_ms_per_voxel)
     }
 
     /// Stale elements (voxels and cells) one region update migrates, from the budget and reform.migrate_ms_per_element.
@@ -418,7 +441,7 @@ pub struct Planner {
     route: Option<route::RouteWatch>,
     // Stage times of the last update or closure call.
     clock: StageClock,
-    // Columns whose voxels a region update changed and whose surface and graph are still to repair, config.region_columns_per_update() a call.
+    // Columns whose voxels a region update changed and whose surface and graph are still to repair, config.region_columns_after(voxels put in) a call.
     region_pending: BTreeMap<(i32, i32), PendingColumn>,
 }
 
@@ -613,8 +636,12 @@ impl Planner {
 
             // Bring the stale parts of the map near the region into the current layer first.
             self.reform_near(bounds, config);
+            let center = (
+                (bounds.origin_x / voxel_size).floor() as i32,
+                (bounds.origin_y / voxel_size).floor() as i32,
+            );
             let stage = Instant::now();
-            let edits = self.replace_region_voxels(local_points, bounds, config);
+            let (edits, applied) = self.replace_region_voxels(local_points, bounds, center, config);
             let diff_ms = ms_since(stage);
             self.clock.add("replace_voxels", stage);
             self.clock.count("edit_columns", edits.columns().count());
@@ -623,11 +650,8 @@ impl Planner {
                 return None;
             }
             let stage = Instant::now();
-            let center = (
-                (bounds.origin_x / voxel_size).floor() as i32,
-                (bounds.origin_y / voxel_size).floor() as i32,
-            );
-            let (edits, window_steps) = self.repair_share(edits, window_steps, center, config);
+            let budget = config.region_columns_after(applied);
+            let (edits, window_steps) = self.repair_share(edits, window_steps, center, budget);
             self.clock.add("pending", stage);
             self.clock
                 .count("repaired_columns", edits.columns().count());
@@ -697,17 +721,17 @@ impl Planner {
         })
     }
 
-    /// The edits this update repairs: all of them when nothing waits and they fit config.region_columns_per_update(),
-    /// else they join the waiting columns and the ones nearest `center` (by column, then by key) up to the budget come
-    /// out, with the widest window any of them asked for. A route through a column that starts waiting is touched.
+    /// The edits this update repairs: all of them when nothing waits and they fit `budget` columns, else they join the
+    /// waiting columns and, from the one nearest `center`, the ones nearest it (by distance, then column) up to the
+    /// budget come out, with the widest window any of them asked for. A route through a column that starts waiting is
+    /// touched.
     fn repair_share(
         &mut self,
         edits: VoxelEdits,
         window_steps: i32,
         center: (i32, i32),
-        config: &Config,
+        budget: usize,
     ) -> (VoxelEdits, i32) {
-        let budget = config.region_columns_per_update();
         if self.region_pending.is_empty() && edits.columns().count() <= budget {
             return (edits, window_steps);
         }
@@ -730,13 +754,19 @@ impl Planner {
             entry.retuned.push(z);
             entry.window_steps = entry.window_steps.max(window_steps);
         }
-        let mut order: Vec<(i64, (i32, i32))> = pending
+        let dist = |c: (i32, i32), (x, y): (i32, i32)| {
+            let (dx, dy) = ((x - c.0) as i64, (y - c.1) as i64);
+            dx * dx + dy * dy
+        };
+        // A patch around the waiting column nearest the center, not a ring of the nearest ones, so the repair window
+        // around them stays one compact block.
+        let seed = pending
             .keys()
-            .map(|&(x, y)| {
-                let (dx, dy) = ((x - center.0) as i64, (y - center.1) as i64);
-                (dx * dx + dy * dy, (x, y))
-            })
-            .collect();
+            .map(|&col| (dist(center, col), col))
+            .min()
+            .map_or(center, |(_, col)| col);
+        let mut order: Vec<(i64, (i32, i32))> =
+            pending.keys().map(|&col| (dist(seed, col), col)).collect();
         if order.len() > budget {
             order.select_nth_unstable(budget);
             order.truncate(budget);
@@ -999,13 +1029,16 @@ impl Planner {
 
     /// Replace the cylinder's voxels and planes with the local map points,
     /// ignoring points outside it; a plane moved less than plane_noise_m keeps
-    /// its old fit, so the map matches a full rebuild within that. Returns the voxel edits.
+    /// its old fit, so the map matches a full rebuild within that. Only the
+    /// columns nearest `center` that fit config.voxels_per_update() go in (see
+    /// voxel_share). Returns the voxel edits and how many voxels and planes went in.
     fn replace_region_voxels(
         &mut self,
         local_points: &[MapPoint],
         bounds: &RegionBounds,
+        center: (i32, i32),
         config: &Config,
-    ) -> VoxelEdits {
+    ) -> (VoxelEdits, usize) {
         let (voxel_size, min_normal_z) = (config.voxel_size, config.min_normal_z());
         let inside = |&(p, _): &MapPoint| {
             if !(p.0.is_finite() && p.1.is_finite() && p.2.is_finite()) {
@@ -1014,6 +1047,7 @@ impl Planner {
             let k = voxelize(p, voxel_size);
             bounds.contains_voxel(k, voxel_size).then_some(k)
         };
+        let stage = Instant::now();
         let keys: Vec<VoxelKey> = local_points.par_iter().filter_map(inside).collect();
         let bbox = bounds.column_bbox(voxel_size);
         let buckets = ColumnBuckets::new(&keys, bbox);
@@ -1037,6 +1071,8 @@ impl Planner {
                 local
             })
             .collect();
+        self.clock.add("voxel_diff", stage);
+        let stage = Instant::now();
         // Each moved plane, and whether its voxel was already mapped.
         let planes = &self.planes;
         let moved: Vec<(VoxelKey, Option<SurfacePlane>, bool)> = local_points
@@ -1053,7 +1089,83 @@ impl Planner {
                 })
             })
             .collect();
-        self.apply_column_edits(&edits, moved, voxel_size)
+        self.clock.add("voxel_planes", stage);
+        let stage = Instant::now();
+        let (edits, moved, applied) = self.voxel_share(edits, moved, center, bbox, config);
+        self.clock.add("voxel_share", stage);
+        let stage = Instant::now();
+        let out = self.apply_column_edits(&edits, moved, voxel_size);
+        self.clock.add("voxel_apply", stage);
+        (out, applied)
+    }
+
+    /// The column edits and moved planes a region update puts in, and how many voxels and planes that is: all when
+    /// they fit config.voxels_per_update(), else whole columns nearest `center` (by distance, then column) while they
+    /// fit, at least one. The rest are left for a later cloud, which covers them again, and a route through one is
+    /// touched.
+    fn voxel_share(
+        &mut self,
+        mut edits: Vec<ColumnEdit>,
+        mut moved: Vec<(VoxelKey, Option<SurfacePlane>, bool)>,
+        center: (i32, i32),
+        bbox: ColumnWindow,
+        config: &Config,
+    ) -> (
+        Vec<ColumnEdit>,
+        Vec<(VoxelKey, Option<SurfacePlane>, bool)>,
+        usize,
+    ) {
+        let budget = config.voxels_per_update();
+        let units = |e: &ColumnEdit| e.removed.len() + e.added.len();
+        let total = edits.iter().map(units).sum::<usize>() + moved.len();
+        if total <= budget {
+            self.clock.count("applied_voxels", total);
+            self.clock.count("waiting_voxel_columns", 0);
+            return (edits, moved, total);
+        }
+        // Units per column over the region's box, which holds every edit and moved plane.
+        let height = (bbox.3 - bbox.2 + 1) as usize;
+        let at = |(x, y): (i32, i32)| (x - bbox.0) as usize * height + (y - bbox.2) as usize;
+        let mut per_col = vec![0u32; (bbox.1 - bbox.0 + 1) as usize * height];
+        for e in &edits {
+            per_col[at(e.col)] += units(e) as u32;
+        }
+        for &((x, y, _), _, _) in &moved {
+            per_col[at((x, y))] += 1;
+        }
+        let key = |(x, y): (i32, i32)| {
+            let (dx, dy) = ((x - center.0) as i64, (y - center.1) as i64);
+            (dx * dx + dy * dy, (x, y))
+        };
+        let mut seen = vec![false; per_col.len()];
+        let mut order: Vec<(i64, (i32, i32))> = Vec::with_capacity(edits.len());
+        let cols = edits.iter().map(|e| e.col);
+        for col in cols.chain(moved.iter().map(|&((x, y, _), _, _)| (x, y))) {
+            if !std::mem::replace(&mut seen[at(col)], true) {
+                order.push(key(col));
+            }
+        }
+        order.par_sort_unstable();
+        let mut applied = 0;
+        let mut taken = 0;
+        for &(_, col) in &order {
+            let n = per_col[at(col)] as usize;
+            if taken > 0 && applied + n > budget {
+                break;
+            }
+            applied += n;
+            taken += 1;
+        }
+        // Columns at or before the cutoff go in.
+        let cutoff = order[taken - 1];
+        edits.retain(|e| key(e.col) <= cutoff);
+        moved.retain(|&((x, y, _), _, _)| key((x, y)) <= cutoff);
+        if let Some(route) = &mut self.route {
+            route.note_columns(order[taken..].iter().map(|&(_, col)| col));
+        }
+        self.clock.count("applied_voxels", applied);
+        self.clock.count("waiting_voxel_columns", order.len() - taken);
+        (edits, moved, applied)
     }
 
     /// Apply per-column voxel removals and additions to the map, then the moved planes (key, new plane, whether the voxel was mapped before).
@@ -1512,6 +1624,7 @@ pub(crate) fn test_config() -> Config {
         scan_period_s: 0.1,
         update_period_share: 0.4,
         repair_ms_per_column: 0.0,
+        apply_ms_per_voxel: 0.0,
         max_closing_box_cells: 250_000_000,
         route_reuse_slack_m: 3.0,
     }
@@ -1534,6 +1647,12 @@ impl Config {
     pub(crate) fn set_region_columns_per_update(&mut self, count: u32) {
         self.repair_ms_per_column = self.unit_cost_for(count);
         debug_assert!(count == 0 || self.region_columns_per_update() == count as usize);
+    }
+
+    /// Put `count` voxels in per region update (0 = all at once).
+    pub(crate) fn set_voxels_per_update(&mut self, count: u32) {
+        self.apply_ms_per_voxel = self.unit_cost_for(count);
+        debug_assert!(count == 0 || self.voxels_per_update() == count as usize);
     }
 
     /// Migrate `count` stale elements per region update (0 = all at once).

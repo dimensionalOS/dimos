@@ -111,11 +111,17 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     scan_period_s: float = 0.1
     # Share of scan_period_s one region update's deferred work (stale migration and waiting column repair, half each) may cost.
     update_period_share: float = 0.4
-    # Calibrated ms one changed column's surface and graph repair costs; a region update repairs what fits half its budget,
-    # nearest its center first, and the rest wait, so the first region after a closure (a whole region rewritten) is
-    # spread out instead of one long update (0 = all at once). 0.04 is the 90th percentile over a 10 Hz FAST-LIO run's
-    # slowest updates on an M-series Mac.
+    # Calibrated ms one changed column's surface and graph repair costs; a region update repairs what fits half its budget
+    # (less what putting voxels in took), a patch around the waiting column nearest its center, and the rest wait, so a
+    # whole region rewritten is spread out instead of one long update (0 = all at once). 0.04 is the 90th percentile over
+    # a 10 Hz FAST-LIO run's slowest updates on an M-series Mac.
     repair_ms_per_column: float = 0.04
+    # Calibrated ms putting one region voxel in or out of the map (or moving its plane) costs; a region update puts in its
+    # changed columns nearest its center first while their voxels fit the repair half of its budget (the repair takes
+    # what they leave) and the rest come in from the next scans' clouds, so a region rewritten whole (the first after a
+    # closure starts a layer) goes in over several updates (0 = all at once). 0.00045 is the most over a 10 Hz FAST-LIO
+    # run's whole-region rewrites (80k+ voxels each) on an M-series Mac.
+    apply_ms_per_voxel: float = 0.00045
     # A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     max_closing_box_cells: int = 250_000_000
     # A replan to the same goal keeps the last route from this far past where the new cell path rejoins it and past the last change on it; only the stretch before is pulled and smoothed again.
