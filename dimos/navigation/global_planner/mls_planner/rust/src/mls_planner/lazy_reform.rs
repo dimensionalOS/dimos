@@ -666,22 +666,35 @@ impl Planner {
             return Vec::new();
         }
         let band = [(z_lo - max_rise) as f64, (z_hi + max_rise) as f64];
-        // One lookup per tile-sized block of columns, each box one column past them, where a stale cell can stand to link.
+        // Where a stale cell can stand to link: a column beside one of `columns`. One lookup per tile-sized block of them.
+        let mut landing: Vec<(i32, i32)> = columns
+            .iter()
+            .flat_map(|&(x, y)| SIDES.map(|(dx, dy)| (x + dx, y + dy)))
+            .collect();
+        landing.sort_unstable();
+        landing.dedup();
         let block = ((lazy.layers.params.tile_m / vs).floor() as i32).max(1);
-        let mut blocks: BTreeMap<(i32, i32), (i32, i32, i32, i32)> = BTreeMap::new();
-        for &(x, y) in &columns {
-            let b = blocks
+        let mut blocks: BTreeMap<(i32, i32), Vec<(i32, i32)>> = BTreeMap::new();
+        for &(x, y) in &landing {
+            blocks
                 .entry((x.div_euclid(block), y.div_euclid(block)))
-                .or_insert((x, x, y, y));
-            *b = (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y));
+                .or_default()
+                .push((x, y));
         }
-        let boxes: Vec<(i32, i32, i32, i32)> = blocks
+        let boxes: Vec<((i32, i32, i32, i32), &[(i32, i32)])> = blocks
             .values()
-            .map(|&(x0, x1, y0, y1)| (x0 - 1, x1 + 1, y0 - 1, y1 + 1))
+            .map(|cols| {
+                let b = cols
+                    .iter()
+                    .fold((i32::MAX, i32::MIN, i32::MAX, i32::MIN), |b, &(x, y)| {
+                        (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y))
+                    });
+                (b, cols.as_slice())
+            })
             .collect();
         let rects: Vec<crate::lazy::Rect> = boxes
             .iter()
-            .map(|&(x0, x1, y0, y1)| {
+            .map(|&((x0, x1, y0, y1), _)| {
                 [
                     x0 as f32 * vs,
                     (x1 + 1) as f32 * vs,
@@ -696,7 +709,7 @@ impl Planner {
         }
         self.clock.count("stitch_submeshes", found.len());
         let in_columns = |c: &(i32, i32)| columns.binary_search(c).is_ok();
-        // Stale cells standing now in a column beside one of `columns`, with their z now, each once.
+        // Stale cells standing now in a landing column, with their z now, each once.
         let mut near: Vec<((i32, i32), CellId, f32)> = Vec::new();
         let mut taken: ahash::AHashSet<CellId> = ahash::AHashSet::new();
         let mut read = 0usize;
@@ -715,26 +728,49 @@ impl Planner {
                     anchors.extend(sub.counts.keys().copied());
                 }
             }
-            let carries: BTreeMap<u32, crate::lazy::Pose> = anchors
+            let carries: BTreeMap<u32, (crate::lazy::Pose, crate::lazy::Pose)> = anchors
                 .iter()
-                .map(|&a| (a, frozen.carry(a, &lazy.table)))
+                .map(|&a| {
+                    let carry = frozen.carry(a, &lazy.table);
+                    (a, (carry, carry.inverse()))
+                })
                 .collect();
-            for rect in &rects {
-                // Each anchor's box in the stale layer's frame, merged where they overlap, read once per group.
-                let mut groups: Vec<((i32, i32, i32, i32), Vec<u32>)> = carries
-                    .iter()
-                    .map(|(&a, carry)| (preimage(carry, *rect, band, vs), vec![a]))
-                    .collect();
-                merge_overlapping(&mut groups);
-                for ((x0, x1, y0, y1), group) in &groups {
-                    for x in *x0..=*x1 {
-                        for y in *y0..=*y1 {
-                            let Some(zs) = frozen.surface_lookup.get(&(x, y)) else {
+            for &(bbox, cols) in &boxes {
+                for (back, members, slack) in carry_groups(&carries, bbox, band, vs) {
+                    // Each landing column carried back by the group's pose, widened by how far any member's carry and
+                    // a point's place in its column and the height band can take it from there.
+                    let mid = 0.5 * (band[0] + band[1]);
+                    let old = |&(x, y): &(i32, i32)| {
+                        let p = back.apply([
+                            (x as f64 + 0.5) * vs as f64,
+                            (y as f64 + 0.5) * vs as f64,
+                            mid,
+                        ]);
+                        (
+                            (p[0] / vs as f64).floor() as i32,
+                            (p[1] / vs as f64).floor() as i32,
+                        )
+                    };
+                    let mapped: Vec<(i32, i32)> = cols.iter().map(old).collect();
+                    let mb = mapped
+                        .iter()
+                        .fold((i32::MAX, i32::MIN, i32::MAX, i32::MIN), |b, &(x, y)| {
+                            (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y))
+                        });
+                    let r = (slack / vs as f64).floor() as i32 + 1;
+                    let mut mask = ColumnMask::new(mb, r);
+                    for &c in &mapped {
+                        mask.set(c);
+                    }
+                    let mask = mask.dilated(r);
+                    for row in mask.rows() {
+                        for col in mask.row_columns(row) {
+                            let Some(zs) = frozen.surface_lookup.get(&col) else {
                                 continue;
                             };
                             for &iz in zs {
                                 read += 1;
-                                let Some(id) = cells.stale_id(layer, (x, y, iz)) else {
+                                let Some(id) = cells.stale_id(layer, (col.0, col.1, iz)) else {
                                     continue;
                                 };
                                 if !cells.is_live(id) || cells.layer(id) != layer {
@@ -743,14 +779,15 @@ impl Planner {
                                 let Some(el) = lazy.layers.cells.get(&id) else {
                                     continue;
                                 };
-                                if group.binary_search(&el.anchor).is_err()
+                                if members.binary_search(&el.anchor).is_err()
                                     || tiles.binary_search(&(layer, el.tile)).is_err()
                                 {
                                     continue;
                                 }
                                 let (px, py, pz) = cells.point(id, vs);
-                                let p =
-                                    carries[&el.anchor].apply([px as f64, py as f64, pz as f64]);
+                                let p = carries[&el.anchor]
+                                    .0
+                                    .apply([px as f64, py as f64, pz as f64]);
                                 let p = (p[0] as f32, p[1] as f32, p[2] as f32);
                                 let k = voxelize(p, vs);
                                 let at = (k.0, k.1);
@@ -1193,71 +1230,61 @@ fn merge_cell(cells: &mut SurfaceCells, from: CellId, into: CellId) {
     }
 }
 
-/// The columns, in a stale layer's own frame, an element carried by `carry` must sit in to land in `rect` (current
-/// frame, m) within the height band `band`: the bounding box of the box's corners carried back, one column wider.
-fn preimage(
-    carry: &crate::lazy::Pose,
-    rect: crate::lazy::Rect,
+/// The anchors of `carries` in groups whose carries back from the box `bbox` (columns) over the height band agree
+/// within a voxel: each group's first member's pose back, its members (sorted), and how far (m, in xy) a point of a
+/// landing column, anywhere in the box and band, carried back by a member can sit from its column's center carried
+/// back by the group's pose at mid band.
+fn carry_groups(
+    carries: &BTreeMap<u32, (crate::lazy::Pose, crate::lazy::Pose)>,
+    (x0, x1, y0, y1): (i32, i32, i32, i32),
     band: [f64; 2],
     voxel_size: f32,
-) -> (i32, i32, i32, i32) {
-    let back = carry.inverse();
-    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-    for corner in 0..8 {
-        let p = back.apply([
-            rect[corner & 1] as f64,
-            rect[2 + (corner >> 1 & 1)] as f64,
-            band[corner >> 2 & 1],
-        ]);
-        for axis in 0..2 {
-            lo[axis] = lo[axis].min(p[axis]);
-            hi[axis] = hi[axis].max(p[axis]);
-        }
-    }
+) -> Vec<(crate::lazy::Pose, Vec<u32>, f64)> {
     let v = voxel_size as f64;
-    let col = |m: f64| (m / v).floor() as i32;
-    (
-        col(lo[0]) - 1,
-        col(hi[0]) + 1,
-        col(lo[1]) - 1,
-        col(hi[1]) + 1,
-    )
-}
-
-/// Merge boxes that overlap, with their anchors, until none do; anchors stay sorted, boxes in a deterministic order.
-fn merge_overlapping(groups: &mut Vec<((i32, i32, i32, i32), Vec<u32>)>) {
-    let overlap = |a: &(i32, i32, i32, i32), b: &(i32, i32, i32, i32)| {
-        a.0 <= b.1 && b.0 <= a.1 && a.2 <= b.3 && b.2 <= a.3
-    };
-    loop {
-        let mut merged = false;
-        let mut i = 0;
-        while i < groups.len() {
-            let mut j = i + 1;
-            while j < groups.len() {
-                if overlap(&groups[i].0, &groups[j].0) {
-                    let (b, anchors) = groups.swap_remove(j);
-                    let a = &mut groups[i];
-                    a.0 = (
-                        a.0 .0.min(b.0),
-                        a.0 .1.max(b.1),
-                        a.0 .2.min(b.2),
-                        a.0 .3.max(b.3),
-                    );
-                    a.1.extend(anchors);
-                    merged = true;
+    let corners: Vec<[f64; 3]> = (0..8)
+        .map(|c| {
+            [
+                if c & 1 == 0 {
+                    x0 as f64 * v
                 } else {
-                    j += 1;
-                }
+                    (x1 + 1) as f64 * v
+                },
+                if c & 2 == 0 {
+                    y0 as f64 * v
+                } else {
+                    (y1 + 1) as f64 * v
+                },
+                band[c >> 2 & 1],
+            ]
+        })
+        .collect();
+    // The xy distance two rigid motions put a point apart is affine in the point, so its most over the box is at a corner.
+    let apart = |a: &crate::lazy::Pose, b: &crate::lazy::Pose| {
+        corners
+            .iter()
+            .map(|&q| {
+                let (p, r) = (a.apply(q), b.apply(q));
+                (p[0] - r[0]).hypot(p[1] - r[1])
+            })
+            .fold(0.0, f64::max)
+    };
+    let mut groups: Vec<(crate::lazy::Pose, Vec<u32>, f64)> = Vec::new();
+    for (&anchor, (_, back)) in carries {
+        match groups.iter_mut().find(|g| apart(&g.0, back) <= v) {
+            Some(g) => {
+                g.2 = g.2.max(apart(&g.0, back));
+                g.1.push(anchor);
             }
-            i += 1;
-        }
-        if !merged {
-            break;
+            None => groups.push((*back, vec![anchor], 0.0)),
         }
     }
-    for g in groups.iter_mut() {
-        g.1.sort_unstable();
+    let mid = 0.5 * (band[0] + band[1]);
+    for g in &mut groups {
+        // a point is within half a column's diagonal of its column's center, and the band tilts a carried column
+        let o = g.0.apply([0.0, 0.0, mid]);
+        let up = g.0.apply([0.0, 0.0, band[1]]);
+        let tilt = (up[0] - o[0]).hypot(up[1] - o[1]);
+        g.2 += std::f64::consts::FRAC_1_SQRT_2 * v + tilt;
     }
-    groups.sort_unstable();
+    groups
 }
