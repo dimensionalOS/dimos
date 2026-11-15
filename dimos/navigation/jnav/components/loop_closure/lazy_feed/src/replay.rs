@@ -41,6 +41,8 @@ struct Args {
     dump_limit: usize,
     /// Snapshots to dump after a scan, by scan index and center.
     snapshot_at: Vec<(u64, f32, f32)>,
+    /// Scans after which the planner is checked against a full rebuild from its own voxels.
+    parity_at: Vec<u64>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -54,6 +56,7 @@ fn parse_args() -> Result<Args, String> {
         dump_radius_m: 40.0,
         dump_limit: 4,
         snapshot_at: Vec::new(),
+        parity_at: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -82,6 +85,7 @@ fn parse_args() -> Result<Args, String> {
                     parts[2].parse().map_err(|_| bad())?,
                 ));
             }
+            "--parity-at" => args.parity_at.push(value()?.parse().map_err(|e| format!("{flag}: {e}"))?),
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -487,6 +491,24 @@ fn run() -> Result<(), String> {
                             dumps += 1;
                             eprintln!("lost path at scan {index} connectivity: {}", planner.connectivity_json(start, goal_xyz, &config));
                             dump(&format!("lost{index}"), &planner.snapshot_json(&format!("lost path {index}"), robot_xy, args.dump_radius_m, &[], &[]));
+                        }
+                        if args.parity_at.contains(&index) {
+                            let fresh = planner.rebuilt(&config);
+                            let (only_here, only_fresh) = planner.surface_difference(&fresh);
+                            let near = |k: &&(i32, i32, i32)| {
+                                let (x, y) = ((k.0 as f32 + 0.5) * config.voxel_size, (k.1 as f32 + 0.5) * config.voxel_size);
+                                (x - start.0).hypot(y - start.1) < 5.0
+                            };
+                            let near_here: Vec<_> = only_here.iter().filter(near).collect();
+                            let near_fresh: Vec<_> = only_fresh.iter().filter(near).collect();
+                            eprintln!(
+                                "parity at scan {index}: start {start:?} goal {goal_xyz:?} has_path {has_path}; cells only incremental {} ({} within 5 m: {:?}), only rebuilt {} ({} within 5 m: {:?})",
+                                only_here.len(), near_here.len(), &near_here[..near_here.len().min(40)],
+                                only_fresh.len(), near_fresh.len(), &near_fresh[..near_fresh.len().min(40)]
+                            );
+                            eprintln!("parity at scan {index}: rebuilt plan found {}", fresh.plan(start, goal_xyz, &config).is_some());
+                            eprintln!("parity at scan {index}: incremental connectivity {}", planner.connectivity_json(start, goal_xyz, &config));
+                            eprintln!("parity at scan {index}: rebuilt connectivity {}", fresh.connectivity_json(start, goal_xyz, &config));
                         }
                         last_found = has_path;
                     } else {
