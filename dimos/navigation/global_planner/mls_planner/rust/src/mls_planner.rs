@@ -33,12 +33,12 @@ use crate::dijkstra::RepairWindow;
 use crate::edges::{
     build_node_edges, build_node_edges_region, edges_to_segments, relink_failed, PlannerGraph,
 };
+use crate::lazy::ReformConfig;
 use crate::nodes::{
     apply_wall_safe_penalty_region, place_nodes, place_nodes_region, relocate_nodes,
-    wall_distances_region, PlacementParams, HOLE_SPAN_CELLS,
+    wall_distances_region, NodeId, PlacementParams, HOLE_SPAN_CELLS,
 };
 use crate::planner;
-use crate::reform::ReformConfig;
 use crate::region_viz::SurfaceEntry;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region};
 use crate::terrain::{PlaneMap, SurfacePlane, Terrain};
@@ -121,7 +121,7 @@ pub struct Config {
     /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-    /// Whether and how the graph warps through each loop_closure_event.
+    /// Whether and how the planner follows GscPGO's loop closures.
     #[validate(nested)]
     pub reform: ReformConfig,
     /// How far around the start, goal and route a plan re-keys cells a warp moved, m.
@@ -328,6 +328,8 @@ pub struct Planner {
     displaced: Option<warp::DisplacedIndex>,
     // Whether the last region update had bad bounds, so a bad pose warns once.
     region_rejected: bool,
+    // The keyframe table and version layers, once the first keyframe arrives with config.reform.enabled.
+    lazy: Option<lazy_reform::LazyState>,
 }
 
 /// Seconds since `epoch` at which each voxel was added, and the clock edits are stamped with.
@@ -419,6 +421,7 @@ impl Planner {
             voxel_times: None,
             displaced: None,
             region_rejected: false,
+            lazy: None,
         }
     }
 
@@ -544,6 +547,8 @@ impl Planner {
                     config,
                 );
             }
+            // Bring the stale parts of the map near the region into the current layer first.
+            self.reform_near(bounds, config);
             let stage = Instant::now();
             let edits = self.replace_region_voxels(local_points, bounds, config);
             let diff_ms = ms_since(stage);
@@ -575,7 +580,16 @@ impl Planner {
             let (cells_added, cells_removed) = (added.len(), removed.len());
 
             let stage = Instant::now();
-            self.rebuild_region_graph(added, removed, &[], &edits, &[], window_steps, config);
+            self.rebuild_region_graph(
+                added,
+                removed,
+                &[],
+                &edits,
+                &[],
+                Vec::new(),
+                window_steps,
+                config,
+            );
             debug_throttled!(
                 DEBUG_LOG_PERIOD,
                 diff_ms,
@@ -601,6 +615,7 @@ impl Planner {
         rekeyed: &[VoxelKey],
         edits: &VoxelEdits,
         moves: &[(usize, VoxelKey)],
+        gone: Vec<NodeId>,
         window_steps: i32,
         config: &Config,
     ) {
@@ -617,7 +632,7 @@ impl Planner {
         seeds.extend_from_slice(&removed);
         seeds.extend_from_slice(rekeyed);
         seeds.extend(patch.retuned.iter().map(|&id| self.graph.cells.coord(id)));
-        if seeds.is_empty() && edits.is_empty() && moves.is_empty() {
+        if seeds.is_empty() && edits.is_empty() && moves.is_empty() && gone.is_empty() {
             return;
         }
         let moving: AHashSet<usize> = moves.iter().map(|&(ni, _)| ni).collect();
@@ -648,6 +663,7 @@ impl Planner {
             &relocations,
             &params,
         );
+        gone_nodes.extend(gone);
         // A moved node's region and edges change around both its ends.
         let mut roots = affected;
         for &(_, from, to) in &relocations[..moves.len()] {
@@ -747,6 +763,9 @@ impl Planner {
             .iter()
             .map(|&c| graph.cells.insert(c, terrain.surface(c)))
             .collect();
+        if let Some(lazy) = &mut self.lazy {
+            lazy.file_cells(&graph.cells, &removed, &added, config.voxel_size);
+        }
         let mut retuned_cells: Vec<CellId> = Vec::new();
         for &c in retuned {
             if graph.cells.id(c).is_some() {
@@ -819,7 +838,7 @@ impl Planner {
                 })
             })
             .collect();
-        self.apply_column_edits(&edits, moved)
+        self.apply_column_edits(&edits, moved, voxel_size)
     }
 
     /// Apply per-column voxel removals and additions to the map, then the moved planes (key, new plane, whether the voxel was mapped before).
@@ -827,6 +846,7 @@ impl Planner {
         &mut self,
         edits: &[ColumnEdit],
         moved: Vec<(VoxelKey, Option<SurfacePlane>, bool)>,
+        voxel_size: f32,
     ) -> VoxelEdits {
         let mut voxel_edits = VoxelEdits::default();
         let mut changed: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
@@ -850,6 +870,9 @@ impl Planner {
                     times.by_key.insert((ix, iy, iz), times.now);
                     times.residual.remove(&(ix, iy, iz));
                 }
+            }
+            if let Some(lazy) = &mut self.lazy {
+                lazy.file_voxels(edit, voxel_size);
             }
             if was_empty != self.by_col.get(edit.col).is_none() {
                 voxel_edits.flipped.push(edit.col);
@@ -1289,6 +1312,8 @@ fn bfs_ball(
     ball
 }
 
+mod lazy_reform;
+pub use lazy_reform::VersionGap;
 mod warp;
 pub use warp::WarpReport;
 

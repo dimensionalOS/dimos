@@ -144,7 +144,7 @@ impl MLSPlanner {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             worker_threads,
-            reform: ReformConfig::off(),
+            reform: dimos_mls_planner::lazy::ReformConfig::off(),
             reform_rekey_radius_m,
             require_full_route,
             max_region_columns,

@@ -20,12 +20,11 @@ import math
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from dimos_lcm.std_msgs import Time
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.reform import ReformConfig
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
@@ -33,6 +32,25 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
+
+
+class MLSReformConfig(BaseModel):
+    """How the planner follows GscPGO's loop closures (its new_keyframe and loop_closure_event inputs)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # follow closures; off ignores new_keyframe and loop_closure_event
+    enabled: bool = False
+    # edge of a version 0 tile, the extent of a submesh, m
+    tile_m: float = 10.0
+    # extra tiles around each area a lookup maps to version 0
+    tile_pad: int = 1
+    # edge of the coarse grid keyframe boxes are filed in, m
+    box_grid_m: float = 10.0
+    # how far each keyframe box grows before it is filed: the most a reform moves a point off its keyframe's rigid motion, m
+    box_pad_m: float = 1.0
+    # past versions whose keyframe poses are kept, for clouds stamped with an older version
+    version_history: int = 4
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
@@ -77,8 +95,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4
-    # Whether and how the graph warps through each loop_closure_event.
-    reform: ReformConfig = Field(default_factory=ReformConfig)
+    # Whether and how the planner follows GscPGO's loop closures.
+    reform: MLSReformConfig = Field(default_factory=MLSReformConfig)
     # How far around the start, goal and route a plan re-keys cells a warp moved, m.
     reform_rekey_radius_m: float = 3.0
     # With no full route publish no path, instead of following the cached route to a standoff short of the blockage.
@@ -107,8 +125,8 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     seed_map: In[PointCloud2]
     seed_bounds: In[PoseStamped]
     goal: In[PointStamped]
-    # With config.reform.enabled: GscPGO's keyframes and per-closure moves, as RayTracingVoxelMap takes them.
-    pose_graph: In[PointCloud2]
+    # With config.reform.enabled: GscPGO's new keyframes (raw pose, scan box) and versioned closures.
+    new_keyframe: In[PointCloud2]
     loop_closure_event: In[PointCloud2]
     tf: In[TFMessage]
 

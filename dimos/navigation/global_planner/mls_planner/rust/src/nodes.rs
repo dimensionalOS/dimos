@@ -189,6 +189,45 @@ impl Nodes {
         }
     }
 
+    /// Re-file the node on a cell that moved from `old` to its current key, at the cell's new point.
+    pub(crate) fn rekey_cell(
+        &mut self,
+        cells: &SurfaceCells,
+        params: &PlacementParams,
+        cell: CellId,
+        old: VoxelKey,
+    ) {
+        if let Some(i) = self.node_at(cell) {
+            self.unindex(params, cell, old);
+            self.list[i].pos = cells.point(cell, params.voxel_size);
+            self.index(cells, params, i);
+        }
+    }
+
+    /// Hand the node on `from` (keyed `from_key`) to `into`, or drop it when `into` holds one. Returns the node id given up.
+    pub(crate) fn transfer(
+        &mut self,
+        cells: &SurfaceCells,
+        params: &PlacementParams,
+        from: CellId,
+        from_key: VoxelKey,
+        into: CellId,
+    ) -> Option<NodeId> {
+        let i = self.node_at(from)?;
+        self.unindex(params, from, from_key);
+        if self.has(into) {
+            self.list[i].cell_id = NO_CELL;
+            self.swap_remove(cells, params, i);
+        } else {
+            self.list[i] = NodeData {
+                cell_id: into,
+                pos: cells.point(into, params.voxel_size),
+            };
+            self.index(cells, params, i);
+        }
+        Some(from)
+    }
+
     /// Move the node on `cell`, if any, to the cell's surface point.
     pub(crate) fn follow_cell(&mut self, cells: &SurfaceCells, cell: CellId, voxel_size: f32) {
         if let Some(i) = self.node_at(cell) {

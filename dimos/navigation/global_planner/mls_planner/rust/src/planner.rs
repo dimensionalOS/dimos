@@ -652,7 +652,7 @@ fn assemble_cells(
 
         // The stored corridor runs a to b. Dead cells are skipped: the update
         // safety walk drops broken corridors, so gaps here are rare races.
-        let resolve = |coord: &VoxelKey| plg.cells.id(*coord);
+        let resolve = |coord: &VoxelKey| plg.cells.resolve(*coord);
         if a == edge.a {
             for c in edge.chain.iter().filter_map(resolve) {
                 push_cell(&mut cells, c);

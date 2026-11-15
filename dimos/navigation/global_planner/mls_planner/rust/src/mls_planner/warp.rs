@@ -325,6 +325,7 @@ impl Planner {
                 &[],
                 &VoxelEdits::default(),
                 &[],
+                Vec::new(),
                 config.node_window_cells(),
                 config,
             );
@@ -367,6 +368,7 @@ impl Planner {
             &rekeyed,
             &VoxelEdits::default(),
             &[],
+            Vec::new(),
             config.node_window_cells(),
             config,
         );

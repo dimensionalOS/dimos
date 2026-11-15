@@ -28,7 +28,7 @@ region_bounds = "geometry_msgs.PoseStamped"
 seed_map = "sensor_msgs.PointCloud2"
 seed_bounds = "geometry_msgs.PoseStamped"
 goal = "geometry_msgs.PointStamped"
-pose_graph = "sensor_msgs.PointCloud2"
+new_keyframe = "sensor_msgs.PointCloud2"
 loop_closure_event = "sensor_msgs.PointCloud2"
 tf = "tf2_msgs.TFMessage"
 

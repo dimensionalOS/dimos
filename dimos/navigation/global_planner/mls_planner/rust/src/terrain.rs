@@ -37,6 +37,16 @@ impl SurfacePlane {
         })
     }
 
+    /// Its slopes and center offset: (gx, gy, z0).
+    pub fn parts(&self) -> (f32, f32, f32) {
+        (self.gx, self.gy, self.z0)
+    }
+
+    /// A plane from its slopes and center offset.
+    pub fn from_parts(gx: f32, gy: f32, z0: f32) -> Self {
+        Self { z0, gx, gy }
+    }
+
     /// The level plane through the voxel center offset by `z0`, for tests.
     #[cfg(test)]
     pub fn level(z0: f32) -> Self {
