@@ -23,6 +23,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
@@ -131,3 +132,60 @@ def test_completed_trajectory_does_not_bypass_start_validation(positions, expect
         ],
     )
     assert task.execute(trajectory, positions).status is expected
+
+
+def test_continuous_stream_follows_a_lagging_joint_without_teeth() -> None:
+    dt, limit, lead, sag, tau = 0.01, 3.0, 0.3, 0.05, 0.13
+    allowance = limit * dt
+    task = JointTrajectoryTask(
+        JointTrajectoryTaskConfig(
+            joint_names=["arm/a"],
+            velocity_limits={"arm/a": limit},
+            continuous_stream=True,
+            stream_lead_limits={"arm/a": lead},
+        )
+    )
+    # A follower that lags its command by tau and sags by a constant offset.
+    t, target, measured, command = 0.0, 0.0, 0.0, 0.0
+    lags: list[float] = []
+
+    def tick(speed: float, *, send: bool = True, blocked: bool = False) -> float:
+        nonlocal t, target, measured, command
+        t += dt
+        target += speed * dt
+        if send:
+            task.on_joint_command(
+                JointState(frame_id="dimos/guarded-joint", name=["arm/a"], position=[target]), t
+            )
+        state = CoordinatorState(
+            joints=JointStateSnapshot(joint_positions={"arm/a": measured}), t_now=t, dt=dt
+        )
+        output = task.compute(state)
+        step = 0.0
+        if output is not None:
+            step = output.positions[0] - command
+            command = output.positions[0]
+        assert abs(command - measured) <= lead + 1e-12
+        lags.append(target - measured)
+        if not blocked:
+            measured += dt / tau * (command - sag - measured)
+        return step
+
+    # Moving, and blocked: never a step back, never past the velocity limit or the lead.
+    for _ in range(100):
+        assert -1e-12 <= tick(1.5) <= allowance + 1e-12
+    assert max(lags) > 5 * allowance
+    for _ in range(50):
+        assert -1e-12 <= tick(1.5, blocked=True) <= allowance + 1e-12
+    assert command == pytest.approx(measured + lead)
+    for _ in range(200):
+        assert -1e-12 <= tick(0.0) <= allowance + 1e-12
+    assert command == pytest.approx(target)
+    assert measured < command - allowance
+
+    # After a silence longer than the gap timeout the stream starts from the reading.
+    for _ in range(20):
+        tick(0.0, send=False)
+    held = measured
+    tick(50.0)
+    assert command == pytest.approx(held + allowance)
