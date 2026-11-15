@@ -17,8 +17,7 @@
 Delegates connection and channel lifecycle to a
 :class:`~dimos.protocol.pubsub.impl.webrtc.providers.spec.Provider`
 (Cloudflare Realtime, broker, ...) and conforms to the standard DimOS
-pubsub interface, so the grid tests in ``pubsub/test_spec.py`` and the
-benchmark harness in ``pubsub/benchmark`` apply directly.
+pubsub interface, so the grid tests in ``pubsub/test_spec.py`` apply directly.
 """
 
 from __future__ import annotations

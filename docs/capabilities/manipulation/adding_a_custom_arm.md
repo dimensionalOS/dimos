@@ -1,5 +1,7 @@
 # How to Integrate a New Manipulator Arm
 
+> Arm built on Damiao motors? Start with [Arms with Damiao motors](#arms-with-damiao-motors) below.
+
 This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
 ## Architecture Overview
@@ -32,6 +34,114 @@ dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is re
 
 > See also: `dimos/hardware/manipulators/README.md` for a quick reference.
 
+## Arms with Damiao motors
+
+If dimOS talks to your arm's Damiao motors directly (DM4310, DM4340, DM8009, each on its own CAN ID, through a CAN
+adapter or a Damiao USB-CAN bridge), don't write a vendor-SDK `ManipulatorAdapter` (Step 1 below). Damiao arms are
+connection modules: the motor protocol, the CAN transports, gripper calibration, gravity compensation and command
+checks live in `dimos/robot/manipulators/damiao/` and the `can-motor-control` library (installed by the `control`
+extra). Your arm declares its data and a small connection class in `dimos/robot/manipulators/<yourarm>/`. Copy the
+closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm/` (two arms, two buses).
+
+1. **Files.** `config.py` (the URDF model, a `RobotModelConfig` factory that takes `robot="arm"` and passes the
+    finger joints to `named_for_robot(..., fingers=...)`, and the robot data), `connection.py`,
+    `blueprints/basic.py` (the coordinator, the trajectory and gripper `TaskConfig`s, the planner), `test_config.py`
+    and `docs/capabilities/manipulation/<yourarm>_integration.md`; optionally `joints.py` (joint-name constants) and
+    `coordinator.py` (an empty `DamiaoCoordinator` subclass, as in `openyam/coordinator.py`). There is no adapter
+    registry, `_registry.py` or `__init__.py`.
+
+2. **Robot data.** Declare one module-level `DamiaoRobot(buses=[...], model=..., gravity_model=..., base_link=...,
+    joint_names=[...], gravity=True, home_joints=[...])` (`dimos/robot/manipulators/damiao/robot.py`). Each
+    `DamiaoBus(arm=[...], kp=[...], kd=[...], gripper=..., name="arm")` is one CAN bus with one arm group and at
+    most one gripper. Each arm motor is `DamiaoMotor(name, type, send_id, reply_id)` from the vendor's motor table;
+    its name is the joint's name in `model` and `gravity_model`, and `reply_id` is the feedback ID. `joint_names`
+    lists every arm motor in bus order, then each gripper's finger joint. Commands and states are matched by joint
+    name, but `kp` and `kd` (per bus), `teach_kd`, `home_joints` and the CAN selectors are matched by position, so
+    keep them in motor order. Nothing checks the motor table against the arm: a wrong or swapped CAN ID is not
+    detected (only a reply ID used twice on one bus is rejected, and a gripper motor that doesn't answer on its IDs
+    makes start fail). A motor that never answers reads 0.0, and one that stops answering keeps its last reading.
+    Holds target the reading, so a joint with a wrong `reply_id` is driven toward 0 rad at full gain as soon as the
+    arm starts. Check the IDs with the vendor's tool, and start the first time with the arm supported near its zero
+    pose. Motor fault codes are not read either: a motor that trips its own protection goes limp without an error in
+    dimOS.
+
+3. **Motors.** `type` is `"DM4310"`, `"DM4340"` or `"DM8009"`. A wrong type scales velocity and torque incorrectly
+    while positions still look right. Pass a `DamiaoProfile(code, p_max, v_max, t_max)` as
+    `DamiaoMotor(..., profile=...)` (its `type` is then ignored; `code` is 0x8000 to 0xFFFF) only when the PMAX,
+    VMAX and TMAX stored in the motor differ from the stock ones (MakerMods Metal is the example in this repo).
+    dimOS has no per-joint sign or zero offset: each motor's zero pose and positive direction must match the URDF,
+    or gravity compensation, the joint limits and planned motions are wrong. Do the vendor's motor ID and zero-pose
+    procedure first, and confirm each joint's direction on the arm.
+
+4. **Connection and transport.** In `connection.py`, subclass `DamiaoConnectionConfig` with a default `source`, one
+    required `str` field per bus (`can_port`, or `left_can_port` and `right_can_port`) and a validator that rejects
+    blank values and defaults `model` to your robot's model. Subclass `DamiaoConnection` with
+    `config: <YourConfig>`, `robot = <YOUR_ROBOT>` and a `can_ports()` that returns the selectors in bus order (see
+    `openyam/connection.py`). Don't implement Damiao framing or a serial protocol yourself. A selector that starts
+    with `/dev/` uses the Damiao USB-CAN bridge on that serial port (`can_motor_control.DmSerialBus`); otherwise it
+    is a SocketCAN interface such as `can0` on Linux, or a gs_usb adapter's serial number on macOS. There are no
+    default selectors, and the connection doesn't configure the interface: on Linux bring it up first with
+    `dimos hardware can setup can0` (1 Mbit/s by default); `dimos hardware can list` shows the selectable interfaces
+    (gs_usb serial numbers on macOS). On a two-bus arm the buses can share motor IDs, so swapped selectors drive the
+    wrong arm without any error. If a transport you need is missing, add it to the shared code, not to your arm.
+
+5. **Gains.** `kp` and `kd` on each `DamiaoBus` hold one value per arm motor; grippers have no gains. dimOS checks
+    the count when the robot data is built and, when it sends, that every value is finite; only the codec checks
+    ranges, at send time. For every motor type the codec accepts `kp` from 0 to 500 and `kd` from 0 to 5, and it
+    checks each command's position, velocity and torque, including the gravity term, against the motor type's limits
+    (DM4310: 10 N·m, 30 rad/s; DM4340: 28 N·m, 10 rad/s; DM8009: 54 N·m, 45 rad/s; positions ±12.5 rad). With a
+    value out of range the arm still starts and enables, then every command and hold raises `CodecError` at the
+    first out-of-range row: that motor, the motors after it in bus order and the grippers stay enabled without
+    commands (motors before it are still commanded), and it shows up only as a repeated warning and in
+    `status().last_error`. Check gains copied from a vendor SDK against these ranges, and check the largest gravity
+    torque over the joint range (for example with `PhysicalModel(...).gravity(q)`) against the motor's torque limit.
+
+6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel)`. `joint` is the
+    URDF finger joint (a second finger must be a mimic or fixed joint, see `RobotModel.with_mimic_joint`; if the
+    URDF has no driven finger joint, add one as `dual_openyam/config.py` does), and the jaw is read and commanded in
+    that joint's unit, with the `open_at` end (`"lower"` or `"upper"`) open. `opening` is the motor direction that
+    opens the jaw (`"increasing_position"` or `"decreasing_position"`). `current` is a per-unit current in (0, 1],
+    not amperes. `calibration_travel` (motor radians, default 4.0) must exceed the gripper's full stroke; a shorter
+    one silently calibrates only part of it. A wrong `opening` or `open_at`, or a gripper task whose `open_at`
+    differs from the robot data, inverts the jaw. These values depend on the physical gripper: take them from the
+    vendor or measure them, and say which values are unverified. Activation calibrates the gripper by driving it to
+    both of its stops, and the arm motors get no commands while it does.
+
+7. **Model and gravity.** `model` is the URDF the connection drives and reports: its movable, non-mimic joints must
+    be exactly `joint_names`, each with a finite position range. Don't make an arm joint continuous: the limit
+    checks accept it, but if `gravity_model` has it as continuous too, `connect()` fails. `gravity_model` must list
+    the arm joints in motor order (other joints are locked), or `connect()` fails even with `gravity=False`.
+    `gravity` is on by default and needs real masses and inertias; set it to `False` only when you can't provide
+    them (MakerMods Metal sets `gravity=False`). Readings are published as measured, even past a limit, while joints
+    that no task drives are held at their last position clamped into the URDF limits, so check the URDF limits
+    against the arm's real stops. Disabling the motors (a fault, a stop or a failed start) removes all torque, so an
+    arm without brakes falls.
+
+8. **Blueprints.** In `blueprints/basic.py`, compose the coordinator and the connection as the examples do:
+    `autoconnect(<Coordinator>.blueprint(instance_name="ControlCoordinator", model=<model config with
+    robot="arm">.model, tasks=[...], zero_stiffness_joints=[]), arm_connection(<YourConnection>))` remapped with
+    `arm_remaps(<YourConnection>, <Coordinator>)`, a trajectory task over the `arm/<joint>` names, a
+    `TaskConfig(type="gripper")` whose `open_at` matches the robot data, and a planner blueprint built with
+    `planner(...)` and `gripper_tasks` (which maps each planning group to its gripper task). The CAN selector lives
+    on the connection, so users pass `--can-port` (or `--left-can-port` and `--right-can-port`); `--simulation`
+    swaps in `MockJointConnection`, and so does a `SIMULATION` environment variable or `.env` entry. Register
+    blueprints by regenerating `dimos/robot/all_blueprints.py` with
+    `pytest dimos/robot/test_all_blueprints_generation.py` (outside CI it rewrites the file, then fails until you
+    stage it). The scanner registers only a plain top-level assignment to a public name (no leading `_`, no type
+    annotation) whose value is an `autoconnect(...)` call or ends in `.blueprint`, `.remappings`, `.transports`,
+    `.global_config`, `.requirements` or `.configurators`; a bare `x = yourarm_control()` is not registered, which
+    is why the examples end with `.remappings([])`. Also add each new blueprint whose name doesn't start with
+    `coordinator-` to `experimental/gateway/annotations.yaml`, or `experimental/gateway/tests/test_config.py` fails.
+    Steps 4 (URDF and planning) and 5 (register blueprints) below apply; the other steps describe the vendor-SDK
+    path.
+
+9. **Tests and docs.** Add `test_config.py` modeled on `makermods_metal/test_config.py` (selectors, CLI options,
+    tasks), and add your arm's wiring and gains to `ARMS` in `dimos/robot/manipulators/damiao/test_damiao_robot.py`
+    and its connection to `ARMS` in `test_damiao_lifecycle.py`. These tests use a fake native robot that accepts any
+    value, so they pass with gains or gravity torques the codec rejects; check those as described in step 5. Add
+    `docs/capabilities/manipulation/<yourarm>_integration.md`, modeled on
+    [OpenYAM integration](/docs/capabilities/manipulation/openyam_integration.md).
+
 ## Prerequisites
 
 1. **Vendor SDK**: The Python SDK for your robot arm (e.g., `xarm-python-sdk`, `piper-sdk`)
@@ -50,7 +160,6 @@ dimos/hardware/manipulators/
 ├── xarm/
 ├── piper/
 └── yourarm/             # ← New directory
-    ├── __init__.py
     ├── _registry.py  # Declares your adapter (name → import path)
     └── adapter.py
 ```
@@ -388,25 +497,22 @@ print(adapter_registry.available())  # Should include "yourarm"
 
 ## Step 3: Create Your Robot Folder and Blueprints
 
-Each robot in dimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm: coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
+Each arm in dimOS gets its own folder under `dimos/robot/manipulators/`. This is where you define all blueprints for your arm: coordinator, planning, perception, etc. The existing arms there, such as `xarm/`, are the reference.
 
 ### 3a. Create the robot directory
 
 ```
-dimos/robot/
-├── unitree/                 # Unitree robots (reference example)
-│   ├── go2/
-│   │   └── blueprints/
-│   └── g1/
-│       └── blueprints/
+dimos/robot/manipulators/
+├── xarm/                    # An existing arm (reference example)
+│   ├── blueprints/
+│   └── config.py
 └── yourarm/                 # ← New directory for your robot
-    ├── __init__.py
     └── blueprints.py
 ```
 
 ### 3b. Define your blueprints
 
-Create `dimos/robot/yourarm/blueprints.py` with your coordinator and (optionally) planning blueprints:
+Create `dimos/robot/manipulators/yourarm/blueprints.py` with your coordinator and (optionally) planning blueprints:
 
 ```python skip
 """Blueprints for YourArm robot.
@@ -417,8 +523,9 @@ Usage:
     dimos run yourarm-planner              # Start planner (optional, for motion planning)
 
     # Or programmatically:
-    from dimos.robot.yourarm.blueprints import coordinator_yourarm
-    coordinator = coordinator_yourarm.build()
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.robot.manipulators.yourarm.blueprints import coordinator_yourarm
+    coordinator = ModuleCoordinator.build(coordinator_yourarm)
     coordinator.loop()
 """
 
@@ -447,7 +554,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
         ),
     ],
     tasks=[
-        joint_trajectory_task([f"arm_joint{i+1}" for i in range(6)]),
+        joint_trajectory_task(make_joints("arm", 6)),
     ],
 )
 
@@ -481,7 +588,7 @@ robot asset cache. Use `LfsPath` only when the description is intentionally
 vendored, locally modified, or has no suitable upstream source.
 
 If the planning blueprint selects the RoboPlan TOPP-RA trajectory
-parametrizer, dimOS requires RoboPlan `0.6.x`. Every movable joint in
+parametrizer, dimOS requires RoboPlan `0.7.x`. Every movable joint in
 each selected planning group must provide finite, positive velocity and
 acceleration limits. An authored extended acceleration limit is accepted:
 
@@ -505,15 +612,60 @@ an explicit robot-level default before building `RobotModelConfig`:
 model = RobotModel.from_file(urdf_path).with_default_joint_acceleration_limit(2.0)
 ```
 
+To weld another URDF tree onto an existing link, use `with_attached_model`.
+The child is a regular `RobotModel`, so its own model transforms and package,
+mesh, and texture resolution are applied before attachment.
+
+```python skip
+model = base_model.with_attached_model(
+    arm_model,
+    parent_link="mount_link",
+    joint_name="left_mount",
+    prefix="left_",
+    xyz=(0.0, 0.3, 0.0),
+    rpy=(0.0, 0.0, 0.0),
+)
+```
+
+For a shared mounting frame with no geometry, create the root directly:
+
+```python skip
+base_model = RobotModel.from_root_link("mount_link", name="dual_arm")
+```
+
+This requires no URDF file. Its `source_path` is `None`, including after loading;
+each attached model still resolves assets relative to its own source. Automatic
+SRDF discovery is skipped for an in-memory root, but explicit SRDF paths work.
+
+The named fixed joint connects the parent's specified link to the child's root.
+The optional prefix namespaces the child's links, joints, materials, and mimic
+references. Translations are in meters; `rpy` uses extrinsic xyz rotations in
+radians. Construction returns a new immutable model without loading assets.
+The host's source subtree filters and planar base compile first. Fixed frames
+and attachments then apply in declaration order to the current XML tree. Host
+joint fixes, position limits, joint renames, and acceleration defaults compile
+last, in that order, and can address namespaced child joints. Child models use
+their own complete load pipeline before attachment. Further attachments can
+target links introduced by earlier attachments or fixed frames. No host-model
+wrapper or replay of nested host snapshots is involved.
+
+`load()` uses the existing in-memory model pipeline. It does not write a generated
+URDF or introduce a separate cache. The model retains its host's `source_path` (if any);
+backends consume the transformed XML from `load()`, as with other model views.
+Each child resolves its assets separately, so package names can be reused by
+different inputs. Missing parent links, duplicate names, and invalid child trees
+fail explicitly. Controller/simulator extensions in child descriptions are
+rejected rather than silently copying unrewritten deployment references.
+
 The model is materialized and validated once. All planning backends then use
 the same compiled position, velocity, and acceleration semantics. Missing,
 zero, negative, or non-finite limits fail startup and identify the affected
 joint.
 
 ```python skip
-from dimos.manipulation.manipulation_module import manipulation_module
+from dimos.robot.manipulators.common.blueprints import planner
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -571,15 +723,19 @@ def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
 
 ### 4c. Create a planning blueprint
 
-Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator blueprint:
+Add this to your `dimos/robot/manipulators/yourarm/blueprints.py` alongside the coordinator blueprint:
 
 ```python skip
+from dimos.core.coordination.blueprints import autoconnect
 
-yourarm_planner = manipulation_module(
-    model=_make_yourarm_config(),
-    planning_timeout=10.0,
-    visualization={"backend": "meshcat"},
-    trajectory_parametrization={"backend": "simple_trapezoid"},
+yourarm_planner = autoconnect(
+    planner(
+        model=_make_yourarm_config(),
+        planning_timeout=10.0,
+        visualization={"backend": "viser"},
+        trajectory_parametrization={"backend": "simple_trapezoid"},
+    ),
+    coordinator_yourarm,
 )
 # The planner's `coordinator_joint_state` input auto-connects to the
 # ControlCoordinator's output on the default `/coordinator_joint_state`
@@ -594,15 +750,18 @@ To configure TOPP-RA tuning explicitly, select RoboPlan for the world and
 parametrizer after adding the URDF limits described above:
 
 ```python skip
-yourarm_planner = manipulation_module(
-    model=_make_yourarm_config(),
-    world_backend="roboplan",
-    trajectory_parametrization={
-        "backend": "roboplan_toppra",
-        "velocity_scale": 0.8,
-        "acceleration_scale": 0.8,
-    },
-    visualization={"backend": "viser"},
+yourarm_planner = autoconnect(
+    planner(
+        model=_make_yourarm_config(),
+        world_backend="roboplan",
+        trajectory_parametrization={
+            "backend": "roboplan_toppra",
+            "velocity_scale": 0.8,
+            "acceleration_scale": 0.8,
+        },
+        visualization={"backend": "viser"},
+    ),
+    coordinator_yourarm,
 )
 ```
 
@@ -764,7 +923,7 @@ coordinator.stop()
 ### Test the real adapter standalone
 
 ```python skip
-from dimos.hardware.manipulators.yourarm import YourArmAdapter
+from dimos.hardware.manipulators.yourarm.adapter import YourArmAdapter
 
 adapter = YourArmAdapter(address="192.168.1.100", dof=6)
 assert adapter.connect() is True
@@ -788,11 +947,9 @@ adapter.disconnect()
 
 Files to create:
 
-- [ ] `dimos/hardware/manipulators/yourarm/__init__.py`
 - [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
 - [ ] `dimos/hardware/manipulators/yourarm/_registry.py` (declares `ADAPTER_FACTORIES`)
-- [ ] `dimos/robot/yourarm/__init__.py`
-- [ ] `dimos/robot/yourarm/blueprints.py` (coordinator + planning blueprints)
+- [ ] `dimos/robot/manipulators/yourarm/blueprints.py` (coordinator + planning blueprints)
 
 Files to modify:
 
@@ -803,3 +960,8 @@ Verification:
 - [ ] `adapter_registry.available()` includes `"yourarm"`
 - [ ] `pytest dimos/robot/test_all_blueprints_generation.py` passes (regenerates `all_blueprints.py`)
 - [ ] `dimos run coordinator-yourarm` starts successfully
+
+For firmware-configured protocol ranges, see the
+[MakerMods Metal integration](/docs/capabilities/manipulation/makermods_metal_integration.md).
+Its firmware ranges are declared through the shared codec's custom profile API
+rather than being aliased to stock Damiao SKUs or added as library enum entries. The same guide compares macOS SLCAN and native gs_usb.

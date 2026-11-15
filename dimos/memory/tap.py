@@ -18,7 +18,7 @@ Runs in the ``dimos run`` process. Each stream is tapped on its own transport (L
 Zenoh, ...), so whatever carries it is what gets recorded. One ``memory.db`` per
 run at ``recordings/<run-id>/``, streams named by their blueprint stream name.
 Poses are not resolved here; ``tf`` is recorded like any other stream and
-``dimos map pose-fill`` derives poses on read.
+``dimos map pose-fill`` writes a copy with attached poses.
 """
 
 from __future__ import annotations

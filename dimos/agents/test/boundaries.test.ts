@@ -100,6 +100,7 @@ const FAMILIES: {
       "shared/render/raster.ts",
       "shared/render/frames.ts",
       "shared/render/files.ts",
+      "shared/render/preview-refs.ts",
     ],
   },
   "harness/dimos/wire": { consumer: null, notMembers: ["harness/dimos/wire/decoder.ts"] },

@@ -34,8 +34,8 @@ from pydantic import TypeAdapter
 
 from dimos.navigation.bench.ground_truth import (
     CLUTTER_NEAR,
-    GO2,
     Difficulty,
+    Envelope,
     GroundTruth,
     Route,
     boxes_near,
@@ -65,9 +65,11 @@ Pose = tuple[float, float, float]
 Point = tuple[float, float, float]
 
 MINED = "mined"
-NARROW_DOOR_M = 2 * GO2.radius + 0.12
+# suites are frozen for these numbers, whatever robot runs them
+REFERENCE_ENVELOPE = Envelope(half_width=0.15875, headroom=0.6, step=0.2)
+NARROW_DOOR_M = 2 * REFERENCE_ENVELOPE.half_width + 0.12
 START_CLEARANCE_MIN = 0.4
-AGAINST_WALL_M = GO2.radius + 0.08
+AGAINST_WALL_M = REFERENCE_ENVELOPE.half_width + 0.08
 DOOR_BINS = (1, 2)
 CLEARANCE_BINS = (0.35, 0.6)
 STRADDLE_M = (1.2, 1.5, 2.0)
@@ -86,7 +88,6 @@ class Rules:
     version: int = 3
     goal_xy_m: float = 0.5
     goal_z_m: float = 0.3
-    stand_height_m: float = GO2.stand
     timeout_s_per_m: float = 6.0
     timeout_base_s: float = 20.0
     fall_rad: float = 1.0
@@ -365,7 +366,7 @@ def _freeze_scene(config: FreezeConfig, seed: int) -> _Mined:
     def truth(params: Params) -> GroundTruth:
         key = json.dumps(params, sort_keys=True)
         if key not in truths:
-            truths[key] = GroundTruth(generate(config.family, seed, **params))
+            truths[key] = GroundTruth(generate(config.family, seed, **params), REFERENCE_ENVELOPE)
         return truths[key]
 
     found = _Mined([], [])
@@ -593,15 +594,16 @@ def _start_facing(
 
 
 def _straight_past(
-    scene: Scene, start: Pose, x: float, y: float, half_width: float, rng: np.random.Generator
+    gt: GroundTruth, start: Pose, x: float, y: float, half_width: float, rng: np.random.Generator
 ) -> Placed:
     """A goal along a line that passes the point closely enough for the body to meet an object this wide.
 
     The feature is where that line comes nearest the point.
     """
+    scene = gt.scene
     sx, sy, _ = start
     reach = math.hypot(x - sx, y - sy)
-    offset = (half_width + GO2.radius) * (2 * float(rng.random()) - 1)
+    offset = (half_width + gt.envelope.half_width) * (2 * float(rng.random()) - 1)
     heading = math.atan2(y - sy, x - sx) + math.asin(offset / reach)
     meet = math.sqrt(reach**2 - offset**2)
     low, high = PAST_M
@@ -617,14 +619,14 @@ def through_a_leg(gt: GroundTruth, leg_width: float, rng: np.random.Generator) -
         gt.scene, gt.scene.params["table_x"], *table_leg(gt.scene, 0.0, corner), rng
     )
     x, y = table_leg(gt.scene, leg_width, corner)
-    return _straight_past(gt.scene, start, x, y, leg_width / 2, rng)
+    return _straight_past(gt, start, x, y, leg_width / 2, rng)
 
 
 def through_the_block(gt: GroundTruth, height: float, rng: np.random.Generator) -> Placed:
     """A goal straight past the block, so the body walking the direct line meets it."""
     x, y = gt.scene.params["block_x"], gt.scene.params["block_y"]
     start = _start_facing(gt.scene, x - BLOCK_SIZE / 2, x, y, rng)
-    return _straight_past(gt.scene, start, x, y, BLOCK_SIZE / 2, rng)
+    return _straight_past(gt, start, x, y, BLOCK_SIZE / 2, rng)
 
 
 LEG_WIDTH = Probe(
@@ -644,7 +646,7 @@ def under_the_slab(gt: GroundTruth, clearance: float, rng: np.random.Generator) 
     x, y = gt.scene.params["slab_x"], gt.scene.params["slab_y"]
     across = min(OVERHANG_SIZE) / 2
     start = _start_facing(gt.scene, x - across, x, y, rng, UNDER_SLAB_RAD)
-    return _straight_past(gt.scene, start, x, y, across - GO2.radius, rng)
+    return _straight_past(gt, start, x, y, across - gt.envelope.half_width, rng)
 
 
 OVERHANG = Probe(
@@ -674,7 +676,7 @@ def over_the_small_object(gt: GroundTruth, length: float, rng: np.random.Generat
     x, y = gt.scene.params["object_x"], gt.scene.params["object_y"]
     start = _start_facing(gt.scene, x - SMALL_OBJECT_LENGTH[1] / 2, x, y, rng)
     least = SMALL_OBJECT_ASPECT * SMALL_OBJECT_LENGTH[0] / 2
-    return _straight_past(gt.scene, start, x, y, least, rng)
+    return _straight_past(gt, start, x, y, least, rng)
 
 
 SMALL_OBJECT = Probe(
@@ -827,14 +829,14 @@ def past_the_pole(gt: GroundTruth, width: float, rng: np.random.Generator) -> Pl
     """A goal straight past the pole, so the body walking the direct line meets even the thinnest."""
     x, y = gt.scene.params["pole_x"], gt.scene.params["pole_y"]
     start = _start_facing(gt.scene, x - POLE_WIDTH[1] / 2, x, y, rng)
-    return _straight_past(gt.scene, start, x, y, POLE_WIDTH[0] / 2, rng)
+    return _straight_past(gt, start, x, y, POLE_WIDTH[0] / 2, rng)
 
 
 def under_the_bar(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
     """A goal straight past the bar near its middle, so the body walking the direct line clears both posts."""
     x, y = gt.scene.params["bar_x"], gt.scene.params["bar_y"]
     start = _start_facing(gt.scene, x - POLE_WIDTH[1] / 2, x, y, rng, UNDER_SLAB_RAD)
-    return _straight_past(gt.scene, start, x, y, BAR_SPAN / 4 - GO2.radius, rng)
+    return _straight_past(gt, start, x, y, BAR_SPAN / 4 - gt.envelope.half_width, rng)
 
 
 BAR = Probe(
@@ -902,7 +904,7 @@ def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -
             rng = np.random.default_rng([sampling_seed, seed])
             params: Params = {} if probe.scene_param is None else {probe.scene_param: value}
             if gt is None or params:
-                gt = GroundTruth(generate(probe.family, seed, **params))
+                gt = GroundTruth(generate(probe.family, seed, **params), REFERENCE_ENVELOPE)
             placed = probe.place(gt, value, rng)
             candidate = Candidate(probe.family, seed, params, placed.start, placed.goal, probe.name)
             route = gt.route(placed.start, placed.goal)

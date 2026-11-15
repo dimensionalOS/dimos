@@ -97,10 +97,13 @@ unitree_go2_holonomic_controller = (
                 # preempts the priority-10 follower for repositioning.
                 TaskConfig(
                     name="vel_go2",
-                    type="velocity",
+                    type="twist_velocity",
                     joint_names=_go2_joints,
                     priority=20,
-                    params={"zero_on_timeout": False},
+                    params={
+                        "axes": ["linear.x", "linear.y", "angular.z"],
+                        "zero_on_timeout": False,
+                    },
                 ),
                 # Sole path/speed consumer: the progress-indexed
                 # holonomic full-pose tracker. Self-calibrates from the

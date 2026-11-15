@@ -19,10 +19,10 @@ from __future__ import annotations
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     eef_twist_task,
@@ -46,6 +46,7 @@ _xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_xarm7_sim_model,
         planning_timeout=10.0,
         visualization={"backend": "viser"},
@@ -54,12 +55,7 @@ xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
     MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
-    ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
-    ),
+    ManipulationLocalize.blueprint(world_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[

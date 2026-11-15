@@ -257,9 +257,13 @@ class Client:
         self._listener = threading.Thread(target=self._listen, daemon=True)
 
     def rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        # A fresh connection per call. A pooled one idles across the subprocess
+        # steps of these tests for about uvicorn's 5 s keep-alive timeout, and a
+        # request that races the server's idle close is reset.
         reply = self._http.post(
             self.url,
             json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
+            headers={"Connection": "close"},
             timeout=60,
         ).json()
         result: dict[str, Any] = reply["result"]

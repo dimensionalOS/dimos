@@ -175,15 +175,11 @@ There are other useful things in `mocker`, like `mocker.MagicMock()` for creatin
 | `--tb=short` | Shorter tracebacks |
 | `--durations=0` | Measure the speed of each test |
 
-## Tool files
+## Manual demos
 
-Dev-only pseudo-tests -- the kind that need human interaction or make no assertions -- live in `tool_*.py` files (e.g. `dimos/protocol/pubsub/benchmark/tool_benchmark.py`). pytest never collects them, because the filename doesn't match the `test_*.py` pattern, so a normal `pytest` run stays clean. Run one on demand by naming it directly:
-
-```bash
-pytest -s dimos/path/to/tool_file.py
-```
-
-(`-s` keeps stdout/stdin open for prints and interactive input; add `--timeout=0` for long-running or interactive ones.)
+Keep automated checks in collected `test_*.py` files with meaningful assertions.
+Use standalone `demo_*.py` scripts for maintained examples that need human interaction,
+and document their direct invocation. Do not use pytest as a manual script runner.
 
 ## Markers
 
@@ -194,10 +190,6 @@ We have a few markers in use now.
 * `web_browser`: the Playwright tests of the cockpit and the web SDK in `dimos/e2e_tests/` (see [Development](/docs/web/development.md#tests)).
 
 `self_hosted_large` and `web_browser` tests do not run on pull requests. The `e2e` workflow runs them once a day on `main`; start it by hand on a branch (`workflow_dispatch`) to check a change before merging. Every test module under `dimos/e2e_tests/` must carry one of the two markers; `dimos/codebase_checks/test_e2e_tests_marked.py` enforces that.
-
-If a test needs to be skipped for some reason, please use on of these markers, or add another one.
-
-* `skipif_no_alibaba`: tests which require an `ALIBABA_API_KEY` key in the env
 
 ## Test a checkout locally
 

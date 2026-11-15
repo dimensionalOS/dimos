@@ -29,7 +29,10 @@ import pytest_mock
 import torch
 from torch import Tensor
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -402,6 +405,63 @@ def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> Non
 
     assert status["active"] is False
     assert status["last_error"] == "coordinator did not confirm cancellation"
+
+
+def test_stop_waits_for_delayed_submission_then_cancels_it(
+    make_runtime: RuntimeFactory, mocker: pytest_mock.MockerFixture
+) -> None:
+    policy = FakePolicy(_action_chunk(), n_action_steps=1)
+    module, control = make_runtime(policy)
+    coordinator = ControlCoordinator(publish_joint_state=False)
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=tuple(JOINTS)))
+    coordinator.add_task(task, task_type="trajectory")
+    reading = Event()
+    release = Event()
+    results: list[TrajectoryExecutionResult] = []
+    _, positions, _ = _provide_observation(module)
+
+    def delayed_positions() -> dict[str, float]:
+        reading.set()
+        assert release.wait(timeout=2.0)
+        return dict(zip(JOINTS, positions, strict=True))
+
+    def execute_trajectory(*args: Any, **kwargs: Any) -> TrajectoryExecutionResult:
+        result = coordinator.execute_trajectory(*args, **kwargs)
+        results.append(result)
+        return result
+
+    mocker.patch.object(coordinator, "get_joint_positions", side_effect=delayed_positions)
+    mocker.patch.object(policy_runtime, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.0)
+    control.execute_trajectory.side_effect = execute_trajectory
+    control.cancel_trajectory.side_effect = coordinator.cancel_trajectory
+    _preflight(module)
+    stopping, stopped = Event(), Event()
+
+    def stop() -> None:
+        stopping.set()
+        module.stop_rollout()
+        stopped.set()
+
+    stopper = Thread(target=stop)
+    try:
+        module.start_rollout()
+        assert reading.wait(timeout=2.0)
+        stopper.start()
+        assert stopping.wait(timeout=2.0)
+        assert module._stop_event.wait(timeout=2.0)
+        assert not stopped.wait(timeout=0.05)
+    finally:
+        release.set()
+        if stopper.ident is not None:
+            stopper.join(timeout=2.0)
+        if module._thread is not None:
+            module._thread.join(timeout=2.0)
+        coordinator.stop()
+
+    assert stopped.is_set()
+    assert results[0].status is TrajectoryExecutionStatus.ACCEPTED
+    assert not task.is_active()
+    assert "did not stop" in (module.rollout_status()["last_error"] or "")
 
 
 @pytest.mark.parametrize(

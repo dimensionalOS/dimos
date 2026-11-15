@@ -438,6 +438,7 @@ class ModuleCoordinator(Resource):
         sources); :meth:`load_blueprint` instead applies only explicitly-set
         fields.
         """
+        check_module_dependencies(blueprint, parsed_config)
         logger.info("Building the blueprint")
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config
@@ -531,6 +532,7 @@ class ModuleCoordinator(Resource):
         blueprint: Blueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
+        check_module_dependencies(blueprint, parsed_config)
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config, sparse_globals=True
         )
@@ -624,24 +626,17 @@ class ModuleCoordinator(Resource):
 
         proxy = self._deployed_modules[name]
 
-        try:
-            proxy.stop()
-        except Exception:
-            logger.error(
-                "Error stopping module during unload",
-                module=name,
-                exc_info=True,
-            )
-
+        # The worker owns module.stop() and undeploy waits for it. A fire-and-forget
+        # stop RPC here would race that stop, and a NativeModule short-circuits the
+        # second stop() call, so the worker would report the module gone while the
+        # old instance still answers on the RPC name its replacement is about to use.
         python_wm = cast("WorkerManagerPython", self._managers["python"])
+        # Propagate failures so restart cannot replace an instance that may still be running.
+        python_wm.undeploy(proxy)
         try:
-            python_wm.undeploy(proxy)
+            proxy.stop_rpc_client()
         except Exception:
-            logger.error(
-                "Error undeploying module from worker",
-                module=name,
-                exc_info=True,
-            )
+            logger.error("Error closing module RPC client", module=name, exc_info=True)
 
         del self._deployed_modules[name]
         del self._instance_classes[name]
@@ -1007,6 +1002,17 @@ def _run_configurators(blueprint: Blueprint) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+def check_module_dependencies(
+    blueprint: Blueprint, parsed_config: ParsedBlueprintConfig | None = None
+) -> None:
+    """Check active modules' dependencies before allocating runtime resources."""
+    _, module_kwargs, _ = _resolve_blueprint_config(blueprint, parsed_config)
+    for atom in blueprint.active_blueprints:
+        kwargs = dict(atom.kwargs)
+        kwargs.update(module_kwargs.get(atom.name, {}))
+        atom.module.check_dependencies(**kwargs)
 
 
 def _check_requirements(blueprint: Blueprint) -> None:

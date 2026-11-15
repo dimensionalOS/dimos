@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
+import os
 import subprocess
 import time
 from typing import TYPE_CHECKING
@@ -23,11 +25,15 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.cli.dimos import main
-from dimos.core import run_registry
+from dimos.core import log_viewer, run_registry
 from dimos.core.run_registry import RunEntry
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+_OLDER_RUN_ID = "20261112-100000-aaaa-test"
+_NEWER_RUN_ID = "20261112-110000-bbbb-test"
 
 
 @pytest.fixture(autouse=True)
@@ -125,6 +131,48 @@ class TestStatusCLI:
 
         result = CliRunner().invoke(main, ["status"])
         assert "No running" in result.output
+
+
+class TestLogCLI:
+    """Tests for `dimos log` command. A run leaves the registry when it exits."""
+
+    @pytest.fixture(autouse=True)
+    def log_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        log_dir = tmp_path / "logs"
+        monkeypatch.setattr(log_viewer, "LOG_DIR", log_dir)
+        # The older run writes last, after the newer run has failed to start.
+        for run_id, event, modified_at in [
+            (_NEWER_RUN_ID, "from newer", 1_700_000_000),
+            (_OLDER_RUN_ID, "from older", 1_700_000_060),
+        ]:
+            path = log_dir / run_id / "main.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"event": event}) + "\n")
+            os.utime(path, (modified_at, modified_at))
+        yield log_dir
+
+    def test_log_prefers_latest_started_run_over_latest_written_log(self):
+        result = CliRunner().invoke(main, ["log"])
+        assert result.exit_code == 0
+        assert "from newer" in result.output
+        assert "from older" not in result.output
+
+    def test_log_run_option_finds_stopped_run(self):
+        result = CliRunner().invoke(main, ["log", "-r", _OLDER_RUN_ID])
+        assert result.exit_code == 0
+        assert "from older" in result.output
+
+    def test_log_prefers_running_instance(self, sleeper, log_dir: Path):
+        _entry(_OLDER_RUN_ID, sleeper().pid, log_dir=str(log_dir / _OLDER_RUN_ID))
+
+        result = CliRunner().invoke(main, ["log"])
+        assert result.exit_code == 0
+        assert "from older" in result.output
+
+    def test_log_unknown_run(self):
+        result = CliRunner().invoke(main, ["log", "-r", "missing"])
+        assert result.exit_code == 1
+        assert "No log files found" in result.output
 
 
 class TestStopCLI:

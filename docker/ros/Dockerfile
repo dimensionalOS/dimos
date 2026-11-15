@@ -66,7 +66,6 @@ RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-nav2-util \
     ros-${ROS_DISTRO}-pointcloud-to-laserscan \
     ros-${ROS_DISTRO}-slam-toolbox \
-    ros-${ROS_DISTRO}-foxglove-bridge \
     python3-rosdep \
     python3-colcon-common-extensions \
     python3-vcstool \

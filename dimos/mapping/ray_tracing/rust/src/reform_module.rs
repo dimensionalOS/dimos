@@ -40,6 +40,9 @@ pub struct ReformConfig {
     pub emit_fine: bool,
     #[validate(range(min = 0.0))]
     pub max_range: f32,
+    /// Keep every Nth point of each cloud, before anything else touches it. 1 keeps them all.
+    #[validate(range(min = 1))]
+    pub pre_trace_subsample: u32,
     #[validate(range(min = 1))]
     pub ray_subsample: u32,
     #[validate(range(min = 0.0))]
@@ -107,6 +110,7 @@ impl ReformConfig {
             fine_divisor: self.fine_divisor,
             emit_fine: self.emit_fine,
             max_range: self.max_range,
+            pre_trace_subsample: self.pre_trace_subsample,
             ray_subsample: self.ray_subsample,
             shadow_depth: self.shadow_depth,
             grace_depth: self.grace_depth,

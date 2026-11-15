@@ -34,10 +34,9 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.suite import Point, Rules
-from dimos.simulation.go2_sim.world import LIDAR_HALF_EXTENTS, MOUNT_R, MOUNT_XYZ
 from dimos.simulation.scenes.procedural import Scene
+from dimos.simulation.sim_world.body import BodyShape
 
 Outcome = Literal[
     "success",
@@ -87,7 +86,6 @@ Signature = Literal[
 ]
 COLLIDING_KINDS = ("wall", "clutter")
 KIND_WORDS = {"clutter": "object"}
-TRUNK_ON_FLOOR = Contact("trunk", "floor")
 T = TypeVar("T")
 GOAL_ECHO_M = 0.05
 TIMEOUT_SLACK_S = 0.2
@@ -220,6 +218,7 @@ class Score:
     claimed: bool
     mismatch: bool = False
     feature_m: float | None = None
+    feature_met: bool | None = None
     contacts: dict[str, int] = field(default_factory=dict)
     first_contact: str | None = None
     first_contact_s: float | None = None
@@ -238,6 +237,7 @@ def score(
     recording: Recording,
     rules: Rules,
     goal: Point,
+    shape: BodyShape,
     route_length: float | None = None,
     feature: tuple[float, float] | None = None,
     verdict: str | None = None,
@@ -268,12 +268,13 @@ def score(
     arrival = _arrival(recording, t0, deadline)
     t1 = arrival if arrival is not None else deadline
     pose = _slice(recording.pose, t0, t1)
-    collisions = _collisions(recording.contacts, t0, t1)
+    lying = {Contact(part, "floor") for part in shape.lying_parts}
+    collisions = _collisions(recording.contacts, t0, t1, lying)
     fall = _fall_start(pose, collisions, rules)
     fell = fall is not None
     final = _at(recording.pose, t1)
     error_xy = float(np.hypot(*(final[:2] - goal[:2])))
-    error_z = float(abs(final[2] - rules.stand_height_m - goal[2]))
+    error_z = float(abs(final[2] - shape.base_height - goal[2]))
     paths = _path_metrics(recording.planner_paths, rules, t0, t1)
     shown = _outcome(recording, rules, t0, t1, arrival, error_xy, error_z, collisions, fell, paths)
     if shown is None and timeout is not None and t1 - t0 >= timeout - TIMEOUT_SLACK_S:
@@ -284,12 +285,15 @@ def score(
     spl = None
     if route_length is not None:
         spl = (route_length / max(route_length, traveled)) if outcome == "success" else 0.0
-    margins = _margins(pose, scene) if scene is not None else None
+    margins = _margins(pose, scene, shape) if scene is not None else None
     closest = int(np.argmin(margins)) if margins is not None else None
-    final_contacts = _collisions(recording.contacts, t1 - rules.stuck_s, t1)
+    final_contacts = _collisions(recording.contacts, t1 - rules.stuck_s, t1, lying)
     pushing_s = final_contacts.seconds if final_contacts else None
     pushed = _held_longest(recording.contacts or [], t1 - rules.stuck_s, t1)
     fell_s = fall - t0 if fall is not None else None
+    feature_m = (
+        None if feature is None else float(np.linalg.norm(pose.xyz[:, :2] - feature, axis=1).min())
+    )
     signatures = _signatures(
         _Episode(
             outcome,
@@ -322,14 +326,13 @@ def score(
         yaw_reversals=_yaw_reversals(recording.commands, rules, t0, t1),
         collisions=collisions.count if collisions else None,
         collision_s=collisions.seconds if collisions else None,
-        trunk_floor_s=collisions.trunk_floor_s if collisions else None,
+        trunk_floor_s=collisions.lying_s if collisions else None,
         fell=fell,
         reached=not fell and _at_goal(rules, error_xy, error_z),
         claimed=arrival is not None,
         mismatch=mismatch,
-        feature_m=None
-        if feature is None
-        else float(np.linalg.norm(pose.xyz[:, :2] - feature, axis=1).min()),
+        feature_m=feature_m,
+        feature_met=None if feature_m is None else feature_m < shape.half_width,
         contacts={_name(c): n for c, n in sorted(collisions.started.items())} if collisions else {},
         first_contact=_name(touched[1]) if touched else None,
         first_contact_s=touched[0] - t0 if touched else None,
@@ -470,44 +473,46 @@ def _at(pose: Poses, t: float) -> NDArray[np.float64]:
 class _Collisions:
     count: int
     seconds: float
-    trunk_floor_s: float
+    lying_s: float
     started: Counter[Contact]
     first: tuple[float, Contact] | None
-    trunk_touches: list[tuple[float, float]]
+    lying_spans: list[tuple[float, float]]
 
 
-def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _Collisions | None:
+def _collisions(
+    samples: list[ContactSample] | None, t0: float, t1: float, lying: set[Contact]
+) -> _Collisions | None:
     """Collision episodes and time, from the piecewise-constant contact state over the window."""
     if samples is None:
         return None
     before = [s for s in samples if s.t <= t0]
     state = before[-1].contacts if before else []
-    held, on_trunk = _colliding(state), TRUNK_ON_FLOOR in state
-    count, seconds, trunk_floor = int(bool(held)), 0.0, 0.0
+    held, lying_now = _colliding(state), bool(lying & set(state))
+    count, seconds, lying_s = int(bool(held)), 0.0, 0.0
     started = Counter(held)
     first = (t0, min(held)) if held else None
-    trunk_touches: list[tuple[float, float]] = []
-    trunk_since = t0
+    lying_spans: list[tuple[float, float]] = []
+    lying_since = t0
     t_prev = t0
     for sample in (s for s in samples if t0 < s.t <= t1):
         seconds += (sample.t - t_prev) * bool(held)
-        trunk_floor += (sample.t - t_prev) * on_trunk
+        lying_s += (sample.t - t_prev) * lying_now
         t_prev = sample.t
         now = _colliding(sample.contacts)
         count += int(bool(now) and not held)
         started.update(now - held)
         if first is None and now:
             first = (sample.t, min(now))
-        if on_trunk and TRUNK_ON_FLOOR not in sample.contacts:
-            trunk_touches.append((trunk_since, sample.t))
-        if not on_trunk:
-            trunk_since = sample.t
-        held, on_trunk = now, TRUNK_ON_FLOOR in sample.contacts
+        if lying_now and not lying & set(sample.contacts):
+            lying_spans.append((lying_since, sample.t))
+        if not lying_now:
+            lying_since = sample.t
+        held, lying_now = now, bool(lying & set(sample.contacts))
     seconds += (t1 - t_prev) * bool(held)
-    trunk_floor += (t1 - t_prev) * on_trunk
-    if on_trunk:
-        trunk_touches.append((trunk_since, t1))
-    return _Collisions(count, seconds, trunk_floor, started, first, trunk_touches)
+    lying_s += (t1 - t_prev) * lying_now
+    if lying_now:
+        lying_spans.append((lying_since, t1))
+    return _Collisions(count, seconds, lying_s, started, first, lying_spans)
 
 
 def _held_longest(samples: list[ContactSample], t0: float, t1: float) -> Contact | None:
@@ -544,26 +549,27 @@ def _speed(pose: Poses, t: float) -> float | None:
     return float(steps.sum() / (span.t[-1] - span.t[0]))
 
 
-def _margins(pose: Poses, scene: Scene) -> NDArray[np.float64] | None:
+def _margins(pose: Poses, scene: Scene, shape: BodyShape) -> NDArray[np.float64] | None:
     """Per pose, the horizontal gap from the body to the nearest wall or clutter box at its height."""
     boxes = [box for box in scene.boxes if box.kind in COLLIDING_KINDS]
     if not boxes:
         return None
     center, half = np.array([b.center for b in boxes]), np.array([b.half for b in boxes])
     away = np.stack([box.gap(pose.xyz[:, :2]) for box in boxes], axis=1)
-    foot, head = pose.xyz[:, None, 2] - GO2.stand, _lidar_top(pose)[:, None]
+    foot, head = pose.xyz[:, None, 2] - shape.base_height, _top(pose, shape)[:, None]
     level = (center[:, 2] + half[:, 2] > foot) & (center[:, 2] - half[:, 2] < head)
     gap = np.where(level, away, np.inf).min(axis=1)
     if not np.isfinite(gap).all():
         return None
-    margins: NDArray[np.float64] = gap - GO2.radius
+    margins: NDArray[np.float64] = gap - shape.half_width
     return margins
 
 
-def _lidar_top(pose: Poses) -> NDArray[np.float64]:
-    """Per pose, the height of the top of the Mid-360 on the tilted trunk."""
+def _top(pose: Poses, shape: BodyShape) -> NDArray[np.float64]:
+    """Per pose, the height of the body's highest point on the tilted base."""
     tilt = Rotation.from_euler("xyz", pose.rpy).as_matrix()
-    reach = (tilt @ MOUNT_XYZ)[:, 2] + np.abs(tilt @ MOUNT_R)[:, 2] @ LIDAR_HALF_EXTENTS
+    center, rotation = np.array(shape.top_center), np.array(shape.top_rotation)
+    reach = (tilt @ center)[:, 2] + np.abs(tilt @ rotation)[:, 2] @ np.array(shape.top_half_extents)
     top: NDArray[np.float64] = pose.xyz[:, 2] + reach
     return top
 
@@ -572,10 +578,10 @@ def _fall_start(pose: Poses, collisions: _Collisions | None, rules: Rules) -> fl
     """When the fall began: the first tilt past the limit, or the trunk touch that reached it."""
     tipped = np.abs(pose.rpy[:, :2]).max(axis=1) > rules.fall_rad
     starts = [float(pose.t[tipped.argmax()])] if tipped.any() else []
-    if collisions is not None and collisions.trunk_floor_s >= rules.fall_trunk_floor_s:
-        lain = np.cumsum([end - start for start, end in collisions.trunk_touches])
+    if collisions is not None and collisions.lying_s >= rules.fall_trunk_floor_s:
+        lain = np.cumsum([end - start for start, end in collisions.lying_spans])
         reached = min(int(np.searchsorted(lain, rules.fall_trunk_floor_s)), len(lain) - 1)
-        starts.append(collisions.trunk_touches[reached][0])
+        starts.append(collisions.lying_spans[reached][0])
     return min(starts, default=None)
 
 

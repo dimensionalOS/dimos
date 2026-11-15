@@ -11,6 +11,7 @@ import { defineConfig } from "vite";
 const sdkIndex = fileURLToPath(new URL("../sdk/src/index.ts", import.meta.url));
 const sdkReact = fileURLToPath(new URL("../sdk/src/react.ts", import.meta.url));
 const sdkTeleop = fileURLToPath(new URL("../sdk/src/internal/teleopMachine.ts", import.meta.url));
+const sdkTopics = fileURLToPath(new URL("../sdk/src/topics.ts", import.meta.url));
 const sharedProtocol = fileURLToPath(new URL("../shared/protocol.ts", import.meta.url));
 const sharedManifest = fileURLToPath(new URL("../shared/manifest.ts", import.meta.url));
 const webRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -20,6 +21,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@dimos/sdk/internal/teleop": sdkTeleop,
+      "@dimos/sdk/internal/topics": sdkTopics,
       "@dimos/sdk/react": sdkReact,
       "@dimos/sdk": sdkIndex,
       "@dimos/shared/manifest": sharedManifest,

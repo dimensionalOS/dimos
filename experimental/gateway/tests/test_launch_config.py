@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import pytest
 
-from experimental.gateway import launches
+from experimental.gateway import launches, shared_config
 from experimental.gateway.launches import LaunchConfig
 
 
@@ -76,3 +78,17 @@ def test_launch_env_defaults_are_settings_dimos_reads() -> None:
     )
     kwargs = parsed.module_kwargs(RerunBridgeModule.name)
     assert (kwargs["rerun_open"], kwargs["rerun_web"]) == ("none", True)
+
+
+@pytest.mark.parametrize("enabled", [True, False, None])
+def test_topic_metadata_follows_the_desktop_runtime_setting(
+    home: Path, enabled: bool | None
+) -> None:
+    if enabled is not None:
+        (home / "dimos_home").mkdir()
+        (home / "dimos_home" / "config.yaml").write_text(
+            f"topics:\n  enabled: {str(enabled).lower()}\n"
+        )
+        shared_config.shared_config.cache_clear()
+    defaults = launches.launch_env_defaults()
+    assert defaults.get("TOPIC_METADATA") == ("true" if enabled is True else None)

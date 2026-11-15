@@ -172,7 +172,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 return self._status_locked()
             try:
                 self._snapshot_observation(time.time())
-            except RuntimeError as exc:
+            except Exception as exc:
                 self._last_error = str(exc)
                 return self._status_locked()
 
@@ -436,7 +436,9 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 actions = bounded_actions
                 if self._stop_event.is_set():
                     break
-                result = self._control.execute_trajectory(self._trajectory(state, actions))
+                result = self._control.execute_trajectory(
+                    self._trajectory(state, actions),
+                )
                 if result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH:
                     self._wait_for_newer_joint_state(state_ts)
                     continue

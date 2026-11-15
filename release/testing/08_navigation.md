@@ -19,12 +19,12 @@ Expected result: the legged robot reaches the clicked goal without crossing wall
 Needs the `mapping` extra. The first run pulls the `go2_hongkong_office` recording.
 
 ```bash
-uv run dimos map global go2_hongkong_office --pgo --export --export-pc2
+uv run dimos map global go2_hongkong_office --pgo --export --export-cloud
 uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2-map --map-file go2_hongkong_office
 uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2
 ```
 
-* `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office.pc2.lcm` (the point-cloud export) to the current directory.
+* `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office_map.db`, whose point cloud is the named map `--map-name` gives (`v1` by default, on its `map_v1_cloud` stream), to the current directory.
 * The premap replay logs `relocalize: fix` and `PGO premap: attached`. `world/global_map` then contains the attached premap and live scan. `unitree-go2-map` saves the updated `.map.db` and backs up the previous copy.
 * The PGO replay grows `world/pgo_keyframes` and publishes loop edges to `world/pgo_loops` when the walk revisits an area.
 
@@ -35,28 +35,12 @@ Expected result: the premap exports, relocalization finds a fix, and PGO closes 
 The first run pulls the `go2_mid360_sf_office_outdoors_2026-05-29` recording and premap. Allow about 7 GB of free disk during the download and extraction. If the Rerun viewer closes while the data is downloading, rerun the command after the data is cached to inspect the map.
 
 ```bash
-uv run dimos run relocalize-mid360 --map-file go2_mid360_sf_office_outdoors_2026-05-29
-uv run dimos run unitree-go2-nav-3d-relocalization-replay --map-file go2_mid360_sf_office_outdoors_2026-05-29
+uv run dimos run relocalize-mid360 --map-file go2_mid360_sf_office_outdoors_2026-05-29_map.db
 ```
 
-* In `relocalize-mid360`, `world/loaded_map` appears in Rerun once a fix lands and lies on top of the live map.
-* In the nav replay, Rerun has no `world/loaded_map`. The premap seeds the voxel map in `world/map_regions` instead.
+* In `relocalize-mid360`, `world/loaded_map` appears in Rerun once a fix lands and lies on top of the live `world/local_map`. `world/global_map`, `world/lidar` and `world/region_bounds` are hidden by default; tick them in the Blueprint panel to compare.
 
-Expected result: both blueprints log `relocalize fix` followed by `placed, no further attempts`, without tracebacks.
-
-## 8.4 Go2 3D navigation with a Mid-360
-
-Needs a Go2 with a Livox Mid-360 mounted and reachable on the LAN.
-
-```bash
-uv run dimos run unitree-go2-nav-3d --lidar-ip=<mid360-ip>
-```
-
-* Drive a few meters with WASD in Rerun. The voxel map grows around the robot.
-* Click a point on the floor. A path appears and the robot walks there.
-* Click a point at the top of a short flight of stairs. The robot climbs them.
-
-Expected result: the robot reaches each clicked goal, including the one up the stairs.
+Expected result: the blueprint logs `relocalize fix` followed by `placed, no further attempts`, without tracebacks.
 
 ## 8.5 Mid-360 driver and Point-LIO
 
@@ -98,7 +82,7 @@ Needs Linux x86_64 with an NVIDIA driver that provides EGL, and nix with flakes.
 uv run dimos run habitat-nav
 ```
 
-* Drive with WASD in Rerun. The scan and the voxel map grow.
+* Click the Keyboard Teleop panel in the viewer's corner so its border turns green, then drive with WASD. The scan and the voxel map grow.
 * Click on the blue planner surface to set a goal.
 
 Expected result: the camera panels show a house interior, and after the click the robot drives along a path to the clicked point.

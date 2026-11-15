@@ -12,7 +12,7 @@ dimos run habitat-nav
 
 The first run builds the simulator environment, which takes 5 to 10 minutes and about 3.5 GB of disk: a python 3.9 conda env with habitat-sim, plus one annotated HM3D house with 908 labelled objects that needs no Matterport credentials. Later runs start in seconds.
 
-Drive with the viewer's keyboard controls. Click the planner's surface in the 3D view to set a goal.
+Click the viewer's Keyboard Teleop panel to engage it, then drive with WASD. Click the planner's surface in the 3D view to set a goal.
 
 ## Blueprints
 
@@ -22,7 +22,7 @@ Layered so a failure can be bisected by dropping a level:
 |---------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
 | `habitat-teleop`    | The sim and its streams. Drive it, nothing else.                                                                                             |
 | `habitat-raycaster` | `RayTracingVoxelMap` on a sensor-frame scan.                                                                                                 |
-| `habitat-nav`       | `MLSPlannerNative` and `BasicPathFollower`. Goal by clicking.                                                                                |
+| `habitat-nav`       | `MLSPlannerNative`, `LocalPlannerNative`, `TrajectoryFollowerNative` and `MovementManager`. Goal by clicking.                                |
 | `habitat-voxel`     | `VoxelGridMapper` on a pre-registered scan. An alternative to the raycaster, not a layer: the two mappers want the scan in different frames. |
 | `habitat-typesafe`  | `TypeSafeNavigationAgent` driving to a named visible object: `go to the chair` in `humancli --transport zenoh`. Needs `TYPESAFENAVIGATIONAGENT__API_KEY`.         |
 

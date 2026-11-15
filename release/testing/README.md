@@ -69,7 +69,6 @@ git log -1 --format='%H %s'
 - [ ] [8.1 Go2 3D navigation in MuJoCo](08_navigation.md#81-go2-3d-navigation-in-mujoco)
 - [ ] [8.2 Go2 premap and relocalization](08_navigation.md#82-go2-premap-and-relocalization)
 - [ ] [8.3 Mid-360 relocalization in replay](08_navigation.md#83-mid-360-relocalization-in-replay)
-- [ ] [8.4 Go2 3D navigation with a Mid-360](08_navigation.md#84-go2-3d-navigation-with-a-mid-360)
 - [ ] [8.5 Mid-360 driver and Point-LIO](08_navigation.md#85-mid-360-driver-and-point-lio)
 - [ ] [8.6 Go2 path following controllers](08_navigation.md#86-go2-path-following-controllers)
 - [ ] [8.7 Habitat simulation](08_navigation.md#87-habitat-simulation)

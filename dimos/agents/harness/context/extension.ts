@@ -2,6 +2,7 @@ import type { ConversationId, Extension } from "@earendil-works/pi-durable";
 import type { InputGate } from "#dimos/agents/harness/inputs/gate.ts";
 import { GenerationTask, ToolTask, defineExtension, hook } from "@earendil-works/pi-durable";
 import { baselineSection } from "#dimos/agents/harness/context/baseline.ts";
+import { hydrateToolResultPreviews } from "#dimos/agents/shared/render/preview-refs.ts";
 
 type ContextExtensionOptions = {
   readonly inputs: InputGate;
@@ -23,6 +24,9 @@ export function contextExtension(options: ContextExtensionOptions): Extension {
         },
       }),
       hook(GenerationTask, {
+        beforeRequest: async (request) => ({
+          messages: await hydrateToolResultPreviews(request.messages),
+        }),
         afterTools: async (assistant, _results, api, context) => {
           if (!changedIn.delete(api.conversationId)) return;
           await options.inputs.submit(

@@ -42,7 +42,7 @@ KNOWN = {
 def test_dimos_lcm_packages_hold_only_dimos_lcm_messages() -> None:
     missing = set()
     for path in MSGS.glob("*/*.py"):
-        if path.name.startswith(("test_", "tool_", "_")):
+        if path.name.startswith(("test_", "_")):
             continue
         package, name = path.parent.name, path.stem
         if importlib.util.find_spec(f"dimos_lcm.{package}") is None:
