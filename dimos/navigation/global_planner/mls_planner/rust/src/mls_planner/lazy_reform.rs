@@ -30,7 +30,7 @@ use crate::lazy::{
     Pose, Rect, Submesh, Version,
 };
 use crate::nodes::NodeId;
-use crate::surfaces::extract_surfaces_region;
+use crate::surfaces::{extract_surfaces_region, RISER_REACH};
 use crate::voxel::{voxelize, VoxelKey};
 
 /// The keyframe table and the version layers.
@@ -48,8 +48,8 @@ pub struct LazyState {
     carried: AHashMap<(Version, (i32, i32)), (Version, CarriedCells)>,
 }
 
-/// Stale cells by the current-frame column they stand in, with their z there.
-type CarriedCells = BTreeMap<(i32, i32), Vec<(CellId, f32)>>;
+/// Stale cells with the current-frame column they stand in and their z there, sorted by column (by id within one).
+type CarriedCells = Vec<((i32, i32), CellId, f32)>;
 
 fn center(k: VoxelKey, voxel_size: f32) -> [f64; 3] {
     let v = voxel_size as f64;
@@ -140,8 +140,9 @@ impl LazyState {
                     let p = carry.apply([x as f64, y as f64, z as f64]);
                     let p = (p[0] as f32, p[1] as f32, p[2] as f32);
                     let k = voxelize(p, voxel_size);
-                    index.entry((k.0, k.1)).or_default().push((id, p.2));
+                    index.push(((k.0, k.1), id, p.2));
                 }
+                index.sort_by_key(|e| e.0);
             }
             self.carried.insert(key, (frame, index));
         }
@@ -662,7 +663,7 @@ impl Planner {
 
     /// The ring around a touched area that must be in the current layer: what the surface extraction pads by and the node window reaches.
     pub(super) fn migrate_margin_m(&self, config: &Config) -> f32 {
-        let pad = 2 * config.closing_passes() as i32;
+        let pad = 2 * config.closing_passes() as i32 + RISER_REACH;
         (pad + config.buffer_window_cells()) as f32 * config.voxel_size
     }
 
@@ -726,15 +727,15 @@ impl Planner {
             let index = lazy.carried_index(*key, frame, cells, vs);
             // Each block's columns, one past the reach, by the column a stale cell stands in now.
             for &(x0, x1, y0, y1) in blocks.values() {
-                for (&(x, y), at) in index.range((x0 - 2, i32::MIN)..=(x1 + 2, i32::MAX)) {
+                let lo = index.partition_point(|e| e.0 < (x0 - 2, i32::MIN));
+                let hi = index.partition_point(|e| e.0 <= (x1 + 2, i32::MAX));
+                for &((x, y), id, z) in &index[lo..hi] {
                     if y < y0 - 2 || y > y1 + 2 || !reach.contains(&(x, y)) {
                         continue;
                     }
-                    for &(id, z) in at {
-                        scanned += 1;
-                        if cells.is_live(id) && cells.layer(id) == layer && taken.insert(id) {
-                            stale_at.entry((x, y)).or_default().push((id, z));
-                        }
+                    scanned += 1;
+                    if cells.is_live(id) && cells.layer(id) == layer && taken.insert(id) {
+                        stale_at.entry((x, y)).or_default().push((id, z));
                     }
                 }
             }
@@ -995,16 +996,16 @@ impl Planner {
         }
         self.clock.add("redirect", stage);
         let stage = Instant::now();
-        let pad = 2 * config.closing_passes() as i32;
+        let reach = 2 * config.closing_passes() as i32 + RISER_REACH;
         let mut bbox = (first.0, first.0, first.1, first.1);
         for &(x, y) in &migrated.columns {
             bbox = (bbox.0.min(x), bbox.1.max(x), bbox.2.min(y), bbox.3.max(y));
         }
-        let mut footprint = ColumnMask::new(bbox, 2 * pad);
+        let mut footprint = ColumnMask::new(bbox, 2 * reach);
         for &col in &migrated.columns {
             footprint.set(col);
         }
-        let write = footprint.dilated(pad);
+        let write = footprint.dilated(reach);
         self.clock.add("mask", stage);
         self.clock.count("mask_area", write.area());
         let stage = Instant::now();

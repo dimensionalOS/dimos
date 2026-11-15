@@ -24,6 +24,9 @@ use crate::columns::{ColumnIz, ColumnMask};
 use crate::terrain::Terrain;
 use crate::voxel::VoxelKey;
 
+/// Columns a riser bridge reads past the cell it fills.
+pub const RISER_REACH: i32 = 1;
+
 /// Extract standable cells from the terrain's whole map, then close small
 /// holes.
 pub fn extract_surfaces(
@@ -44,6 +47,51 @@ pub fn extract_surfaces(
         .collect();
 
     close_surface_holes(standable, terrain, closing_passes, max_box_cells, out);
+    let risers = bridge_risers(out, terrain, |_| true);
+    out.extend(risers);
+}
+
+/// Cells for the one-column gaps a stair riser or a ramp leaves: a column with no voxel at all between two surface
+/// cells on voxels of their own (not filled over a hole) that differ by up to a step gets a cell at the lower one, so
+/// they link through it. Per-z closing cannot fill such a gap, since its two sides are at different heights. Only
+/// columns `at` accepts are filled.
+fn bridge_risers(
+    surface: &[VoxelKey],
+    terrain: &Terrain,
+    at: impl Fn((i32, i32)) -> bool,
+) -> Vec<VoxelKey> {
+    let mut by_col: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
+    let mut held: ahash::AHashSet<(i32, i32)> = ahash::AHashSet::new();
+    for &k @ (ix, iy, iz) in surface {
+        held.insert((ix, iy));
+        if terrain.by_col.contains(k) {
+            by_col.entry((ix, iy)).or_default().push(iz);
+        }
+    }
+    let max_rise = (terrain.step_m / terrain.voxel_size).floor() as i32;
+    let mut out: Vec<VoxelKey> = Vec::new();
+    for (&(ix, iy), near) in &by_col {
+        for (dx, dy) in [(1, 0), (0, 1)] {
+            let gap = (ix + dx, iy + dy);
+            if held.contains(&gap) || terrain.by_col.get(gap).is_some() || !at(gap) {
+                continue;
+            }
+            let Some(far) = by_col.get(&(ix + 2 * dx, iy + 2 * dy)) else {
+                continue;
+            };
+            for &za in near {
+                for &zb in far {
+                    let rise = (za - zb).abs();
+                    if rise > 0 && rise <= max_rise {
+                        out.push((gap.0, gap.1, za.min(zb)));
+                    }
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// Standable cells in one column: any cell with robot clearance above, plus
@@ -67,8 +115,9 @@ pub fn extract_surfaces_region(
     max_box_cells: u64,
     write: &ColumnMask,
 ) -> Vec<VoxelKey> {
+    // One column past the closing's reach, for the riser bridges at the write mask's edge.
     let pad = (2 * closing_passes) as i32;
-    let read = write.dilated(pad);
+    let read = write.dilated(pad + RISER_REACH);
 
     let standable: Vec<VoxelKey> = read
         .rows()
@@ -92,6 +141,8 @@ pub fn extract_surfaces_region(
         max_box_cells,
         &mut closed,
     );
+    let risers = bridge_risers(&closed, terrain, |col| write.contains(col));
+    closed.extend(risers);
     closed
         .into_iter()
         .filter(|&(ix, iy, _)| write.contains((ix, iy)))
