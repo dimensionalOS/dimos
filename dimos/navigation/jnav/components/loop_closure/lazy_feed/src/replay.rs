@@ -36,6 +36,9 @@ struct Args {
     replan_every: u64,
     goal_along_path_m: f64,
     until_scan: u64,
+    dump_dir: Option<PathBuf>,
+    dump_radius_m: f32,
+    dump_limit: usize,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -46,6 +49,9 @@ fn parse_args() -> Result<Args, String> {
         replan_every: 1,
         goal_along_path_m: 2.0,
         until_scan: u64::MAX,
+        dump_dir: None,
+        dump_radius_m: 40.0,
+        dump_limit: 4,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -59,6 +65,9 @@ fn parse_args() -> Result<Args, String> {
                 args.goal_along_path_m = value()?.parse().map_err(|e| format!("{flag}: {e}"))?
             }
             "--until-scan" => args.until_scan = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
+            "--dump-dir" => args.dump_dir = Some(value()?.into()),
+            "--dump-radius-m" => args.dump_radius_m = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
+            "--dump-limit" => args.dump_limit = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -68,7 +77,7 @@ fn parse_args() -> Result<Args, String> {
         || args.replan_every == 0
     {
         return Err("usage: lazy-replay --feed F --planner-config C.json --output DIR [--replan-every N] \
-                    [--goal-along-path-m M] [--until-scan S]"
+                    [--goal-along-path-m M] [--until-scan S] [--dump-dir D [--dump-radius-m R] [--dump-limit N]]"
             .into());
     }
     Ok(args)
@@ -218,7 +227,7 @@ fn run() -> Result<(), String> {
     let mut scans_out = BufWriter::new(
         std::fs::File::create(args.output.join("scans.csv")).map_err(|e| e.to_string())?,
     );
-    writeln!(scans_out, "scan,ts,version,layers,replanned,path,path_m,after_new_layer").map_err(|e| e.to_string())?;
+    writeln!(scans_out, "scan,ts,version,layers,replanned,path,path_m,seam_check").map_err(|e| e.to_string())?;
 
     let mut planner = Planner::new(config.worker_threads);
     let mut timings = Timings::default();
@@ -233,6 +242,17 @@ fn run() -> Result<(), String> {
     let (mut events, mut new_layers, mut seam_checks, mut torn) = (0u64, 0u64, 0u64, 0u64);
     let mut pending_seam_check = false;
     let mut last_found = false;
+    let mut robot_xy = (0.0f32, 0.0f32);
+    let mut last_cylinder: Option<(f32, f32, f32)> = None;
+    // a closure that started a layer while paths were found: the snapshot from just before it, kept until the next replan
+    let mut before_seam: Option<(String, String)> = None;
+    let mut dumps = 0usize;
+    let dump = |name: &str, json: &str| {
+        if let Some(dir) = &args.dump_dir {
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::write(dir.join(format!("{name}.json")), json);
+        }
+    };
     let wall = Instant::now();
 
     let apply_region = |planner: &mut Planner,
@@ -264,10 +284,17 @@ fn run() -> Result<(), String> {
                         keyframes.insert(r.node_id, r.post());
                     }
                     events += 1;
+                    let snapshot = (args.dump_dir.is_some() && dumps < args.dump_limit && last_found).then(|| {
+                        let cyl: Vec<_> = last_cylinder.into_iter().collect();
+                        planner.snapshot_json("before", robot_xy, args.dump_radius_m, &cyl, &[])
+                    });
                     let outcome = timings.time("closure", || planner.on_closure(&records, &config));
                     if outcome.is_some_and(|o| o.new_layer) {
                         new_layers += 1;
                         pending_seam_check = last_found;
+                        if let Some(before) = snapshot {
+                            before_seam = Some((format!("v{}", planner.reform_version()), before));
+                        }
                     }
                     // a cloud held for this version can go in now
                     if let Some((_, _, pose, version, region)) = held.take() {
@@ -285,6 +312,7 @@ fn run() -> Result<(), String> {
                 first_ts.get_or_insert(ts);
                 last_ts = ts;
                 if let Some(region) = region {
+                    last_cylinder = Some((region.0[0], region.0[1], region.0[2]));
                     match apply_region(&mut planner, &mut timings, &pose, version, &region) {
                         Err(VersionGap::Ahead) => held = Some((index, ts, pose, version, region)),
                         Err(VersionGap::Forgotten) => {}
@@ -292,6 +320,7 @@ fn run() -> Result<(), String> {
                     }
                 }
                 let xyz = [pose[0], pose[1], pose[2]];
+                robot_xy = (pose[0] as f32, pose[1] as f32);
                 if let Some(prev) = last_xyz {
                     travelled += ((xyz[0] - prev[0]).powi(2) + (xyz[1] - prev[1]).powi(2)).sqrt();
                 }
@@ -305,6 +334,7 @@ fn run() -> Result<(), String> {
                 let mut replanned = false;
                 let mut path_m = f64::NAN;
                 let mut has_path = false;
+                let mut seam_check = false;
                 if let Some((node, local)) = goal {
                     if index % args.replan_every == 0 {
                         let g = keyframes[&node].apply(local);
@@ -323,9 +353,21 @@ fn run() -> Result<(), String> {
                             counted_found += u64::from(has_path);
                         }
                         if pending_seam_check {
+                            seam_check = true;
                             seam_checks += 1;
                             torn += u64::from(!has_path);
                             pending_seam_check = false;
+                            if let Some((tag, before)) = before_seam.take() {
+                                if !has_path && dumps < args.dump_limit {
+                                    dumps += 1;
+                                    let cyl: Vec<_> = last_cylinder.into_iter().collect();
+                                    let gxy = (goal_xyz.0, goal_xyz.1);
+                                    dump(&format!("seam{index}_{tag}_0before"), &before.replace("\"before\"", &format!("\"seam{index} before\"")));
+                                    dump(&format!("seam{index}_{tag}_1after"), &planner.snapshot_json(&format!("seam{index} after"), robot_xy, args.dump_radius_m, &cyl, &[]));
+                                    eprintln!("seam{index} connectivity: {}", planner.connectivity_json(start, goal_xyz, &config));
+                                    dump(&format!("seam{index}_{tag}_2goal"), &planner.snapshot_json(&format!("seam{index} at goal"), gxy, args.dump_radius_m, &[], &[]));
+                                }
+                            }
                         }
                         last_found = has_path;
                     }
@@ -338,7 +380,7 @@ fn run() -> Result<(), String> {
                     u8::from(replanned),
                     u8::from(has_path),
                     path_m,
-                    u8::from(pending_seam_check)
+                    u8::from(seam_check)
                 )
                 .map_err(|e| e.to_string())?;
             }

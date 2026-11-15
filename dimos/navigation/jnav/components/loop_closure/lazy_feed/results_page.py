@@ -101,7 +101,7 @@ def strip(run: dict) -> str:
         x = (float(r["ts"]) - t0) / span * width
         parts.append(f'<rect x="{x:.1f}" y="0" width="1.2" height="{height}" fill="var(--bad)"/>')
     for r in run["rows"]:
-        if r["after_new_layer"] == "1":
+        if r["seam_check"] == "1":
             x = (float(r["ts"]) - t0) / span * width
             parts.append(
                 f'<rect x="{x:.1f}" y="{height}" width="1.5" height="6" fill="var(--target)"/>'
