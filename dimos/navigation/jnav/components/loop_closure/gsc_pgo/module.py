@@ -26,6 +26,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
@@ -256,12 +257,19 @@ class GscPGO(NativeModule):
     coordinate_factor: In[Odometry]
     # landmark sighting (TagSightings): frame_id = sensor, to_id = landmark; a repeated constraint_instance_id replaces it
     landmark_factor: In[LocationConstraint]
+    # any message asks for one pose_graph publish (for rendering); pose_graph is not sent otherwise
+    pose_graph_request: In[Bool]
     corrected_odometry: Out[Odometry]
     # in: odom_frame -> body_frame and the scans' frames; out: the map_frame -> odom_frame correction, identity until the first one
     tf: IO[TFMessage]
-    # a packed record per keyframe: x, y, z, node_id, ts, qx, qy, qz, qw
+    # on each pose_graph_request, a packed record per keyframe at its current pose: x, y, z, node_id, ts, qx, qy, qz, qw
     pose_graph: Out[PointCloud2]
-    # a packed record per keyframe a solve moved: its pose before, then the delta (post = delta * pre)
+    # once per keyframe, as it is made: x, y, z, node_id, ts, qx, qy, qz, qw at its raw odometry pose, then
+    # min_x, min_y, min_z, max_x, max_y, max_z, the box (in its own frame) around every scan since the previous keyframe
+    new_keyframe: Out[PointCloud2]
+    # when a solve moved any keyframe, a packed record per keyframe: its pose before, the delta (post = delta * pre),
+    # version (this event's count, from 1), closed_with (the keyframe a closure since the previous event paired it
+    # with, 4294967295 for none)
     loop_closure_event: Out[PointCloud2]
     # closure candidate lifecycle events as packed records, for drawing closure edges
     closure_edges: Out[PointCloud2]
