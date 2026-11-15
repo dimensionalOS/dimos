@@ -72,12 +72,14 @@ PAGE = """<!DOCTYPE html>
       const video = document.querySelector("#v");
       const session = connect({ url: location.origin });
       window.frames_seen = 0;
+      window.tracks_seen = 0;
       window.statuses = [];
       const tick = () => {
         window.frames_seen++;
         video.requestVideoFrameCallback(tick);
       };
-      const handle = session.topics.video("%(key)s", {}, (track) => {
+      const handle = session.topics.video("%(key)s", { maxHz: Number(new URLSearchParams(location.search).get("hz") || 30) }, (track) => {
+        window.tracks_seen++;
         video.srcObject = track === null ? null : new MediaStream([track]);
         if (track !== null) video.requestVideoFrameCallback(tick);
       });
@@ -86,6 +88,8 @@ PAGE = """<!DOCTYPE html>
         document.querySelector("#status").textContent = status.phase;
       });
       window.mode = () => handle.mode();
+      window.change = (options) => handle.update(options);
+      window.track = () => handle.track();
       window.stats = async () => {
         const receiver = handle.receiver();
         if (receiver === null) return null;
@@ -242,3 +246,21 @@ def test_camera_plays_as_a_direct_track(stack: Stack, page: Page) -> None:
     assert inbound["keyFramesDecoded"] >= 1
     assert inbound["frameWidth"] == 320 and inbound["frameHeight"] == 240
     assert inbound["bytesReceived"] > 0
+
+
+def test_sole_viewer_settings_change_keeps_the_track_and_presented_frames(stack, page):
+    page.goto(f"http://127.0.0.1:{stack.relay.http_port}/?hz=24")
+    page.wait_for_function("() => window.frames_seen >= 10", timeout=START_TIMEOUT_S * 1000)
+    page.evaluate("() => { window.original_track = window.track(); }")
+    before = page.evaluate("() => window.frames_seen")
+    settings = page.evaluate(
+        "() => window.change({ maxResolution: [160, 120], maxBitrate: 200000 })"
+    )
+    assert settings["maxResolution"] == [160, 120]
+    assert settings["maxBitrate"] == 200000
+    page.wait_for_function("n => window.frames_seen >= n + 10", arg=before, timeout=5000)
+    assert page.evaluate("() => window.track() === window.original_track")
+    assert page.evaluate("() => window.tracks_seen") == 1
+    page.wait_for_function(
+        "async () => (await window.stats()).inbound.frameWidth === 160", timeout=5000
+    )

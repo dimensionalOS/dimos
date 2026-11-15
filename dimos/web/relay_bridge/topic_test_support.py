@@ -82,6 +82,7 @@ async def provider_connection(
                 profiles=capabilities(config, video=codec is not None).profiles,
                 guardedPublishers=config.write,
                 profileOptions=PROFILE_OPTIONS,
+                videoReconfigure=codec is not None,
             ),
         )
         catalog = TopicCatalog()

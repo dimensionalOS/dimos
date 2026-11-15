@@ -8,6 +8,7 @@ const LATEST_LIFETIME_MS = 500;
 /** Shared by all routes of a viewer, and by the whole topic registry. */
 export class TopicBudget {
   bytes = 0;
+  aborted = 0;
   constructor(readonly limit: number) {}
 }
 
@@ -76,9 +77,14 @@ export class TopicEgress {
     for (const budget of this.budgets) budget.bytes -= size;
   }
 
-  #abortLatest(frame: LatestSend): void {
+  #abortLatest(frame: LatestSend, congested = true): void {
     if (!this.#latest.delete(frame)) return;
     frame.send.abort();
+    if (congested) {
+      for (const budget of this.budgets) {
+        budget.aborted = Math.min(Number.MAX_SAFE_INTEGER, budget.aborted + 1);
+      }
+    }
     this.#release(frame.size);
   }
 
@@ -231,8 +237,11 @@ export class TopicEgress {
   }
 
   reap(nowMs: number): void {
+    // Accepted streams also expire on healthy links. Only a stream the
+    // transport never accepted within its lifetime was backpressured; a
+    // fresh write beside an expiring accepted one is no evidence either.
     for (const frame of this.#latest) {
-      if (nowMs - frame.at >= LATEST_LIFETIME_MS) this.#abortLatest(frame);
+      if (nowMs - frame.at >= LATEST_LIFETIME_MS) this.#abortLatest(frame, !frame.accepted);
     }
     if (this.delivery === "latest") this.#drain();
   }

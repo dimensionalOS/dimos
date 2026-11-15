@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Msg, TopicSubMsg } from "@dimos/shared";
+import type { Msg, TopicSettings, TopicSubMsg, TopicUpdateMsg } from "@dimos/shared";
 import { FakePeerConnection } from "./testing/fakePeerConnection.ts";
 import { TopicClient, type TopicSample, type TopicStatus } from "./topics.ts";
 import {
@@ -17,6 +17,7 @@ const PROFILE_OPTIONS = {
   [VIDEO_PROFILE]: {
     maxHz: { kind: "number", max: 1000, default: 30 },
     maxResolution: { kind: "size", min: 16, max: 4096, default: [1920, 1080] },
+    maxBitrate: { kind: "int", min: 100000, max: 4500000, default: 4500000 },
   },
   [VIDEO_FALLBACK_PROFILE]: {
     maxHz: { kind: "number", max: 1000, default: 30 },
@@ -63,14 +64,19 @@ describe("direct topic video", () => {
         }],
       });
     const subs = () => sent.filter((m): m is TopicSubMsg => m.t === "topic_sub");
-    const ready = (route = "@t:v1", gen = 1, sub = subs().at(-1)!) => {
+    const ready = (
+      route = "@t:v1",
+      gen = 1,
+      sub = subs().at(-1)!,
+      settings: TopicSettings = { maxHz: 30, maxResolution: [1920, 1080] },
+    ) => {
       client.onMessage({
         t: "topic_ready",
         id: sub.id,
         source: "workspace",
         route,
         gen,
-        settings: { maxHz: 30, maxResolution: [1920, 1080] },
+        settings,
       });
       return { id: sub.id, route, gen };
     };
@@ -153,6 +159,96 @@ describe("direct topic video", () => {
     h.client.onMessage({ t: "topic_rtc_close", ...ref, gen: 2, reason: "ice_failed" });
     h.client.onMessage({ t: "topic_rtc_close", id: "nope", route: ref.route, gen: 1, reason: "x" });
     expect(video.status().phase).toBe("ready");
+  });
+
+  it("adapts from receiver statistics and keeps the track on an in-place acknowledgement", async () => {
+    vi.useFakeTimers();
+    const h = setup();
+    const video = h.video({ maxResolution: [1280, 720] });
+    h.sources();
+    const ref = h.ready("@t:v1", 1, undefined, {
+      maxHz: 30,
+      maxResolution: [1280, 720],
+      maxBitrate: 2500000,
+    });
+    await flush();
+    h.client.onMessage({ t: "topic_rtc_answer", ...ref, sdp: "answer" });
+    await flush();
+    const pc = h.pcs[0];
+    const track = pc.track();
+    pc.media();
+    expect(video.stats()).toBeNull();
+    for (let i = 0; i < 4; i++) {
+      // Firefox-style stats: no freeze counters or bitrate estimate.
+      pc.stats = [{
+        type: "inbound-rtp",
+        kind: "video",
+        packetsReceived: 97 * i,
+        packetsLost: 3 * i,
+        framesDecoded: 15 * i,
+        bytesReceived: 1000 * i,
+      }];
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    const update = h.sent.find((m): m is TopicUpdateMsg => m.t === "topic_update")!;
+    expect(update.options).toEqual({ maxBitrate: 1500000 });
+    const changed = vi.fn();
+    video.onSettings(changed);
+    h.client.onMessage({
+      t: "topic_applied",
+      id: ref.id,
+      revision: update.revision,
+      settings: { maxHz: 30, maxResolution: [1280, 720], maxBitrate: 1500000 },
+    });
+    await flush();
+    expect(changed).toHaveBeenCalledExactlyOnceWith(video.settings());
+    expect(video.stats()).toMatchObject({
+      adapted: true,
+      rung: { index: 1 },
+      video: { lossFraction: 0.03, freezeMs: 0, bitrate: 16000, fps: 30 },
+    });
+    expect(video.track()).toBe(track);
+    expect(h.tracks).toEqual([track]);
+    expect(h.offers()).toHaveLength(1);
+    expect(pc.closed).toBe(0);
+  });
+
+  it("keeps polling receiver statistics after an update moves the handle to another group", async () => {
+    vi.useFakeTimers();
+    const h = setup();
+    const video = h.video({ maxResolution: [1280, 720] });
+    h.sources();
+    const settings: TopicSettings = { maxHz: 30, maxResolution: [1280, 720], maxBitrate: 2500000 };
+    const ref = h.ready("@t:v1", 1, undefined, settings);
+    await flush();
+    h.client.onMessage({ t: "topic_rtc_answer", ...ref, sdp: "answer" });
+    await flush();
+    h.pcs[0].track();
+    h.pcs[0].media();
+    const moved = video.update({ priority: 3 });
+    await flush();
+    expect(h.subs()).toHaveLength(2);
+    const next = h.ready("@t:v1", 1, undefined, settings);
+    await flush();
+    h.client.onMessage({ t: "topic_rtc_answer", ...next, sdp: "answer" });
+    await flush();
+    const pc = h.pcs[1];
+    pc.track();
+    pc.media();
+    await expect(moved).resolves.toEqual(settings);
+    for (let i = 0; i < 4; i++) {
+      pc.stats = [{
+        type: "inbound-rtp",
+        kind: "video",
+        packetsReceived: 97 * i,
+        packetsLost: 3 * i,
+        framesDecoded: 15 * i,
+        bytesReceived: 1000 * i,
+      }];
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    expect(video.stats()?.video).toMatchObject({ lossFraction: 0.03, fps: 30 });
+    expect(h.sent.filter((m): m is TopicUpdateMsg => m.t === "topic_update")).toHaveLength(1);
   });
 
   it("backs off and offers again after an answer timeout, ICE failure or provider close, and stays failed after the third", async () => {
