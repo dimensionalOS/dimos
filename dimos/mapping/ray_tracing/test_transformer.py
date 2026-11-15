@@ -143,7 +143,6 @@ def test_reused_instance_continues_the_map() -> None:
 
 
 @pytest.mark.skipif_aarch64
-@pytest.mark.skipif_macos
 def test_pose_from_tf_attaches_the_pose_at_the_stamp(tmp_path: Path) -> None:
     ts = 10.0
     with SqliteStore(path=str(tmp_path / "tf.db")) as store:

@@ -143,6 +143,8 @@ class DiscoveredModule:
     source: str  # repo-relative path of the defining .py file
     build_command: str
     build_dir: str  # repo-relative source directory
+    # The config's `alternate_builds`: builds a validator swaps in at runtime, published alongside the default.
+    alternate_builds: tuple[str, ...] = ()
 
 
 def _literal_default(classdef: ast.ClassDef, field: str, source: str) -> str | None:
@@ -184,6 +186,33 @@ def is_nix_build(command: str | None) -> bool:
     return "nix" in tokens and tokens[tokens.index("nix") + 1 :][:1] == ["build"]
 
 
+def _alternate_builds(classdef: ast.ClassDef, source: str) -> tuple[str, ...]:
+    """The class's `alternate_builds` ClassVar: builds chosen at runtime (a Jetson's `path:.#jetson`) that CI still publishes."""
+    for stmt in classdef.body:
+        if not (
+            isinstance(stmt, ast.AnnAssign)
+            and isinstance(stmt.target, ast.Name)
+            and stmt.target.id == "alternate_builds"
+        ):
+            continue
+        if not (
+            isinstance(stmt.value, ast.Tuple)
+            and all(
+                isinstance(item, ast.Constant)
+                and isinstance(item.value, str)
+                and is_nix_build(item.value)
+                and item.value.split()[-1].startswith("path:.#")
+                for item in stmt.value.elts
+            )
+        ):
+            raise SystemExit(
+                f"{source}:{stmt.lineno}: {classdef.name}.alternate_builds must be a tuple of"
+                " `nix build … path:.#<package>` string literals"
+            )
+        return tuple(item.value for item in stmt.value.elts)
+    return ()
+
+
 def discover() -> tuple[DiscoveredModule, ...]:
     found = []
     for dirpath, dirnames, filenames in os.walk(PACKAGE_DIR):
@@ -220,6 +249,7 @@ def discover() -> tuple[DiscoveredModule, ...]:
                         source=source,
                         build_command=build_command,
                         build_dir=PurePosixPath(build_rel).as_posix(),
+                        alternate_builds=_alternate_builds(node, source),
                     )
                 )
     return tuple(sorted(found))
@@ -420,7 +450,11 @@ def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
         f"salt {MARKER_SALT}",
         f"script {_git_object_hash('bin/native-modules')}",
         f"cachix {os.environ.get('CACHIX_CACHE_NAME', '')}",
-        *(f"module {m.qualname} dir={m.build_dir} cmd={m.build_command}" for m in modules),
+        *(
+            f"module {m.qualname} dir={m.build_dir} cmd={m.build_command}"
+            + "".join(f" alt={alternate}" for alternate in m.alternate_builds)
+            for m in modules
+        ),
         *(f"path {path} {_git_object_hash(path)}" for path in top),
     ]
     return "\n".join(lines) + "\n"
@@ -533,6 +567,14 @@ def _declared_systems(module: DiscoveredModule) -> frozenset[str] | None:
         return None
 
 
+def _packages_for_this_system(module: DiscoveredModule) -> frozenset[str]:
+    apply = f'packages: builtins.attrNames (packages."{current_system()}" or {{}})'
+    proc = _run(
+        ["nix", "eval", "--json", "path:.#packages", "--apply", apply], REPO_ROOT / module.build_dir
+    )
+    return frozenset(json.loads(proc.stdout))
+
+
 def flake_dirs() -> list[str]:
     """Every tracked directory holding a `flake.nix`, repo-relative, sorted.
 
@@ -589,6 +631,20 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
     _log(f"START: {name} in {build_dir}: {command}")
     proc = _run(command, build_dir)
     body = proc.stdout + proc.stderr
+    if module.alternate_builds:
+        packages = _packages_for_this_system(module)
+        for alternate in module.alternate_builds:
+            package = alternate.split("#", 1)[1]
+            if package not in packages:
+                body += f"\nSKIP:  {alternate} (no {package} package on {current_system()})"
+                continue
+            # Its own out-link, so `result` stays the default build and result-* is recorded and verified too.
+            alternate_command = f"{alternate} --out-link result-{package}" + (
+                " --dry-run" if dry_run else ""
+            )
+            _log(f"START: {name} in {build_dir}: {alternate_command}")
+            proc = _run(alternate_command, build_dir)
+            body += "\n" + proc.stdout + proc.stderr
     # A dry run lists the derivations it would realise; saying nothing means every
     # output already substitutes, so a real run would push nothing new.
     return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()

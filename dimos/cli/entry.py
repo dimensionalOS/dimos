@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Console-script entry point (``[project.scripts] dimos``).
+"""Console-script entry points for ``dimos`` and ``rerun-bridge``.
 
 Deliberately tiny: module workers use the multiprocessing ``forkserver`` start
 method, and every worker re-runs the console script as ``__mp_main__`` before
@@ -21,8 +21,16 @@ import of ``dimos.cli.dimos`` (typer plus every command) is paid once, in the
 parent, inside ``main()``.
 """
 
+import sys
+
 
 def main() -> None:
     from dimos.cli.dimos import cli_main
 
     cli_main()
+
+
+def rerun_bridge() -> None:
+    """Run the standalone bridge through the shared CLI."""
+    sys.argv = ["dimos", "rerun-bridge", *sys.argv[1:]]
+    main()

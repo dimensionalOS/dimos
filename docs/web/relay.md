@@ -146,6 +146,8 @@ Source ids start with a letter or digit and run to 64 letters, digits, `_`, `.` 
 
 A media route serves up to four encode variants, the settings pages change with `update()`, each at the highest rate among its viewers; the relay keeps every viewer's own rate gate, moves a viewer only once its new variant encodes, and closes a variant nobody uses after two seconds. Direct video has no data frames to gate, so each rate is a variant of its own. The fixed profiles stay the ceilings.
 
+Topic viewers receive a cumulative `pong.aborted` counter for congested latest-send aborts, excluding per-key replacement and already accepted stream cleanup; the SDK uses its delta for [adaptive quality and rate](/docs/web/web_sdk.md#adapting-to-a-slow-link).
+
 ## Binding beyond loopback
 
 A `--host` other than loopback is accepted only with `--cert`, `--key` and `--auth-file` together, or with `--unsafe-non-loopback` when your own TLS and access control sit in front. `--serve-dir` is refused on any non-loopback host: a public relay serves only the built cockpit. `--auth-file` alone on loopback is fine.

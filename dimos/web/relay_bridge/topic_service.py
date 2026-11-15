@@ -312,7 +312,7 @@ class _Route:
         self._changed.set()
 
     def set_variant(self, name: str, requested: dict[str, Any]) -> dict[str, Any]:
-        """Open a variant, or change the rate of an open one; returns its settings."""
+        """Open a variant, or reconfigure video/rate in place; returns its settings."""
         settings = normalize_settings(self.spec.profile, requested)
         existing = self._variants.get(name)
         if existing is None:
@@ -322,7 +322,9 @@ class _Route:
             return settings
         video = self._video is not None
         if _encode_key(existing.settings, video=video) != _encode_key(settings, video=video):
-            raise ValueError("variant_settings_changed")
+            if self._video is None:
+                raise ValueError("variant_settings_changed")
+            self._video.reconfigure(name, settings)
         # A rate change keeps each key's last encode time, as the mailbox does.
         period = 1 / float(settings["maxHz"])
         existing.next_due = {
@@ -449,10 +451,13 @@ class _Route:
                     continue
                 await self._transforms.slots.acquire()
                 try:
-                    # Select again with the permit in hand: the wait for a
-                    # worker must not leave an obsolete frame to encode.
-                    fresh, _ = self._mailbox.take(time.monotonic(), limit=128)
-                    self._absorb(fresh)
+                    # Select again with the permit in hand, past the rate
+                    # gate: the wait for a worker must not leave an obsolete
+                    # frame to encode. The newer sample replaces the selected
+                    # one, so the key's schedule stays.
+                    newer = self._mailbox.refresh(key)
+                    if newer is not None:
+                        self._absorb([newer])
                     sample = self._latest.get(key)
                     if sample is None or self._variants.get(variant.name) is not variant:
                         continue
@@ -885,6 +890,7 @@ def capabilities(config: TopicServiceConfig, *, video: bool = False) -> TopicCap
         profiles=profiles,
         guardedPublishers=config.write and config.guarded_publishers,
         profileOptions={name: PROFILE_OPTIONS[name] for name in profiles},
+        videoReconfigure=video,
     )
 
 

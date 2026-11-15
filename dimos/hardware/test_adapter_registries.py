@@ -45,7 +45,6 @@ OPTIONAL_VENDOR_MODULES = {
 # conscious change: update this set in the same PR.
 EXPECTED_NAMES = {
     "manipulators": {
-        "a750",
         "mock",
         "piper",
         "sim_mujoco",

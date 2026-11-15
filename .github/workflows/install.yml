@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/test-install.sh'
+      - 'scripts/test_install.py'
       - 'pyproject.toml'
       - 'uv.lock'
       - 'setup.py'
@@ -34,6 +35,8 @@ jobs:
           /bin/bash -n scripts/install.sh
           /bin/bash -n scripts/test-install.sh
           uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh
+      - name: Test installation harness
+        run: uvx --from pytest pytest -c /dev/null scripts/test_install.py
 
   ubuntu:
     needs: lint

@@ -498,3 +498,20 @@ Deno.test("peek rejects a frame whose total exceeds MAX_DATA_FRAME_BYTES", () =>
   dv.setUint32(4, MAX_DATA_FRAME_BYTES, true); // payload pushes total over the cap
   assertThrows(() => peekDataFrameLengths(bad));
 });
+
+Deno.test("video bitrate is clamped to the normalized size class", () => {
+  const ranges: OptionRanges = {
+    maxHz: { kind: "number", max: 1000, default: 30 },
+    maxResolution: { kind: "size", min: 16, max: 4096, default: [1920, 1080] },
+    maxBitrate: { kind: "int", min: 100000, max: 4500000, default: 4500000 },
+  };
+  assertEquals(
+    normalizeTopicSettings(ranges, { maxResolution: [1280, 720], maxBitrate: 10000000 }),
+    {
+      settings: { maxHz: 30, maxResolution: [1280, 720], maxBitrate: 2500000 },
+    },
+  );
+  assertEquals(normalizeTopicSettings(ranges, { maxBitrate: 99999 }), {
+    error: "option_out_of_range",
+  });
+});

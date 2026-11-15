@@ -196,6 +196,16 @@ def test_recorder_is_in_the_publish_manifest() -> None:
     assert _SCRIPT._flake_ref_of(recorder) == "path:."
 
 
+def test_a_build_chosen_at_runtime_is_published_too() -> None:
+    """V4L2CameraConfig swaps in the Jetson package from a validator; the publish still has to build it."""
+    camera = next(
+        module
+        for module in _SCRIPT.discover()
+        if module.qualname.endswith("v4l2.module.V4L2CameraConfig")
+    )
+    assert camera.alternate_builds == ("nix build -L path:.#jetson",)
+
+
 @pytest.mark.parametrize("override", [None, "build_command", "source_dir"])
 def test_inherited_build_coverage_tracks_overrides(override: str | None) -> None:
     owner = _ClassDef(

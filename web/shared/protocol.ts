@@ -25,6 +25,7 @@ import {
   MAX_SDP_LEN,
   type TopicCapabilities,
   topicCapabilitiesOk,
+  topicGenerationOk,
   type TopicMsg,
   topicMsgFromUnknown,
   topicSourceOk,
@@ -147,6 +148,7 @@ export interface PongMsg {
   t: "pong";
   n: number;
   ts: number;
+  aborted?: number;
 }
 
 export interface ErrorMsg {
@@ -426,6 +428,7 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
     (v.topicSource === undefined || topicSourceOk(v.topicSource)) &&
     (v.topicCapabilities === undefined || topicCapabilitiesOk(v.topicCapabilities)) &&
     (v.topicsVersion === undefined || v.topicsVersion === 1),
+  pong: (v) => v.aborted === undefined || topicGenerationOk(v.aborted),
   error: (v) => v.requestId === undefined || requestIdOk(v.requestId),
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),

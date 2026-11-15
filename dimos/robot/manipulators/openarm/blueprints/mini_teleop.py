@@ -18,28 +18,43 @@ from __future__ import annotations
 
 from dataclasses import replace
 import os
-from typing import ClassVar
+import threading
+import time
+from typing import Any, ClassVar
+
+from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.core import rpc
 from dimos.core.stream import In
+from dimos.hardware.controllers.joycon.joycon_module import JoyconConnectionModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
     arm_declaration,
     arm_remaps,
 )
+from dimos.robot.manipulators.feetech.connection import (
+    GUARDED_JOINT_FRAME_ID,
+    FeetechConnection,
+    FeetechConnectionConfig,
+)
 from dimos.robot.manipulators.openarm.config import (
+    OPENARM_MINI_ARM_LEADERS,
     OPENARM_MINI_LEADERS,
     OPENARM_SIDES,
     openarm_bimanual_model_config,
 )
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
-from dimos.robot.manipulators.openarm.mini_connection import OpenArmMiniConnection
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Leader-follower needs human arm speeds, well above the WebXR IK profile.
 _ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)
@@ -73,15 +88,97 @@ class OpenArmLeaderCoordinator(DamiaoCoordinator):
     leader_joint_command: In[JointState]
 
 
+class OpenArmMiniConnectionConfig(FeetechConnectionConfig):
+    """Serial ports of the two OpenArm Mini leader arms.
+
+    Attributes:
+        left_serial_port: The left leader's serial port, e.g. "/dev/ttyACM0";
+            empty leaves that leader unread.
+        right_serial_port: The right leader's serial port; empty leaves it unread.
+    """
+
+    left_serial_port: str = ""
+    right_serial_port: str = ""
+
+
+class OpenArmMiniConnection(FeetechConnection):
+    """The two OpenArm Mini leader arms; the serial ports given select which are read.
+
+    While ``follow`` is off, nothing is sent and the follower holds still, so
+    the leaders can be moved freely.
+    """
+
+    # Off pauses the leaders; on (the start state) sends their targets again.
+    follow: In[Bool]
+
+    config: OpenArmMiniConnectionConfig
+    robot = OPENARM_MINI_LEADERS
+
+    def serial_ports(self) -> dict[str, str]:
+        return {"left": self.config.left_serial_port, "right": self.config.right_serial_port}
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._following = True
+        self._follow_lock = threading.Lock()
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.follow.subscribe(self._on_follow)))
+
+    def publish_reading(self, readings: dict[str, dict[str, float]]) -> None:
+        with self._follow_lock:
+            if self._following:
+                super().publish_reading(readings)
+
+    def _on_follow(self, msg: Bool) -> None:
+        with self._follow_lock:
+            if msg.data == self._following:
+                return
+            self._following = msg.data
+            if not msg.data:
+                # A jog with no positions and zero speed tells the trajectory
+                # task to hold every joint now, not 0.4 s after the last target.
+                joints = [
+                    f"{self.config.source}/{motor.joint}"
+                    for bus in self.robot.buses
+                    for motor in bus.motors
+                ]
+                self.joint_state.publish(
+                    JointState(
+                        ts=time.time(),
+                        frame_id=GUARDED_JOINT_FRAME_ID,
+                        name=joints,
+                        velocity=[0.0] * len(joints),
+                    )
+                )
+        logger.info("%s %s", type(self).__name__, "resumed" if msg.data else "paused")
+
+
+class OpenArmMiniArmConnection(OpenArmMiniConnection):
+    """The two leader arms without their trigger servos; the jaws are driven elsewhere.
+
+    Each side's calibration file must list only the seven arm motors.
+    """
+
+    robot = OPENARM_MINI_ARM_LEADERS
+
+
 # The follower's jaws by side; each is named <side>_gripper on the robot.
 _JAWS = {jaw.name.removesuffix("_gripper"): jaw for jaw in OpenArmConnection.robot.grippers}
 
 
-def _leader() -> Blueprint:
+def _leader(connection: type[OpenArmMiniConnection] = OpenArmMiniConnection) -> Blueprint:
     """The leaders' connection: the arms' joint targets and jaw openings."""
-    return OpenArmMiniConnection.blueprint(
+    return connection.blueprint(
         state_rate_hz=_LEADER_RATE_HZ, filter_cutoff_hz=_COMMAND_FILTER_CUTOFF_HZ
-    ).remappings([(OpenArmMiniConnection, "joint_state", "leader_joint_command")])
+    ).remappings([(connection, "joint_state", "leader_joint_command")])
+
+
+def _joycon_leader() -> Blueprint:
+    """Leaders without triggers, and a Joy-Con on each for its jaw, episodes and pause."""
+    return autoconnect(_leader(OpenArmMiniArmConnection), JoyconConnectionModule.blueprint())
 
 
 def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:
@@ -124,6 +221,14 @@ teleop_openarm_mini = autoconnect(_leader(), _follower())
 # Split deployment: leaders on an operator machine, follower on the robot.
 # The robot stack owns the Coordinator name, so the leader half does not claim it.
 teleop_openarm_mini_leader = _leader().global_config(
+    zenoh_mode="client", serve_coordinator_rpc=False
+)
+
+# Joy-Cons in place of the trigger servos: ZL / ZR close the jaws, B / Y run
+# episodes, plus pauses and resumes following.
+teleop_openarm_mini_joycon = autoconnect(_joycon_leader(), _follower())
+
+teleop_openarm_mini_joycon_leader = _joycon_leader().global_config(
     zenoh_mode="client", serve_coordinator_rpc=False
 )
 
