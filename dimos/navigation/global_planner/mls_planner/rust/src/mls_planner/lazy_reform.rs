@@ -95,6 +95,29 @@ impl LazyState {
     }
 }
 
+impl LazyState {
+    /// Where a stale cell is now, carried by its anchor; None for a current-layer cell.
+    pub(crate) fn stale_point(&self, cells: &SurfaceCells, id: CellId) -> Option<(f32, f32, f32)> {
+        let layer = cells.layer(id);
+        if layer == self.layers.current {
+            return None;
+        }
+        let el = self.layers.cells.get(&id)?;
+        let carry = self.layers.stale.get(&layer)?.carry(el.anchor, &self.table);
+        let (x, y, z) = cells.point(id, self.voxel_size);
+        let p = carry.apply([x as f64, y as f64, z as f64]);
+        Some((p[0] as f32, p[1] as f32, p[2] as f32))
+    }
+}
+
+/// A cell's key where it is now: its own in the current layer, its carried point's for a stale one.
+pub(crate) fn key_now(lazy: Option<&LazyState>, cells: &SurfaceCells, id: CellId) -> VoxelKey {
+    match lazy.and_then(|l| l.stale_point(cells, id).map(|p| voxelize(p, l.voxel_size))) {
+        Some(k) => k,
+        None => cells.coord(id),
+    }
+}
+
 /// What a migration did to the current layer, for the repair after it.
 #[derive(Default)]
 struct Migrated {
@@ -234,16 +257,154 @@ impl Planner {
 
     /// Where a stale layer's cell is in the current frame, by its anchor's pose then and now; None for a current-layer cell.
     pub(crate) fn stale_point(&self, id: CellId) -> Option<(f32, f32, f32)> {
-        let lazy = self.lazy.as_ref()?;
-        let layer = self.graph.cells.layer(id);
-        if layer == lazy.layers.current {
-            return None;
+        self.lazy.as_ref()?.stale_point(&self.graph.cells, id)
+    }
+
+    /// Why a plan from `start` to `goal` fails, as JSON: whether the cells connect over passable links; if not, where
+    /// the start's component ends (by layer pair and whether a link exists), else the first place along the cell path
+    /// the node graph lacks the edge between the two Voronoi owners.
+    pub fn connectivity_json(
+        &self,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+        config: &Config,
+    ) -> String {
+        use std::collections::VecDeque;
+        let g = &self.graph;
+        let vs = config.voxel_size;
+        let snap = |p| {
+            crate::planner::snap_pose_to_cell(&g.surface_lookup, p, vs, config.robot_height)
+                .and_then(|k| g.cells.id(k))
+        };
+        let (Some(a), Some(b)) = (snap(start), snap(goal)) else {
+            return format!(
+                "{{\"snapped\":false,\"start\":{},\"goal\":{}}}",
+                snap(start).is_some(),
+                snap(goal).is_some()
+            );
+        };
+        let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
+        pred.insert(a, a);
+        let mut queue = VecDeque::from([a]);
+        while let Some(c) = queue.pop_front() {
+            if c == b {
+                break;
+            }
+            for e in g.cells.neighbors(c) {
+                if e.cost.is_finite() && !pred.contains_key(&e.dest) {
+                    pred.insert(e.dest, c);
+                    queue.push_back(e.dest);
+                }
+            }
         }
-        let el = lazy.layers.cells.get(&id)?;
-        let carry = lazy.layers.stale.get(&layer)?.carry(el.anchor, &lazy.table);
-        let (x, y, z) = self.graph.cells.point(id, lazy.voxel_size);
-        let p = carry.apply([x as f64, y as f64, z as f64]);
-        Some((p[0] as f32, p[1] as f32, p[2] as f32))
+        let reached = pred.len();
+        let now = |id: CellId| {
+            self.stale_point(id)
+                .unwrap_or_else(|| g.cells.point(id, vs))
+        };
+        if !pred.contains_key(&b) {
+            let key = |id: CellId| voxelize(now(id), vs);
+            let mut by_key: AHashMap<VoxelKey, Vec<CellId>> = AHashMap::new();
+            for id in g.cells.ids() {
+                by_key.entry(key(id)).or_default().push(id);
+            }
+            let mut pairs: std::collections::BTreeMap<(u32, u32, bool), (usize, [f32; 3])> =
+                Default::default();
+            for &c in pred.keys() {
+                let k = key(c);
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    for dz in -2..=2 {
+                        for &o in by_key
+                            .get(&(k.0 + dx, k.1 + dy, k.2 + dz))
+                            .into_iter()
+                            .flatten()
+                        {
+                            if pred.contains_key(&o) {
+                                continue;
+                            }
+                            let linked = g.cells.neighbors(c).iter().any(|e| e.dest == o);
+                            let p = now(c);
+                            let entry = pairs
+                                .entry((g.cells.layer(c), g.cells.layer(o), linked))
+                                .or_insert((0, [p.0, p.1, p.2]));
+                            entry.0 += 1;
+                        }
+                    }
+                }
+            }
+            let list: Vec<String> = pairs
+                .iter()
+                .map(|((li, lo, linked), (n, p))| {
+                    format!("{{\"in\":{li},\"out\":{lo},\"linked\":{linked},\"count\":{n},\"sample\":[{:.2},{:.2},{:.2}]}}", p[0], p[1], p[2])
+                })
+                .collect();
+            // where the goal's component comes closest to the start's, by where cells are now
+            let mut from_goal: AHashMap<CellId, ()> = AHashMap::new();
+            from_goal.insert(b, ());
+            let mut queue = VecDeque::from([b]);
+            while let Some(c) = queue.pop_front() {
+                for e in g.cells.neighbors(c) {
+                    if e.cost.is_finite() && !from_goal.contains_key(&e.dest) {
+                        from_goal.insert(e.dest, ());
+                        queue.push_back(e.dest);
+                    }
+                }
+            }
+            let mut goal_keys: AHashMap<(i32, i32), Vec<CellId>> = AHashMap::new();
+            for &c in from_goal.keys() {
+                let k = key(c);
+                goal_keys.entry((k.0, k.1)).or_default().push(c);
+            }
+            let mut closest: Option<(f32, CellId, CellId)> = None;
+            for &c in pred.keys() {
+                let k = key(c);
+                for dx in -3..=3 {
+                    for dy in -3..=3 {
+                        for &o in goal_keys.get(&(k.0 + dx, k.1 + dy)).into_iter().flatten() {
+                            let (p, q) = (now(c), now(o));
+                            let d =
+                                ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2) + (p.2 - q.2).powi(2))
+                                    .sqrt();
+                            if closest.is_none_or(|(best, _, _)| d < best) {
+                                closest = Some((d, c, o));
+                            }
+                        }
+                    }
+                }
+            }
+            let near = closest.map_or("null".to_string(), |(d, c, o)| {
+                let (p, q) = (now(c), now(o));
+                let link = g.cells.neighbors(c).iter().find(|e| e.dest == o).map_or("none".to_string(), |e| format!("{}", e.cost));
+                let w = |id: CellId| g.wall_state.dist.get(id as usize).copied().unwrap_or(f32::INFINITY);
+                format!(
+                    "{{\"gap_m\":{d:.3},\"start_side\":[{:.2},{:.2},{:.2}],\"goal_side\":[{:.2},{:.2},{:.2}],\"layers\":[{},{}],\"link_cost\":\"{link}\",\"walls\":[{:.2},{:.2}],\"start_side_links\":{},\"goal_side_links\":{}}}",
+                    p.0, p.1, p.2, q.0, q.1, q.2, g.cells.layer(c), g.cells.layer(o), w(c), w(o),
+                    g.cells.neighbors(c).len(), g.cells.neighbors(o).len()
+                )
+            });
+            return format!("{{\"cells_connect\":false,\"reached\":{reached},\"goal_component\":{},\"closest\":{near},\"boundary\":[{}]}}", from_goal.len(), list.join(","));
+        }
+        let mut path = vec![b];
+        while *path.last().unwrap() != a {
+            path.push(pred[path.last().unwrap()]);
+        }
+        path.reverse();
+        let owner = |c: CellId| g.cell_state.source.get(c as usize).copied();
+        let mut gap = String::from("null");
+        for w in path.windows(2) {
+            if let (Some(oa), Some(ob)) = (owner(w[0]), owner(w[1])) {
+                if oa != ob && g.node_edges.between(oa, ob).is_none() {
+                    let (p, q) = (now(w[0]), now(w[1]));
+                    gap = format!(
+                        "{{\"at\":[{:.2},{:.2},{:.2}],\"next\":[{:.2},{:.2},{:.2}],\"layers\":[{},{}],\"owners\":[{oa},{ob}],\"owner_nodes\":[{},{}]}}",
+                        p.0, p.1, p.2, q.0, q.1, q.2, g.cells.layer(w[0]), g.cells.layer(w[1]),
+                        g.nodes.node_at(oa).is_some(), g.nodes.node_at(ob).is_some()
+                    );
+                    break;
+                }
+            }
+        }
+        format!("{{\"cells_connect\":true,\"reached\":{reached},\"path_cells\":{},\"first_gap\":{gap}}}", path.len())
     }
 
     /// The cells within `radius` of `center` where they are now, their links (flagged when across layers) and the
@@ -268,13 +429,17 @@ impl Planner {
         let ids: Vec<CellId> = cells.ids().filter(|&id| near(now(id))).collect();
         let kept: BTreeSet<CellId> = ids.iter().copied().collect();
         let mut j = String::new();
-        let _ = write!(j, "{{\"name\":\"{name}\",\"current_layer\":{},\"voxel_size\":{vs},\"cells\":[", lazy.layers.current);
+        let _ = write!(
+            j,
+            "{{\"name\":\"{name}\",\"current_layer\":{},\"voxel_size\":{vs},\"cells\":[",
+            lazy.layers.current
+        );
         for (n, &id) in ids.iter().enumerate() {
             let (p, k) = (now(id), cells.coord(id));
             let anchor = lazy.layers.cells.get(&id).map_or(-1, |e| e.anchor as i64);
             let _ = write!(
                 j,
-                "{}{{\"id\":{id},\"layer\":{},\"key\":[{},{},{}],\"now\":[{:.3},{:.3},{:.3}],\"anchor\":{anchor}}}",
+                "{}{{\"id\":{id},\"layer\":{},\"key\":[{},{},{}],\"now\":[{:.3},{:.3},{:.3}],\"anchor\":{anchor},\"wall\":{:.3}}}",
                 if n > 0 { "," } else { "" },
                 cells.layer(id),
                 k.0,
@@ -282,16 +447,25 @@ impl Planner {
                 k.2,
                 p.0,
                 p.1,
-                p.2
+                p.2,
+                self.graph.wall_state.dist.get(id as usize).copied().unwrap_or(99.0).min(99.0)
             );
         }
         j.push_str("],\"edges\":[");
         let mut first = true;
         for &id in &ids {
             for e in cells.neighbors(id) {
-                if kept.contains(&e.dest) && (e.dest > id || !cells.neighbors(e.dest).iter().any(|b| b.dest == id)) {
+                if kept.contains(&e.dest)
+                    && (e.dest > id || !cells.neighbors(e.dest).iter().any(|b| b.dest == id))
+                {
                     let cross = u8::from(cells.layer(e.dest) != cells.layer(id));
-                    let _ = write!(j, "{}[{id},{},{cross}]", if first { "" } else { "," }, e.dest);
+                    let blocked = u8::from(!e.cost.is_finite());
+                    let _ = write!(
+                        j,
+                        "{}[{id},{},{cross},{blocked}]",
+                        if first { "" } else { "," },
+                        e.dest
+                    );
                     first = false;
                 }
             }
@@ -305,9 +479,12 @@ impl Planner {
             if (t[0] as f32 - center.0).hypot(t[1] as f32 - center.1) > radius {
                 continue;
             }
-            let rect = lazy.table.current_rect(slot).map_or("null".to_string(), |r| {
-                format!("[{:.3},{:.3},{:.3},{:.3}]", r[0], r[1], r[2], r[3])
-            });
+            let rect = lazy
+                .table
+                .current_rect(slot)
+                .map_or("null".to_string(), |r| {
+                    format!("[{:.3},{:.3},{:.3},{:.3}]", r[0], r[1], r[2], r[3])
+                });
             let _ = write!(
                 j,
                 "{}{{\"node_id\":{},\"raw\":[{:.3},{:.3},{:.3}],\"now\":[{:.3},{:.3},{:.3}],\"rect\":{rect}}}",
@@ -324,11 +501,24 @@ impl Planner {
         }
         j.push_str("],\"cylinders\":[");
         for (n, c) in cylinders.iter().enumerate() {
-            let _ = write!(j, "{}[{:.3},{:.3},{:.3}]", if n > 0 { "," } else { "" }, c.0, c.1, c.2);
+            let _ = write!(
+                j,
+                "{}[{:.3},{:.3},{:.3}]",
+                if n > 0 { "," } else { "" },
+                c.0,
+                c.1,
+                c.2
+            );
         }
         j.push_str("],\"found\":[");
         for (n, (layer, tile)) in found.iter().enumerate() {
-            let _ = write!(j, "{}[{layer},{},{}]", if n > 0 { "," } else { "" }, tile.0, tile.1);
+            let _ = write!(
+                j,
+                "{}[{layer},{},{}]",
+                if n > 0 { "," } else { "" },
+                tile.0,
+                tile.1
+            );
         }
         let _ = write!(j, "],\"tile_m\":{}}}", lazy.layers.params.tile_m);
         j
@@ -336,10 +526,7 @@ impl Planner {
 
     /// A cell's key where it is now: its own in the current layer, its carried point's for a stale one.
     pub(crate) fn key_now(&self, id: CellId) -> VoxelKey {
-        match (self.stale_point(id), &self.lazy) {
-            (Some(p), Some(lazy)) => voxelize(p, lazy.voxel_size),
-            _ => self.graph.cells.coord(id),
-        }
+        key_now(self.lazy.as_ref(), &self.graph.cells, id)
     }
 
     /// The ring around a touched area that must be in the current layer: what the surface extraction pads by and the node window reaches.

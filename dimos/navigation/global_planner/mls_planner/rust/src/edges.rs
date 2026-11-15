@@ -787,10 +787,10 @@ fn merge_min(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voxel::VoxelKey;
     use crate::adjacency::{build_surface_lookup, build_whole_voxel_cells};
     use crate::nodes::{NodeData, PlacementParams};
     use crate::voxel::surface_point_xyz;
+    use crate::voxel::VoxelKey;
 
     const VOXEL: f32 = 0.1;
 

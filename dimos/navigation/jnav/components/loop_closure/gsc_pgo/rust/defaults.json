@@ -54,6 +54,8 @@
     "verification_scans_per_round_point": 6.563647896724165e-05
   },
   "drop_reseen_points": true,
+  "event_min_shift_m": 0.04,
+  "event_min_turn_rad": 0.004,
   "extension_cloud_spacing": 0.25,
   "fast_match_workers": 2,
   "graph_change_heat_decay": 0.995,
