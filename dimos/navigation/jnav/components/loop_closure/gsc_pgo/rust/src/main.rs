@@ -24,8 +24,7 @@ use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config as PgoConfig, GscPgo, PoseWit
 use dimos_gsc_pgo::location_constraint::LocationConstraint;
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::records::{
-    append_pose_changes, build_closure_edge_records, build_loop_closure_records, build_odometry,
-    build_pose_graph_records, extract_xyz, write_keyframes, HeardPoses,
+    append_pose_changes, build_closure_edge_records, build_odometry, extract_xyz, write_keyframes, GraphOutputs,
 };
 use dimos_module::nalgebra::{Isometry3, Matrix3, Rotation3, Translation3, UnitQuaternion};
 use dimos_module::{native_config, run_with_transport, Input, Module, Output, Tf, Transform};
@@ -207,6 +206,8 @@ struct SharedState {
     solve_finished: bool,
     /// Fixed-frame scan warning already shown.
     fixed_frame_warned: bool,
+    /// A render asked for the whole pose graph and it hasn't been sent yet.
+    pose_graph_requested: bool,
 }
 
 type Shared<T> = Arc<Mutex<T>>;
@@ -244,16 +245,25 @@ struct GscPgoModule {
     #[input(decode = LocationConstraint::decode, handler = on_landmark_factor)]
     landmark_factor: Input<LocationConstraint>,
 
+    // any message asks for one pose_graph publish (for rendering); pose_graph is not sent otherwise
+    #[input(decode = std_msgs::Bool::decode, handler = on_pose_graph_request)]
+    pose_graph_request: Input<std_msgs::Bool>,
+
     #[output(encode = Odometry::encode)]
     corrected_odometry: Output<Odometry>,
 
     #[tf]
     tf: Tf,
 
+    // every keyframe at its current pose, once per pose_graph_request
     #[output(encode = PointCloud2::encode)]
     pose_graph: Output<PointCloud2>,
 
-    // per keyframe a solve moved: its pose before, and the delta
+    // once per keyframe: its raw odometry pose and the box around every scan since the previous keyframe
+    #[output(encode = PointCloud2::encode)]
+    new_keyframe: Output<PointCloud2>,
+
+    // per keyframe when a solve moved any: its pose before, the delta, the event's version and closed_with
     #[output(encode = PointCloud2::encode)]
     loop_closure_event: Output<PointCloud2>,
 
@@ -287,6 +297,7 @@ impl GscPgoModule {
             config: self.config.clone(),
             corrected_odometry: self.corrected_odometry.clone(),
             pose_graph: self.pose_graph.clone(),
+            new_keyframe: self.new_keyframe.clone(),
             loop_closure_event: self.loop_closure_event.clone(),
             closure_edges: self.closure_edges.clone(),
             debug_log: self.debug_log.clone(),
@@ -309,6 +320,11 @@ impl GscPgoModule {
             self.wake.notify_all();
             let _ = tokio::task::spawn_blocking(move || thread.join()).await;
         }
+    }
+
+    async fn on_pose_graph_request(&mut self, _msg: std_msgs::Bool) {
+        self.state.lock().expect("state").pose_graph_requested = true;
+        self.wake.notify_one();
     }
 
     async fn on_odometry(&mut self, msg: Odometry) {
@@ -490,10 +506,13 @@ impl GscPgoModule {
 
 // ---- graph publisher ------------------------------------------------------------
 
-/// Next publish: O(1) graph snapshot, whether a closure closed since the last send (or-ed over skips), data time.
+/// Next publish: O(1) graph and closure snapshots, whether a closure closed / a render asked for the graph since the
+/// last send (or-ed over skips), data time.
 struct Publish {
     keys: dimos_gsc_pgo::store::KeyFrames,
+    closures: dimos_gsc_pgo::store::Closures,
     closure_closed: bool,
+    pose_graph_requested: bool,
     ts: f64,
 }
 
@@ -510,11 +529,12 @@ impl GraphPublisher {
         let pending: PendingPublish = Arc::default();
         let (shared, stop) = (Arc::clone(&pending), Arc::clone(&worker.stop));
         let (pose_graph, loop_closure_event) = (worker.pose_graph.clone(), worker.loop_closure_event.clone());
+        let new_keyframe = worker.new_keyframe.clone();
         let (rt, dump_path) = (worker.rt.clone(), worker.config.dump_path.clone());
         std::thread::Builder::new()
             .name("gsc-publish".into())
             .spawn(move || {
-                let mut heard = HeardPoses::default();
+                let mut outputs = GraphOutputs::default();
                 let publish = |out: &dyn Fn() -> Result<(), String>, what: &str| {
                     if let Err(e) = out() {
                         error!(error = %e, "{what} failed to publish");
@@ -538,12 +558,17 @@ impl GraphPublisher {
                             None => return,
                         }
                     };
-                    let Publish { keys, closure_closed, ts } = next;
-                    heard.add_new(&keys);
-                    if let Some(changes) = heard.take_changes(&keys, closure_closed) {
-                        let records = build_loop_closure_records(changes, ts, &frame_id);
+                    let Publish { keys, closures, closure_closed, pose_graph_requested, ts } = next;
+                    let messages = outputs.step(&keys, &closures, closure_closed, pose_graph_requested, ts, &frame_id);
+                    if let Some(records) = &messages.new_keyframe {
                         publish(
-                            &|| rt.block_on(loop_closure_event.publish(&records)).map_err(|e| e.to_string()),
+                            &|| rt.block_on(new_keyframe.publish(records)).map_err(|e| e.to_string()),
+                            "new_keyframe",
+                        );
+                    }
+                    if let Some((records, changes)) = &messages.loop_closure_event {
+                        publish(
+                            &|| rt.block_on(loop_closure_event.publish(records)).map_err(|e| e.to_string()),
                             "loop_closure_event",
                         );
                         if !dump_path.is_empty() {
@@ -551,17 +576,18 @@ impl GraphPublisher {
                                 .create(true)
                                 .append(true)
                                 .open(format!("{dump_path}.closures"))
-                                .and_then(|mut file| append_pose_changes(&mut file, ts, &records.data));
+                                .and_then(|mut file| append_pose_changes(&mut file, ts, changes));
                             if let Err(e) = appended {
                                 warn!(error = %e, "Failed to dump the loop closure.");
                             }
                         }
                     }
-                    let records = build_pose_graph_records(&keys, ts, &frame_id);
-                    publish(
-                        &|| rt.block_on(pose_graph.publish(&records)).map_err(|e| e.to_string()),
-                        "pose_graph",
-                    );
+                    if let Some(records) = &messages.pose_graph {
+                        publish(
+                            &|| rt.block_on(pose_graph.publish(records)).map_err(|e| e.to_string()),
+                            "pose_graph",
+                        );
+                    }
                     if !dump_path.is_empty() {
                         if let Err(e) = write_keyframes(dump_path.as_ref(), &keys) {
                             warn!(error = %e, "Failed to dump the keyframes.");
@@ -572,14 +598,17 @@ impl GraphPublisher {
             .expect("spawn graph publisher thread");
         GraphPublisher { pending }
     }
-    /// Hand over the current graph; an unsent older one is replaced, its closure flag kept.
-    fn send(&self, pgo: &GscPgo, closure_closed: bool, ts: f64) {
+    /// Hand over the current graph; an unsent older one is replaced, its closure and request flags kept.
+    fn send(&self, pgo: &GscPgo, closure_closed: bool, pose_graph_requested: bool, ts: f64) {
         let (lock, ready) = &*self.pending;
         let mut state = lock.lock().expect("publisher");
         let closed = closure_closed || state.0.as_ref().is_some_and(|p| p.closure_closed);
+        let requested = pose_graph_requested || state.0.as_ref().is_some_and(|p| p.pose_graph_requested);
         state.0 = Some(Publish {
             keys: pgo.key_poses().clone(),
+            closures: pgo.committed_closures().clone(),
             closure_closed: closed,
+            pose_graph_requested: requested,
             ts,
         });
         ready.notify_one();
@@ -602,6 +631,7 @@ struct Worker {
     corrected_odometry: Output<Odometry>,
     tf: Tf,
     pose_graph: Output<PointCloud2>,
+    new_keyframe: Output<PointCloud2>,
     loop_closure_event: Output<PointCloud2>,
     closure_edges: Output<PointCloud2>,
     debug_log: Output<std_msgs::String>,
@@ -661,7 +691,7 @@ impl Worker {
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
             if solve_finished && pgo.update() {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-                publisher.send(&pgo, false, last_time);
+                publisher.send(&pgo, false, false, last_time);
                 self.log_solve(&pgo, last_time);
             }
             // fixes and sightings join as they arrive; one alone starts a solve
@@ -697,9 +727,13 @@ impl Worker {
                 }
                 if pgo.update() {
                     let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-                    publisher.send(&pgo, false, last_time);
+                    publisher.send(&pgo, false, false, last_time);
                     self.log_solve(&pgo, last_time);
                 }
+            }
+            if std::mem::take(&mut self.state.lock().expect("state").pose_graph_requested) {
+                let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+                publisher.send(&pgo, false, true, last_time);
             }
             self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
             self.log_closures(&pgo, &mut closures_logged);
@@ -714,6 +748,7 @@ impl Worker {
                     && !state.solve_finished
                     && state.world_fixes.is_empty()
                     && state.landmark_factors.is_empty()
+                    && !state.pose_graph_requested
                 {
                     let _ = self.wake.wait_timeout(state, wake_timeout);
                 }
@@ -747,7 +782,7 @@ impl Worker {
 
             pgo.step_closure_search(false);
             let moved = pgo.update();
-            publisher.send(&pgo, moved, cur_time);
+            publisher.send(&pgo, moved, false, cur_time);
             if moved {
                 self.log_solve(&pgo, cur_time);
             }

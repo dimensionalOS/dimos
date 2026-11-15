@@ -29,8 +29,20 @@ from dimos.core.transport_factory import make_transport
 
 # pose_graph: one per keyframe at its current pose (quaternion x, y, z, w)
 POSE_RECORD = np.dtype([("xyz", "<f4", 3), ("id", "<u4"), ("ts", "<f8"), ("q", "<f4", 4)])
-# loop_closure_event: a keyframe's pose before a solve moved it, then the delta (post = delta * pre)
-CLOSURE_RECORD = np.dtype([*POSE_RECORD.descr, ("dt", "<f4", 3), ("dq", "<f4", 4)])
+# new_keyframe: a keyframe at its raw odometry pose, then the box (min, max; its own frame) around its scans
+NEW_KEYFRAME_RECORD = np.dtype([*POSE_RECORD.descr, ("box_min", "<f4", 3), ("box_max", "<f4", 3)])
+# loop_closure_event: a keyframe's pose before a solve moved it, the delta (post = delta * pre), the event's version
+# and the keyframe a closure since the previous event paired it with (CLOSED_WITH_NONE for none)
+CLOSURE_RECORD = np.dtype(
+    [
+        *POSE_RECORD.descr,
+        ("dt", "<f4", 3),
+        ("dq", "<f4", 4),
+        ("version", "<u4"),
+        ("closed_with", "<u4"),
+    ]
+)
+CLOSED_WITH_NONE = 0xFFFFFFFF
 # closure_edges: one closure candidate lifecycle event, both keyframes where they are now
 CLOSURE_EDGE_RECORD = np.dtype(
     [
