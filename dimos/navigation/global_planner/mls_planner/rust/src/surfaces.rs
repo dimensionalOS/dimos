@@ -24,8 +24,11 @@ use crate::columns::{ColumnIz, ColumnMask};
 use crate::terrain::Terrain;
 use crate::voxel::VoxelKey;
 
-/// Columns a riser bridge reads past the cell it fills.
-pub const RISER_REACH: i32 = 1;
+/// The widest gap a riser bridge fills, which is also how far one reads past the cells it fills: as wide a hole as
+/// the closing fills on a level surface.
+pub fn riser_reach(closing_passes: u32) -> i32 {
+    2 * closing_passes as i32
+}
 
 /// Extract standable cells from the terrain's whole map, then close small
 /// holes.
@@ -47,17 +50,18 @@ pub fn extract_surfaces(
         .collect();
 
     close_surface_holes(standable, terrain, closing_passes, max_box_cells, out);
-    let risers = bridge_risers(out, terrain, |_| true);
+    let risers = bridge_risers(out, terrain, riser_reach(closing_passes), |_| true);
     out.extend(risers);
 }
 
-/// Cells for the one-column gaps a stair riser or a ramp leaves: a column with no voxel at all between two surface
-/// cells on voxels of their own (not filled over a hole) that differ by up to a step gets a cell at the lower one, so
-/// they link through it. Per-z closing cannot fill such a gap, since its two sides are at different heights. Only
-/// columns `at` accepts are filled.
+/// Cells for the gaps a stair riser or a ramp leaves: a run of up to `widest` columns with no voxel and no surface
+/// cell, along x or y between two surface cells on voxels of their own (not filled over a hole) that differ by up to a
+/// step, gets cells stepping evenly (rounded down) from one height to the other, so they link through it. Per-z closing cannot fill
+/// such a gap, since its two sides are at different heights. Only columns `at` accepts are filled.
 fn bridge_risers(
     surface: &[VoxelKey],
     terrain: &Terrain,
+    widest: i32,
     at: impl Fn((i32, i32)) -> bool,
 ) -> Vec<VoxelKey> {
     let mut by_col: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
@@ -69,21 +73,31 @@ fn bridge_risers(
         }
     }
     let max_rise = (terrain.step_m / terrain.voxel_size).floor() as i32;
+    let empty = |col: (i32, i32)| !held.contains(&col) && terrain.by_col.get(col).is_none();
     let mut out: Vec<VoxelKey> = Vec::new();
     for (&(ix, iy), near) in &by_col {
         for (dx, dy) in [(1, 0), (0, 1)] {
-            let gap = (ix + dx, iy + dy);
-            if held.contains(&gap) || terrain.by_col.get(gap).is_some() || !at(gap) {
+            let along = |n: i32| (ix + n * dx, iy + n * dy);
+            let gap = (1..=widest + 1)
+                .find(|&n| !empty(along(n)))
+                .map_or(0, |n| n - 1);
+            if gap == 0 {
                 continue;
             }
-            let Some(far) = by_col.get(&(ix + 2 * dx, iy + 2 * dy)) else {
+            let Some(far) = by_col.get(&along(gap + 1)) else {
                 continue;
             };
             for &za in near {
                 for &zb in far {
-                    let rise = (za - zb).abs();
-                    if rise > 0 && rise <= max_rise {
-                        out.push((gap.0, gap.1, za.min(zb)));
+                    let rise = zb - za;
+                    if rise == 0 || rise.abs() > max_rise {
+                        continue;
+                    }
+                    for n in 1..=gap {
+                        let col = along(n);
+                        if at(col) {
+                            out.push((col.0, col.1, za + (rise * n).div_euclid(gap + 1)));
+                        }
                     }
                 }
             }
@@ -117,7 +131,8 @@ pub fn extract_surfaces_region(
 ) -> Vec<VoxelKey> {
     // One column past the closing's reach, for the riser bridges at the write mask's edge.
     let pad = (2 * closing_passes) as i32;
-    let read = write.dilated(pad + RISER_REACH);
+    let reach = riser_reach(closing_passes);
+    let read = write.dilated(pad + reach);
 
     let standable: Vec<VoxelKey> = read
         .rows()
@@ -141,7 +156,7 @@ pub fn extract_surfaces_region(
         max_box_cells,
         &mut closed,
     );
-    let risers = bridge_risers(&closed, terrain, |col| write.contains(col));
+    let risers = bridge_risers(&closed, terrain, reach, |col| write.contains(col));
     closed.extend(risers);
     closed
         .into_iter()
