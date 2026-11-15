@@ -505,7 +505,7 @@ jobs:
           - check_name: isolated-lerobot-tests
             project: native/python/lerobot
             tests: [dimos_lerobot]
-            system_packages: [portaudio19-dev, libturbojpeg, ffmpeg]
+            system_packages: [portaudio19-dev, libturbojpeg0-dev, ffmpeg]
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
@@ -614,7 +614,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libturbojpeg portaudio19-dev
+          sudo apt-get install -y libturbojpeg0-dev portaudio19-dev
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -823,7 +823,7 @@ jobs:
             sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
           fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg
+          sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg0-dev
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
@@ -1244,7 +1244,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg0-dev
       # LCM lidar/image UDP fragments drop with small kernel buffers; the
       # in-process configurator (64MB) skips under pytest, so do it here.
       - name: Raise UDP receive buffers for LCM
