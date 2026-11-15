@@ -22,16 +22,16 @@ import numpy as np
 import pink
 
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
-from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_HOME_JOINTS
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_HOME_PER_ARM
 
 _FRAME_POSITION_COST = 8.0
 _FRAME_ORIENTATION_COST = 2.0
-_POSTURE_WEIGHTS = np.ones(len(DUAL_OPENYAM_HOME_JOINTS), dtype=np.float64)
-_NOMINAL_POSTURE = np.asarray(DUAL_OPENYAM_HOME_JOINTS, dtype=np.float64)
+_POSTURE_WEIGHTS = np.ones(len(DUAL_OPENYAM_HOME_PER_ARM), dtype=np.float64)
+_NOMINAL_POSTURE = np.asarray(DUAL_OPENYAM_HOME_PER_ARM, dtype=np.float64)
 
 
 class DualOpenYamPinkPoseTargetSolver(PinkPoseTargetSolver):
-    """Keep both nonredundant OpenYAM arms near their canonical home posture."""
+    """Keep one nonredundant OpenYAM arm near its canonical home posture."""
 
     def _create_tasks(
         self,

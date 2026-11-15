@@ -141,11 +141,14 @@ def generate_fallback_planning_group(
     )
 
 
-def _resolve_srdf_path(model_path: Path, srdf_path: Path | None) -> Path | None:
+def _resolve_srdf_path(model_path: Path | None, srdf_path: Path | None) -> Path | None:
     if srdf_path is not None:
         if srdf_path.exists():
             return srdf_path
         raise FileNotFoundError(f"SRDF file not found: {srdf_path}")
+
+    if model_path is None:
+        return None
 
     for candidate in _srdf_auto_discovery_candidates(model_path):
         if candidate.exists():

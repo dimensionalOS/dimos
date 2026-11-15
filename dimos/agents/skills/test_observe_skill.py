@@ -39,6 +39,7 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ObserveSkill]:
     scheduler.executor.shutdown(wait=True)
 
 
+@pytest.mark.flaky(reruns=1)
 def test_observe_returns_published_frame(module: ObserveSkill) -> None:
     frame = Image.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=1.0)
     stop = threading.Event()

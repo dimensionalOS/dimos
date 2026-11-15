@@ -90,6 +90,8 @@ def test_overrides_follow_the_planner_publish_rate() -> None:
         "voxel_size": 0.08,
         "wall_clearance_m": 0.1,
         "clearance_clamp_m": 1.0,
+        "static": True,
     }
     assert on["world/nodes"] is viz.render_nodes
-    assert on["world/node_edges"] is viz.render_edge_region
+    edges = on["world/node_edges"]
+    assert isinstance(edges, partial) and edges.func is viz.render_edge_region

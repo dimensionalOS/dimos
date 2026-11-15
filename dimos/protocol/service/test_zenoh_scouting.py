@@ -30,6 +30,7 @@ from dimos.protocol.service.zenohservice import (
     ZenohConfig,
     ZenohSessionPool,
     _await_connect,
+    _zenoh_config,
     endpoint_addresses,
 )
 
@@ -239,3 +240,18 @@ def test_stock_sessions_discover_each_other_over_loopback(
     finally:
         for pool in pools:
             pool.close_all()
+
+
+@pytest.mark.parametrize("source", ("multicast", "gossip"))
+def test_a_router_autoconnects_by_each_source_on_its_own(source: str) -> None:
+    other = "gossip" if source == "multicast" else "multicast"
+    base = ZenohConfig(mode="router", listen=["tcp/127.0.0.1:7999"])
+    plain = _zenoh_config(base)
+    on = _zenoh_config(base.model_copy(update={f"{source}_autoconnect": True}))
+
+    assert on.get_json(f"scouting/{source}/autoconnect") != plain.get_json(
+        f"scouting/{source}/autoconnect"
+    )
+    assert on.get_json(f"scouting/{other}/autoconnect") == plain.get_json(
+        f"scouting/{other}/autoconnect"
+    )

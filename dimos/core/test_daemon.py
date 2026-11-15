@@ -19,19 +19,27 @@ import os
 from pathlib import Path
 import re
 import signal
+import subprocess
 import sys
+import threading
+import time
 from unittest import mock
+import uuid
 
+import psutil
 import pytest
 
 from dimos.core import run_registry
+from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.core.run_registry import (
     RunEntry,
     blueprint_from_run_id,
     cleanup_stale,
     generate_run_id,
     list_runs,
+    stop_entry,
 )
+from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture()
@@ -74,12 +82,67 @@ class TestRunEntryCRUD:
         entry.remove()
         assert not entry.registry_path.exists()
 
+    def test_scoped_secrets_are_not_persisted(self, tmp_registry: Path) -> None:
+        entry = _make_entry(
+            config_overrides={
+                "go2connection": {"aes_128_key": "private-aes", "replay_exit": True},
+                "typesafenavigationagent.api-key": "private-api",
+                "relaybridgemodule": {"relay_key": "private-relay", "robot_id": "test-robot"},
+            },
+            original_argv=[
+                "dimos",
+                "run",
+                "unitree-go2",
+                "--go2connection.aes-128-key",
+                "private-aes",
+                "--typesafenavigationagent.api-key=private-api",
+                "--relaybridgemodule.relay-key=private-relay",
+                "--go2connection.replay-exit",
+            ],
+        )
+        entry.save()
+        loaded = RunEntry.load(entry.registry_path)
+
+        assert loaded.config_overrides == {
+            "go2connection": {"replay_exit": True},
+            "relaybridgemodule": {"robot_id": "test-robot"},
+        }
+        assert loaded.original_argv == [
+            "dimos",
+            "run",
+            "unitree-go2",
+            "--go2connection.replay-exit",
+        ]
+        assert "private-" not in entry.registry_path.read_text()
+
     def test_save_creates_directory(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         nested = tmp_path / "a" / "b" / "c"
         monkeypatch.setattr("dimos.core.run_registry.REGISTRY_DIR", nested)
         entry = _make_entry()
         entry.save()
         assert entry.registry_path.exists()
+
+    def test_a_reader_never_sees_an_entry_half_saved(self, tmp_registry: Path) -> None:
+        entry = _make_entry()
+        entry.save()
+        done = threading.Event()
+        listed: list[int] = []
+
+        def read() -> None:
+            while not done.is_set():
+                listed.append(len(list_runs(alive_only=True)))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        try:
+            for _ in range(2000):
+                entry.save()
+        finally:
+            done.set()
+            reader.join(timeout=10)
+        # list_runs deletes an entry it can't parse, so one read half written would be gone for good
+        assert set(listed) == {1}
+        assert [path.name for path in tmp_registry.iterdir()] == [entry.registry_path.name]
 
     def test_remove_idempotent(self, tmp_registry: Path):
         entry = _make_entry()
@@ -274,44 +337,89 @@ class TestForkDaemon:
         write_daemon_status(write_fd, {"ok": True})
         os.close(write_fd)
 
+    def test_stdout_is_writable_after_redirect_to_devnull(self):
+        # A worker started after the daemon detached (load, restart) flushes stdout first.
+        code = (
+            "import sys\n"
+            "from dimos.core.daemon import redirect_stdio_to_devnull\n"
+            "redirect_stdio_to_devnull()\n"
+            "print('after detach')\n"
+            "sys.stdout.flush()\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=60)
+        assert result.returncode == 0
+
 
 class TestSignalHandler:
-    """test_signal_handler_cleans_registry."""
+    """Signal callbacks request shutdown without running cleanup reentrantly."""
 
-    def test_signal_handler_cleans_registry(self, tmp_registry: Path):
-        entry = _make_entry()
-        entry.save()
-        assert entry.registry_path.exists()
+    def test_signal_handler_requests_shutdown(self, mocker):
+        coord = mocker.Mock()
+        register = mocker.patch("signal.signal")
+        install_signal_handlers("run-1", coord)
+        handler = register.call_args_list[0].args[1]
 
-        coord = mock.MagicMock()
-        with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers(entry, coord)
-            # Capture the handler closure registered for SIGTERM
-            handler = mock_signal.call_args_list[0][0][1]
+        handler(signal.SIGTERM, None)
 
-        with pytest.raises(SystemExit):
-            handler(signal.SIGTERM, None)
+        coord.shutdown.assert_called_once_with()
+        coord.stop.assert_not_called()
+        assert [call.args[0] for call in register.call_args_list] == [signal.SIGTERM, signal.SIGINT]
 
-        # Registry file should be cleaned up
-        assert not entry.registry_path.exists()
-        # Coordinator should have been stopped
-        coord.stop.assert_called_once()
+    def test_foreground_preserves_sigint_handler(self, mocker):
+        coord = mocker.Mock()
+        register = mocker.patch("signal.signal")
 
-    def test_signal_handler_tolerates_stop_error(self, tmp_registry: Path):
-        entry = _make_entry()
-        entry.save()
+        install_signal_handlers("run-1", coord, sigint=False)
 
-        coord = mock.MagicMock()
-        coord.stop.side_effect = RuntimeError("boom")
-        with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers(entry, coord)
-            handler = mock_signal.call_args_list[0][0][1]
+        assert [call.args[0] for call in register.call_args_list] == [signal.SIGTERM]
 
-        with pytest.raises(SystemExit):
-            handler(signal.SIGTERM, None)
 
-        # Entry still removed even if stop() throws
-        assert not entry.registry_path.exists()
+@pytest.mark.parametrize("shutdown", ["SIGTERM", "SIGINT", "rpc"])
+def test_coordinator_shutdown_exits_cleanly_and_stops_modules_once(tmp_path, shutdown):
+    run_id = f"shutdown-test-{uuid.uuid4().hex}"
+    stop_file = tmp_path / "stops"
+    ready_file = tmp_path / "ready"
+    code = """
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+
+from dimos.core.coordination._test_module import StopCountingModule
+from dimos.core.daemon import run_coordinator
+
+stop_file, ready_file, run_id, shutdown = sys.argv[1:]
+blueprint = StopCountingModule.blueprint(stop_file=stop_file).global_config(
+    n_workers=2, viewer="none",
+)
+coordinators = []
+
+def ready(coordinator):
+    coordinators.append(coordinator)
+    Path(ready_file).write_text(str(time.monotonic()))
+    if shutdown == "rpc":
+        coordinator.shutdown()
+    else:
+        os.kill(os.getpid(), getattr(signal, shutdown))
+        os.kill(os.getpid(), getattr(signal, shutdown))
+
+run_coordinator(blueprint, None, run_id=run_id, log_dir=Path(stop_file).parent, on_ready=ready)
+coordinators[0].stop()
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(stop_file), str(ready_file), run_id, shutdown],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert time.monotonic() - float(ready_file.read_text()) < 5
+        assert "Traceback" not in result.stderr, result.stderr
+        assert stop_file.read_text().splitlines() == ["stop"]
+    finally:
+        kill_run_processes(run_id)
 
 
 class TestStatusCommand:
@@ -363,6 +471,63 @@ class TestStatusCommand:
 
 class TestStopCommand:
     """Tests for `dimos stop` CLI command."""
+
+    @pytest.fixture
+    def clock(self, mocker):
+        clock = mocker.Mock(spec=time)
+        clock.monotonic.return_value = 0.0
+
+        def sleep(seconds):
+            clock.monotonic.return_value += seconds
+
+        clock.sleep.side_effect = sleep
+        mocker.patch.object(run_registry, "time", clock)
+        return clock
+
+    @pytest.mark.parametrize("cleanup_seconds", [0.0, 6.5, 22.0])
+    def test_stop_waits_for_cleanup(self, tmp_registry, mocker, clock, cleanup_seconds):
+        entry = _make_entry(pid=12345)
+        entry.save()
+        kill = mocker.patch.object(run_registry.os, "kill")
+        mocker.patch.object(
+            run_registry,
+            "is_pid_alive",
+            side_effect=lambda pid: clock.monotonic() < cleanup_seconds,
+        )
+
+        assert stop_entry(entry) == ("Stopped with SIGTERM", True)
+
+        kill.assert_called_once_with(entry.pid, signal.SIGTERM)
+        assert not entry.registry_path.exists()
+
+    def test_force_stop_skips_cleanup_wait(self, tmp_registry, mocker, clock):
+        entry = _make_entry(pid=12345)
+        entry.save()
+        kill = mocker.patch.object(run_registry.os, "kill")
+        mocker.patch.object(run_registry, "is_pid_alive", return_value=True)
+
+        assert stop_entry(entry, force=True) == ("Stopped with SIGKILL", True)
+
+        kill.assert_called_once_with(entry.pid, signal.SIGKILL)
+        clock.sleep.assert_not_called()
+        assert not entry.registry_path.exists()
+
+    def test_stop_recognizes_exited_child_without_reaping_it(self, tmp_registry, mocker):
+        with subprocess.Popen([sys.executable, "-c", "raise SystemExit(23)"]) as child:
+            wait_until(
+                lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, timeout=5
+            )
+            entry = _make_entry(pid=child.pid)
+            entry.save()
+            mocker.patch(
+                "dimos.core.run_registry.time.sleep",
+                side_effect=AssertionError("An exited process must not delay shutdown"),
+            )
+
+            assert stop_entry(entry) == ("Stopped with SIGTERM", True)
+            assert not entry.registry_path.exists()
+            # The status still belongs to Popen, not the liveness check.
+            assert child.wait(timeout=1) == 23
 
     def test_stop_sends_sigterm(self, tmp_path, monkeypatch):
         """Verify stop sends SIGTERM to the correct PID."""
@@ -463,44 +628,24 @@ class TestStopCommand:
         stop_entry(entry, force=False)
         assert not entry.registry_path.exists()
 
-    def test_stop_escalates_to_sigkill_after_timeout(self, tmp_path, monkeypatch):
-        """If SIGTERM doesn't kill within 5s, escalates to SIGKILL."""
-        reg_dir = tmp_path / "runs"
-        monkeypatch.setattr(run_registry, "REGISTRY_DIR", reg_dir)
-
+    def test_stop_escalates_to_sigkill_after_timeout(self, tmp_registry, mocker, clock):
+        """A stuck process is killed after the graceful shutdown budget."""
+        entry = _make_entry(pid=12345)
+        entry.save()
         signals_sent = []
 
-        def mock_kill(pid, sig):
-            signals_sent.append(sig)
-            # Don't raise — process "survives"
+        def kill(pid, sig):
+            signals_sent.append((pid, sig, clock.monotonic()))
 
-        monkeypatch.setattr(os, "kill", mock_kill)
+        mocker.patch.object(run_registry.os, "kill", side_effect=kill)
+        mocker.patch.object(run_registry, "is_pid_alive", return_value=True)
 
-        # Make is_pid_alive always return True (process won't die)
-        monkeypatch.setattr(run_registry, "is_pid_alive", lambda pid: True)
+        assert stop_entry(entry) == ("Escalated to SIGKILL after SIGTERM timeout", True)
 
-        # Speed up the wait loop
-        monkeypatch.setattr("time.sleep", lambda x: None)
-
-        entry = RunEntry(
-            run_id="20260306-120000-stubborn",
-            pid=12345,
-            blueprint="stubborn",
-            started_at="2026-03-06T12:00:00Z",
-            log_dir=str(tmp_path / "logs"),
-            cli_args=["stubborn"],
-            config_overrides={},
-        )
-        entry.save()
-
-        from dimos.core.run_registry import stop_entry
-
-        stop_entry(entry, force=False)
-
-        import signal
-
-        assert signal.SIGTERM in signals_sent
-        assert signal.SIGKILL in signals_sent
+        assert signals_sent == [
+            (entry.pid, signal.SIGTERM, 0.0),
+            (entry.pid, signal.SIGKILL, pytest.approx(30.0)),
+        ]
         assert not entry.registry_path.exists()
 
     def test_get_most_recent_returns_latest(self, tmp_path, monkeypatch):
@@ -536,3 +681,57 @@ class TestStopCommand:
         latest = get_most_recent(alive_only=True)
         assert latest is not None
         assert latest.run_id == "20260306-110000-second"
+
+
+def test_run_coordinator_serves_and_leaves_the_registry_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dimos.core.daemon import run_coordinator
+
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
+    coordinator = mock.MagicMock()
+    coordinator.health_check.return_value = True
+    entry = RunEntry("run-x", os.getpid(), "bp", "now", str(tmp_path))
+    entry.save()
+    readiness: list[bool] = []
+    with (
+        mock.patch("dimos.core.coordination.module_coordinator.ModuleCoordinator.build") as build,
+        mock.patch("dimos.core.coordination.process_lifecycle.spawn_watchdog") as watchdog,
+        mock.patch("dimos.core.daemon.install_signal_handlers") as handlers,
+        mock.patch.dict(os.environ, {}, clear=False),
+    ):
+        build.return_value = coordinator
+        coordinator.loop.side_effect = lambda: readiness.append(
+            os.environ["DIMOS_RUN_ID"] == "run-x"
+        )
+        run_coordinator(
+            "bp",  # type: ignore[arg-type]
+            "cfg",  # type: ignore[arg-type]
+            run_id="run-x",
+            log_dir=str(tmp_path),
+            rpc_name="runs/x",
+            sigint=False,
+            on_ready=lambda _: readiness.append(True),
+        )
+
+    build.assert_called_once_with("bp", "cfg", remote_module_refs=None)
+    coordinator.start_rpc_service.assert_called_once_with(name="runs/x")
+    watchdog.assert_called_once_with("run-x", log_dir=str(tmp_path))
+    handlers.assert_called_once_with("run-x", coordinator, sigint=False)
+    assert readiness == [True, True]
+    # A fragment shares its controller's run id: the entry is never this function's to remove.
+    assert entry.registry_path.exists()
+
+
+def test_run_coordinator_stops_the_build_when_the_health_check_fails() -> None:
+    from dimos.core.daemon import run_coordinator
+
+    coordinator = mock.MagicMock()
+    coordinator.health_check.return_value = False
+    build = "dimos.core.coordination.module_coordinator.ModuleCoordinator.build"
+    with (
+        mock.patch(build, return_value=coordinator),
+        pytest.raises(RuntimeError, match="health check failed"),
+    ):
+        run_coordinator("bp", "cfg", run_id="run-y", log_dir="/logs")  # type: ignore[arg-type]
+    coordinator.stop.assert_called_once_with()

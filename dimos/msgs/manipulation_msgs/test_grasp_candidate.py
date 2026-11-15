@@ -18,6 +18,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.std_msgs.Header import Header
+from dimos.protocol.encode.cbor import decode, encode
 
 
 def test_grasp_candidate_round_trip_preserves_pose_and_score() -> None:
@@ -49,3 +50,17 @@ def test_grasp_candidate_array_round_trip_preserves_header_and_order() -> None:
     assert decoded.header.frame_id == "world"
     assert [candidate.score for candidate in decoded] == [0.9, 0.7]
     assert [candidate.pose.position.x for candidate in decoded] == [0.1, 0.2]
+
+
+def test_grasp_candidate_array_crosses_rpc_as_cbor() -> None:
+    proposals = GraspCandidateArray(
+        Header(123.0, "world"), [GraspCandidate(Pose(0.1, 0.0, 0.2), 0.9)]
+    )
+
+    decoded = decode(encode(proposals))
+
+    assert type(decoded) is GraspCandidateArray
+    assert decoded.header.frame_id == "world"
+    assert type(decoded.candidates[0]) is GraspCandidate
+    assert decoded.candidates[0].score == 0.9
+    assert decoded.candidates[0].pose.position.x == 0.1

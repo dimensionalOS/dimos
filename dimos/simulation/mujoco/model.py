@@ -22,9 +22,9 @@ import xml.etree.ElementTree as ET
 import mujoco
 import numpy as np
 
-from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.menagerie import menagerie_path
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
@@ -146,12 +146,12 @@ def _add_person_object(root: ET.Element) -> None:
     )
 
 
-def load_scene_xml(config: GlobalConfig) -> str:
-    if config.mujoco_room_from_occupancy:
-        path = Path(config.mujoco_room_from_occupancy)
+def load_scene_xml(config: MujocoConfig) -> str:
+    if config.room_from_occupancy:
+        path = Path(config.room_from_occupancy)
         return generate_mujoco_scene(OccupancyGrid.from_path(path))
 
-    mujoco_room = config.mujoco_room or "office_555"
+    mujoco_room = config.room
     if mujoco_room == "office_555":
         return _office_555_scene_xml()
     xml_file = (_get_data_dir() / f"scene_{mujoco_room}.xml").as_posix()

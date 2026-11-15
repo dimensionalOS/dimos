@@ -28,6 +28,7 @@ import re
 import shutil
 from typing import TYPE_CHECKING
 import uuid
+import xml.etree.ElementTree as ET
 
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
 from dimos.robot.assets.model import LoadedRobotModel
@@ -68,6 +69,14 @@ def prepare_urdf_for_drake(
     # Convert meshes if requested
     if convert_meshes:
         urdf_content = _convert_meshes(urdf_content, _CACHE_DIR)
+
+    # Drake's string parser requires file URIs for absolute asset paths.
+    root = ET.fromstring(urdf_content)
+    for element in (*root.findall(".//mesh"), *root.findall(".//texture")):
+        filename = element.get("filename")
+        if filename and Path(filename).is_absolute():
+            element.set("filename", Path(filename).as_uri())
+    urdf_content = ET.tostring(root, encoding="unicode")
 
     return LoadedRobotModel(
         xml=urdf_content,

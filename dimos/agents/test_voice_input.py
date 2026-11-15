@@ -15,7 +15,7 @@
 """VoiceInput: audio_in chunks -> decode -> STT pipeline -> human_input text.
 
 The real normalizer and WhisperNode wiring run against a fake Whisper model;
-the ffmpeg boundary runs for real in the container test and is otherwise
+the PyAV decode runs for real in the container test and is otherwise
 replaced with a byte-mirroring stub.
 """
 
@@ -39,8 +39,6 @@ from dimos.stream.audio.node_normalizer import AudioNormalizer
 from dimos.stream.audio.stt import node_whisper as whisper_module
 from dimos.web.relay_bridge.audio_codec import AudioChunk
 from dimos.web.relay_bridge.module_test_support import FakeTransport
-
-pytestmark = pytest.mark.skipif_no_ffmpeg
 
 
 def _chunk(sid: str = "u1", seq: int = 0, data: bytes = b"", final: bool = False) -> AudioChunk:
@@ -148,7 +146,7 @@ def test_chunks_reassemble_through_decode_to_human_input(
 def test_real_container_bytes_reach_pcm_and_human_input(
     make_voice: _MakeVoice, wait_until: Any
 ) -> None:
-    # A real WAV through the real ffmpeg decode: the pipeline receives the
+    # A real WAV through the real PyAV decode: the pipeline receives the
     # 16-kHz mono float32 PCM WhisperNode assumes, and text reaches the port.
     h = make_voice(real_decode=True)
     raw = _wav_bytes()

@@ -500,6 +500,7 @@ def test_derived_rust_log_keeps_zenoh_quiet(monkeypatch, dimos_level: str, rust_
     monkeypatch.setenv("DIMOS_LOG_LEVEL", dimos_level)
     assert _spawn_env()["RUST_LOG"] == (
         f"{rust_level},zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+        ",zenoh::net::routing::hat::peer=error"
     )
 
 
@@ -507,7 +508,10 @@ def test_rust_log_always_follows_dimos_log_level(monkeypatch) -> None:
     monkeypatch.setenv("RUST_LOG", "trace,zenoh=debug")
     monkeypatch.setenv("DIMOS_LOG_LEVEL", "WARNING")
     env = _spawn_env({"RUST_LOG": "trace"})
-    assert env["RUST_LOG"] == "warn,zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+    assert env["RUST_LOG"] == (
+        "warn,zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+        ",zenoh::net::routing::hat::peer=error"
+    )
 
 
 def test_json_mode_malformed_falls_back_to_plain_text() -> None:

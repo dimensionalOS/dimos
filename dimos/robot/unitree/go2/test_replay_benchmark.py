@@ -203,7 +203,7 @@ def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float
 @pytest.mark.skipif_macos_bug
 @pytest.mark.timeout(900)
 def test_go2_replay_realtime_load() -> None:
-    """Run `dimos --replay --replay-exit run unitree-go2` to completion."""
+    """Run `dimos --replay run unitree-go2 --go2connection.replay-exit=true` to completion."""
     from dimos.memory.replay import resolve_db_path
 
     db_path = str(resolve_db_path(REPLAY_DB))  # LFS pull/extract on miss
@@ -238,18 +238,18 @@ def test_go2_replay_realtime_load() -> None:
     sampler = threading.Thread(target=sample_peaks, daemon=True)
 
     # The venv's console script: the CLI entrypoint, not an in-process build,
-    # so the benchmark measures what `dimos run` users get. --replay-exit
+    # so the benchmark measures what `dimos run` users get. --go2connection.replay-exit=true
     # makes the process exit once the recording finishes.
     cmd = [
         str(Path(sys.executable).with_name("dimos")),
         "--replay",
         "--replay-db",
         REPLAY_DB,
-        "--replay-exit",
         "--viewer",
         "none",
         "run",
         "unitree-go2",
+        "--go2connection.replay-exit=true",
     ]
     if PERF_EVENTS:
         # Children inherit the counters, so this covers the workers too. perf's

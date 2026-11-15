@@ -16,15 +16,18 @@
 //! each `loop_closure_event` it warps its whole graph, goal included, into
 //! the corrected frame in place instead of waiting for a corrected map.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use dimos_module::{warn_throttled, Input, Module, Output, Tf};
+use lcm_msgs::actionlib_msgs::GoalStatus;
 use lcm_msgs::geometry_msgs::{PointStamped, PoseStamped};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
 use tracing::debug;
 use validator::ValidationError;
 
+use crate::goal_status::{LatestStatus, StatusReporter};
 use crate::mls_planner::Config;
 use crate::module::{Intake, WorkerOutputs, WorkerTasks};
 use crate::reform::{decode_loop_closure_event, decode_pose_graph, ReformParams, ReformState};
@@ -60,6 +63,14 @@ pub struct ReformConfig {
     pub step_penalty_weight: f32,
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
+    #[validate(range(exclusive_min = 0.0))]
+    pub goal_z_tolerance: f32,
+    #[validate(range(min = 0.0))]
+    pub blocked_timeout_s: f32,
+    #[validate(range(min = 0.0))]
+    pub progress_timeout_s: f32,
+    #[validate(range(exclusive_min = 0.0))]
+    pub progress_min_m: f32,
     #[validate(range(min = 0.0))]
     pub viz_publish_hz: f32,
     #[validate(range(exclusive_min = 0.0))]
@@ -112,6 +123,10 @@ impl ReformConfig {
             step_threshold_m: self.step_threshold_m,
             step_penalty_weight: self.step_penalty_weight,
             goal_tolerance: self.goal_tolerance,
+            goal_z_tolerance: self.goal_z_tolerance,
+            blocked_timeout_s: self.blocked_timeout_s,
+            progress_timeout_s: self.progress_timeout_s,
+            progress_min_m: self.progress_min_m,
             viz_publish_hz: self.viz_publish_hz,
             viz_cell_m: self.viz_cell_m,
             viz_sweep_cells: self.viz_sweep_cells,
@@ -173,12 +188,16 @@ pub struct MlsReformPlanner {
     #[output(encode = Path::encode)]
     path: Output<Path>,
 
+    #[output(encode = GoalStatus::encode)]
+    nav_status: Output<GoalStatus>,
+
     #[config]
     config: ReformConfig,
 
     intake: Intake,
     tasks: WorkerTasks,
     reform: ReformState,
+    latest_status: LatestStatus,
 }
 
 impl MlsReformPlanner {
@@ -188,6 +207,7 @@ impl MlsReformPlanner {
             nodes: self.nodes.clone(),
             node_edges: self.node_edges.clone(),
             path: self.path.clone(),
+            status: self.status(),
         };
         let dump_path = (!self.config.dump_path.is_empty()).then(|| self.config.dump_path.clone());
         self.tasks = self.intake.spawn(
@@ -201,6 +221,13 @@ impl MlsReformPlanner {
 
     async fn stop_worker(&mut self) {
         self.tasks.stop();
+    }
+
+    fn status(&self) -> StatusReporter {
+        StatusReporter {
+            out: self.nav_status.clone(),
+            latest: Arc::clone(&self.latest_status),
+        }
     }
 
     async fn on_global_map(&mut self, msg: PointCloud2) {
@@ -224,7 +251,8 @@ impl MlsReformPlanner {
     }
 
     async fn on_goal(&mut self, msg: PointStamped) {
-        self.intake.goal(msg);
+        let status = self.status();
+        self.intake.goal(msg, &status).await;
     }
 
     async fn on_pose_graph(&mut self, msg: PointCloud2) {

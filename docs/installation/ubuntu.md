@@ -28,7 +28,7 @@ Use these steps if you need to install without the guided script.
 
 ```sh skip
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config
+sudo apt-get install -y ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -39,7 +39,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir dimos-app && cd dimos-app
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
+uv pip install --torch-backend cpu 'dimos[base,unitree,sim,drone]'
 uv run dimos --help
 ```
 

@@ -120,11 +120,21 @@ def choice(options: Sequence[str], *, case_sensitive: bool = False) -> Callable[
     """Parser for a multiple-choice reply: the last option the model names, so
     that reasoning before the answer does not decide it. Longest option first,
     so "northeast" wins over "north". ``case_sensitive`` for lettered options
-    ("A", "B"), where the article "a" must not count."""
+    ("A", "B"), where the article "a" must not count.
+
+    Boundaries are alphanumeric lookarounds rather than ``\\b``, so options that
+    end in punctuation (e.g. ``under 25%``) still match when quoted or alone.
+    """
     import re
 
     words = "|".join(re.escape(o) for o in sorted(options, key=len, reverse=True))
-    pattern = re.compile(rf"\b({words})\b", 0 if case_sensitive else re.I)
+    # (?<![A-Za-z0-9_]) / (?![A-Za-z0-9_]) ≈ word edges, but also allow a match
+    # to end on '%', which \\b does not ('%' is non-word, so \\b after it needs
+    # a following word char).
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])({words})(?![A-Za-z0-9_])",
+        0 if case_sensitive else re.IGNORECASE,
+    )
 
     def parse(text: str) -> str:
         # "north-west" must read as northwest, not as west.
@@ -185,6 +195,29 @@ def stacked_on(
         if not rise_m[0] <= t.z - b.z <= rise_m[1]:
             return 0.0
         return ramp(math.hypot(t.x - b.x, t.y - b.y), band=band_m)
+
+    return grade
+
+
+def inside(
+    body: str, container: str, *, half_extents_m: tuple[float, float], rise_m: tuple[float, float]
+) -> Callable[[Outcome], float]:
+    """1.0 if ``body`` ended in ``container``: its centre over the floor, ``half_extents_m``
+    (x, y) in the container's frame, and ``rise_m`` above the container's origin; else 0.0."""
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as store:
+            try:
+                t = last_body_transform(store, body).translation
+                c = last_body_transform(store, container)
+            except LookupError:
+                return 0.0
+        rotation = c.rotation.to_rotation_matrix()
+        x, y, z = rotation.T @ np.array(
+            [t.x - c.translation.x, t.y - c.translation.y, t.z - c.translation.z]
+        )
+        on_floor = abs(x) <= half_extents_m[0] and abs(y) <= half_extents_m[1]
+        return float(on_floor and rise_m[0] <= z <= rise_m[1])
 
     return grade
 
@@ -253,6 +286,19 @@ def hung_tool(outcome: Outcome) -> float:
         and math.hypot(hole_in_frame[1], hole_in_frame[2] - 0.08625) < 0.007
         and abs(np.dot(hole.rotation.to_rotation_matrix()[:, 2], frame_r[:, 0])) > 0.95
     )
+
+
+def human(task: str) -> Callable[[Outcome], float]:
+    """The operator watched the run and says whether ``task`` succeeded: 1.0 for yes."""
+
+    def grade(outcome: Outcome) -> float:
+        answer = input(
+            f"\nTask: {task}\nAgent's final answer: {outcome.trajectory.final_answer!r}\n"
+            "Did the robot succeed by the end of the agent's run? [y/N] "
+        )
+        return 1.0 if answer.strip().lower().startswith("y") else 0.0
+
+    return grade
 
 
 def judge(rubric: str, *, model: str = "openai:gpt-5.6-luna") -> Callable[[str, str], float]:

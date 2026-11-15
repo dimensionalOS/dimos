@@ -25,6 +25,7 @@ Usage:
     dimos --replay-db recordings/<run-id>/memory.db run replay
 """
 
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
 
@@ -47,11 +48,11 @@ def _plot_twist(name: str, twist: Any) -> Any:
     return [(f"plots/{name}", rr.Scalars([twist.linear.x, twist.linear.y, twist.angular.z]))]
 
 
+@dataclass
 class _KeysText:
     """Joystick -> one text line per key change, e.g. ``W + SHIFT``."""
 
-    def __init__(self) -> None:
-        self._last: list[int] | None = None
+    _last: list[int] | None = field(default=None, init=False)
 
     def __call__(self, joy: Any) -> Any:
         import rerun as rr

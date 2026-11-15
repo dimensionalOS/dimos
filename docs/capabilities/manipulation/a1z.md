@@ -89,28 +89,27 @@ The A1Z has no brakes or hardware e-stop button; the PSU switch is the hardware
 kill switch. Support the arm and clear its workspace before starting or
 stopping dimOS. Disabling the motors makes the arm fall.
 
-```bash
-dimos run keyboard-teleop-a1z
-```
-
-This launches keyboard teleoperation with mock hardware, the control coordinator,
-trajectory execution, and `ManipulationModule`. Select a CAN interface explicitly
-to use the real arm. Real-hardware startup waits for feedback from all six arm
-motors, validates the measured state, holds the measured pose, and then ramps
-gravity compensation:
+Every A1Z blueprint drives the real arm through `A1ZConnection`; there is no
+mock arm. Name the CAN interface after the blueprint name:
 
 ```bash
-dimos --can-port a1zcan run keyboard-teleop-a1z
+dimos run a1z-keyboard-teleop --a1zconnection.can-port a1zcan      # keyboard, in a pygame window
+dimos run a1z-teleop --a1zconnection.can-port a1zcan               # Desktop Manipulation app
+dimos run teleop-webxr-a1z --a1zconnection.can-port a1zcan         # VR headset, left controller
+dimos run a1z-planner-coordinator --a1zconnection.can-port a1zcan  # motion planning
+dimos run coordinator-a1z --a1zconnection.can-port a1zcan          # the arm behind a coordinator
 ```
 
-On Linux, pass another verified SocketCAN interface instead if needed:
+On Linux, name another verified SocketCAN interface, such as `can0`, if needed.
+On macOS the HHS adapter is opened over USB, whatever the name.
+`A1ZCONNECTION__CAN_PORT=a1zcan` in the environment works too.
 
-```bash
-dimos --can-port can0 run keyboard-teleop-a1z
-```
-
-On macOS, the adapter selects the userspace USB transport automatically; omit
-`--can-port`.
+At start, `A1ZConnection` waits for all six arm motors, checks their readings,
+holds the arm where it is, then ramps in gravity compensation. When commands stop for 0.1 s,
+or the coordinator's `set_estop(True)` stops them, the arm holds where it is.
+After starting, and before its motors turn off on stop, it moves to its home:
+all joints at 0 rad, folded at rest. Set `--a1zconnection.home '[...]'` (six
+angles in rad) for another pose.
 
 ## Troubleshooting
 
@@ -126,6 +125,6 @@ On macOS, the adapter selects the userspace USB transport automatically; omit
   `dimos hardware a1z doctor` on macOS.
 - **macOS cannot find or open the adapter.** Check that libusb is installed,
   reconnect the adapter, and rerun `dimos hardware a1z doctor`.
-- **The gripper remains stiff after shutdown.** The adapter retries the disable
-  command, but a degraded bus can still lose it. Support the arm and turn off
+- **The gripper remains stiff after shutdown.** dimOS sends the off command
+  twice, but a degraded bus can still lose it. Support the arm and turn off
   the PSU.

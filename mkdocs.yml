@@ -84,12 +84,27 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
+  - pymdownx.tasklist
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            allow_inspection: false
+            docstring_style: google
+            docstring_options:
+              warn_missing_types: false
+            show_signature_annotations: true
+            separate_signature: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_docstring_attributes: true
   # nav lives in docs/.nav.yml (and per-directory .nav.yml files)
   - awesome-nav
   # click a diagram or screenshot to open it full size

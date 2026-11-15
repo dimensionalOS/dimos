@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import pickle
 import struct
 
 from pydantic import ValidationError
@@ -29,6 +28,7 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.webrtc.providers import spec
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
@@ -191,7 +191,7 @@ def test_pickle_roundtrip_preserves_everything() -> None:
     """Transports are pickled into module worker processes; topic, type,
     and provider config must all survive."""
     t1 = MockTransport("cmd_unreliable", FakeLCMMsg, name="pickled")
-    t2 = pickle.loads(pickle.dumps(t1))
+    t2 = decode(encode(t1))
 
     assert type(t2) is MockTransport
     assert t2.topic == t1.topic
@@ -290,7 +290,7 @@ def test_transport_overrides_apply_and_survive_pickle() -> None:
     transport = _materialize_transports(bp, {"mock": {"name": "overridden"}})[("topic", FakeLCMMsg)]
 
     assert transport._config.name == "overridden"
-    assert pickle.loads(pickle.dumps(transport))._config.name == "overridden"
+    assert decode(encode(transport))._config.name == "overridden"
 
     # No override → config built from the spec's defaults.
     default = _materialize_transports(bp, {})[("topic", FakeLCMMsg)]

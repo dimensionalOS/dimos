@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
+from dimos.control.contract.keys import Interface
 from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
@@ -77,12 +78,14 @@ class JointStateSnapshot:
         joint_velocities: Joint name -> velocity (rad/s)
         joint_efforts: Joint name -> effort (Nm)
         timestamp: Unix timestamp when state was read
+        joint_command_interfaces: Declared interfaces, available even when feedback is stale.
     """
 
     joint_positions: dict[JointName, float] = field(default_factory=dict)
     joint_velocities: dict[JointName, float] = field(default_factory=dict)
     joint_efforts: dict[JointName, float] = field(default_factory=dict)
     timestamp: float = 0.0
+    joint_command_interfaces: dict[JointName, frozenset[Interface]] = field(default_factory=dict)
 
     def get_position(self, joint_name: JointName) -> float | None:
         """Get position for a specific joint."""
@@ -95,6 +98,20 @@ class JointStateSnapshot:
     def get_effort(self, joint_name: JointName) -> float | None:
         """Get effort for a specific joint."""
         return self.joint_efforts.get(joint_name)
+
+
+@dataclass
+class SensorStateSnapshot:
+    """The latest reading from every sensor a robot's connection module
+    reports, such as its IMU (from the ``Imu`` messages it publishes).
+
+    Looked up by sensor, then by reading: ``readings["g1/imu"]["qw"]``. A
+    sensor's name is its robot and part, e.g. "g1/imu"; a reading is one
+    number it reports, e.g. "qw". Cameras and lidar are not here; they have
+    their own streams.
+    """
+
+    readings: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -112,12 +129,15 @@ class CoordinatorState:
             Empty dict when no whole-body hardware exposes IMU this tick.
         t_now: Current tick time (time.perf_counter())
         dt: Time since last tick (seconds)
+        sensors: Sensor readings from robots driven through connection
+            modules. Empty when none reports a sensor.
     """
 
     joints: JointStateSnapshot
     imu: dict[str, IMUState] = field(default_factory=dict)
     t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
     dt: float = 0.0  # Time since last tick
+    sensors: SensorStateSnapshot = field(default_factory=SensorStateSnapshot)
 
 
 @dataclass
@@ -253,8 +273,10 @@ class ControlTask(Protocol):
         """
         ...
 
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        """Compute output command given current state.
+    def compute(
+        self, state: CoordinatorState
+    ) -> JointCommandOutput | list[JointCommandOutput] | None:
+        """Compute output command(s) given current state.
 
         Called by coordinator for active tasks each tick.
 
@@ -268,8 +290,10 @@ class ControlTask(Protocol):
                    - dt: Time since last tick
 
         Returns:
-            JointCommandOutput with joint_names and values, or None if
-            no command should be sent this tick.
+            One JointCommandOutput, a list of outputs for distinct joint groups
+            using different modes, or None to send no command this tick.
+            Every output shares this task's claim priority; arbitration uses
+            each output's mode, not ResourceClaim.mode.
         """
         ...
 
@@ -316,6 +340,15 @@ class ControlTask(Protocol):
         without tearing down the coordinator. ``reactivate`` optionally
         re-engages a task that had stopped itself. Returns True if the task
         had state to reset.
+        """
+        ...
+
+    def set_estop(self, estopped: bool) -> None:
+        """Stop the task on an emergency stop, or let it run again when cleared.
+
+        The coordinator sends robots nothing while stopped, so a task only
+        needs to drop what it should not resume on clear, e.g. a half-done
+        trajectory.
         """
         ...
 
@@ -366,6 +399,9 @@ class BaseControlTask(ControlTask):
     def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
         """No-op default."""
         return False
+
+    def set_estop(self, estopped: bool) -> None:
+        """No-op default: the task resumes as it was when the stop is cleared."""
 
     def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
         """No-op default."""

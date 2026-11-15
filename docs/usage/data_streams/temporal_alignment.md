@@ -288,6 +288,7 @@ class Detection3DModule(Detection2DModule):
     color_image: In[Image]
     pointcloud: In[PointCloud2]
 
+    @rpc
     def start(self):
         # Align 2D detections with pointcloud data
         self.detection_stream_3d = align_timestamped(

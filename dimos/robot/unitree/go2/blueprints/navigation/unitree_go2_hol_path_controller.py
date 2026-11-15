@@ -67,7 +67,7 @@ _nav_rerun_config = {
 
 unitree_go2_hol_path_controller = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-    GO2Connection.blueprint(motion_mode="mcf", velocity_api=True),
+    GO2Connection.blueprint(obstacle_avoidance=False, motion_mode="mcf", velocity_api=True),
     VoxelGridMapper.blueprint(
         voxel_size=voxel_size,
         frame_id="world",
@@ -89,4 +89,4 @@ unitree_go2_hol_path_controller = autoconnect(
     DanLocalPlanner.blueprint(resample_spacing_m=0.1),
     DanHolonomicTC.blueprint(run_profile="walk"),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
+).global_config(n_workers=10, robot_model="unitree_go2")

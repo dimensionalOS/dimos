@@ -129,6 +129,7 @@ export class ChannelStore {
   #channels = new Map<string, ChannelState>();
   #now: () => number;
   #rebaselineUntilMs = 0;
+  #flushScheduled = false;
 
   constructor(now: () => number = Date.now) {
     this.#now = now;
@@ -179,6 +180,7 @@ export class ChannelStore {
   ): void {
     const state = this.#state(ch);
     const now = this.#now();
+    if (state.frames === 0) this.#scheduleFlush();
     state.frames += 1;
     state.lastFrameAtMs = now;
     state.lastSeq = header.seq;
@@ -214,6 +216,22 @@ export class ChannelStore {
       };
       notifyAll(state.direct);
     }
+  }
+
+  /**
+   * A channel's first frame (since creation or reset()) publishes the UI
+   * snapshots on a microtask instead of waiting for the next UI tick, so a
+   * badge, the channel table or a chat shows data within a frame of arrival
+   * rather than up to the tick period later. Debounced: a burst of first
+   * frames right after connecting costs one publish.
+   */
+  #scheduleFlush(): void {
+    if (this.#flushScheduled) return;
+    this.#flushScheduled = true;
+    queueMicrotask(() => {
+      this.#flushScheduled = false;
+      this.publishUi();
+    });
   }
 
   /** Always-current slot (canvas/direct consumers; no snapshot indirection). */

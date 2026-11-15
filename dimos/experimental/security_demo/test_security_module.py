@@ -15,12 +15,50 @@
 from __future__ import annotations
 
 import threading
+from unittest.mock import call
 
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+
+@pytest.mark.parametrize("failed_rpc", ["set_replanning_enabled", "set_safe_goal_clearance"])
+def test_stop_restores_planner_after_failed_patrol_setup(security_module, failed_rpc):
+    planner = security_module._planner_spec
+    getattr(planner, failed_rpc).side_effect = [TimeoutError("planner RPC timed out"), None]
+
+    with pytest.raises(TimeoutError, match="planner RPC timed out"):
+        security_module.start_security_patrol()
+    security_module.stop()
+    security_module.stop()
+
+    assert planner.set_replanning_enabled.call_args_list == [call(False), call(True)]
+    planner.reset_safe_goal_clearance.assert_called_once_with()
+
+
+def test_stop_without_start_or_wiring(security_module, monkeypatch):
+    monkeypatch.delattr(security_module, "_planner_spec")
+
+    security_module.stop()
+
+    security_module._depth_estimator.stop.assert_called_once_with()
+    security_module._detector.stop.assert_called_once_with()
+    security_module._tracker.stop.assert_called_once_with()
+
+
+def test_stop_restores_planner_after_running_patrol(security_module):
+    security_module._router.next_goal.return_value = None
+
+    security_module.start_security_patrol()
+    security_module.stop_security_patrol()
+    security_module.stop()
+
+    planner = security_module._planner_spec
+    assert planner.set_replanning_enabled.call_args_list == [call(False), call(True)]
+    planner.reset_safe_goal_clearance.assert_called_once_with()
+    assert security_module._main_thread is None
 
 
 @pytest.mark.self_hosted

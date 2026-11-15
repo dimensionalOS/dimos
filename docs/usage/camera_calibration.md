@@ -63,9 +63,9 @@ uv run dimos cameracalibrate --source topic --topic "zenoh:dimos/color_image" --
 - `zenoh:dimos/color_image`: default typed Zenoh stream.
 - `lcm:/color_image`: standard typed LCM stream when using the LCM backend.
 - `jpeg_lcm:/color_image`: JPEG-LCM publishers.
-- `pzenoh` / `plcm`: pickled image publishers on Zenoh or LCM.
+- `pzenoh` / `plcm`: untyped (CBOR-encoded) image publishers on Zenoh or LCM.
 
-The optional `#<msg_type>` URI suffix forwards a fully-qualified message name to the registry (e.g. `zenoh:dimos/color_image#sensor_msgs.Image`); when omitted, the calibration CLI passes `sensor_msgs.Image` for typed protos. Zenoh channels include the namespace (`dimos/`); the transport appends the message type to the wire key. Pickled protos (`pzenoh`, `plcm`) ignore the type.
+The optional `#<msg_type>` URI suffix forwards a fully-qualified message name to the registry (e.g. `zenoh:dimos/color_image#sensor_msgs.Image`); when omitted, the calibration CLI passes `sensor_msgs.Image` for typed protos. Zenoh channels include the namespace (`dimos/`); the transport appends the message type to the wire key. Untyped protos (`pzenoh`, `plcm`) ignore the type.
 
 If the topic stays silent, `--topic-timeout-sec` (default 60) aborts the run instead of hanging the terminal. Increase it if your publisher is slow to start.
 

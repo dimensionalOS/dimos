@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, get_type_hints
+from typing import get_type_hints
 
 from pydantic import BaseModel
 import pytest
@@ -42,11 +42,6 @@ def _config_kwarg_names(module: type[ModuleBase]) -> set[str]:
     return set()
 
 
-def _declares_config(module: type[ModuleBase]) -> bool:
-    annotations: dict[str, Any] = module.__dict__.get("__annotations__", {})
-    return "config" in annotations
-
-
 def _init_kwarg_names(module: type[ModuleBase]) -> set[str]:
     signature = inspect.signature(module.__init__)
     names = {
@@ -62,9 +57,7 @@ def _init_kwarg_names(module: type[ModuleBase]) -> set[str]:
 
 
 def _allowed_kwarg_names(module: type[ModuleBase]) -> set[str]:
-    if _declares_config(module):
-        return _config_kwarg_names(module)
-    return _init_kwarg_names(module)
+    return _config_kwarg_names(module) | _init_kwarg_names(module)
 
 
 def _blueprint_params() -> list[str | pytest.ParameterSet]:
@@ -96,8 +89,6 @@ def test_blueprint_atom_kwargs_match_module_config(
         listing = "\n".join(f"  - {violation}" for violation in violations)
         raise AssertionError(
             f"Blueprint {blueprint_name!r} passes unknown module kwargs:\n{listing}\n\n"
-            "Blueprint kwargs are forwarded into the module constructor. For modules "
-            "with an explicit `config` annotation, use fields from that config model; "
-            "for legacy modules with direct constructor parameters, use the declared "
-            "`__init__` keyword names."
+            "Blueprint kwargs are forwarded into the module constructor. "
+            "use fields from the config model or explicitly declared `__init__` keyword names."
         )

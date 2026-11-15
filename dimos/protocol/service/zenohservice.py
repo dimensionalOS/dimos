@@ -15,10 +15,10 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+import copy
 from dataclasses import dataclass, field
 import json
 import os
-import platform
 import socket
 import threading
 import time
@@ -29,11 +29,24 @@ import zenoh
 
 from dimos.core.global_config import TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
+from dimos.protocol.service.zenoh_wire import (
+    ALL_INTERFACES as ALL_INTERFACES,
+    LOOPBACK_INTERFACE as LOOPBACK_INTERFACE,
+    LOOPBACK_LISTEN as LOOPBACK_LISTEN,
+    make_zenoh_config,
+)
 from dimos.utils.logging_config import setup_logger
 
-ZENOH_LOG_DIRECTIVES = "zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+# hat::peer warns "Gossip is disabled" on every session of a blueprint that turns
+# gossip off on purpose. It is that target's only warning.
+ZENOH_LOG_DIRECTIVES = (
+    "zenoh=warn,zenoh_shm::watchdog::periodic_task=error,zenoh::net::routing::hat::peer=error"
+)
 
-zenoh.init_log_from_env_or(f"warn,{ZENOH_LOG_DIRECTIVES}")
+# Process-wide (the subscriber is set once): the orchestrator warns on every failed dial
+# of a connect endpoint, which a Host router redialing an absent peer repeats forever;
+# _await_connect reports a missing link once for every session.
+zenoh.init_log_from_env_or(f"warn,{ZENOH_LOG_DIRECTIVES},zenoh::net::runtime::orchestrator=error")
 
 logger = setup_logger()
 
@@ -43,20 +56,8 @@ ROBOT_ZENOH_PORT = 7447
 # Poll interval while waiting for connect endpoints to link.
 _CONNECT_POLL_INTERVAL = 0.05
 
-# Interface scouting falls back to when network discovery is off.
-# Darwin spells loopback differently.
-LOOPBACK_INTERFACE = "lo0" if platform.system() == "Darwin" else "lo"
 
-# Zenoh's own name for "every multicast-capable interface".
-ALL_INTERFACES = "auto"
-
-# Zenoh's own default listener binds every interface, so an unconfigured session
-# is reachable from the LAN. A session whose discovery never leaves loopback
-# listens here instead: loopback only, on a port the kernel picks.
-LOOPBACK_LISTEN = "tcp/127.0.0.1:0"
-
-
-def _locators(value: str) -> list[str]:
+def split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
@@ -68,9 +69,9 @@ def _default_connect_endpoints() -> list[str]:
     """
     if global_config.transport != "zenoh":
         return []
-    ips = _locators(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
+    ips = split_csv(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
     robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
-    return list(dict.fromkeys(robots + _locators(global_config.zenoh_connect)))
+    return list(dict.fromkeys(robots + split_csv(global_config.zenoh_connect)))
 
 
 def _default_scouting() -> bool:
@@ -141,6 +142,13 @@ class ZenohConfig(SessionConfig):
     # Seconds to block in start() waiting for the connect endpoints to link.
     # Also bounds zenoh's dial retries at open. 0 skips both.
     connect_timeout: float = Field(default_factory=_default_connect_timeout, ge=0, le=86400)
+    # Serve zenoh's read-only admin space (@/<zid>/...), e.g. a router's routing tables.
+    # Python sessions only, native modules never see it.
+    adminspace: bool = False
+    # A router links to the routers it scouts. Python sessions only.
+    multicast_autoconnect: bool = False
+    # A router links to the routers a linked one tells it of. Python sessions only.
+    gossip_autoconnect: bool = False
 
     @model_validator(mode="after")
     def _router_needs_a_listen_endpoint(self) -> ZenohConfig:
@@ -190,7 +198,8 @@ class ZenohConfig(SessionConfig):
             f"{self.mode}|{json.dumps(sorted(self.connect))}"
             f"|{json.dumps(sorted(self.listen_endpoints))}|{self.multicast_interface}"
             f"|{self.multicast}|{self.scout_addr}|{self.gossip_enabled}"
-            f"|{self.connect_timeout}"
+            f"|{self.connect_timeout}|{self.adminspace}"
+            f"|{self.multicast_autoconnect}|{self.gossip_autoconnect}"
         )
 
     def to_wire(self) -> dict[str, Any]:
@@ -217,33 +226,19 @@ def _warn_client_single_link(config: ZenohConfig) -> None:
         )
 
 
-# Wire setting to the zenoh config key that carries it. A python session inserts
-# these into a zenoh.Config, a native module reads the same values off stdin.
-_ZENOH_KEYS = {
-    "mode": "mode",
-    "connect": "connect/endpoints",
-    "listen": "listen/endpoints",
-    "multicast": "scouting/multicast/enabled",
-    "scout_addr": "scouting/multicast/address",
-    "interface": "scouting/multicast/interface",
-    "gossip": "scouting/gossip/enabled",
-    "connect_timeout_ms": "connect/timeout_ms",
-}
-
-# Settings zenoh decides for itself when we send nothing. An empty listen list
-# means its own default port, and a zero timeout means its own retry policy.
-_ZENOH_DEFAULTED_WHEN_EMPTY = ("connect", "listen", "scout_addr", "connect_timeout_ms")
-
-
 def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
     """The zenoh session config these settings open."""
-    zconfig = zenoh.Config()
-    for name, value in config.to_wire().items():
-        if not value and name in _ZENOH_DEFAULTED_WHEN_EMPTY:
-            continue
-        zconfig.insert_json5(_ZENOH_KEYS[name], json.dumps(value))
-    # Off: shared-memory transfer silently loses payloads over 3 kB between some sessions.
-    zconfig.insert_json5("transport/shared_memory/enabled", "false")
+    zconfig = make_zenoh_config(config.to_wire())
+    if config.adminspace:
+        zconfig.insert_json5("adminspace/enabled", "true")
+    for source, on in (
+        ("multicast", config.multicast_autoconnect),
+        ("gossip", config.gossip_autoconnect),
+    ):
+        if on:
+            zconfig.insert_json5(
+                f"scouting/{source}/autoconnect", '{router: ["router"], peer: ["router", "peer"]}'
+            )
     return zconfig
 
 
@@ -313,14 +308,6 @@ class ZenohSessionPool:
         # Completion must not take the pool lock: close_all may hold it while waiting.
         if created:
             try:
-                logger.info(
-                    "Zenoh session opened",
-                    mode=config.mode,
-                    connect=config.connect,
-                    listen=config.listen_endpoints,
-                    multicast_interface=config.multicast_interface,
-                    gossip=config.gossip_enabled,
-                )
                 _await_connect(entry.session, config)
             except BaseException as e:
                 # Release every waiter even if initialization is interrupted.
@@ -330,6 +317,20 @@ class ZenohSessionPool:
                 entry.ready.set_result(None)
         entry.ready.result()
         return entry.session
+
+    def release(self, config: ZenohConfig) -> None:
+        """Close and drop the pooled session for ``config``, if any."""
+        with self._lock:
+            entry = self._sessions.pop(config.session_key, None)
+        if entry is None:
+            return
+        entry.ready.exception()
+        try:
+            entry.session.close()
+        except zenoh.ZError as e:
+            logger.warning(
+                "Zenoh session close failed", session_key=config.session_key, error=str(e)
+            )
 
     def _close_at_exit(self) -> None:
         """Close pooled sessions at interpreter exit, in the opening process only."""
@@ -375,22 +376,19 @@ class ZenohService(Service):
         self._session_pool = session_pool or default_session_pool
         self._session: zenoh.Session | None = None
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Drop the live session, which pyo3 cannot pickle.
+    # Services ride into workers as blueprint config (``pubsubs=[Zenoh(...)]``): only
+    # their settings cross, the far side uses the default session pool, and a copy
+    # is a fresh, unstarted service. RPC services are never sent, so their
+    # rpc_timeouts have no place here.
+    def cbor_encode(self) -> dict[str, Any]:
+        return self.config.model_dump()
 
-        A module travels to its worker by pickle, so anything holding a session
-        has to shed it and re-acquire from the pool on the far side -- the same
-        move LCMService makes with its own runtime handles.
-        """
-        state = self.__dict__.copy()
-        state.pop("_session", None)
-        state.pop("_session_pool", None)
-        return state
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> ZenohService:
+        return cls(**data)
 
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self.__dict__.update(state)
-        self._session_pool = default_session_pool
-        self._session = None
+    def __deepcopy__(self, memo: dict[int, Any]) -> ZenohService:
+        return type(self).cbor_decode(copy.deepcopy(self.cbor_encode(), memo))
 
     def start(self) -> None:
         try:

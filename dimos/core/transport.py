@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from functools import partial
+from abc import abstractmethod
+import copy
 import importlib.util
 import threading
 import time
@@ -29,14 +30,15 @@ import numpy as np
 
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.protocol import DimosMsg
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, CborLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 from dimos.protocol.pubsub.impl.zenohpubsub import (
-    PickleZenoh,
+    CborZenoh,
     Topic as ZenohTopic,
     Zenoh,
+    ZenohQoS,
 )
 from dimos.stream.audio.base import AudioEvent
 from dimos.utils import colors
@@ -47,7 +49,6 @@ logger = setup_logger()
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.core.coordination.blueprints import TransportSpec
     from dimos.protocol.pubsub.impl.rospubsub import DimosROS
 
 T = TypeVar("T")
@@ -91,12 +92,29 @@ class PubSubTransport(Transport[T]):
         """The channel string this transport publishes and subscribes on."""
         return str(self.topic)
 
-    @classmethod
-    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
-        """Defer construction: capture ctor args for the coordinator to build later."""
-        from dimos.core.coordination.blueprints import TransportSpec
+    # Transports cross process boundaries as their constructor kwargs, never as the
+    # live pubsub: cbor_encode() returns a dict with the plain "topic" string plus
+    # whatever else cls(**kwargs) needs, and StreamDescriptor carries the same dict as
+    # a TransportSpec so that listing streams builds nothing.
+    @abstractmethod
+    def cbor_encode(self) -> dict[str, Any]: ...
 
-        return TransportSpec(cls, args, kwargs)
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> PubSubTransport[Any]:
+        return cls(**data)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> PubSubTransport[T]:
+        # A fresh instance from the same settings, never a copy of the live pubsub:
+        # blueprint config values are deep-copied before deployment.
+        return cast(
+            "PubSubTransport[T]", type(self).cbor_decode(copy.deepcopy(self.cbor_encode(), memo))
+        )
+
+    def with_topic(self, topic: str) -> PubSubTransport[T]:
+        """A copy of this transport on another topic, keeping every other setting."""
+        return cast(
+            "PubSubTransport[T]", type(self).cbor_decode({**self.cbor_encode(), "topic": topic})
+        )
 
 
 class pLCMTransport(PubSubTransport[T]):
@@ -104,13 +122,10 @@ class pLCMTransport(PubSubTransport[T]):
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
-        self.lcm = PickleLCM(**kwargs)
+        self.lcm = CborLCM(**kwargs)
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            partial(pLCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
-            (self.topic,),
-        )
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"topic": self.topic, **self.lcm.config.model_dump(exclude={"lcm"})}
 
     def broadcast(self, _: Stream[T] | None, msg: T) -> None:
         if not self._started:
@@ -150,11 +165,12 @@ class LCMTransport(PubSubTransport[T]):
         self.lcm.stop()
         self._started = False
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            partial(LCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
-            (self.topic.topic, self.topic.lcm_type),
-        )
+    def cbor_encode(self) -> dict[str, Any]:
+        return {
+            "topic": self.topic.topic,
+            "type": self.topic.lcm_type,
+            **self.lcm.config.model_dump(exclude={"lcm"}),
+        }
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -179,12 +195,6 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         self.lcm = JpegLCM(**kwargs)  # type: ignore[assignment]
         super().__init__(topic, type)
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            partial(JpegLcmTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
-            (self.topic.topic, self.topic.lcm_type),
-        )
-
     def start(self) -> None:
         self.lcm.start()
         self._started = True
@@ -197,15 +207,14 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 class ROSTransport(PubSubTransport[DimosMsg]):
     _ros: DimosROS | None = None
 
-    def __init__(self, topic: str, msg_type: type[DimosMsg], **kwargs: Any) -> None:
+    def __init__(self, topic: str, msg_type: type[DimosMsg]) -> None:
         # rclpy (about 0.1 s with rospubsub): only loaded when a ROSTransport exists.
         from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
 
         super().__init__(ROSTopic(topic, msg_type))
-        self._kwargs = kwargs
 
-    def __reduce__(self) -> tuple[Any, ...]:
-        return (ROSTransport, (self.topic.topic, self.topic.msg_type))
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"topic": self.topic.topic, "msg_type": self.topic.msg_type}
 
     def broadcast(self, _: Stream[DimosMsg] | None, msg: DimosMsg) -> None:
         if self._ros is None:
@@ -225,7 +234,7 @@ class ROSTransport(PubSubTransport[DimosMsg]):
         if self._ros is None:
             from dimos.protocol.pubsub.impl.rospubsub import DimosROS  # rclpy: see __init__
 
-            self._ros = DimosROS(**self._kwargs)
+            self._ros = DimosROS()
             self._ros.start()
 
     def stop(self) -> None:
@@ -240,20 +249,27 @@ DDS_AVAILABLE = importlib.util.find_spec("cyclonedds") is not None
 
 
 class DDSTransport(PubSubTransport[T]):
-    def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, topic: str, type: type, qos: Any = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         # cyclonedds: see DDS_AVAILABLE.
+        from cyclonedds.qos import Qos
+
         from dimos.protocol.pubsub.impl.ddspubsub import DDS, Topic as DDSTopic
 
         super().__init__(DDSTopic(topic, type))
-        self.dds = DDS(**kwargs)
+        if isinstance(qos, dict):  # the wire form cbor_encode() produces
+            qos = Qos.fromdict(qos)
+        self.dds = DDS(qos=qos, **kwargs)
         self._started: bool = False
         self._start_lock = threading.RLock()
 
-    def __reduce__(self) -> tuple[Any, ...]:
-        return (
-            partial(DDSTransport, qos=self.dds.qos, **self.dds.config.model_dump()),
-            (self.topic.name, self.topic.data_type),
-        )
+    def cbor_encode(self) -> dict[str, Any]:
+        qos = self.dds.qos
+        return {
+            "topic": self.topic.name,
+            "type": self.topic.data_type,
+            "qos": qos.asdict() if qos is not None else None,  # type: ignore[no-untyped-call]
+            **self.dds.config.model_dump(),
+        }
 
     def start(self) -> None:
         with self._start_lock:
@@ -283,12 +299,6 @@ class DDSTransport(PubSubTransport[T]):
 M = TypeVar("M", bound=DimosMsg)
 
 
-def _rebuild_webrtc_transport(
-    cls: type[WebRTCTransport[M]], topic: str, msg_type: type[M] | None, config: ProviderConfig
-) -> WebRTCTransport[M]:
-    return cls(topic, msg_type, config=config)
-
-
 class WebRTCTransport(PubSubTransport[M]):
     """Transport over WebRTC DataChannels.
 
@@ -301,11 +311,12 @@ class WebRTCTransport(PubSubTransport[M]):
       transports sharing one multiplexed DataChannel each receive only
       their own message type.
 
-    The transport itself holds no connection: the picklable ``config``
-    resolves to a per-process singleton provider on first use, so transports
-    survive being pickled into module worker processes and all transports in
-    a process share one session. ``stop()`` intentionally leaves the shared
-    provider running (it is process-scoped).
+    The transport itself holds no connection: the ``config`` (a pydantic model
+    that crosses process boundaries as data) resolves to a per-process
+    singleton provider on first use, so transports survive the trip into module
+    worker processes and all transports in a process share one session.
+    ``stop()`` intentionally leaves the shared provider running (it is
+    process-scoped).
     """
 
     _config_cls: type[ProviderConfig]
@@ -326,12 +337,12 @@ class WebRTCTransport(PubSubTransport[M]):
         self._pubsub: WebRTCPubSub | None = None
         # Guards first-use init: concurrent subscribe()/broadcast() must not
         # construct two WebRTCPubSub wrappers (one would silently orphan any
-        # subscribe_all state). Never pickled — __reduce__ rebuilds via the
+        # subscribe_all state). Never serialized: cbor_decode rebuilds via the
         # constructor.
         self._init_lock = threading.Lock()
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (_rebuild_webrtc_transport, (type(self), self.topic, self._msg_type, self._config))
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"topic": self.topic, "msg_type": self._msg_type, "config": self._config}
 
     def broadcast(self, _: Stream[M] | None, msg: M) -> None:
         if not self._started:
@@ -405,12 +416,13 @@ class _ProviderTransport(Transport[T]):
     def __init__(self, *, config: ProviderConfig | None = None, **config_kwargs: Any) -> None:
         self._config = config or self._config_cls(**config_kwargs)
 
-    @classmethod
-    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
-        """Defer construction: capture ctor args for the coordinator to build later."""
-        from dimos.core.coordination.blueprints import TransportSpec
+    # Constructor kwargs, like PubSubTransport.cbor_encode.
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"config": self._config}
 
-        return TransportSpec(cls, args, kwargs)
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> _ProviderTransport[Any]:
+        return cls(**data)
 
     def stop(self) -> None:
         pass  # shared provider is process-scoped (see WebRTCTransport.stop)
@@ -512,9 +524,15 @@ class ZenohTransport(PubSubTransport[T]):
 
     _started: bool = False
 
-    def __init__(self, topic: str | ZenohTopic, type: type | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        topic: str | ZenohTopic,
+        type: type | None = None,
+        qos: ZenohQoS | None = None,
+        **kwargs: Any,
+    ) -> None:
         if isinstance(topic, str):
-            topic = ZenohTopic(topic, type)
+            topic = ZenohTopic(topic, type, qos=qos)
         super().__init__(topic)
         self.zenoh = Zenoh(**kwargs)
         self._start_lock = threading.RLock()
@@ -528,8 +546,8 @@ class ZenohTransport(PubSubTransport[T]):
         qos = self.topic.qos
         return qos.to_wire() if qos is not None else None
 
-    def __reduce__(self) -> tuple[Any, ...]:
-        return (ZenohTransport, (self.topic,))
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"topic": self.topic.topic, "type": self.topic.lcm_type, "qos": self.topic.qos}
 
     def start(self) -> None:
         with self._start_lock:
@@ -557,7 +575,7 @@ class ZenohTransport(PubSubTransport[T]):
 
 
 class pZenohTransport(PubSubTransport[T]):
-    """Zenoh transport with pickle encoding for arbitrary Python objects.
+    """Zenoh transport for values without an LCM form, CBOR-encoded.
 
     Accepts either a plain topic string or a full `ZenohTopic` carrying
     per-topic settings (QoS). `self.topic` stays the plain string.
@@ -565,10 +583,10 @@ class pZenohTransport(PubSubTransport[T]):
 
     _started: bool = False
 
-    def __init__(self, topic: str | ZenohTopic, **kwargs: Any) -> None:
-        self._zenoh_topic = ZenohTopic(topic) if isinstance(topic, str) else topic
+    def __init__(self, topic: str | ZenohTopic, qos: ZenohQoS | None = None, **kwargs: Any) -> None:
+        self._zenoh_topic = ZenohTopic(topic, qos=qos) if isinstance(topic, str) else topic
         super().__init__(self._zenoh_topic.pattern)
-        self.zenoh = PickleZenoh(**kwargs)
+        self.zenoh = CborZenoh(**kwargs)
         self._start_lock = threading.RLock()
 
     @property
@@ -580,8 +598,8 @@ class pZenohTransport(PubSubTransport[T]):
         qos = self._zenoh_topic.qos
         return qos.to_wire() if qos is not None else None
 
-    def __reduce__(self) -> tuple[Any, ...]:
-        return (pZenohTransport, (self._zenoh_topic,))
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"topic": self._zenoh_topic.topic, "qos": self._zenoh_topic.qos}
 
     def start(self) -> None:
         with self._start_lock:

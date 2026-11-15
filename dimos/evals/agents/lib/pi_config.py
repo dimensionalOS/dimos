@@ -24,7 +24,7 @@ from pydantic.alias_generators import to_camel
 
 from dimos.constants import CACHE_DIR, CONFIG_DIR
 
-Provider = Literal["openai", "anthropic"]
+Provider = Literal["openai", "anthropic", "google"]
 Thinking = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 

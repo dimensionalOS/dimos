@@ -215,7 +215,7 @@ Here's how it's used in the actual camera module:
 ```python skip
 from dimos.core.module import Module
 
-class CameraModule(Module):
+class WebcamModule(Module):
     frequency: float = 2.0  # Target output frequency
     @rpc
     def start(self) -> None:

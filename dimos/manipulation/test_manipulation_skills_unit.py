@@ -21,10 +21,12 @@ import pytest
 
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
-    CommandResult,
-    CommandStatus,
     ExecutionResult,
     ExecutionStatus,
+)
+from dimos.robot.manipulators.common.agent_prompts import (
+    BASE_MANIPULATION_AGENT_SYSTEM_PROMPT,
+    MANIPULATION_AGENT_SYSTEM_PROMPT,
 )
 
 
@@ -53,10 +55,12 @@ def test_cancel_reports_a_confirmed_stop(skills: ManipulationSkills) -> None:
     assert skills.cancel().message == "Cancelled"
 
 
-def test_reset_surfaces_a_refused_recovery(skills: ManipulationSkills) -> None:
-    skills.manipulation.reset.return_value = CommandResult(
-        CommandStatus.FAILED, "stop not confirmed"
-    )
-
-    with pytest.raises(RuntimeError, match="refused.*FAILED: stop not confirmed"):
-        skills.reset()
+@pytest.mark.parametrize(
+    "prompt", [BASE_MANIPULATION_AGENT_SYSTEM_PROMPT, MANIPULATION_AGENT_SYSTEM_PROMPT]
+)
+def test_recovery_prompts_use_available_cancel_skill(skills, prompt):
+    assert "reset" not in prompt.lower()
+    assert "planning failure, inspect the error, correct the target, and retry" in prompt
+    assert "cancel" in prompt
+    skills.manipulation.cancel.return_value = ExecutionResult(ExecutionStatus.ABORTED, "Cancelled")
+    assert skills.cancel().message == "Cancelled"

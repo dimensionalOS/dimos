@@ -52,8 +52,24 @@ class MjvOption:
     geomgroup: NDArray[np.uint8]
     def __init__(self) -> None: ...
 
+class MjvCamera:
+    lookat: NDArray[np.float64]
+    distance: float
+    azimuth: float
+    elevation: float
+    def __init__(self) -> None: ...
+
+class MjvScene:
+    flags: NDArray[np.uint8]
+    geoms: Any
+    ngeom: int
+
 class Renderer:
     def __init__(self, model: MjModel, height: int = ..., width: int = ...) -> None: ...
+    def __enter__(self) -> Renderer: ...
+    def __exit__(self, *args: object) -> None: ...
+    @property
+    def scene(self) -> MjvScene: ...
     def update_scene(
         self,
         data: MjData,
@@ -62,11 +78,20 @@ class Renderer:
     ) -> None: ...
     def render(self) -> NDArray[np.uint8]: ...
     def enable_depth_rendering(self) -> None: ...
+    def enable_segmentation_rendering(self) -> None: ...
     def close(self) -> None: ...
 
 # --- top-level functions ----------------------------------------------
 
 def mj_forward(model: MjModel, data: MjData) -> None: ...
+def mjv_initGeom(
+    geom: Any,
+    type: int,
+    size: NDArray[np.float64],
+    pos: NDArray[np.float64],
+    mat: NDArray[np.float64],
+    rgba: NDArray[np.float32],
+) -> None: ...
 def mj_step(model: MjModel, data: MjData, nstep: int = ...) -> None: ...
 def mj_resetDataKeyframe(model: MjModel, data: MjData, key: int) -> None: ...
 def mj_name2id(model: MjModel, type: int, name: str | None) -> int: ...
@@ -106,6 +131,9 @@ class mjtObj:
 class mjtCamera:
     mjCAMERA_FREE: int
     mjCAMERA_TRACKING: int
+
+class mjtRndFlag:
+    mjRND_REFLECTION: int
 
 class mjtGeom:
     mjGEOM_PLANE: int

@@ -126,11 +126,15 @@ uv run dimos hardware g1 disable
 
 ## 5. Legacy navigation viewer example
 
+Rerun's gRPC listener binds to all interfaces even when the bridge's `host`
+is loopback. Restrict remote access with a host firewall as described in
+[Network exposure](/docs/usage/visualization.md#network-exposure).
+
 In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
 
 ```sh skip
 source .venv/bin/activate
-uv run dimos --rerun-host 0.0.0.0 run unitree-g1-nav-simple
+uv run dimos run unitree-g1-nav-simple --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
 # should print out something like:
 # ============================================================
 # Rerun gRPC server running (no viewer opened)

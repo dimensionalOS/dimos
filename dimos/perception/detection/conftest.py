@@ -20,12 +20,10 @@ from unittest import mock
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 import pytest
 
-from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.type.detection2d.base import Detection2D
@@ -112,47 +110,6 @@ def get_moment(tf):
 
     yield moment_provider
     moment_provider.cache_clear()
-
-
-@pytest.fixture(scope="session")
-def publish_moment():
-    def publisher(moment: Moment | Moment2D | Moment3D) -> None:
-        detections2d_val = moment.get("detections2d")
-        if detections2d_val:
-            detections: LCMTransport[Detection2DArray] = LCMTransport(
-                "/detections", Detection2DArray
-            )
-            assert isinstance(detections2d_val, ImageDetections2D)
-            detections.publish(detections2d_val.to_ros_detection2d_array())
-            detections.lcm.stop()
-
-        lidar_frame = moment.get("lidar_frame")
-        if lidar_frame:
-            lidar: LCMTransport[PointCloud2] = LCMTransport("/lidar", PointCloud2)
-            lidar.publish(lidar_frame)
-            lidar.lcm.stop()
-
-        image_frame = moment.get("image_frame")
-        if image_frame:
-            image: LCMTransport[Image] = LCMTransport("/image", Image)
-            image.publish(image_frame)
-            image.lcm.stop()
-
-        camera_info_val = moment.get("camera_info")
-        if camera_info_val:
-            camera_info: LCMTransport[CameraInfo] = LCMTransport("/camera_info", CameraInfo)
-            camera_info.publish(camera_info_val)
-            camera_info.lcm.stop()
-
-        tf = moment.get("tf")
-        transforms = moment.get("transforms")
-        if tf is not None and transforms is not None:
-            tf.publish(*transforms)
-
-    # moduleDB.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
-    # moduleDB.target.transport = LCMTransport("/target", PoseStamped)
-
-    return publisher
 
 
 @pytest.fixture(scope="session")

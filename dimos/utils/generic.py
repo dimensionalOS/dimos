@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 import hashlib
+from ipaddress import ip_address
 import json
 import math
 import os
@@ -25,17 +26,30 @@ import uuid
 import psutil
 
 
-def get_local_ips() -> list[tuple[str, str]]:
-    """Return ``(ip, interface_name)`` for every non-loopback IPv4 address.
+def get_local_ips(*, family: socket.AddressFamily = socket.AF_INET) -> list[tuple[str, str]]:
+    """Return non-loopback ``(ip, interface_name)`` pairs, using IPv4 by default.
 
     Picks up physical, virtual, and VPN interfaces (including Tailscale).
+    IPv6 link-local addresses are excluded: their scope is local to the host,
+    so they cannot be used directly in browser links on another device.
     """
     results: list[tuple[str, str]] = []
     for iface, addrs in psutil.net_if_addrs().items():
         for addr in addrs:
-            if addr.family == socket.AF_INET and not addr.address.startswith("127."):
-                results.append((addr.address, iface))
+            if addr.family != family:
+                continue
+            ip = ip_address(addr.address)
+            if ip.is_loopback or (ip.version == 6 and ip.is_link_local):
+                continue
+            results.append((addr.address, iface))
     return results
+
+
+def connect_host(bind_host: str) -> str:
+    """The host a client on this machine dials to reach a server bound to ``bind_host``."""
+    if bind_host in ("0.0.0.0", "::"):
+        return "localhost"
+    return f"[{bind_host}]" if ":" in bind_host else bind_host
 
 
 _T = TypeVar("_T")

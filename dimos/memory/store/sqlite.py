@@ -217,6 +217,16 @@ class SqliteStore(Store):
         # a name that is not a safe identifier (another writer's "map/pipeline") cannot be opened here, so it is not listed
         return sorted(name for name in db_names | set(self._streams.keys()) if is_identifier(name))
 
+    def pose_counts(self) -> dict[str, int]:
+        """Observations with an attached pose, per stream."""
+        with self._registry_lock:
+            return {
+                name: self._registry_conn.execute(
+                    f'SELECT COUNT(*) FROM "{name}_rtree"'
+                ).fetchone()[0]
+                for name in self._registry.list_streams()
+            }
+
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)
         with self._registry_lock:

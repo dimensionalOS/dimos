@@ -19,7 +19,7 @@ from typing import Any
 
 from reactivex import Observable, Subject
 
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import TransportBackend
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -31,6 +31,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
 
@@ -53,9 +54,10 @@ class DimSimConnection:
         frame_id="camera_optical",
     )
 
-    def __init__(self, global_config: GlobalConfig) -> None:
-        self._global_config = global_config
-        self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
+    def __init__(self, config: DimSimConfig, *, transport: TransportBackend) -> None:
+        self.config = config
+        self._transport_backend = transport
+        self._dimsim_process: DimSimProcess = DimSimProcess(config)
         self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
         self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
         self._unsubscribe_odom: Callable[[], None] | None = None
@@ -68,13 +70,11 @@ class DimSimConnection:
         self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
         try:
             self._dimsim_process.start()
-            if self._global_config.dimsim_headless and not self._first_odom.wait(
-                _FIRST_ODOM_TIMEOUT
-            ):
+            if self.config.headless and not self._first_odom.wait(_FIRST_ODOM_TIMEOUT):
                 raise TimeoutError(
                     f"DimSim reported ready but no /odom arrived within {_FIRST_ODOM_TIMEOUT:.0f} s. "
                     "DimSim publishes over LCM only; the transport is "
-                    f"{self._global_config.transport!r}."
+                    f"{self._transport_backend!r}."
                 )
         except BaseException:
             self.stop()

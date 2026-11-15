@@ -22,7 +22,6 @@ from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -52,7 +51,6 @@ class GlobalPlanner(Resource):
     _goal_reached: bool = False
     _thread: Thread | None = None
 
-    _global_config: GlobalConfig
     _navigation_map: NavigationMap
     _navigation_map_near: NavigationMap
     _local_planner: LocalPlanner
@@ -74,19 +72,30 @@ class GlobalPlanner(Resource):
     _max_path_deviation: float = 0.9
     _replanning_enabled: bool = True
 
-    def __init__(self, global_config: GlobalConfig) -> None:
+    def __init__(
+        self,
+        *,
+        robot_width: float,
+        robot_rotation_diameter: float,
+        nerf_speed: float = 1.0,
+        simulation: bool = False,
+    ) -> None:
         self.path = Subject()
         self.goal_reached = Subject()
 
-        self._global_config = global_config
-        self._navigation_map = NavigationMap(self._global_config, "voronoi")
-        self._navigation_map_near = NavigationMap(self._global_config, "gradient")
+        self._robot_rotation_diameter = robot_rotation_diameter
+        self._navigation_map = NavigationMap(robot_width, "voronoi")
+        self._navigation_map_near = NavigationMap(robot_width, "gradient")
         self._local_planner = LocalPlanner(
-            self._global_config, self._navigation_map, self._goal_tolerance
+            self._navigation_map,
+            self._goal_tolerance,
+            robot_width=robot_width,
+            nerf_speed=nerf_speed,
+            simulation=simulation,
         )
 
         stuck_threshold = self._stuck_threshold
-        if global_config.simulation:
+        if simulation:
             stuck_threshold = 1.0
 
         self._position_tracker = PositionTracker(self._stuck_time_window, stuck_threshold)
@@ -153,7 +162,8 @@ class GlobalPlanner(Resource):
         if no_goal and self._local_planner.get_state() == NavigationState.IDLE:
             return
 
-        logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
+        if not but_will_try_again or self._local_planner.get_state() != NavigationState.IDLE:
+            logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
 
         with self._lock:
             self._position_tracker.reset_data()
@@ -221,7 +231,8 @@ class GlobalPlanner(Resource):
                 continue
 
             if (
-                current_goal.position.distance(current_odom.position) < self._goal_tolerance
+                _planar_distance(current_goal.position, current_odom.position)
+                < self._goal_tolerance
                 and abs(
                     angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
                 )
@@ -293,7 +304,10 @@ class GlobalPlanner(Resource):
         assert current_odom is not None
         assert current_goal is not None
 
-        if current_goal.position.distance(current_odom.position) < self._replan_goal_tolerance:
+        if (
+            _planar_distance(current_goal.position, current_odom.position)
+            < self._replan_goal_tolerance
+        ):
             self.cancel_goal(arrived=True)
             return
 
@@ -351,7 +365,7 @@ class GlobalPlanner(Resource):
         sizes_to_try: list[float] = [1.1]
 
         for size in sizes_to_try:
-            distance = robot_pos.distance(goal)
+            distance = _planar_distance(robot_pos, goal)
             navigation_map = self._navigation_map if distance > 1.5 else self._navigation_map_near
             costmap = navigation_map.make_gradient_costmap(size)
             self._clear_robot_footprint(costmap, navigation_map.binary_costmap, robot_pos)
@@ -383,7 +397,7 @@ class GlobalPlanner(Resource):
 
         center = costmap.world_to_grid(robot_pos)
         center_x, center_y = int(center.x), int(center.y)
-        cells = int(self._global_config.robot_rotation_diameter / 2 / costmap.resolution) + 1
+        cells = int(self._robot_rotation_diameter / 2 / costmap.resolution) + 1
 
         height, width = costmap.grid.shape
         y0, y1 = max(0, center_y - cells), min(height, center_y + cells + 1)
@@ -417,9 +431,9 @@ class GlobalPlanner(Resource):
             logger.warning("No safe goal found near requested target.")
             return None
 
-        goals_distance = safe_goal.distance(goal)
+        goals_distance = _planar_distance(safe_goal, goal)
         if goals_distance > 0.2:
-            logger.warning(f"Travelling to goal {goals_distance}m away from requested goal.")
+            logger.warning(f"Travelling to goal {goals_distance:.2f}m away from requested goal.")
 
         logger.info("Found safe goal.", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
 
@@ -427,4 +441,14 @@ class GlobalPlanner(Resource):
 
     def _reset_safe_goal_clearance(self) -> None:
         with self._lock:
-            self._safe_goal_clearance = self._global_config.robot_rotation_diameter / 2
+            self._safe_goal_clearance = self._robot_rotation_diameter / 2
+
+
+def _planar_distance(a: Vector3, b: Vector3) -> float:
+    """Distance in the costmap plane.
+
+    Odometry carries the height of the robot's body and a goal carries whatever z
+    its sender gave it, while costmap cells are at z=0. None of that is distance
+    left to travel.
+    """
+    return a.to_2d().distance(b.to_2d())

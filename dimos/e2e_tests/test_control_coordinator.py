@@ -36,7 +36,7 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
-pytestmark = pytest.mark.self_hosted
+pytestmark = pytest.mark.self_hosted_large
 
 
 class TestControlCoordinatorE2E:

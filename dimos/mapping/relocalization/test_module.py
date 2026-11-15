@@ -21,7 +21,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
 from dimos.mapping.relocalization.lidar.module import LidarWindowRelocalization
-from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
@@ -32,7 +32,7 @@ def module():
     """Build a real module (and dispose it); `cls, **config` picks the class."""
     built = []
 
-    def build(cls=RelocalizationModule, **config):
+    def build(cls=PremapModule, **config):
         m = cls(**config)
         built.append(m)
         return m
@@ -64,7 +64,7 @@ def test_submit_publishes_and_checks_frames(module):
 
 
 def test_relocalize_once_stops_after_the_first_fix(module):
-    """What the flag does, either way. Which one is the default is a policy call."""
+    """What the flag does, either way."""
     tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
 
     once = module(relocalize_once=True)
@@ -93,24 +93,27 @@ def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
 
 
 def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
-    """Loading is the base's: every strategy reads a premap and publishes it, once placed."""
-    path = tmp_path / "somewhere.pc2.lcm"
-    path.write_bytes(
-        PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0).lcm_encode()
-    )
+    """The base loads the premap and publishes it once placed."""
+    from dimos.memory.store.sqlite import SqliteStore
+
+    path = tmp_path / "somewhere.db"
+    with SqliteStore(path=str(path)) as store:
+        store.stream("map_v1_cloud", PointCloud2).append(
+            PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0), ts=0.0
+        )
     m = module()
     published, disposables = [], []
-    # The one collaborator worth faking: a real Out port would publish onto a
-    # bus nothing in this test is listening to.
+    # Capture publishes without a bus.
     m.loaded_map = SimpleNamespace(publish=published.append)
     m.register_disposable = disposables.append
 
+    m._resolve_map(str(path))
     m._load_premap(str(path))
     assert m.premap is not None and len(m.premap) == 5
-    assert m.premap.frame_id == "map"
+    assert m.premap.frame_id == "map/v1"
     assert len(disposables) == 1  # the gated publish
     assert published == []  # ... which stays silent until a fix lands
-    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map"))
+    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map/v1"))
     assert published == [m.premap]  # republish_loaded_map=0: once, on that fix
     disposables[0].dispose()
 
@@ -187,7 +190,7 @@ def test_from_matrix_inverse_matches_linalg_inv():
 
 
 def test_dual_strategy_merges_ports():
-    class FakeImpl(RelocalizationModule):
+    class FakeImpl(PremapModule):
         detections: In[Detection3DArray]
 
     class Dual(LidarWindowRelocalization, FakeImpl):
@@ -196,3 +199,33 @@ def test_dual_strategy_merges_ports():
     hints = get_type_hints(Dual)
     assert {"tf", "lidar", "loaded_map", "detections"} <= hints.keys()
     assert Dual.blueprint() is not None
+
+
+def test_a_map_file_that_is_not_a_recording_is_refused():
+    from dimos.mapping.relocalization.module import load_premap
+
+    with pytest.raises(ValueError, match="recording"):
+        load_premap("office.pc2.lcm")
+
+
+def test_a_premap_mcap_decodes_its_cloud_past_unrelated_name_clashes(tmp_path):
+    mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
+    from dimos.mapping.relocalization.module import load_premap
+
+    path = tmp_path / "premap.mcap"
+    cloud = PointCloud2.from_numpy(np.eye(3, dtype=np.float32), frame_id="map/v1", timestamp=1.0)
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start()
+        payload_type = {"dimos.payload_type": "dimos.msgs.sensor_msgs.PointCloud2.PointCloud2"}
+        channel = writer.register_channel("/map/v1/cloud", "lcm", 0, payload_type)
+        writer.add_message(channel, 1_000_000_000, cloud.lcm_encode(), 1_000_000_000)
+        # Two camera topics that fold to one stream name
+        for topic in ("rt/camera_info", "camera_info"):
+            clash = writer.register_channel(topic, "cdr", 0)
+            writer.add_message(clash, 1_000_000_000, b"\0", 1_000_000_000)
+        writer.finish()
+
+    loaded = load_premap(str(path))
+    assert isinstance(loaded, PointCloud2)
+    assert np.allclose(loaded.as_numpy()[0], np.eye(3))

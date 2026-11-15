@@ -25,7 +25,7 @@ from langchain_core.messages import (
 )
 
 import dimos.protocol.pubsub.impl.lcmpubsub as lcm
-from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM
+from dimos.protocol.pubsub.impl.lcmpubsub import CborLCM
 
 
 def test_publish_messages() -> None:
@@ -33,7 +33,7 @@ def test_publish_messages() -> None:
     print("Starting agent message publisher demo...")
 
     # Create transport
-    transport = PickleLCM()
+    transport = CborLCM()
     topic = lcm.Topic("/agent")
 
     print(f"Publishing to topic: {topic}")

@@ -4,6 +4,8 @@
 // Nothing here imports three.js, so it all unit-tests on node and the
 // three.js half (voxelScene.ts) stays a lazy chunk.
 
+import type { PathPoint } from "./mapPath.ts";
+
 export interface Pose3d {
   x: number;
   y: number;
@@ -22,11 +24,15 @@ export interface VoxelScene {
    * may rewrite them in place), voxel edge in m. */
   setVoxels(positions: Float32Array, colors: Uint8Array, res: number): void;
   setPose(pose: Pose3d | null): void;
+  /** Draw the planner's 2D path on the ground plane; null/empty clears it. */
+  setPath(path: PathPoint[] | null): void;
   /** Frame the current voxels. */
   fit(): void;
   /** Keep the camera behind the robot as it moves (on), or leave it be (off). */
   setFollow(on: boolean): void;
   resize(cssWidth: number, cssHeight: number, dpr: number): void;
+  /** Pick a 2D goal at normalized device coordinates (x/y in -1..1, y up). */
+  pick(x: number, y: number): [number, number] | null;
   render(): void;
   dispose(): void;
 }

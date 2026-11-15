@@ -26,6 +26,7 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
+_STATIONARY_HOLD_DURATION = 0.01
 
 
 class TrajectoryParametrizationError(ValueError):
@@ -52,7 +53,11 @@ class BaseTrajectoryParametrizer(ABC):
         path = [JointState(state) for state in result.path]
         self._validate_selected_path(path, selection.joint_names)
         if result.timestamps is None:
-            trajectory = self._parametrize_path(world, selection, tuple(path), speed_scale)
+            # TOPP-RA rejects a path that goes nowhere; hold still instead.
+            if all(self._positions_close(state.position, path[0].position) for state in path):
+                trajectory = self._stationary_trajectory(selection, path[0])
+            else:
+                trajectory = self._parametrize_path(world, selection, tuple(path), speed_scale)
         else:
             trajectory = self._timed_trajectory(selection, path, result.timestamps)
         self._validate_trajectory(
@@ -117,6 +122,22 @@ class BaseTrajectoryParametrizer(ABC):
                 positions,
                 f"Waypoint {waypoint_index} positions",
             )
+
+    @staticmethod
+    def _stationary_trajectory(
+        selection: PlanningGroupSelection, state: JointState
+    ) -> JointTrajectory:
+        return JointTrajectory(
+            joint_names=list(selection.joint_names),
+            points=[
+                TrajectoryPoint(
+                    time_from_start=time_from_start,
+                    positions=list(state.position),
+                    velocities=[0.0] * len(selection.joint_names),
+                )
+                for time_from_start in (0.0, _STATIONARY_HOLD_DURATION)
+            ],
+        )
 
     @classmethod
     def _timed_trajectory(

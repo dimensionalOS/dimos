@@ -18,7 +18,7 @@ See [installer options](/docs/installation/index.md).
 
 LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. dimOS defaults the global stream transport to **Zenoh** everywhere, so you never need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
 
-See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for what the localhost-pinned default reaches and how to point it at a robot or the LAN.
+See the [Zenoh transport guide](/docs/usage/transports/index.md#zenoh) for what the localhost-pinned default reaches and how to point it at a robot or the LAN.
 
 ## Manual installation
 
@@ -28,7 +28,7 @@ Use these steps if you need to install without the guided script.
 # Install Homebrew first if it is not installed.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 eval "$(/opt/homebrew/bin/brew shellenv)"
-brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config
+brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit libsndfile pkg-config
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -39,7 +39,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir dimos-app && cd dimos-app
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
+uv pip install --torch-backend cpu 'dimos[base,unitree,sim,drone]'
 uv run dimos --help
 ```
 

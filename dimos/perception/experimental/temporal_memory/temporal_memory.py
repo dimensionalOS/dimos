@@ -130,9 +130,6 @@ class TemporalMemory(Module):
 
         self._vlm_raw = self.config.vlm
 
-        # new_memory is set via TemporalMemoryConfig by the blueprint factory
-        # (which runs in the main process where GlobalConfig is available).
-
         # Components
         self._accumulator = FrameWindowAccumulator(
             max_buffer_frames=self.config.max_buffer_frames,

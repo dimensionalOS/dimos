@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
 from dimos.perception.localize.localize import index_frames, localize
-from dimos.perception.localize.types import LocalizePolicy
+from dimos.perception.localize.types import Localization, LocalizeParams
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,10 +43,9 @@ if TYPE_CHECKING:
     from dimos.models.embedding.base import EmbeddingModel
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-    from dimos.perception.localize.association import Groups
     from dimos.perception.localize.localize import LocalizeTrace
+    from dimos.perception.localize.memento import Memento, Span
     from dimos.perception.localize.rig import Rig
-    from dimos.perception.localize.types import Localization
 
 
 class Detector(Protocol):
@@ -88,10 +87,10 @@ def _owlv2() -> Detector:
 
 @dataclass(frozen=True)
 class Option:
-    """A registered model: how to build it, and the policy fields its score scale shifts."""
+    """A registered model: how to build it, and the score deltas its scale shifts from OWLv2."""
 
     build: str | Callable[[], Any]  # "module:attr" of a class or factory, or the callable
-    policy: dict[str, Any] = field(default_factory=dict)
+    shift: dict[str, float] = field(default_factory=dict)
 
 
 EMBEDDERS: dict[str, Option] = {
@@ -102,11 +101,11 @@ DETECTORS: dict[str, Option] = {
     "owlv2": Option(_owlv2),
     "omdet": Option(
         "dimos.perception.detection.detectors.omdet:OmDetDetector",
-        {"candidate_floor": 0.15, "accept_score": 0.30},
+        {"candidate_floor": -0.10, "accept_score": -0.10},
     ),
     "gdino": Option(
         "dimos.perception.detection.detectors.grounding_dino:GroundingDinoDetector",
-        {"candidate_floor": 0.35, "accept_score": 0.55},
+        {"candidate_floor": 0.10, "accept_score": 0.15},
     ),
 }
 SEGMENTERS: dict[str, Option] = {
@@ -161,15 +160,30 @@ class DanDetector(Resource):
             model.stop()
         del self.embedder, self.detector, self.segmenter
 
-    def policy(self, overrides: dict[str, Any] | None = None) -> LocalizePolicy:
-        """``LocalizePolicy`` shifted to these models' score scales, then ``overrides``."""
-        shifts = {key: value for option in self.options for key, value in option.policy.items()}
-        return replace(LocalizePolicy(), **{**shifts, **(overrides or {})})
+    def shifted(self, base: LocalizeParams, fields: dict[str, Any] | None = None) -> LocalizeParams:
+        """``base`` shifted onto these models' score scales, then ``fields``.
 
-    def embed_live(self, rig: Rig, source: Stream[Any, Any], index: Stream[Any, Any]) -> None:
+        Each model's shift is a delta relative to the OWLv2 baseline that
+        ``LocalizeParams`` was fit on; explicit overrides in ``fields`` take
+        precedence.
+        """
+        shifts = {
+            key: round(getattr(base, key) + delta, 6)
+            for option in self.options
+            for key, delta in option.shift.items()
+        }
+        return replace(base, **{**shifts, **(fields or {})})
+
+    def embed_live(
+        self,
+        rig: Rig,
+        source: Stream[Any, Any],
+        index: Stream[Any, Any],
+        embed_hz: float | None = None,
+    ) -> None:
         """Tail ``source`` into ``index`` on a background thread while the resource is open."""
         pipeline = (
-            index_frames(rig, source.live())
+            index_frames(rig, source.live(), embed_hz=embed_hz)
             .transform(EmbedImages(self.embedder, batch_size=1))
             .save(index)
         )
@@ -180,20 +194,25 @@ class DanDetector(Resource):
         queries: list[str],
         *,
         index: Stream[Any, Any],
+        window: Span,
+        head: float,
         rig: Rig,
-        policy: LocalizePolicy | None = None,
+        params: LocalizeParams = LocalizeParams(),
+        fields: dict[str, Any] | None = None,
+        memento: Memento | None = None,
         traces: list[LocalizeTrace] | None = None,
-        groups: dict[str, Groups] | None = None,
     ) -> list[list[Localization]]:
-        """:func:`localize` on this resource's models, at :meth:`policy` unless given one."""
+        """:func:`localize` on this resource's models, with ``params`` shifted onto their scales."""
         return localize(
             queries,
             index=index,
+            window=window,
+            head=head,
             rig=rig,
             embedder=self.embedder,
             detector=self.detector,
             segmenter=self.segmenter,
-            policy=policy or self.policy(),
+            params=self.shifted(params, fields),
+            memento=memento,
             traces=traces,
-            groups=groups,
         )

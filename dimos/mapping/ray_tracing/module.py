@@ -44,6 +44,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     emit_fine: bool = False
     # Maximum range for ray tracing
     max_range: float = 30.0
+    # Keep every Nth point of each lidar cloud before any other step
+    pre_trace_subsample: int = 1
     # Proportion of points that are ray traced
     # Higher subsample means less tracing
     ray_subsample: int = 1
@@ -57,6 +59,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Don't clear a miss when abs of ray dot normal is below this, clear it when above.
     # Higher clears only on direct hits, lower clears on slight grazes too.
     graze_cos: float = 0.7
+    # Spare a grazing miss only on a voxel hit within this many frames, so what nothing sees any more clears; 2**32 - 1 spares always.
+    graze_recent_frames: int = 2**32 - 1
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4

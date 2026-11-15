@@ -19,7 +19,6 @@ from __future__ import annotations
 from hashlib import sha256
 import os
 from pathlib import Path
-import pickle
 import select
 import subprocess
 import threading
@@ -31,6 +30,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.rpc_client import RPCClient
+from dimos.protocol.encode.cbor import encode
 from dimos.utils.data import get_project_root
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -48,6 +48,19 @@ def isolated_python_run_command(project: Path, *command: str) -> list[str]:
     if (project / "pixi.toml").is_file():
         return ["pixi", "run", "--executable", *args]
     return args
+
+
+def isolated_python_environment(project: Path) -> dict[str, str]:
+    """Use a cached project environment without inheriting host interpreter pins."""
+    env = dict(os.environ)
+    # The isolated project picks its own interpreter and venv; host pins
+    # (e.g. setup-uv exporting UV_PYTHON on CI matrix legs) must not leak in.
+    env.pop("VIRTUAL_ENV", None)
+    env.pop("UV_PYTHON", None)
+    env.pop("UV_PROJECT_ENVIRONMENT", None)
+    project_key = sha256(str(project).encode()).hexdigest()[:16]
+    env["UV_PROJECT_ENVIRONMENT"] = str(CACHE_DIR / "isolated-python" / project_key / ".venv")
+    return env
 
 
 class IsolatedPythonModuleConfig(NativeModuleConfig):
@@ -147,14 +160,7 @@ class IsolatedPythonModule(NativeModule):
         return self._runtime_name
 
     def _runtime_env(self) -> dict[str, str]:
-        env = dict(os.environ)
-        # The isolated project picks its own interpreter and venv; host pins
-        # (e.g. setup-uv exporting UV_PYTHON on CI matrix legs) must not leak in.
-        env.pop("VIRTUAL_ENV", None)
-        env.pop("UV_PYTHON", None)
-        env.pop("UV_PROJECT_ENVIRONMENT", None)
-        project_key = sha256(str(self.runtime_project).encode()).hexdigest()[:16]
-        env["UV_PROJECT_ENVIRONMENT"] = str(CACHE_DIR / "isolated-python" / project_key / ".venv")
+        env = isolated_python_environment(self.runtime_project)
         env.update(self.config.extra_env)
         return env
 
@@ -200,7 +206,8 @@ class IsolatedPythonModule(NativeModule):
             assert self._process.stdin is not None
             kwargs = self.config.model_dump()
             kwargs["instance_name"] = self._runtime_name
-            pickle.dump(kwargs, self._process.stdin)
+            # The same codec as the worker pipe; the runtime reads stdin to EOF.
+            self._process.stdin.write(encode(kwargs))
             self._process.stdin.close()
 
             watchdog = threading.Thread(

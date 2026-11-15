@@ -22,10 +22,13 @@ import time
 from typing import Any
 
 import pytest
+import typer
 
-from dimos.cloud import data as cd
+from dimos.cloud import cli, data as cd
+from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
-from dimos.core.global_config import global_config
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
 
 
 class FakeTransport:
@@ -38,6 +41,7 @@ class FakeTransport:
         self.fail_at = 0  # fail the Nth put, once
         self.epoch = 0  # presign generation; URLs from older epochs are expired
         self.expire_at = 0  # bump epoch before the Nth put, once
+        self.previews: dict[str, dict[str, Any]] = {}
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         if path.endswith("/uploads") and method == "POST":
@@ -66,6 +70,10 @@ class FakeTransport:
                 "limits": {"total_gb": 250, "daily_gb": 25, "max_file_gb": 50, "trust": "new"},
                 "message": "storage at 0% of quota",
             }
+        if path.endswith("/preview") and method == "PUT":
+            assert body
+            self.previews[path.split("/")[4]] = body
+            return {}
         if path.endswith("/uploads"):
             return {"uploads": [dict(id=k, **v) for k, v in self.uploads.items()]}
         uid = path.split("/")[4]
@@ -141,7 +149,6 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
     monkeypatch.setattr(cd.time, "sleep", lambda s: None)
-    monkeypatch.setattr(global_config, "dimos_upload_retries", 1)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
 
@@ -276,10 +283,9 @@ def test_recordings_discovery(
 
 
 def test_not_logged_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cd, "api_key", lambda: None)
-    monkeypatch.setattr(global_config, "dimos_api_key", None)
+    monkeypatch.setattr(cd, "api_key", lambda config: None)
     with pytest.raises(RuntimeError, match="dimos login"):
-        CloudData()
+        CloudData(config=CloudConfig(api_key=None))
 
 
 def test_pull_with_cross_filesystem_staging(
@@ -416,26 +422,127 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         t.request("POST", "/v1/data/uploads", {})
 
 
+@pytest.mark.parametrize(
+    "api_url,console_url,skipped",
+    [
+        ("https://api.dimensional.org", "https://console.dimensional.org", False),
+        ("https://api.dimensional.org/", "https://console.dimensional.org", True),
+        ("https://api.staging.dimensional.org", "https://console.staging.dimensional.org", False),
+        ("https://api.staging.dimensional.org/", "https://console.staging.dimensional.org", True),
+    ],
+)
+def test_upload_cli_prints_console_link(
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    skipped: bool,
+    api_url: str,
+    console_url: str,
+) -> None:
+    cloud, _, db = env
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(cloud.config, "url", api_url)
+    if skipped:
+        cloud.upload(db)
+
+    cli.upload(db, None, None, None, None)
+
+    captured = capsys.readouterr()
+    note = "already uploaded" if skipped else "complete"
+    assert f"{db.name}: {note} (u0)\n" in captured.out
+    assert "  console preview: failed:" in captured.out  # fixture's invalid stream name
+    assert f"  console: {console_url}/console/data?open=u0\n" in captured.out
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    "api_url",
+    [
+        "http://localhost:8000",
+        "https://cloud.example/",
+        "https://api.dimensional.org.evil.example",
+        "http://api.dimensional.org",
+        "https://api.dimensional.org/v1",
+        "https://api.dimensional.org//",
+    ],
+)
+def test_upload_cli_omits_console_link_for_unknown_api(
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    api_url: str,
+) -> None:
+    cloud, _, db = env
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(cloud.config, "url", api_url)
+
+    cli.upload(db, None, None, None, None)
+
+    captured = capsys.readouterr()
+    assert f"{db.name}: complete (u0)\n" in captured.out
+    assert "  console:" not in captured.out
+    assert captured.err == ""
+
+
+def test_upload_cli_keeps_quota_warning_without_preview(
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cloud, t, db = env
+    blob = db.with_suffix(".bin")
+    blob.write_bytes(b"raw artifact")
+    request = t.request
+
+    def warning_request(
+        method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        result = request(method, path, body)
+        if path.endswith("/complete"):
+            result["quota"] = {"state": "warn", "message": "storage at 90% of quota"}
+        return result
+
+    monkeypatch.setattr(t, "request", warning_request)
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(cloud.config, "url", "https://api.dimensional.org")
+
+    cli.upload(blob, None, None, None, None)
+
+    captured = capsys.readouterr()
+    assert captured.out.strip().splitlines() == [
+        f"{blob.name}: complete (u0)",
+        "  console: https://console.dimensional.org/console/data?open=u0",
+    ]
+    assert captured.err == "storage at 90% of quota\n"
+
+
+@pytest.mark.parametrize("endpoint", ["/uploads", "/uploads/u0/complete"])
 def test_upload_cli_exits_nonzero_on_server_error(
-    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    endpoint: str,
 ) -> None:
     """`dimos data upload` must fail loudly (exit 1), not swallow a server fault."""
-    import typer
-
-    from dimos.cloud import cli
-
     cloud, t, db = env
+    request = t.request
 
     def failing_request(
         method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        raise RuntimeError("POST /v1/data/uploads: 503 storage unavailable")
+        if path == f"/v1/data{endpoint}":
+            raise RuntimeError(f"POST {path}: 503 storage unavailable")
+        return request(method, path, body)
 
     monkeypatch.setattr(t, "request", failing_request)
     monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(cloud.config, "url", "https://api.dimensional.org")
     with pytest.raises(typer.Exit) as e:
         cli.upload(db, None, None, None, None)
     assert e.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ""
+    assert f"{db.name}: POST /v1/data{endpoint}: 503 storage unavailable\n" in captured.err
 
 
 def test_matching_suffix_uploads_raw_and_unstamped(
@@ -449,3 +556,80 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_mcap_recording_sends_preview_with_joystick(
+    env: tuple[CloudData, FakeTransport, Path],
+) -> None:
+    writer_mod = pytest.importorskip("mcap.writer")
+    cloud, t, db = env
+    path = db.parent / "teleop.mcap"
+    with path.open("wb") as f:
+        w = writer_mod.Writer(f)
+        w.start(profile="dimos", library="test")
+        chans = {
+            name: w.register_channel(
+                topic=name,
+                message_encoding="lcm",
+                schema_id=0,
+                metadata={
+                    "dimos.payload_type": payload,
+                    "dimos.observation_time": "publish_time",
+                },
+            )
+            for name, payload in (
+                ("odom", "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped"),
+                ("joy", "dimos.msgs.sensor_msgs.Joy.Joy"),
+            )
+        }
+        for i in range(3):
+            ns = (100 + i) * 10**9
+            pose = PoseStamped(ts=100.0 + i, position=[i, 0, 0.3], frame_id="world")
+            joy = Joy(ts=100.0 + i, axes=[0.0, 0.5, -1.0, 0.0], buttons=[1, 0, 0])
+            for name, msg in (("odom", pose), ("joy", joy)):
+                w.add_message(
+                    channel_id=chans[name], log_time=ns, publish_time=ns, data=msg.lcm_encode()
+                )
+        w.finish()
+
+    r = cloud.upload(path, robot_id="go2")
+    assert r["preview"].startswith("sent")
+    doc = t.previews[r["upload_id"]]
+    assert doc["streams"]["joystick"]["count"] == 3
+    assert [s[1:] for s in doc["joy"]] == [[[0.0, 0.5, -1.0, 0.0], [1, 0, 0]]] * 3
+
+
+def test_mcap_upload_sends_its_preview(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    from dimos.memory.store.test_mcap import ros2_odom, write_ros2_mcap
+
+    cloud, _t, db = env
+    mcap = db.parent / "run.mcap"
+    write_ros2_mcap(mcap, [("/odometry", "nav_msgs/Odometry", 1.0, ros2_odom(1.0, 0, 0))])
+    before = mcap.read_bytes()
+    assert cloud.upload(mcap)["preview"] == "sent"  # opened read-only in place, not as SQLite
+    assert mcap.read_bytes() == before
+
+
+def test_an_mcap_recording_gets_a_manifest_so_it_can_be_previewed(tmp_path: Path) -> None:
+    """No manifest means no console preview, and the manifest used to be read by opening the
+    recording as sqlite — which every .mcap fails, whatever the preview could have made of it."""
+    writer = pytest.importorskip("mcap.writer")
+    path = tmp_path / "run.mcap"
+    with path.open("wb") as out:
+        w = writer.Writer(out)
+        w.start(profile="dimos", library="test")
+        w.register_channel(
+            topic="dimos/lidar/sensor_msgs.PointCloud2", message_encoding="lcm", schema_id=0
+        )
+        w.finish()
+
+    manifest = cd._manifest(path)
+    assert manifest is not None
+    assert [s["name"] for s in manifest["streams"]] == ["lidar"]
+    assert manifest["streams"][0]["payload_module"].endswith("PointCloud2")
+
+
+def test_a_file_that_is_no_recording_has_no_manifest(tmp_path: Path) -> None:
+    junk = tmp_path / "notes.txt"
+    junk.write_text("not a recording")
+    assert cd._manifest(junk) is None

@@ -38,6 +38,9 @@ from dimos.core.coordination.blueprint_config.schema import (
 )
 from dimos.core.coordination.blueprint_config.values import deep_set, plain_mapping
 from dimos.core.global_config import ENV_FILE, GlobalConfig
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 def global_schema_defaults() -> dict[str, Any]:
@@ -46,20 +49,109 @@ def global_schema_defaults() -> dict[str, Any]:
     return plain_mapping(defaults)
 
 
+# Environment names of former GlobalConfig fields and where each setting lives
+# now. A leftover one would otherwise configure nothing, silently.
+REMOVED_ENVIRONMENT_NAMES: dict[str, str] = {
+    "UNITREE_AES_128_KEY": "GO2CONNECTION__AES_128_KEY (or the G1 connection's AES_128_KEY)",
+    "XARM7_IP": "CONTROLCOORDINATOR__ADDRESSES",
+    "XARM6_IP": "CONTROLCOORDINATOR__ADDRESSES",
+    "LITE6_IP": "CONTROLCOORDINATOR__ADDRESSES",
+    "CAN_PORT": "CONTROLCOORDINATOR__ADDRESSES",
+    "DEVICE_PATH": "CONTROLCOORDINATOR__ADDRESSES",
+    "REPLAY_EXIT": "GO2CONNECTION__REPLAY_EXIT",
+    "OBSTACLE_AVOIDANCE": "GO2CONNECTION__OBSTACLE_AVOIDANCE",
+    "NEW_MEMORY": "TEMPORALMEMORY__NEW_MEMORY",
+    "DETECTION_MODEL": "PERCEIVELOOPSKILL__DETECTION_MODEL",
+    "NERF_SPEED": "REPLANNINGASTARPLANNER__NERF_SPEED",
+    "RERUN_OPEN": "RERUNBRIDGEMODULE__RERUN_OPEN",
+    "RERUN_WEB": "RERUNBRIDGEMODULE__RERUN_WEB",
+    "RERUN_SAVE": "RERUNBRIDGEMODULE__RERUN_SAVE",
+    "RERUN_HOST": "RERUNBRIDGEMODULE__HOST and RERUNWEBSOCKETSERVER__HOST",
+    "RERUN_WEBSOCKET_SERVER_PORT": "RERUNWEBSOCKETSERVER__PORT",
+    "MUJOCO_CAMERA_POSITION": "GO2CONNECTION__MUJOCO__CAMERA_POSITION",
+    "MUJOCO_ROOM": "GO2CONNECTION__MUJOCO__ROOM",
+    "MUJOCO_ROOM_FROM_OCCUPANCY": "GO2CONNECTION__MUJOCO__ROOM_FROM_OCCUPANCY",
+    "MUJOCO_START_POS": "GO2CONNECTION__MUJOCO__START_POS",
+    "MUJOCO_STEPS_PER_FRAME": "GO2CONNECTION__MUJOCO__STEPS_PER_FRAME",
+    "MUJOCO_SHADOWS": "GO2CONNECTION__MUJOCO__SHADOWS",
+    "MUJOCO_GLOBAL_COSTMAP_FROM_OCCUPANCY": "MAP__GLOBAL_COSTMAP_FROM_OCCUPANCY",
+    "MUJOCO_GLOBAL_MAP_FROM_POINTCLOUD": "MAP__GLOBAL_MAP_FROM_POINTCLOUD",
+    "MUJOCO_SCENE": "MUJOCOSIMMODULE__ADDRESS",
+    "DIMSIM_SCENE": "GO2CONNECTION__DIMSIM__SCENE",
+    "DIMSIM_PORT": "GO2CONNECTION__DIMSIM__PORT",
+    "DIMSIM_HEADLESS": "GO2CONNECTION__DIMSIM__HEADLESS",
+    "DIMSIM_READY_TIMEOUT": "GO2CONNECTION__DIMSIM__READY_TIMEOUT",
+    "MCP_PORT": "MCPSERVER__PORT",
+    "ROBOT_ID": "RELAYBRIDGEMODULE__ROBOT_ID",
+    "RELAY_CA": "RELAYBRIDGEMODULE__RELAY_CA",
+    "RELAY_KEY": "RELAYBRIDGEMODULE__RELAY_KEY",
+    "TYPESAFE_API_KEY": "TYPESAFENAVIGATIONAGENT__API_KEY",
+    "DIMOS_API_KEY": "DIMOS_CLOUD_API_KEY",
+    "DIMOS_HTTP_TIMEOUT": "DIMOS_CLOUD_HTTP_TIMEOUT",
+    "DIMOS_UPLOAD_CODEC": "DIMOS_CLOUD_UPLOAD_CODEC",
+    "DIMOS_UPLOAD_RETRIES": "DIMOS_CLOUD_UPLOAD_RETRIES",
+    "DIMOS_UPLOAD_CHUNK_MB": "DIMOS_CLOUD_UPLOAD_CHUNK_MB",
+    "DIMOS_UPLOAD_QUIET_S": "DIMOS_CLOUD_UPLOAD_QUIET_S",
+    "DIMOS_STAGING_DIR": "DIMOS_CLOUD_STAGING_DIR",
+}
+
+# Ignoring these can select the wrong hardware or lose credentials. Other
+# obsolete names may belong to unrelated tools sharing the same environment.
+REQUIRED_ENVIRONMENT_MIGRATIONS = frozenset(
+    {
+        "UNITREE_AES_128_KEY",
+        "XARM7_IP",
+        "XARM6_IP",
+        "LITE6_IP",
+        "CAN_PORT",
+        "DEVICE_PATH",
+        "RELAY_KEY",
+        "TYPESAFE_API_KEY",
+        "DIMOS_API_KEY",
+    }
+)
+
+
 def configuration_environment(
     environ: Mapping[str, str] | None,
 ) -> Mapping[str, str]:
-    if environ is not None:
-        return environ
-    if ENV_FILE is None:
-        return os.environ
-    from_dotenv = {
-        key: value for key, value in dotenv_values(ENV_FILE).items() if value is not None
-    }
-    return {**from_dotenv, **os.environ}
+    if environ is None:
+        if ENV_FILE is None:
+            environ = os.environ
+        else:
+            from_dotenv = {
+                key: value for key, value in dotenv_values(ENV_FILE).items() if value is not None
+            }
+            environ = {**from_dotenv, **os.environ}
+    removed = sorted(name for name in environ if name.upper() in REMOVED_ENVIRONMENT_NAMES)
+    required = [name for name in removed if name.upper() in REQUIRED_ENVIRONMENT_MIGRATIONS]
+    if required:
+        hints = "; ".join(
+            f"{name} -> {REMOVED_ENVIRONMENT_NAMES[name.upper()]}" for name in required
+        )
+        raise BlueprintConfigError(
+            f"Environment variable(s) of removed global settings: {hints}. "
+            "Remove the old names and configure their replacements "
+            "(see docs/usage/configuration.md)."
+        )
+    if removed:
+        logger.warning(
+            "Ignoring environment variables of removed global settings; "
+            "use their replacements (see docs/usage/configuration.md)",
+            replacements={name: REMOVED_ENVIRONMENT_NAMES[name.upper()] for name in removed},
+        )
+    return environ
 
 
 def validate_global_values(values: Mapping[str, Any]) -> dict[str, Any]:
+    known = global_environment_names()
+    unknown = sorted(key for key in values if key.lower() not in known)
+    if unknown:
+        raise BlueprintConfigError(
+            "Unknown global configuration field(s): "
+            + ", ".join(unknown)
+            + ". Module settings belong in the owning module's configuration section."
+        )
     try:
         model = GlobalConfig.model_validate(values)
     except ValidationError as error:

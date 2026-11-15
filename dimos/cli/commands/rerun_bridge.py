@@ -16,27 +16,38 @@
 
 from __future__ import annotations
 
-from typing import cast
+import os
 
 import typer
 
-from dimos.visualization.rerun.constants import RerunOpenOption
+from dimos.core.global_config import global_config
 
 
 def rerun_bridge_cmd(
-    memory_limit: str = typer.Option(
-        "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
+    ctx: typer.Context,
+    options: list[str] | None = typer.Argument(
+        None, help="Bridge settings, e.g. --rerun-open web --memory-limit 4GB"
     ),
-    rerun_open: str = typer.Option("native", help="How to open Rerun: native, web, both, none"),
-    rerun_web: bool = typer.Option(
-        True, "--rerun-web/--no-rerun-web", help="Enable/Disable Rerun web server"
-    ),
+    show_help: bool = typer.Option(False, "--help"),
 ) -> None:
-    """Launch the Rerun visualization bridge."""
-    from dimos.visualization.rerun.bridge import run_bridge
+    """Launch the Rerun visualization bridge on its own."""
+    from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.visualization.rerun.bridge import RerunBridgeModule, run_bridge
 
-    run_bridge(
-        memory_limit=memory_limit,
-        rerun_open=cast("RerunOpenOption", rerun_open),
-        rerun_web=rerun_web,
-    )
+    # Unlike a bridge inside a stack, the standalone one serves the web viewer.
+    parser = BlueprintConfigParser(RerunBridgeModule.blueprint(rerun_web=True))
+    if show_help:
+        typer.echo(ctx.get_help())
+        typer.echo()
+        typer.echo(parser.format_help())
+        return
+    try:
+        parsed = parser.parse(options or (), environ=os.environ, global_overrides=ctx.obj)
+    except BlueprintConfigError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    # The bridge runs in this process and reads the global config singleton,
+    # which so far only has the global options given before the command name.
+    global_config.update(**parsed.explicit_global_config_values())
+    run_bridge(**parsed.module_kwargs("rerunbridgemodule"))

@@ -41,6 +41,8 @@ pub struct ReformConfig {
     #[validate(range(min = 0.0))]
     pub max_range: f32,
     #[validate(range(min = 1))]
+    pub pre_trace_subsample: u32,
+    #[validate(range(min = 1))]
     pub ray_subsample: u32,
     #[validate(range(min = 0.0))]
     pub shadow_depth: f32,
@@ -51,6 +53,7 @@ pub struct ReformConfig {
     pub max_health: i32,
     #[validate(range(min = 0.0, max = 1.0))]
     pub graze_cos: f32,
+    pub graze_recent_frames: u32,
     #[validate(range(min = 0))]
     pub support_min: i32,
     #[validate(range(min = 0))]
@@ -105,12 +108,14 @@ impl ReformConfig {
             fine_divisor: self.fine_divisor,
             emit_fine: self.emit_fine,
             max_range: self.max_range,
+            pre_trace_subsample: self.pre_trace_subsample,
             ray_subsample: self.ray_subsample,
             shadow_depth: self.shadow_depth,
             grace_depth: self.grace_depth,
             min_health: self.min_health,
             max_health: self.max_health,
             graze_cos: self.graze_cos,
+            graze_recent_frames: self.graze_recent_frames,
             support_min: self.support_min,
             emit_every: self.emit_every,
             global_emit_every: self.global_emit_every,

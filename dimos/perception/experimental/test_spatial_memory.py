@@ -15,17 +15,15 @@
 import os
 import shutil
 import tempfile
-import time
 
+import cv2
 import numpy as np
 import pytest
-from reactivex import of, operators as ops
-from reactivex.scheduler import ThreadPoolScheduler
+from reactivex import from_iterable, of, operators as ops
 
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.spatial_perception import SpatialMemory
-from dimos.stream.video_provider import VideoProvider
+from dimos.utils.data import get_data
 
 
 @pytest.mark.self_hosted
@@ -85,121 +83,45 @@ class TestSpatialMemory:
         assert text_embedding.shape[0] == 512
         assert np.isclose(np.linalg.norm(text_embedding), 1.0, atol=1e-5)
 
-    def test_spatial_memory_processing(self, spatial_memory, temp_dir) -> None:
+    def test_spatial_memory_processing(self, spatial_memory, monkeypatch) -> None:
         """Test processing video frames and building spatial memory with CLIP embeddings."""
-        test_scheduler = ThreadPoolScheduler(max_workers=4)
-        try:
-            # Use the shared spatial_memory fixture
-            memory = spatial_memory
+        # Exercise storage and retrieval without depending on playback timing.
+        monkeypatch.setattr(spatial_memory, "min_time_threshold", 0.0)
+        video_path = get_data("assets") / "trimmed_video_office.mov"
+        capture = cv2.VideoCapture(str(video_path))
+        target_frames = 100
 
-            from dimos.utils.data import get_data
-
-            video_path = get_data("assets") / "trimmed_video_office.mov"
-            assert os.path.exists(video_path), f"Test video not found: {video_path}"
-            video_provider = VideoProvider(
-                dev_name="test_video", video_source=video_path, pool_scheduler=test_scheduler
-            )
-            video_stream = video_provider.capture_video_as_observable(realtime=False, fps=15)
-
-            # Create a frame counter for position generation
-            frame_counter = 0
-
-            # Process each video frame directly
-            def process_frame(frame):
-                nonlocal frame_counter
-
-                # Generate a unique position for this frame to ensure minimum distance threshold is met
-                pos = Pose(frame_counter * 0.5, frame_counter * 0.5, 0)
-                transform = {"position": pos, "timestamp": time.time()}
-                frame_counter += 1
-
-                # Create a dictionary with frame, position and rotation for SpatialMemory.process_stream
-                return {
+        def frames():
+            for index in range(target_frames):
+                success, frame = capture.read()
+                assert success, f"Could not read frame {index} from {video_path}"
+                yield {
                     "frame": frame,
-                    "position": transform["position"],
-                    "rotation": transform["position"],  # Using position as rotation for testing
+                    "position": Vector3(index * 0.5, index * 0.5, 0),
+                    "rotation": Vector3(),
                 }
 
-            # Create a stream that processes each frame
-            formatted_stream = video_stream.pipe(ops.map(process_frame))
+        try:
+            assert capture.isOpened(), f"Could not open test video: {video_path}"
+            results = (
+                spatial_memory.process_stream(from_iterable(frames())).pipe(ops.to_list()).run()
+            )
+        finally:
+            capture.release()
 
-            # Process the stream using SpatialMemory's built-in processing
-            print("Creating spatial memory stream...")
-            spatial_stream = memory.process_stream(formatted_stream)
+        assert len(results) == target_frames
 
-            # Stream is now created above using memory.process_stream()
-
-            # Collect results from the stream
-            results = []
-
-            frames_processed = 0
-            target_frames = 100  # Process more frames for thorough testing
-
-            def on_next(result) -> None:
-                nonlocal results, frames_processed
-                if not result:  # Skip None results
-                    return
-
-                results.append(result)
-                frames_processed += 1
-
-                # Stop processing after target frames
-                if frames_processed >= target_frames:
-                    subscription.dispose()
-
-            def on_error(error) -> None:
-                pytest.fail(f"Error in spatial stream: {error}")
-
-            def on_completed() -> None:
-                pass
-
-            # Subscribe and wait for results
-            subscription = spatial_stream.subscribe(
-                on_next=on_next, on_error=on_error, on_completed=on_completed
+        for query in ["office", "room with furniture"]:
+            results = spatial_memory.query_by_text(query, limit=2)
+            assert results, f"No results found for relevant query: {query}"
+            assert any(1 - result["distance"] > 0.22 for result in results), (
+                f"Expected at least one result with similarity > 0.22 for query '{query}'"
             )
 
-            # Wait for frames to be processed
-            timeout = 30.0  # seconds
-            start_time = time.time()
-            while frames_processed < target_frames and time.time() - start_time < timeout:
-                time.sleep(0.5)
-
-            subscription.dispose()
-
-            assert len(results) > 0, "Failed to process any frames with spatial memory"
-
-            relevant_queries = ["office", "room with furniture"]
-            irrelevant_query = "star wars"
-
-            for query in relevant_queries:
-                results = memory.query_by_text(query, limit=2)
-                print(f"\nResults for query: '{query}'")
-
-                assert len(results) > 0, f"No results found for relevant query: {query}"
-
-                similarities = [1 - r.get("distance") for r in results]
-                print(f"Similarities: {similarities}")
-
-                assert any(d > 0.22 for d in similarities), (
-                    f"Expected at least one result with similarity > 0.22 for query '{query}'"
-                )
-
-            results = memory.query_by_text(irrelevant_query, limit=2)
-            print(f"\nResults for query: '{irrelevant_query}'")
-
-            if results:
-                similarities = [1 - r.get("distance") for r in results]
-                print(f"Similarities: {similarities}")
-
-                assert all(d < 0.25 for d in similarities), (
-                    f"Expected all results to have similarity < 0.25 for irrelevant query '{irrelevant_query}'"
-                )
-
-        except Exception as e:
-            pytest.fail(f"Error in test: {e}")
-        finally:
-            video_provider.dispose_all()
-            test_scheduler.executor.shutdown(wait=True)
+        results = spatial_memory.query_by_text("star wars", limit=2)
+        assert all(1 - result["distance"] < 0.25 for result in results), (
+            "Expected all results to have similarity < 0.25 for irrelevant query 'star wars'"
+        )
 
     def test_processing_skips_failed_embedding(self, spatial_memory, monkeypatch) -> None:
         """A failed embedding must not end the stream: later frames are still stored."""

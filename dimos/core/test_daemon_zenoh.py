@@ -36,6 +36,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 _CLIENT = """
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 
@@ -60,13 +62,31 @@ def _sweep_leftover_daemons(state_dir: Path) -> None:
             time.sleep(1.0)
 
 
-def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "blueprint",
+    [
+        "demo-mcp-stress-test",
+        # Go2 replay needs go2_short.db, exceeding the standard CI LFS limit.
+        pytest.param("unitree-go2-basic", marks=pytest.mark.self_hosted),
+    ],
+)
+def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path, blueprint: str) -> None:
     env = os.environ | {
         "DIMOS_TRANSPORT": "zenoh",
         # Never touch the developer's real registry/config, even without xdist.
         "XDG_STATE_HOME": str(tmp_path / "state"),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
     }
+    cwd = None
+    if blueprint == "demo-mcp-stress-test":
+        # Exercise a dotenv-only registry path without reading/writing the
+        # developer's .env: dotenv searches upward from the imported CLI.
+        (tmp_path / "dimos").symlink_to(Path(__file__).resolve().parents[1])
+        (tmp_path / ".env").write_text(f"XDG_STATE_HOME={env.pop('XDG_STATE_HOME')}\n")
+        env.pop("PYTEST_VERSION", None)
+        env["HOME"] = str(tmp_path / "home")
+        env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), env.get("PYTHONPATH", "")])
+        cwd = tmp_path
     # File, not pipe: the daemon's forkserver inherits the CLI's stdout/stderr
     # and holds them open forever, so a pipe would block subprocess.run.
     run_log = tmp_path / "run.log"
@@ -77,17 +97,18 @@ def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path) -> None:
                     sys.executable,
                     "-m",
                     "dimos.cli.dimos",
+                    "--replay",
                     "run",
-                    "demo-mcp-stress-test",
+                    blueprint,
                     "--daemon",
-                    "--disable",
-                    "mcp-server",
+                    *(["--disable", "mcp-server"] if blueprint == "demo-mcp-stress-test" else []),
                     "--viewer",
                     "none",
                     "--n-workers",
                     "1",
                 ],
                 env=env,
+                cwd=cwd,
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=log,
@@ -98,6 +119,7 @@ def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path) -> None:
         client = subprocess.run(
             [sys.executable, "-c", _CLIENT],
             env=env,
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=60,
@@ -106,11 +128,25 @@ def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path) -> None:
             f"Coordinator/ping unreachable from an out-of-process zenoh client:\n"
             f"{client.stdout}\n{client.stderr}"
         )
+        status = subprocess.run(
+            [sys.executable, "-m", "dimos.cli.dimos", "status"],
+            env=env,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert blueprint in status.stdout, status.stdout + status.stderr
+        assert list((tmp_path / "state/dimos/runs").glob("*.json"))
     finally:
-        subprocess.run(
+        stopped = subprocess.run(
             [sys.executable, "-m", "dimos.cli.dimos", "stop"],
             env=env,
+            cwd=cwd,
             capture_output=True,
+            text=True,
             timeout=60,
         )
         _sweep_leftover_daemons(tmp_path / "state")
+        _sweep_leftover_daemons(tmp_path / "home/.local/state")
+    assert stopped.returncode == 0, stopped.stdout + stopped.stderr

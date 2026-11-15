@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from dimos.protocol.tf.tf import MultiTBuffer
@@ -49,7 +50,7 @@ _SPOT_GREEN = (0, 255, 0)
 
 # Mirrors the tf stream so a camera pose can be looked up at the moment its
 # image was captured. Module-level, not an attribute of the override objects:
-# those get pickled out to the bridge's worker and would each carry a copy.
+# those get sent to the bridge's worker and would each carry a copy.
 _tf_buffer = MultiTBuffer()
 
 
@@ -111,8 +112,8 @@ def _camera_info_pinhole(camera_info: CameraInfo, origin: Callable[[str], str]) 
     ]
 
 
-# Module-level (not closures) so the RerunBridgeModule config stays picklable
-# when it is shipped to its worker process.
+# Module-level (not closures) so the RerunBridgeModule config stays encodable
+# when it is shipped to its worker process: functions cross by import path.
 def _grayscale_info_to_pinhole(camera_info: CameraInfo) -> RerunData | None:
     return _camera_info_pinhole(camera_info, _grayscale_origin)
 
@@ -233,9 +234,9 @@ def spot_camera_layout() -> rrb.Blueprint:
 # The solution is to anchor the image to the frame *at a specific time*
 # Probably hasn't been noticed earlier because its less obvious for color image and for 60/30zh
 # we should fix this in our rerun bridge but I'm not going to do that in this spot PR
+@dataclass
 class _ImageBakedIntoAnchor:
-    def __init__(self, origin: str) -> None:
-        self.origin = origin
+    origin: str
 
     def __call__(self, image: Any) -> RerunData | None:
         anchor = _anchor_frame()

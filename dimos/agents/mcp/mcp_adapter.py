@@ -32,12 +32,16 @@ Usage::
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import uuid
 
 import requests
 
+from dimos.agents.mcp.constants import DEFAULT_MCP_TIMEOUT, DEFAULT_MCP_URL
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.run_registry import RunEntry
 
 logger = setup_logger()
 
@@ -54,12 +58,8 @@ class McpAdapter:
     """Thin JSON-RPC client for a running MCP server."""
 
     def __init__(self, url: str | None = None, timeout: int | None = None) -> None:
-        from dimos.core.global_config import global_config
-
-        if url is None:
-            url = f"http://localhost:{global_config.mcp_port}/mcp"
-        self.url = url
-        self.timeout = global_config.mcp_timeout if timeout is None else timeout
+        self.url = DEFAULT_MCP_URL if url is None else url
+        self.timeout = DEFAULT_MCP_TIMEOUT if timeout is None else timeout
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a JSON-RPC request and return the parsed response.
@@ -135,25 +135,23 @@ class McpAdapter:
         return False
 
     @classmethod
-    def from_run_entry(cls, entry: Any | None = None, timeout: int | None = None) -> McpAdapter:
-        """Create an adapter from a RunEntry, or discover the latest one.
+    def from_run_entry(
+        cls, entry: RunEntry | None = None, timeout: int | None = None
+    ) -> McpAdapter:
+        """Create an adapter from a RunEntry, or discover the newest run serving MCP.
 
         Falls back to the default URL if no entry is found.
         """
         if entry is None:
             from dimos.core.run_registry import list_runs
 
-            runs = list_runs(alive_only=True)
-            entry = runs[0] if runs else None
+            # list_runs() is oldest first.
+            entry = next((run for run in reversed(list_runs(alive_only=True)) if run.mcp_url), None)
 
-        if entry is not None and hasattr(entry, "mcp_url") and entry.mcp_url:
+        if entry is not None and entry.mcp_url:
             return cls(url=entry.mcp_url, timeout=timeout)
 
-        # Fall back to default URL using GlobalConfig port
-        from dimos.core.global_config import global_config
-
-        url = f"http://localhost:{global_config.mcp_port}/mcp"
-        return cls(url=url, timeout=timeout)
+        return cls(timeout=timeout)
 
     @staticmethod
     def _unwrap(response: dict[str, Any]) -> dict[str, Any]:

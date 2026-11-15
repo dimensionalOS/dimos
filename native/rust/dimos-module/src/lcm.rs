@@ -111,7 +111,13 @@ impl LcmTransport {
                         let callbacks = routes.lock().unwrap().get(&msg.channel).cloned();
                         if let Some(callbacks) = callbacks {
                             for cb in &callbacks {
-                                cb(&msg.data);
+                                if !cb.try_deliver(&msg.data) {
+                                    crate::warn_throttled!(
+                                        Duration::from_secs(1),
+                                        channel = %msg.channel,
+                                        "input full, message dropped"
+                                    );
+                                }
                             }
                         }
                     }

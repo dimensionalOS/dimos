@@ -16,7 +16,7 @@
 
 `CloudData` is a thin facade over `MultipartBackend` (today)
 speaks the /v1/data blob API; a sync backend plugs in beside it without touching
-callers. Every knob lives on GlobalConfig; nothing here is hardcoded."""
+callers. Transfer settings live on CloudConfig."""
 
 from __future__ import annotations
 
@@ -38,8 +38,8 @@ from typing import Any
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
+from dimos.cloud.config import CloudConfig
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
-from dimos.core.global_config import global_config
 from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
 
@@ -159,7 +159,7 @@ class MultipartBackend:
                     **create,
                     "skipped": True,
                     "preview": self._preview(create["upload_id"], path, Path(tmp))
-                    if manifest
+                    if kind_of(path) == "recording"
                     else None,
                 }
             uid = create["upload_id"]
@@ -200,19 +200,23 @@ class MultipartBackend:
                 **done,
                 "upload_id": uid,
                 "skipped": False,
-                "preview": self._preview(uid, path, Path(tmp)) if manifest else None,
+                "preview": self._preview(uid, path, Path(tmp))
+                if kind_of(path) == "recording"
+                else None,
             }
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
         """The console's spatial preview, built here while the recording is at hand.
-        Built from a copy: the store opens read-write (WAL), and the user's recording
-        must stay byte-identical to what was uploaded. Best effort: the upload stands
-        without it."""
+        A .db is built from a copy: the store opens read-write (WAL), and the user's
+        recording must stay byte-identical to what was uploaded; an .mcap opens
+        read-only. Best effort: the upload stands without it."""
         try:
-            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
-            shutil.copyfile(path, copy)
+            source, clip = path, tmp / "timelapse.mp4"
+            if path.suffix != ".mcap":
+                source = tmp / "preview.db"
+                shutil.copyfile(path, source)
             note = ""
-            with open_store(copy) as store:
+            with open_store(source) as store:
                 doc = preview.build(store)
                 try:  # the preview stands without its clip
                     video = preview.timelapse(store, clip) if doc is not None else None
@@ -280,19 +284,20 @@ class MultipartBackend:
 class CloudData:
     """Facade: resolves auth + config once, delegates to the configured backend."""
 
-    def __init__(self, backend: MultipartBackend | None = None) -> None:
+    def __init__(
+        self, backend: MultipartBackend | None = None, *, config: CloudConfig | None = None
+    ) -> None:
+        self.config = config if config is not None else CloudConfig()
         if backend is None:
-            key = global_config.dimos_api_key or api_key()
+            key = api_key(self.config)
             if not key:
                 raise RuntimeError("not logged in — run `dimos login`")
-            request = HttpCloudRequest(
-                global_config.dimos_cloud_url, key, global_config.dimos_http_timeout
-            )
+            request = HttpCloudRequest(self.config.url, key, self.config.http_timeout)
             backend = MultipartBackend(
                 DataApi(request),
-                global_config.dimos_upload_codec,
-                global_config.dimos_staging_dir,
-                global_config.dimos_upload_retries,
+                self.config.upload_codec,
+                self.config.staging_dir,
+                self.config.upload_retries,
             )
         self.backend = backend
 
@@ -310,9 +315,9 @@ class CloudData:
             raise FileNotFoundError(path)
         if _is_sidecar(path):
             raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
-        if skip_recent and time.time() - path.stat().st_mtime < global_config.dimos_upload_quiet_s:
+        if skip_recent and time.time() - path.stat().st_mtime < self.config.upload_quiet_s:
             raise RuntimeError("file still being written — skipped")
-        chunk_mb = chunk_mb if chunk_mb is not None else global_config.dimos_upload_chunk_mb
+        chunk_mb = chunk_mb if chunk_mb is not None else self.config.upload_chunk_mb
         return self.backend.upload(
             path,
             robot_id=robot_id,
@@ -387,13 +392,13 @@ def kind_of(path: Path) -> str:
 
 
 def _require_space(where: Path, need: int) -> None:
-    """Uploads and pulls stage copies beside the file (or in dimos_staging_dir); fail
+    """Uploads and pulls stage copies beside the file (or in DIMOS_CLOUD_STAGING_DIR); fail
     before starting rather than at 99% of a 100 GB transfer."""
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(
             f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage — "
-            "set dimos_staging_dir to a larger partition"
+            "set DIMOS_CLOUD_STAGING_DIR to a larger partition"
         )
 
 
@@ -424,15 +429,52 @@ def _is_sidecar(path: Path) -> bool:
     return path.name.endswith(("-shm", "-wal", "-journal"))  # SQLite's own suffixes
 
 
-def _manifest(db: Path) -> dict[str, Any] | None:
+def _sqlite_streams(db: Path) -> list[dict[str, Any]] | None:
     try:
         with contextlib.closing(
             sqlite3.connect(f"{db.absolute().as_uri()}?mode=ro", uri=True)
         ) as conn:
             rows = conn.execute("SELECT name, config FROM _streams").fetchall()
-        return {"streams": [{"name": n, **json.loads(c)} for n, c in rows]}
     except sqlite3.Error:
         return None
+    return [{"name": n, **json.loads(c)} for n, c in rows]
+
+
+def _store_streams(recording: Path) -> list[dict[str, Any]] | None:
+    """What a recording that isn't a dimos sqlite database holds, asked of the store itself."""
+    try:
+        with open_store(recording) as store:
+            streams = []
+            for name in store.list_streams():
+                try:
+                    payload = store.stream(name).data_type
+                except Exception:  # a channel whose type won't import still leaves the rest
+                    continue
+                streams.append(
+                    {
+                        "name": name,
+                        "payload_module": f"{payload.__module__}.{payload.__qualname__}"
+                        if payload
+                        else None,
+                    }
+                )
+            return streams
+    except Exception:
+        return None
+
+
+def _manifest(recording: Path) -> dict[str, Any] | None:
+    """What the recording holds: the server keeps it, and it is what says a preview can be built.
+
+    A dimos sqlite database answers from its own `_streams` table, cheaply and without importing
+    any dimos type. Anything else — an .mcap — is opened as a store and asked instead. Without
+    that an .mcap had no manifest, and no manifest meant no console preview at all, whatever the
+    preview itself could make of it.
+    """
+    streams = _sqlite_streams(recording)
+    if streams is None:
+        streams = _store_streams(recording)
+    return {"streams": streams} if streams else None
 
 
 def _plain_name(filename: str, wire: str) -> str:

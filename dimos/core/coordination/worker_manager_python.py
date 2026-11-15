@@ -210,12 +210,13 @@ class WorkerManagerPython:
 
         logger.info("Shutting down all workers...")
 
-        for worker in reversed(self._workers):
+        def _shutdown_worker(worker: PythonWorker) -> None:
             try:
                 worker.shutdown()
             except Exception as e:
                 logger.error(f"Error shutting down worker: {e}", exc_info=True)
 
+        safe_thread_map(tuple(reversed(self._workers)), _shutdown_worker)
         self._workers.clear()
 
         logger.info("All workers shut down")
@@ -252,7 +253,7 @@ class WorkerManagerPython:
         total_workers = len(self._workers)
         if total_dedicated * 2 > total_workers:
             n_to_add = total_dedicated * 2 - total_workers
-            logger.warning(
+            logger.info(
                 "Auto-scaling worker pool for dedicated modules.",
                 dedicated=total_dedicated,
                 before=total_workers,

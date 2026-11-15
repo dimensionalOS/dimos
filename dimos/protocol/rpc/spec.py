@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import threading
 from types import MappingProxyType
 from typing import Any, Protocol, overload
@@ -22,7 +22,7 @@ from typing import Any, Protocol, overload
 class Empty: ...
 
 
-Args = tuple[list, dict[str, Any]]  # type: ignore[type-arg]
+Args = tuple[Sequence[Any], dict[str, Any]]
 
 
 # module that we can inspect for RPCs

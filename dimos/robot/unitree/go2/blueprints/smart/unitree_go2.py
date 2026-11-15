@@ -19,8 +19,6 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
-from dimos.mapping.relocalization.go2.module import Go2Relocalization
-from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -40,15 +38,22 @@ from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.robot.unitree.go2.connection import GO2Connection
 
+# Live loop closure, on the premap graph given as `--map-file` when there is one.
 unitree_go2 = autoconnect(
     unitree_go2_basic,
-    VoxelGridMapper.blueprint(emit_every=5),
+    PGOVoxelMapper.blueprint(emit_every=5),
     CostMapper.blueprint(),
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2")
+
+# Persistent map: map_go2 (or `--map-file`) loaded, joined, saved as it changes, created if missing.
+unitree_go2_map = autoconnect(
+    unitree_go2,
+    PGOVoxelMapper.blueprint(emit_every=5, save_map=True, map_file="map_go2"),
+)
 
 
 class Go2MemoryConfig(RecorderConfig):
@@ -94,25 +99,10 @@ unitree_go2_markers = (
             ),
         }
     )
-    .global_config(n_workers=11, robot_model="unitree_go2")
+    .global_config(n_workers=12, robot_model="unitree_go2")
 )
-
-unitree_go2_relocalization = autoconnect(
-    unitree_go2,
-    Go2Relocalization.blueprint(),
-).global_config(n_workers=11)
 
 unitree_go2_memory = autoconnect(
     unitree_go2,
     Go2Memory.blueprint(),
-).global_config(n_workers=12)
-
-# Live loop closure: PGOVoxelMapper replaces the plain voxel mapper.
-unitree_go2_pgo = (
-    autoconnect(
-        unitree_go2,
-        PGOVoxelMapper.blueprint(emit_every=5),
-    )
-    .disabled_modules(VoxelGridMapper)
-    .global_config(n_workers=11)
-)
+).global_config(n_workers=13)

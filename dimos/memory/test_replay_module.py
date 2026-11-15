@@ -13,12 +13,15 @@
 # limitations under the License.
 
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.core.stream import Out
+from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -61,6 +64,61 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
     module.stop()
     assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
     assert [round(t, 3) for t in got["goal"]] == [1.05]
+
+
+def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    decoded = threading.Event()
+    stopping = threading.Event()
+    subscriptions_disposed = threading.Event()
+    stopped = threading.Event()
+    errors: list[Exception] = []
+    decode = ReplayStream._decode
+
+    def held_decode(self: ReplayStream[Any], obs: Any) -> Any:
+        entered.set()
+        try:
+            assert release.wait(5), "decode was not released"
+            data = decode(self, obs)
+            decoded.set()
+            return data
+        except Exception as exc:
+            errors.append(exc)
+            raise
+
+    monkeypatch.setattr(ReplayStream, "_decode", held_decode)
+    module = replay_module(recording, topics="odom")(dataset=recording, topics="odom")
+    module.register_disposable(Disposable(stopping.set))
+
+    def stop() -> None:
+        try:
+            module.stop()
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            stopped.set()
+
+    thread = threading.Thread(target=stop)
+    try:
+        module.start()
+        module.register_disposable(Disposable(subscriptions_disposed.set))
+        assert entered.wait(5), "no emission reached decode"
+        thread.start()
+        assert stopping.wait(5), "stop did not reach subscription disposal"
+        assert not subscriptions_disposed.wait(0.1), "disposal did not wait for the active decode"
+    finally:
+        release.set()
+        if thread.ident is not None:
+            thread.join(timeout=5)
+        module.stop()
+
+    assert stopped.is_set()
+    assert subscriptions_disposed.is_set()
+    assert decoded.is_set()
+    assert errors == []
+    with SqliteStore(path=recording) as store:
+        assert [obs.data.ts for obs in store.stream("odom")] == pytest.approx([1.0, 1.1, 1.2])
 
 
 def test_portless_class_gets_ports_from_dataset(recording: str) -> None:

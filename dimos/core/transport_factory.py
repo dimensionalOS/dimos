@@ -44,15 +44,20 @@ if TYPE_CHECKING:
     from dimos.protocol.rpc.spec import RPCSpec
 
 
+def zenoh_prefix(g: GlobalConfig = global_config) -> str:
+    """The zenoh key prefix of every stream: ``dimos/``, or ``dimos-domains/<domain>/``."""
+    return f"dimos-domains/{g.zenoh_domain}/" if g.zenoh_domain else "dimos/"
+
+
 def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
     """Map a logical channel name to the active backend's topic string.
 
     LCM channels are leading-slash paths (`/foo`).
 
-    Zenoh key expressions can't start with `/` and are namespaced under `dimos`.
+    Zenoh key expressions can't start with `/` and live under `zenoh_prefix`.
     """
     if g.transport == "zenoh":
-        return "dimos/" + name.lstrip("/")
+        return zenoh_prefix(g) + name.lstrip("/")
     return name if name.startswith("/") else "/" + name
 
 
@@ -99,7 +104,7 @@ def make_transport(
 ) -> PubSubTransport[Any]:
     """Construct the active-backend pub/sub transport for a logical channel.
 
-    A pickled (self-describing) transport is used when no `msg_type` is given or
+    A CBOR (self-describing) transport is used when no `msg_type` is given or
     the type has no `lcm_encode`. Otherwise a typed transport is used.
 
     A channel name alone doesn't fully define a topic: backends have per-topic
@@ -110,16 +115,16 @@ def make_transport(
     transport map. LCM (UDP multicast) has no per-topic settings.
     """
 
-    use_pickled = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
+    untyped = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
     topic = transport_topic(name, g)
     if g.transport == "zenoh":
         ztopic = ZenohTopic(
-            topic, None if use_pickled else msg_type, qos=default_zenoh_qos(name, msg_type)
+            topic, None if untyped else msg_type, qos=default_zenoh_qos(name, msg_type)
         )
-        return pZenohTransport(ztopic) if use_pickled else ZenohTransport(ztopic)
-    if use_pickled:
+        return pZenohTransport(ztopic) if untyped else ZenohTransport(ztopic)
+    if untyped:
         return pLCMTransport(topic)
-    assert msg_type is not None  # not use_pickled implies a typed msg_type
+    assert msg_type is not None  # not untyped implies a typed msg_type
     return LCMTransport(topic, msg_type)
 
 

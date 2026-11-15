@@ -23,19 +23,28 @@ Available subclasses:
 """
 
 import asyncio
+import threading
 from typing import Any
 
 from fastapi import WebSocket
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
+from dimos.teleop.webxr.controller_types import (
+    BUTTON_ALIASES,
+    Buttons,
+    Hand,
+    WebXRControllerState,
+)
 from dimos.teleop.webxr.module import WebXRTeleopConfig, WebXRTeleopModule
 from dimos.utils.logging_config import setup_logger
 
@@ -147,6 +156,12 @@ class ArmTeleopModule(WebXRTeleopModule):
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
 
+    _manipulation: ManipulationSpec | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._grip_held: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -154,6 +169,25 @@ class ArmTeleopModule(WebXRTeleopModule):
     @rpc
     def stop(self) -> None:
         super().stop()
+
+    def _on_buttons_pressed(self, pressed: Buttons) -> None:
+        """Move to the zero joint pose, off the control loop, when zero_button is pressed."""
+        button = self.config.zero_button
+        if button is not None and getattr(pressed, BUTTON_ALIASES.get(button, button)):
+            threading.Thread(target=self._move_to_zero, daemon=True).start()
+
+    def _move_to_zero(self) -> None:
+        if self._manipulation is None:
+            return
+        targets = {
+            group.id: JointState(
+                name=list(group.joint_names), position=[0.0] * len(group.joint_names)
+            )
+            for group in self._manipulation.list_planning_groups()
+        }
+        plan = self._manipulation.plan_to_joints(targets)
+        if plan.plan is not None:
+            self._manipulation.execute(blocking=False, plan_id=plan.plan.plan_id)
 
     def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
         """Return the current absolute controller pose."""
@@ -179,6 +213,14 @@ class ArmTeleopModule(WebXRTeleopModule):
         )
         self._publish_buttons(buttons)
         self._publish_gripper_commands(left, right, buttons)
+        self._log_engagement(buttons)
+
+    def _log_engagement(self, buttons: Buttons) -> None:
+        """Log a hand as engaged when its grip is pressed, and disengaged when let go."""
+        for hand, held in ((Hand.LEFT, buttons.left_grip), (Hand.RIGHT, buttons.right_grip)):
+            if held != self._grip_held[hand]:
+                self._grip_held[hand] = held
+                logger.info(f"{hand.name} {'engaged' if held else 'disengaged'}.")
 
     def _publish_gripper_commands(
         self,
@@ -314,9 +356,9 @@ class Go2TeleopModule(WebXRTeleopModule):
     def _deadzone(self, v: float) -> float:
         return 0.0 if abs(v) < self.config.deadzone else v
 
-    def _on_joy_bytes(self, data: bytes) -> bool:
+    def _on_joy(self, msg: Joy) -> bool:
         try:
-            valid = super()._on_joy_bytes(data)
+            valid = super()._on_joy(msg)
         except ValueError:
             self._publish_safe_command()
             raise

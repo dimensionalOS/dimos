@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Human-readable formatters for durations, byte sizes, and numbers."""
+"""Human-readable formatters for durations and byte sizes."""
 
 from __future__ import annotations
 
@@ -36,18 +36,6 @@ def human_duration(seconds: float, signed: bool = True) -> str:
         return f"{sign}{int(m)}m {int(s)}s"
     h, m = divmod(m, 60)
     return f"{sign}{int(h)}h {int(m)}m"
-
-
-def human_number(value: float, decimals: int = 1) -> str:
-    """Format a number with SI suffixes (k, M, G, ...).
-
-    Examples: ``"42"``, ``"1.5k"``, ``"3.2M"``.
-    """
-    for unit in ("", "k", "M", "G", "T"):
-        if abs(value) < 1000:
-            return f"{value:.{decimals}f}{unit}" if unit else f"{value:.0f}"
-        value /= 1000
-    return f"{value:.{decimals}f}P"
 
 
 def human_bytes(value: float, concise: bool = False, decimals: int = 2) -> str:

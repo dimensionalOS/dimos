@@ -22,11 +22,12 @@ readers/writers. Built-in workflows expose it through `dimos imitation`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
+from contextlib import nullcontext
 from itertools import chain
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from dimos.imitation.dataprep.core import (
     extract_episodes,
@@ -35,6 +36,8 @@ from dimos.imitation.dataprep.core import (
     inspect_episodes,
     iter_episode_samples,
 )
+from dimos.imitation.dataprep.formats.lerobot.features import canonical_feature_names
+from dimos.imitation.dataprep.formats.lerobot.publication import staged_dataset
 from dimos.imitation.dataprep.schema import (
     DataPrepConfig,
     Episode,
@@ -43,19 +46,10 @@ from dimos.imitation.dataprep.schema import (
     Sample,
     Writer,
 )
-from dimos.memory.codecs.base import codec_from_id
 from dimos.memory.store.base import Store
-from dimos.memory.store.mcap import McapStore, StreamCodec
+from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
-
-make_reader: Callable[..., Any] | None
-try:
-    from mcap.reader import make_reader as _make_reader
-except ImportError:
-    make_reader = None
-else:
-    make_reader = _make_reader
 
 logger = setup_logger()
 
@@ -66,32 +60,8 @@ def _open_recording(path: str | Path) -> Store:
     if source.suffix == ".db":
         return SqliteStore(path=str(source), must_exist=True)
     if source.suffix == ".mcap":
-        return McapStore(path=str(source), codecs=_recording_codecs(source))
+        return McapStore(path=str(source), decode_metadata=True)
     raise ValueError(f"Unsupported recording {str(source)!r}: expected a .db or .mcap artifact")
-
-
-def _recording_codecs(path: Path) -> dict[str, StreamCodec]:
-    """Load native codecs from a trusted recording's message-type metadata."""
-    if make_reader is None:
-        raise RuntimeError("MCAP recording support requires the optional learning extra")
-    with path.open("rb") as file:
-        summary = make_reader(file).get_summary()
-    codecs: dict[str, StreamCodec] = {}
-    if summary is None:
-        return codecs
-    for channel in summary.channels.values():
-        payload_type = channel.metadata.get("dimos.payload_type")
-        if payload_type and channel.message_encoding in {"jpeg", "lcm", "lz4+lcm"}:
-            try:
-                codecs[channel.topic] = cast(
-                    "StreamCodec", codec_from_id(channel.message_encoding, payload_type)
-                )
-            except (ImportError, AttributeError) as exc:
-                raise ImportError(
-                    f"Cannot decode MCAP stream {channel.topic!r}: install the package "
-                    f"providing {payload_type!r} in the dataset reader environment"
-                ) from exc
-    return codecs
 
 
 def _write_dimos_meta(
@@ -104,10 +74,10 @@ def _write_dimos_meta(
     schema alongside the dataset."""
     meta = {
         "source": config.source,
-        "observation": {k: v.model_dump() for k, v in config.observation.items()},
-        "action": {k: v.model_dump() for k, v in config.action.items()},
-        "sync": config.sync.model_dump(),
-        "quality": config.quality.model_dump(),
+        "observation": {k: v.model_dump() for k, v in config.recording_schema.observation.items()},
+        "action": {k: v.model_dump() for k, v in config.recording_schema.action.items()},
+        "sync": config.recording_schema.sync.model_dump(),
+        "quality": config.recording_schema.quality.model_dump(),
         "quality_reports": [report.model_dump() for report in quality_reports],
         "episodes": [
             {
@@ -122,6 +92,11 @@ def _write_dimos_meta(
         "format": config.output.format,
         "metadata": config.output.metadata,
     }
+    if config.output.format == "lerobot":
+        meta["feature_names"] = canonical_feature_names(
+            {key: spec.dtype for key, spec in config.recording_schema.observation.items()},
+            config.recording_schema.action.keys(),
+        )
     # Writers return a directory (lerobot) or a file (hdf5). Put the sidecar
     # *inside* a directory, or *beside* a file (`<name>.dimos_meta.json`).
     if dataset_path.is_dir():
@@ -139,7 +114,7 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
     configured format writer, and writes `dimos_meta.json`. Synchronous —
     raises on failure so the caller owns the exit code.
     """
-    shared = set(config.observation) & set(config.action)
+    shared = set(config.recording_schema.observation) & set(config.recording_schema.action)
     if shared:
         raise ValueError(
             f"observation and action share feature name(s) {sorted(shared)}; "
@@ -149,13 +124,13 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
     logger.info(
         "[dataprep] starting build  source=%s  extractor=%s  output=%s",
         config.source,
-        config.episodes.extractor,
+        config.recording_schema.episodes.extractor,
         config.output.path,
     )
     store = _open_recording(config.source)
     try:
         logger.info("[dataprep] streams in source: %s", store.list_streams())
-        all_eps = extract_episodes(store, config.episodes)
+        all_eps = extract_episodes(store, config.recording_schema.episodes)
         successful = [e for e in all_eps if e.success]
         logger.info(
             "[dataprep] episodes extracted: %d total / %d successful",
@@ -166,24 +141,30 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
         if not successful:
             raise RuntimeError(
                 f"No successful episodes extracted from {config.source!r} "
-                f"using extractor={config.episodes.extractor!r}. "
+                f"using extractor={config.recording_schema.episodes.extractor!r}. "
                 f"Available streams: {store.list_streams()}. "
                 f"For a recording with no episode_status stream, set "
                 f"extractor='ranges' with explicit (start, end) tuples."
             )
 
-        obs_keys = set(config.observation)
-        action_keys = set(config.action)
-        streams = {**config.observation, **config.action}
+        obs_keys = set(config.recording_schema.observation)
+        action_keys = set(config.recording_schema.action)
+        streams = {**config.recording_schema.observation, **config.recording_schema.action}
         logger.info(
             "[dataprep] obs streams=%s  action streams=%s  sync=%s",
             sorted(obs_keys),
             sorted(action_keys),
-            config.sync.model_dump(),
+            config.recording_schema.sync.model_dump(),
         )
         selected_writer = writer or get_writer(config.output.format)
         quality_reports = [
-            inspect_episode_quality(store, episode, streams, config.sync, config.quality)
+            inspect_episode_quality(
+                store,
+                episode,
+                streams,
+                config.recording_schema.sync,
+                config.recording_schema.quality,
+            )
             for episode in successful
         ]
         valid_ids = {report.episode_id for report in quality_reports if report.valid}
@@ -201,8 +182,11 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
         # fps drives written timestamps + video rate, so tie it to the resample
         # rate; an explicit metadata.fps still wins.
         feature_schema = {
-            **{key: value.model_dump() for key, value in config.observation.items()},
-            **{key: value.model_dump() for key, value in config.action.items()},
+            **{
+                key: value.model_dump()
+                for key, value in config.recording_schema.observation.items()
+            },
+            **{key: value.model_dump() for key, value in config.recording_schema.action.items()},
             "complementary_info.is_filled": {
                 "dtype": "bool",
                 "shape": [1],
@@ -217,9 +201,11 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                 }
             }
         )
-        if config.sync.rate_hz > 0 and "fps" not in output.metadata:
+        if config.recording_schema.sync.rate_hz > 0 and "fps" not in output.metadata:
             output = output.model_copy(
-                update={"metadata": {**output.metadata, "fps": config.sync.rate_hz}}
+                update={
+                    "metadata": {**output.metadata, "fps": config.recording_schema.sync.rate_hz}
+                }
             )
         logger.info("[dataprep] writing %s dataset to %s", config.output.format, output.path)
 
@@ -236,8 +222,8 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                     store=store,
                     episode=ep,
                     streams=streams,
-                    sync=config.sync,
-                    quality=config.quality,
+                    sync=config.recording_schema.sync,
+                    quality=config.recording_schema.quality,
                     obs_keys=obs_keys,
                     action_keys=action_keys,
                 ):
@@ -270,9 +256,18 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                 "data during each episode before changing the synchronization contract."
             ) from error
 
-        dataset_path = Path(selected_writer(chain((first_sample,), samples), output))
-        written = [e.model_copy(update={"id": f"ep_{i:06d}"}) for i, e in enumerate(produced)]
-        _write_dimos_meta(dataset_path, config, written, quality_reports)
+        # The writer also supports standalone builds. This outer transaction
+        # includes the sidecar so a failed rebuild preserves the complete dataset.
+        publication = (
+            staged_dataset(output.path) if output.format == "lerobot" else nullcontext(output.path)
+        )
+        with publication as staged_path:
+            staged_output = output.model_copy(update={"path": staged_path})
+            dataset_path = Path(selected_writer(chain((first_sample,), samples), staged_output))
+            written = [e.model_copy(update={"id": f"ep_{i:06d}"}) for i, e in enumerate(produced)]
+            _write_dimos_meta(dataset_path, config, written, quality_reports)
+        if output.format == "lerobot":
+            dataset_path = output.path
         logger.info(
             "[dataprep] succeeded — wrote %d samples across %d episodes to %s",
             samples_seen,
@@ -312,10 +307,14 @@ def inspect_recording(
             "incomplete_episodes": [episode.model_dump() for episode in incomplete],
         }
         if config is not None:
-            streams = {**config.observation, **config.action}
+            streams = {**config.recording_schema.observation, **config.recording_schema.action}
             result["quality"] = [
                 inspect_episode_quality(
-                    store, episode, streams, config.sync, config.quality
+                    store,
+                    episode,
+                    streams,
+                    config.recording_schema.sync,
+                    config.recording_schema.quality,
                 ).model_dump()
                 for episode in episodes
                 if episode.success
@@ -340,9 +339,7 @@ def inspect_dataset(path: Path | str) -> dict[str, Any]:
 
         return inspect(p)
     if (p / "meta" / "info.json").exists():
-        from dimos.imitation.dataprep.formats.lerobot.reader import (
-            inspect as inspect_lerobot_dataset,
-        )
+        from dimos.imitation.dataprep.formats.lerobot.adapter import inspect_lerobot_dataset
 
         return inspect_lerobot_dataset(p)
     raise ValueError(

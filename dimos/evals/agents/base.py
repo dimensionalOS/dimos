@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 import os
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field, field_validator, model_validator
 from typing_extensions import Self
@@ -85,7 +85,7 @@ class ModelAgentConfig(AgentConfig):
     model: str = "gpt-5.6-luna"
 
 
-class Agent(Configurable, ABC):
+class EvalSubject(Configurable, ABC):
     """The thing under evaluation, behind one interface.
 
     A subclass adapts one way of answering a case: a coding harness plus a model
@@ -98,6 +98,8 @@ class Agent(Configurable, ABC):
     """
 
     config: AgentConfig
+    requires_mcp: ClassVar[bool] = False
+    """Whether this agent drives the robot through an McpServer the environment must serve."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

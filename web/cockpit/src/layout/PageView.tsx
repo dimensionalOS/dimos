@@ -33,7 +33,7 @@ export function PageView({ manifest, page, children, ...panelProps }: {
   let content = children;
   if (spec !== undefined) {
     const Component = getPanel(spec.kind) ?? UnknownPanel;
-    content = <Component spec={spec} {...panelProps} />;
+    content = <Component key={spec.id} spec={spec} {...panelProps} />;
   }
   return <div role="tabpanel" className={styles.page}>{content}</div>;
 }

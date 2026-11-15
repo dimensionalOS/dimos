@@ -2,6 +2,27 @@
 
 Rules for writing code in dimos. These address recurring issues found in code review.
 
+## Google docstrings
+
+Use Google-style sections when a docstring needs structured information. Use
+`Args:` for callable inputs, `Returns:` or `Yields:` for results, and `Raises:` for
+errors callers need to handle. A short summary alone is enough when the signature
+and name explain the contract.
+
+Use `Attributes:` for fields of configuration models and dataclasses. Document
+units, joint ordering, constraints, and other meanings the field name does not
+express. Do not repeat the fields in a constructor `Args:` section unless a
+handwritten constructor takes different inputs.
+
+Keep types in Python annotations, rather than copying them into descriptions.
+MkDocs is configured to parse Google docstrings and show existing annotations
+when API references are added. This change does not add API reference pages.
+
+Ruff checks recognized section headings for capitalization and a trailing colon
+with `D405` and `D416`, using the Google convention. These rules do not reject
+every NumPy, reST, or other docstring format. Missing docstrings and annotations
+remain allowed by these checks; the existing mypy policy is unchanged.
+
 ## No comment banners
 
 Don't use decorative section dividers or box comments.

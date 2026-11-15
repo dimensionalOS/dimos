@@ -182,3 +182,54 @@ def test_frame_first_seen_takes_first_ts_per_frame() -> None:
         tf.append(_tf("a", 7.0), ts=7.0)
         seen = _frame_first_seen([("tf", tf, tf.first())], {"a", "b"})
     assert seen == {"a": 5.0, "b": 6.0}
+
+
+def test_render_store_attaches_entities_to_their_frame(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import rerun as rr
+
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    logged: list[tuple[str, object]] = []
+    real_log = rr.log
+    monkeypatch.setattr(
+        rr, "log", lambda path, *a, **k: (logged.append((path, a[0])), real_log(path, *a, **k))
+    )
+    with MemoryStore() as store:
+        lidar = store.stream("lidar", PointCloud2)
+        for ts in (1.0, 2.0):
+            lidar.append(
+                PointCloud2.from_numpy(np.zeros((3, 3), np.float32), frame_id="utlidar_lidar"),
+                ts=ts,
+            )
+        store.stream("tf", TFMessage).append(_tf("utlidar_lidar", 1.0), ts=1.0)
+        render_store(store, out=str(tmp_path / "c.rrd"), no_gui=True)
+
+    attaches = [a for p, a in logged if p == "lidar" and isinstance(a, rr.Transform3D)]
+    assert len(attaches) == 1  # once per frame, not per message
+    assert any(
+        p.endswith("/world/utlidar_lidar") or p.endswith("utlidar_lidar")
+        for p, _ in logged
+        if p != "lidar"
+    )
+
+
+def test_render_store_themes_meshes(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import rerun as rr
+
+    from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
+
+    logged: list[tuple[str, object]] = []
+    real_log = rr.log
+    monkeypatch.setattr(
+        rr, "log", lambda path, *a, **k: (logged.append((path, a[0])), real_log(path, *a, **k))
+    )
+    verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 1]], np.float32)
+    with MemoryStore() as store:
+        store.stream("mesh", TriangleMesh).append(
+            TriangleMesh(verts, np.array([[0, 1, 2]])), ts=1.0
+        )
+        render_store(store, out=str(tmp_path / "d.rrd"), no_gui=True)
+
+    paths = [p for p, _ in logged]
+    assert "mesh" not in paths
+    assert sum(p.startswith("world/mesh/") for p in paths) == 2  # geometry + turbo colours

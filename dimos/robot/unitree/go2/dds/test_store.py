@@ -71,6 +71,10 @@ def test_lidar(store: Go2McapStore) -> None:
     )
     assert isinstance(pc, PointCloud2)
     assert xyz.shape[1] == 3 and len(xyz) > 0
+    # The L1's per-point `time` (s after the stamp) and `ring` survive the CDR decode.
+    offsets = pc.offset_times_u32()
+    assert offsets is not None and 0 <= offsets.max() < 100_000_000
+    assert pc.lines_u8() is not None
 
 
 def test_imu(store: Go2McapStore) -> None:
@@ -110,6 +114,10 @@ def test_lowstate(store: Go2McapStore) -> None:
     assert isinstance(ls, LowState)
     assert len(ls.motor_state) == 20
     assert np.isclose(np.linalg.norm(ls.imu_state.quaternion), 1.0, atol=1e-2)
+    # MotorState is u8-first; padding it like a struct shifts every record 3 bytes,
+    # which shows up as junk modes and a battery voltage near 1 V.
+    assert all(m.mode in (0, 1) for m in ls.motor_state[:12])
+    assert 20 < ls.power_v < 35
 
 
 def test_sportmodestate(store: Go2McapStore) -> None:

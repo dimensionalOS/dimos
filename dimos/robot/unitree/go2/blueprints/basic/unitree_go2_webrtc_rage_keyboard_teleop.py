@@ -36,4 +36,4 @@ unitree_go2_webrtc_rage_keyboard_teleop = autoconnect(
     unitree_go2_webrtc_keyboard_teleop,
     GO2Connection.blueprint(mode="rage"),
     KeyboardTeleop.blueprint(linear_speed=1.25, angular_speed=1.2),
-).global_config(obstacle_avoidance=True)
+)

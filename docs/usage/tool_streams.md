@@ -12,7 +12,7 @@ the progress alongside the tool's response.
 Under the hood, tool streams turn into MCP `notifications/progress` frames bound
 to the client's `progressToken`.
 
-For the dimos-internal `McpClient`, each update lands on the agent's message
+For the dimos-internal `Agent`, each update lands on the agent's message
 queue as a `HumanMessage` tagged `[tool:<tool_name>]` so the model can reason
 about it. If a client didn't send a `progressToken` (raw curl, older tools), the
 stream falls back to `notifications/message` log frames so updates still arrive,
@@ -93,8 +93,9 @@ Constructing a tool stream from a detached thread raises `RuntimeError` with a
 message that names the invariant.
 
 - **`start_tool("x")` while another `"x"` is already open on the same module
-raises.** Two concurrent streams for the same logical tool is almost always a
-bug. If you really need to restart, call `stop_tool("x")` first.
+re-stamps that stream with the new call's capability hold** and opens no second
+one. Its eventual stop frame then releases the newer hold. That is what lets a
+background skill call `start_tool` before its "already running" return.
 
 - **`tool_update` and `stop_tool` are thread-safe.** Background workers can fire
 updates from any thread once `start_tool` has registered the channel.
@@ -120,6 +121,6 @@ frame:
 
 The `progressToken` is the one the client supplied on its `tools/call` request.
 `progress` is a per-stream monotonic counter (1, 2, 3, ...). The dimos-specific
-`_meta.tool_name` hint is used by our internal `McpClient` to route the update
+`_meta.tool_name` hint is used by our internal `Agent` to route the update
 into the agent transcript as `[tool:start_streaming] Update 1 of 3`; external
 clients that don't recognize it simply pass it through.

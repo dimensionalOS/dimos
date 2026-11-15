@@ -55,6 +55,10 @@ impl Voxel {
         self.num_pts += other.num_pts;
         self.next_fit_pts = self.next_fit_pts.min(other.next_fit_pts);
         self.time = self.time.min(other.time);
+        // the merged voxel was last hit when the more recent of the two was (frames wrap)
+        if (other.last_hit.wrapping_sub(self.last_hit) as i32) > 0 {
+            self.last_hit = other.last_hit;
+        }
         self.sum += other.sum;
         self.m2 += other.m2;
         self.normal = NormalFit::Stale;

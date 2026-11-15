@@ -5,20 +5,29 @@ selects saved episodes, aligns the configured features, and writes a dataset.
 Inspection and export use the same feature validation and alignment plan.
 The source recording remains unchanged.
 
-## Configure and inspect the source
+## Inspect and prepare a recording
 
-Start from [example_config.json](/dimos/imitation/dataprep/example_config.json). Set `source` to your
-recording, adapt the feature shapes and names to your robot, and set
-`output.format` and `output.path`. The example maps its action to measured
-`coordinator_joint_state` snapshots; a feature named `joint_target` does not
-make that data an accepted command.
+The CLI uses the `schema.json` saved in each collection directory:
 
-`inspect_recording` accepts a `DataPrepConfig` to report saved-episode quality
-before export. The CLI command `dimos dataprep inspect data/recordings/session.db`
-reports stream counts, saved/discarded episodes, and unfinished episodes. Use
-your actual path; `.mcap` recordings are supported too. The CLI's recording
-inspection does not accept a feature config, so use the Python API for quality
-inspection with the same config you will export.
+```bash
+dimos imitation inspect /path/to/recording
+dimos imitation prepare /path/to/recording --output /path/to/new-dataset
+dimos imitation inspect /path/to/new-dataset
+```
+
+Replace these paths with your recording and a new output directory. Inspection
+reports stream counts, episode status and quality using the saved schema.
+Preparation exports a LeRobot dataset. See
+[recordings and profiles](/docs/capabilities/manipulation/learning/reference/recordings-and-profiles.md)
+for the collection layout.
+
+For a standalone `.db` or `.mcap` file, `dimos imitation inspect /path/to/session.db`
+reports stream and episode counts. To assess quality or export HDF5, use the
+Python API with a `DataPrepConfig`. Start from
+[example_config.json](/dimos/imitation/dataprep/example_config.json), adapt its
+feature names and shapes, and set `source`, `output.format` and `output.path`.
+The example's action uses measured `coordinator_joint_state` snapshots. Naming
+it `joint_target` does not turn those measurements into commands.
 
 For MCAP, sample alignment uses source/publish timestamps, rather than reception
 timestamps. Recorded message-type metadata supplies codecs for supported typed
@@ -26,7 +35,7 @@ channels; the reader environment must contain their Python message classes.
 
 ## Explicit features
 
-`observation` and `action` each map a distinct output feature name to a
+`observation` and `action` each map a distinct configured feature name to a
 `FeatureSpec` in [schema.py](/dimos/imitation/dataprep/schema.py). Each feature declares:
 
 | Field | Meaning |
@@ -47,7 +56,7 @@ the isolated-runtime JSON protocol contain only the portable projection fields.
 
 Both source kinds use the same alignment planner. They describe different
 recorded meanings, not separate observation/action pipelines: a measured
-snapshot may align to a nearby future sample, while an accepted target must use
+snapshot may align to a nearby future sample, while an commanded target must use
 only prior commands and retain joints omitted by sparse updates. Both can use
 `JointState` messages, so the message class cannot choose this meaning for you.
 
@@ -58,39 +67,51 @@ declared dtype. Video features must match their declared shape and contain
 uint8 image data. Features sharing a recorded stream must agree on its
 `source_kind`.
 
-This executable example defines measured observations and accepted-command
+This executable example defines measured observations and commanded-target
 actions separately. It only validates a config; building requires the named
 recorded streams to exist.
 
 ```python no-result
 from dimos.imitation.dataprep.schema import (
-    DataPrepConfig, FeatureSpec, OutputConfig, SyncConfig,
+    RecordingSchema,
+    DataPrepConfig,
+    FeatureSpec,
+    OutputConfig,
+    SyncConfig,
 )
 
 joints = ["arm/joint1", "arm/gripper"]
 config = DataPrepConfig(
+    recording_schema=RecordingSchema(
+        observation={
+            "observation.state": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=joints,
+            ),
+        },
+        action={
+            "action": FeatureSpec(
+                stream="coordinator_joint_command",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=joints,
+                source_kind="joint_position_updates",
+            ),
+        },
+        sync=SyncConfig(anchor="observation.state", rate_hz=30, tolerance_ms=20),
+    ),
     source="data/recordings/session.db",
-    observation={
-        "observation.state": FeatureSpec(
-            stream="coordinator_joint_state", field="position",
-            dtype="float32", shape=(2,), names=joints,
-        ),
-    },
-    action={
-        "action": FeatureSpec(
-            stream="applied_joint_position_command", field="position",
-            dtype="float32", shape=(2,), names=joints,
-            source_kind="joint_position_updates",
-        ),
-    },
-    sync=SyncConfig(anchor="observation.state", rate_hz=30, tolerance_ms=20),
     output=OutputConfig(format="hdf5", path="data/datasets/session.hdf5"),
 )
-assert config.action["action"].names == joints
-assert config.action["action"].source_kind == "joint_position_updates"
+assert config.recording_schema.action["action"].names == joints
+assert config.recording_schema.action["action"].source_kind == "joint_position_updates"
 ```
 
-## Timestamps and accepted targets
+## Timestamps and commanded targets
 
 `sync.anchor` names an output feature, not a raw stream. The fixed-rate timeline
 starts at that feature's first timestamp inside the episode and stops at its
@@ -102,12 +123,12 @@ There is no implicit next-frame action shift: observation and action are both
 evaluated at the same dataset timestamp, according to their source semantics.
 
 `joint_position_updates` requires JointState position updates with unique
-configured joint names. DataPrep reads accepted command history before episode
-start, retains each joint's last accepted target when a sparse update omits it,
+configured joint names. DataPrep reads commanded command history before episode
+start, retains each joint's last commanded target when a sparse update omits it,
 and applies only updates at or before each dataset timestamp. Future commands
-and measured joint state do not initialize missing accepted targets. Every
-configured joint needs an accepted target before a complete frame can be built.
-Holding an accepted target between commands is normal command semantics and
+and measured joint state do not initialize missing commanded targets. Every
+configured joint needs an commanded target before a complete frame can be built.
+Holding an commanded target between commands is normal command semantics and
 does not mark a frame as filled.
 
 ## Episode selection and quality
@@ -131,7 +152,7 @@ before the target. Targets without an eligible source candidate are omitted
 rather than fabricated. Schema validation still applies: a selected target
 vector with missing joints rejects the episode. A frame using this fallback
 has `complementary_info.is_filled=True`; other frames have `False`. There is
-currently no age limit on this snapshot fallback or on held accepted targets.
+currently no age limit on this snapshot fallback or on held commanded targets.
 The camera-gap setting does not impose a fill-age limit.
 
 Quality reports include expected/emitted/filled frame counts, source camera
@@ -140,11 +161,22 @@ excludes invalid saved episodes and raises an error if none remain.
 
 ## Export and provenance
 
-Use `dimos dataprep build --source data/recordings/session.db --config
-dimos/imitation/dataprep/example_config.json --format hdf5 --output
-data/datasets/session.hdf5` with your recording and adapted config. The source,
-format and output flags override the corresponding config values. The Python
-API is `run_dataprep(config)` in [build.py](/dimos/imitation/dataprep/build.py).
+Use `dimos imitation prepare /path/to/recording --output /path/to/new-dataset`
+for LeRobot export from a collection directory. For a custom config or HDF5
+output, use `run_dataprep(config)` in [build.py](/dimos/imitation/dataprep/build.py):
+
+```python no-result
+from pathlib import Path
+
+from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
+from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig
+
+config = DataPrepConfig.model_validate_json(Path("/path/to/config.json").read_text())
+config.source = "/path/to/session.db"
+config.output = OutputConfig(format="hdf5", path=Path("/path/to/session.hdf5"))
+report = inspect_recording(config.source, config=config)
+dataset = run_dataprep(config)
+```
 
 HDF5 export requires `h5py` and a nonempty task label on every exported episode.
 It stores each episode under `/episodes/episode_NNNNNN`, with `observation/`,
@@ -159,7 +191,7 @@ feature schemas, synchronization and quality settings, quality reports,
 exported episode boundaries/task labels, output format and metadata.
 `fps` defaults to `sync.rate_hz` unless explicitly supplied in output metadata.
 
-`dimos dataprep inspect data/datasets/session.hdf5` inspects the built dataset.
+`dimos imitation inspect /path/to/session.hdf5` inspects the built dataset.
 LeRobot output remains supported through the format-specific writer; choosing
 a writer does not change the source feature or alignment contract.
 
@@ -174,3 +206,38 @@ memory. It decodes video values as selected frames are emitted instead of
 retaining every decoded image in the episode. Format writers have their own
 buffering behavior; the HDF5 writer currently buffers an episode before writing
 its datasets.
+
+
+## LeRobot export
+
+The isolated project delegates frame validation, video encoding, data files,
+statistics, and dataset metadata to `LeRobotDataset`. DimOS maps aligned samples
+to frames, preserves task labels and episode boundaries, and publishes the
+completed dataset only after a successful export. Failed exports preserve an
+existing dataset. Invalid frame dtype or shape is reported by LeRobot.
+
+LeRobot conversion uses fixed policy-facing feature names; no rename config is
+required. One numerical observation becomes `observation.state`, one action becomes
+`action`, and image observations become `observation.images.<name>`. Multiple
+numerical observations and actions use `observation.<name>` and `action.<name>`.
+Names already following these conventions stay unchanged. Collisions are errors.
+The same mapping applies to feature metadata and every frame. Source stream names
+and HDF5 feature names remain unchanged.
+
+`dimos_meta.json` retains the original declarations and records the computed
+`feature_names` mapping for inspection. LeRobot training reads the actual dataset
+features from `meta/info.json`, not this sidecar. Conversion does not concatenate
+multiple vectors or make every policy support multiple state or action features.
+
+Import dataset configuration and sample types from `dataprep.schema`, and
+alignment functions from `dataprep.core`. The host adapter is in
+`dataprep/formats/lerobot/adapter.py`. Native MCAP codec discovery belongs to
+`McapStore`, with `decode_metadata=True` for trusted recordings.
+
+The isolated project uses standard `test_*.py` names. CI discovers the whole
+project directory, including new tests without a workflow change:
+
+```bash
+cd native/python/lerobot
+uv run --frozen --group tests --with-editable ../../.. pytest dimos_lerobot
+```

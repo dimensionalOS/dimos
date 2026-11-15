@@ -125,6 +125,7 @@ class FakeClient:
         # Robot-opened one-shot @control frames (publish acks/nacks).
         self.control_frames: list[Msg] = []
         self.close_count = 0
+        self.keepalive_started = False
 
     async def hello(
         self,
@@ -138,6 +139,9 @@ class FakeClient:
         self.hello_token = token
         if self.hello_error is not None:
             raise self.hello_error
+
+    def start_keepalive(self) -> None:
+        self.keepalive_started = True
 
     def latest_writer(self, ch: str, *, stale_after: float = 0.5) -> FakeWriter:
         writer = FakeWriter()

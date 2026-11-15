@@ -158,12 +158,6 @@
 <polygon fill="#0b0f0f" stroke="#5c9ff0" points="454.45,-208.72 353.8,-208.72 353.8,-172.72 454.45,-172.72 454.45,-208.72"/>
 <text text-anchor="middle" x="404.12" y="-187.95" font-family="fixed" font-size="12.00" fill="#b5e4f4">SpatialMemory</text>
 </g>
-<!-- FoxgloveBridge -->
-<g id="node11" class="node">
-<title>FoxgloveBridge</title>
-<polygon fill="#0b0f0f" stroke="#5c9ff0" points="133.9,-66.72 33.25,-66.72 33.25,-30.73 133.9,-30.73 133.9,-66.72"/>
-<text text-anchor="middle" x="83.57" y="-45.95" font-family="fixed" font-size="12.00" fill="#b5e4f4">FoxgloveBridge</text>
-</g>
 <!-- GO2Connection -->
 <g id="node12" class="node">
 <title>GO2Connection</title>

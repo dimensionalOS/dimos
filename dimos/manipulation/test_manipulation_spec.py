@@ -16,7 +16,6 @@
 
 from dataclasses import fields, is_dataclass
 import inspect
-import pickle
 from types import UnionType
 from typing import get_args, get_origin, get_type_hints
 
@@ -40,6 +39,7 @@ from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.spec.utils import spec_annotation_compliance
 
 
@@ -117,7 +117,7 @@ def test_state_repr_exposes_values_for_repl_use() -> None:
     assert "0.25" in text
     assert "0.75" in text
     assert "home" in text
-    assert repr(pickle.loads(pickle.dumps(snapshot))) == text
+    assert repr(decode(encode(snapshot))) == text
 
 
 def test_plan_result_repr_summarizes_trajectory_without_dumping_points() -> None:

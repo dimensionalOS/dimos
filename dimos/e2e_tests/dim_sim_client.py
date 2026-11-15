@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -20,9 +19,12 @@ from dimos.simulation.dimsim.scene_client import SceneClient
 
 
 class DimSimClient:
+    """Scene commands for the DimSim a launched dimos runs; ``port`` is the one it was given."""
+
     _client: SceneClient | None = None
 
-    def __init__(self) -> None:
+    def __init__(self, port: int) -> None:
+        self._port = port
         self._client = None
         self._goal_request: PubSubTransport[PoseStamped] = make_transport(
             "/goal_request", PoseStamped
@@ -43,7 +45,7 @@ class DimSimClient:
     @property
     def client(self) -> SceneClient:
         if self._client is None:
-            self._client = SceneClient(port=global_config.dimsim_port)
+            self._client = SceneClient(port=self._port)
             self._client.start()
         return self._client
 

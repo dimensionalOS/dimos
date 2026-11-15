@@ -32,6 +32,8 @@ Keyboard controls:
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -53,8 +55,10 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Force X11 driver to avoid OpenGL threading issues
-os.environ["SDL_VIDEODRIVER"] = "x11"
+# Force X11 driver on Linux to avoid OpenGL threading issues. macOS has no X11
+# driver (SDL uses cocoa); forcing x11 there makes pygame.display fail outright.
+if sys.platform.startswith("linux"):
+    os.environ["SDL_VIDEODRIVER"] = "x11"
 
 # Default jog speeds
 DEFAULT_LINEAR_SPEED = 0.05  # m/s
@@ -109,6 +113,7 @@ class KeyboardTeleopModule(Module):
 
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
+    _window: subprocess.Popen[str] | None = None
     _gripper_opening: float | None = None
 
     def __init__(self, **kwargs: Any) -> None:
@@ -124,12 +129,30 @@ class KeyboardTeleopModule(Module):
             )
         super().start()
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
+        if sys.platform == "darwin":
+            # macOS only allows windows on a process's main thread, so the loop
+            # runs in a child process and this module publishes what it prints.
+            self._window = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    __name__,
+                    str(self.config.linear_speed),
+                    str(self.config.angular_speed),
+                ],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            self._thread = threading.Thread(target=self._publish_window_commands, daemon=True)
+        else:
+            self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
         self._thread.start()
 
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
+        if self._window is not None:
+            self._window.terminate()
         if self._thread is not None:
             self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
@@ -198,6 +221,17 @@ class KeyboardTeleopModule(Module):
 
         self._publish_twist()
         pygame.quit()
+
+    def _publish_window_commands(self) -> None:
+        assert self._window is not None and self._window.stdout is not None
+        for line in self._window.stdout:
+            fields = line.split()
+            if fields[:1] == ["twist"]:
+                x, y, z, roll, pitch, yaw = (float(value) for value in fields[1:])
+                self._publish_twist(linear=(x, y, z), angular=(roll, pitch, yaw))
+            elif fields[:1] == ["gripper"]:
+                self._publish_gripper_command(opening=float(fields[1]))
+        self._publish_twist()
 
     def _handle_pygame_event(
         self,
@@ -272,3 +306,30 @@ def _twist_from_keys(
             vector[axis] += delta
 
     return (linear[0], linear[1], linear[2]), (angular[0], angular[1], angular[2])
+
+
+class _WindowProcess:
+    """The macOS child: runs the module's pygame loop and prints its commands."""
+
+    _pygame_loop = KeyboardTeleopModule._pygame_loop
+    _handle_pygame_event = KeyboardTeleopModule._handle_pygame_event
+
+    def __init__(self, linear_speed: float, angular_speed: float) -> None:
+        self.config = KeyboardTeleopConfig(linear_speed=linear_speed, angular_speed=angular_speed)
+        self._stop_event = threading.Event()
+
+    def _publish_twist(
+        self,
+        *,
+        linear: TwistVector = (0.0, 0.0, 0.0),
+        angular: TwistVector = (0.0, 0.0, 0.0),
+    ) -> None:
+        print("twist", *linear, *angular, flush=True)
+
+    def _publish_gripper_command(self, *, opening: float) -> None:
+        print("gripper", opening, flush=True)
+
+
+if __name__ == "__main__":
+    # The module's loop only uses the attributes _WindowProcess provides.
+    _WindowProcess(float(sys.argv[1]), float(sys.argv[2]))._pygame_loop()  # type: ignore[misc]

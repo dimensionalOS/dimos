@@ -23,6 +23,10 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
 FrameMeta = dict[str, Any] | None
 # (payload, meta, ts); ts is None for live frames (stamped at send) and the
 # source arrival time for replays, so a stale replay is honest about its age.
@@ -35,16 +39,45 @@ def passes_rate_gate(
     now: float,
     min_interval: float,
 ) -> bool:
-    """Claim the current input when it is outside the channel's rate interval."""
+    """Claim the current input when it is outside the channel's rate interval:
+    a strict minimum spacing from the last accepted input (log throttling).
+    Not for sampling a stream: see passes_sampling_gate."""
     if now - last_input.get(ch, 0.0) < min_interval:
         return False
     last_input[ch] = now
     return True
 
 
+def passes_sampling_gate(
+    next_due: dict[str, float],
+    ch: str,
+    now: float,
+    interval: float,
+) -> bool:
+    """Sample a stream at one frame per `interval` on average, tolerant of
+    arrival jitter.
+
+    The schedule is anchored on the channel's own due times, not on the
+    accepted arrivals: a frame up to half an interval early is accepted and
+    the next due time advances from the schedule, so a 30 Hz camera through a
+    30 Hz gate passes every frame (a last-arrival anchor rejects every frame
+    that lands a few ms early and re-anchors on the late ones, which thins
+    30 fps to 20). A frame arriving late advances the schedule from its own
+    arrival, so the average never exceeds the rate; the only burst is two
+    frames half an interval apart right after a late one.
+    """
+    due = next_due.get(ch, 0.0)
+    if now < due - 0.5 * interval:
+        return False
+    next_due[ch] = max(due, now) + interval
+    return True
+
+
 # A producer sustaining more than maxHz for this many frames is pathological
-# (the agent chats at a few messages a second); beyond it the oldest go.
+# (the agent chats at a few messages a second); beyond it the oldest go,
+# logged at most once per _PACED_DROP_LOG_S per sender.
 _PACED_QUEUE_MAX = 256
+_PACED_DROP_LOG_S = 5.0
 
 
 class PacedSender:
@@ -52,20 +85,30 @@ class PacedSender:
     one per interval, in order, so an event channel (chat) never thins a
     burst. Wraps the channel's real sender."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop, interval: float, send: Sender) -> None:
+    def __init__(
+        self, loop: asyncio.AbstractEventLoop, interval: float, send: Sender, name: str = ""
+    ) -> None:
         self._loop = loop
         self._interval = interval
         self._send = send
+        self._name = name
         self._queue: deque[tuple[bytes, FrameMeta, float | None]] = deque()
         self._due = 0.0
         self._handle: asyncio.TimerHandle | None = None
         self.dropped = 0
+        self._drop_logged: dict[str, float] = {}
 
     def __call__(self, payload: bytes, meta: FrameMeta, ts: float | None) -> None:
         self._queue.append((payload, meta, ts))
         if len(self._queue) > _PACED_QUEUE_MAX:
             self._queue.popleft()
             self.dropped += 1
+            # A chat flood losing its oldest lines must not be silent.
+            if passes_rate_gate(self._drop_logged, "", self._loop.time(), _PACED_DROP_LOG_S):
+                logger.warning(
+                    f"paced channel {self._name or '?'}: {_PACED_QUEUE_MAX} frames queued, "
+                    f"dropping the oldest ({self.dropped} dropped so far)"
+                )
         if self._handle is None:
             self._drain()
 

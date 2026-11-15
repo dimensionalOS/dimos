@@ -127,7 +127,7 @@ def test_scene_flag(exported: Path) -> None:
     proc = DimosCliCall()
     xarm_table_env(scene, ("akita_black_bowl",)).configure_launch(proc)
     assert proc.simulator == "mujoco"
-    assert proc.global_args[-2:] == ["--mujoco-scene", str(scene.resolve())]
+    assert proc.extra_env["MUJOCOSIMMODULE__ADDRESS"] == str(scene.resolve())
 
 
 def test_grade_body_is_tracked_when_manifest_omits_it() -> None:

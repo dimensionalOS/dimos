@@ -19,6 +19,8 @@ from __future__ import annotations
 import traceback
 from typing import Any, TypedDict
 
+from dimos.protocol.encode.cbor import encode
+
 
 class SerializedException(TypedDict):
     """Type for serialized exception data."""
@@ -64,9 +66,18 @@ def serialize_exception(exc: Exception) -> SerializedException:
     return SerializedException(
         type_name=type(exc).__name__,
         type_module=type(exc).__module__,
-        args=exc.args,
+        args=tuple(_encodable(arg) for arg in exc.args),
         traceback=tb_str,
     )
+
+
+def _encodable(value: Any) -> Any:
+    """``value`` if it can cross the wire, else its str(); the traceback keeps the detail."""
+    try:
+        encode(value)
+    except TypeError:
+        return str(value)
+    return value
 
 
 def deserialize_exception(exc_data: SerializedException) -> Exception:
@@ -97,7 +108,9 @@ def deserialize_exception(exc_data: SerializedException) -> Exception:
                 # Add remote traceback as __cause__ for context
                 exc.__cause__ = RemoteError(type_name, type_module, args, tb_str)
                 return exc  # type: ignore[no-any-return]
-        except (AttributeError, TypeError):
+        except Exception:
+            # Args that could not cross the wire (an ExceptionGroup's members, say)
+            # arrived as strings; RemoteError below still carries the traceback.
             pass
 
     # Use RemoteError for non-builtin or if reconstruction failed

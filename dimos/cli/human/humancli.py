@@ -43,7 +43,9 @@ from textual.strip import Strip
 from textual.widgets import Input, RichLog, Static
 
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.cli import theme
+from dimos.cli.tui_args import parse_tui_args
 from dimos.core.transport_factory import apply_transport_arg, make_transport
 from dimos.utils.generic import truncate_display_string
 
@@ -67,7 +69,7 @@ JSON_THEME = Theme(
 
 # How many of a tool's most recent stream lines to show inside its box.
 RECENT_LINES = 5
-# Prefix `McpClient` puts on tool-stream updates it re-emits to `/agent`.
+# Prefix `Agent` puts on tool-stream updates it re-emits to `/agent`.
 TOOL_MSG_PREFIX = "[tool:"
 # Markers pairing a tool call with its result in the scrollback.
 TOOL_CALL_MARKER = "▶"
@@ -425,6 +427,11 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                 if text:
                     self.call_from_thread(self._tool_panels.update, name, text, "tool", timestamp)
                 return
+            # A tool's artefact (an image fed to the model as a user turn) is a
+            # tool result, not typed input.
+            if TOOL_ORIGIN_KEY in msg.additional_kwargs:
+                self.call_from_thread(self._write_tool_result, timestamp, content, None)
+                return
             self._reply_target = None
             self.call_from_thread(self._add_message, timestamp, "human", content, theme.HUMAN)
             # Keep the spinner up while this turn is processed (also re-shows
@@ -665,9 +672,10 @@ Tool calls are displayed in cyan with ▶ prefix"""
 
 
 def main() -> None:
+    args = parse_tui_args("Chat with the running DimOS agent.")
     apply_transport_arg(sys.argv)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "web":
+    if args.mode == "web":
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")

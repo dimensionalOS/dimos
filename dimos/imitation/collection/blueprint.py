@@ -12,69 +12,144 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Recording blueprints.
-
-`CollectionRecorder` (a memory Recorder) captures the obs/action/status
-streams to a SQLite session DB during the run and flushes it durably on
-shutdown. DataPrep reads that DB afterwards.
-"""
+"""Profile-based Rust recording for the xArm and Piper teleop blueprints."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+from typing import Literal, cast
 
 from dimos.constants import RECORDINGS_DIR
+from dimos.control.coordinator import ControlCoordinator
+from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.hardware.sensors.camera.realsense.camera import (
+    RealSenseCamera,
+    RealSenseCameraConfig,
+)
+from dimos.hardware.sensors.camera.spec import CameraConfig
+from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeMonitorModule
+from dimos.imitation.collection.preset_buttons import PresetButtonsModule
+from dimos.imitation.collection.profile import CollectionProfile
+from dimos.imitation.collection.recorder import collect
+from dimos.imitation.dataprep.schema import FeatureSpec
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
 )
+from dimos.teleop.webxr.headset_feed import HeadsetFeedModule
 
 
-def _session_db(robot: str) -> str:
-    """Timestamped session DB path under RECORDINGS_DIR, namespaced by robot."""
-    return str(RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S}.db")
+class _CollectionRealSenseConfig(RealSenseCameraConfig):
+    """Capture dimensions must match the shipped collection profile."""
+
+    width: Literal[848] = 848
+    height: Literal[480] = 480
 
 
-def _camera_if_real() -> tuple[Blueprint, ...]:
+class _CollectionRealSenseCamera(RealSenseCamera):
+    config: _CollectionRealSenseConfig
+
+
+def _camera_if_real(*, pointcloud: bool) -> tuple[Blueprint, ...]:
     """Real RealSense only off-sim. In `--simulation` the teleop coordinator's
     MujocoSimModule already publishes color_image on /camera/color_image, so a
-    real camera would be redundant (and fail with no device connected)."""
+    real camera would be redundant (and fail with no device connected).
+
+    Args:
+        pointcloud: Also publish the depth point cloud (for the 3D view; not recorded).
+    """
     if global_config.simulation:
         return ()
-    return (RealSenseCamera.blueprint(enable_pointcloud=False),)
+    return (
+        _CollectionRealSenseCamera.blueprint(
+            instance_name="RealSenseCamera", enable_pointcloud=pointcloud
+        ),
+    )
 
 
-# teleop_buttons / color_image / coordinator_joint_state / status are left to
-# autoconnect — each name is unique across the composed blueprint, so it
-# resolves to a stable /<name> topic shared by producer and recorder. The
-# recorder captures whatever joints are present, so the coordinator's aggregate
-# stream is its intended input (see dimos/control/README.md).
-# These generic teleoperation labels should be customized for a specific
-# training task when composing a collection blueprint.
+def _collection_components(
+    robot: str, teleop: Blueprint, *, task: str, headset_view: bool = False
+) -> tuple[Blueprint, ...]:
+    """The recorder, the episode monitor and the teleop stack with its camera.
+
+    Args:
+        headset_view: Also send the camera's picture and point cloud to the Quest
+            (the Manipulation app's VR view) and the point cloud to Desktop's 3D view,
+            and let the left controller's X and Y send the arm to its start pose and
+            home. Y then no longer discards an episode: A does. Only for an arm whose
+            teleop stack places the camera on the arm and has a safe home pose.
+    """
+    real_camera = _camera_if_real(pointcloud=headset_view)
+    # Half the feed's default grids: a tabletop at 1 cm still fits its 150,000-point
+    # map, and the map's message size, so the Quest's Wi-Fi load, stays the same.
+    bench = (
+        (
+            HeadsetFeedModule.blueprint(cloud_voxel_m=0.0075, map_voxel_m=0.01),
+            PresetButtonsModule.blueprint(),
+        )
+        if headset_view
+        else ()
+    )
+    button_map: dict[EpisodeCommand, str] = (
+        {"toggle": "B", "discard": "A"} if headset_view else {"toggle": "B", "discard": "Y"}
+    )
+    producers = autoconnect(teleop, *real_camera, *bench)
+    coordinator = next(
+        atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    joints = [joint for hardware in coordinator.kwargs["hardware"] for joint in hardware.joints]
+    camera = next(
+        atom
+        for atom in producers.active_blueprints
+        if any(
+            stream.name == "color_image" and stream.direction == "out" for stream in atom.streams
+        )
+    )
+    camera_config = cast("CameraConfig", module_config_cls(camera)(**camera.kwargs))
+    state = FeatureSpec(
+        stream="coordinator_joint_state",
+        message_type=JointState,
+        field="position",
+        dtype="float32",
+        shape=(len(joints),),
+        names=joints,
+    )
+    profile = CollectionProfile(
+        metadata={"name": f"{robot}-webxr", "robot_type": robot},
+        observations={
+            "camera": FeatureSpec(
+                stream="color_image",
+                message_type=Image,
+                field="data",
+                dtype="video",
+                shape=(camera_config.height, camera_config.width, 3),
+                names=["height", "width", "channels"],
+            ),
+            "state": state,
+        },
+        actions={"action": state.model_copy(deep=True)},
+    )
+    directory: Path = RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S_%f}"
+    return (
+        collect(profile=profile, recording=directory, format="sqlite"),
+        EpisodeMonitorModule.blueprint(task=task, button_map=button_map),
+        producers,
+    )
+
+
 learning_collect_webxr_xarm7 = autoconnect(
-    CollectionRecorder.blueprint(
-        db_path=_session_db("xarm7"),
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
-        record_tf=False,
-    ),
-    EpisodeMonitorModule.blueprint(task="Teleoperate the xArm"),
-    teleop_webxr_xarm7,
-    *_camera_if_real(),
+    *_collection_components(
+        "xarm7",
+        teleop_webxr_xarm7,
+        task="Teleoperate the xArm",
+        headset_view=True,
+    )
 )
-
-
 learning_collect_webxr_piper = autoconnect(
-    CollectionRecorder.blueprint(
-        db_path=_session_db("piper"),
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
-        record_tf=False,
-    ),
-    EpisodeMonitorModule.blueprint(task="Teleoperate the Piper"),
-    teleop_webxr_piper,
-    *_camera_if_real(),
+    *_collection_components("piper", teleop_webxr_piper, task="Teleoperate the Piper")
 )

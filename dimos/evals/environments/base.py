@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalSubject
     from dimos.evals.types import RunningEnvironment
 
 
@@ -44,7 +44,7 @@ class Environment(Configurable, ABC):
 
     @property
     def has_robot(self) -> bool:
-        """Whether this environment supplies an MCP server without agent modules."""
+        """Whether this environment supplies a live robot without agent modules."""
         return False
 
     @property
@@ -57,13 +57,16 @@ class Environment(Configurable, ABC):
         """ROBOT.md template describing the raw topics, when provides_raw_robot."""
         return None
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalSubject) -> None:
         """Check compatibility before any environment starts."""
         return None
 
     @abstractmethod
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
-        """Start the environment with the agent's additional blueprint names."""
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
+        """Start the environment with the agent's additional blueprint names.
+
+        ``requires_mcp`` asks for an McpServer, for an agent that drives the robot through one.
+        """
 
     def settle(self, budget_s: float) -> None:
         """Wait for ongoing actions to finish, within the remaining case budget."""

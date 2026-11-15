@@ -73,7 +73,7 @@ class Go2FleetConnection(GO2Connection):
         for ip in self._extra_ips:
             # The AES-128 key is per-device; a heterogeneous fleet would need a
             # per-IP mapping here rather than this shared key.
-            conn = make_connection(ip, self.config.g, aes_128_key=self.config.aes_128_key)
+            conn = make_connection(ip, self.config, aes_128_key=self.config.aes_128_key)
             conn.start()
             self._extra_connections.append(conn)
 
@@ -81,7 +81,7 @@ class Go2FleetConnection(GO2Connection):
         super().start()
         for conn in self._extra_connections:
             conn.balance_stand()
-            conn.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+            conn.set_obstacle_avoidance(self.config.obstacle_avoidance)
 
     @rpc
     def stop(self) -> None:

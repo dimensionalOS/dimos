@@ -34,7 +34,7 @@ class RuntimeChannelSpec:
     """One channel's immutable runtime contract.
 
     Compiled by cockpit() in the parent (codecs resolved from the registry,
-    ready to pickle by reference into the worker) or resolved from the
+    ready to send by reference into the worker) or resolved from the
     manifest against BUILTIN_CHANNELS at module start. The bridge's rx
     encode behavior and its tx publish decode behavior are driven entirely
     by these specs.

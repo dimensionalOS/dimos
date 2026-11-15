@@ -217,6 +217,17 @@ class Arm:
             raise MotionError("move_linear", result)
         return result
 
+    def cancel(self) -> ExecutionResult:
+        """Cancel work, raising if the stop is not confirmed. Does not clear hardware errors."""
+        result = self.rpc.cancel()
+        if result.status not in {
+            ExecutionStatus.COMPLETED,
+            ExecutionStatus.ABORTED,
+            ExecutionStatus.NO_EXECUTION,
+        }:
+            raise MotionError("cancel", result)
+        return result
+
     def set_gripper_position(self, position: float) -> CommandResult:
         """Set normalized gripper travel: 0 closed, 1 open."""
         if not math.isfinite(position) or not 0.0 <= position <= 1.0:

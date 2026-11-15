@@ -616,6 +616,30 @@ Deno.test("readRobotFrame: a malformed header yields null, frame bytes intact", 
   assertEquals(reserved, false);
 });
 
+Deno.test("readRobotFrame: session budget rejects partial payloads before retaining more bytes", async () => {
+  const frame = encodeDataFrame(
+    { ch: "@t:route", seq: 1, ts: 0, delivery: "reliable" },
+    new Uint8Array(256 * 1024),
+  );
+  let retained = 0;
+  const stream = byteStream(frame.slice());
+  try {
+    await assertRejects(
+      () =>
+        readRobotFrame(stream, true, (bytes) => {
+          if (retained + bytes > 128 * 1024) throw new Error("aggregate ingress overflow");
+          retained += bytes;
+        }),
+      Error,
+      "aggregate ingress overflow",
+    );
+    assert(retained > 0 && retained <= 128 * 1024);
+    assertEquals(stream.locked, false, "a rejected read releases the transport reader");
+  } finally {
+    await stream.cancel();
+  }
+});
+
 Deno.test("readRobotFrame: reserved classification survives an invalid header", async () => {
   // The raw ch decides reserved-ness, so a malformed @-frame still routes to
   // the control rejection path instead of passing as ordinary data.

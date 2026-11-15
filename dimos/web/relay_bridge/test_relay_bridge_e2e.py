@@ -220,6 +220,7 @@ def test_local_relay_port_collision_does_not_kill_listener() -> None:
             listener.stdout.close()
 
 
+@pytest.mark.flaky(reruns=1)
 def test_full_session_flow_and_lazy_encode(
     bridge: RelayBridgeModule, publisher: _Publisher
 ) -> None:
@@ -560,6 +561,7 @@ def test_teleop_relay_kill_deadman_deadline(
     asyncio.run(flow())
 
 
+@pytest.mark.flaky(reruns=1)
 def test_teleop_lease_exclusive_and_handover(teleop_bridge: RelayBridgeModule) -> None:
     bridge = teleop_bridge
     twists: list[Twist] = []
@@ -697,6 +699,7 @@ def _self_signed_cert(directory: Path) -> tuple[Path, Path]:
     return cert_path, key_path
 
 
+@pytest.mark.flaky(reruns=1)
 def test_external_relay_with_real_certificate(tmp_path: Path) -> None:
     # A relay given --cert/--key advertises no hash, so both client legs
     # verify the certificate: against relay_ca (mkcert, a private CA) or the

@@ -1,0 +1,126 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+import pytest
+
+from dimos.control._control_test_helpers import fake_arm_model
+from dimos.control.contract.convert import (
+    IMU_INTERFACES,
+    imu_from_values,
+    imu_to_values,
+    joint_state_from_values,
+    joint_state_to_values,
+    motor_command_from_values,
+    motor_command_to_values,
+    motor_joints,
+)
+from dimos.control.contract.keys import Interface
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+
+
+def test_a_joint_state_gives_only_the_fields_asked_for() -> None:
+    msg = JointState(name=["arm/j1", "arm/j2"], position=[0.1, 0.2], velocity=[1.0, 2.0])
+    assert joint_state_to_values(msg, (Interface.POSITION,)) == {
+        "arm/j1/position": 0.1,
+        "arm/j2/position": 0.2,
+    }
+    assert joint_state_to_values(msg, (Interface.VELOCITY, Interface.EFFORT)) == {
+        "arm/j1/velocity": 1.0,
+        "arm/j2/velocity": 2.0,
+    }
+
+
+def test_a_malformed_joint_state_raises() -> None:
+    with pytest.raises(ValueError, match="2 names but 1 position"):
+        joint_state_to_values(
+            JointState(name=["a/j1", "a/j2"], position=[0.1]), (Interface.POSITION,)
+        )
+    with pytest.raises(ValueError, match="no 'kp' field"):
+        joint_state_to_values(JointState(name=["a/j1"]), ("kp",))
+
+
+def test_a_joint_state_from_values_fills_the_fields_every_joint_has() -> None:
+    values = {"arm/j1/position": 0.1, "arm/j2/position": 0.2, "arm/j1/effort": 3.0}
+    msg = joint_state_from_values(values, ["arm/j1"], ts=5.0)
+    assert (msg.ts, msg.name, msg.position, msg.velocity, msg.effort) == (
+        5.0,
+        ["arm/j1"],
+        [0.1],
+        [],
+        [3.0],
+    )
+    assert joint_state_to_values(
+        msg, (Interface.POSITION, Interface.VELOCITY, Interface.EFFORT)
+    ) == {
+        "arm/j1/position": 0.1,
+        "arm/j1/effort": 3.0,
+    }
+    with pytest.raises(ValueError, match=r"effort is missing for \['arm/j2'\]"):
+        joint_state_from_values(values, ["arm/j1", "arm/j2"])
+    with pytest.raises(ValueError, match="no position"):
+        joint_state_from_values(values, ["arm/j3"])
+
+
+def test_motor_joints_are_the_models_moving_joints_named_in_full() -> None:
+    model = fake_arm_model(("left_knee", "right_knee"))
+    assert motor_joints(model, "g1") == ["g1/left_knee", "g1/right_knee"]
+    named = model.with_renamed_joints({"left_knee": "g1/left_knee", "right_knee": "g1/right_knee"})
+    assert motor_joints(named, "g1") == ["g1/left_knee", "g1/right_knee"]
+
+
+def test_a_motor_command_round_trips_in_joint_order() -> None:
+    joints = ["g1/a", "g1/b"]
+    msg = MotorCommandArray(q=[0.1, 0.2], dq=[0.3, 0.4], kp=[10, 20], kd=[1, 2], tau=[5, 6])
+    values = motor_command_to_values(msg, joints)
+    assert values["g1/b/position"] == 0.2
+    assert values["g1/a/effort"] == 5.0
+    assert values["g1/b/kd"] == 2.0
+    assert len(values) == 10
+    back = motor_command_from_values(values, joints, ts=7.0)
+    assert (back.q, back.dq, back.kp, back.kd, back.tau) == (msg.q, msg.dq, msg.kp, msg.kd, msg.tau)
+    assert back.timestamp == 7.0
+
+
+def test_a_motor_command_of_the_wrong_size_or_missing_values_raises() -> None:
+    with pytest.raises(ValueError, match="1 joints, expected 2"):
+        motor_command_to_values(MotorCommandArray(q=[0.1]), ["g1/a", "g1/b"])
+    with pytest.raises(ValueError, match=r"missing values \['g1/a/kd'\]"):
+        motor_command_from_values(
+            {"g1/a/position": 0, "g1/a/velocity": 0, "g1/a/effort": 0, "g1/a/kp": 0}, ["g1/a"]
+        )
+
+
+def test_an_imu_round_trips_all_ten_readings() -> None:
+    imu = Imu(
+        orientation=Quaternion(0.1, 0.2, 0.3, 0.9),
+        angular_velocity=Vector3(1.0, 2.0, 3.0),
+        linear_acceleration=Vector3(4.0, 5.0, 9.8),
+    )
+    values = imu_to_values(imu, "g1/imu")
+    assert list(values) == [f"g1/imu/{i}" for i in IMU_INTERFACES]
+    assert values["g1/imu/qw"] == 0.9
+    assert values["g1/imu/gy"] == 2.0
+    assert values["g1/imu/az"] == 9.8
+    assert imu_to_values(imu_from_values(values, "g1/imu", ts=1.0), "g1/imu") == values
+
+
+def test_from_values_names_what_is_missing() -> None:
+    with pytest.raises(ValueError, match="g1/imu/qx"):
+        imu_from_values({}, "g1/imu")

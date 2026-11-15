@@ -27,7 +27,22 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import TypeAdapter
 
-from dimos.navigation.trajectory_follower.fancy.controller import ControllerConfig
+from dimos.protocol.service.spec import BaseConfig
+
+
+class ControllerConfig(BaseConfig):
+    """The follower's tuning for one body, with no defaults so each body states its own."""
+
+    lookahead: float  # carrot distance along the path (m)
+    k_pos: float  # body-frame position error gain (1/s)
+    k_yaw: float  # yaw error gain (1/s)
+    # yaw-per-meter above this is a commanded rotation (fan), not a curve
+    fan_yaw_per_m: float
+    # while a fan segment is being executed, hold position and rotate until
+    # the yaw error drops under this (rad)
+    fan_yaw_done: float
+    # the governor is judged over the next speed_lookahead meters of path
+    speed_lookahead: float
 
 
 @dataclass(frozen=True)

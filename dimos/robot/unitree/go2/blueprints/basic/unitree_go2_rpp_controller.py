@@ -76,7 +76,7 @@ class _Go2RppCoordinator(PathFollowingCoordinator):
 
 unitree_go2_rpp_controller = (
     autoconnect(
-        GO2Connection.blueprint(),
+        GO2Connection.blueprint(obstacle_avoidance=False),
         _Go2RppCoordinator.blueprint(
             instance_name="ControlCoordinator",
             publish_joint_state=True,
@@ -94,10 +94,13 @@ unitree_go2_rpp_controller = (
                 # preempts the priority-10 follower for repositioning.
                 TaskConfig(
                     name="vel_go2",
-                    type="velocity",
+                    type="twist_velocity",
                     joint_names=_go2_joints,
                     priority=20,
-                    params={"zero_on_timeout": False},
+                    params={
+                        "axes": ["linear.x", "linear.y", "angular.z"],
+                        "zero_on_timeout": False,
+                    },
                 ),
                 # Sole set_path/set_speed responder. Self-calibrates from the
                 # vendored artifact on the first path; pursuit knobs are the
@@ -149,5 +152,4 @@ unitree_go2_rpp_controller = (
             ("go2_joints", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(obstacle_avoidance=False)
 )

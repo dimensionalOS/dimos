@@ -140,9 +140,12 @@ my_robot = ControlCoordinator.blueprint(
 
 ## Operator Hold
 
-`operator_hold` (priority 100) freezes every joint where it is and waits for a
-person. It is not an e-stop: the e-stop cuts motion; the hold keeps position
-(zero velocity for a base). Add it with `operator_hold_task()` from
+`operator_hold` (priority 100) automatically freezes every joint that accepts
+position commands at its measured position and waits for a person. Velocity-only
+joints are claimed at the same priority and commanded to zero speed, even when
+they report positions. `joint_names` optionally restricts both groups.
+It is not an e-stop: the e-stop cuts motion; the hold keeps commanding these targets.
+Add it with `operator_hold_task()` from
 `dimos/control/tasks/operator_hold_task/operator_hold_task.py`.
 
 ```python
@@ -155,10 +158,17 @@ trajectory is preempted, and a trajectory sent during the hold is accepted
 and then aborted by preemption on the next tick, so the arm stays put.
 Stopping a running policy is the policy's job, not the coordinator's.
 `get_status` answers with an `OperatorHoldStatus` (on, route, reason, start
-time, unheld joints); the task also hands the same status to whatever
-`set_status_publisher()` was given, once a second while on and once more on
-acknowledge. After acknowledge nothing resumes by itself: the next task to
-command a joint takes it.
+time, unheld joints, e-stop latched); the task also hands the same status to
+whatever `set_status_publisher()` was given, once a second while on, on every
+e-stop change and once more on acknowledge. After acknowledge nothing resumes
+by itself: the next task to command a joint takes it.
+
+The coordinator's `set_estop(True)` turns the hold on (route `failsafe`,
+reason `e-stop`). While stopped the hold commands nothing; after
+`set_estop(False)` it holds each joint where it is then, until acknowledged;
+acknowledge is refused while the e-stop is latched.
+
+Connection commands outside the model's declared bounds are rejected, not clamped.
 
 ## Control Modes
 
@@ -215,6 +225,52 @@ class PIDController:
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         pass  # Handle preemption
 ```
+
+## Connection wire and Twist inputs
+
+Shared `ConnectionModule` declarations describe named control resources and their
+supported interfaces. Commands and actuator-state feedback use `JointState` on
+independent `position_command` / `velocity_command` and `joint_state` ports.
+For a mobile base, `<robot>/base_forward`, `<robot>/base_lateral`, and
+`<robot>/base_turn` are velocity-only **BODY-frame** action axes, not odometry
+x/y/yaw coordinates. Native measured body rates may be published as velocity-only
+`JointState` feedback for these resources; leave positions empty, never fabricate
+positions or combine body rates with world positions under the same joint names.
+This is actuator-state feedback, not pose telemetry.
+
+Pose/world x/y/yaw and pose/twist telemetry belong on an independent `Odometry`
+stream. Ordinary body velocity control does not require odometry or measured yaw.
+`ConnectionSource` and the coordinator do not interpret base axes, Twist, yaw, or
+odometry and perform no frame conversion. Existing startup/readiness contracts
+are unchanged: a velocity-only joint-state reading can establish actuator readiness.
+Do not wire optional pose telemetry as a required control reading.
+`PlanarBaseDefinition` / `RobotModel.with_planar_base` still describe geometric
+x/y/yaw position coordinates for planning and limits; they do not define body
+velocity as the derivative of odometry q. Control-only axis declarations must be
+explicit and must not be used as a world-pose kinematic model.
+
+For a body-frame Twist input, explicitly configure its consuming task:
+
+```python
+TaskConfig(
+    name="drive", type="twist_velocity",
+    joint_names=["r1pro/base_forward", "r1pro/base_lateral", "r1pro/base_turn"],
+    params={"axes": ["linear.x", "linear.y", "angular.z"]},
+)
+```
+
+`TwistVelocityTask` simply maps configured components in joint order, in the
+same declared frame. Neither joint names nor hardware type imply a mapping.
+There is no `yaw_joint` parameter or implicit rotation. World-frame-consuming
+controllers must explicitly use transform helpers at their own boundary; the
+default body action path must not make a body→world→body round trip.
+Timeout emits zero without refreshing the input receipt clock, and E-stop clears
+intent so only fresh post-clear input can restart motion.
+Like `JointVelocityTask`, ordinary `stop()` only deactivates output; it does not
+latch input rejection or discard intent. New input reactivates the stream, and
+`start()` can resume an unexpired command. Use `clear()` to discard cached intent;
+E-stop is the latched stop.
+The coordinator subscribes only to task-card inputs and forwards raw messages.
 
 ## Task Cards
 
@@ -300,7 +356,7 @@ Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish the
 Choose by what the consumer is, not by how many robots the deployment has.
 
 Consumers that capture or model whatever is present read the aggregate:
-`CollectionRecorder`, `WorldBeliefRecorder`, `ManipulationModule`.
+`CollectionModule`, `WorldBeliefRecorder`, `ManipulationModule`.
 
 Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
 reads `/g1/joints`, and the go2 controller blueprints pin `go2_joints`.

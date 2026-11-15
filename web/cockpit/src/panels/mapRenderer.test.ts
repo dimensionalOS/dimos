@@ -6,10 +6,10 @@ import {
   gridBlit,
   gridToImageData,
   OCCUPANCY_PALETTE,
-  PATH_COLOR,
   posePath,
   worldToCanvas,
 } from "./mapRenderer.ts";
+import { PATH_COLOR } from "./mapPath.ts";
 
 function rgba(imageData: ImageData, x: number, y: number): number[] {
   const i = (y * imageData.width + x) * 4;

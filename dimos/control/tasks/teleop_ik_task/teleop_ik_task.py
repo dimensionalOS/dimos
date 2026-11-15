@@ -307,6 +307,8 @@ class TeleopIKTaskParams(PoseTargetIKTaskParams):
 
     bindings: list[TeleopHandBindingParams]
     solver_type: type[PinkPoseTargetSolver] = PinkPoseTargetSolver
+    # Teleop still rejects feedback past the model limits.
+    feedback_limit_tolerance: float = 1e-3
 
 
 def create_task(

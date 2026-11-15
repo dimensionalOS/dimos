@@ -28,7 +28,7 @@ from mujoco import viewer
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.core.global_config import GlobalConfig
+from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,
@@ -98,13 +98,13 @@ def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
     if is_slow:
         logger.warning(
             f"Shadowed render took {render_ms:.1f} ms of the {budget_ms:.0f} ms frame "
-            "budget; disabling shadows (force with mujoco_shadows=on)"
+            "budget; disabling shadows (force with --go2connection.mujoco.shadows=on)"
         )
     return is_slow
 
 
-def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
-    robot_name = config.robot_model or "unitree_go1"
+def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | None = None) -> None:
+    robot_name = robot_model or "unitree_go1"
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
 
@@ -122,7 +122,7 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         case _:
             z = 0
 
-    start_pos = config.mujoco_start_pos_float
+    start_pos = config.start_pos
 
     data.qpos[0:3] = [start_pos[0], start_pos[1], z]
 
@@ -133,8 +133,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
     person_position_controller = PersonPositionController(model)
 
-    if config.mujoco_shadows == "off" or (
-        config.mujoco_shadows == "auto" and _shadow_render_is_slow(model, data)
+    if config.shadows == "off" or (
+        config.shadows == "auto" and _shadow_render_is_slow(model, data)
     ):
         # Must happen before the viewer and renderers build their GL contexts:
         # the shadow framebuffer is allocated at context creation, so the
@@ -174,10 +174,10 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         video_interval = 1.0 / VIDEO_FPS
         lidar_interval = 1.0 / LIDAR_FPS
 
-        m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
-        m_viewer.cam.distance = config.mujoco_camera_position_float[3]
-        m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
-        m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
+        m_viewer.cam.lookat = config.camera_position[0:3]
+        m_viewer.cam.distance = config.camera_position[3]
+        m_viewer.cam.azimuth = config.camera_position[4]
+        m_viewer.cam.elevation = config.camera_position[5]
 
         parent_pid = os.getppid()
 
@@ -197,7 +197,7 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             step_start = time.time()
 
             # Step simulation
-            for _ in range(config.mujoco_steps_per_frame):
+            for _ in range(config.steps_per_frame):
                 mujoco.mj_step(model, data)
 
             person_position_controller.tick(data)
@@ -278,7 +278,7 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
 
 if __name__ == "__main__":
-    global_config = pickle.loads(base64.b64decode(sys.argv[1]))
+    config, robot_model = pickle.loads(base64.b64decode(sys.argv[1]))
     shm_names = json.loads(sys.argv[2])
 
     shm = ShmReader(shm_names)
@@ -292,6 +292,6 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        _run_simulation(global_config, shm)
+        _run_simulation(config, shm, robot_model)
     finally:
         shm.cleanup()

@@ -5,8 +5,8 @@
 ## The two ways DimSim runs
 
 ```bash
-# 1. dimos drives DimSim (production / agentic / CI)
-uv run dimos --simulation dimsim --dimsim-scene=apartment run unitree-go2-agentic
+# 1. dimos drives DimSim (production / agentic / CI). DimSim speaks LCM only.
+uv run dimos --simulation dimsim --transport lcm run unitree-go2-agentic --go2connection.dimsim.scene=apartment
 
 # 2. DimSim runs standalone (engine dev / scene authoring)
 cd misc/DimSim/cli
@@ -95,5 +95,5 @@ docs/       guides
   (`dimsim dev --scene <name>`) for a clean reset.
 - **First launch is slow.** Vite builds `dist/` on first run (~20s); later runs reuse it.
 - **Headless slow to boot on CI.** Use `--render cpu` and bump `--timeout 120000`.
-- **`unitree-go2-basic` hides lidar in Rerun** by override. Click the eye icon in the Rerun entity tree, or use `unitree-go2-spatial` / `unitree-go2-agentic` which leave it visible.
+- **Lidar is hidden in Rerun** by override in every blueprint built on `unitree-go2-basic` (`unitree-go2`, `unitree-go2-spatial`, `unitree-go2-agentic`, ...). Click the eye icon next to `world/lidar` in the Rerun entity tree to show it.
 - **Click-to-nav** in Rerun only works on nav-enabled blueprints (`unitree-go2-agentic` and friends). `unitree-go2-basic` has no nav stack.

@@ -25,9 +25,9 @@ from numpy.typing import NDArray
 import pytest
 from pytest import MonkeyPatch
 
-from dimos.core.global_config import GlobalConfig
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
+from dimos.simulation.mujoco.config import MujocoConfig
 
 
 class _FakeShmNames:
@@ -123,7 +123,7 @@ def _bare_connection(monkeypatch: MonkeyPatch, popen: Callable[..., Any]) -> Muj
     monkeypatch.setattr(mujoco_connection.subprocess, "Popen", popen)
     monkeypatch.setattr(mujoco_connection.atexit, "register", lambda *_args: None)
     monkeypatch.setattr(mujoco_connection, "logger", _FakeLogger())
-    return MujocoConnection(GlobalConfig())
+    return MujocoConnection(MujocoConfig())
 
 
 def test_start_drains_subprocess_output_larger_than_a_pipe(

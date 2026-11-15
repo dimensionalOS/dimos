@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Loop-closure tuning eval — runs the dimos map pipeline over all
-hk_village recordings and reports two totals to minimize:
+"""Loop-closure tuning eval over the hk_village recordings; both totals are minimized.
 
-- TOTAL_PGO_TIME (s): wall-clock for the PGO loop across all recordings
-- TOTAL_SPREAD  (m): per-recording sum of pairwise distances between
-  final-smoothed marker positions of the same marker_id (PGO-corrected),
-  summed across all marker_ids across all recordings. Smaller = tighter
-  loop closures.
+- TOTAL_PGO_TIME (s): PGO wall-clock across all recordings
+- TOTAL_SPREAD (m): sum of pairwise distances between PGO-corrected final
+  marker positions sharing a marker_id, over all markers and recordings
 
 Usage:
     uv run python -m dimos.navigation.go2.loop_closure.eval
@@ -78,7 +75,6 @@ def _eval_recording(
         graph = lidar.transform(PGO()).last().data
         pgo_time = time.perf_counter() - t0
 
-        # Marker detection pipeline: same shape as dimos map / markers_rrd.
         color_image = store.stream("color_image", Image)
         xf = DetectMarkers(
             camera_info=cam_info,
@@ -97,7 +93,7 @@ def _eval_recording(
             )
         all_dets = pipeline.transform(xf).to_list()
 
-        # Dedup by track_id → final smoothed pose per track.
+        # Last (smoothed) detection per track.
         by_track: dict[int, Observation[Any]] = {}
         for d in all_dets:
             by_track[d.data.track_id] = d
@@ -133,9 +129,7 @@ def main(
 ) -> None:
     names = datasets or DEFAULT_DATASETS
 
-    # Sequential: PGO (Open3D) and marker detection (cv2/numpy) already
-    # saturate available cores internally via OpenMP — process-level
-    # parallelism only adds contention.
+    # Sequential: PGO and marker detection already saturate the cores.
     wall_start = time.perf_counter()
     results: dict[str, tuple[float, float]] = {}
     for name in names:
@@ -155,7 +149,7 @@ def main(
     print()
     print(f"{'recording':<14}  {'pgo_time_s':>10}  {'spread_m':>10}")
     print("-" * 40)
-    for name in names:  # original order
+    for name in names:
         pgo_time, spread = results[name]
         print(f"{name:<14}  {pgo_time:>10.2f}  {spread:>10.3f}")
         total_pgo += pgo_time

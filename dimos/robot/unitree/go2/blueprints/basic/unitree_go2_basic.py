@@ -57,7 +57,7 @@ def _convert_global_map(grid: PointCloud2) -> Archetype:
 def _convert_navigation_costmap(grid: OccupancyGrid) -> Archetype:
     return grid.to_rerun(
         colormap="Accent",
-        z_offset=0.015,
+        z_offset=0.05,
         opacity=0.2,
         background="#484981",
     )
@@ -141,6 +141,7 @@ def _go2_rerun_blueprint() -> Blueprint:
                 ),
                 overrides={
                     "world/lidar": rrb.EntityBehavior(visible=False),
+                    "world/pgo": rrb.EntityBehavior(visible=False),
                 },
             ),
             column_shares=[1, 2],
@@ -162,11 +163,10 @@ rerun_config: dict[str, Any] = {
         "world/odom": _plot_odom,
         "world/cmd_vel": _plot_cmd_vel,
         "world/global_map": _convert_global_map,
-        "world/merged_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
         "world/pgo_keyframes": _convert_pgo_keyframes,
         "world/pgo_loops": _convert_pgo_loops,
-        # partial, not a closure: this config is pickled to the viewer's worker
+        # partial, not a closure: this config is sent by reference to the viewer's worker
         "world/mapper_frame_ms": partial(_plot_telemetry, "mapper_frame_ms"),
         "world/pgo_loop_ms": partial(_plot_telemetry, "pgo_loop_ms"),
         "world/pgo_rebuild_ms": partial(_plot_telemetry, "pgo_rebuild_ms"),

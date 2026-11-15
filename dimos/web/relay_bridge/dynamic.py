@@ -12,22 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pickle-safe dynamically generated RelayBridgeModule subclasses.
+"""Dynamically generated RelayBridgeModule subclasses that survive the worker pipe.
 
 DimOS discovers a module's streams from class annotations and ships the class
-object itself into forkserver workers (DeployModuleRequest) and back out again
-(Actor.__reduce__), all over standard pickle. A class built at runtime has no
-importable module attribute for pickle's save-by-reference path, so
-`make_relay_bridge_class` builds classes through a dedicated metaclass
-registered with copyreg: pickle consults copyreg's dispatch table before its
-class special-case, serializes the canonical port specs, and reconstructs
-through the memoized factory on load. A metaclass `__reduce__` would not work;
-pickle never calls it for class objects.
+object itself into forkserver workers (DeployModuleRequest) over the CBOR
+codec, which sends classes by importable name. A class built at runtime has no
+such name, so `make_relay_bridge_class` builds classes through a dedicated
+metaclass whose `cbor_encode`/`cbor_decode` serialize the canonical port specs
+and reconstruct through the memoized factory on the far side.
 """
 
 from abc import ABCMeta
-from collections.abc import Callable, Sequence
-import copyreg
+from collections.abc import Sequence
 from dataclasses import dataclass
 import hashlib
 import keyword
@@ -60,11 +56,21 @@ class _DynamicRelayBridgeMeta(ABCMeta):
     """Marker metaclass for generated bridge classes.
 
     Derives from ABCMeta because that is Module's metaclass (a bare `type`
-    metaclass would conflict). copyreg dispatches on the exact metaclass, so
-    ordinary ABCMeta classes are unaffected by the reducer below.
+    metaclass would conflict). The CBOR codec looks for the hooks on a class
+    object's metaclass, so ordinary ABCMeta classes are unaffected.
     """
 
     dynamic_port_specs: tuple[DynamicPortSpec, ...]
+
+    def cbor_encode(cls) -> tuple[tuple[str, type[Any], str], ...]:
+        # Plain field tuples, not DynamicPortSpec instances: instances would pin
+        # the payload to one generation of the dataclass, so re-encoding a class
+        # that survived an importlib.reload of this module would fail.
+        return _spec_fields(cls.dynamic_port_specs)
+
+    @classmethod
+    def cbor_decode(cls, fields: Sequence[Sequence[Any]]) -> type[RelayBridgeModule]:
+        return _rebuild_relay_bridge_class(tuple(tuple(f) for f in fields))
 
 
 _CLASS_NAME_PREFIX = "DynamicRelayBridge_"
@@ -79,7 +85,7 @@ _RESERVED_NAMES: frozenset[str] = (
     | {"ref", "rpc", "encoded"}
 )
 
-# Process-global on purpose: repeated unpickles of the same class must return
+# Process-global on purpose: repeated decodes of the same class must return
 # the identical class object, because blueprints and the coordinator compare
 # module classes with `is`.
 _memo: dict[tuple[DynamicPortSpec, ...], type[RelayBridgeModule]] = {}
@@ -87,7 +93,7 @@ _memo_lock = threading.Lock()
 
 
 def _resolves_by_reference(message_type: type[Any]) -> bool:
-    """Mirror pickle's save-by-reference lookup for a class."""
+    """Mirror the CBOR codec's by-reference lookup for a class."""
     obj: Any = sys.modules.get(message_type.__module__)
     for part in message_type.__qualname__.split("."):
         obj = getattr(obj, part, None)
@@ -142,12 +148,12 @@ def _validate_specs(specs: tuple[DynamicPortSpec, ...]) -> None:
         if "<locals>" in message_type.__qualname__:
             raise ValueError(
                 f"stream {stream!r}: message type {message_type.__qualname__} is defined "
-                "inside a function; move it to module level so it can be pickled by reference"
+                "inside a function; move it to module level so it can be sent by reference"
             )
         if not _resolves_by_reference(message_type):
             raise ValueError(
                 f"stream {stream!r}: message type {message_type.__module__}."
-                f"{message_type.__qualname__} cannot be pickled by reference; it must be "
+                f"{message_type.__qualname__} cannot be sent by reference; it must be "
                 "importable under its own module and qualified name"
             )
     seen: set[str] = set()
@@ -238,22 +244,3 @@ def _rebuild_relay_bridge_class(
             for stream, message_type, direction in fields
         ]
     )
-
-
-def _reduce_dynamic_class(
-    cls: _DynamicRelayBridgeMeta,
-) -> tuple[Callable[..., Any], tuple[tuple[tuple[str, type[Any], str], ...]]]:
-    # Plain field tuples, not DynamicPortSpec instances: instances would pin
-    # the pickle to one generation of the dataclass, so re-pickling a class
-    # that survived an importlib.reload of this module would fail with
-    # "it's not the same object as ...DynamicPortSpec".
-    return (_rebuild_relay_bridge_class, (_spec_fields(cls.dynamic_port_specs),))
-
-
-# Registered at import time on purpose: the reducer must be active in every
-# process that pickles a generated class (workers re-pickle it through
-# Actor.__reduce__), and unpickling resolves _rebuild_relay_bridge_class by
-# importing this module, so the import itself activates the reducer wherever
-# the class travels. copyreg.pickle overwrites the same dispatch-table slot,
-# making repeated registration (including importlib.reload) idempotent.
-copyreg.pickle(_DynamicRelayBridgeMeta, _reduce_dynamic_class)

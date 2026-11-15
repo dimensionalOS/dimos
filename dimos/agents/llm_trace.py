@@ -41,7 +41,7 @@ logger = setup_logger()
 
 REQUEST_SUFFIX = "-request.json"
 RESPONSE_SUFFIX = "-response.json"
-_DROPPED_HEADERS = {"authorization", "x-api-key", "openai-organization", "cookie"}
+_DROPPED_HEADERS = {"authorization", "x-api-key", "x-goog-api-key", "openai-organization", "cookie"}
 
 
 def _next_seq(trace_dir: Path) -> int:
@@ -140,6 +140,16 @@ def list_llm_trace_pairs(trace_dir: Path) -> list[tuple[int, Path, Path]]:
         if seq.isdigit() and response.is_file():
             pairs.append((int(seq), request, response))
     return sorted(pairs)
+
+
+def last_request_unanswered(trace_dir: Path) -> bool:
+    """Whether the newest request has no response: the call failed before one arrived."""
+    seqs = [
+        int(seq)
+        for request in trace_dir.glob(f"*{REQUEST_SUFFIX}")
+        if (seq := request.name.removesuffix(REQUEST_SUFFIX)).isdigit()
+    ]
+    return bool(seqs) and not response_path(trace_dir, max(seqs)).is_file()
 
 
 def latest_pair(trace_dir: Path, after: int) -> tuple[int, Path, Path] | None:

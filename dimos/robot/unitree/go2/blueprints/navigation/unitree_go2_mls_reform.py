@@ -29,13 +29,14 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.reform_module import ReformRayTracingVoxelMap
+from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.global_planner.mls_planner.mls_reform_planner_native import (
     MLSReformPlannerNative,
 )
 from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import GscPGO
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
+from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
@@ -91,9 +92,8 @@ def _reform_nav(odom_frame: str) -> Blueprint:
                 (MLSReformPlannerNative, "global_map", "global_map_unused"),
             ]
         ),
-        BasicPathFollower.blueprint(
-            world_frame="map", heading_gain=1.0, lookahead_time_s=2.5, min_lookahead_m=1.2
-        ),
+        # Follows the map-frame path: it reads the pose on the path's own frame.
+        TrajectoryFollowerNative.blueprint(embodiment=GO2),
         MovementManager.blueprint(),
     )
 

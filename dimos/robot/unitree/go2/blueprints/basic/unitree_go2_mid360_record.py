@@ -91,7 +91,7 @@ if _RECORD_PCAP:
 
 if __name__ == "__main__":
     parsed_config = BlueprintConfigParser(unitree_go2_mid360_record).parse(
-        global_overrides={"obstacle_avoidance": False}
+        overrides={"go2connection": {"obstacle_avoidance": False}}
     )
     coordinator = ModuleCoordinator.build(unitree_go2_mid360_record, parsed_config)
     coordinator.loop()

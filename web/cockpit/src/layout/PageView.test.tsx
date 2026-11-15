@@ -82,6 +82,15 @@ describe("PageView", () => {
     expect(grid()).not.toBeNull();
   });
 
+  it("unmounts the previous page when switching between panels of the same kind", () => {
+    const m = manifest(["first", "second"], [panel("first"), panel("second")]);
+    render(m, "first");
+    const first = container.querySelector('[data-testid="panel-first"]')!;
+    render(m, "second");
+    expect(first.isConnected).toBe(false);
+    expect(container.querySelector('[data-testid="panel-second"]')).not.toBe(first);
+  });
+
   it("renders a page whose panel id is overview", () => {
     render(manifest(["overview"], [panel("overview")]), "overview");
     expect(grid()).toBeNull();
