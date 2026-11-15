@@ -43,7 +43,13 @@ pub struct LazyState {
     pub(crate) pending: BTreeSet<(Version, (i32, i32))>,
     /// Submeshes a region update's lookup found around it, migrated before the pending ones.
     pub(crate) urgent: BTreeSet<(Version, (i32, i32))>,
+    /// Per stale submesh, the frame it was built in and its cells (with their z now) by the column they stand in now:
+    /// a stale cell only moves when a closure starts a frame, so a stitch reads the columns it needs, not the submesh.
+    carried: AHashMap<(Version, (i32, i32)), (Version, CarriedCells)>,
 }
+
+/// Stale cells by the current-frame column they stand in, with their z there.
+type CarriedCells = BTreeMap<(i32, i32), Vec<(CellId, f32)>>;
 
 fn center(k: VoxelKey, voxel_size: f32) -> [f64; 3] {
     let v = voxel_size as f64;
@@ -101,6 +107,46 @@ impl LazyState {
 }
 
 impl LazyState {
+    /// The stale submesh's cells by the column they stand in now, built once per frame. Cells it has lost since stay
+    /// listed, so a reader checks each is still live and in the layer.
+    fn carried_index(
+        &mut self,
+        key: (Version, (i32, i32)),
+        frame: Version,
+        cells: &SurfaceCells,
+        voxel_size: f32,
+    ) -> &CarriedCells {
+        let fresh = self.carried.get(&key).is_some_and(|(f, _)| *f == frame);
+        if !fresh {
+            let mut index = CarriedCells::new();
+            let (layer, _) = key;
+            if let (Some(sub), Some(frozen)) =
+                (self.layers.submeshes.get(&key), self.layers.stale.get(&layer))
+            {
+                // One carry per anchor, not per cell.
+                let mut carries: AHashMap<u32, Pose> = AHashMap::new();
+                for &id in &sub.cells {
+                    if !cells.is_live(id) || cells.layer(id) != layer {
+                        continue;
+                    }
+                    let Some(el) = self.layers.cells.get(&id) else {
+                        continue;
+                    };
+                    let carry = carries
+                        .entry(el.anchor)
+                        .or_insert_with(|| frozen.carry(el.anchor, &self.table));
+                    let (x, y, z) = cells.point(id, voxel_size);
+                    let p = carry.apply([x as f64, y as f64, z as f64]);
+                    let p = (p[0] as f32, p[1] as f32, p[2] as f32);
+                    let k = voxelize(p, voxel_size);
+                    index.entry((k.0, k.1)).or_default().push((id, p.2));
+                }
+            }
+            self.carried.insert(key, (frame, index));
+        }
+        &self.carried[&key].1
+    }
+
     /// Where a stale cell is now, carried by its anchor; None for a current-layer cell.
     pub(crate) fn stale_point(&self, cells: &SurfaceCells, id: CellId) -> Option<(f32, f32, f32)> {
         let layer = cells.layer(id);
@@ -154,6 +200,7 @@ impl Planner {
             voxel_size: config.voxel_size,
             pending: BTreeSet::new(),
             urgent: BTreeSet::new(),
+            carried: AHashMap::new(),
         });
         for record in records {
             lazy.table.add(record);
@@ -610,10 +657,18 @@ impl Planner {
     /// Link current-layer cells in the columns around `keys` to stale cells beside them now, so a patch that meets
     /// an older pass it never shared a link with stays connected; returns the keys of the current cells it linked.
     pub(super) fn stitch_stale(&mut self, keys: &[VoxelKey], config: &Config) -> Vec<VoxelKey> {
-        let Some(lazy) = self.lazy.as_ref() else {
+        let Some(lazy) = self.lazy.as_mut() else {
             return Vec::new();
         };
-        if keys.is_empty() || lazy.layers.submeshes.range(..(lazy.layers.current, (i32::MIN, i32::MIN))).next().is_none() {
+        let current = lazy.layers.current;
+        if keys.is_empty()
+            || lazy
+                .layers
+                .submeshes
+                .range(..(current, (i32::MIN, i32::MIN)))
+                .next()
+                .is_none()
+        {
             return Vec::new();
         }
         let vs = config.voxel_size;
@@ -649,33 +704,30 @@ impl Planner {
         if found.is_empty() {
             return Vec::new();
         }
+        self.clock.count("stitch_submeshes", found.len());
         let cells = &self.graph.cells;
-        // One carry per layer and anchor, not per cell.
-        let mut carries: AHashMap<(Version, u32), Pose> = AHashMap::new();
+        let frame = lazy.table.frame_version();
         let mut stale_at: BTreeMap<(i32, i32), Vec<(CellId, f32)>> = BTreeMap::new();
+        let mut taken: ahash::AHashSet<CellId> = ahash::AHashSet::new();
+        let mut scanned = 0usize;
         for key @ &(layer, _) in &found {
-            let (Some(sub), Some(frozen)) = (lazy.layers.submeshes.get(key), lazy.layers.stale.get(&layer)) else {
-                continue;
-            };
-            for &id in &sub.cells {
-                if !cells.is_live(id) || cells.layer(id) != layer {
-                    continue;
-                }
-                let Some(el) = lazy.layers.cells.get(&id) else {
-                    continue;
-                };
-                let carry = carries
-                    .entry((layer, el.anchor))
-                    .or_insert_with(|| frozen.carry(el.anchor, &lazy.table));
-                let (x, y, z) = cells.point(id, vs);
-                let p = carry.apply([x as f64, y as f64, z as f64]);
-                let p = (p[0] as f32, p[1] as f32, p[2] as f32);
-                let k = voxelize(p, vs);
-                if reach.contains(&(k.0, k.1)) {
-                    stale_at.entry((k.0, k.1)).or_default().push((id, p.2));
+            let index = lazy.carried_index(*key, frame, cells, vs);
+            // Each block's columns, one past the reach, by the column a stale cell stands in now.
+            for &(x0, x1, y0, y1) in blocks.values() {
+                for (&(x, y), at) in index.range((x0 - 2, i32::MIN)..=(x1 + 2, i32::MAX)) {
+                    if y < y0 - 2 || y > y1 + 2 || !reach.contains(&(x, y)) {
+                        continue;
+                    }
+                    for &(id, z) in at {
+                        scanned += 1;
+                        if cells.is_live(id) && cells.layer(id) == layer && taken.insert(id) {
+                            stale_at.entry((x, y)).or_default().push((id, z));
+                        }
+                    }
                 }
             }
         }
+        self.clock.count("stitch_scanned", scanned);
         let max_rise = config.step_threshold_m + config.plane_noise_m;
         let mut links: Vec<(CellId, CellId, f32)> = Vec::new();
         for &(x, y) in &columns {
@@ -737,10 +789,28 @@ impl Planner {
         };
         let outer = self.clock.enter("pending");
         let stage = Instant::now();
+        let caps = self.map_capacities();
         let migrated = self.migrate(budget, config);
         self.clock.add("migrate", stage);
+        let grown = caps
+            .iter()
+            .zip(self.map_capacities())
+            .filter(|(a, b)| **a != *b)
+            .count();
+        self.clock.count("maps_grown", grown);
         self.repair_migrated(migrated, config);
         self.clock.enter(outer);
+    }
+
+    /// Capacities of the maps a migration grows, to tell a rehash from the work itself.
+    fn map_capacities(&self) -> [usize; 4] {
+        let lazy = self.lazy.as_ref();
+        [
+            self.planes.capacity(),
+            self.graph.surface_lookup.capacity(),
+            lazy.map_or(0, |l| l.layers.voxels.capacity()),
+            lazy.map_or(0, |l| l.layers.cells.capacity()),
+        ]
     }
 
     /// Move up to `budget` elements of the queued submeshes into the current layer by their anchors' poses then and now.
@@ -774,6 +844,7 @@ impl Planner {
             let (strip_voxels, strip_cells) = take_strip(&mut sub, left, &self.graph.cells);
             left -= (strip_voxels.len() + strip_cells.len()).min(left);
             if sub.is_empty() {
+                lazy.carried.remove(&key);
                 if let Some(layers) = lazy.layers.tiles.get_mut(&tile) {
                     layers.remove(&layer);
                     if layers.is_empty() {
