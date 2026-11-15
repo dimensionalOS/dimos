@@ -214,6 +214,16 @@ impl Toy {
 
     /// Connected groups of live cells over their links, any layer.
     fn components(&self) -> usize {
+        self.component_sizes().len()
+    }
+
+    /// Connected groups of more than one cell: surfaces, not the odd lone cell a cylinder's edge leaves.
+    fn surfaces(&self) -> usize {
+        self.component_sizes().iter().filter(|&&n| n > 1).count()
+    }
+
+    /// The sizes of the connected groups of live cells, largest first.
+    fn component_sizes(&self) -> Vec<usize> {
         let cells = self.cells();
         let ids: Vec<CellId> = cells.ids().collect();
         let mut parent: Vec<u32> = (0..cells.slot_capacity() as u32).collect();
@@ -230,10 +240,13 @@ impl Toy {
                 parent[a as usize] = b;
             }
         }
-        ids.iter()
-            .map(|&id| find(&mut parent, id))
-            .collect::<BTreeSet<_>>()
-            .len()
+        let mut sizes: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+        for &id in &ids {
+            *sizes.entry(find(&mut parent, id)).or_default() += 1;
+        }
+        let mut out: Vec<usize> = sizes.into_values().collect();
+        out.sort_unstable_by(|a, b| b.cmp(a));
+        out
     }
 
     /// Links between cells in different layers.
@@ -666,5 +679,198 @@ fn a_cloud_from_an_older_layer_is_carried_and_one_from_a_future_closure_is_held(
     assert!(
         toy.cells().id(voxelize((9.05, 2.45, 0.05), vs)).is_none(),
         "nothing at the old frame's place"
+    );
+}
+
+/// Live links whose ends sit more than `factor` voxels apart where they are now.
+fn stretched_links(toy: &Toy, factor: f64) -> usize {
+    let vs = toy.cfg.voxel_size as f64;
+    let cells = toy.cells();
+    cells
+        .ids()
+        .map(|id| {
+            let a = toy.point_now(id);
+            cells
+                .neighbors(id)
+                .iter()
+                .filter(|e| {
+                    let b = toy.point_now(e.dest);
+                    (a[0] - b[0]).hypot(a[1] - b[1]) > factor * vs
+                })
+                .count()
+        })
+        .sum()
+}
+
+#[test]
+fn a_bending_closure_through_a_mixed_anchor_surface_stretches_links_without_splitting_it() {
+    // A 16 m corridor scanned every meter, so each stretch of floor is anchored to whichever keyframe first saw it.
+    let mut toy = Toy::new(|x, y| (0.0..16.0).contains(&x) && (0.0..2.0).contains(&y));
+    for k in 0..16 {
+        let x = 0.5 + k as f64;
+        toy.scan_at(pose(x, 1.0, 0.0), pose(x, 1.0, 0.0), (x as f32, 1.0));
+    }
+    let anchors: BTreeSet<u32> = {
+        let lazy = toy.planner.lazy.as_ref().unwrap();
+        toy.cells()
+            .ids()
+            .filter_map(|id| lazy.layers.cells.get(&id).map(|e| e.anchor))
+            .collect()
+    };
+    assert!(anchors.len() > 4, "one surface, many anchors");
+    assert_eq!(toy.surfaces(), 1, "{:?}", toy.component_sizes());
+    // A closure that bends the corridor at its middle: the far half's keyframes slide 35 cm sideways, the near half's stay.
+    for kf in toy.keyframes.iter_mut().skip(8) {
+        kf.1 = pose(0.0, 0.35, 0.0).compose(&kf.1);
+    }
+    assert!(toy.close_to_truth(&[]).new_layer);
+    // Reform around the bend only: neighbors with different anchors land apart.
+    toy.planner.reform_around((8.0, 1.0, 0.1), &toy.cfg);
+    toy.dump("toy4_mixed_anchors");
+    assert_eq!(toy.surfaces(), 1, "stretched links keep one surface");
+    assert!(
+        toy.cross_layer_links() > 0,
+        "links between the reformed bend and the stale ends"
+    );
+    assert!(
+        stretched_links(&toy, 1.5) > 0,
+        "links across the bend stretch past neighbors"
+    );
+    let plan = toy
+        .planner
+        .plan_or_truncate((1.0, 1.0, 0.1), (15.0, 1.35, 0.1), &toy.cfg);
+    assert!(
+        matches!(plan, Plan::Full(_)),
+        "a path end to end across the stretched links, got {plan:?}"
+    );
+}
+
+#[test]
+fn a_lookup_after_two_closures_finds_what_is_stale_since_each() {
+    // Out along a 20 m corridor and back with odometry 3 m off; a first closure at the far end fixes that, then odometry slips 1 m more on the way back and a second closure halfway fixes it.
+    let mut toy = Toy::new(|x, y| (0.0..20.0).contains(&x) && (0.0..2.0).contains(&y));
+    use std::f64::consts::PI;
+    for i in 0..10 {
+        let x = 1.0 + 2.0 * i as f64;
+        toy.scan_at(pose(x, 1.0, 0.0), pose(x, 1.0, 0.0), (x as f32, 1.0));
+    }
+    for x in [19.0, 17.0] {
+        toy.scan_at(pose(x, 1.0, PI), pose(x, 4.0, PI), (x as f32, 1.0));
+    }
+    assert!(toy.close_to_truth(&[(9, 10)]).new_layer);
+    let first = toy.planner.reform_version();
+    for x in [15.0, 13.0, 11.0, 9.0] {
+        toy.scan_at(pose(x, 1.0, PI), pose(x, 5.0, PI), (x as f32, 1.0));
+    }
+    assert!(toy.close_to_truth(&[(4, 15)]).new_layer);
+    assert!(toy.planner.reform_version() > first);
+    // In the second closure's frame, a lookup over the corridor finds the start, stale since version 0, and the way back at x 13..15, stale since the first closure.
+    let corridor = RegionBounds {
+        origin_x: 10.0,
+        origin_y: 1.0,
+        radius: 10.0,
+        z_min: -0.5,
+        z_max: 1.0,
+    };
+    let layers: BTreeSet<u32> = toy
+        .lookup_rect(&corridor)
+        .iter()
+        .map(|&(layer, _)| layer)
+        .collect();
+    assert!(layers.contains(&0), "submeshes stale since version 0");
+    assert!(
+        layers.contains(&first),
+        "submeshes stale since the first closure"
+    );
+    toy.found.clear();
+    for x in [1.0, 3.0, 5.0, 13.0, 15.0] {
+        toy.scan_at(pose(x, 1.0, PI), pose(x, 5.0, PI), (x as f32, 1.0));
+    }
+    toy.dump("toy5_two_closures");
+    assert_eq!(toy.surfaces(), 1, "{:?}", toy.component_sizes());
+    assert_eq!(toy.duplicates_in([0.0, 20.0, 0.0, 2.0]), 0);
+}
+
+#[test]
+fn a_path_through_stale_cells_is_reported_where_they_are_now() {
+    let mut toy = Toy::new(loop_floor);
+    let path = loop_path();
+    for (k, &truth) in path.iter().enumerate() {
+        let t = truth.translation;
+        toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
+    }
+    let last = path.len() - 1;
+    assert!(toy.close_to_truth(&[(0, last)]).new_layer);
+    // From the closed start to the loop's far corner, through cells still stale and drifted in their layer.
+    let goal = (19.0, 11.0, 0.1);
+    let plan = toy
+        .planner
+        .plan_or_truncate((1.0, 1.0, 0.1), goal, &toy.cfg);
+    let Plan::Full(waypoints) = plan else {
+        panic!("a full path to the far corner, got {plan:?}");
+    };
+    let slack = 2.0 * toy.cfg.voxel_size;
+    for &(x, y, _) in &waypoints {
+        let on_floor = [
+            (-slack, -slack),
+            (slack, -slack),
+            (-slack, slack),
+            (slack, slack),
+            (0.0, 0.0),
+        ]
+        .iter()
+        .any(|&(dx, dy)| loop_floor(x + dx, y + dy));
+        assert!(on_floor, "waypoint ({x}, {y}) is on the true floor");
+    }
+}
+
+#[test]
+fn a_global_rebuild_never_drops_stale_layers() {
+    let mut toy = Toy::new(|x, y| (0.0..20.0).contains(&x) && (0.0..2.0).contains(&y));
+    for i in 0..10 {
+        let x = 1.0 + 2.0 * i as f64;
+        toy.scan_at(pose(x, 1.0, 0.0), pose(x, 1.5, 0.0), (x as f32, 1.0));
+    }
+    assert!(toy.close_to_truth(&[(0, 1)]).new_layer);
+    let (layers, cells) = (toy.planner.layer_count(), toy.cells().ids().count());
+    assert!(layers > 1);
+    toy.planner
+        .update_global_map(&bare(&[(1.0, 1.0, 0.05)]), &toy.cfg);
+    assert_eq!(toy.planner.layer_count(), layers);
+    assert_eq!(toy.cells().ids().count(), cells);
+}
+
+/// Per-closure bookkeeping on a big map: run with --ignored to print what a closure listing 20000 keyframes costs.
+#[test]
+#[ignore]
+fn closure_bookkeeping_cost_on_a_big_map() {
+    let keyframes = 20_000u32;
+    let mut table = crate::lazy::KeyframeTable::new(toy_config().reform.table_params());
+    for id in 0..keyframes {
+        table.add(&KeyframeRecord {
+            node_id: id,
+            ts: id as f64,
+            raw: pose(id as f64 * 0.5, 0.0, 0.0),
+            scan_box: [-5.0, -5.0, -1.0, 5.0, 5.0, 2.0],
+        });
+    }
+    let records: Vec<EventRecord> = (0..keyframes)
+        .map(|id| EventRecord {
+            node_id: id,
+            pre: table.now(id),
+            delta: pose(0.0, 0.001, 0.0),
+            version: None,
+            closed_with: None,
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let rounds = 20;
+    for _ in 0..rounds {
+        table.apply_event(&records);
+        std::hint::black_box(table.shift_since_frame());
+    }
+    let per = started.elapsed().as_secs_f64() * 1e3 / rounds as f64;
+    println!(
+        "closure bookkeeping, {keyframes} keyframes: {per:.2} ms per event (apply + shift check)"
     );
 }
