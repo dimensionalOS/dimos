@@ -45,6 +45,8 @@ struct Args {
     parity_at: Vec<u64>,
     /// Inclusive scan ranges left out of path_share_excluded, e.g. where the odometry is known to drift.
     exclude_scans: Vec<(u64, u64)>,
+    /// How many of the slowest calls of each kind slow_calls.json keeps.
+    slowest: usize,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -60,6 +62,7 @@ fn parse_args() -> Result<Args, String> {
         snapshot_at: Vec::new(),
         parity_at: Vec::new(),
         exclude_scans: Vec::new(),
+        slowest: 20,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -94,6 +97,7 @@ fn parse_args() -> Result<Args, String> {
                 let (a, b) = v.split_once('-').ok_or_else(bad)?;
                 args.exclude_scans.push((a.parse().map_err(|_| bad())?, b.parse().map_err(|_| bad())?));
             }
+            "--slowest" => args.slowest = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
             "--parity-at" => args.parity_at.push(value()?.parse().map_err(|e| format!("{flag}: {e}"))?),
             other => return Err(format!("unknown argument {other}")),
         }
@@ -103,7 +107,7 @@ fn parse_args() -> Result<Args, String> {
         || args.output.as_os_str().is_empty()
     {
         return Err("usage: lazy-replay --feed F --planner-config C.json --output DIR \
-                    [--goal-along-path-m M] [--until-scan S] [--exclude-scans FIRST-LAST]... [--parity-at SCAN]... [--dump-dir D [--dump-radius-m R] [--dump-limit N] [--snapshot-at SCAN,X,Y]...]"
+                    [--goal-along-path-m M] [--until-scan S] [--exclude-scans FIRST-LAST]... [--parity-at SCAN]... [--slowest N] [--dump-dir D [--dump-radius-m R] [--dump-limit N] [--snapshot-at SCAN,X,Y]...]"
             .into());
     }
     Ok(args)
@@ -208,6 +212,9 @@ struct Timings {
     stages: BTreeMap<&'static str, BTreeMap<String, Vec<f64>>>,
     breakdowns: BTreeMap<&'static str, Vec<(f64, u64, serde_json::Value)>>,
     scan: u64,
+    /// Every call's scan, kind and ms, for calls.csv.
+    log: Vec<(u64, &'static str, f64)>,
+    slowest: usize,
 }
 
 fn quantiles(samples: &[f64], scale: f64) -> serde_json::Value {
@@ -224,7 +231,9 @@ impl Timings {
     fn time<T>(&mut self, kind: &'static str, f: impl FnOnce() -> T) -> T {
         let start = Instant::now();
         let out = f();
-        self.calls.entry(kind).or_default().push(start.elapsed().as_secs_f64());
+        let total = start.elapsed().as_secs_f64();
+        self.calls.entry(kind).or_default().push(total);
+        self.log.push((self.scan, kind, total * 1e3));
         out
     }
 
@@ -234,6 +243,7 @@ impl Timings {
         let out = f(planner);
         let total = start.elapsed().as_secs_f64();
         self.calls.entry(kind).or_default().push(total);
+        self.log.push((self.scan, kind, total * 1e3));
         let calls = self.calls[kind].len();
         let stages = self.stages.entry(kind).or_default();
         let mut seen = std::collections::BTreeSet::new();
@@ -259,9 +269,9 @@ impl Timings {
             .collect();
         let slow = self.breakdowns.entry(kind).or_default();
         slow.push((total, self.scan, serde_json::json!({ "stages_ms": breakdown, "counts": counts })));
-        if slow.len() > 200 {
+        if slow.len() > (10 * self.slowest).max(200) {
             slow.sort_by(|a, b| b.0.total_cmp(&a.0));
-            slow.truncate(SLOWEST);
+            slow.truncate(self.slowest);
         }
         out
     }
@@ -287,7 +297,7 @@ impl Timings {
             calls.sort_by(|a, b| b.0.total_cmp(&a.0));
             let list: Vec<serde_json::Value> = calls
                 .iter()
-                .take(SLOWEST)
+                .take(self.slowest)
                 .map(|(total, scan, detail)| {
                     let mut d = detail.clone();
                     d["scan"] = serde_json::json!(scan);
@@ -301,8 +311,6 @@ impl Timings {
     }
 }
 
-/// How many of the slowest calls of each kind slow_calls.json keeps.
-const SLOWEST: usize = 20;
 
 fn path_length(waypoints: &[(f32, f32, f32)]) -> f64 {
     waypoints
@@ -330,7 +338,7 @@ fn run() -> Result<(), String> {
     writeln!(scans_out, "scan,ts,version,layers,pass,replanned,path,path_m,seam_check").map_err(|e| e.to_string())?;
 
     let mut planner = Planner::new(config.worker_threads);
-    let mut timings = Timings::default();
+    let mut timings = Timings { slowest: args.slowest, ..Timings::default() };
     // each keyframe's current pose, kept from new_keyframe and loop_closure_event, which the goal rides
     let mut keyframes: BTreeMap<u32, Pose> = BTreeMap::new();
     let mut goal: Option<(u32, [f64; 3])> = None;
@@ -571,6 +579,12 @@ fn run() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     std::fs::write(args.output.join("slow_calls.json"), serde_json::to_string_pretty(&timings.slowest()).unwrap())
         .map_err(|e| e.to_string())?;
+    let mut calls_out = BufWriter::new(std::fs::File::create(args.output.join("calls.csv")).map_err(|e| e.to_string())?);
+    writeln!(calls_out, "scan,kind,ms").map_err(|e| e.to_string())?;
+    for (scan, kind, ms) in &timings.log {
+        writeln!(calls_out, "{scan},{kind},{ms:.3}").map_err(|e| e.to_string())?;
+    }
+    calls_out.flush().map_err(|e| e.to_string())?;
     println!("{}", serde_json::to_string(&summary).unwrap());
     println!("{}", serde_json::to_string(&timing).unwrap());
     Ok(())
