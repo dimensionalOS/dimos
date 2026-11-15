@@ -303,7 +303,7 @@ dual_openyam_leader_teleop = autoconnect(
 # Leaders without trigger servos; Joy-Cons drive the jaws and pause following.
 dual_openyam_joycon_leader_teleop = autoconnect(
     dual_openyam_leaders(DualOpenYamLeaderArmConnection),
-    JoyconConnectionModule.blueprint(),
+    JoyconConnectionModule.blueprint(jaw_control="close_open"),
     dual_openyam_leader_control(),
     _manipulation(),
     _urdf_manager(),
