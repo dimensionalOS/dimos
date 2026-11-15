@@ -27,7 +27,6 @@ use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 
 use crate::adjacency::{CellId, SurfaceLookup};
 use crate::columns::ColumnIz;
-use crate::fixed_hash::AHashSet;
 use crate::sharded_map::ShardedMap;
 use crate::terrain::{PlaneMap, SurfacePlane};
 use crate::voxel::VoxelKey;
@@ -65,10 +64,10 @@ pub struct ReformConfig {
     /// A closure starts a new layer when it closes a loop or moves some keyframe's box corner this far from the current layer's frame, m (0 = half a voxel).
     #[validate(range(min = 0.0))]
     pub min_shift_m: f32,
-    /// Calibrated ms moving one stale element (voxel or cell) costs; a region update migrates what fits half its
-    /// budget (Config::half_budget_ms), the repair window around where they land charged at
-    /// Config::repair_ms_per_window_cell, from the submeshes around the update first and then those inside a closure's
-    /// closing boxes, so no one update carries a whole merge (both 0 = all at once).
+    /// Calibrated ms migrating one stale element (voxel or cell) costs, with its share of the re-extraction and graph
+    /// repair after; a region update migrates what fits half its budget (Config::migrate_per_update), from the
+    /// submeshes around the update first and then those inside a closure's closing boxes, so no one update carries a
+    /// whole merge (0 = all at once).
     #[validate(range(min = 0.0))]
     pub migrate_ms_per_element: f32,
 }
@@ -84,7 +83,7 @@ impl ReformConfig {
             box_pad_m: 1.0,
             version_history: 4,
             min_shift_m: 0.0,
-            migrate_ms_per_element: 0.0015,
+            migrate_ms_per_element: 0.008,
         }
     }
 
@@ -894,20 +893,17 @@ impl Layers {
 
     /// lookup over each of `rects`, the union once, ascending.
     pub fn lookup_all(&self, table: &KeyframeTable, rects: &[Rect]) -> Vec<(Version, (i32, i32))> {
-        let mut tiles: AHashSet<(i32, i32)> = AHashSet::default();
+        // Each (rect, candidate) pair's padded tile square, then their union on a dense grid over all of them.
         let pad = self.params.tile_pad;
-        let add_square = |tiles: &mut AHashSet<(i32, i32)>, corners: &[[f64; 3]; 4]| {
+        let mut squares: Vec<((i32, i32), (i32, i32))> = Vec::new();
+        let add_square = |squares: &mut Vec<((i32, i32), (i32, i32))>, corners: &[[f64; 3]; 4]| {
             let (mut lo, mut hi) = ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN));
             for c in corners {
                 let t = self.tile_of(c[0], c[1]);
                 lo = (lo.0.min(t.0), lo.1.min(t.1));
                 hi = (hi.0.max(t.0), hi.1.max(t.1));
             }
-            for x in lo.0 - pad..=hi.0 + pad {
-                for y in lo.1 - pad..=hi.1 + pad {
-                    tiles.insert((x, y));
-                }
-            }
+            squares.push(((lo.0 - pad, lo.1 - pad), (hi.0 + pad, hi.1 + pad)));
         };
         for &rect in rects {
             let corners = [
@@ -918,10 +914,48 @@ impl Layers {
             ];
             for slot in table.candidates(rect) {
                 let to_v0 = table.to_v0(slot);
-                add_square(&mut tiles, &corners.map(|c| to_v0.apply(c)));
+                add_square(&mut squares, &corners.map(|c| to_v0.apply(c)));
             }
         }
         let mut found = Vec::new();
+        let Some(&(first_lo, first_hi)) = squares.first() else {
+            return found;
+        };
+        let (lo, hi) = squares
+            .iter()
+            .fold((first_lo, first_hi), |(lo, hi), &(a, b)| {
+                (
+                    (lo.0.min(a.0), lo.1.min(a.1)),
+                    (hi.0.max(b.0), hi.1.max(b.1)),
+                )
+            });
+        let width = (hi.1 - lo.1 + 1) as usize;
+        let area = (hi.0 - lo.0 + 1) as usize * width;
+        let mut tiles: Vec<(i32, i32)> = Vec::new();
+        // A grid no bigger than the stored tiles' count times a margin; past that, the tiles stored are fewer to walk.
+        if area <= 64 * self.tiles.len().max(1024) {
+            let mut covered = vec![false; area];
+            for &(a, b) in &squares {
+                for x in a.0..=b.0 {
+                    let row = (x - lo.0) as usize * width;
+                    covered[row + (a.1 - lo.1) as usize..=row + (b.1 - lo.1) as usize].fill(true);
+                }
+            }
+            for x in lo.0..=hi.0 {
+                let row = (x - lo.0) as usize * width;
+                for y in lo.1..=hi.1 {
+                    if covered[row + (y - lo.1) as usize] && self.tiles.contains_key(&(x, y)) {
+                        tiles.push((x, y));
+                    }
+                }
+            }
+        } else {
+            tiles.extend(self.tiles.keys().copied().filter(|&(x, y)| {
+                squares
+                    .iter()
+                    .any(|&(a, b)| a.0 <= x && x <= b.0 && a.1 <= y && y <= b.1)
+            }));
+        }
         for tile in tiles {
             for &layer in self.tiles.get(&tile).into_iter().flatten() {
                 if layer < self.current {
@@ -1091,6 +1125,101 @@ mod tests {
         assert!(
             gx.abs() < 1e-5 && gy.abs() < 1e-5 && (z0 - 0.02).abs() < 1e-5,
             "{out:?}"
+        );
+    }
+
+    /// lookup_all as it walked a set of every square's tiles, for checking the grid union against.
+    fn lookup_by_set(
+        layers: &Layers,
+        table: &KeyframeTable,
+        rects: &[Rect],
+    ) -> Vec<(Version, (i32, i32))> {
+        let mut tiles = std::collections::BTreeSet::new();
+        let pad = layers.params.tile_pad;
+        for &rect in rects {
+            let corners = [
+                [rect[0] as f64, rect[2] as f64, 0.0],
+                [rect[1] as f64, rect[2] as f64, 0.0],
+                [rect[0] as f64, rect[3] as f64, 0.0],
+                [rect[1] as f64, rect[3] as f64, 0.0],
+            ];
+            for slot in table.candidates(rect) {
+                let to_v0 = table.to_v0(slot);
+                let ts: Vec<(i32, i32)> = corners
+                    .iter()
+                    .map(|&c| {
+                        let v = to_v0.apply(c);
+                        layers.tile_of(v[0], v[1])
+                    })
+                    .collect();
+                let (x0, x1) = (
+                    ts.iter().map(|t| t.0).min().unwrap(),
+                    ts.iter().map(|t| t.0).max().unwrap(),
+                );
+                let (y0, y1) = (
+                    ts.iter().map(|t| t.1).min().unwrap(),
+                    ts.iter().map(|t| t.1).max().unwrap(),
+                );
+                for x in x0 - pad..=x1 + pad {
+                    for y in y0 - pad..=y1 + pad {
+                        tiles.insert((x, y));
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        for tile in tiles {
+            for &layer in layers.tiles.get(&tile).into_iter().flatten() {
+                if layer < layers.current {
+                    found.push((layer, tile));
+                }
+            }
+        }
+        found.sort_unstable();
+        found
+    }
+
+    /// The closing-box lookup unions its squares on a grid, or walks the stored tiles when the squares' span is far
+    /// larger than them, and either way finds exactly the stale submeshes a per-tile set of the squares finds.
+    #[test]
+    fn a_lookup_over_many_rects_finds_what_a_tile_set_of_their_squares_finds() {
+        let mut table = KeyframeTable::new(params());
+        for i in 0..40u32 {
+            let yaw = 0.05 * i as f64;
+            table.add(&keyframe(
+                i,
+                Pose::from_yaw([3.0 * i as f64, (i % 7) as f64 * 4.0, 0.0], yaw),
+            ));
+        }
+        let mut wide = keyframe(99, Pose::from_yaw([0.0, 0.0, 0.0], 0.0));
+        wide.scan_box = [-2000.0, -2000.0, -1.0, 2000.0, 2000.0, 1.0];
+        let wide_slot = table.add(&wide);
+        let mut layers = Layers::new(LayerParams {
+            tile_m: 10.0,
+            tile_pad: 1,
+        });
+        layers.current = 2;
+        for x in -10..30 {
+            for y in -10..20 {
+                if (x * 7 + y * 3) % 4 != 0 {
+                    layers
+                        .tiles
+                        .entry((x, y))
+                        .or_default()
+                        .extend([0, (x + y).rem_euclid(3) as Version]);
+                }
+            }
+        }
+        let rects: Vec<Rect> = (0..40).filter_map(|s| table.current_rect(s)).collect();
+        let found = layers.lookup_all(&table, &rects);
+        assert!(!found.is_empty());
+        assert!(found.iter().all(|k| k.0 < layers.current));
+        assert_eq!(found, lookup_by_set(&layers, &table, &rects));
+        // the wide keyframe's square spans ~160000 tiles, far past the 1200 stored, so the stored tiles are walked
+        let wide_rects = [table.current_rect(wide_slot).unwrap()];
+        assert_eq!(
+            layers.lookup_all(&table, &wide_rects),
+            lookup_by_set(&layers, &table, &wide_rects)
         );
     }
 }
