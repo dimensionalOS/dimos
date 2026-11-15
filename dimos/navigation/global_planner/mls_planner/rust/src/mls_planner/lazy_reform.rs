@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use crate::fixed_hash::{AHashMap, AHashSet};
 
-use super::{Config, MapPoint, Planner, RegionBounds};
+use super::{Config, MapPoint, Planner, RegionBounds, WindowEstimate};
 use crate::adjacency::{CellId, Edge, SurfaceCells};
 use crate::columns::{ColumnEdit, ColumnMask, VoxelEdits};
 use crate::lazy::{
@@ -39,7 +39,7 @@ pub struct LazyState {
     pub(crate) layers: Layers,
     /// The planner's voxel edge, for placing stale cells.
     voxel_size: f32,
-    /// Closing-box submeshes a closure has yet to migrate, config.migrate_per_update() elements per region update.
+    /// Closing-box submeshes a closure has yet to migrate, half a region update's budget a call (Config::half_budget_ms).
     pub(crate) pending: BTreeSet<(Version, (i32, i32))>,
     /// Submeshes a region update's lookup found around it, migrated before the pending ones.
     pub(crate) urgent: BTreeSet<(Version, (i32, i32))>,
@@ -267,8 +267,10 @@ impl Planner {
         // The cached route is in the old layer's keys, and every cell on it is stale and carried now.
         self.last_path = None;
         self.route = None;
-        // The waiting columns' voxels froze with the layer; a migration re-extracts them when it moves them in.
-        self.region_pending.clear();
+        // The waiting columns' voxels froze with the layer; a migration re-extracts them when it moves them in. A long
+        // queue is freed on a worker, off this call.
+        let waiting = std::mem::take(&mut self.region_pending);
+        self.pool.spawn(move || drop(waiting));
         lazy.index_credit = 0;
         self.clock.add("freeze", stage);
 
@@ -305,7 +307,7 @@ impl Planner {
     }
 
     /// Queue the stale submeshes a region update is about to touch, out to the margin its repair reads, ahead of a
-    /// closure's, then migrate the next config.migrate_per_update() elements of the queues.
+    /// closure's, then migrate what of the queues fits half the update's budget.
     pub(super) fn reform_near(&mut self, bounds: &RegionBounds, config: &Config) {
         let margin = bounds.radius + self.migrate_margin_m(config);
         let Some(lazy) = self.lazy.as_mut() else {
@@ -959,9 +961,10 @@ impl Planner {
         linked.into_iter().collect()
     }
 
-    /// Migrate the next config.migrate_per_update() elements (voxels and cells) of the queued submeshes, the ones a
-    /// region update found around it first; 0 migrates them all. A submesh larger than what is left of the budget
-    /// moves a strip of its columns and stays queued.
+    /// Migrate the queued submeshes' elements (voxels and cells), the ones a region update found around it first, while
+    /// their cost (reform.migrate_ms_per_element each, and repair_ms_per_window_cell per cell of the repair window
+    /// estimated around the columns they land in) fits half the update's budget; both costs 0 migrates them all. A
+    /// submesh larger than what is left of the budget moves a strip of its columns and stays queued.
     fn migrate_pending(&mut self, config: &Config) {
         let Some(lazy) = self.lazy.as_ref() else {
             return;
@@ -969,11 +972,10 @@ impl Planner {
         if lazy.urgent.is_empty() && lazy.pending.is_empty() {
             return;
         }
-        let budget = config.migrate_per_update();
         let outer = self.clock.enter("pending");
         let stage = Instant::now();
         let caps = self.map_capacities();
-        let migrated = self.migrate(budget, config);
+        let migrated = self.migrate(config);
         self.clock.add("migrate", stage);
         let grown = caps
             .iter()
@@ -997,8 +999,9 @@ impl Planner {
         ]
     }
 
-    /// Move up to `budget` elements of the queued submeshes into the current layer by their anchors' poses then and now.
-    fn migrate(&mut self, budget: usize, config: &Config) -> Migrated {
+    /// Move elements of the queued submeshes into the current layer by their anchors' poses then and now, while their
+    /// cost fits half the update's budget (see migrate_pending).
+    fn migrate(&mut self, config: &Config) -> Migrated {
         let vs = config.voxel_size;
         let min_normal_z = config.min_normal_z();
         let params = config.placement_params();
@@ -1007,9 +1010,39 @@ impl Planner {
         let mut changed: AHashMap<(i32, i32), Vec<i32>> = AHashMap::default();
         let lazy = self.lazy.as_mut().expect("migrate needs the lazy state");
         let current = lazy.layers.current;
-        let mut left = budget;
+        let (per_element, per_cell) = (
+            config.reform.migrate_ms_per_element as f64,
+            config.repair_ms_per_window_cell as f64,
+        );
+        let mut window = WindowEstimate::new(config.node_window_cells());
+        // Elements the rest of the budget pays for, the window so far charged first; unbounded when elements are free.
+        let elements_left = |window: &WindowEstimate, spent: usize| -> usize {
+            if per_element <= 0.0 && per_cell <= 0.0 {
+                return usize::MAX;
+            }
+            let ms = config.half_budget_ms()
+                - window.cells() as f64 * per_cell
+                - spent as f64 * per_element;
+            if ms <= 0.0 {
+                0
+            } else if per_element <= 0.0 {
+                usize::MAX
+            } else {
+                (ms / per_element).floor() as usize
+            }
+        };
+        let mut spent = 0usize;
         let (mut submeshes, mut voxels_moved) = (0usize, 0usize);
-        while left > 0 {
+        loop {
+            // The first strip always moves, so every update makes progress.
+            let left = if submeshes == 0 {
+                elements_left(&window, spent).max(1)
+            } else {
+                elements_left(&window, spent)
+            };
+            if left == 0 {
+                break;
+            }
             let (key, urgent) = match lazy.urgent.pop_first() {
                 Some(key) => (key, true),
                 None => match lazy.pending.pop_first() {
@@ -1026,7 +1059,7 @@ impl Planner {
             };
             submeshes += 1;
             let (strip_voxels, strip_cells) = take_strip(&mut sub, left, &self.graph.cells);
-            left -= (strip_voxels.len() + strip_cells.len()).min(left);
+            spent += strip_voxels.len() + strip_cells.len();
             if sub.is_empty() {
                 lazy.carried.remove(&key);
                 if let Some(layers) = lazy.layers.tiles.get_mut(&tile) {
@@ -1078,6 +1111,7 @@ impl Planner {
                 }
                 lazy.layers.add_voxel(to, el);
                 out.columns.insert(col);
+                window.add(col);
             }
             for id in strip_cells {
                 if !self.graph.cells.is_live(id) || self.graph.cells.layer(id) != layer {
@@ -1096,6 +1130,7 @@ impl Planner {
                 let carry = frozen.carry(el.anchor, &lazy.table);
                 let to = voxel_of(carry.apply(center(from, vs)), vs);
                 out.columns.insert((to.0, to.1));
+                window.add((to.0, to.1));
                 out.rekeyed.push(to);
                 match self.graph.cells.id(to) {
                     None => {
@@ -1147,6 +1182,7 @@ impl Planner {
             })
             .collect();
         out.edits.changed.sort_unstable_by_key(|&(col, _)| col);
+        self.clock.count("window_estimate", window.cells());
         self.clock.count("submeshes", submeshes);
         self.clock.count("migrated_voxels", voxels_moved);
         self.clock.count("migrated_columns", out.columns.len());

@@ -1716,7 +1716,7 @@ fn a_region_rewritten_on_a_column_budget_repairs_it_nearest_first_and_ends_like_
     once.update_region(&cloud, &b, &cfg);
     assert!(once.region_pending.is_empty());
 
-    cfg.set_region_columns_per_update(300);
+    cfg.set_repair_window_cells_per_update(3000);
     let mut spread = Planner::new(cfg.worker_threads);
     spread.update_region(&cloud, &b, &cfg);
     let waiting = spread.region_pending.len();
@@ -1736,7 +1736,17 @@ fn a_region_rewritten_on_a_column_budget_repairs_it_nearest_first_and_ends_like_
             .iter()
             .find(|c| c.1 == "repaired_columns")
             .map_or(0, |c| c.2);
-        assert!(repaired <= 300, "a call repaired {repaired} columns");
+        let estimate = spread
+            .last_stage_counts()
+            .iter()
+            .find(|c| c.1 == "window_estimate")
+            .map_or(0, |c| c.2);
+        assert!(repaired > 0, "a call repaired nothing");
+        // the nearest column always comes out, so one column's window may pass the budget
+        assert!(
+            estimate <= 3000 || repaired == 1,
+            "a call's window estimate was {estimate} cells over {repaired} columns"
+        );
         calls += 1;
         assert!(calls < 100, "the waiting columns drain");
     }
@@ -1766,7 +1776,7 @@ fn a_route_across_columns_still_waiting_for_repair_plans_again() {
     ));
     assert_eq!(p.replan_reason(start, goal, &cfg), None);
     // the floor one voxel higher everywhere, more than a budget's worth of columns
-    cfg.set_region_columns_per_update(300);
+    cfg.set_repair_window_cells_per_update(3000);
     let raised: Vec<(f32, f32, f32)> = slice(&all, &b, cfg.voxel_size)
         .into_iter()
         .map(|(x, y, z)| (x, y, z + cfg.voxel_size))
@@ -1780,24 +1790,38 @@ fn a_route_across_columns_still_waiting_for_repair_plans_again() {
 }
 
 #[test]
-fn per_update_work_counts_come_from_the_scan_period_share_and_unit_costs() {
+fn the_update_budget_comes_from_the_scan_period_share_and_unit_costs() {
     let mut cfg = test_config();
     cfg.scan_period_s = 0.1;
     cfg.update_period_share = 0.4;
-    cfg.repair_ms_per_column = 0.04;
-    cfg.reform.migrate_ms_per_element = 0.008;
-    // 40 ms a scan, half each: 20 ms / 0.04 ms and 20 ms / 0.008 ms.
-    assert_eq!(cfg.region_columns_per_update(), 500);
-    assert_eq!(cfg.migrate_per_update(), 2500);
+    cfg.repair_ms_per_window_cell = 0.001;
+    // 40 ms a scan, half to the waiting repair: 20 ms / 0.001 ms a cell.
+    assert!((cfg.half_budget_ms() - 20.0).abs() < 1e-4);
+    assert_eq!(cfg.repair_window_cells_per_update(), 20_000);
     // A lidar twice as slow leaves twice the work per update.
     cfg.scan_period_s = 0.2;
-    assert_eq!(cfg.region_columns_per_update(), 1000);
-    // A unit dearer than the whole half budget still does one; a free one does all at once.
-    cfg.repair_ms_per_column = 1e6;
-    assert_eq!(cfg.region_columns_per_update(), 1);
-    cfg.repair_ms_per_column = 0.0;
-    assert_eq!(cfg.region_columns_per_update(), usize::MAX);
+    assert_eq!(cfg.repair_window_cells_per_update(), 40_000);
+    cfg.repair_ms_per_window_cell = 0.0;
+    assert_eq!(cfg.repair_window_cells_per_update(), usize::MAX);
     assert!(cfg.validate().is_ok());
     cfg.update_period_share = 1.5;
     assert!(cfg.validate().is_err());
+}
+
+/// The window estimate counts each 3x3 block neighbourhood once: one column 9 blocks, a compact patch little more
+/// than its own area, scattered columns each their own 9.
+#[test]
+fn a_window_estimate_charges_scattered_columns_more_than_a_compact_patch() {
+    let mut one = WindowEstimate::new(10);
+    one.add((5, 5));
+    one.add((6, 5));
+    assert_eq!(one.cells(), 900);
+    let mut patch = WindowEstimate::new(10);
+    let mut scattered = WindowEstimate::new(10);
+    for i in 0..100 {
+        patch.add((i % 10, i / 10));
+        scattered.add((i * 40, 0));
+    }
+    assert_eq!(patch.cells(), 900);
+    assert_eq!(scattered.cells(), 100 * 900);
 }
