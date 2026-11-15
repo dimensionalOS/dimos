@@ -484,7 +484,9 @@ fn a_second_pass_crossing_the_old_run_reforms_what_it_meets() {
     let outcome = toy.close_to_truth(&[(0, last)]);
     assert!(outcome.new_layer);
     // A little past the closure the robot turns 90 degrees and crosses the loop's middle, toward the old run's far side at A.
-    let along: Vec<Pose> = (1..5).map(|i| pose(1.0 + 2.0 * i as f64, 1.0, 0.0)).collect();
+    let along: Vec<Pose> = (1..5)
+        .map(|i| pose(1.0 + 2.0 * i as f64, 1.0, 0.0))
+        .collect();
     let mut across: Vec<Pose> = (1..6)
         .map(|i| pose(10.0, 1.0 + 2.0 * i as f64, std::f64::consts::FRAC_PI_2))
         .collect();
@@ -499,7 +501,10 @@ fn a_second_pass_crossing_the_old_run_reforms_what_it_meets() {
         .map(|id| (id, toy.point_now(id)))
         .filter(|(_, p)| (p[0] - ax).hypot(p[1] - ay) < 1.0)
         .collect();
-    assert!(!near_a.is_empty(), "the old run at A is stale before the second pass");
+    assert!(
+        !near_a.is_empty(),
+        "the old run at A is stale before the second pass"
+    );
     toy.dump("toy2_second_pass_before");
     across.pop();
     for truth in along.into_iter().chain(across).chain([a]) {
@@ -524,13 +529,22 @@ fn a_second_pass_crossing_the_old_run_reforms_what_it_meets() {
             "stale cell {id} at {then:?} is reformed in place"
         );
     }
-    assert!(toy.cross_layer_links() > 0, "stretched links to the unvisited rest");
-    assert_eq!(toy.duplicates_in([ax as f32 - 1.0, ax as f32 + 1.0, ay as f32 - 1.0, ay as f32 + 0.9]), 0);
-    let home = toy.planner.plan(
-        (ax as f32, ay as f32, 0.1),
-        (1.0, 1.0, 0.1),
-        &toy.cfg,
+    assert!(
+        toy.cross_layer_links() > 0,
+        "stretched links to the unvisited rest"
     );
+    assert_eq!(
+        toy.duplicates_in([
+            ax as f32 - 1.0,
+            ax as f32 + 1.0,
+            ay as f32 - 1.0,
+            ay as f32 + 0.9
+        ]),
+        0
+    );
+    let home = toy
+        .planner
+        .plan((ax as f32, ay as f32, 0.1), (1.0, 1.0, 0.1), &toy.cfg);
     assert!(home.is_some(), "a path from A back to the start");
 }
 
@@ -553,16 +567,29 @@ fn a_box_far_from_its_keyframe_finds_what_that_keyframe_saw() {
     let shifted: Vec<(u32, Pose, Pose)> = toy
         .keyframes
         .iter()
-        .map(|&(id, truth, raw)| (id, Pose::from_yaw([0.5, 0.0, 0.0], 0.0).compose(&truth), raw))
+        .map(|&(id, truth, raw)| {
+            (
+                id,
+                Pose::from_yaw([0.5, 0.0, 0.0], 0.0).compose(&truth),
+                raw,
+            )
+        })
         .collect();
     toy.keyframes = shifted;
     assert!(toy.close_to_truth(&[(0, 3)]).new_layer);
     let lazy = toy.planner.lazy.as_ref().unwrap();
     let patch: Rect = [0.5, 4.5, 15.0, 18.0];
     let slot = lazy.table.slot(toy.keyframes[telescope].0).unwrap();
-    assert_eq!(lazy.table.candidates(patch), vec![slot], "only the telescope's box reaches the patch");
+    assert_eq!(
+        lazy.table.candidates(patch),
+        vec![slot],
+        "only the telescope's box reaches the patch"
+    );
     let found = lazy.layers.lookup(&lazy.table, patch);
-    assert!(!found.is_empty(), "its tiles hold the patch's stale submeshes");
+    assert!(
+        !found.is_empty(),
+        "its tiles hold the patch's stale submeshes"
+    );
     let current = lazy.layers.current;
     // A cylinder at the patch, in the current frame.
     let points: Vec<(f32, f32, f32)> = toy
@@ -578,7 +605,8 @@ fn a_box_far_from_its_keyframe_finds_what_that_keyframe_saw() {
         z_max: 1.0,
     };
     toy.found.extend(toy.lookup_rect(&bounds));
-    toy.cylinders.push((bounds.origin_x, bounds.origin_y, bounds.radius));
+    toy.cylinders
+        .push((bounds.origin_x, bounds.origin_y, bounds.radius));
     toy.planner.update_region(&bare(&points), &bounds, &toy.cfg);
     toy.dump("toy3_telescope");
     let patch_cells: Vec<CellId> = toy
@@ -590,7 +618,12 @@ fn a_box_far_from_its_keyframe_finds_what_that_keyframe_saw() {
         })
         .collect();
     assert!(!patch_cells.is_empty());
-    assert!(patch_cells.iter().all(|&id| toy.cells().layer(id) == current), "the patch is reformed");
+    assert!(
+        patch_cells
+            .iter()
+            .all(|&id| toy.cells().layer(id) == current),
+        "the patch is reformed"
+    );
     assert_eq!(toy.duplicates_in([0.0, 5.0, 14.5, 18.5]), 0);
 }
 
@@ -630,5 +663,8 @@ fn a_cloud_from_an_older_layer_is_carried_and_one_from_a_future_closure_is_held(
     let k = voxelize((9.05, 1.05, 0.05), vs);
     let id = toy.cells().id(k).expect("a current cell at the true floor");
     assert_eq!(toy.cells().layer(id), current);
-    assert!(toy.cells().id(voxelize((9.05, 2.45, 0.05), vs)).is_none(), "nothing at the old frame's place");
+    assert!(
+        toy.cells().id(voxelize((9.05, 2.45, 0.05), vs)).is_none(),
+        "nothing at the old frame's place"
+    );
 }
