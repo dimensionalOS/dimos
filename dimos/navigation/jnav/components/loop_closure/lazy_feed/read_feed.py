@@ -65,12 +65,14 @@ def read_feed(path: Path) -> tuple[dict, Iterator[Scan | Message | dict]]:
     if _exact(stream, 8) != b"LAZYFEED":
         raise ValueError(f"{path} is not a lazy-feed file")
     (version,) = struct.unpack("<I", _exact(stream, 4))
-    if version != 1:
-        raise ValueError(f"{path}: format {version}, this reader knows 1")
+    if version != 2:
+        raise ValueError(f"{path}: format {version}, this reader knows 2")
     (length,) = struct.unpack("<I", _exact(stream, 4))
     header = json.loads(_exact(stream, length))
 
     def records() -> Iterator[Scan | Message | dict]:
+        # the last region's rows by center, which each region is stored as a change from
+        region: dict[bytes, np.ndarray] = {}
         while True:
             tag, index, ts = struct.unpack("<BQd", _exact(stream, 17))
             if tag in (NEW_KEYFRAME, LOOP_CLOSURE_EVENT):
@@ -82,12 +84,22 @@ def read_feed(path: Path) -> tuple[dict, Iterator[Scan | Message | dict]]:
                 cylinder, surfaces = None, None
                 if has_region:
                     cylinder = struct.unpack("<5f", _exact(stream, 20))
-                    (n,) = struct.unpack("<I", _exact(stream, 4))
-                    surfaces = np.frombuffer(_exact(stream, n * 28), "<f4").reshape(n, 7).copy()
+                    (removed,) = struct.unpack("<I", _exact(stream, 4))
+                    gone = np.frombuffer(_exact(stream, removed * 12), "<f4").reshape(removed, 3)
+                    for center in gone:
+                        del region[center.tobytes()]
+                    (upserted,) = struct.unpack("<I", _exact(stream, 4))
+                    rows = np.frombuffer(_exact(stream, upserted * 28), "<f4").reshape(upserted, 7)
+                    for row in rows:
+                        region[row[:3].tobytes()] = row
+                    surfaces = (
+                        np.stack([region[k] for k in sorted(region)])
+                        if region
+                        else np.zeros((0, 7), np.float32)
+                    )
                 yield Scan(index, ts, pose, map_version, cylinder, surfaces)
             elif tag == END:
-                rest = stream.read()
-                yield json.loads(rest)
+                yield json.loads(stream.read())
                 return
             else:
                 raise ValueError(f"unknown record tag {tag}")

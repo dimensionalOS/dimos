@@ -37,7 +37,7 @@ use dimos_voxel_ray_tracing::voxel_ray_tracer::Config as TracerConfig;
 use memory2::{for_each_scan, read_odometry, Rigid, TfTree};
 use rusqlite::Connection;
 
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 
 #[repr(u8)]
 enum Tag {
@@ -46,8 +46,9 @@ enum Tag {
     /// GSC's `loop_closure_event` message, LCM-encoded PointCloud2.
     LoopClosureEvent = 2,
     /// The scan's corrected body pose (x y z qx qy qz qw, f64), its map version (u32) and whether a region follows
-    /// (u8); a region is cx cy radius z_min z_max (f32), u32 count, then count rows of 7 f32 (center, unit normal,
-    /// plane offset; NaN normal without a plane), as the tracer's `local_map` carries.
+    /// (u8); a region is cx cy radius z_min z_max (f32), then its surfaces as a change from the previous region's:
+    /// u32 count of removed centers (3 f32 each), u32 count of added or changed rows (7 f32: center, unit normal,
+    /// plane offset; NaN normal without a plane), as the tracer's `local_map` carries. Rows are keyed by center.
     Scan = 3,
     /// Summary JSON.
     End = 9,
@@ -124,20 +125,36 @@ fn gsc_config(overrides: Option<&PathBuf>) -> Result<(PgoConfig, serde_json::Val
     Ok((config, merged))
 }
 
-/// The tracer's 7-float surface rows in a fixed order (by center, then the rest), since its map iterates in hash order.
-fn sorted_rows(flat: Vec<f32>) -> Vec<f32> {
-    let mut rows: Vec<[f32; 7]> = flat
-        .chunks_exact(7)
-        .map(|r| [r[0], r[1], r[2], r[3], r[4], r[5], r[6]])
+type CenterKey = [u32; 3];
+type Region = std::collections::BTreeMap<CenterKey, [f32; 7]>;
+
+/// The tracer's 7-float surface rows keyed by center bits, in a fixed order (its map iterates in hash order).
+fn region_rows(flat: &[f32]) -> Region {
+    flat.chunks_exact(7)
+        .map(|r| ([r[0].to_bits(), r[1].to_bits(), r[2].to_bits()], [r[0], r[1], r[2], r[3], r[4], r[5], r[6]]))
+        .collect()
+}
+
+/// `next` as a change from `previous`: removed centers, then added or changed rows.
+fn put_region_change(out: &mut Vec<u8>, previous: &Region, next: &Region) {
+    let removed: Vec<&CenterKey> = previous.keys().filter(|k| !next.contains_key(*k)).collect();
+    let upserted: Vec<&[f32; 7]> = next
+        .iter()
+        .filter(|(k, row)| previous.get(*k).is_none_or(|old| old.map(f32::to_bits) != row.map(f32::to_bits)))
+        .map(|(_, row)| row)
         .collect();
-    rows.sort_by(|a, b| {
-        a.iter()
-            .zip(b)
-            .map(|(x, y)| x.total_cmp(y))
-            .find(|o| o.is_ne())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    rows.into_iter().flatten().collect()
+    out.extend_from_slice(&(removed.len() as u32).to_le_bytes());
+    for key in removed {
+        for bits in key {
+            out.extend_from_slice(&bits.to_le_bytes());
+        }
+    }
+    out.extend_from_slice(&(upserted.len() as u32).to_le_bytes());
+    for row in upserted {
+        for v in row {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
 }
 
 fn put_pose(out: &mut Vec<u8>, rotation: &mat3::Mat3, translation: &mat3::Vec3) {
@@ -289,6 +306,7 @@ fn run() -> Result<(), String> {
     let mut scan_index = 0u64;
     let mut counts = Counts::default();
     let mut regions = 0usize;
+    let mut last_region = Region::new();
     let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
 
     for_each_scan(&connection, &args.lidar_stream, args.until_s, |scan| {
@@ -360,15 +378,13 @@ fn run() -> Result<(), String> {
         match region {
             Some(cylinder) => {
                 regions += 1;
-                let surfaces = sorted_rows(mapper.local_surfaces(&cylinder.bounds()));
+                let rows = region_rows(&mapper.local_surfaces(&cylinder.bounds()));
                 payload.push(1);
                 for v in [cylinder.cx, cylinder.cy, cylinder.radius, cylinder.z_min, cylinder.z_max] {
                     payload.extend_from_slice(&v.to_le_bytes());
                 }
-                payload.extend_from_slice(&((surfaces.len() / 7) as u32).to_le_bytes());
-                for v in &surfaces {
-                    payload.extend_from_slice(&v.to_le_bytes());
-                }
+                put_region_change(&mut payload, &last_region, &rows);
+                last_region = rows;
             }
             None => payload.push(0),
         }
