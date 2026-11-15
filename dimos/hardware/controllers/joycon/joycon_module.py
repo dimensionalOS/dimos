@@ -76,6 +76,9 @@ _JAW_KEYS: dict[JoyConSide, int] = {"left": 312, "right": 313}  # ZL, ZR
 # L / R, which open the jaw in the "close_open" jaw control. These are the
 # keys published as left_grip / right_grip (BTN_TL 0x136, BTN_TR 0x137).
 _JAW_OPEN_KEYS: dict[JoyConSide, int] = {"left": 310, "right": 311}
+# In "close_open", a reading counts at most this many read periods, so a
+# stalled cycle cannot throw a jaw across its whole range.
+_MAX_JAW_STEP_PERIODS = 5
 _PLUS_KEY = 315
 # struct input_event from linux/input.h: time, type, code, value.
 _EVENT_FORMAT = "llHHi"
@@ -115,7 +118,8 @@ class JoyconConnectionModuleConfig(ModuleConfig):
             when the Joy-Con connects or returns is ignored until it is
             released and pressed again. While a Joy-Con is absent its jaw
             keeps its last opening and nothing is published for it. The
-            opening is published every cycle while the Joy-Con is connected,
+            A reading counts for at most 5 read periods, so a stalled cycle
+            cannot jump the jaw. The opening is published every cycle while the Joy-Con is connected,
             held or not. L / R still go out in ``teleop_buttons``.
     """
 
@@ -150,6 +154,10 @@ class JoyconConnectionModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        if self.config.jaw_control == "close_open":
+            # A restarted module begins from the documented start, not a stale opening.
+            self._openings = dict.fromkeys(JOYCON_SIDES, 1.0)
+            self._ignored_keys = {}
         self._devices = _JoyConDevices()
         self._reader = threading.Thread(target=self._read_loop, daemon=True, name="joycon-read")
         self._reader.start()
@@ -196,7 +204,12 @@ class JoyconConnectionModule(Module):
                 self._ignored_keys[side] = ignored
                 closing = _JAW_KEYS[side] in keys and _JAW_KEYS[side] not in ignored
                 opening_key = _JAW_OPEN_KEYS[side] in keys and _JAW_OPEN_KEYS[side] not in ignored
-                self._openings[side] = max(0.0, min(1.0, opening + step * (opening_key - closing)))
+                held_step = self.config.jaw_speed_per_s * min(
+                    max(0.0, dt), _MAX_JAW_STEP_PERIODS / self.config.read_rate_hz
+                )
+                self._openings[side] = max(
+                    0.0, min(1.0, opening + held_step * (opening_key - closing))
+                )
             else:
                 target = 0.0 if jaws_held[side] else 1.0
                 self._openings[side] = opening + max(-step, min(step, target - opening))
