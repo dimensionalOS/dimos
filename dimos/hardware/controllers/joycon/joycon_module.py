@@ -18,7 +18,8 @@ Each Joy-Con pairs over Bluetooth, and the Linux ``hid-nintendo`` driver shows
 it as an input device. The module reads those devices and publishes on streams
 the follower and the episode monitor already listen to:
 
-- ZL / ZR held close the left / right jaw.
+- ZL / ZR held close the left / right jaw. With ``jaw_control="close_open"``,
+  L / R held open it, and with neither held it stays where it is.
 - Every button goes out as ``teleop_buttons``; the episode monitor's defaults
   make B start or save an episode and Y discard it.
 - plus flips ``follow`` off and on; a leader connection holds the follower
@@ -72,6 +73,9 @@ _BUTTON_BITS: dict[JoyConSide, dict[int, str]] = {
     },
 }
 _JAW_KEYS: dict[JoyConSide, int] = {"left": 312, "right": 313}  # ZL, ZR
+# L / R, which open the jaw in the "close_open" jaw control. These are the
+# keys published as left_grip / right_grip (BTN_TL 0x136, BTN_TR 0x137).
+_JAW_OPEN_KEYS: dict[JoyConSide, int] = {"left": 310, "right": 311}
 _PLUS_KEY = 315
 # struct input_event from linux/input.h: time, type, code, value.
 _EVENT_FORMAT = "llHHi"
@@ -89,6 +93,9 @@ _PAIR_SCRIPT = "dimos/hardware/controllers/joycon/pair_joycon.sh"
 Pressed = Mapping[JoyConSide, frozenset[int] | None]
 
 
+JawControl = Literal["trigger", "close_open"]
+
+
 class JoyconConnectionModuleConfig(ModuleConfig):
     """Settings for the Joy-Con module.
 
@@ -96,10 +103,25 @@ class JoyconConnectionModuleConfig(ModuleConfig):
         read_rate_hz: How often the Joy-Cons are read and published, in Hz.
         jaw_speed_per_s: How fast a jaw opening moves, in full openings per
             second, so a jaw never slams; 3 closes it in about 0.33 s.
+        jaw_control: How the buttons move a jaw. Each side is independent, and
+            a jaw is 1 (open) at start in both modes.
+
+            ``"trigger"`` (default): ZL / ZR held close the jaw and releasing
+            it opens the jaw again.
+
+            ``"close_open"``: ZL / ZR held close the jaw, L / R held open it,
+            and with neither held the jaw holds its opening, so a partial grip
+            stays. With both held the jaw also holds. A button already held
+            when the Joy-Con connects or returns is ignored until it is
+            released and pressed again. While a Joy-Con is absent its jaw
+            keeps its last opening and nothing is published for it. The
+            opening is published every cycle while the Joy-Con is connected,
+            held or not. L / R still go out in ``teleop_buttons``.
     """
 
     read_rate_hz: float = Field(default=50.0, gt=0, allow_inf_nan=False)
     jaw_speed_per_s: float = Field(default=3.0, gt=0, allow_inf_nan=False)
+    jaw_control: JawControl = "trigger"
 
 
 class JoyconConnectionModule(Module):
@@ -118,6 +140,9 @@ class JoyconConnectionModule(Module):
         self._openings: dict[JoyConSide, float] = dict.fromkeys(JOYCON_SIDES, 1.0)
         self._following = True
         self._plus_was_down = False
+        # "close_open" only: jaw keys held since the Joy-Con connected, ignored
+        # until released. A side absent (or not yet read) is seen as new.
+        self._ignored_keys: dict[JoyConSide, frozenset[int]] = {}
         self._devices: _JoyConDevices | None = None
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
@@ -159,11 +184,22 @@ class JoyconConnectionModule(Module):
         outputs = {"left": self.left_gripper_command, "right": self.right_gripper_command}
         step = self.config.jaw_speed_per_s * max(0.0, dt)
         for side in JOYCON_SIDES:
-            if pressed[side] is None:
+            keys = pressed[side]
+            if keys is None:
+                self._ignored_keys.pop(side, None)
                 continue
-            target = 0.0 if jaws_held[side] else 1.0
             opening = self._openings[side]
-            self._openings[side] = opening + max(-step, min(step, target - opening))
+            if self.config.jaw_control == "close_open":
+                jaw_keys = {_JAW_KEYS[side], _JAW_OPEN_KEYS[side]}
+                ignored = self._ignored_keys.get(side, frozenset(jaw_keys & keys))
+                ignored &= keys
+                self._ignored_keys[side] = ignored
+                closing = _JAW_KEYS[side] in keys and _JAW_KEYS[side] not in ignored
+                opening_key = _JAW_OPEN_KEYS[side] in keys and _JAW_OPEN_KEYS[side] not in ignored
+                self._openings[side] = max(0.0, min(1.0, opening + step * (opening_key - closing)))
+            else:
+                target = 0.0 if jaws_held[side] else 1.0
+                self._openings[side] = opening + max(-step, min(step, target - opening))
             outputs[side].publish(Float32(data=self._openings[side]))
 
         plus = _PLUS_KEY in (pressed["right"] or ())

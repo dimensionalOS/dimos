@@ -20,7 +20,10 @@ import pytest
 
 from dimos.hardware.controllers.joycon.joycon_module import JoyconConnectionModule, _JoyConDevices
 
+ZL = 312
+L = 310
 ZR = 313
+R = 311
 PLUS = 315
 
 
@@ -37,6 +40,46 @@ def test_zr_held_closes_the_right_jaw_at_the_jaw_speed(mocker: Any) -> None:
     # 0.2 s at 3 openings per second: from open (1) to 0.4.
     assert right.call_args.args[0].data == pytest.approx(0.4)
     left.assert_not_called()
+
+
+def test_close_open_jaw_control_closes_opens_and_holds_each_side_alone(mocker: Any) -> None:
+    joycons = JoyconConnectionModule(jaw_speed_per_s=3.0, jaw_control="close_open")
+    left = mocker.patch.object(joycons.left_gripper_command, "publish")
+    right = mocker.patch.object(joycons.right_gripper_command, "publish")
+    none = frozenset[int]()
+
+    def read(left_keys: frozenset[int] | None, right_keys: frozenset[int] | None) -> None:
+        joycons.publish_reading({"left": left_keys, "right": right_keys}, dt=0.1)
+
+    def jaws() -> tuple[float, float]:
+        return left.call_args.args[0].data, right.call_args.args[0].data
+
+    try:
+        # L is held as the Joy-Con connects, so it must not move the jaw yet.
+        read(frozenset({L}), none)
+        assert jaws() == pytest.approx((1.0, 1.0))
+        read(none, none)
+        read(frozenset({ZL}), none)  # left closes 0.3, right stays
+        read(frozenset({ZL}), none)
+        assert jaws() == pytest.approx((0.4, 1.0))
+        read(none, none)  # released: the left jaw holds
+        assert jaws() == pytest.approx((0.4, 1.0))
+        read(frozenset({ZL, L}), none)  # both held: hold
+        assert jaws() == pytest.approx((0.4, 1.0))
+        read(frozenset({L}), frozenset({ZR}))  # left opens, right closes
+        assert jaws() == pytest.approx((0.7, 0.7))
+        read(none, frozenset({ZR, R}))
+        read(none, frozenset({R}))  # right opens by 0.3
+        assert jaws() == pytest.approx((0.7, 1.0))
+        # A held button after a disconnect is ignored until released.
+        read(None, none)
+        read(frozenset({ZL}), none)
+        assert jaws() == pytest.approx((0.7, 1.0))
+        read(none, none)
+        read(frozenset({ZL}), none)
+        assert jaws() == pytest.approx((0.4, 1.0))
+    finally:
+        joycons.stop()
 
 
 def test_each_plus_press_flips_follow_once(mocker: Any) -> None:
