@@ -51,6 +51,16 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 JOINT_TRAJECTORY_TASK_NAME = "joint_trajectory"
+# With continuous_stream, how far a streamed command may run from the measured
+# position, in radians, unless stream_lead_limits names each joint's. On the dual
+# OpenYAM it clears the worst gravity sag (0.19 rad, joint 2 at kp 80) and the
+# wrists' recorded lag, while kp x 0.3 stays under the peak push of restarting
+# every target from the reading.
+DEFAULT_STREAM_LEAD_LIMIT = 0.3
+# With continuous_stream, a streamed target arriving more than this long after
+# the previous one starts again from the measured position, in seconds. Recorded
+# dual OpenYAM leader streams paused under 33 ms, or over 1 s when reads failed.
+DEFAULT_STREAM_GAP_TIMEOUT = 0.05
 
 
 def joint_trajectory_task(
@@ -58,6 +68,8 @@ def joint_trajectory_task(
     priority: int = 10,
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
+    continuous_stream: bool = False,
+    stream_lead_limits: Mapping[str, float] | None = None,
 ) -> TaskConfig:
     """Build the coordinator's single canonical joint-trajectory task."""
     # The coordinator imports this module to recognize the canonical JTT.
@@ -66,6 +78,10 @@ def joint_trajectory_task(
     params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
     if velocity_limits is not None:
         params["velocity_limits"] = dict(velocity_limits)
+    if continuous_stream:
+        params["continuous_stream"] = True
+    if stream_lead_limits is not None:
+        params["stream_lead_limits"] = dict(stream_lead_limits)
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
@@ -140,6 +156,19 @@ class JointTrajectoryTaskConfig:
             position and the first trajectory point.
         velocity_limits: Optional positive velocity limit for every configured
             joint. Defaults to 1 rad/s per joint.
+        continuous_stream: A streamed target (``on_joint_command``) continues
+            from the last streamed command, instead of from the measured
+            position, even when the previous target was already reached, so a
+            follower that lags gets one continuous rate-limited command. A first
+            target, one after a stop, a cancel, an e-stop or a preemption, and
+            one arriving more than ``stream_gap_timeout`` after a reached target
+            start from the measured position, as without it.
+        stream_lead_limits: With ``continuous_stream``, how far a streamed
+            command may be from the measured position, in radians, for every
+            configured joint. Defaults to ``DEFAULT_STREAM_LEAD_LIMIT`` per joint.
+        stream_gap_timeout: With ``continuous_stream``, the longest silence
+            between streamed targets, in seconds, that still continues from
+            the last command.
     """
 
     joint_names: Annotated[
@@ -153,6 +182,13 @@ class JointTrajectoryTaskConfig:
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
+    continuous_stream: bool = Field(default=False, strict=True)
+    stream_lead_limits: dict[str, float] | None = None
+    stream_gap_timeout: float = Field(
+        default=DEFAULT_STREAM_GAP_TIMEOUT,
+        gt=0.0,
+        allow_inf_nan=False,
+    )
 
 
 @dataclass
@@ -204,6 +240,11 @@ class JointTrajectoryTask(BaseControlTask):
         # Opt-in streamed controller jogs expire on this robot-side clock.
         # RPC trajectories and ordinary finite position goals keep their semantics.
         self._stream_deadlines: dict[str, float] = {}
+        # With continuous_stream: when each joint's last streamed target came,
+        # and the last command a streamed target gave it, kept after the target
+        # is reached so the next one continues from it. Empty otherwise.
+        self._stream_heard: dict[str, float] = {}
+        self._stream_anchors: dict[str, float] = {}
         self._start_time: float = 0.0
         self._pending_start: bool = False  # Defer start time to first compute()
         self._last_duration: float = 0.0
@@ -222,6 +263,18 @@ class JointTrajectoryTask(BaseControlTask):
             ):
                 raise ValueError("velocity_limits must be finite and positive")
             self._velocity_limits = dict(configured_limits)
+
+        lead_limits = config.stream_lead_limits
+        if lead_limits is None:
+            self._stream_lead_limits = {
+                name: DEFAULT_STREAM_LEAD_LIMIT for name in config.joint_names
+            }
+        else:
+            if set(lead_limits) != self._joint_names:
+                raise ValueError("stream_lead_limits must name every configured trajectory joint")
+            if any(not math.isfinite(value) or value <= 0.0 for value in lead_limits.values()):
+                raise ValueError("stream_lead_limits must be finite and positive")
+            self._stream_lead_limits = dict(lead_limits)
 
         logger.info(
             f"JointTrajectoryTask {self._name} initialized for joints: {config.joint_names}"
@@ -244,6 +297,8 @@ class JointTrajectoryTask(BaseControlTask):
             for name in msg.name:
                 if name in self._stream_deadlines:
                     self._stream_deadlines[name] = t_now
+                # A stopped stream starts again from the measured position.
+                self._stream_anchors.pop(name, None)
             return True
         if not msg.position or len(msg.name) != len(msg.position):
             return False
@@ -258,9 +313,19 @@ class JointTrajectoryTask(BaseControlTask):
             joint_names=[name for name, _ in selected],
             points=[TrajectoryPoint(positions=[position for _, position in selected])],
         )
+        # execute() forgets the stream; an unbroken one keeps its last commands.
+        anchors = {
+            name: self._stream_anchors[name]
+            for name, _ in selected
+            if name in self._stream_anchors
+            and t_now - self._stream_heard[name] <= self._config.stream_gap_timeout
+        }
         accepted = self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
         if accepted and guarded:
             self._stream_deadlines.update((name, t_now + 0.4) for name, _ in selected)
+        if accepted and self._config.continuous_stream:
+            self._stream_heard.update((name, t_now) for name, _ in selected)
+            self._stream_anchors.update(anchors)
         return accepted
 
     def is_active(self) -> bool:
@@ -292,6 +357,7 @@ class JointTrajectoryTask(BaseControlTask):
                     self._commanded_positions[joint_name] = position
                 del self._motions[joint_name]
                 del self._stream_deadlines[joint_name]
+                self._forget_stream(joint_name)
                 continue
             if run.start_time is None:
                 run.start_time = state.t_now
@@ -303,6 +369,8 @@ class JointTrajectoryTask(BaseControlTask):
             desired = run.trajectory.sample(elapsed)[0][index]
             current = self._commanded_positions.get(joint_name)
             if current is None:
+                current = self._stream_anchors.get(joint_name)
+            if current is None:
                 current = state.joints.get_position(joint_name)
                 if current is None or not math.isfinite(current):
                     all_complete = False
@@ -310,6 +378,18 @@ class JointTrajectoryTask(BaseControlTask):
             max_delta = self._velocity_limits[joint_name] * max(0.0, state.dt)
             delta = max(-max_delta, min(max_delta, desired - current))
             commanded = current + delta
+            if joint_name in self._stream_heard:
+                # Never lead the measured position by more than the limit, so a
+                # blocked joint or a stale reading cannot wind the command up.
+                measured = state.joints.get_position(joint_name)
+                if measured is None or not math.isfinite(measured):
+                    self._commanded_positions.pop(joint_name, None)
+                    self._stream_anchors.pop(joint_name, None)
+                    all_complete = False
+                    continue
+                lead = self._stream_lead_limits[joint_name]
+                commanded = max(measured - lead, min(measured + lead, commanded))
+                self._stream_anchors[joint_name] = commanded
             self._commanded_positions[joint_name] = commanded
 
             final_position = run.trajectory.points[-1].positions[index]
@@ -362,9 +442,16 @@ class JointTrajectoryTask(BaseControlTask):
         self._trajectory = None
         self._motions.clear()
         self._stream_deadlines.clear()
+        self._stream_heard.clear()
+        self._stream_anchors.clear()
         self._commanded_positions.clear()
         self._pending_start = False
         self._start_time = 0.0
+
+    def _forget_stream(self, joint_name: str) -> None:
+        """Make the joint's next streamed target start from the measured position."""
+        self._stream_heard.pop(joint_name, None)
+        self._stream_anchors.pop(joint_name, None)
 
     def _validate_trajectory(self, trajectory: JointTrajectory) -> bool:
         """Validate a trajectory before execution."""
@@ -495,6 +582,7 @@ class JointTrajectoryTask(BaseControlTask):
         run = _TrajectoryRun(trajectory)
         for index, joint_name in enumerate(trajectory.joint_names):
             self._stream_deadlines.pop(joint_name, None)
+            self._forget_stream(joint_name)
             self._motions[joint_name] = (run, index)
             if len(trajectory.points) > 1 and joint_name not in self._commanded_positions:
                 self._commanded_positions[joint_name] = current_positions[joint_name]
@@ -516,6 +604,9 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             Semantic cancellation result.
         """
+        # A stream after a cancel or an e-stop starts from the measured position.
+        self._stream_heard.clear()
+        self._stream_anchors.clear()
         if self._state != TrajectoryState.EXECUTING:
             return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
         self._state = TrajectoryState.ABORTED
@@ -615,6 +706,13 @@ class JointTrajectoryTaskParams(BaseConfig):
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
+    continuous_stream: bool = Field(default=False, strict=True)
+    stream_lead_limits: dict[str, float] | None = None
+    stream_gap_timeout: float = Field(
+        default=DEFAULT_STREAM_GAP_TIMEOUT,
+        gt=0.0,
+        allow_inf_nan=False,
+    )
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
@@ -629,5 +727,8 @@ def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
             velocity_limits=params.velocity_limits,
+            continuous_stream=params.continuous_stream,
+            stream_lead_limits=params.stream_lead_limits,
+            stream_gap_timeout=params.stream_gap_timeout,
         ),
     )
