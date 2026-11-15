@@ -14,12 +14,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-import colorsys
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 if TYPE_CHECKING:
     from open3d.geometry import PointCloud  # type: ignore[import-untyped]
@@ -29,40 +25,3 @@ def read_pointcloud(path: Path) -> PointCloud:
     import open3d as o3d
 
     return o3d.io.read_point_cloud(path)
-
-
-def sum_pointclouds(pointclouds: Iterable[PointCloud]) -> PointCloud:
-    it = iter(pointclouds)
-    ret = next(it)
-    for x in it:
-        ret += x
-    return ret.remove_duplicated_points()
-
-
-def height_colorize(pointcloud: PointCloud) -> None:
-    import open3d as o3d
-
-    points = np.asarray(pointcloud.points)
-    z_values = points[:, 2]
-    z_min = z_values.min()
-    z_max = z_values.max()
-
-    z_normalized = (z_values - z_min) / (z_max - z_min)
-
-    # Create rainbow color map.
-    colors = np.array([colorsys.hsv_to_rgb(0.7 * (1 - h), 1.0, 1.0) for h in z_normalized])
-
-    pointcloud.colors = o3d.utility.Vector3dVector(colors)
-
-
-def visualize(pointcloud: PointCloud) -> None:
-    import open3d as o3d
-
-    voxel_size = 0.05  # 0.05m voxels
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pointcloud, voxel_size=voxel_size)
-    o3d.visualization.draw_geometries(
-        [voxel_grid],
-        window_name="Combined Point Clouds (Voxelized)",
-        width=1024,
-        height=768,
-    )

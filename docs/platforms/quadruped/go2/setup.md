@@ -68,7 +68,7 @@ export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2
 ```
 
-That's it. dimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center in your browser.
+That's it. dimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the Rerun viewer.
 
 ### What's Running
 
@@ -80,14 +80,10 @@ That's it. dimOS connects via WebRTC (no jailbreak required), starts the full na
 | **ReplanningAStarPlanner** | Continuous A* path planning with dynamic replanning |
 | **WavefrontFrontierExplorer** | Autonomous exploration of unmapped areas |
 | **RerunBridge** | 3D visualization in browser |
-| **WebsocketVis** | Command center at localhost:7779 |
 
 ### Send Goals
 
-From the command center ([localhost:7779](http://localhost:7779)):
-- Click on the map to set navigation goals
-- Toggle autonomous exploration
-- Monitor robot pose, costmap, and planned path
+Click on the map in the Rerun viewer to set navigation goals.
 
 ## Agentic Control
 

@@ -21,6 +21,9 @@ import pytest
 
 from dimos.control.components import HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
+from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
+    PlanarBaseTrajectoryTaskConfig,
+)
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
@@ -98,7 +101,11 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
             timeout=5.0,
             message="the base trajectory never completed",
         )
-        assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(0.2, abs=0.03)
+        # The mock base moves a fixed step per tick, so a slow tick loop leaves it
+        # behind, and COMPLETED only promises it got within the goal tolerance.
+        assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(
+            0.2, abs=PlanarBaseTrajectoryTaskConfig.position_goal_tolerance
+        )
     finally:
         coordinator.stop()
 

@@ -76,6 +76,8 @@ RELAY_DIST_SOURCES = (
     "sdk/deno.json",
     "sdk/package.json",
     "sdk/dist",
+    # the gateway's /msgs.js bundles its generated decoders against this one source (experimental/gateway/msgs.py)
+    "sdk/src/decoders/lcm.ts",
 )
 RELAY_DIST_TARGET = os.path.join("dimos", "web", "relay_bridge", "_relay_dist")
 

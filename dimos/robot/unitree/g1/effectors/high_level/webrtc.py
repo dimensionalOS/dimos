@@ -55,7 +55,7 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     cmd_vel: In[Twist]
     config: G1HighLevelWebRtcConfig
 
-    connection: UnitreeWebRTCConnection | None
+    connection: UnitreeWebRTCConnection | None = None
 
     def __init__(self, *args: Any, g: GlobalConfig = global_config, **kwargs: Any) -> None:
         super().__init__(*args, g=g, **kwargs)

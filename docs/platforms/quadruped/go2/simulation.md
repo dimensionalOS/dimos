@@ -12,7 +12,7 @@ See [Setup](/docs/platforms/quadruped/go2/setup.md) for installing dimOS first.
 dimos --replay run unitree-go2
 ```
 
-Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3D visualization. Watch the Go2 map and navigate an office in real time.
+Opens Rerun 3D visualization. Watch the Go2 map and navigate an office in real time.
 
 ## MuJoCo Simulation
 

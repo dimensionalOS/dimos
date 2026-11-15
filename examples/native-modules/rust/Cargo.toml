@@ -12,6 +12,10 @@ name = "pong"
 path = "src/pong.rs"
 
 [[bin]]
+name = "slow_handler"
+path = "src/slow_handler.rs"
+
+[[bin]]
 name = "tf_listener"
 path = "src/tf_listener.rs"
 
@@ -20,7 +24,7 @@ name = "tf_broadcaster"
 path = "src/tf_broadcaster.rs"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "30482d5b99126e5404b3c0a56dd0eddc8fcea6a8" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }

@@ -37,8 +37,11 @@ jobs:
       id-token: write  # For codecov-action's OIDC upload
 
     steps:
+      - name: Remove stale git lock files
+        # See the ci.yml self-hosted-tests job.
+        run: if [ -d .git ]; then sudo find .git -type f -name '*.lock' -print -delete; fi
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           clean: false
           # If we ever allow external PRs on custom runner, persisting credentials
@@ -124,7 +127,7 @@ jobs:
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           disable_search: true
           fail_ci_if_error: true
@@ -137,7 +140,7 @@ jobs:
           binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           report_type: test_results
           use_oidc: true
@@ -171,14 +174,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
       - name: Extract Deno version
         id: deno-version
         run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
       # No setup-deno cache here: its post step fails when DENO_DIR does not exist,
       # and nothing creates it until the builds below first run deno.
       - name: Install Deno
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@v2.0.5
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
       # Build the dists up front: the bridge would otherwise build them inside
@@ -241,8 +244,11 @@ jobs:
       contents: read  # For checkout
 
     steps:
+      - name: Remove stale git lock files
+        # See the ci.yml self-hosted-tests job.
+        run: if [ -d .git ]; then find .git -type f -name '*.lock' -print -delete; fi
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           clean: false
           # If we ever allow external PRs on custom runner, persisting credentials

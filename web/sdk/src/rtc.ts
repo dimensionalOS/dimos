@@ -13,6 +13,8 @@ export interface PeerConnectionLike {
   createAnswer(): Promise<RTCSessionDescriptionInit>;
   setLocalDescription(description?: RTCSessionDescriptionInit): Promise<void>;
   setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void>;
+  /** Trickled remote candidates (direct topic video); null ends them. */
+  addIceCandidate(candidate: { candidate: string; sdpMid: string | null } | null): Promise<void>;
   getTransceivers(): { mid: string | null; receiver: { track: MediaStreamTrack } }[];
   addEventListener(type: string, listener: (event: Event) => void): void;
   close(): void;

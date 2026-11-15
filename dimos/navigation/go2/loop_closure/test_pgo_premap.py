@@ -181,6 +181,18 @@ def test_premap_loops_pull_a_drifting_walk_onto_the_premap() -> None:
     assert np.linalg.norm(last - truth) < 0.15
 
 
+def test_loop_closure_off_keeps_the_attachment_but_closes_no_loops() -> None:
+    room = _room()
+    state = PGOState(PGOConfig(loop_closure=False), _premap(room))
+    drift = 0.04
+    _walk(state, room, range(3), drift)
+    state.relocalize(_fix(TRUE, 0.0))
+    assert state.attached
+    _walk(state, room, range(3, 16), drift)
+    assert state.n_premap_loops == 0
+    assert state.n_loops == 0
+
+
 def test_a_loosely_held_premap_gives_way_to_a_stiff_live_run() -> None:
     room = _room()
     bend = 0.4

@@ -12,27 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Seeed B601-DM model, hardware and planning configuration."""
+"""Seeed B601-DM model and planning configuration."""
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import TaskConfig
-from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
-from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.robot.manipulators._modeling import named_for_robot
+from dimos.robot.manipulators.damiao.robot import (
+    DamiaoBus,
+    DamiaoGripper,
+    DamiaoMotor,
+    DamiaoRobot,
+)
 from dimos.robot.manipulators.seeed_b601_dm.joints import (
     B601_DM_ARM_JOINTS,
     B601_DM_DOF,
     B601_DM_GRIPPER_JOINT,
-    B601_DM_JOINTS,
 )
 
 B601_DM_HARDWARE_ID = "b601_dm"
+B601_DM_GRIPPER_NAME = "gripper"
+#: The jaw's finger joints, in m: finger_left is driven and the URDF has
+#: finger_right copy it. finger_left is closed at 0 and fully open at its upper end.
+B601_DM_FINGER_JOINTS = ("finger_left", "finger_right")
+# Measured on the arm: the gripper motor travels 6.39 rad between its stops,
+# and opening moves it toward more negative positions. Calibration drives
+# past the full stroke so it reaches both stops from any start.
+GRIPPER_CALIBRATION_TRAVEL_RAD = 7.0
+GRIPPER_CURRENT = 0.15
 B601_DM_SOURCE = RobotDescriptionSource(
     url="https://github.com/Seeed-Projects/reBot-DevArm",
     ref="8494bdfa91f4e3712bb7e7743e7bbcc63b01b9af",
@@ -47,7 +58,6 @@ B601_DM_VELOCITY_LIMITS = dict(zip(B601_DM_ARM_JOINTS, (0.2, 0.2, 0.2, 0.8, 0.8,
 # Lazy: the description repository is fetched on first load, not on import.
 B601_DM_MODEL = (
     RobotModel.from_file(B601_DM_SOURCE / "Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf")
-    .with_fixed_joints("finger_left", "finger_right")
     .with_joint_position_limits(
         "joint2", lower=B601_DM_JOINT2_LIMITS[0], upper=B601_DM_JOINT2_LIMITS[1]
     )
@@ -56,76 +66,87 @@ B601_DM_MODEL = (
 )
 
 
-def b601_dm_hardware(
-    *,
-    can_port: str | None = None,
-    gravity_comp: bool = True,
-) -> HardwareComponent:
-    """Select in-memory hardware, or the physical arm when a port is given.
-
-    ``can_port`` is a SocketCAN interface (``can0``) or the serial port of
-    the Damiao USB-CAN bridge shipped with the arm (``/dev/ttyACM0``).
-    """
-    adapter_kwargs: dict[str, object] = {}
-    limits: JointLimits | None = None
-    if can_port is None:
-        limits = JointLimits(
-            position_lower=[*([None] * B601_DM_DOF), 0.0],
-            position_upper=[*([None] * B601_DM_DOF), 1.0],
-            velocity_max=[None] * len(B601_DM_JOINTS),
-        )
-    else:
-        if not can_port.strip():
-            raise ValueError("B601-DM CAN port must not be empty")
-        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_devices={"b601_dm": can_port},
-            gravity_comp=gravity_comp,
-        )
-    return HardwareComponent(
-        hardware_id=B601_DM_HARDWARE_ID,
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=list(B601_DM_JOINTS),
-        adapter_type="mock_whole_body" if can_port is None else "seeed_b601_dm",
-        auto_enable=True,
-        limits=limits,
-        adapter_kwargs=adapter_kwargs,
-        # Seeed's SDK MIT gains; the shoulder kd is capped at the shared
-        # codec's 5.0 maximum. The gripper runs its own current-limited control.
-        wb_config=WholeBodyConfig(
-            kp=(120.0, 120.0, 120.0, 18.0, 18.0, 18.0, 0.0),
-            kd=(5.0, 5.0, 5.0, 2.0, 2.0, 2.0, 0.0),
-        ),
-    )
-
-
 def b601_dm_gripper_task() -> TaskConfig:
-    """Normalized open/close control of the gripper joint (0.0 closed, 1.0 open)."""
+    """Open and close the jaw from 0.0 (closed) to 1.0 (open), on finger_left."""
     return TaskConfig(
         name=f"{B601_DM_HARDWARE_ID}_gripper",
         type="gripper",
         joint_names=[B601_DM_GRIPPER_JOINT],
         priority=20,
+        params={"open_at": "upper"},
     )
 
 
 def b601_dm_model_config(
     *,
     home_joints: list[float] | None = None,
+    robot: str | None = None,
 ) -> RobotModelConfig:
-    """Build the planning config for the arm joints of the vendor model."""
-    return RobotModelConfig(
-        model=B601_DM_MODEL,
-        joint_names=list(B601_DM_ARM_JOINTS),
-        base_link="base_link",
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="manipulator",
-                joint_names=B601_DM_ARM_JOINTS,
-                base_link="base_link",
-                tip_link="end_link",
-            )
-        ],
-        auto_convert_meshes=True,
-        gripper_hardware_id=B601_DM_HARDWARE_ID,
-        home_joints=list(home_joints or [0.0] * B601_DM_DOF),
+    """Build the planning config for the arm joints of the vendor model.
+
+    Args:
+        home_joints: The arm's home posture; defaults to all zeros.
+        robot: Name the moving joints under this robot, e.g. "arm" gives
+            "arm/joint1" and "arm/finger_left".
+    """
+    return named_for_robot(
+        RobotModelConfig(
+            model=B601_DM_MODEL,
+            joint_names=list(B601_DM_ARM_JOINTS),
+            base_link="base_link",
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="manipulator",
+                    joint_names=B601_DM_ARM_JOINTS,
+                    base_link="base_link",
+                    tip_link="end_link",
+                )
+            ],
+            # The closed fingers touch each other.
+            collision_exclusion_pairs=[("finger_left_link", "finger_right_link")],
+            auto_convert_meshes=True,
+            home_joints=list(home_joints or [0.0] * B601_DM_DOF),
+        ),
+        robot,
+        fingers=B601_DM_FINGER_JOINTS,
     )
+
+
+def _arm_motors() -> list[DamiaoMotor]:
+    # Seeed's motor table. DM4340P uses the DM4340 driver profile.
+    types = ["DM4340"] * 3 + ["DM4310"] * 3
+    return [
+        DamiaoMotor(f"joint{index}", motor_type, index, index + 0x10)
+        for index, motor_type in enumerate(types, start=1)
+    ]
+
+
+#: One B601-DM arm and its calibrated jaw on one Damiao CAN bus.
+B601_DM = DamiaoRobot(
+    buses=[
+        DamiaoBus(
+            arm=_arm_motors(),
+            # Seeed's SDK MIT gains; the shoulder kd is capped at the shared
+            # codec's 5.0 maximum. The gripper runs its own current-limited
+            # control.
+            kp=[120.0, 120.0, 120.0, 18.0, 18.0, 18.0],
+            kd=[5.0, 5.0, 5.0, 2.0, 2.0, 2.0],
+            gripper=DamiaoGripper(
+                name=B601_DM_GRIPPER_NAME,
+                joint=B601_DM_FINGER_JOINTS[0],
+                open_at="upper",
+                motor=DamiaoMotor("gripper_motor", "DM4310", 0x07, 0x17),
+                opening="decreasing_position",
+                current=GRIPPER_CURRENT,
+                calibration_travel=GRIPPER_CALIBRATION_TRAVEL_RAD,
+            ),
+            name="arm",
+        )
+    ],
+    model=b601_dm_model_config().model,
+    gravity_model=B601_DM_MODEL,
+    base_link="base_link",
+    joint_names=[*B601_DM_ARM_JOINTS, B601_DM_FINGER_JOINTS[0]],
+    gravity=True,
+    home_joints=[0.0] * B601_DM_DOF,
+)

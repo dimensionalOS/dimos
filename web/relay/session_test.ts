@@ -180,6 +180,7 @@ Deno.test("the viewer control stream is raised to CONTROL_SEND_ORDER", async () 
       readable: new ReadableStream<Uint8Array>(),
       writable: new WritableStream<Uint8Array>(),
     },
+    incomingUnidirectionalStreams: new ReadableStream(),
     incomingBidirectionalStreams: new ReadableStream({
       start(controller) {
         controller.enqueue({
@@ -209,6 +210,64 @@ Deno.test("the viewer control stream is raised to CONTROL_SEND_ORDER", async () 
   );
 });
 
+for (const ending of ["kick", "control EOF"] as const) {
+  Deno.test(`viewer ${ending} releases provider demand before transport shutdown finishes`, async () => {
+    let input!: ReadableStreamDefaultController<Uint8Array>;
+    const wt = {
+      // A blocked transport must not keep encoding after the app has gone.
+      closed: new Promise<void>(() => {}),
+      close() {},
+      datagrams: { readable: new ReadableStream(), writable: new WritableStream() },
+      incomingBidirectionalStreams: new ReadableStream({
+        start(controller) {
+          controller.enqueue({
+            readable: new ReadableStream<Uint8Array>({
+              start(controller) {
+                input = controller;
+                controller.enqueue(encodeControlFrame({
+                  t: "hello",
+                  v: PROTOCOL_VERSION,
+                  role: "viewer",
+                }));
+              },
+            }),
+            writable: new WritableStream(),
+          });
+        },
+      }),
+    } as unknown as WebTransport;
+    const registry = new Registry();
+    const session = new ViewerSession(wt, 1, registry);
+    const messages: Msg[] = [];
+    registry.topics.registerSource({
+      sendControl: (msg) => messages.push(msg),
+      sendTopicPublication() {},
+      sendTopicGuard() {},
+      failTopics() {},
+    }, "workspace");
+    session.start();
+    while (!session.greeted) await tick();
+    registry.topics.addViewer(session, () => {});
+    registry.topics.onViewerMsg(session, {
+      t: "topic_sub",
+      id: "camera",
+      source: "workspace",
+      keyExpr: "camera",
+      delivery: "latest",
+      profile: "raw",
+      maxHz: 30,
+    }, () => {});
+    assertEquals(messages.filter((m) => m.t === "topic_open").length, 1);
+    if (ending === "kick") session.sink.kick("consumer stopped");
+    else input.close();
+    for (let i = 0; i < 100 && !messages.some((m) => m.t === "topic_close"); i++) await tick();
+    assertEquals(messages.filter((m) => m.t === "topic_close").length, 1);
+    assertEquals((registry.stats() as { viewers: number }).viewers, 0);
+    session.sink.kick("duplicate shutdown");
+    assertEquals(messages.filter((m) => m.t === "topic_close").length, 1);
+  });
+}
+
 // Viewer auth (T12d): with an Auth, a hello must carry a known viewer token.
 const VIEWER_TOKEN = "viewer-token-0123456789abcdef";
 const AUTH = new Auth(new Map(), new Map([["paul", VIEWER_TOKEN]]));
@@ -216,7 +275,7 @@ const AUTH = new Auth(new Map(), new Map([["paul", VIEWER_TOKEN]]));
 /** One viewer hello over a fake WebTransport: the control replies, whether
  * the session closed the transport, and the session itself. */
 async function viewerHandshake(
-  hello: Msg,
+  hello: Msg | Msg[],
   auth: Auth | null,
 ): Promise<{ replies: Msg[]; closed: boolean; session: ViewerSession }> {
   const written: Uint8Array[] = [];
@@ -230,12 +289,15 @@ async function viewerHandshake(
       readable: new ReadableStream<Uint8Array>(),
       writable: new WritableStream<Uint8Array>(),
     },
+    incomingUnidirectionalStreams: new ReadableStream(),
     incomingBidirectionalStreams: new ReadableStream({
       start(controller) {
         controller.enqueue({
           readable: new ReadableStream<Uint8Array>({
             start(controller) {
-              controller.enqueue(encodeControlFrame(hello));
+              for (const msg of Array.isArray(hello) ? hello : [hello]) {
+                controller.enqueue(encodeControlFrame(msg));
+              }
             },
           }),
           writable: new WritableStream<Uint8Array>({

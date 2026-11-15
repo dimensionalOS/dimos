@@ -31,6 +31,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
+from dimos.msgs.std_msgs.String import String
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2
 from dimos.simulation.go2_sim.world import GO2, MID360, MOUNT_R, SHAPE, SimGo2World
@@ -40,7 +41,6 @@ from dimos.simulation.sim_world.premap import premap_cloud, without_objects
 from dimos.simulation.sim_world.world import (
     CONTACTS_HEARTBEAT_DT,
     FRAME_DT,
-    LIDAR_GROUPS,
     LidarFrame,
     Sim,
     display_xml,
@@ -74,6 +74,9 @@ def sim(scene: Scene, policy: OnnxGo2Policy) -> Sim:
 def waiting_world() -> Iterator[SimGo2World]:
     world = SimGo2World(wait_for_scene=True)
     world.cmd_vel.transport = LCMTransport("/test_go2_sim_world_wait/cmd_vel", Twist)
+    world.render_file_request.transport = LCMTransport(
+        "/test_go2_sim_world_wait/render_file_request", String
+    )
     yield world
     world.stop()
 
@@ -159,7 +162,7 @@ def test_sensor_velocity_matches_the_motion(sim: Sim) -> None:
 
 def test_the_lidar_sees_nothing_overhead(sim: Sim) -> None:
     position, _ = sim.sensor_pose(MID360)
-    raycaster = MujocoRaycaster(sim.model, sim.data, LIDAR_GROUPS)
+    raycaster = MujocoRaycaster(sim.model, sim.data, sim.lidar_groups)
     dist, _ = raycaster.cast(position, np.array([[0.0, 0.0, 1.0]]), 10.0)
     assert dist[0] < 0
 
@@ -198,6 +201,9 @@ def test_a_rig_with_two_lidars_reports_both_at_its_base(
 def test_reset_pose_moves_the_robot_and_the_contacts_keep_their_heartbeat(scene: Scene) -> None:
     world = SimGo2World()
     world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel", Twist)
+    world.render_file_request.transport = LCMTransport(
+        "/test_go2_sim_world/render_file_request", String
+    )
     poses: list[PoseStamped] = []
     heard: list[Contacts] = []
     world.ground_truth.subscribe(poses.append)

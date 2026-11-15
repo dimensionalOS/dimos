@@ -26,6 +26,9 @@ class CloudConfig(BaseSettings):
     url: str = "https://api.dimensional.org"
     api_key: str | None = Field(default=None, repr=False)
     http_timeout: float = 60.0
+    # The OS keyring answers over IPC and a locked one waits on an unlock prompt forever;
+    # past this it is treated as absent and the stored-credentials file is used instead.
+    keyring_timeout: float = 5.0
     upload_codec: str = "lz4"
     upload_retries: int = 2
     upload_chunk_mb: int | None = None

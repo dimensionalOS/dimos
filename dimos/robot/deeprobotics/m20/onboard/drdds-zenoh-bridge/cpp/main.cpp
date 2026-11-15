@@ -399,25 +399,22 @@ public:
     ~M20ControlBridge() { stop(); }
 
     void start() {
-        // Robot motion runs on AOS, so these topics cross to NOS over the
-        // vendor's UDP DDS transport. The LIO outputs below remain local SHM.
-        constexpr bool use_shm = false;
         hes_subscription_ = std::make_unique<
             DrDDSChannel<drdds::msg::StdMsgInt32PubSubType>>(
             [this](const drdds::msg::StdMsgInt32* msg) { on_hes_status(msg); },
-            kHesStatusTopic, kDomain, use_shm, "rt");
+            kHesStatusTopic, kDomain);
         motion_info_subscription_ = std::make_unique<
             DrDDSChannel<drdds::msg::MotionInfoPubSubType>>(
             [this](const drdds::msg::MotionInfo* msg) { on_motion_info(msg); },
-            kMotionInfoTopic, kDomain, use_shm, "rt");
+            kMotionInfoTopic, kDomain);
         nav_cmd_publisher_ =
             std::make_unique<DrDDSChannel<drdds::msg::NavCmdPubSubType>>(
-                kNavCmdTopic, kDomain, use_shm, "rt");
+                kNavCmdTopic, kDomain);
         motion_state_publisher_ =
             std::make_unique<DrDDSChannel<drdds::msg::MotionStatePubSubType>>(
-                kMotionStateTopic, kDomain, use_shm, "rt");
+                kMotionStateTopic, kDomain);
         gait_publisher_ = std::make_unique<DrDDSChannel<drdds::msg::GaitPubSubType>>(
-            kGaitTopic, kDomain, use_shm, "rt");
+            kGaitTopic, kDomain);
         command_ready_->matched = [this] { return nav_cmd_publisher_->GetMatchedCount(); };
         motion_state_->matched =
             [this] { return motion_info_subscription_->GetMatchedCount(); };
@@ -630,19 +627,18 @@ int main() {
         &body, &tf, &odometry, &command_ready, &motion_state, &gait_state,
     };
 
-    constexpr bool use_shm = true;
     auto body_channel =
         std::make_unique<DrDDSChannel<sensor_msgs::msg::PointCloud2PubSubType>>(
             [&body, &tf_gate](const sensor_msgs::msg::PointCloud2* message) {
                 on_pointcloud(message, &body, &tf_gate);
             },
-            kBodyTopic, kDomain, use_shm, "rt");
+            kBodyTopic, kDomain);
     auto odometry_channel =
         std::make_unique<DrDDSChannel<nav_msgs::msg::OdometryPubSubType>>(
             [&odometry, &tf, &tf_gate](const nav_msgs::msg::Odometry* message) {
                 on_odometry(message, &odometry, &tf, &tf_gate);
             },
-            kOdometryTopic, kDomain, use_shm, "rt");
+            kOdometryTopic, kDomain);
     body.matched = [&body_channel] { return body_channel->GetMatchedCount(); };
     odometry.matched = [&odometry_channel] {
         return odometry_channel->GetMatchedCount();

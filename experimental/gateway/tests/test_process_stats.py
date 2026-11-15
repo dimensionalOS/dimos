@@ -110,3 +110,13 @@ def test_the_route_answers_the_snapshot(client: TestClient, state: State) -> Non
     shown = client.get("/active/stats").json()
     assert shown["up"] is True
     assert shown["cpuHistory"]["worker:0"] == [14.0]
+
+
+def test_each_sample_is_a_stats_event(state: State, sent: list[tuple[str, Any]]) -> None:
+    made: list[FakeTransport] = []
+    state.process_stats._factory = lambda topic: made.append(FakeTransport(topic)) or made[-1]
+    state.process_stats.snapshot()
+    made[0].send(stats_message(1.0))
+    made[0].send(stats_message(2.0))
+    # a bust signal: the view reads GET /active/stats again
+    assert sent == [("ns/dimos/events/stats", {"type": "stats"})] * 2

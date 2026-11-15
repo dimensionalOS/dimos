@@ -100,13 +100,19 @@ When the factory builds transports from the global switch, it applies defaults (
 
 ## Benchmarks
 
-Quick view on performance of our pubsub backends:
+Run the pubsub benchmarks directly:
 
 ```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
+uv run python -m dimos.protocol.pubsub.benchmarks.throughput
 ```
 
-![Benchmark results](../assets/pubsub_benchmark.png)
+See the [benchmark guide](/dimos/protocol/pubsub/benchmarks/README.md) for backend selection,
+image compression comparisons, and blueprint replay measurements.
+
+These historical results include the retired SHM backend. Current results depend on the
+machine, payload size, transport settings, and installed backends.
+
+![Historical pubsub benchmark results](../assets/pubsub_benchmark.png)
 
 ## Abstraction layers
 
@@ -274,10 +280,10 @@ dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 
 ![dimos spy](../assets/lcmspy.png)
 
-`dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
+`dimos topic echo /topic` finds the typed channel for a topic name and decodes automatically. On Zenoh the channel is a key like `dimos/topic/pkg.Msg`. On LCM it is `/topic#pkg.Msg`. The full channel is also accepted in place of the name.
 
 ```sh skip
-Listening on /camera/rgb (inferring from typed LCM channels like '/camera/rgb#pkg.Msg')... (Ctrl+C to stop)
+Listening on /camera/rgb (inferring from typed Zenoh keys like 'dimos/camera/rgb/pkg.Msg')... (Ctrl+C to stop)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28:59)
 ```
 
@@ -485,19 +491,13 @@ class MyCborPubSub(CborEncoderMixin, Memory):
     pass
 ```
 
-## Testing and benchmarks
-
-### Spec tests
+## Testing
 
 See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid tests your new backend should pass.
 
-### Benchmarks
-
-Add your backend to benchmarks to compare in context:
-
-```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
-```
+Add performance comparisons to the cases in
+[`benchmarks/cases.py`](/dimos/protocol/pubsub/benchmarks/cases.py) and run the standalone
+commands in the [benchmark guide](/dimos/protocol/pubsub/benchmarks/README.md).
 
 ## Available transports
 

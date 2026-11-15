@@ -78,6 +78,9 @@ pub struct Config {
     pub emit_fine: bool,
     #[validate(range(min = 0.0))]
     pub max_range: f32,
+    /// Keep every Nth point of each cloud, before anything else touches it. 1 keeps them all.
+    #[validate(range(min = 1))]
+    pub pre_trace_subsample: u32,
     #[validate(range(min = 1))]
     pub ray_subsample: u32,
     #[validate(range(min = 0.0))]

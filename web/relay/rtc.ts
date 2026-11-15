@@ -76,7 +76,7 @@ interface ViewerRtc {
   pendingAnswer: {
     resolve: (sdp: string) => void;
     reject: (e: Error) => void;
-    timer: number;
+    timer: ReturnType<typeof setTimeout>;
   } | null;
 }
 
@@ -96,7 +96,7 @@ export class RtcHub implements RtcBroker {
   #robots = new Map<string, RobotRtc>();
   #viewers = new Map<ViewerPeer, ViewerRtc>();
   #ice: IceServer[] = STUN_ONLY;
-  #iceTimer: number | null = null;
+  #iceTimer: ReturnType<typeof setInterval> | null = null;
   #onRefresh: (() => void) | null = null;
   #disposed = false;
   #apiErrors = 0;

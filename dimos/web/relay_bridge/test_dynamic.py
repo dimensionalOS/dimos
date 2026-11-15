@@ -301,7 +301,7 @@ def test_module_init_constructs_runtime_streams(local_modules):
     assert module.config.relay_url is None
 
 
-@pytest.mark.skip(reason="flaky in CI, disabled until fixed")
+@pytest.mark.skipif_flaky_in_ci
 def test_forkserver_worker_predates_class_deploy_rpc_and_stream(
     worker_manager, deployed_proxies, ping_transport, retry_until
 ):
@@ -330,13 +330,18 @@ def test_forkserver_worker_predates_class_deploy_rpc_and_stream(
     assert proxy.set_transport("fork_ping", ping_transport) is True
 
     received = []
+    errors = []
     got = threading.Event()
 
     def peek():
-        value = proxy.peek_stream("fork_ping", 15.0)
-        if value is not None:
-            received.append(value)
-        got.set()
+        try:
+            value = proxy.peek_stream("fork_ping", 15.0)
+            if value is not None:
+                received.append(value)
+        except Exception as e:  # surfaced below instead of a bare timeout
+            errors.append(e)
+        finally:
+            got.set()
 
     peeker = threading.Thread(target=peek)
     peeker.start()
@@ -344,6 +349,7 @@ def test_forkserver_worker_predates_class_deploy_rpc_and_stream(
         retry_until(got, lambda: ping_transport.publish(Vector3(1.0, 2.0, 3.0)), timeout=10.0)
     finally:
         peeker.join(timeout=20.0)
+    assert not errors, errors
     assert received == [Vector3(1.0, 2.0, 3.0)]
 
 
