@@ -86,11 +86,11 @@ as `--pgovoxelmapper.map-file`. Global flags work on either side of
 `run`; older wrapper-style overrides are no longer accepted.
 
 ```bash
-# Foreground (Ctrl-C to stop)
-dimos run unitree-go2
+# Foreground replay without a robot (Ctrl-C to stop)
+dimos --replay run unitree-go2
 
-# Background (returns immediately)
-dimos run unitree-go2-agentic --daemon
+# Background replay
+dimos --replay run unitree-go2-agentic --daemon
 
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
@@ -107,19 +107,19 @@ dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
 
 # Blueprint configuration (both value forms are accepted)
-dimos run unitree-go2 --map-file recording_go2
+dimos --replay run unitree-go2 --map-file recording_go2
 
 # Compose modules dynamically
-dimos run unitree-go2 keyboard-teleop
+dimos --replay run unitree-go2 keyboard-teleop
 
 # Run an externally packaged blueprint
 dimos run my-robot-stack.go2
 
 # Compose built-in and external blueprints
-dimos run unitree-go2 my-robot-stack.keyboard-teleop
+dimos --replay run unitree-go2 my-robot-stack.keyboard-teleop
 
 # Disable specific modules
-dimos run unitree-go2-agentic --disable speak-skill --disable web-input
+dimos --replay run unitree-go2-agentic --disable speak-skill --disable web-input
 ```
 
 External blueprint names are always fully qualified as
