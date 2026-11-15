@@ -78,6 +78,15 @@ def test_close_open_jaw_control_closes_opens_and_holds_each_side_alone(mocker: A
         read(none, none)
         read(frozenset({ZL}), none)
         assert jaws() == pytest.approx((0.4, 1.0))
+        # A long gap with a button held moves a jaw by at most 5 read periods
+        # (0.1 s at 50 Hz): 0.3 here, not the whole range.
+        joycons.publish_reading({"left": frozenset({ZL}), "right": none}, dt=5.0)
+        assert jaws() == pytest.approx((0.1, 1.0))
+        read(none, none)
+        joycons.publish_reading({"left": none, "right": frozenset({R})}, dt=5.0)
+        read(frozenset({L}), none)
+        joycons.publish_reading({"left": frozenset({L}), "right": none}, dt=5.0)
+        assert jaws() == pytest.approx((0.7, 1.0))
     finally:
         joycons.stop()
 
