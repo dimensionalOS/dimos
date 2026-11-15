@@ -24,10 +24,9 @@ use crate::columns::{ColumnIz, ColumnMask};
 use crate::terrain::Terrain;
 use crate::voxel::VoxelKey;
 
-/// The widest gap a riser bridge fills, which is also how far one reads past the cells it fills: as wide a hole as
-/// the closing fills on a level surface.
+/// The widest gap a riser bridge fills, which is also how far one reads past the cells it fills: the closing radius.
 pub fn riser_reach(closing_passes: u32) -> i32 {
-    2 * closing_passes as i32
+    closing_passes as i32
 }
 
 /// Extract standable cells from the terrain's whole map, then close small
