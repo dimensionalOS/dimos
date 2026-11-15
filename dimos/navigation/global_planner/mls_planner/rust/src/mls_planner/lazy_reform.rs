@@ -309,7 +309,9 @@ impl Planner {
             crate::planner::snap_pose_to_cell(&g.surface_lookup, p, vs, config.robot_height)
                 .and_then(|k| g.cells.id(k))
         };
-        let (Some(a), Some(b)) = (snap(start), snap(goal)) else {
+        let goal_cell = crate::planner::snap_goal_current(g, goal, vs, config.robot_height)
+            .or_else(|| snap(goal));
+        let (Some(a), Some(b)) = (snap(start), goal_cell) else {
             return format!(
                 "{{\"snapped\":false,\"start\":{},\"goal\":{}}}",
                 snap(start).is_some(),
