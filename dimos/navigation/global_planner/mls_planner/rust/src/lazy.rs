@@ -58,9 +58,12 @@ pub struct ReformConfig {
     /// How far each keyframe box grows before it is filed: the most a reform moves a point off its keyframe's rigid motion, m.
     #[validate(range(min = 0.0))]
     pub box_pad_m: f32,
-    /// Past versions whose keyframe poses are kept, for clouds stamped with an older version.
+    /// Past layers whose keyframe poses are kept, for clouds stamped with an older version.
     #[validate(range(min = 1))]
     pub version_history: u32,
+    /// A closure starts a new layer when it closes a loop or moves some keyframe's box corner this far from the current layer's frame, m (0 = half a voxel).
+    #[validate(range(min = 0.0))]
+    pub min_shift_m: f32,
 }
 
 impl ReformConfig {
@@ -73,6 +76,16 @@ impl ReformConfig {
             box_grid_m: 10.0,
             box_pad_m: 1.0,
             version_history: 4,
+            min_shift_m: 0.0,
+        }
+    }
+
+    /// The shift that starts a new layer: min_shift_m, or half a voxel when 0.
+    pub fn layer_shift_m(&self, voxel_size: f32) -> f64 {
+        if self.min_shift_m > 0.0 {
+            self.min_shift_m as f64
+        } else {
+            0.5 * voxel_size as f64
         }
     }
 
@@ -362,7 +375,7 @@ pub struct TableParams {
     pub box_grid_m: f32,
     /// How far each box is grown before it is filed, m.
     pub box_pad_m: f32,
-    /// How many past versions' poses are kept, for clouds stamped with an older version.
+    /// How many past layers' frames are kept, for clouds stamped with an older version.
     pub version_history: usize,
 }
 
@@ -377,10 +390,40 @@ pub struct KeyframeTable {
     version: Version,
     /// now * raw^-1 of the newest keyframe at the last closure, which places keyframes made since.
     correction: Pose,
-    /// Past versions, newest last: the version, every keyframe's pose then, and the correction then.
-    recent: VecDeque<(Version, Vec<Pose>, Pose)>,
+    /// The frame the current layer is built in: the version it started at, every keyframe's pose then, and the correction then.
+    frame: Frame,
+    /// Past layers' frames, newest last, for clouds stamped with an older version.
+    frames: VecDeque<Frame>,
     /// Coarse grid cell -> keyframes whose padded current box reaches it.
     box_grid: BTreeMap<(i32, i32), Vec<u32>>,
+}
+
+/// A layer's frame: the version it was fixed at, the keyframes' poses then, and the correction that placed keyframes made since.
+#[derive(Clone, Debug)]
+struct Frame {
+    version: Version,
+    poses: Vec<Pose>,
+    correction: Pose,
+}
+
+impl Default for Frame {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            poses: Vec::new(),
+            correction: Pose::IDENTITY,
+        }
+    }
+}
+
+impl Frame {
+    /// A keyframe's pose in this frame; one made after it was fixed rides its correction.
+    fn pose(&self, slot: u32, table: &KeyframeTable) -> Pose {
+        self.poses
+            .get(slot as usize)
+            .copied()
+            .unwrap_or_else(|| self.correction.compose(&table.raw(slot)))
+    }
 }
 
 /// What a closure changed: its version and the keyframes that closed, by slot.
@@ -401,7 +444,8 @@ impl KeyframeTable {
             slot_of: BTreeMap::new(),
             version: 0,
             correction: Pose::IDENTITY,
-            recent: VecDeque::new(),
+            frame: Frame::default(),
+            frames: VecDeque::new(),
             box_grid: BTreeMap::new(),
         }
     }
@@ -443,9 +487,9 @@ impl KeyframeTable {
         self.scan_box[slot as usize]
     }
 
-    /// raw * now^-1: a current-frame point near the keyframe to where it was at version 0.
+    /// raw * frame^-1: a point near the keyframe in the current layer's frame to where it was at version 0.
     pub fn to_v0(&self, slot: u32) -> Pose {
-        self.raw(slot).compose(&self.now(slot).inverse())
+        self.raw(slot).compose(&self.frame_pose(slot).inverse())
     }
 
     /// Take a new keyframe, placed by the current correction; a known one is ignored.
@@ -472,11 +516,6 @@ impl KeyframeTable {
         if known.is_empty() {
             return None;
         }
-        self.recent
-            .push_back((self.version, self.now.clone(), self.correction));
-        while self.recent.len() > self.params.version_history {
-            self.recent.pop_front();
-        }
         let mut closing: BTreeSet<u32> = BTreeSet::new();
         for &(slot, record) in &known {
             self.now[slot as usize] = record.post();
@@ -492,34 +531,81 @@ impl KeyframeTable {
             .iter()
             .find_map(|(_, r)| r.version)
             .map_or(next, |v| v.max(next));
-        self.refile_boxes();
         Some(Closure {
             version: self.version,
             closing: closing.into_iter().collect(),
         })
     }
 
-    /// A keyframe's pose at a past version still kept, None when that version is gone.
-    pub fn pose_at(&self, version: Version, slot: u32) -> Option<Pose> {
-        if version == self.version {
-            return Some(self.now(slot));
-        }
-        let (_, poses, correction) = self.recent.iter().find(|(v, _, _)| *v == version)?;
-        Some(
-            poses
-                .get(slot as usize)
-                .copied()
-                .unwrap_or_else(|| correction.compose(&self.raw(slot))),
-        )
+    /// The version the current layer's frame was fixed at.
+    pub fn frame_version(&self) -> Version {
+        self.frame.version
     }
 
-    /// The keyframe's padded box at its current pose, as an xy rectangle; None for an empty box.
+    /// Fix the current poses as the frame of a layer starting now; the old frame is kept for older clouds.
+    pub fn start_frame(&mut self) {
+        let next = Frame {
+            version: self.version,
+            poses: self.now.clone(),
+            correction: self.correction,
+        };
+        self.frames
+            .push_back(std::mem::replace(&mut self.frame, next));
+        while self.frames.len() > self.params.version_history {
+            self.frames.pop_front();
+        }
+        self.refile_boxes();
+    }
+
+    /// A keyframe's pose in the current layer's frame.
+    pub fn frame_pose(&self, slot: u32) -> Pose {
+        self.frame.pose(slot, self)
+    }
+
+    /// A keyframe's pose in the frame of the layer `version` falls in, None when that layer's frame is no longer kept.
+    pub fn pose_at(&self, version: Version, slot: u32) -> Option<Pose> {
+        if version >= self.frame.version {
+            return Some(self.frame.pose(slot, self));
+        }
+        let frame = self.frames.iter().rev().find(|f| f.version <= version)?;
+        Some(frame.pose(slot, self))
+    }
+
+    /// The farthest any keyframe's box corner has moved between the current layer's frame and now, m.
+    pub fn shift_since_frame(&self) -> f64 {
+        let mut worst: f64 = 0.0;
+        for slot in 0..self.raw.len() as u32 {
+            let (then, now) = (self.frame_pose(slot), self.now(slot));
+            let b = self.scan_box(slot);
+            let boxed = b[0] <= b[3] && b[1] <= b[4] && b[2] <= b[5];
+            let corners = if boxed { 8 } else { 1 };
+            for corner in 0..corners {
+                let pick = |axis: usize| {
+                    if !boxed {
+                        0.0
+                    } else if corner >> axis & 1 == 0 {
+                        b[axis] as f64
+                    } else {
+                        b[axis + 3] as f64
+                    }
+                };
+                let local = [pick(0), pick(1), pick(2)];
+                let (a, c) = (then.apply(local), now.apply(local));
+                let d =
+                    ((a[0] - c[0]).powi(2) + (a[1] - c[1]).powi(2) + (a[2] - c[2]).powi(2)).sqrt();
+                worst = worst.max(d);
+            }
+        }
+        worst
+    }
+
+    /// The keyframe's padded box in the current layer's frame, as an xy rectangle; None for an empty box.
     pub fn current_rect(&self, slot: u32) -> Option<Rect> {
         let b = self.scan_box(slot);
         if !(b[0] <= b[3] && b[1] <= b[4] && b[2] <= b[5]) {
             return None;
         }
-        let pose = self.now(slot);
+        let pose = self.frame_pose(slot);
         let mut rect = [
             f32::INFINITY,
             f32::NEG_INFINITY,
@@ -599,10 +685,10 @@ pub struct FrozenLayer {
 }
 
 impl FrozenLayer {
-    /// The pose to move an element by: its anchor's now times its pose in this layer.
+    /// The pose to move an element into the current layer by: its anchor's pose in the current frame times its pose in this layer's.
     pub fn carry(&self, anchor: u32, table: &KeyframeTable) -> Pose {
         match self.anchor_poses.get(&anchor) {
-            Some(then) if anchor != NO_ANCHOR => table.now(anchor).compose(&then.inverse()),
+            Some(then) if anchor != NO_ANCHOR => table.frame_pose(anchor).compose(&then.inverse()),
             _ => Pose::IDENTITY,
         }
     }
@@ -926,11 +1012,22 @@ mod tests {
         // A keyframe made after the closure rides the newest keyframe's correction.
         let c = table.add(&keyframe(12, Pose::from_yaw([20.0, 0.0, 0.0], 0.0)));
         assert!(close(table.now(c).translation, [20.0, 1.0, 0.0]));
-        // The version before is still at hand.
+        // Version 0's frame stays the current layer's until a new one starts, then is kept.
+        assert!(close(
+            table.pose_at(1, b).unwrap().translation,
+            [10.0, 0.0, 0.0]
+        ));
+        assert!(table.shift_since_frame() >= 1.0);
+        table.start_frame();
         assert!(close(
             table.pose_at(0, b).unwrap().translation,
             [10.0, 0.0, 0.0]
         ));
+        assert!(close(
+            table.pose_at(1, b).unwrap().translation,
+            [10.0, 1.0, 0.0]
+        ));
+        assert!(table.shift_since_frame() < 1e-9);
         assert!(close(
             table.to_v0(b).apply([10.0, 1.0, 0.0]),
             [10.0, 0.0, 0.0]

@@ -1313,7 +1313,7 @@ fn bfs_ball(
 }
 
 mod lazy_reform;
-pub use lazy_reform::VersionGap;
+pub use lazy_reform::{ClosureOutcome, VersionGap};
 mod warp;
 pub use warp::WarpReport;
 
@@ -1357,3 +1357,6 @@ mod region_tests;
 
 #[cfg(test)]
 mod plane_tests;
+
+#[cfg(test)]
+mod reform_tests;

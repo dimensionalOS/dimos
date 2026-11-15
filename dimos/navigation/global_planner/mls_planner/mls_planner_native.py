@@ -49,8 +49,10 @@ class MLSReformConfig(BaseModel):
     box_grid_m: float = 10.0
     # how far each keyframe box grows before it is filed: the most a reform moves a point off its keyframe's rigid motion, m
     box_pad_m: float = 1.0
-    # past versions whose keyframe poses are kept, for clouds stamped with an older version
+    # past layers whose keyframe poses are kept, for clouds stamped with an older version
     version_history: int = 4
+    # a closure starts a new layer when it closes a loop or moves some keyframe's box corner this far from the layer's frame, m (0 = half a voxel)
+    min_shift_m: float = 0.0
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):

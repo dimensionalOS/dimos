@@ -113,19 +113,6 @@ impl Planner {
         self.lazy.as_ref().map_or(0, |l| l.table.version())
     }
 
-    /// The newest keyframe's slot and current pose, which a goal is carried by.
-    pub fn newest_keyframe(&self) -> Option<(u32, Pose)> {
-        let lazy = self.lazy.as_ref()?;
-        let slot = lazy.table.latest()?;
-        Some((slot, lazy.table.now(slot)))
-    }
-
-    /// A keyframe's current pose.
-    pub fn keyframe_now(&self, slot: u32) -> Option<Pose> {
-        let lazy = self.lazy.as_ref()?;
-        ((slot as usize) < lazy.table.len()).then(|| lazy.table.now(slot))
-    }
-
     /// Take GscPGO's new keyframes; the first one starts the lazy reform.
     pub fn add_keyframes(&mut self, records: &[KeyframeRecord], config: &Config) {
         if !config.reform.enabled {
@@ -140,24 +127,43 @@ impl Planner {
         }
     }
 
-    /// Apply a loop closure: freeze the current layer, start the closure's, and migrate the submeshes inside the closing keyframes' boxes.
-    pub fn on_closure(&mut self, records: &[EventRecord], config: &Config) -> Option<Closure> {
+    /// Apply a loop closure to the keyframe table. One that closes a loop, or moves some keyframe past `reform.min_shift_m` since the current layer's frame, also freezes the current layer, starts the closure's, and migrates the submeshes inside the closing keyframes' boxes.
+    pub fn on_closure(
+        &mut self,
+        records: &[EventRecord],
+        config: &Config,
+    ) -> Option<ClosureOutcome> {
         let lazy = self.lazy.as_mut()?;
-        // The anchors' poses in the layer being frozen, before the closure moves them.
+        let closure = lazy.table.apply_event(records)?;
+        let shift = lazy.table.shift_since_frame();
+        if closure.closing.is_empty() && shift <= config.reform.layer_shift_m(config.voxel_size) {
+            return Some(ClosureOutcome {
+                closure,
+                new_layer: false,
+                carry_newest: Pose::IDENTITY,
+            });
+        }
+        // The anchors' poses in the frame of the layer being frozen.
         let anchor_poses = lazy
             .layers
             .anchors
             .iter()
             .map(|&a| {
                 let pose = if (a as usize) < lazy.table.len() {
-                    lazy.table.now(a)
+                    lazy.table.frame_pose(a)
                 } else {
                     Pose::IDENTITY
                 };
                 (a, pose)
             })
             .collect();
-        let closure = lazy.table.apply_event(records)?;
+        let newest = lazy.table.latest();
+        let newest_then = newest.map(|slot| lazy.table.frame_pose(slot));
+        lazy.table.start_frame();
+        let carry_newest = match (newest, newest_then) {
+            (Some(slot), Some(then)) => lazy.table.frame_pose(slot).compose(&then.inverse()),
+            _ => Pose::IDENTITY,
+        };
         let frozen = FrozenLayer {
             by_col: std::mem::take(&mut self.by_col),
             planes: std::mem::take(&mut self.planes),
@@ -180,7 +186,16 @@ impl Planner {
             .collect();
         let pool = Arc::clone(&self.pool);
         pool.install(|| self.reform_rects(&rects, config));
-        Some(closure)
+        Some(ClosureOutcome {
+            closure,
+            new_layer: true,
+            carry_newest,
+        })
+    }
+
+    /// How many version layers hold elements, the current one included.
+    pub fn layer_count(&self) -> usize {
+        self.lazy.as_ref().map_or(1, |l| 1 + l.layers.stale.len())
     }
 
     /// Migrate the stale submeshes a region update is about to touch, out to the margin its repair reads.
@@ -199,7 +214,7 @@ impl Planner {
     }
 
     /// The ring around a touched area that must be in the current layer: what the surface extraction pads by and the node window reaches.
-    fn migrate_margin_m(&self, config: &Config) -> f32 {
+    pub(super) fn migrate_margin_m(&self, config: &Config) -> f32 {
         let pad = 2 * config.closing_passes() as i32;
         (pad + config.buffer_window_cells()) as f32 * config.voxel_size
     }
@@ -377,7 +392,7 @@ impl Planner {
         );
     }
 
-    /// A region update from a cloud stamped with closure `version`: an older one is carried into the current frame by the newest keyframe's move since, a newer one is refused for the caller to hold until its closure arrives.
+    /// A region update from a cloud stamped with closure `version`: one from an older layer is carried into the current layer's frame by the newest keyframe's move between the frames, a newer one is refused for the caller to hold until its closure arrives.
     pub fn update_region_at_version(
         &mut self,
         points: &[MapPoint],
@@ -388,11 +403,11 @@ impl Planner {
         let Some(lazy) = &self.lazy else {
             return Ok(self.update_region(points, bounds, config));
         };
-        let now = lazy.table.version();
-        if version > now {
+        if version > lazy.table.version() {
             return Err(VersionGap::Ahead);
         }
-        if version == now {
+        // A version since the current layer's frame was fixed is within reform.min_shift_m of it.
+        if version >= lazy.table.frame_version() {
             return Ok(self.update_region(points, bounds, config));
         }
         let Some(anchor) = lazy.table.latest() else {
@@ -401,7 +416,7 @@ impl Planner {
         let Some(then) = lazy.table.pose_at(version, anchor) else {
             return Err(VersionGap::Forgotten);
         };
-        let carry = lazy.table.now(anchor).compose(&then.inverse());
+        let carry = lazy.table.frame_pose(anchor).compose(&then.inverse());
         let carried: Vec<MapPoint> = points
             .iter()
             .map(|&((x, y, z), fit)| {
@@ -425,6 +440,16 @@ impl Planner {
         };
         Ok(self.update_region(&carried, &carried_bounds, config))
     }
+}
+
+/// What a closure did to the planner.
+#[derive(Clone, Debug)]
+pub struct ClosureOutcome {
+    pub closure: Closure,
+    /// Whether it froze the current layer and started a new one.
+    pub new_layer: bool,
+    /// How the newest keyframe moved between the old layer's frame and the new one's, which a held goal rides.
+    pub carry_newest: Pose,
 }
 
 /// Why a stamped cloud cannot be applied now.

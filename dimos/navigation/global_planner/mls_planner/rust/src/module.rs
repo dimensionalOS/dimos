@@ -832,21 +832,15 @@ impl Worker {
             ReformEvent::Closure(records) => records,
         };
         let started = Instant::now();
-        let newest = planner.newest_keyframe();
-        let Some(closure) = planner.on_closure(&records, &self.config) else {
+        let Some(outcome) = planner.on_closure(&records, &self.config) else {
             debug!(
                 keyframes = records.len(),
                 "A loop closure listed no known keyframe, ignored."
             );
             return false;
         };
-        // Only a world-frame goal moves with the map; one in another frame follows that frame's tf.
-        if let Some((slot, then)) = newest {
-            let carry = planner
-                .keyframe_now(slot)
-                .map_or(crate::lazy::Pose::IDENTITY, |now| {
-                    now.compose(&then.inverse())
-                });
+        if outcome.new_layer {
+            // Only a world-frame goal moves with the map; one in another frame follows that frame's tf.
             let mut goal = self.active_goal.lock().expect("goal mutex");
             if let Some(g) = goal.as_mut().filter(|g| {
                 g.frame
@@ -854,7 +848,7 @@ impl Worker {
                     .is_none_or(|f| !is_tf_frame(f) || f == &*self.config.world_frame)
             }) {
                 let (x, y, z) = g.position;
-                let p = carry.apply([x as f64, y as f64, z as f64]);
+                let p = outcome.carry_newest.apply([x as f64, y as f64, z as f64]);
                 g.position = (p[0] as f32, p[1] as f32, p[2] as f32);
             }
         }
@@ -867,13 +861,21 @@ impl Worker {
             }
             self.wake.notify_one();
         }
-        info!(
-            ms = ms_since(started),
-            version = closure.version,
-            closing_keyframes = closure.closing.len(),
-            "Loop closure applied."
-        );
-        true
+        if outcome.new_layer {
+            info!(
+                ms = ms_since(started),
+                version = outcome.closure.version,
+                closing_keyframes = outcome.closure.closing.len(),
+                layers = planner.layer_count(),
+                "Loop closure applied in a new layer."
+            );
+        } else {
+            debug!(
+                version = outcome.closure.version,
+                "Loop closure moved keyframes under reform.min_shift_m, kept the layer."
+            );
+        }
+        outcome.new_layer
     }
 
     /// Live work has kept seed regions queued and unapplied for too long.
