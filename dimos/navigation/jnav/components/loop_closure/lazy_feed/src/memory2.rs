@@ -130,6 +130,12 @@ fn odom_from_pose_stamped(ts: f64, message: &PoseStamped) -> OdomRow {
     )
 }
 
+/// The rotation of a quaternion (w, x, y, z) normalized first.
+fn unit_rotation(q: [f64; 4]) -> Mat3 {
+    let norm = q.iter().map(|v| v * v).sum::<f64>().sqrt();
+    mat3::mat_from_quat(&q.map(|v| v / norm))
+}
+
 fn odom_from_pose(
     ts: f64,
     translation: Vec3,
@@ -137,6 +143,9 @@ fn odom_from_pose(
     frame_id: String,
     child_frame_id: String,
 ) -> OdomRow {
+    // recorded quaternions are only near unit; a rotation built from one is not quite orthonormal
+    let norm = quaternion_xyzw.iter().map(|v| v * v).sum::<f64>().sqrt();
+    let quaternion_xyzw = quaternion_xyzw.map(|v| v / norm);
     let [qx, qy, qz, qw] = quaternion_xyzw;
     OdomRow {
         ts,
@@ -267,7 +276,7 @@ impl TfTree {
                 let t = &stamped.transform.translation;
                 let q = &stamped.transform.rotation;
                 let transform = Rigid {
-                    rotation: mat3::mat_from_quat(&[q.w, q.x, q.y, q.z]),
+                    rotation: unit_rotation([q.w, q.x, q.y, q.z]),
                     translation: [t.x, t.y, t.z],
                 };
                 let (parent, child) = (&stamped.header.frame_id, &stamped.child_frame_id);
