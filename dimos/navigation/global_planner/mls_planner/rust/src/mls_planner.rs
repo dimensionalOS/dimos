@@ -589,10 +589,13 @@ impl Planner {
             &mut graph.cluster_index,
             &mut graph.node_scratch.seen,
         );
+        let lazy = self.lazy.as_ref();
+        let cells = &graph.cells;
         wall_distances_region(
-            &graph.cells,
+            cells,
             &config.terrain(&self.by_col, &self.planes),
             &window,
+            &|id| lazy_reform::key_now(lazy, cells, id),
             &mut graph.wall_state,
         );
         gone_nodes.extend(place_nodes_region(

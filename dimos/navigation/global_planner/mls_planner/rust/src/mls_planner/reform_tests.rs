@@ -47,6 +47,8 @@ fn toy_config() -> Config {
         version_history: 4,
         min_shift_m: 0.0,
     };
+    // a wall clearance, so a layer seam misread as a wall shows up as impassable links
+    cfg.wall_clearance_m = 2.0 * cfg.voxel_size;
     cfg
 }
 
@@ -435,6 +437,7 @@ fn a_closure_merges_two_surfaces_and_keeps_links_to_the_rest() {
     let outcome = toy.close_to_truth(&[(0, 11)]);
     assert!(outcome.new_layer);
     toy.dump("toy1_merge");
+    assert_eq!(blocked_seam_links(&toy), 0, "a layer seam reads as a wall");
     toy.planner.graph.node_edges.assert_indexed(toy.cells());
     assert_eq!(toy.components(), 1, "the merge joins them");
     assert!(
@@ -684,6 +687,31 @@ fn a_cloud_from_an_older_layer_is_carried_and_one_from_a_future_closure_is_held(
         "nothing at the old frame's place"
     );
     toy.dump("toy6_version_race");
+}
+
+/// Links across layers that came out impassable between cells clear of every wall: a layer seam misread as a wall.
+fn blocked_seam_links(toy: &Toy) -> usize {
+    let cells = toy.cells();
+    let vs = toy.cfg.voxel_size;
+    let reach = toy.cfg.wall_clearance_m + vs;
+    let steps = (reach / vs).ceil() as i32;
+    let open = |id: CellId| {
+        let p = toy.point_now(id);
+        (-steps..=steps).all(|i| {
+            (-steps..=steps)
+                .all(|k| (toy.floor)(p[0] as f32 + i as f32 * vs, p[1] as f32 + k as f32 * vs))
+        })
+    };
+    cells
+        .ids()
+        .flat_map(|id| cells.neighbors(id).iter().map(move |e| (id, *e)))
+        .filter(|(id, e)| {
+            cells.layer(*id) != cells.layer(e.dest)
+                && !e.cost.is_finite()
+                && open(*id)
+                && open(e.dest)
+        })
+        .count()
 }
 
 /// Live links whose ends sit more than `factor` voxels apart where they are now.

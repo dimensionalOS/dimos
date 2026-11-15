@@ -399,14 +399,16 @@ fn place_from_candidates(
 }
 
 /// Repair the wall distance field inside the window.
+/// `place` gives a cell's key where it is now, which tells a stretched link's direction.
 pub fn wall_distances_region(
     cells: &SurfaceCells,
     terrain: &Terrain,
     window: &RepairWindow,
+    place: &Place<'_>,
     wall_state: &mut DijkstraState,
 ) {
     let mut wall_seeds: Vec<CellId> = Vec::new();
-    collect_wall_adjacent_in_window(cells, terrain, window.cells(), &mut wall_seeds);
+    collect_wall_adjacent_in_window(cells, terrain, window.cells(), place, &mut wall_seeds);
     dijkstra_clusters(
         cells,
         &wall_seeds,
@@ -484,11 +486,12 @@ fn collect_wall_adjacent_in_window(
     cells: &SurfaceCells,
     terrain: &Terrain,
     window: &[CellId],
+    place: &Place<'_>,
     out: &mut Vec<CellId>,
 ) {
     *out = window
         .par_iter()
-        .filter(|&&id| cells.is_live(id) && real_wall_adjacent(cells, terrain, id))
+        .filter(|&&id| cells.is_live(id) && real_wall_adjacent(cells, terrain, id, place))
         .copied()
         .collect();
 }
@@ -503,12 +506,33 @@ const MIN_COMPONENT_CELLS: u32 = 4;
 /// spawn a node.
 const SPAWN_FLOOR_BUFFER_FRAC: f32 = 0.5;
 
-/// True when any missing 4-neighbor opens onto a real edge rather than a hole.
-fn real_wall_adjacent(cells: &SurfaceCells, terrain: &Terrain, id: CellId) -> bool {
+/// A cell's key where it is now; a stale cell's own key is in its layer's frame.
+pub type Place<'a> = dyn Fn(CellId) -> VoxelKey + Sync + 'a;
+
+/// True when any missing 4-neighbor opens onto a real edge rather than a hole. A link counts toward the direction
+/// its far cell lies in now, so a link across a layer seam is a neighbor, not a wall.
+fn real_wall_adjacent(
+    cells: &SurfaceCells,
+    terrain: &Terrain,
+    id: CellId,
+    place: &Place<'_>,
+) -> bool {
     let (cx, cy, cz) = cells.coord(id);
+    let here = place(id);
     let mut mask: u8 = 0;
     for e in cells.neighbors(id) {
-        let (nx, ny, _) = cells.coord(e.dest);
+        let (nx, ny, _) = if cells.stretched(id, e.dest) && e.base_cost.is_finite() {
+            // the far cell's direction now, along its dominant axis
+            let there = place(e.dest);
+            let (dx, dy) = (there.0 - here.0, there.1 - here.1);
+            if dx.abs() >= dy.abs() {
+                (cx + dx.signum(), cy, 0)
+            } else {
+                (cx, cy + dy.signum(), 0)
+            }
+        } else {
+            cells.coord(e.dest)
+        };
         mask |= match (nx - cx, ny - cy) {
             (-1, 0) => 1,
             (1, 0) => 2,
@@ -594,7 +618,7 @@ fn collect_wall_adjacent_cells(cells: &SurfaceCells, terrain: &Terrain, out: &mu
     let ids: Vec<CellId> = cells.ids().collect();
     *out = ids
         .par_iter()
-        .filter(|&&id| real_wall_adjacent(cells, terrain, id))
+        .filter(|&&id| real_wall_adjacent(cells, terrain, id, &|c| cells.coord(c)))
         .copied()
         .collect();
     if out.is_empty() {
@@ -789,7 +813,7 @@ mod tests {
 
     /// Whether a cell is wall-adjacent among the voxels of `by_col`.
     fn walled(sc: &SurfaceCells, by_col: &ColumnIz, id: CellId) -> bool {
-        real_wall_adjacent(sc, &terrain(by_col, &PlaneMap::new()), id)
+        real_wall_adjacent(sc, &terrain(by_col, &PlaneMap::new()), id, &|c| sc.coord(c))
     }
 
     fn build_cells(surface: &[VoxelKey], step_cells: i32) -> SurfaceCells {
@@ -923,6 +947,7 @@ mod tests {
             &sc,
             &terrain(&ColumnIz::default(), &PlaneMap::new()),
             &repair,
+            &|c| sc.coord(c),
             &mut state,
         );
         place_nodes_region(
