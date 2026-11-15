@@ -265,7 +265,11 @@ impl StageClock {
     pub(crate) fn add(&mut self, stage: &'static str, since: Instant) {
         let ms = ms_since(since);
         let phase = self.phase;
-        match self.stages.iter_mut().find(|s| s.phase == phase && s.stage == stage) {
+        match self
+            .stages
+            .iter_mut()
+            .find(|s| s.phase == phase && s.stage == stage)
+        {
             Some(s) => s.ms += ms,
             None => self.stages.push(StageMs { phase, stage, ms }),
         }

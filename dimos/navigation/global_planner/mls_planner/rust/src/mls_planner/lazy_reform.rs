@@ -120,9 +120,10 @@ impl LazyState {
         if !fresh {
             let mut index = CarriedCells::new();
             let (layer, _) = key;
-            if let (Some(sub), Some(frozen)) =
-                (self.layers.submeshes.get(&key), self.layers.stale.get(&layer))
-            {
+            if let (Some(sub), Some(frozen)) = (
+                self.layers.submeshes.get(&key),
+                self.layers.stale.get(&layer),
+            ) {
                 // One carry per anchor, not per cell.
                 let mut carries: AHashMap<u32, Pose> = AHashMap::new();
                 for &id in &sub.cells {
@@ -280,7 +281,8 @@ impl Planner {
             .collect();
         lazy.pending.extend(found.difference(&lazy.urgent));
         self.clock.add("lookup", stage);
-        self.clock.count("pending", lazy.pending.len() + lazy.urgent.len());
+        self.clock
+            .count("pending", lazy.pending.len() + lazy.urgent.len());
         let pool = Arc::clone(&self.pool);
         pool.install(|| self.migrate_pending(config));
         Some(ClosureOutcome {
@@ -526,8 +528,8 @@ impl Planner {
         format!("{{\"cells_connect\":true,\"reached\":{reached},\"path_cells\":{},\"first_gap\":{gap}}}", path.len())
     }
 
-    /// The cells within `radius` of `center` where they are now, their links (flagged when across layers) and the
-    /// keyframes, as the JSON the toy render page draws; `cylinders` (x, y, radius) and `found` (layer, v0 tile)
+    /// The cells within `radius` of `center` where they are now, their links (flagged when across layers), the
+    /// keyframes and the current layer's voxels, as the JSON the toy render page draws; `cylinders` (x, y, radius) and `found` (layer, v0 tile)
     /// come from the caller.
     pub fn snapshot_json(
         &self,
@@ -638,6 +640,16 @@ impl Planner {
                 tile.0,
                 tile.1
             );
+        }
+        // the current layer's voxels under the disc, by key
+        j.push_str("],\"voxels\":[");
+        let mut first = true;
+        for (ix, iy, iz) in self.by_col.keys() {
+            let (x, y) = ((ix as f32 + 0.5) * vs, (iy as f32 + 0.5) * vs);
+            if (x - center.0).hypot(y - center.1) <= radius {
+                let _ = write!(j, "{}[{ix},{iy},{iz}]", if first { "" } else { "," });
+                first = false;
+            }
         }
         let _ = write!(j, "],\"tile_m\":{}}}", lazy.layers.params.tile_m);
         j
@@ -795,14 +807,15 @@ impl Planner {
         let grown = caps
             .iter()
             .zip(self.map_capacities())
-            .filter(|(a, b)| **a != *b)
+            .filter(|(a, b)| *b > **a)
             .count();
         self.clock.count("maps_grown", grown);
         self.repair_migrated(migrated, config);
         self.clock.enter(outer);
     }
 
-    /// Capacities of the maps a migration grows, to tell a rehash from the work itself.
+    /// Capacities of the maps a migration grows, to tell a rehash (a resize, or a rehash in place of a map full of
+    /// tombstones, both of which raise it) from the work itself.
     fn map_capacities(&self) -> [usize; 4] {
         let lazy = self.lazy.as_ref();
         [
