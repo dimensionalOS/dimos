@@ -250,9 +250,15 @@ def dual_openyam_leader_control() -> Blueprint:
 
 
 def _manipulation() -> Blueprint:
+    model = dual_openyam_model_config(robot="arm")
+    # Every follower link on tf (world -> link): viewers draw each URDF link at its tf frame.
+    loaded = model.model.load()
+    model = model.model_copy(
+        update={"tf_extra_links": [loaded.root_link, *(j.child_link for j in loaded.joints)]}
+    )
     return ManipulationModule.blueprint(
         gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS,
-        model=dual_openyam_model_config(robot="arm"),
+        model=model,
         visualization=ViserVisualizationConfig(),
     )
 
@@ -260,7 +266,9 @@ def _manipulation() -> Blueprint:
 def _urdf_manager() -> Blueprint:
     """Serves the URDF and its meshes to viewers, with a "leader" copy posed by the leader arms.
 
-    The planner already puts the follower's links on tf.
+    The planner puts the follower's links on tf, because _manipulation() lists them in
+    tf_extra_links; this manager publishes only the leader copy's frames, so it keeps
+    publish_joint_tf off (on, some frames would get two parents).
     """
     return DualOpenYamLeaderUrdfManager.blueprint(
         model=dual_openyam_model_config(robot="arm").model, publish_joint_tf=False
