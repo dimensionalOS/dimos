@@ -439,3 +439,196 @@ fn a_closure_merges_two_surfaces_and_keeps_links_to_the_rest() {
         .count();
     assert!(merged > 0);
 }
+
+/// Odometry that drifts a little more each keyframe: raw = drift(k) * truth.
+fn drift(k: usize) -> Pose {
+    Pose::from_yaw([0.10 * k as f64, 0.06 * k as f64, 0.0], 0.003 * k as f64)
+}
+
+/// A 20 x 12 m loop of 2 m corridors with a corridor across its middle at x 9..11.
+fn loop_floor(x: f32, y: f32) -> bool {
+    let inside = (0.0..20.0).contains(&x) && (0.0..12.0).contains(&y);
+    let band = x < 2.0 || x >= 18.0 || y < 2.0 || y >= 10.0;
+    let cross = (9.0..11.0).contains(&x);
+    inside && (band || cross)
+}
+
+/// The loop's centerline, counterclockwise from (1, 1): keyframe poses every 2 m.
+fn loop_path() -> Vec<Pose> {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let mut out = Vec::new();
+    for i in 0..10 {
+        out.push(pose(1.0 + 2.0 * i as f64, 1.0, 0.0));
+    }
+    for i in 1..6 {
+        out.push(pose(19.0, 1.0 + 2.0 * i as f64, FRAC_PI_2));
+    }
+    for i in 1..10 {
+        out.push(pose(19.0 - 2.0 * i as f64, 11.0, PI));
+    }
+    for i in 1..5 {
+        out.push(pose(1.0, 11.0 - 2.0 * i as f64, -FRAC_PI_2));
+    }
+    out
+}
+
+#[test]
+fn a_second_pass_crossing_the_old_run_reforms_what_it_meets() {
+    let mut toy = Toy::new(loop_floor);
+    let path = loop_path();
+    for (k, &truth) in path.iter().enumerate() {
+        let t = truth.translation;
+        toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
+    }
+    let last = path.len() - 1;
+    let outcome = toy.close_to_truth(&[(0, last)]);
+    assert!(outcome.new_layer);
+    // A little past the closure the robot turns 90 degrees and crosses the loop's middle, toward the old run's far side at A.
+    let along: Vec<Pose> = (1..5).map(|i| pose(1.0 + 2.0 * i as f64, 1.0, 0.0)).collect();
+    let mut across: Vec<Pose> = (1..6)
+        .map(|i| pose(10.0, 1.0 + 2.0 * i as f64, std::f64::consts::FRAC_PI_2))
+        .collect();
+    let a = *across.last().unwrap();
+    let (ax, ay) = (a.translation[0], a.translation[1]);
+    // Until the second pass gets near, the old run at A is stale, displaced in its layer by the drift.
+    let current = toy.planner.lazy.as_ref().unwrap().layers.current;
+    let near_a: Vec<(CellId, [f64; 3])> = toy
+        .cells()
+        .ids()
+        .filter(|&id| toy.cells().layer(id) < current)
+        .map(|id| (id, toy.point_now(id)))
+        .filter(|(_, p)| (p[0] - ax).hypot(p[1] - ay) < 1.0)
+        .collect();
+    assert!(!near_a.is_empty(), "the old run at A is stale before the second pass");
+    toy.dump("toy2_second_pass_before");
+    across.pop();
+    for truth in along.into_iter().chain(across).chain([a]) {
+        let k = toy.keyframes.len();
+        let t = truth.translation;
+        toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
+    }
+    toy.dump("toy2_second_pass");
+    // Each stale cell that was near A now has a current-layer cell where its anchor put it (ids recycle, so match by place).
+    let vs = toy.cfg.voxel_size as f64;
+    let reformed: Vec<[f64; 3]> = toy
+        .cells()
+        .ids()
+        .filter(|&id| toy.cells().layer(id) == current)
+        .map(|id| toy.point_now(id))
+        .collect();
+    for (id, then) in &near_a {
+        assert!(
+            reformed
+                .iter()
+                .any(|p| (p[0] - then[0]).hypot(p[1] - then[1]) < 1.5 * vs),
+            "stale cell {id} at {then:?} is reformed in place"
+        );
+    }
+    assert!(toy.cross_layer_links() > 0, "stretched links to the unvisited rest");
+    assert_eq!(toy.duplicates_in([ax as f32 - 1.0, ax as f32 + 1.0, ay as f32 - 1.0, ay as f32 + 0.9]), 0);
+    let home = toy.planner.plan(
+        (ax as f32, ay as f32, 0.1),
+        (1.0, 1.0, 0.1),
+        &toy.cfg,
+    );
+    assert!(home.is_some(), "a path from A back to the start");
+}
+
+#[test]
+fn a_box_far_from_its_keyframe_finds_what_that_keyframe_saw() {
+    let floor = |x: f32, y: f32| {
+        ((0.0..8.0).contains(&x) && (0.0..2.0).contains(&y))
+            || ((0.0..4.0).contains(&x) && (15.0..18.0).contains(&y))
+    };
+    let mut toy = Toy::new(floor);
+    for i in 0..4 {
+        let x = 1.0 + 2.0 * i as f64;
+        toy.scan_at(pose(x, 1.0, 0.0), pose(x, 1.0, 0.0), (x as f32, 1.0));
+    }
+    // One keyframe on the corridor whose lidar only reached a patch 15 m away.
+    toy.scan_radius_m = 1.4;
+    toy.scan_at(pose(3.0, 1.0, 0.0), pose(3.0, 1.0, 0.0), (2.0, 16.5));
+    let telescope = toy.keyframes.len() - 1;
+    // A closure moving everything 0.5 m along x.
+    let shifted: Vec<(u32, Pose, Pose)> = toy
+        .keyframes
+        .iter()
+        .map(|&(id, truth, raw)| (id, Pose::from_yaw([0.5, 0.0, 0.0], 0.0).compose(&truth), raw))
+        .collect();
+    toy.keyframes = shifted;
+    assert!(toy.close_to_truth(&[(0, 3)]).new_layer);
+    let lazy = toy.planner.lazy.as_ref().unwrap();
+    let patch: Rect = [0.5, 4.5, 15.0, 18.0];
+    let slot = lazy.table.slot(toy.keyframes[telescope].0).unwrap();
+    assert_eq!(lazy.table.candidates(patch), vec![slot], "only the telescope's box reaches the patch");
+    let found = lazy.layers.lookup(&lazy.table, patch);
+    assert!(!found.is_empty(), "its tiles hold the patch's stale submeshes");
+    let current = lazy.layers.current;
+    // A cylinder at the patch, in the current frame.
+    let points: Vec<(f32, f32, f32)> = toy
+        .floor_near(2.0, 16.5, 1.4)
+        .into_iter()
+        .map(|(x, y, z)| (x + 0.5, y, z))
+        .collect();
+    let bounds = RegionBounds {
+        origin_x: 2.5,
+        origin_y: 16.5,
+        radius: 1.5,
+        z_min: -0.5,
+        z_max: 1.0,
+    };
+    toy.found.extend(toy.lookup_rect(&bounds));
+    toy.cylinders.push((bounds.origin_x, bounds.origin_y, bounds.radius));
+    toy.planner.update_region(&bare(&points), &bounds, &toy.cfg);
+    toy.dump("toy3_telescope");
+    let patch_cells: Vec<CellId> = toy
+        .cells()
+        .ids()
+        .filter(|&id| {
+            let p = toy.point_now(id);
+            p[1] > 14.5
+        })
+        .collect();
+    assert!(!patch_cells.is_empty());
+    assert!(patch_cells.iter().all(|&id| toy.cells().layer(id) == current), "the patch is reformed");
+    assert_eq!(toy.duplicates_in([0.0, 5.0, 14.5, 18.5]), 0);
+}
+
+#[test]
+fn a_cloud_from_an_older_layer_is_carried_and_one_from_a_future_closure_is_held() {
+    let mut toy = Toy::new(|x, y| (0.0..12.0).contains(&x) && (0.0..2.0).contains(&y));
+    for i in 0..4 {
+        let x = 1.0 + 2.0 * i as f64;
+        toy.scan_at(pose(x, 1.0, 0.0), pose(x, 1.5, 0.0), (x as f32, 1.0));
+    }
+    assert!(toy.close_to_truth(&[(0, 3)]).new_layer);
+    let version = toy.planner.reform_version();
+    // The tracer still in the old frame: its points sit where the old layer had them, 0.5 m up in y.
+    let stale: Vec<(f32, f32, f32)> = toy
+        .floor_near(9.0, 1.0, 1.0)
+        .into_iter()
+        .map(|(x, y, z)| (x, y + 0.5, z))
+        .collect();
+    let bounds = RegionBounds {
+        origin_x: 9.0,
+        origin_y: 1.5,
+        radius: 1.1,
+        z_min: -0.5,
+        z_max: 1.0,
+    };
+    let ahead = toy
+        .planner
+        .update_region_at_version(&bare(&stale), &bounds, version + 1, &toy.cfg);
+    assert_eq!(ahead, Err(VersionGap::Ahead));
+    let applied = toy
+        .planner
+        .update_region_at_version(&bare(&stale), &bounds, 0, &toy.cfg);
+    assert!(applied.is_ok());
+    // Carried into the current frame, the cloud lands on the true corridor, where the reformed cells are.
+    let vs = toy.cfg.voxel_size;
+    let current = toy.planner.lazy.as_ref().unwrap().layers.current;
+    let k = voxelize((9.05, 1.05, 0.05), vs);
+    let id = toy.cells().id(k).expect("a current cell at the true floor");
+    assert_eq!(toy.cells().layer(id), current);
+    assert!(toy.cells().id(voxelize((9.05, 2.45, 0.05), vs)).is_none(), "nothing at the old frame's place");
+}
