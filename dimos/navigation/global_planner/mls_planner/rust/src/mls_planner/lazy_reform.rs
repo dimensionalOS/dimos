@@ -687,18 +687,24 @@ impl Planner {
         let vs = config.voxel_size;
         const RING: [(i32, i32); 5] = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)];
         // The current cells in and beside the keys' columns link; a stale cell one column past them can be linked to.
-        let columns: BTreeSet<(i32, i32)> = keys
+        let mut columns: Vec<(i32, i32)> = keys.iter().map(|k| (k.0, k.1)).collect();
+        columns.sort_unstable();
+        columns.dedup();
+        let mut ring: Vec<(i32, i32)> = columns
             .iter()
-            .flat_map(|k| RING.map(|(dx, dy)| (k.0 + dx, k.1 + dy)))
+            .flat_map(|&(x, y)| RING.map(|(dx, dy)| (x + dx, y + dy)))
             .collect();
-        let mut reach: ahash::AHashSet<(i32, i32)> = ahash::AHashSet::new();
+        ring.sort_unstable();
+        ring.dedup();
+        let columns = ring;
+        let beside = |(x, y): (i32, i32)| {
+            RING.iter()
+                .any(|&(dx, dy)| columns.binary_search(&(x + dx, y + dy)).is_ok())
+        };
         // One lookup per tile-sized block of columns.
         let block = ((lazy.layers.params.tile_m / vs).floor() as i32).max(1);
         let mut blocks: BTreeMap<(i32, i32), (i32, i32, i32, i32)> = BTreeMap::new();
         for &(x, y) in &columns {
-            for (dx, dy) in RING {
-                reach.insert((x + dx, y + dy));
-            }
             let b = blocks
                 .entry((x.div_euclid(block), y.div_euclid(block)))
                 .or_insert((x, x, y, y));
@@ -730,7 +736,7 @@ impl Planner {
                 let lo = index.partition_point(|e| e.0 < (x0 - 2, i32::MIN));
                 let hi = index.partition_point(|e| e.0 <= (x1 + 2, i32::MAX));
                 for &((x, y), id, z) in &index[lo..hi] {
-                    if y < y0 - 2 || y > y1 + 2 || !reach.contains(&(x, y)) {
+                    if y < y0 - 2 || y > y1 + 2 || !beside((x, y)) {
                         continue;
                     }
                     scanned += 1;
