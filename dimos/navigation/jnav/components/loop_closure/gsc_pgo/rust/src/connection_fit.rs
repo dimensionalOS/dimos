@@ -168,12 +168,12 @@ pub fn icp_with_early_stop(
                 &mat3::mat_vec(&step_rotation, &translation),
                 &step_translation,
             );
-            let cos = (step_rotation[0][0] + step_rotation[1][1] + step_rotation[2][2] - 1.0) / 2.0;
+            let turn = mat3::rotation_angle(&step_rotation);
             // how far this step moved the source points: its centroid's move plus the turn at their RMS radius
             let step_motion = mat3::norm(&mat3::sub(
                 &mat3::add(&mat3::mat_vec(&step_rotation, &placed), &step_translation),
                 &placed,
-            )) + cos.clamp(-1.0, 1.0).acos() * spread;
+            )) + turn * spread;
             let mse = pairs.iter().map(|p| p.2 as f64).sum::<f64>() / pairs.len() as f64;
             if let Some(fail) = fail_fitness {
                 let inliers: Vec<f64> = pairs
@@ -208,7 +208,7 @@ pub fn icp_with_early_stop(
                     }
                 }
             }
-            if (cos >= 0.99999 && mat3::norm(&step_translation) <= 1e-3)
+            if (turn.cos() >= 0.99999 && mat3::norm(&step_translation) <= 1e-3)
                 || (previous_mse - mse).abs() <= 1e-6 * previous_mse
             {
                 converged = true;

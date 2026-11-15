@@ -332,7 +332,7 @@ impl GscPgoModule {
 
     async fn on_odometry(&mut self, msg: Odometry) {
         let q = &msg.pose.pose.orientation;
-        let rotation = mat3::mat_from_quat(&[q.w, q.x, q.y, q.z]);
+        let rotation = mat3::rotation_from_quat(&[q.w, q.x, q.y, q.z]);
         let p = &msg.pose.pose.position;
         let translation = [p.x, p.y, p.z];
         let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
@@ -400,7 +400,7 @@ impl GscPgoModule {
             }));
         let norm = (qw * qw + qx * qx + qy * qy + qz * qz).sqrt();
         let seen: Mat3 = if norm > 0.0 {
-            mat3::mat_from_quat(&[qw / norm, qx / norm, qy / norm, qz / norm])
+            mat3::rotation_from_quat(&[qw, qx, qy, qz])
         } else {
             for (i, row) in information.iter_mut().enumerate() {
                 for (j, v) in row.iter_mut().enumerate() {
