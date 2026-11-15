@@ -26,9 +26,6 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 
-/// A keyframe pose change smaller than this waits to add up before it is sent.
-const POSE_CHANGE_M: f64 = 1e-3;
-const POSE_CHANGE_RAD: f64 = 1e-4;
 /// Bytes per pose-change record: a keyframe record (40) then the delta (28).
 const POSE_CHANGE_RECORD_BYTES: usize = 68;
 
@@ -236,7 +233,6 @@ pub struct GraphMessages {
 }
 
 /// The graph outputs' memory across snapshots: keyframes sent, poses heard, events sent, closures reported.
-#[derive(Default)]
 pub struct GraphOutputs {
     heard: HeardPoses,
     keyframes_sent: usize,
@@ -245,12 +241,22 @@ pub struct GraphOutputs {
 }
 
 impl GraphOutputs {
-    /// The messages for this snapshot; `closure_closed` / `pose_graph_requested` are or-ed over skipped snapshots.
+    /// Outputs sending a loop_closure_event only past the config's `event_min_shift_m` / `event_min_turn_rad`.
+    pub fn new(config: &crate::gsc_pgo::Config) -> GraphOutputs {
+        GraphOutputs {
+            heard: HeardPoses::new(config.event_min_shift_m, config.event_min_turn_rad),
+            keyframes_sent: 0,
+            version: 0,
+            closures_reported: 0,
+        }
+    }
+
+    /// The messages for this snapshot; `pose_graph_requested` is or-ed over skipped snapshots. Closures committed since
+    /// the last event ride the next one (one with no significant move sends none).
     pub fn step(
         &mut self,
         key_poses: &KeyFrames,
         closures: &crate::store::Closures,
-        closure_closed: bool,
         pose_graph_requested: bool,
         ts: f64,
         frame_id: &str,
@@ -266,7 +272,7 @@ impl GraphOutputs {
             self.keyframes_sent = key_poses.len();
         }
         self.heard.add_new(key_poses);
-        if let Some(changes) = self.heard.take_changes(key_poses, closure_closed) {
+        if let Some(changes) = self.heard.take_changes(key_poses) {
             self.version += 1;
             let closed_pairs: Vec<(usize, usize)> = (self.closures_reported..closures.len())
                 .map(|i| closures.fixed(i))
@@ -283,35 +289,43 @@ impl GraphOutputs {
     }
 }
 
-/// Each keyframe's pose as fast-reform consumers last heard it.
-#[derive(Default)]
-pub struct HeardPoses(Vec<(Mat3, Vec3)>);
+/// Each keyframe's pose as fast-reform consumers last heard it, and the move (m, rad) worth telling them.
+pub struct HeardPoses {
+    poses: Vec<(Mat3, Vec3)>,
+    min_shift_m: f64,
+    min_turn_rad: f64,
+}
 
 impl HeardPoses {
-    /// Keyframes added since the last call: consumers hold their scans where the current offset put them.
-    pub fn add_new(&mut self, key_poses: &KeyFrames) {
-        self.0
-            .extend((self.0.len()..key_poses.len()).map(|k| key_poses.global(k)));
+    pub fn new(min_shift_m: f64, min_turn_rad: f64) -> HeardPoses {
+        HeardPoses { poses: Vec::new(), min_shift_m, min_turn_rad }
     }
 
-    /// On a closure or a move past POSE_CHANGE_*: per keyframe, pre-pose record + delta (post = delta * pre).
-    pub fn take_changes(&mut self, key_poses: &KeyFrames, closure_closed: bool) -> Option<Vec<u8>> {
+    /// Keyframes added since the last call: consumers hold their scans where the current offset put them.
+    pub fn add_new(&mut self, key_poses: &KeyFrames) {
+        self.poses
+            .extend((self.poses.len()..key_poses.len()).map(|k| key_poses.global(k)));
+    }
+
+    /// Once a keyframe moved past min_shift_m / min_turn_rad since last heard: per keyframe, pre-pose record + delta
+    /// (post = delta * pre). Smaller moves stay unheard, so they add up.
+    pub fn take_changes(&mut self, key_poses: &KeyFrames) -> Option<Vec<u8>> {
         let moved = key_poses
             .iter()
-            .zip(&self.0)
+            .zip(&self.poses)
             .any(|(kp, (rotation, translation))| {
                 let shift = mat3::sub(&kp.translation_global, translation);
                 let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
                 let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
-                mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
+                mat3::norm(&shift) > self.min_shift_m || cos.acos() > self.min_turn_rad
             });
-        if !closure_closed && !moved {
+        if !moved {
             return None;
         }
-        let count = self.0.len().min(key_poses.len());
+        let count = self.poses.len().min(key_poses.len());
         let mut data = Vec::with_capacity(count * POSE_CHANGE_RECORD_BYTES);
         for (i, ((pre_rotation, pre_translation), post)) in
-            self.0.iter().zip(key_poses.iter()).enumerate()
+            self.poses.iter().zip(key_poses.iter()).enumerate()
         {
             let rotation_delta =
                 mat3::mat_mul(&post.rotation_global, &mat3::transpose(pre_rotation));
@@ -328,7 +342,7 @@ impl HeardPoses {
                 data.extend_from_slice(&(v as f32).to_le_bytes());
             }
         }
-        self.0 = key_poses
+        self.poses = key_poses
             .iter()
             .map(|kp| (kp.rotation_global, kp.translation_global))
             .collect();

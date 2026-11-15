@@ -20,10 +20,10 @@ from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import DEFAULT
 
 def test_the_config_sent_to_rust_keeps_its_previous_defaults():
     sent = json.dumps(PGOConfig().to_config_dict(), sort_keys=True)
-    # sha256 of the effective config before defaults.json (Python fields, Rust lidar_range defaults, blends_per_window = the old fixed 5)
+    # sha256 of the effective config before defaults.json (Python fields, Rust lidar_range defaults, blends_per_window = the old fixed 5), plus event_min_shift_m / event_min_turn_rad
     assert (
         hashlib.sha256(sent.encode()).hexdigest()
-        == "a5e58d3e12d0f57db7f9a9899753a8756e12b06f6753c7a8fd5aaa8056231e6f"
+        == "aa7fe5e1c193c29621777b14595f9814f3a01b98c59c35400548f7a3caaacc29"
     )
 
 
