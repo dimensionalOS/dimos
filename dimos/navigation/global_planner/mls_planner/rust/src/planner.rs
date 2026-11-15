@@ -156,9 +156,14 @@ pub fn plan_reusing(
         );
         return None;
     }
-    // The goal snaps in the current layer, or else to the stale cell standing nearest it now.
-    let goal_cell = snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
-        .and_then(|k| plg.cells.id(k))
+    // The goal snaps in the current layer, to the nearest cell with a passable link (a lone cell a region's edge
+    // left is no place to plan to), or else to the stale cell standing nearest it now.
+    let linked = |id: &CellId| plg.cells.neighbors(*id).iter().any(|e| e.cost.is_finite());
+    let goal_cell = snap_candidates(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
+        .into_iter()
+        .take(MAX_SNAP_ATTEMPTS)
+        .filter_map(|k| plg.cells.id(k))
+        .find(linked)
         .or_else(|| (stale.nearest)(goal_pose));
     let Some(goal_cell) = goal_cell else {
         tracing::debug!(
