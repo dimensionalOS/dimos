@@ -572,6 +572,7 @@ fn run() -> Result<(), String> {
     {
         eprintln!("pgo-eval: could not cap the worker threads: {e}");
     }
+    let event_thresholds = (pgo_config.event_min_shift_m, pgo_config.event_min_turn_rad);
     let mut pgo = GscPgo::new(pgo_config);
     // a lockstep replay waits for a due job that has not finished (live, it lands late)
     pgo.set_wait_for_due_jobs(!args.live);
@@ -595,7 +596,7 @@ fn run() -> Result<(), String> {
     };
     let mut cursor = 0usize;
     let mut scans_processed = 0usize;
-    let mut recorder = Recorder::new(args.event_dump.as_deref())?;
+    let mut recorder = Recorder::new(args.event_dump.as_deref(), event_thresholds)?;
     let started = Instant::now();
     let mut lidar_frame: Option<String> = None;
     let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
@@ -786,7 +787,7 @@ fn run() -> Result<(), String> {
     let finish_s = finish_started.elapsed().as_secs_f64();
     let overshoots = pgo.overshoot_report();
     let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-    recorder.dump(&pgo, false, ts)?;
+    recorder.dump(&pgo, ts)?;
     if let Some(path) = &args.event_dump {
         write_keyframes(path, pgo.key_poses()).map_err(|e| format!("write keyframes: {e}"))?;
     }
@@ -1174,7 +1175,7 @@ struct Recorder {
 }
 
 impl Recorder {
-    fn new(event_dump: Option<&std::path::Path>) -> Result<Recorder, String> {
+    fn new(event_dump: Option<&std::path::Path>, (min_shift_m, min_turn_rad): (f64, f64)) -> Result<Recorder, String> {
         let create = |suffix: &str, path: &std::path::Path| {
             std::fs::File::create(format!("{}{suffix}", path.display()))
                 .map_err(|e| format!("create {suffix} dump: {e}"))
@@ -1184,7 +1185,7 @@ impl Recorder {
             None => None,
         };
         Ok(Recorder {
-            heard: HeardPoses::default(),
+            heard: HeardPoses::new(min_shift_m, min_turn_rad),
             events,
             edges_written: 0,
             closures: 0,
@@ -1242,15 +1243,15 @@ impl Recorder {
             *last = ((step_started.elapsed().as_secs_f64() - (pgo.thread_waits_s() - self.step_waits_s))
                 * 1e3) as f32;
         }
-        self.dump(pgo, had_closure, ts)
+        self.dump(pgo, ts)
     }
 
-    /// With `--event-dump`, append pose changes (on a closure or a moved keyframe) and the new closure-edge events.
-    fn dump(&mut self, pgo: &GscPgo, closure_closed: bool, ts: f64) -> Result<(), String> {
+    /// With `--event-dump`, append pose changes (once a keyframe moved past the event thresholds, as the module publishes) and the new closure-edge events.
+    fn dump(&mut self, pgo: &GscPgo, ts: f64) -> Result<(), String> {
         let Some((events, edges)) = &mut self.events else {
             return Ok(());
         };
-        if let Some(changes) = self.heard.take_changes(pgo.key_poses(), closure_closed) {
+        if let Some(changes) = self.heard.take_changes(pgo.key_poses()) {
             append_pose_changes(events, ts, &changes)
                 .map_err(|e| format!("write event dump: {e}"))?;
         }

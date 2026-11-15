@@ -245,6 +245,10 @@ class PGOConfig(NativeModuleConfig):
     # loops' worth of evidence the stated estimate counts as in the learner (0 = closures alone, inf = never learn)
     learned_odometry_error_estimate_stiffness: float = 10.0
 
+    # loop_closure_event only once a keyframe moved this far (m; default = the ray tracer's reform min_shift_m) or turned this much (rad) since last sent
+    event_min_shift_m: float = 0.04
+    event_min_turn_rad: float = 0.004
+
     # scan queue depth; past it all but the newest scan are dropped (<= 0 = unbounded)
     max_scan_queue: int = 5
     # rayon threads for closure search and solves (0 = every core)
