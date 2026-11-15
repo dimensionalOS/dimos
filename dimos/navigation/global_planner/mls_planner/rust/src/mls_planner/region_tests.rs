@@ -1774,3 +1774,89 @@ fn the_region_cap_bounds_every_box_a_region_update_allocates() {
         .defect(cfg.voxel_size, cfg.max_region_columns)
         .is_some());
 }
+
+/// The whole floor as one region update, as the first one after a closure that starts a layer.
+fn whole_world_bounds() -> RegionBounds {
+    RegionBounds {
+        origin_x: 4.0,
+        origin_y: 4.0,
+        radius: 6.0,
+        z_min: -1.0,
+        z_max: 2.0,
+    }
+}
+
+/// A whole region rewritten on a column budget repairs at most the budget a call, nearest the center first, and once
+/// nothing waits the surface and links are the ones a single unbudgeted update makes.
+#[test]
+fn a_region_rewritten_on_a_column_budget_repairs_it_nearest_first_and_ends_like_one_done_at_once() {
+    let mut cfg = test_config();
+    let all = big_world();
+    let b = whole_world_bounds();
+    let cloud = bare(&slice(&all, &b, cfg.voxel_size));
+    let mut once = Planner::new(cfg.worker_threads);
+    once.update_region(&cloud, &b, &cfg);
+    assert!(once.region_pending.is_empty());
+
+    cfg.region_columns_per_update = 300;
+    let mut spread = Planner::new(cfg.worker_threads);
+    spread.update_region(&cloud, &b, &cfg);
+    let waiting = spread.region_pending.len();
+    assert!(waiting > 0, "a whole region waits past the budget");
+    // the robot's surroundings come first
+    let has = |p: &Planner, (x, y): (f32, f32)| {
+        let col = ((x / cfg.voxel_size) as i32, (y / cfg.voxel_size) as i32);
+        p.graph.surface_lookup.contains_key(&col)
+    };
+    assert!(has(&spread, (4.0, 4.5)), "the center is repaired first");
+    assert!(!has(&spread, (0.05, 0.05)), "a far corner waits");
+    let mut calls = 1;
+    while !spread.region_pending.is_empty() {
+        spread.update_region(&cloud, &b, &cfg);
+        let repaired = spread
+            .last_stage_counts()
+            .iter()
+            .find(|c| c.1 == "repaired_columns")
+            .map_or(0, |c| c.2);
+        assert!(repaired <= 300, "a call repaired {repaired} columns");
+        calls += 1;
+        assert!(calls < 100, "the waiting columns drain");
+    }
+    assert!(calls > 2);
+    assert_eq!(surface_set(&spread), surface_set(&once), "surfaces differ");
+    assert_eq!(cell_edges(&spread), cell_edges(&once), "cell links differ");
+    assert_eq!(
+        clearance_map(&spread, &cfg),
+        clearance_map(&once, &cfg),
+        "wall clearances differ"
+    );
+    assert_plans_equivalent(&once, &spread, &cfg);
+}
+
+/// A route across columns whose repair waits plans again: what it crosses there is the map before the update.
+#[test]
+fn a_route_across_columns_still_waiting_for_repair_plans_again() {
+    let mut cfg = test_config();
+    let all = big_world();
+    let b = whole_world_bounds();
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_region(&bare(&slice(&all, &b, cfg.voxel_size)), &b, &cfg);
+    let (start, goal) = PLAN_PAIRS[0];
+    assert!(matches!(
+        p.plan_or_truncate(start, goal, &cfg),
+        Plan::Full(_)
+    ));
+    assert_eq!(p.replan_reason(start, goal, &cfg), None);
+    // the floor one voxel higher everywhere, more than a budget's worth of columns
+    cfg.region_columns_per_update = 300;
+    let raised: Vec<(f32, f32, f32)> = slice(&all, &b, cfg.voxel_size)
+        .into_iter()
+        .map(|(x, y, z)| (x, y, z + cfg.voxel_size))
+        .collect();
+    p.update_region(&bare(&raised), &b, &cfg);
+    assert!(!p.region_pending.is_empty());
+    assert_eq!(
+        p.replan_reason(start, goal, &cfg),
+        Some(ReplanReason::RouteChanged)
+    );
+}

@@ -405,6 +405,8 @@ pub struct KeyframeTable {
     frames: VecDeque<Frame>,
     /// Coarse grid cell -> keyframes whose padded current box reaches it.
     box_grid: BTreeMap<(i32, i32), Vec<u32>>,
+    /// Per slot, its padded box in the current frame and its pose from there to version 0, both fixed until the next frame.
+    filed: Vec<(Option<Rect>, Pose)>,
 }
 
 /// A layer's frame: the version it was fixed at, the keyframes' poses then, and the correction that placed keyframes made since.
@@ -456,6 +458,7 @@ impl KeyframeTable {
             frame: Frame::default(),
             frames: VecDeque::new(),
             box_grid: BTreeMap::new(),
+            filed: Vec::new(),
         }
     }
 
@@ -498,7 +501,7 @@ impl KeyframeTable {
 
     /// raw * frame^-1: a point near the keyframe in the current layer's frame to where it was at version 0.
     pub fn to_v0(&self, slot: u32) -> Pose {
-        self.raw(slot).compose(&self.frame_pose(slot).inverse())
+        self.filed[slot as usize].1
     }
 
     /// Take a new keyframe, placed by the current correction; a known one is ignored.
@@ -610,6 +613,11 @@ impl KeyframeTable {
 
     /// The keyframe's padded box in the current layer's frame, as an xy rectangle; None for an empty box.
     pub fn current_rect(&self, slot: u32) -> Option<Rect> {
+        self.filed[slot as usize].0
+    }
+
+    /// current_rect from the box and the frame pose, for filing.
+    fn frame_rect(&self, slot: u32) -> Option<Rect> {
         let b = self.scan_box(slot);
         if !(b[0] <= b[3] && b[1] <= b[4] && b[2] <= b[5]) {
             return None;
@@ -647,7 +655,15 @@ impl KeyframeTable {
     }
 
     fn file_box(&mut self, slot: u32) {
-        if let Some(rect) = self.current_rect(slot) {
+        let rect = self.frame_rect(slot);
+        let to_v0 = self.raw(slot).compose(&self.frame_pose(slot).inverse());
+        let at = slot as usize;
+        if at < self.filed.len() {
+            self.filed[at] = (rect, to_v0);
+        } else {
+            self.filed.push((rect, to_v0));
+        }
+        if let Some(rect) = rect {
             let cells: Vec<(i32, i32)> = self.grid_cells(rect).collect();
             for cell in cells {
                 self.box_grid.entry(cell).or_default().push(slot);
@@ -664,15 +680,17 @@ impl KeyframeTable {
 
     /// The keyframes whose padded current box overlaps `rect`, ascending.
     pub fn candidates(&self, rect: Rect) -> Vec<u32> {
-        let mut out: BTreeSet<u32> = BTreeSet::new();
+        let mut out: Vec<u32> = Vec::new();
         for cell in self.grid_cells(rect) {
             for &slot in self.box_grid.get(&cell).into_iter().flatten() {
                 if self.current_rect(slot).is_some_and(|r| overlaps(r, rect)) {
-                    out.insert(slot);
+                    out.push(slot);
                 }
             }
         }
-        out.into_iter().collect()
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 }
 
@@ -867,9 +885,14 @@ impl Layers {
 
     /// The stale submeshes filed under the version 0 tiles that the area `rect` (current frame) maps to through each candidate keyframe, ascending.
     pub fn lookup(&self, table: &KeyframeTable, rect: Rect) -> Vec<(Version, (i32, i32))> {
-        let mut tiles: BTreeSet<(i32, i32)> = BTreeSet::new();
+        self.lookup_all(table, &[rect])
+    }
+
+    /// lookup over each of `rects`, the union once, ascending.
+    pub fn lookup_all(&self, table: &KeyframeTable, rects: &[Rect]) -> Vec<(Version, (i32, i32))> {
+        let mut tiles: ahash::AHashSet<(i32, i32)> = ahash::AHashSet::new();
         let pad = self.params.tile_pad;
-        let add_square = |tiles: &mut BTreeSet<(i32, i32)>, corners: &[[f64; 3]; 4]| {
+        let add_square = |tiles: &mut ahash::AHashSet<(i32, i32)>, corners: &[[f64; 3]; 4]| {
             let (mut lo, mut hi) = ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN));
             for c in corners {
                 let t = self.tile_of(c[0], c[1]);
@@ -882,15 +905,17 @@ impl Layers {
                 }
             }
         };
-        let corners = [
-            [rect[0] as f64, rect[2] as f64, 0.0],
-            [rect[1] as f64, rect[2] as f64, 0.0],
-            [rect[0] as f64, rect[3] as f64, 0.0],
-            [rect[1] as f64, rect[3] as f64, 0.0],
-        ];
-        for slot in table.candidates(rect) {
-            let to_v0 = table.to_v0(slot);
-            add_square(&mut tiles, &corners.map(|c| to_v0.apply(c)));
+        for &rect in rects {
+            let corners = [
+                [rect[0] as f64, rect[2] as f64, 0.0],
+                [rect[1] as f64, rect[2] as f64, 0.0],
+                [rect[0] as f64, rect[3] as f64, 0.0],
+                [rect[1] as f64, rect[3] as f64, 0.0],
+            ];
+            for slot in table.candidates(rect) {
+                let to_v0 = table.to_v0(slot);
+                add_square(&mut tiles, &corners.map(|c| to_v0.apply(c)));
+            }
         }
         let mut found = Vec::new();
         for tile in tiles {

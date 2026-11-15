@@ -1081,3 +1081,81 @@ fn closure_bookkeeping_cost_on_a_big_map() {
         "closure bookkeeping, {keyframes} keyframes: {per:.2} ms per event (apply + shift check)"
     );
 }
+
+/// Toy: after the loop closes, one scan over the old run's top corridor on a migration budget of one column leaves most of the old
+/// run stale beside the new patch; every stale cell standing now in a column beside a current cell, within a step of
+/// it, is linked to it, though the drift turned the old run's frame (so the stitch reads it through each anchor's carry).
+#[test]
+fn a_patch_over_a_turned_stale_run_links_every_stale_cell_beside_it_now() {
+    let mut toy = Toy::new(loop_floor);
+    toy.cfg.reform.migrate_per_update = 1;
+    let path = loop_path();
+    for (k, &truth) in path.iter().enumerate() {
+        let t = truth.translation;
+        toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
+    }
+    let last = path.len() - 1;
+    assert!(toy.close_to_truth(&[(0, last)]).new_layer);
+    // on the top corridor, which the run saw late, so far drifted
+    let truth = pose(8.0, 11.0, std::f64::consts::PI);
+    let k = toy.keyframes.len();
+    toy.scan_at(truth, drift(k).compose(&truth), (8.0, 11.0));
+    let cells = toy.cells();
+    let current = toy.planner.lazy.as_ref().unwrap().layers.current;
+    let vs = toy.cfg.voxel_size;
+    let max_rise = toy.cfg.step_threshold_m + toy.cfg.plane_noise_m;
+    let mut stale_at: std::collections::BTreeMap<(i32, i32), Vec<(CellId, f32)>> =
+        Default::default();
+    for id in cells.ids().filter(|&id| cells.layer(id) < current) {
+        let p = toy
+            .planner
+            .stale_point(id)
+            .expect("a stale cell has a place now");
+        let k = voxelize(p, vs);
+        stale_at.entry((k.0, k.1)).or_default().push((id, p.2));
+    }
+    let mut beside = 0;
+    for a in cells.ids().filter(|&id| cells.layer(id) == current) {
+        let (x, y, _) = cells.coord(a);
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            for &(b, zb) in stale_at.get(&(x + dx, y + dy)).into_iter().flatten() {
+                if (zb - cells.z(a)).abs() <= max_rise {
+                    beside += 1;
+                    assert!(
+                        cells.neighbors(a).iter().any(|e| e.dest == b),
+                        "current cell {a} at {:?} is not linked to stale cell {b} beside it",
+                        cells.coord(a)
+                    );
+                }
+            }
+        }
+    }
+    assert!(beside > 0, "the patch meets the stale run");
+}
+
+/// One lookup over several areas finds what each area's lookup finds, together.
+#[test]
+fn a_lookup_over_several_areas_is_the_union_of_their_lookups() {
+    let mut toy = Toy::new(loop_floor);
+    let path = loop_path();
+    for (k, &truth) in path.iter().enumerate() {
+        let t = truth.translation;
+        toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
+    }
+    let last = path.len() - 1;
+    assert!(toy.close_to_truth(&[(0, last)]).new_layer);
+    let lazy = toy.planner.lazy.as_ref().unwrap();
+    let rects: Vec<Rect> = vec![
+        [0.0, 3.0, 0.0, 3.0],
+        [8.0, 12.0, 4.0, 6.0],
+        [17.0, 20.0, 9.0, 12.0],
+    ];
+    let mut each: Vec<(u32, (i32, i32))> = rects
+        .iter()
+        .flat_map(|&r| lazy.layers.lookup(&lazy.table, r))
+        .collect();
+    each.sort_unstable();
+    each.dedup();
+    assert!(!each.is_empty());
+    assert_eq!(lazy.layers.lookup_all(&lazy.table, &rects), each);
+}

@@ -43,13 +43,7 @@ pub struct LazyState {
     pub(crate) pending: BTreeSet<(Version, (i32, i32))>,
     /// Submeshes a region update's lookup found around it, migrated before the pending ones.
     pub(crate) urgent: BTreeSet<(Version, (i32, i32))>,
-    /// Per stale submesh, the frame it was built in and its cells (with their z now) by the column they stand in now:
-    /// a stale cell only moves when a closure starts a frame, so a stitch reads the columns it needs, not the submesh.
-    carried: AHashMap<(Version, (i32, i32)), (Version, CarriedCells)>,
 }
-
-/// Stale cells with the current-frame column they stand in and their z there, sorted by column (by id within one).
-type CarriedCells = Vec<((i32, i32), CellId, f32)>;
 
 fn center(k: VoxelKey, voxel_size: f32) -> [f64; 3] {
     let v = voxel_size as f64;
@@ -107,48 +101,6 @@ impl LazyState {
 }
 
 impl LazyState {
-    /// The stale submesh's cells by the column they stand in now, built once per frame. Cells it has lost since stay
-    /// listed, so a reader checks each is still live and in the layer.
-    fn carried_index(
-        &mut self,
-        key: (Version, (i32, i32)),
-        frame: Version,
-        cells: &SurfaceCells,
-        voxel_size: f32,
-    ) -> &CarriedCells {
-        let fresh = self.carried.get(&key).is_some_and(|(f, _)| *f == frame);
-        if !fresh {
-            let mut index = CarriedCells::new();
-            let (layer, _) = key;
-            if let (Some(sub), Some(frozen)) = (
-                self.layers.submeshes.get(&key),
-                self.layers.stale.get(&layer),
-            ) {
-                // One carry per anchor, not per cell.
-                let mut carries: AHashMap<u32, Pose> = AHashMap::new();
-                for &id in &sub.cells {
-                    if !cells.is_live(id) || cells.layer(id) != layer {
-                        continue;
-                    }
-                    let Some(el) = self.layers.cells.get(&id) else {
-                        continue;
-                    };
-                    let carry = carries
-                        .entry(el.anchor)
-                        .or_insert_with(|| frozen.carry(el.anchor, &self.table));
-                    let (x, y, z) = cells.point(id, voxel_size);
-                    let p = carry.apply([x as f64, y as f64, z as f64]);
-                    let p = (p[0] as f32, p[1] as f32, p[2] as f32);
-                    let k = voxelize(p, voxel_size);
-                    index.push(((k.0, k.1), id, p.2));
-                }
-                index.sort_by_key(|e| e.0);
-            }
-            self.carried.insert(key, (frame, index));
-        }
-        &self.carried[&key].1
-    }
-
     /// Where a stale cell is now, carried by its anchor; None for a current-layer cell.
     pub(crate) fn stale_point(&self, cells: &SurfaceCells, id: CellId) -> Option<(f32, f32, f32)> {
         let layer = cells.layer(id);
@@ -202,7 +154,6 @@ impl Planner {
             voxel_size: config.voxel_size,
             pending: BTreeSet::new(),
             urgent: BTreeSet::new(),
-            carried: AHashMap::new(),
         });
         for record in records {
             lazy.table.add(record);
@@ -268,6 +219,8 @@ impl Planner {
         // The cached route is in the old layer's keys, and every cell on it is stale and carried now.
         self.last_path = None;
         self.route = None;
+        // The waiting columns' voxels froze with the layer; a migration re-extracts them when it moves them in.
+        self.region_pending.clear();
         self.clock.add("freeze", stage);
 
         let stage = Instant::now();
@@ -276,11 +229,10 @@ impl Planner {
             .iter()
             .filter_map(|&slot| lazy.table.current_rect(slot))
             .collect();
-        let found: BTreeSet<(Version, (i32, i32))> = rects
-            .iter()
-            .flat_map(|&rect| lazy.layers.lookup(&lazy.table, rect))
-            .collect();
-        lazy.pending.extend(found.difference(&lazy.urgent));
+        let found = lazy.layers.lookup_all(&lazy.table, &rects);
+        let urgent = &lazy.urgent;
+        lazy.pending
+            .extend(found.into_iter().filter(|key| !urgent.contains(key)));
         self.clock.add("lookup", stage);
         self.clock
             .count("pending", lazy.pending.len() + lazy.urgent.len());
@@ -669,8 +621,10 @@ impl Planner {
 
     /// Link current-layer cells in the columns around `keys` to stale cells beside them now, so a patch that meets
     /// an older pass it never shared a link with stays connected; returns the keys of the current cells it linked.
+    /// It reads the stale layers' surface only where the columns' boxes come from by each anchor's carry, so it costs
+    /// the area touched, not the submeshes found.
     pub(super) fn stitch_stale(&mut self, keys: &[VoxelKey], config: &Config) -> Vec<VoxelKey> {
-        let Some(lazy) = self.lazy.as_mut() else {
+        let Some(lazy) = self.lazy.as_ref() else {
             return Vec::new();
         };
         let current = lazy.layers.current;
@@ -685,23 +639,34 @@ impl Planner {
             return Vec::new();
         }
         let vs = config.voxel_size;
-        const RING: [(i32, i32); 5] = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)];
-        // The current cells in and beside the keys' columns link; a stale cell one column past them can be linked to.
-        let mut columns: Vec<(i32, i32)> = keys.iter().map(|k| (k.0, k.1)).collect();
+        const SIDES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+        // The current cells in and beside the keys' columns link.
+        let mut columns: Vec<(i32, i32)> = keys
+            .iter()
+            .flat_map(|k| {
+                std::iter::once((k.0, k.1)).chain(SIDES.map(|(dx, dy)| (k.0 + dx, k.1 + dy)))
+            })
+            .collect();
         columns.sort_unstable();
         columns.dedup();
-        let mut ring: Vec<(i32, i32)> = columns
-            .iter()
-            .flat_map(|&(x, y)| RING.map(|(dx, dy)| (x + dx, y + dy)))
-            .collect();
-        ring.sort_unstable();
-        ring.dedup();
-        let columns = ring;
-        let beside = |(x, y): (i32, i32)| {
-            RING.iter()
-                .any(|&(dx, dy)| columns.binary_search(&(x + dx, y + dy)).is_ok())
-        };
-        // One lookup per tile-sized block of columns.
+        let cells = &self.graph.cells;
+        let lookup = &self.graph.surface_lookup;
+        let max_rise = config.step_threshold_m + config.plane_noise_m;
+        // Only a stale cell within a step of some current cell here can link, so only that height band is read.
+        let (mut z_lo, mut z_hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        for col in &columns {
+            for &iz in lookup.get(col).into_iter().flatten() {
+                if let Some(a) = cells.id((col.0, col.1, iz)) {
+                    z_lo = z_lo.min(cells.z(a));
+                    z_hi = z_hi.max(cells.z(a));
+                }
+            }
+        }
+        if z_lo > z_hi {
+            return Vec::new();
+        }
+        let band = [(z_lo - max_rise) as f64, (z_hi + max_rise) as f64];
+        // One lookup per tile-sized block of columns, each box one column past them, where a stale cell can stand to link.
         let block = ((lazy.layers.params.tile_m / vs).floor() as i32).max(1);
         let mut blocks: BTreeMap<(i32, i32), (i32, i32, i32, i32)> = BTreeMap::new();
         for &(x, y) in &columns {
@@ -710,61 +675,118 @@ impl Planner {
                 .or_insert((x, x, y, y));
             *b = (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y));
         }
-        let mut found: BTreeSet<(Version, (i32, i32))> = BTreeSet::new();
-        for &(x0, x1, y0, y1) in blocks.values() {
-            let rect = [
-                (x0 - 1) as f32 * vs,
-                (x1 + 2) as f32 * vs,
-                (y0 - 1) as f32 * vs,
-                (y1 + 2) as f32 * vs,
-            ];
-            found.extend(lazy.layers.lookup(&lazy.table, rect));
-        }
+        let boxes: Vec<(i32, i32, i32, i32)> = blocks
+            .values()
+            .map(|&(x0, x1, y0, y1)| (x0 - 1, x1 + 1, y0 - 1, y1 + 1))
+            .collect();
+        let rects: Vec<crate::lazy::Rect> = boxes
+            .iter()
+            .map(|&(x0, x1, y0, y1)| {
+                [
+                    x0 as f32 * vs,
+                    (x1 + 1) as f32 * vs,
+                    y0 as f32 * vs,
+                    (y1 + 1) as f32 * vs,
+                ]
+            })
+            .collect();
+        let found = lazy.layers.lookup_all(&lazy.table, &rects);
         if found.is_empty() {
             return Vec::new();
         }
         self.clock.count("stitch_submeshes", found.len());
-        let cells = &self.graph.cells;
-        let frame = lazy.table.frame_version();
-        let mut stale_at: BTreeMap<(i32, i32), Vec<(CellId, f32)>> = BTreeMap::new();
+        let in_columns = |c: &(i32, i32)| columns.binary_search(c).is_ok();
+        // Stale cells standing now in a column beside one of `columns`, with their z now, each once.
+        let mut near: Vec<((i32, i32), CellId, f32)> = Vec::new();
         let mut taken: ahash::AHashSet<CellId> = ahash::AHashSet::new();
-        let mut scanned = 0usize;
-        for key @ &(layer, _) in &found {
-            let index = lazy.carried_index(*key, frame, cells, vs);
-            // Each block's columns, one past the reach, by the column a stale cell stands in now.
-            for &(x0, x1, y0, y1) in blocks.values() {
-                let lo = index.partition_point(|e| e.0 < (x0 - 2, i32::MIN));
-                let hi = index.partition_point(|e| e.0 <= (x1 + 2, i32::MAX));
-                for &((x, y), id, z) in &index[lo..hi] {
-                    if y < y0 - 2 || y > y1 + 2 || !beside((x, y)) {
-                        continue;
-                    }
-                    scanned += 1;
-                    if cells.is_live(id) && cells.layer(id) == layer && taken.insert(id) {
-                        stale_at.entry((x, y)).or_default().push((id, z));
-                    }
+        let mut read = 0usize;
+        let mut start = 0;
+        while start < found.len() {
+            let layer = found[start].0;
+            let end = start + found[start..].partition_point(|k| k.0 == layer);
+            let tiles = &found[start..end];
+            start = end;
+            let Some(frozen) = lazy.layers.stale.get(&layer) else {
+                continue;
+            };
+            let mut anchors: BTreeSet<u32> = BTreeSet::new();
+            for key in tiles {
+                if let Some(sub) = lazy.layers.submeshes.get(key) {
+                    anchors.extend(sub.counts.keys().copied());
                 }
             }
-        }
-        self.clock.count("stitch_scanned", scanned);
-        let max_rise = config.step_threshold_m + config.plane_noise_m;
-        let mut links: Vec<(CellId, CellId, f32)> = Vec::new();
-        for &(x, y) in &columns {
-            for &iz in self.graph.surface_lookup.get(&(x, y)).into_iter().flatten() {
-                let Some(a) = cells.id((x, y, iz)) else {
-                    continue;
-                };
-                let za = cells.z(a);
-                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    for &(b, zb) in stale_at.get(&(x + dx, y + dy)).into_iter().flatten() {
-                        let rise = (zb - za).abs();
-                        if rise <= max_rise {
-                            links.push((a, b, rise));
+            let carries: BTreeMap<u32, crate::lazy::Pose> = anchors
+                .iter()
+                .map(|&a| (a, frozen.carry(a, &lazy.table)))
+                .collect();
+            for rect in &rects {
+                // Each anchor's box in the stale layer's frame, merged where they overlap, read once per group.
+                let mut groups: Vec<((i32, i32, i32, i32), Vec<u32>)> = carries
+                    .iter()
+                    .map(|(&a, carry)| (preimage(carry, *rect, band, vs), vec![a]))
+                    .collect();
+                merge_overlapping(&mut groups);
+                for ((x0, x1, y0, y1), group) in &groups {
+                    for x in *x0..=*x1 {
+                        for y in *y0..=*y1 {
+                            let Some(zs) = frozen.surface_lookup.get(&(x, y)) else {
+                                continue;
+                            };
+                            for &iz in zs {
+                                read += 1;
+                                let Some(id) = cells.stale_id(layer, (x, y, iz)) else {
+                                    continue;
+                                };
+                                if !cells.is_live(id) || cells.layer(id) != layer {
+                                    continue;
+                                }
+                                let Some(el) = lazy.layers.cells.get(&id) else {
+                                    continue;
+                                };
+                                if group.binary_search(&el.anchor).is_err()
+                                    || tiles.binary_search(&(layer, el.tile)).is_err()
+                                {
+                                    continue;
+                                }
+                                let (px, py, pz) = cells.point(id, vs);
+                                let p =
+                                    carries[&el.anchor].apply([px as f64, py as f64, pz as f64]);
+                                let p = (p[0] as f32, p[1] as f32, p[2] as f32);
+                                let k = voxelize(p, vs);
+                                let at = (k.0, k.1);
+                                if SIDES
+                                    .iter()
+                                    .any(|&(dx, dy)| in_columns(&(at.0 - dx, at.1 - dy)))
+                                    && taken.insert(id)
+                                {
+                                    near.push((at, id, p.2));
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+        self.clock.count("stitch_scanned", read);
+        let mut links: Vec<(CellId, CellId, f32)> = Vec::new();
+        for &((x, y), b, zb) in &near {
+            for (dx, dy) in SIDES {
+                let col = (x - dx, y - dy);
+                if !in_columns(&col) {
+                    continue;
+                }
+                for &iz in lookup.get(&col).into_iter().flatten() {
+                    let Some(a) = cells.id((col.0, col.1, iz)) else {
+                        continue;
+                    };
+                    let rise = (zb - cells.z(a)).abs();
+                    if rise <= max_rise {
+                        links.push((a, b, rise));
+                    }
+                }
+            }
+        }
+        links.sort_unstable_by_key(|&(a, b, _)| (a, b));
         let mut linked: BTreeSet<VoxelKey> = BTreeSet::new();
         for (a, b, rise) in links {
             let cost = vs.hypot(rise);
@@ -864,7 +886,6 @@ impl Planner {
             let (strip_voxels, strip_cells) = take_strip(&mut sub, left, &self.graph.cells);
             left -= (strip_voxels.len() + strip_cells.len()).min(left);
             if sub.is_empty() {
-                lazy.carried.remove(&key);
                 if let Some(layers) = lazy.layers.tiles.get_mut(&tile) {
                     layers.remove(&layer);
                     if layers.is_empty() {
@@ -1170,4 +1191,73 @@ fn merge_cell(cells: &mut SurfaceCells, from: CellId, into: CellId) {
             cells.link(e.dest, Edge { dest: into, ..back });
         }
     }
+}
+
+/// The columns, in a stale layer's own frame, an element carried by `carry` must sit in to land in `rect` (current
+/// frame, m) within the height band `band`: the bounding box of the box's corners carried back, one column wider.
+fn preimage(
+    carry: &crate::lazy::Pose,
+    rect: crate::lazy::Rect,
+    band: [f64; 2],
+    voxel_size: f32,
+) -> (i32, i32, i32, i32) {
+    let back = carry.inverse();
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for corner in 0..8 {
+        let p = back.apply([
+            rect[corner & 1] as f64,
+            rect[2 + (corner >> 1 & 1)] as f64,
+            band[corner >> 2 & 1],
+        ]);
+        for axis in 0..2 {
+            lo[axis] = lo[axis].min(p[axis]);
+            hi[axis] = hi[axis].max(p[axis]);
+        }
+    }
+    let v = voxel_size as f64;
+    let col = |m: f64| (m / v).floor() as i32;
+    (
+        col(lo[0]) - 1,
+        col(hi[0]) + 1,
+        col(lo[1]) - 1,
+        col(hi[1]) + 1,
+    )
+}
+
+/// Merge boxes that overlap, with their anchors, until none do; anchors stay sorted, boxes in a deterministic order.
+fn merge_overlapping(groups: &mut Vec<((i32, i32, i32, i32), Vec<u32>)>) {
+    let overlap = |a: &(i32, i32, i32, i32), b: &(i32, i32, i32, i32)| {
+        a.0 <= b.1 && b.0 <= a.1 && a.2 <= b.3 && b.2 <= a.3
+    };
+    loop {
+        let mut merged = false;
+        let mut i = 0;
+        while i < groups.len() {
+            let mut j = i + 1;
+            while j < groups.len() {
+                if overlap(&groups[i].0, &groups[j].0) {
+                    let (b, anchors) = groups.swap_remove(j);
+                    let a = &mut groups[i];
+                    a.0 = (
+                        a.0 .0.min(b.0),
+                        a.0 .1.max(b.1),
+                        a.0 .2.min(b.2),
+                        a.0 .3.max(b.3),
+                    );
+                    a.1.extend(anchors);
+                    merged = true;
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+        if !merged {
+            break;
+        }
+    }
+    for g in groups.iter_mut() {
+        g.1.sort_unstable();
+    }
+    groups.sort_unstable();
 }
