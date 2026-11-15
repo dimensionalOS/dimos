@@ -50,17 +50,18 @@ class ReformRayTracingVoxelMap(RayTracingVoxelMap):
 
     On each loop_closure_event it warps every voxel into the corrected frame
     with fast-reform, at the time the voxel landed, instead of waiting to
-    re-trace a corrected map. pose_graph supplies the keyframes that did not
-    move, which hold their surroundings in place. world_frame should be the
-    optimizer's corrected frame, so new clouds land where the warp moved the map.
+    re-trace a corrected map. Each event lists every keyframe the optimizer has
+    heard, and the unmoved ones hold their surroundings in place. world_frame
+    should be the optimizer's corrected frame, so new clouds land where the warp
+    moved the map. Every published cloud's per-point u32 `version` is the event
+    version the map was last moved to (0 before any).
     """
 
     config: ReformRayTracingVoxelMapConfig
 
-    # One record per keyframe: x, y, z, node_id, ts, qx, qy, qz, qw.
-    pose_graph: In[PointCloud2]
-    # One record per keyframe a closure moved: its pre pose as in pose_graph,
-    # then dx, dy, dz, dqx, dqy, dqz, dqw with post = delta * pre.
+    # One record per heard keyframe: x, y, z, node_id, ts, qx, qy, qz, qw (the
+    # pre pose), then dx, dy, dz, dqx, dqy, dqz, dqw with post = delta * pre,
+    # and optionally a u32 version (the optimizer's count of events).
     loop_closure_event: In[PointCloud2]
 
 

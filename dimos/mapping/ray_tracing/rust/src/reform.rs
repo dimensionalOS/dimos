@@ -19,6 +19,8 @@
 //! `pose_graph`, one record per keyframe (x, y, z, node_id, ts, qx..qw), and
 //! `loop_closure_event`, one per keyframe a closure moved (the pre-closure
 //! pose as in pose_graph, then dx, dy, dz, dqx..dqw with post = delta * pre).
+//! An event may also carry a u32 `version` per record, the count of events the
+//! optimizer has published, which consumers stamp their output with.
 //!
 //! The map holds each keyframe at the pose it had when the map last moved for
 //! it, its applied pose. A closure warps by post * applied⁻¹ for the keyframes
@@ -225,6 +227,17 @@ pub fn decode_loop_closure_event(msg: &PointCloud2) -> Result<Vec<MovedRecord>, 
             delta: pose_at(fields.record(i), &dt, &dq),
         })
         .collect())
+}
+
+/// The optimizer's count of published events, from the `version` field, or None
+/// for an event without one.
+pub fn decode_event_version(msg: &PointCloud2) -> Result<Option<u32>, DecodeError> {
+    let fields = Fields::new(msg)?;
+    if !msg.fields.iter().any(|f| f.name == "version") {
+        return Ok(None);
+    }
+    let offset = fields.offset("version", PointField::UINT32 as u8, 4)?;
+    Ok((fields.count > 0).then(|| u32::from_le_bytes(read(fields.record(0), offset))))
 }
 
 /// Field layout of pose_graph, for building test and replay clouds.
@@ -997,6 +1010,31 @@ mod tests {
             }
         }
         record_cloud(LOOP_EVENT_FIELDS, data)
+    }
+
+    #[test]
+    fn an_event_reads_its_version_and_one_without_has_none() {
+        let pre = Pose::IDENTITY;
+        let plain = event(&[(1, 0.0, pre, pre), (2, 1.0, pre, pre)]);
+        assert_eq!(decode_event_version(&plain), Ok(None));
+
+        let layout: Vec<(&str, u8)> = LOOP_EVENT_FIELDS
+            .iter()
+            .copied()
+            .chain([("version", PointField::UINT32 as u8)])
+            .collect();
+        let step = plain.point_step as usize;
+        let mut data = Vec::new();
+        for record in plain.data.chunks(step) {
+            data.extend_from_slice(record);
+            data.extend_from_slice(&7_u32.to_le_bytes());
+        }
+        let versioned = record_cloud(&layout, data);
+        assert_eq!(decode_event_version(&versioned), Ok(Some(7)));
+        assert_eq!(
+            decode_loop_closure_event(&versioned).map(|m| m.len()),
+            Ok(2)
+        );
     }
 
     fn params() -> ReformParams {

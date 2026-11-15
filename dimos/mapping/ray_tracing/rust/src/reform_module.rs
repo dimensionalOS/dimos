@@ -15,6 +15,9 @@
 //! The ray tracer that follows a pose-graph optimizer's loop closures: on each
 //! `loop_closure_event` it warps its whole voxel map into the corrected frame
 //! in place, so the map and the local regions it hands on stay corrected.
+//! Every keyframe the optimizer has heard is in each event at the pose the map
+//! holds it, so the events alone carry the keyframes the warp anchors on. Each
+//! cloud it publishes is stamped with the event version its map was moved to.
 
 use std::time::{Duration, Instant};
 
@@ -25,7 +28,7 @@ use tracing::debug;
 use validator::ValidationError;
 
 use crate::module::{Job, WorkerHandle, WorkerOutputs};
-use crate::reform::{decode_loop_closure_event, decode_pose_graph, ReformParams, ReformState};
+use crate::reform::{decode_event_version, decode_loop_closure_event, ReformParams, ReformState};
 use crate::voxel_ray_tracer::{validate_config, Config};
 
 /// The ray tracer's config plus how closures warp it.
@@ -154,11 +157,8 @@ pub struct ReformRayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
     loaded_map: Input<PointCloud2>,
 
-    // Every keyframe's pose, for the anchors that hold the unmoved parts.
-    #[input(decode = PointCloud2::decode, handler = on_pose_graph)]
-    pose_graph: Input<PointCloud2>,
-
-    // Per closure, each keyframe it moved: its pre pose and the delta.
+    // Per closure, every heard keyframe: its pre pose, the delta, and the
+    // optimizer's event version.
     #[input(decode = PointCloud2::decode, handler = on_loop_closure_event)]
     loop_closure_event: Input<PointCloud2>,
 
@@ -191,6 +191,8 @@ pub struct ReformRayTracingVoxelMap {
 
     worker: WorkerHandle,
     reform: ReformState,
+    // The version of the last event, counted here for an optimizer that sends none.
+    last_version: u32,
 }
 
 impl ReformRayTracingVoxelMap {
@@ -226,17 +228,6 @@ impl ReformRayTracingVoxelMap {
         self.worker.enqueue(Job::LoadedMap(msg)).await;
     }
 
-    async fn on_pose_graph(&mut self, msg: PointCloud2) {
-        match decode_pose_graph(&msg) {
-            Ok(records) => self.reform.add_keyframes(&records),
-            Err(e) => warn_throttled!(
-                Duration::from_secs(1),
-                error = %e,
-                "Failed to decode pose_graph, dropped it."
-            ),
-        }
-    }
-
     async fn on_loop_closure_event(&mut self, msg: PointCloud2) {
         let moved = match decode_loop_closure_event(&msg) {
             Ok(moved) => moved,
@@ -249,12 +240,28 @@ impl ReformRayTracingVoxelMap {
                 return;
             }
         };
+        let version = match decode_event_version(&msg) {
+            Ok(Some(version)) => version,
+            Ok(None) => self.last_version + 1,
+            Err(e) => {
+                warn_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Failed to read loop_closure_event's version, counted it instead."
+                );
+                self.last_version + 1
+            }
+        };
+        self.last_version = version;
         match self.reform.closure(&moved, &self.config.reform()) {
-            Some(warp) => self.worker.enqueue(Job::Warp(warp)).await,
-            None => debug!(
-                keyframes = moved.len(),
-                "Loop closure moved nothing past reform_min_shift_m, held for the next."
-            ),
+            Some(warp) => self.worker.enqueue(Job::Warp(warp, version)).await,
+            None => {
+                debug!(
+                    keyframes = moved.len(),
+                    "Loop closure moved nothing past reform_min_shift_m, held for the next."
+                );
+                self.worker.enqueue(Job::Version(version)).await;
+            }
         }
     }
 }

@@ -47,7 +47,6 @@ threads = 2
 [package.metadata.dimos.module.reform_ray_tracing.inputs]
 lidar = "sensor_msgs.PointCloud2"
 loaded_map = "sensor_msgs.PointCloud2"
-pose_graph = "sensor_msgs.PointCloud2"
 loop_closure_event = "sensor_msgs.PointCloud2"
 tf = "tf2_msgs.TFMessage"
 
