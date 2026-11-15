@@ -114,6 +114,8 @@ pub struct KeyFixed {
     pub rotation_local: Mat3,
     pub translation_local: Vec3,
     pub time: f64,
+    /// Box (min xyz, max xyz) in this keyframe's frame around every scan since the previous keyframe; empty is +inf / -inf.
+    pub scan_box: [f32; 6],
     heavy: Mutex<Heavy>,
     /// The removal stamp it was simplified away at (`KeyFrames::remove`); `u64::MAX` while it keeps its cloud.
     removed_at: AtomicU64,
@@ -137,6 +139,7 @@ impl KeyFixed {
             rotation_local,
             translation_local,
             time,
+            scan_box: EMPTY_BOX,
             heavy: Mutex::new(Heavy {
                 body_cloud,
                 descriptor,
@@ -144,7 +147,14 @@ impl KeyFixed {
             removed_at: AtomicU64::new(u64::MAX),
         }
     }
+    pub fn with_scan_box(mut self, scan_box: [f32; 6]) -> KeyFixed {
+        self.scan_box = scan_box;
+        self
+    }
 }
+
+/// A box with nothing in it: min +inf, max -inf.
+pub const EMPTY_BOX: [f32; 6] = [f32::INFINITY, f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
 
 /// The newest adopted solve's global poses (the first `rotations.len()` keyframes), built on its thread.
 #[derive(Default)]
@@ -189,6 +199,10 @@ impl KeyFrames {
         self.fixed.get(k)
     }
     /// Keyframe `k`'s global pose: the newest solve's, or its odometry pose ridden on that solve's newest correction.
+    /// Keyframe `k`'s box around its scans, in its own frame (`KeyFixed::scan_box`).
+    pub fn scan_box(&self, k: usize) -> [f32; 6] {
+        self.fixed.get(k).scan_box
+    }
     pub fn global(&self, k: usize) -> (Mat3, Vec3) {
         if k < self.solved.rotations.len() {
             return (self.solved.rotations[k], self.solved.positions[k]);
