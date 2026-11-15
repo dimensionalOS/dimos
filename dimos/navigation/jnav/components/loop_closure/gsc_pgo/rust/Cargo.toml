@@ -22,7 +22,7 @@ native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:validator"]
 [dependencies]
 rayon = "1"
 faer = "0.24"
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9618889cb8d5e0c5a59acd983d3ee3cb08162dbd", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"], optional = true }
 serde = { version = "1", features = ["derive"] }
