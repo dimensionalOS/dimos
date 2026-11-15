@@ -181,11 +181,29 @@ def test_continuous_stream_follows_a_lagging_joint_without_teeth() -> None:
     for _ in range(200):
         assert -1e-12 <= tick(0.0) <= allowance + 1e-12
     assert command == pytest.approx(target)
-    assert measured < command - allowance
 
-    # After a silence longer than the gap timeout the stream starts from the reading.
-    for _ in range(20):
-        tick(0.0, send=False)
-    held = measured
-    tick(50.0)
-    assert command == pytest.approx(held + allowance)
+    # Whatever breaks the stream, its next target starts from the reading: a pause,
+    # a cancel, a preemption, another task moving the arm, a silence over the gap.
+    def moved_by_another_task() -> None:
+        nonlocal measured
+        measured -= 2 * lead
+
+    def silence() -> None:
+        for _ in range(20):
+            tick(0.0, send=False)
+
+    pause = JointState(frame_id="dimos/guarded-joint", name=["arm/a"], velocity=[0.0])
+    for interrupt in (
+        lambda: task.on_joint_command(pause, t),
+        task.cancel,
+        lambda: task.on_preempted("other", frozenset({"arm/a"})),
+        moved_by_another_task,
+        silence,
+    ):
+        for _ in range(200):
+            tick(0.0)
+        assert measured < command - allowance
+        interrupt()
+        held = measured
+        tick(50.0)
+        assert command == pytest.approx(held + allowance)
