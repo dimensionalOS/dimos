@@ -39,7 +39,7 @@ pub struct LazyState {
     pub(crate) layers: Layers,
     /// The planner's voxel edge, for placing stale cells.
     voxel_size: f32,
-    /// Closing-box submeshes a closure has yet to migrate, reform.migrate_per_update elements per region update.
+    /// Closing-box submeshes a closure has yet to migrate, config.migrate_per_update() elements per region update.
     pub(crate) pending: BTreeSet<(Version, (i32, i32))>,
     /// Submeshes a region update's lookup found around it, migrated before the pending ones.
     pub(crate) urgent: BTreeSet<(Version, (i32, i32))>,
@@ -305,7 +305,7 @@ impl Planner {
     }
 
     /// Queue the stale submeshes a region update is about to touch, out to the margin its repair reads, ahead of a
-    /// closure's, then migrate the next reform.migrate_per_update elements of the queues.
+    /// closure's, then migrate the next config.migrate_per_update() elements of the queues.
     pub(super) fn reform_near(&mut self, bounds: &RegionBounds, config: &Config) {
         let margin = bounds.radius + self.migrate_margin_m(config);
         let Some(lazy) = self.lazy.as_mut() else {
@@ -959,7 +959,7 @@ impl Planner {
         linked.into_iter().collect()
     }
 
-    /// Migrate the next reform.migrate_per_update elements (voxels and cells) of the queued submeshes, the ones a
+    /// Migrate the next config.migrate_per_update() elements (voxels and cells) of the queued submeshes, the ones a
     /// region update found around it first; 0 migrates them all. A submesh larger than what is left of the budget
     /// moves a strip of its columns and stays queued.
     fn migrate_pending(&mut self, config: &Config) {
@@ -969,10 +969,7 @@ impl Planner {
         if lazy.urgent.is_empty() && lazy.pending.is_empty() {
             return;
         }
-        let budget = match config.reform.migrate_per_update {
-            0 => usize::MAX,
-            n => n as usize,
-        };
+        let budget = config.migrate_per_update();
         let outer = self.clock.enter("pending");
         let stage = Instant::now();
         let caps = self.map_capacities();

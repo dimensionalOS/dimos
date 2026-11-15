@@ -39,6 +39,9 @@ class MLSPlanner:
         reform: dict[str, Any] | None = None,
         require_full_route: bool = False,
         max_region_columns: int = 10_000_000,
+        scan_period_s: float = 0.1,
+        update_period_share: float = 0.4,
+        repair_ms_per_column: float = 0.0,
         max_closing_box_cells: int = 250_000_000,
     ) -> None: ...
     def update_global_map(self, points: NDArray[np.float32]) -> None:

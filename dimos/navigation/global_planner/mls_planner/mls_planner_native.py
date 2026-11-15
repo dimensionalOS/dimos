@@ -53,8 +53,10 @@ class MLSReformConfig(BaseModel):
     version_history: int = 4
     # a closure starts a new layer when it closes a loop or moves some keyframe's box corner this far from the layer's frame, m (0 = half a voxel)
     min_shift_m: float = 0.0
-    # stale elements (voxels and cells) migrated per region update, from the submeshes around the update first, then a closure's closing boxes (0 = all at once)
-    migrate_per_update: int = 4000
+    # calibrated ms one stale element (voxel or cell) costs to migrate and repair around; a region update migrates what
+    # fits half its budget (scan_period_s x update_period_share), the submeshes around it first, then a closure's
+    # closing boxes (0 = all at once). 0.008 is the 90th percentile over a 10 Hz FAST-LIO run's slowest updates on an M-series Mac.
+    migrate_ms_per_element: float = 0.008
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
@@ -105,9 +107,15 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     require_full_route: bool = False
     # A region update spanning more columns is a bad pose or bound (10M is ~126 m of radius at 8 cm), refused before it allocates.
     max_region_columns: int = 10_000_000
-    # Changed columns one region update repairs, nearest its center first; the rest wait for the next updates, so the
-    # first region after a closure (a whole region rewritten) is spread out instead of one long update (0 = all at once).
-    region_columns_per_update: int = 2000
+    # Expected seconds between region updates (the lidar's scan period).
+    scan_period_s: float = 0.1
+    # Share of scan_period_s one region update's deferred work (stale migration and waiting column repair, half each) may cost.
+    update_period_share: float = 0.4
+    # Calibrated ms one changed column's surface and graph repair costs; a region update repairs what fits half its budget,
+    # nearest its center first, and the rest wait, so the first region after a closure (a whole region rewritten) is
+    # spread out instead of one long update (0 = all at once). 0.04 is the 90th percentile over a 10 Hz FAST-LIO run's
+    # slowest updates on an M-series Mac.
+    repair_ms_per_column: float = 0.04
     # A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     max_closing_box_cells: int = 250_000_000
     # A replan to the same goal keeps the last route from this far past where the new cell path rejoins it and past the last change on it; only the stretch before is pulled and smoothed again.

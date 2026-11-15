@@ -46,7 +46,7 @@ fn toy_config() -> Config {
         box_pad_m: 0.5,
         version_history: 4,
         min_shift_m: 0.0,
-        migrate_per_update: 0,
+        migrate_ms_per_element: 0.0,
     };
     // a wall clearance, so a layer seam misread as a wall shows up as impassable links
     cfg.wall_clearance_m = 2.0 * cfg.voxel_size;
@@ -426,7 +426,7 @@ fn a_closure_merge_spread_over_updates_ends_like_one_done_at_once() {
     // Toy 1's corridor out and back, with the merge migrated a few dozen elements per region update, so submeshes
     // move a strip at a time.
     let mut toy = Toy::new(|x, y| (0.0..12.0).contains(&x) && (0.0..2.0).contains(&y));
-    toy.cfg.reform.migrate_per_update = 50;
+    toy.cfg.set_migrate_per_update(50);
     for i in 0..6 {
         let x = 1.0 + 2.0 * i as f64;
         toy.scan_at(pose(x, 1.0, 0.0), pose(x, 1.0, 0.0), (x as f32, 1.0));
@@ -565,7 +565,7 @@ fn a_second_pass_on_a_migration_budget_reforms_what_it_meets_a_little_per_update
 /// `budget` stale elements per update (0 = all); the scans at A repeat until nothing stale is queued.
 fn second_pass_crossing_the_old_run(budget: u32) {
     let mut toy = Toy::new(loop_floor);
-    toy.cfg.reform.migrate_per_update = budget;
+    toy.cfg.set_migrate_per_update(budget);
     let path = loop_path();
     for (k, &truth) in path.iter().enumerate() {
         let t = truth.translation;
@@ -670,7 +670,7 @@ fn second_pass_crossing_the_old_run(budget: u32) {
 fn loop_run_fingerprint(threads: u32) -> String {
     let mut toy = Toy::new(loop_floor);
     toy.cfg.worker_threads = threads;
-    toy.cfg.reform.migrate_per_update = 60;
+    toy.cfg.set_migrate_per_update(60);
     toy.planner = Planner::new(threads);
     let mut out = String::new();
     let mut plan = |toy: &mut Toy, out: &mut String| {
@@ -1147,7 +1147,7 @@ fn closure_bookkeeping_cost_on_a_big_map() {
 #[test]
 fn a_patch_over_a_turned_stale_run_links_every_stale_cell_beside_it_now() {
     let mut toy = Toy::new(loop_floor);
-    toy.cfg.reform.migrate_per_update = 1;
+    toy.cfg.set_migrate_per_update(1);
     let path = loop_path();
     for (k, &truth) in path.iter().enumerate() {
         let t = truth.translation;

@@ -1716,7 +1716,7 @@ fn a_region_rewritten_on_a_column_budget_repairs_it_nearest_first_and_ends_like_
     once.update_region(&cloud, &b, &cfg);
     assert!(once.region_pending.is_empty());
 
-    cfg.region_columns_per_update = 300;
+    cfg.set_region_columns_per_update(300);
     let mut spread = Planner::new(cfg.worker_threads);
     spread.update_region(&cloud, &b, &cfg);
     let waiting = spread.region_pending.len();
@@ -1766,7 +1766,7 @@ fn a_route_across_columns_still_waiting_for_repair_plans_again() {
     ));
     assert_eq!(p.replan_reason(start, goal, &cfg), None);
     // the floor one voxel higher everywhere, more than a budget's worth of columns
-    cfg.region_columns_per_update = 300;
+    cfg.set_region_columns_per_update(300);
     let raised: Vec<(f32, f32, f32)> = slice(&all, &b, cfg.voxel_size)
         .into_iter()
         .map(|(x, y, z)| (x, y, z + cfg.voxel_size))
@@ -1777,4 +1777,27 @@ fn a_route_across_columns_still_waiting_for_repair_plans_again() {
         p.replan_reason(start, goal, &cfg),
         Some(ReplanReason::RouteChanged)
     );
+}
+
+#[test]
+fn per_update_work_counts_come_from_the_scan_period_share_and_unit_costs() {
+    let mut cfg = test_config();
+    cfg.scan_period_s = 0.1;
+    cfg.update_period_share = 0.4;
+    cfg.repair_ms_per_column = 0.04;
+    cfg.reform.migrate_ms_per_element = 0.008;
+    // 40 ms a scan, half each: 20 ms / 0.04 ms and 20 ms / 0.008 ms.
+    assert_eq!(cfg.region_columns_per_update(), 500);
+    assert_eq!(cfg.migrate_per_update(), 2500);
+    // A lidar twice as slow leaves twice the work per update.
+    cfg.scan_period_s = 0.2;
+    assert_eq!(cfg.region_columns_per_update(), 1000);
+    // A unit dearer than the whole half budget still does one; a free one does all at once.
+    cfg.repair_ms_per_column = 1e6;
+    assert_eq!(cfg.region_columns_per_update(), 1);
+    cfg.repair_ms_per_column = 0.0;
+    assert_eq!(cfg.region_columns_per_update(), usize::MAX);
+    assert!(cfg.validate().is_ok());
+    cfg.update_period_share = 1.5;
+    assert!(cfg.validate().is_err());
 }
