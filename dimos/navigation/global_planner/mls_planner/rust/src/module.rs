@@ -22,10 +22,12 @@ use crate::goal_status::{
     StatusReporter, NO_GOAL_FRAME, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED,
     PREEMPT_REPLACED,
 };
-use crate::mls_planner::{ms_since, Config, Plan, Planner, RegionBounds, DEBUG_LOG_PERIOD};
+use crate::mls_planner::{
+    ms_since, Config, MapPoint, Plan, Planner, RegionBounds, DEBUG_LOG_PERIOD,
+};
 use crate::planner::snap_pose_to_cell;
 use crate::reform::{decode_loop_closure_event, decode_pose_graph, DecodeError, ReformState, Warp};
-use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
+use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment, SurfaceEntry};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey, Xyz};
 use dimos_module::nalgebra::Vector3;
 use dimos_module::time::now;
@@ -51,12 +53,12 @@ type Shared<T> = Arc<Mutex<Option<T>>>;
 /// so a dropped intermediate frame is harmless.
 enum MapUpdate {
     Region {
-        points: Vec<Xyz>,
+        points: Vec<MapPoint>,
         bounds: PoseStamped,
         received: Instant,
     },
     Global {
-        points: Vec<Xyz>,
+        points: Vec<MapPoint>,
         stamp: f64,
     },
 }
@@ -70,7 +72,7 @@ struct SeedRegion {
 /// A seed region with its points extracted, queued for the worker. They
 /// queue, since every one must land.
 struct QueuedSeed {
-    points: Vec<Xyz>,
+    points: Vec<MapPoint>,
     bounds: PoseStamped,
 }
 
@@ -1222,15 +1224,15 @@ fn region_bounds(msg: &PoseStamped) -> RegionBounds {
 /// One cell's surface as a message, the cell in its header seq.
 fn surface_message(
     cell: Cell,
-    surface: Vec<(VoxelKey, f32)>,
+    surface: Vec<SurfaceEntry>,
     voxel_size: f32,
     frame: &str,
     stamp: Time,
 ) -> PointCloud2 {
     let points: Vec<Xyzi> = surface
         .into_iter()
-        .map(|((ix, iy, iz), clearance)| {
-            let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+        .map(|((ix, iy, iz), z, clearance)| {
+            let (x, y, _) = surface_point_xyz(ix, iy, iz, voxel_size);
             (x, y, z, clearance)
         })
         .collect();
@@ -1428,16 +1430,16 @@ fn build_pc2_xyz(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> Poi
     }
 }
 
-struct ExtractError(&'static str);
+pub struct ExtractError(&'static str);
 impl std::fmt::Display for ExtractError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.0)
     }
 }
 
-/// The xyz points of a cloud, or None with a warning when it cannot be read.
-fn cloud_points(msg: &PointCloud2, topic: &'static str) -> Option<Vec<Xyz>> {
-    match extract_xyz(msg) {
+/// The points of a cloud, or None with a warning when it cannot be read.
+fn cloud_points(msg: &PointCloud2, topic: &'static str) -> Option<Vec<MapPoint>> {
+    match extract_points(msg) {
         Ok(points) => Some(points),
         Err(e) => {
             warn_throttled!(
@@ -1451,24 +1453,25 @@ fn cloud_points(msg: &PointCloud2, topic: &'static str) -> Option<Vec<Xyz>> {
     }
 }
 
-fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> {
-    let mut x_off: Option<usize> = None;
-    let mut y_off: Option<usize> = None;
-    let mut z_off: Option<usize> = None;
-    for f in &msg.fields {
-        if f.datatype != PointField::FLOAT32 as u8 {
-            continue;
-        }
-        match f.name.as_str() {
-            "x" => x_off = Some(f.offset as usize),
-            "y" => y_off = Some(f.offset as usize),
-            "z" => z_off = Some(f.offset as usize),
-            _ => {}
-        }
-    }
-    let xo = x_off.ok_or(ExtractError("missing float32 x field"))?;
-    let yo = y_off.ok_or(ExtractError("missing float32 y field"))?;
-    let zo = z_off.ok_or(ExtractError("missing float32 z field"))?;
+/// The ray tracer's per-voxel plane fields, in `MapPoint` order.
+const PLANE_FIELDS: [&str; 4] = ["normal_x", "normal_y", "normal_z", "plane_offset"];
+
+/// A cloud's finite points with their planes when it carries every plane field, else NaN (whole voxels).
+pub fn extract_points(msg: &PointCloud2) -> Result<Vec<MapPoint>, ExtractError> {
+    let offset_of = |name: &str| {
+        msg.fields
+            .iter()
+            .find(|f| f.name == name && f.datatype == PointField::FLOAT32 as u8)
+            .map(|f| f.offset as usize)
+    };
+    let xo = offset_of("x").ok_or(ExtractError("missing float32 x field"))?;
+    let yo = offset_of("y").ok_or(ExtractError("missing float32 y field"))?;
+    let zo = offset_of("z").ok_or(ExtractError("missing float32 z field"))?;
+    let plane_offsets = || {
+        let [nx, ny, nz, offset] = PLANE_FIELDS.map(offset_of);
+        Some([nx?, ny?, nz?, offset?])
+    };
+    let plane_offsets = plane_offsets();
 
     let n = (msg.width as usize) * (msg.height as usize);
     let step = msg.point_step as usize;
@@ -1480,24 +1483,28 @@ fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> 
             "data buffer shorter than width*height*point_step",
         ));
     }
-    if xo + 4 > step || yo + 4 > step || zo + 4 > step {
-        return Err(ExtractError(
-            "xyz field offsets do not fit within point_step",
-        ));
+    let mut offsets = [xo, yo, zo]
+        .into_iter()
+        .chain(plane_offsets.iter().flatten().copied());
+    if offsets.any(|o| o + 4 > step) {
+        return Err(ExtractError("field offsets do not fit within point_step"));
     }
     if msg.is_bigendian {
         return Err(ExtractError("big-endian point data not supported"));
     }
 
     let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let base = i * step;
-        let x = read_f32_le(&msg.data, base + xo);
-        let y = read_f32_le(&msg.data, base + yo);
-        let z = read_f32_le(&msg.data, base + zo);
-        if x.is_finite() && y.is_finite() && z.is_finite() {
-            out.push((x, y, z));
+    for point in msg.data.chunks_exact(step).take(n) {
+        let (x, y, z) = (
+            read_f32_le(point, xo),
+            read_f32_le(point, yo),
+            read_f32_le(point, zo),
+        );
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            continue;
         }
+        let plane = plane_offsets.map_or([f32::NAN; 4], |o| o.map(|off| read_f32_le(point, off)));
+        out.push(((x, y, z), plane));
     }
     Ok(out)
 }
@@ -1526,6 +1533,41 @@ mod tests {
             position,
             frame: None,
         }
+    }
+
+    /// A cloud of centers and planes, laid out as the tracer's local_map, reads back with every plane.
+    #[test]
+    fn a_tracer_cloud_extracts_with_its_planes() {
+        let rows = [
+            [0.5, 1.5, 2.5, 0.0, 0.6, 0.8, -0.01],
+            [3.5, 4.5, 5.5, f32::NAN, f32::NAN, f32::NAN, f32::NAN],
+        ];
+        let names = ["x", "y", "z"].into_iter().chain(PLANE_FIELDS);
+        let cloud = PointCloud2 {
+            height: 1,
+            width: rows.len() as i32,
+            fields: names
+                .enumerate()
+                .map(|(i, name)| PointField {
+                    name: name.into(),
+                    offset: 4 * i as i32,
+                    datatype: PointField::FLOAT32 as u8,
+                    count: 1,
+                })
+                .collect(),
+            point_step: 28,
+            row_step: 28 * rows.len() as i32,
+            data: rows
+                .iter()
+                .flatten()
+                .flat_map(|v| v.to_le_bytes())
+                .collect(),
+            ..Default::default()
+        };
+        let points = extract_points(&cloud).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(points[0], ((0.5, 1.5, 2.5), [0.0, 0.6, 0.8, -0.01]));
+        assert_eq!(points[1].0, (3.5, 4.5, 5.5));
+        assert!(points[1].1.iter().all(|c| c.is_nan()));
     }
 
     #[test]
@@ -1611,6 +1653,7 @@ mod tests {
             })
             .collect();
         let mut planner = Planner::new(1);
+        let floor: Vec<MapPoint> = floor.into_iter().map(|p| (p, [f32::NAN; 4])).collect();
         planner.update_global_map(&floor, &config);
         // Further above the floor than goal_z_tolerance, yet within the snap.
         let goal = (5.0, 1.0, cell + 0.62);
@@ -1721,7 +1764,13 @@ mod tests {
     #[test]
     fn region_messages_carry_the_cell_in_their_headers_even_when_empty() {
         let cell = (1, -2);
-        let surface = surface_message(cell, vec![((1, 2, 0), 0.5)], 0.1, "odom", Time::default());
+        let surface = surface_message(
+            cell,
+            vec![((1, 2, 0), 0.1, 0.5)],
+            0.1,
+            "odom",
+            Time::default(),
+        );
         let segments = vec![((1, 2, 0), (2, 2, 0), 1.5)];
         let edges = edges_message(cell, segments, 0.1, "odom", Time::default());
         assert_eq!(surface.header.seq, pack_cell(cell));

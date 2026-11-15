@@ -39,8 +39,13 @@ use crate::nodes::{
 };
 use crate::planner;
 use crate::reform::ReformConfig;
+use crate::region_viz::SurfaceEntry;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region};
+use crate::terrain::{PlaneMap, SurfacePlane, Terrain};
 use crate::voxel::{voxelize, VoxelKey, Xyz};
+
+/// An incoming voxel center and its tracer plane: normal xyz, then offset from the center, NaN without one.
+pub type MapPoint = ((f32, f32, f32), [f32; 4]);
 
 #[native_config]
 #[derive(Clone)]
@@ -80,6 +85,12 @@ pub struct Config {
     /// Max traversable vertical step. Taller steps are impassable.
     #[validate(range(min = 0.0))]
     pub step_threshold_m: f32,
+    /// Steepest voxel plane, in degrees from level, a cell takes its height from; steeper stand at their top face.
+    #[validate(range(min = 0.0, exclusive_max = 90.0))]
+    pub max_surface_slope_deg: f32,
+    /// How far fit noise alone moves a plane's height; plane moves and rises this small are ignored.
+    #[validate(range(min = 0.0))]
+    pub plane_noise_m: f32,
     /// Soft cost added per meter of vertical climb.
     #[validate(range(min = 0.0))]
     pub step_penalty_weight: f32,
@@ -153,14 +164,32 @@ impl Config {
         (self.surface_closing_radius / self.voxel_size).ceil() as u32
     }
 
-    /// Robot-height headroom in cells, the clear space a cell needs to be standable.
+    /// Robot-height headroom in cells: the farthest above a cell a voxel can still block it.
     pub fn headroom_cells(&self) -> i32 {
         (self.robot_height / self.voxel_size).ceil() as i32
     }
 
-    /// Max traversable vertical step in cells.
-    pub fn step_cells(&self) -> i32 {
-        (self.step_threshold_m / self.voxel_size).floor() as i32
+    /// The surface model over `by_col` and `planes` with this robot's limits.
+    pub(crate) fn terrain<'a>(&self, by_col: &'a ColumnIz, planes: &'a PlaneMap) -> Terrain<'a> {
+        Terrain {
+            by_col,
+            planes,
+            voxel_size: self.voxel_size,
+            robot_height: self.robot_height,
+            step_m: self.step_threshold_m,
+            noise_m: self.plane_noise_m,
+            max_slope: self.max_slope(),
+        }
+    }
+
+    /// The steepest slope a cell's plane may have, dz per meter.
+    pub(crate) fn max_slope(&self) -> f32 {
+        self.max_surface_slope_deg.to_radians().tan()
+    }
+
+    /// The least normal z of a plane a cell takes its height from.
+    pub fn min_normal_z(&self) -> f32 {
+        self.max_surface_slope_deg.to_radians().cos()
     }
 
     /// Radius of the node window around a changed cell: the hard clearance
@@ -186,8 +215,7 @@ impl Config {
     /// Config-derived scalars for node placement.
     pub fn placement_params(&self) -> PlacementParams {
         PlacementParams {
-            clearance_cells: self.headroom_cells(),
-            step_cells: self.step_cells(),
+            step_m: self.step_threshold_m,
             voxel_size: self.voxel_size,
             node_spacing_m: self.node_spacing_m,
             wall_clearance_m: self.wall_clearance_m,
@@ -227,13 +255,19 @@ impl RegionBounds {
     }
 
     fn contains_voxel(&self, (kx, ky, kz): VoxelKey, voxel_size: f32) -> bool {
-        let half = voxel_size * 0.5;
-        let z = kz as f32 * voxel_size + half;
-        if z < self.z_min || z > self.z_max {
-            return false;
-        }
-        let dx = kx as f32 * voxel_size + half - self.origin_x;
-        let dy = ky as f32 * voxel_size + half - self.origin_y;
+        self.contains_height(kz, voxel_size) && self.contains_column((kx, ky), voxel_size)
+    }
+
+    /// Whether a voxel `kz` cells up sits within the z band.
+    fn contains_height(&self, kz: i32, voxel_size: f32) -> bool {
+        let z = (kz as f32 + 0.5) * voxel_size;
+        z >= self.z_min && z <= self.z_max
+    }
+
+    /// Whether a column's center lies within the cylinder's radius.
+    fn contains_column(&self, (kx, ky): (i32, i32), voxel_size: f32) -> bool {
+        let dx = (kx as f32 + 0.5) * voxel_size - self.origin_x;
+        let dy = (ky as f32 + 0.5) * voxel_size - self.origin_y;
         dx * dx + dy * dy <= self.radius * self.radius
     }
 
@@ -280,7 +314,8 @@ pub struct Planner {
     // with other components sharing the process.
     pool: Arc<rayon::ThreadPool>,
     graph: PlannerGraph,
-    voxel_map: AHashSet<VoxelKey>,
+    /// Every mapped voxel with its usable plane.
+    planes: PlaneMap,
     by_col: ColumnIz,
     // Last successful path and its goal, which a warp moves: followed while safe when a replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
@@ -336,7 +371,7 @@ pub struct PlannerSizes {
 impl Planner {
     /// Each voxel's key where its point sits, which a warp can move off its own key.
     pub fn placed_voxels(&self, voxel_size: f32) -> impl Iterator<Item = VoxelKey> + '_ {
-        self.voxel_map.iter().map(move |&k| {
+        self.by_col.keys().map(move |k| {
             let r = self
                 .voxel_times
                 .as_ref()
@@ -361,7 +396,7 @@ impl Planner {
 
     pub fn sizes(&self) -> PlannerSizes {
         PlannerSizes {
-            voxels: self.voxel_map.len(),
+            voxels: self.by_col.voxel_count(),
             column_tiles: self.by_col.tile_count(),
             surface_cells: self.graph.cells.live_len(),
             surface_slots: self.graph.cells.slot_capacity(),
@@ -377,7 +412,7 @@ impl Planner {
         Self {
             pool: worker_pool(worker_threads),
             graph: PlannerGraph::default(),
-            voxel_map: AHashSet::new(),
+            planes: PlaneMap::new(),
             by_col: ColumnIz::default(),
             last_path: None,
             last_result: None,
@@ -404,17 +439,26 @@ impl Planner {
         }
     }
 
-    pub fn update_global_map(&mut self, points: &[(f32, f32, f32)], config: &Config) {
+    pub fn update_global_map(&mut self, points: &[MapPoint], config: &Config) {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
-            self.voxel_map.clear();
-            for &p in points {
-                self.voxel_map.insert(voxelize(p, voxel_size));
-            }
+            let min_normal_z = config.min_normal_z();
+            let keys: Vec<VoxelKey> = points
+                .iter()
+                .map(|&(p, _)| voxelize(p, voxel_size))
+                .collect();
+            self.planes = points
+                .iter()
+                .zip(&keys)
+                .filter_map(|(&(_, fit), &key)| {
+                    Some((key, SurfacePlane::from_fit(fit, min_normal_z)?))
+                })
+                .collect();
+            self.by_col = ColumnIz::from_voxels(&keys);
             if let Some(times) = &mut self.voxel_times {
                 let now = times.now;
-                times.by_key = self.voxel_map.iter().map(|&k| (k, now)).collect();
+                times.by_key = self.by_col.keys().map(|k| (k, now)).collect();
                 times.residual.clear();
             }
             self.rebuild_from_voxels(config);
@@ -424,12 +468,11 @@ impl Planner {
     /// Re-derive surfaces, cells, nodes and edges from the whole voxel map.
     fn rebuild_from_voxels(&mut self, config: &Config) {
         let mut surface: Vec<VoxelKey> = Vec::new();
+        let terrain = config.terrain(&self.by_col, &self.planes);
         extract_surfaces(
-            &self.voxel_map,
-            config.headroom_cells(),
+            &terrain,
             config.closing_passes(),
             config.max_closing_box_cells,
-            &mut self.by_col,
             &mut surface,
         );
         build_surface_lookup(&surface, &mut self.graph.surface_lookup);
@@ -441,7 +484,7 @@ impl Planner {
     /// was rewritten in, or None when no voxel changed.
     pub fn update_region(
         &mut self,
-        local_points: &[(f32, f32, f32)],
+        local_points: &[MapPoint],
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
@@ -453,7 +496,7 @@ impl Planner {
     /// borders.
     pub fn update_seed_region(
         &mut self,
-        points: &[(f32, f32, f32)],
+        points: &[MapPoint],
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
@@ -462,7 +505,7 @@ impl Planner {
 
     fn update_region_within(
         &mut self,
-        local_points: &[(f32, f32, f32)],
+        local_points: &[MapPoint],
         bounds: &RegionBounds,
         config: &Config,
         window_steps: i32,
@@ -490,7 +533,6 @@ impl Planner {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
-            let clearance = config.headroom_cells();
             let pad = (2 * config.closing_passes()) as i32;
 
             // Re-key what a warp moved out of its keys before the region's data meets it.
@@ -503,7 +545,7 @@ impl Planner {
                 );
             }
             let stage = Instant::now();
-            let edits = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let edits = self.replace_region_voxels(local_points, bounds, config);
             let diff_ms = ms_since(stage);
             // No voxel changed, so surfaces and the graph are untouched.
             if edits.is_empty() {
@@ -519,9 +561,9 @@ impl Planner {
             }
             let write = footprint.dilated(pad);
             let stage = Instant::now();
+            let terrain = config.terrain(&self.by_col, &self.planes);
             let new_cells = extract_surfaces_region(
-                &self.by_col,
-                clearance,
+                &terrain,
                 config.closing_passes(),
                 config.max_closing_box_cells,
                 &write,
@@ -562,7 +604,6 @@ impl Planner {
         window_steps: i32,
         config: &Config,
     ) {
-        let step = config.step_cells();
         // A moving node's coordinate, while its cell id still resolves.
         let mut relocations: Vec<(usize, VoxelKey, VoxelKey)> = moves
             .iter()
@@ -571,10 +612,11 @@ impl Planner {
                 (ni, self.graph.cells.coord(cell), target)
             })
             .collect();
-        let patch = self.patch_cells(&added, &removed);
+        let patch = self.patch_cells(&added, &removed, &edits.retuned, config);
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
         seeds.extend_from_slice(rekeyed);
+        seeds.extend(patch.retuned.iter().map(|&id| self.graph.cells.coord(id)));
         if seeds.is_empty() && edits.is_empty() && moves.is_empty() {
             return;
         }
@@ -587,14 +629,16 @@ impl Planner {
                 .map(|&(ni, coord)| (ni, coord, coord)),
         );
 
-        let affected = self.changed_neighborhood(&seeds, step);
+        let reach = config
+            .terrain(&self.by_col, &self.planes)
+            .step_reach_cells();
+        let affected = self.changed_neighborhood(&seeds, reach);
         let graph = &mut self.graph;
         rebuild_edges_around(
             &mut graph.cells,
             &graph.surface_lookup,
             &affected,
-            config.voxel_size,
-            step,
+            &config.terrain(&self.by_col, &self.planes),
         );
         let params = config.placement_params();
         let mut gone_nodes = relocate_nodes(
@@ -623,8 +667,7 @@ impl Planner {
         );
         wall_distances_region(
             &graph.cells,
-            &self.by_col,
-            &params,
+            &config.terrain(&self.by_col, &self.planes),
             &window,
             &mut graph.wall_state,
         );
@@ -676,9 +719,16 @@ impl Planner {
         }
     }
 
-    /// Apply the surface cell changes to the cell store.
-    fn patch_cells(&mut self, added: &[VoxelKey], removed: &[VoxelKey]) -> CellPatch {
+    /// Apply the surface cell changes, and the new surface of kept cells whose plane moved.
+    fn patch_cells(
+        &mut self,
+        added: &[VoxelKey],
+        removed: &[VoxelKey],
+        retuned: &[VoxelKey],
+        config: &Config,
+    ) -> CellPatch {
         let graph = &mut self.graph;
+        let terrain = config.terrain(&self.by_col, &self.planes);
         // Removal frees cell ids and the inserts recycle them, so a node id
         // captured here is not stable. Capture dead nodes by coordinate while
         // their ids still resolve.
@@ -693,30 +743,46 @@ impl Planner {
             .iter()
             .filter_map(|&c| graph.cells.remove(c))
             .collect();
-        let added: Vec<CellId> = added.iter().map(|&c| graph.cells.insert(c)).collect();
+        let added: Vec<CellId> = added
+            .iter()
+            .map(|&c| graph.cells.insert(c, terrain.surface(c)))
+            .collect();
+        let mut retuned_cells: Vec<CellId> = Vec::new();
+        for &c in retuned {
+            if graph.cells.id(c).is_some() {
+                let id = graph.cells.insert(c, terrain.surface(c));
+                graph.nodes.follow_cell(&graph.cells, id, config.voxel_size);
+                retuned_cells.push(id);
+            }
+        }
         CellPatch {
             added,
             removed,
+            retuned: retuned_cells,
             dead_nodes,
         }
     }
 
-    /// Replace the cylinder's voxels with the local map points, ignoring
-    /// points outside it. Returns the voxel edits.
+    /// Replace the cylinder's voxels and planes with the local map points,
+    /// ignoring points outside it; a plane moved less than plane_noise_m keeps
+    /// its old fit, so the map matches a full rebuild within that. Returns the voxel edits.
     fn replace_region_voxels(
         &mut self,
-        local_points: &[(f32, f32, f32)],
+        local_points: &[MapPoint],
         bounds: &RegionBounds,
-        voxel_size: f32,
+        config: &Config,
     ) -> VoxelEdits {
-        let incoming: Vec<VoxelKey> = local_points
-            .par_iter()
-            .filter(|p| p.0.is_finite() && p.1.is_finite() && p.2.is_finite())
-            .map(|&p| voxelize(p, voxel_size))
-            .filter(|&k| bounds.contains_voxel(k, voxel_size))
-            .collect();
+        let (voxel_size, min_normal_z) = (config.voxel_size, config.min_normal_z());
+        let inside = |&(p, _): &MapPoint| {
+            if !(p.0.is_finite() && p.1.is_finite() && p.2.is_finite()) {
+                return None;
+            }
+            let k = voxelize(p, voxel_size);
+            bounds.contains_voxel(k, voxel_size).then_some(k)
+        };
+        let keys: Vec<VoxelKey> = local_points.par_iter().filter_map(inside).collect();
         let bbox = bounds.column_bbox(voxel_size);
-        let buckets = ColumnBuckets::new(&incoming, bbox);
+        let buckets = ColumnBuckets::new(&keys, bbox);
 
         let by_col = &self.by_col;
         let edits: Vec<ColumnEdit> = ColumnIz::tiles_covering(bbox)
@@ -725,33 +791,53 @@ impl Planner {
                 let mut local: Vec<ColumnEdit> = Vec::new();
                 for (col, old) in by_col.tile_columns_in(tile, bbox) {
                     let new = buckets.column(col);
-                    if old.is_empty() && new.is_empty() {
+                    if old.is_empty() && new.is_empty() || !bounds.contains_column(col, voxel_size)
+                    {
                         continue;
                     }
-                    if let Some(edit) =
-                        diff_column(col, old, new, |k| bounds.contains_voxel(k, voxel_size))
-                    {
+                    let in_band = |(_, _, kz)| bounds.contains_height(kz, voxel_size);
+                    if let Some(edit) = diff_column(col, old, new, in_band) {
                         local.push(edit);
                     }
                 }
                 local
             })
             .collect();
-        self.apply_column_edits(&edits)
+        // Each moved plane, and whether its voxel was already mapped.
+        let planes = &self.planes;
+        let moved: Vec<(VoxelKey, Option<SurfacePlane>, bool)> = local_points
+            .par_iter()
+            .filter_map(|point| {
+                let k @ (ix, iy, iz) = inside(point)?;
+                let plane = SurfacePlane::from_fit(point.1, min_normal_z);
+                let old = planes.get(&k).copied();
+                SurfacePlane::moved(old, plane, voxel_size, config.plane_noise_m).then(|| {
+                    let existed = by_col
+                        .get((ix, iy))
+                        .is_some_and(|zs| zs.binary_search(&iz).is_ok());
+                    (k, plane, existed)
+                })
+            })
+            .collect();
+        self.apply_column_edits(&edits, moved)
     }
 
-    /// Apply per-column voxel removals and additions to the map.
-    fn apply_column_edits(&mut self, edits: &[ColumnEdit]) -> VoxelEdits {
+    /// Apply per-column voxel removals and additions to the map, then the moved planes (key, new plane, whether the voxel was mapped before).
+    fn apply_column_edits(
+        &mut self,
+        edits: &[ColumnEdit],
+        moved: Vec<(VoxelKey, Option<SurfacePlane>, bool)>,
+    ) -> VoxelEdits {
         let mut voxel_edits = VoxelEdits::default();
+        let mut changed: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
         for edit in edits {
             let (ix, iy) = edit.col;
             let was_empty = self.by_col.get(edit.col).is_none();
             for &iz in &edit.removed {
-                self.voxel_map.remove(&(ix, iy, iz));
+                self.planes.remove(&(ix, iy, iz));
                 self.by_col.remove((ix, iy, iz));
             }
             for &iz in &edit.added {
-                self.voxel_map.insert((ix, iy, iz));
                 self.by_col.add((ix, iy, iz));
             }
             if let Some(times) = &mut self.voxel_times {
@@ -768,12 +854,32 @@ impl Planner {
             if was_empty != self.by_col.get(edit.col).is_none() {
                 voxel_edits.flipped.push(edit.col);
             } else {
-                let mut heights: Vec<i32> =
-                    edit.removed.iter().chain(&edit.added).copied().collect();
-                heights.sort_unstable();
-                voxel_edits.changed.push((edit.col, heights));
+                changed
+                    .entry(edit.col)
+                    .or_default()
+                    .extend(edit.removed.iter().chain(&edit.added));
             }
         }
+        for (key @ (ix, iy, iz), plane, existed) in moved {
+            match plane {
+                Some(plane) => self.planes.insert(key, plane),
+                None => self.planes.remove(&key),
+            };
+            // A new voxel's plane rides in with its edit, so only a kept one retunes.
+            if existed {
+                changed.entry((ix, iy)).or_default().push(iz);
+                voxel_edits.retuned.push(key);
+            }
+        }
+        voxel_edits.changed = changed
+            .into_iter()
+            .map(|(col, mut heights)| {
+                heights.sort_unstable();
+                heights.dedup();
+                (col, heights)
+            })
+            .collect();
+        voxel_edits.changed.sort_unstable_by_key(|&(col, _)| col);
         voxel_edits
     }
 
@@ -837,14 +943,10 @@ impl Planner {
 
     /// Rebuild all cells from surface_lookup, then nodes and edges.
     fn rebuild_graph(&mut self, config: &Config) {
-        let voxel_size = config.voxel_size;
-        let step = config.step_cells();
-
         build_surface_cells(
             &mut self.graph.cells,
             &self.graph.surface_lookup,
-            voxel_size,
-            step,
+            &config.terrain(&self.by_col, &self.planes),
         );
         self.rebuild_nodes(config);
     }
@@ -893,7 +995,7 @@ impl Planner {
         let graph = &mut self.graph;
         let wall_roots = wall_seed_roots(
             &graph.surface_lookup,
-            &self.by_col,
+            &config.terrain(&self.by_col, &self.planes),
             &graph.cells,
             edits,
             config,
@@ -913,7 +1015,7 @@ impl Planner {
     fn rebuild_nodes(&mut self, config: &Config) {
         place_nodes(
             &mut self.graph.cells,
-            &self.by_col,
+            &config.terrain(&self.by_col, &self.planes),
             &config.placement_params(),
             &mut self.graph.wall_state,
             &mut self.graph.nodes,
@@ -1071,33 +1173,25 @@ impl Planner {
         })
     }
 
-    pub fn surface(&self) -> impl Iterator<Item = VoxelKey> + '_ {
-        self.graph
-            .surface_lookup
-            .iter()
-            .flat_map(|(&(ix, iy), zs)| zs.iter().map(move |&iz| (ix, iy, iz)))
-    }
-
-    /// Surface cells paired with their wall clearance, the distance to the
-    /// nearest untraversable edge. Unreached cells report +inf.
-    pub fn surface_clearance(&self) -> Vec<(VoxelKey, f32)> {
+    /// Surface cells with their surface height and wall clearance (nearest untraversable edge, +inf unreached).
+    pub fn surface_clearance(&self) -> Vec<SurfaceEntry> {
         self.surface_clearance_iter().collect()
     }
 
-    pub fn surface_clearance_iter(&self) -> impl Iterator<Item = (VoxelKey, f32)> + '_ {
+    pub fn surface_clearance_iter(&self) -> impl Iterator<Item = SurfaceEntry> + '_ {
         let dist = &self.graph.wall_state.dist;
         self.graph.cells.ids().map(move |id| {
             let d = dist.get(id as usize).copied().unwrap_or(f32::INFINITY);
-            (self.graph.cells.coord(id), d)
+            (self.graph.cells.coord(id), self.graph.cells.z(id), d)
         })
     }
 
     pub fn voxel_count(&self) -> usize {
-        self.voxel_map.len()
+        self.by_col.voxel_count()
     }
 
     pub fn voxel_keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
-        self.voxel_map.iter().copied()
+        self.by_col.keys()
     }
 }
 
@@ -1105,6 +1199,8 @@ impl Planner {
 struct CellPatch {
     added: Vec<CellId>,
     removed: Vec<CellId>,
+    /// Kept cells whose plane moved.
+    retuned: Vec<CellId>,
     /// The nodes whose cell died, by list index and the dead coordinate.
     dead_nodes: Vec<(usize, VoxelKey)>,
 }
@@ -1113,12 +1209,12 @@ struct CellPatch {
 /// surface change, up to HOLE_SPAN_CELLS from the edited column.
 fn wall_seed_roots(
     lookup: &SurfaceLookup,
-    by_col: &ColumnIz,
+    terrain: &Terrain,
     cells: &SurfaceCells,
     edits: &VoxelEdits,
     config: &Config,
 ) -> Vec<CellId> {
-    let step_dz = config.step_cells();
+    let step_dz = terrain.step_reach_cells();
     let reach = config.headroom_cells() + step_dz;
     let reached = |heights: &[i32], nz: i32| {
         let first = heights.partition_point(|&iz| iz < nz - step_dz);
@@ -1139,7 +1235,7 @@ fn wall_seed_roots(
                         }
                     }
                 }
-                if by_col.get(col).is_some() {
+                if terrain.by_col.get(col).is_some() {
                     break;
                 }
             }
@@ -1211,6 +1307,8 @@ pub(crate) fn test_config() -> Config {
         wall_buffer_m: 0.3,
         wall_buffer_weight: 1.0,
         step_threshold_m: 0.25,
+        max_surface_slope_deg: 45.0,
+        plane_noise_m: 0.01,
         step_penalty_weight: 0.0,
         goal_tolerance: 0.3,
         goal_z_tolerance: 0.5,
@@ -1231,3 +1329,6 @@ pub(crate) fn test_config() -> Config {
 
 #[cfg(test)]
 mod region_tests;
+
+#[cfg(test)]
+mod plane_tests;

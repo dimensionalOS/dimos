@@ -22,13 +22,12 @@ use ahash::AHashMap;
 use rayon::prelude::*;
 
 use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
-use crate::columns::ColumnIz;
 use crate::dijkstra::{
     all_clusters, chain_source, dijkstra, dijkstra_clusters, ClusterIndex, DijkstraState, Frontier,
     RepairWindow, Weight,
 };
-use crate::surfaces::is_standable;
-use crate::voxel::{surface_point_xyz, VoxelKey};
+use crate::terrain::{Surface, Terrain};
+use crate::voxel::VoxelKey;
 
 const NEIGHBORS_4: [(i32, i32, u8); 4] = [(-1, 0, 1), (1, 0, 2), (0, -1, 4), (0, 1, 8)];
 
@@ -45,8 +44,8 @@ pub struct NodeData {
 
 /// Config-derived scalars shared by the node placement passes.
 pub struct PlacementParams {
-    pub clearance_cells: i32,
-    pub step_cells: i32,
+    /// Max traversable vertical step.
+    pub step_m: f32,
     pub voxel_size: f32,
     pub node_spacing_m: f32,
     pub wall_clearance_m: f32,
@@ -183,11 +182,17 @@ impl Nodes {
     pub(crate) fn follow_cells(&mut self, cells: &SurfaceCells, voxel_size: f32) {
         for n in &mut self.list {
             if n.cell_id != NO_CELL {
-                let (ix, iy, iz) = cells.coord(n.cell_id);
-                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+                let (x, y, z) = cells.point(n.cell_id, voxel_size);
                 let o = cells.offset(n.cell_id);
                 n.pos = (x + o[0], y + o[1], z + o[2]);
             }
+        }
+    }
+
+    /// Move the node on `cell`, if any, to the cell's surface point.
+    pub(crate) fn follow_cell(&mut self, cells: &SurfaceCells, cell: CellId, voxel_size: f32) {
+        if let Some(i) = self.node_at(cell) {
+            self.list[i].pos = cells.point(cell, voxel_size);
         }
     }
 
@@ -261,7 +266,6 @@ pub fn relocate_nodes(
     params: &PlacementParams,
 ) -> Vec<NodeId> {
     let mut gone: Vec<NodeId> = Vec::with_capacity(moves.len());
-    let step = params.step_cells;
     let crowd_m = RELOCATION_CROWDING_FRAC * params.node_spacing_m;
     // Moving nodes leave the index before any relocates; the edges still reference the old id.
     for &(ni, coord, _) in moves {
@@ -271,20 +275,21 @@ pub fn relocate_nodes(
     }
     let mut unplaced: Vec<usize> = Vec::new();
     for &(ni, _, (ix, iy, iz)) in moves {
+        let old_z = nodes.list[ni].pos.2;
         let mut best: Option<(i32, CellId, VoxelKey)> = None;
         for (dx, dy) in [(0_i32, 0_i32), (-1, 0), (1, 0), (0, -1), (0, 1)] {
             let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
                 continue;
             };
             for &nz in zs {
-                let dz = (nz - iz).abs();
-                if dz > step {
-                    continue;
-                }
                 let k = (ix + dx, iy + dy, nz);
                 let Some(id) = cells.id(k) else {
                     continue;
                 };
+                if (cells.z(id) - old_z).abs() > params.step_m {
+                    continue;
+                }
+                let dz = (nz - iz).abs();
                 if nodes.has(id) {
                     continue;
                 }
@@ -298,7 +303,7 @@ pub fn relocate_nodes(
             Some((_, id, k)) if !nodes.near(cells, params, k, crowd_m) => {
                 nodes.list[ni] = NodeData {
                     cell_id: id,
-                    pos: surface_point_xyz(k.0, k.1, k.2, params.voxel_size),
+                    pos: cells.point(id, params.voxel_size),
                 };
                 nodes.index(cells, params, ni);
             }
@@ -319,7 +324,7 @@ pub fn relocate_nodes(
 /// Place graph nodes across the surface, spaced out and biased away from walls.
 pub fn place_nodes(
     cells: &mut SurfaceCells,
-    by_col: &ColumnIz,
+    terrain: &Terrain,
     params: &PlacementParams,
     state: &mut DijkstraState,
     nodes: &mut Nodes,
@@ -330,13 +335,7 @@ pub fn place_nodes(
     }
 
     let mut wall_seeds: Vec<CellId> = Vec::new();
-    collect_wall_adjacent_cells(
-        cells,
-        by_col,
-        params.clearance_cells,
-        params.step_cells,
-        &mut wall_seeds,
-    );
+    collect_wall_adjacent_cells(cells, terrain, &mut wall_seeds);
     dijkstra(cells, &wall_seeds, state, Weight::Base);
 
     // Floor is the hard clearance. NMS already prefers the clearest cells.
@@ -368,8 +367,7 @@ fn place_from_candidates(
             .then(cells.coord(a).cmp(&cells.coord(b)))
     });
     for id in candidates {
-        let (ix, iy, iz) = cells.coord(id);
-        if nodes.near(cells, params, (ix, iy, iz), params.node_spacing_m) {
+        if nodes.near(cells, params, cells.coord(id), params.node_spacing_m) {
             continue;
         }
         nodes.push(
@@ -377,7 +375,7 @@ fn place_from_candidates(
             params,
             NodeData {
                 cell_id: id,
-                pos: surface_point_xyz(ix, iy, iz, params.voxel_size),
+                pos: cells.point(id, params.voxel_size),
             },
         );
     }
@@ -386,20 +384,12 @@ fn place_from_candidates(
 /// Repair the wall distance field inside the window.
 pub fn wall_distances_region(
     cells: &SurfaceCells,
-    by_col: &ColumnIz,
-    params: &PlacementParams,
+    terrain: &Terrain,
     window: &RepairWindow,
     wall_state: &mut DijkstraState,
 ) {
     let mut wall_seeds: Vec<CellId> = Vec::new();
-    collect_wall_adjacent_in_window(
-        cells,
-        by_col,
-        params.clearance_cells,
-        params.step_cells,
-        window.cells(),
-        &mut wall_seeds,
-    );
+    collect_wall_adjacent_in_window(cells, terrain, window.cells(), &mut wall_seeds);
     dijkstra_clusters(
         cells,
         &wall_seeds,
@@ -475,17 +465,13 @@ fn drop_walled_in_nodes(
 /// Wall-adjacency over a cell subset, matching collect_wall_adjacent_cells.
 fn collect_wall_adjacent_in_window(
     cells: &SurfaceCells,
-    by_col: &ColumnIz,
-    clearance_cells: i32,
-    step_cells: i32,
+    terrain: &Terrain,
     window: &[CellId],
     out: &mut Vec<CellId>,
 ) {
     *out = window
         .par_iter()
-        .filter(|&&id| {
-            cells.is_live(id) && real_wall_adjacent(cells, by_col, id, clearance_cells, step_cells)
-        })
+        .filter(|&&id| cells.is_live(id) && real_wall_adjacent(cells, terrain, id))
         .copied()
         .collect();
 }
@@ -501,13 +487,7 @@ const MIN_COMPONENT_CELLS: u32 = 4;
 const SPAWN_FLOOR_BUFFER_FRAC: f32 = 0.5;
 
 /// True when any missing 4-neighbor opens onto a real edge rather than a hole.
-fn real_wall_adjacent(
-    cells: &SurfaceCells,
-    by_col: &ColumnIz,
-    id: CellId,
-    clearance_cells: i32,
-    step_cells: i32,
-) -> bool {
+fn real_wall_adjacent(cells: &SurfaceCells, terrain: &Terrain, id: CellId) -> bool {
     let (cx, cy, cz) = cells.coord(id);
     let mut mask: u8 = 0;
     for e in cells.neighbors(id) {
@@ -524,7 +504,7 @@ fn real_wall_adjacent(
         if mask & bit != 0 {
             continue; // a surface neighbor already connects this direction
         }
-        if edge_in_direction(by_col, cx, cy, cz, dx, dy, clearance_cells, step_cells) {
+        if edge_in_direction(terrain, (cx, cy, cz), cells.surface(id), (dx, dy)) {
             return true; // wall, cliff, or drop in this direction
         }
     }
@@ -533,24 +513,23 @@ fn real_wall_adjacent(
 
 /// True when the missing neighbor in this direction is a real edge (wall, cliff,
 /// or drop) rather than a small sensor hole that surface bridges within the span.
-#[allow(clippy::too_many_arguments)]
 fn edge_in_direction(
-    by_col: &ColumnIz,
-    cx: i32,
-    cy: i32,
-    cz: i32,
-    dx: i32,
-    dy: i32,
-    clearance_cells: i32,
-    step_cells: i32,
+    terrain: &Terrain,
+    cell @ (cx, cy, cz): VoxelKey,
+    surface: Surface,
+    (dx, dy): (i32, i32),
 ) -> bool {
+    let reach = terrain.step_reach_cells();
     for k in 1..=HOLE_SPAN_CELLS {
         let (nx, ny) = (cx + dx * k, cy + dy * k);
-        let Some(zs) = by_col.get((nx, ny)) else {
+        let Some(zs) = terrain.by_col.get((nx, ny)) else {
             continue; // empty column: keep scanning across the hole
         };
-        let reachable = zs.iter().any(|&oz| {
-            (oz - cz).abs() <= step_cells && is_standable(nx, ny, oz, by_col, clearance_cells)
+        let reachable = zs.iter().enumerate().any(|(i, &oz)| {
+            let other = (nx, ny, oz);
+            (oz - cz).abs() <= reach
+                && terrain.clear_under(other, zs.get(i + 1))
+                && terrain.steps_onto(cell, surface, other)
         });
         return !reachable;
     }
@@ -594,17 +573,11 @@ pub fn apply_wall_safe_penalty_region(
 
 /// Wall-adjacent cells over the whole graph. Falls back to a single cell so a
 /// fully-enclosed map still seeds the wall-distance field.
-fn collect_wall_adjacent_cells(
-    cells: &SurfaceCells,
-    by_col: &ColumnIz,
-    clearance_cells: i32,
-    step_cells: i32,
-    out: &mut Vec<CellId>,
-) {
+fn collect_wall_adjacent_cells(cells: &SurfaceCells, terrain: &Terrain, out: &mut Vec<CellId>) {
     let ids: Vec<CellId> = cells.ids().collect();
     *out = ids
         .par_iter()
-        .filter(|&&id| real_wall_adjacent(cells, by_col, id, clearance_cells, step_cells))
+        .filter(|&&id| real_wall_adjacent(cells, terrain, id))
         .copied()
         .collect();
     if out.is_empty() {
@@ -716,13 +689,12 @@ fn ensure_node_per_component(
             .collect()
     };
     for id in seeds {
-        let (ix, iy, iz) = cells.coord(id);
         nodes.push(
             cells,
             params,
             NodeData {
                 cell_id: id,
-                pos: surface_point_xyz(ix, iy, iz, params.voxel_size),
+                pos: cells.point(id, params.voxel_size),
             },
         );
     }
@@ -755,8 +727,11 @@ impl NodeScratch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adjacency::{build_surface_cells, build_surface_lookup, SurfaceLookup};
+    use crate::adjacency::{build_surface_lookup, build_whole_voxel_cells, SurfaceLookup};
+    use crate::columns::ColumnIz;
     use crate::dijkstra::ClusterIndex;
+    use crate::terrain::PlaneMap;
+    use crate::voxel::surface_point_xyz;
 
     const VOXEL: f32 = 0.1;
 
@@ -772,8 +747,7 @@ mod tests {
 
     fn params(wall_clearance_m: f32, step_penalty_weight: f32) -> PlacementParams {
         PlacementParams {
-            clearance_cells: 5,
-            step_cells: 2,
+            step_m: 2.0 * VOXEL,
             voxel_size: VOXEL,
             node_spacing_m: 1.0,
             wall_clearance_m,
@@ -783,11 +757,29 @@ mod tests {
         }
     }
 
+    /// Whole voxels over `by_col` for a robot 5 voxels tall that steps 2.
+    fn terrain<'a>(by_col: &'a ColumnIz, planes: &'a PlaneMap) -> Terrain<'a> {
+        Terrain {
+            by_col,
+            planes,
+            voxel_size: VOXEL,
+            robot_height: 5.0 * VOXEL,
+            step_m: 2.0 * VOXEL,
+            noise_m: 0.0,
+            max_slope: 0.0,
+        }
+    }
+
+    /// Whether a cell is wall-adjacent among the voxels of `by_col`.
+    fn walled(sc: &SurfaceCells, by_col: &ColumnIz, id: CellId) -> bool {
+        real_wall_adjacent(sc, &terrain(by_col, &PlaneMap::new()), id)
+    }
+
     fn build_cells(surface: &[VoxelKey], step_cells: i32) -> SurfaceCells {
         let mut lookup = SurfaceLookup::new();
         build_surface_lookup(surface, &mut lookup);
         let mut sc = SurfaceCells::default();
-        build_surface_cells(&mut sc, &lookup, VOXEL, step_cells);
+        build_whole_voxel_cells(&mut sc, &lookup, VOXEL, step_cells);
         sc
     }
 
@@ -910,7 +902,12 @@ mod tests {
         let mut nodes = Nodes::from_list(&sc, list, &p);
         let mut cluster_index = ClusterIndex::default();
         let repair = RepairWindow::new(&sc, &window, &mut cluster_index, &mut scratch.seen);
-        wall_distances_region(&sc, &ColumnIz::default(), &p, &repair, &mut state);
+        wall_distances_region(
+            &sc,
+            &terrain(&ColumnIz::default(), &PlaneMap::new()),
+            &repair,
+            &mut state,
+        );
         place_nodes_region(
             &sc,
             &p,
@@ -939,7 +936,7 @@ mod tests {
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
-            &ColumnIz::default(),
+            &terrain(&ColumnIz::default(), &PlaneMap::new()),
             &params(0.5, 0.0),
             &mut state,
             &mut nodes,
@@ -955,7 +952,7 @@ mod tests {
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
-            &ColumnIz::default(),
+            &terrain(&ColumnIz::default(), &PlaneMap::new()),
             &params(0.0, 0.0),
             &mut state,
             &mut nodes,
@@ -979,7 +976,7 @@ mod tests {
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
-            &ColumnIz::default(),
+            &terrain(&ColumnIz::default(), &PlaneMap::new()),
             &params(0.5, 0.0),
             &mut state,
             &mut nodes,
@@ -1002,7 +999,7 @@ mod tests {
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
-            &ColumnIz::default(),
+            &terrain(&ColumnIz::default(), &PlaneMap::new()),
             &params(0.0, 0.0),
             &mut state,
             &mut nodes,
@@ -1042,7 +1039,7 @@ mod tests {
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
-            &ColumnIz::default(),
+            &terrain(&ColumnIz::default(), &PlaneMap::new()),
             &params(0.0, 0.0),
             &mut state,
             &mut nodes,
@@ -1062,7 +1059,7 @@ mod tests {
             let mut nodes = Nodes::default();
             place_nodes(
                 &mut sc,
-                &ColumnIz::default(),
+                &terrain(&ColumnIz::default(), &PlaneMap::new()),
                 &params(0.0, step_weight),
                 &mut state,
                 &mut nodes,
@@ -1090,7 +1087,7 @@ mod tests {
         for col in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(!real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(!walled(&sc, &by_col, id));
     }
 
     /// The same cell with one empty neighbor column: a cliff edge that must seed
@@ -1103,7 +1100,7 @@ mod tests {
         for col in [(1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(walled(&sc, &by_col, id));
     }
 
     /// An occupied neighbor that rises well beyond the step threshold reads as a
@@ -1117,7 +1114,7 @@ mod tests {
         for col in [(-1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(walled(&sc, &by_col, id));
     }
 
     /// Immediate neighbor empty but surface resumes within the span at the same
@@ -1131,7 +1128,7 @@ mod tests {
         for col in [(-1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(!real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(!walled(&sc, &by_col, id));
     }
 
     /// Empty for more than the span before surface resumes: a real cliff.
@@ -1144,6 +1141,6 @@ mod tests {
         for col in [(-1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(walled(&sc, &by_col, id));
     }
 }

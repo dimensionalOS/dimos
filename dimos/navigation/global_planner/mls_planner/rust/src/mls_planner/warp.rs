@@ -86,7 +86,7 @@ impl Planner {
         let stage = Instant::now();
         // Voxel points off their keys live with the voxel times.
         self.track_voxel_times();
-        let voxels: Vec<VoxelKey> = self.voxel_map.iter().copied().collect();
+        let voxels: Vec<VoxelKey> = self.by_col.keys().collect();
         let cells: Vec<CellId> = self.graph.cells.ids().collect();
         let path_goal = self.last_path.as_ref().map(|(goal, _)| *goal);
         let time_of = |k: &VoxelKey| match &self.voxel_times {
@@ -257,7 +257,7 @@ impl Planner {
             let points: Vec<[f32; 3]> = keys.iter().map(|k| point_of(k).unwrap()).collect();
             let moving_set: AHashSet<VoxelKey> = keys.iter().copied().collect();
             let landed = landing_keys(&keys, &points, vs, |k| {
-                self.voxel_map.contains(k) && !moving_set.contains(k)
+                self.by_col.contains(*k) && !moving_set.contains(k)
             });
             self.rekey_voxels(&keys, &landed, &points, vs);
         }
@@ -426,14 +426,13 @@ impl Planner {
                 (*k, times.by_key.remove(k))
             })
             .collect();
+        // A re-keyed voxel's plane was fit about its old key; it stands at its top face until the tracer sends a new fit.
         for k in keys {
-            self.voxel_map.remove(k);
+            self.planes.remove(k);
             self.by_col.remove(*k);
         }
         for ((&to, p), (_, t)) in landed.iter().zip(points).zip(moved) {
-            if self.voxel_map.insert(to) {
-                self.by_col.add(to);
-            }
+            self.by_col.add(to);
             if let Some(t) = t {
                 times
                     .by_key
@@ -482,7 +481,7 @@ impl Planner {
     /// The surface cell a point sits on: the voxel under it, else its own.
     fn surface_under(&self, p: (f32, f32, f32), vs: f32) -> VoxelKey {
         let below = surface_key(&[p.0, p.1, p.2], vs);
-        if self.voxel_map.contains(&below) {
+        if self.by_col.contains(below) {
             below
         } else {
             voxelize(p, vs)

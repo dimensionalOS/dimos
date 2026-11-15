@@ -17,6 +17,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
@@ -27,12 +29,18 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    import numpy as np
     from numpy.typing import NDArray
 
     from dimos.memory.type.observation import Observation
 
 logger = setup_logger()
+
+
+def planner_points(obs: Observation[PointCloud2]) -> np.ndarray:
+    """The cloud's points as the planner takes them, with the ray tracer's planes when tagged."""
+    planes = obs.tags.get("planes")
+    points = obs.data.points_f32()
+    return points if planes is None else np.hstack([points, planes])
 
 
 class MLSPlan(Transformer[PointCloud2, Path]):
@@ -83,7 +91,7 @@ class MLSPlan(Transformer[PointCloud2, Path]):
 
             ox, oy, radius, z_min, z_max = obs.tags["region_bounds"]
             t_update = time.perf_counter()
-            planner.update_region(obs.data.points_f32(), (ox, oy), radius, z_min, z_max, float(z))
+            planner.update_region(planner_points(obs), (ox, oy), radius, z_min, z_max, float(z))
             t_plan = time.perf_counter()
             waypoints = planner.plan(start, self.goal)
             t_done = time.perf_counter()

@@ -62,7 +62,8 @@ impl Voxel {
 
 impl VoxelMap {
     /// Move each voxel to its new key, merging into whatever is there; every mover leaves before any lands, so support counts stay exact.
-    pub fn move_voxels(&mut self, moves: &[VoxelMove]) {
+    /// Surface planes are refit from the moved moments.
+    pub fn move_voxels(&mut self, moves: &[VoxelMove], voxel_size: f32) {
         let mut changed: AHashSet<VoxelKey> = AHashSet::with_capacity(moves.len());
         let mut removed: Vec<VoxelKey> = Vec::new();
         let mut taken: Vec<(VoxelKey, Voxel)> = Vec::new();
@@ -90,6 +91,7 @@ impl VoxelMap {
             changed.insert(to);
         }
         mark_stale(self, &changed, &removed);
+        refit_surfaces(self, &changed, &removed, voxel_size);
     }
 
     /// Put a moved voxel at `to`, merging into one already there.
@@ -114,14 +116,22 @@ impl VoxelMap {
         }
     }
 
-    /// Move every voxel's points by its offset, in `ChunkMap::iter` order, keeping its key.
-    pub fn shift_in_place(&mut self, offsets: &[[f32; 3]]) {
+    /// Move every voxel's points by its offset, in `ChunkMap::iter` order, keeping its key, and refit the moved voxels' surface planes.
+    pub fn shift_in_place(&mut self, offsets: &[[f32; 3]], voxel_size: f32) {
         self.voxels.par_for_each_mut(|i, _, v| {
             let o = offsets[i];
             if o != [0.0; 3] {
                 v.shift(Vector3::new(o[0], o[1], o[2]));
             }
         });
+        let moved: AHashSet<VoxelKey> = self
+            .voxels
+            .iter()
+            .zip(offsets)
+            .filter(|(_, o)| **o != [0.0; 3])
+            .map(|((k, _), _)| k)
+            .collect();
+        refit_surfaces(self, &moved, &[], voxel_size);
         let chunks: Vec<ChunkKey> = self.voxels.chunk_keys().collect();
         self.changed_chunks.extend(chunks);
     }

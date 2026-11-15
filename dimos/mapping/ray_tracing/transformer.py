@@ -81,10 +81,11 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
 
         tags = {**last_obs.tags, "frame_count": count}
         cx, cy, radius, z_min, z_max = mapper.take_local_bounds()
-        positions = mapper.local_map((cx, cy, 0.0), radius, z_min, z_max)
+        surfaces = mapper.local_surfaces((cx, cy, 0.0), radius, z_min, z_max)
         tags["region_bounds"] = (cx, cy, radius, z_min, z_max)
+        tags["planes"] = surfaces[:, 3:]
         pcd = o3d.t.geometry.PointCloud()
-        pcd.point["positions"] = o3c.Tensor.from_numpy(positions)
+        pcd.point["positions"] = o3c.Tensor(surfaces[:, :3])
         cloud = PointCloud2(pointcloud=pcd, frame_id="world", ts=last_obs.ts)
         return last_obs.derive(data=cloud, tags=tags)
 

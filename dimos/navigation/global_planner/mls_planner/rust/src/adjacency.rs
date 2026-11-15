@@ -19,6 +19,7 @@
 use ahash::AHashMap;
 use rayon::prelude::*;
 
+use crate::terrain::{climb, surface_gap, within_step, Gap, Slope, Surface, Terrain};
 use crate::voxel::VoxelKey;
 
 pub type SurfaceLookup = AHashMap<(i32, i32), Vec<i32>>;
@@ -30,12 +31,6 @@ pub const NO_CELL: CellId = u32::MAX;
 /// Marks a freed slot reusable by the next insert.
 const TOMBSTONE: VoxelKey = (i32::MIN, i32::MIN, i32::MIN);
 const NEIGHBORS_4: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
-
-/// Vertical extent of a dz-cell change in meters, the step-penalty input.
-#[inline]
-pub fn rise(dz: i32, voxel_size: f32) -> f32 {
-    dz.unsigned_abs() as f32 * voxel_size
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Edge {
@@ -128,6 +123,10 @@ impl CoordIndex {
 #[derive(Default)]
 pub struct SurfaceCells {
     coord: Vec<VoxelKey>,
+    /// Surface height of each cell, from its plane or its top face.
+    z: Vec<f32>,
+    /// Each cell's surface slope when a plane gave its height.
+    slope: Vec<Option<Slope>>,
     /// Per slot: where a warp moved the cell's point off its key's surface point, as cells outside the local area move un-re-keyed.
     offset: Vec<[f32; 3]>,
     /// Every cell's outgoing edges in one buffer at its span; a grown list moves to the end and the buffer compacts once stranded edges outweigh live ones.
@@ -181,6 +180,8 @@ impl SurfaceCells {
     /// Clear all vecs but keep allocated capacity.
     pub fn clear(&mut self) {
         self.coord.clear();
+        self.z.clear();
+        self.slope.clear();
         self.offset.clear();
         self.by_coord.clear();
         self.free.clear();
@@ -231,14 +232,18 @@ impl SurfaceCells {
         self.coord[id as usize] != TOMBSTONE
     }
 
-    /// Get or insert a cell, reusing a freed slot before growing.
-    pub fn insert(&mut self, k: VoxelKey) -> CellId {
+    /// Get or insert a cell with surface height `z` and slope, reusing a freed slot; an existing cell keeps its id.
+    pub fn insert(&mut self, k: VoxelKey, (z, slope): Surface) -> CellId {
         debug_assert_ne!(k, TOMBSTONE, "voxel coord collides with tombstone sentinel");
         if let Some(id) = self.by_coord.get(&k) {
+            self.z[id as usize] = z;
+            self.slope[id as usize] = slope;
             return id;
         }
         let id = if let Some(free_id) = self.free.pop() {
             self.coord[free_id as usize] = k;
+            self.z[free_id as usize] = z;
+            self.slope[free_id as usize] = slope;
             self.offset[free_id as usize] = [0.0; 3];
             self.coord_ordered = false;
             free_id
@@ -252,6 +257,8 @@ impl SurfaceCells {
                 self.coord_ordered = false;
             }
             self.coord.push(k);
+            self.z.push(z);
+            self.slope.push(slope);
             self.offset.push([0.0; 3]);
             self.spans.push((self.flat.len() as u32, 0));
             id
@@ -296,6 +303,46 @@ impl SurfaceCells {
     #[inline]
     pub fn coord(&self, id: CellId) -> VoxelKey {
         self.coord[id as usize]
+    }
+
+    /// Cell ID to its surface point: the column center at the surface height.
+    #[inline]
+    pub fn point(&self, id: CellId, voxel_size: f32) -> (f32, f32, f32) {
+        let (ix, iy, _) = self.coord[id as usize];
+        (
+            (ix as f32 + 0.5) * voxel_size,
+            (iy as f32 + 0.5) * voxel_size,
+            self.z[id as usize],
+        )
+    }
+
+    #[inline]
+    pub fn z(&self, id: CellId) -> f32 {
+        self.z[id as usize]
+    }
+
+    #[inline]
+    pub fn surface(&self, id: CellId) -> Surface {
+        (self.z[id as usize], self.slope[id as usize])
+    }
+
+    /// The height change between cells' centers: by their planes when both have one, else by whole-voxel levels.
+    pub fn rise(&self, a: CellId, b: CellId, voxel_size: f32) -> f32 {
+        self.view().rise(a, b, voxel_size)
+    }
+
+    /// The height gap the robot steps from cell `a` to cell `b`.
+    pub fn gap(&self, a: CellId, b: CellId, voxel_size: f32) -> Gap {
+        self.view().gap(a, b, voxel_size)
+    }
+
+    fn view(&self) -> CellView<'_> {
+        CellView {
+            coord: &self.coord,
+            z: &self.z,
+            slope: &self.slope,
+            by_coord: &self.by_coord,
+        }
     }
 
     /// How far a warp moved a cell's point off its key's surface point.
@@ -432,12 +479,82 @@ pub fn build_surface_lookup(cells: &[VoxelKey], out: &mut SurfaceLookup) {
     }
 }
 
+/// The cell store's read-only half, borrowed apart from its edges.
+struct CellView<'a> {
+    coord: &'a [VoxelKey],
+    z: &'a [f32],
+    slope: &'a [Option<Slope>],
+    by_coord: &'a CoordIndex,
+}
+
+impl CellView<'_> {
+    /// See `SurfaceCells::gap`.
+    fn gap(&self, a: CellId, b: CellId, voxel_size: f32) -> Gap {
+        let (a, b) = (a as usize, b as usize);
+        surface_gap(
+            (self.z[a], self.slope[a]),
+            (self.z[b], self.slope[b]),
+            (self.coord[a], self.coord[b]),
+            voxel_size,
+        )
+    }
+
+    /// See `SurfaceCells::rise`.
+    fn rise(&self, a: CellId, b: CellId, voxel_size: f32) -> f32 {
+        let (a, b) = (a as usize, b as usize);
+        if self.slope[a].is_some() && self.slope[b].is_some() {
+            (self.z[b] - self.z[a]).abs()
+        } else {
+            (self.coord[b].2 - self.coord[a].2).unsigned_abs() as f32 * voxel_size
+        }
+    }
+}
+
+/// Fill `out` with `src`'s edges to each 4-neighbor its surface steps onto, costed by 3D surface distance.
+fn edges_of(
+    view: &CellView,
+    surface_lookup: &SurfaceLookup,
+    terrain: &Terrain,
+    src: CellId,
+    out: &mut Vec<Edge>,
+) {
+    out.clear();
+    let reach = terrain.step_reach_cells();
+    let (ix, iy, iz) = view.coord[src as usize];
+    for (dx, dy) in NEIGHBORS_4 {
+        let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
+            continue;
+        };
+        for &nz in nzs {
+            let dest_key = (ix + dx, iy + dy, nz);
+            if (nz - iz).abs() > reach {
+                continue;
+            }
+            let dest = view
+                .by_coord
+                .get(&dest_key)
+                .expect("neighbor cell exists in lookup");
+            let gap = view.gap(src, dest, terrain.voxel_size);
+            if !within_step(gap, terrain.voxel_size, terrain.step_m, terrain.noise_m) {
+                continue;
+            }
+            let rise = climb(view.rise(src, dest, terrain.voxel_size), terrain.noise_m);
+            let cost = terrain.voxel_size.hypot(rise);
+            out.push(Edge {
+                dest,
+                base_cost: cost,
+                rise,
+                cost,
+            });
+        }
+    }
+}
+
 /// Build surface adjacency from the lookup, replacing any existing contents.
 pub fn build_surface_cells(
     cells: &mut SurfaceCells,
     surface_lookup: &SurfaceLookup,
-    voxel_size: f32,
-    step_threshold_cells: i32,
+    terrain: &Terrain,
 ) {
     cells.clear();
 
@@ -450,110 +567,85 @@ pub fn build_surface_cells(
             cells.coord.push((ix, iy, iz));
         }
     }
-    // Ids in coordinate order, indexed in parallel.
-    cells.spans.resize(cells.coord.len(), (0, 0));
-    cells.offset.resize(cells.coord.len(), [0.0; 3]);
+    // Ids in coordinate order, surfaces and the index filled in parallel.
+    let n = cells.coord.len();
+    let surfaces: Vec<Surface> = cells
+        .coord
+        .par_iter()
+        .map(|&k| terrain.surface(k))
+        .collect();
+    (cells.z, cells.slope) = surfaces.into_iter().unzip();
+    cells.offset.resize(n, [0.0; 3]);
     cells.by_coord.fill(&cells.coord);
 
-    // Count each cell's edges, lay the spans out in id order, then fill each block of the buffer in parallel.
+    // Each block of ids builds its edges in parallel, then the blocks are laid out in id order.
     const BLOCK: usize = 4096;
-    let coord: &[VoxelKey] = &cells.coord;
-    let neighbors = |(ix, iy, iz): VoxelKey| {
-        NEIGHBORS_4.into_iter().flat_map(move |(dx, dy)| {
-            surface_lookup
-                .get(&(ix + dx, iy + dy))
-                .into_iter()
-                .flatten()
-                .filter(move |&&nz| (nz - iz).abs() <= step_threshold_cells)
-                .map(move |&nz| (dx, dy, nz))
-        })
-    };
-    cells
-        .spans
-        .par_iter_mut()
-        .zip(coord.par_iter())
-        .for_each(|(span, &k)| span.1 = neighbors(k).count() as u32);
-    let mut total = 0u32;
-    for span in cells.spans.iter_mut() {
-        span.0 = total;
-        total += span.1;
-    }
-    let blank = Edge {
-        dest: 0,
-        base_cost: 0.0,
-        rise: 0.0,
-        cost: 0.0,
-    };
-    cells.flat.resize(total as usize, blank);
-    let mut slices: Vec<&mut [Edge]> = Vec::with_capacity(coord.len().div_ceil(BLOCK));
-    let mut rest: &mut [Edge] = &mut cells.flat;
-    for block in cells.spans.chunks(BLOCK) {
-        let len: u32 = block.iter().map(|s| s.1).sum();
-        let (head, tail) = rest.split_at_mut(len as usize);
-        slices.push(head);
-        rest = tail;
-    }
-    let by_coord: &CoordIndex = &cells.by_coord;
-    slices
-        .into_par_iter()
-        .zip(coord.par_chunks(BLOCK))
-        .for_each(|(slice, block)| {
-            let mut at = 0;
-            for &(ix, iy, iz) in block {
-                for (dx, dy, nz) in neighbors((ix, iy, iz)) {
-                    let dz = nz - iz;
-                    let dest = by_coord
-                        .get(&(ix + dx, iy + dy, nz))
-                        .expect("neighbor cell exists in lookup");
-                    let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
-                    slice[at] = Edge {
-                        dest,
-                        base_cost: cost,
-                        rise: rise(dz, voxel_size),
-                        cost,
-                    };
-                    at += 1;
-                }
+    let view = cells.view();
+    let blocks: Vec<(Vec<u32>, Vec<Edge>)> = (0..n)
+        .collect::<Vec<usize>>()
+        .par_chunks(BLOCK)
+        .map(|ids| {
+            let (mut lens, mut flat, mut out) =
+                (Vec::with_capacity(ids.len()), Vec::new(), Vec::new());
+            for &id in ids {
+                edges_of(&view, surface_lookup, terrain, id as CellId, &mut out);
+                lens.push(out.len() as u32);
+                flat.extend_from_slice(&out);
             }
-        });
+            (lens, flat)
+        })
+        .collect();
+    cells.spans.clear();
+    cells.spans.reserve(n);
+    let mut at = 0u32;
+    for (lens, flat) in blocks {
+        for len in lens {
+            cells.spans.push((at, len));
+            at += len;
+        }
+        cells.flat.extend(flat);
+    }
+}
+
+/// `build_surface_cells` over whole voxels alone, for a robot that steps `step_cells` voxels.
+#[cfg(test)]
+pub(crate) fn build_whole_voxel_cells(
+    cells: &mut SurfaceCells,
+    surface_lookup: &SurfaceLookup,
+    voxel_size: f32,
+    step_cells: i32,
+) {
+    let (by_col, planes) = (
+        crate::columns::ColumnIz::default(),
+        crate::terrain::PlaneMap::new(),
+    );
+    let terrain = Terrain {
+        by_col: &by_col,
+        planes: &planes,
+        voxel_size,
+        robot_height: voxel_size,
+        step_m: step_cells as f32 * voxel_size,
+        noise_m: 0.0,
+        max_slope: 0.0,
+    };
+    build_surface_cells(cells, surface_lookup, &terrain);
 }
 
 /// Recompute outgoing edges for the affected cells. Call after an incremental
-/// insert or remove with the changed cells and their surface neighbors so the
-/// region matches a full rebuild.
+/// insert, remove, or height change with the changed cells and their surface
+/// neighbors so the region matches a full rebuild.
 pub fn rebuild_edges_around(
     cells: &mut SurfaceCells,
     surface_lookup: &SurfaceLookup,
     affected: &[CellId],
-    voxel_size: f32,
-    step_threshold_cells: i32,
+    terrain: &Terrain,
 ) {
+    let view = cells.view();
     let rebuilt: Vec<(CellId, Vec<Edge>)> = affected
         .par_iter()
         .map(|&id| {
-            let (ix, iy, iz) = cells.coord(id);
-            let mut edges: Vec<Edge> = Vec::new();
-            for (dx, dy) in NEIGHBORS_4 {
-                let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
-                    continue;
-                };
-                for &nz in nzs {
-                    let dz = nz - iz;
-                    if dz.abs() > step_threshold_cells {
-                        continue;
-                    }
-                    let dest = cells
-                        .id((ix + dx, iy + dy, nz))
-                        .expect("neighbor cell exists in lookup");
-                    let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
-                    edges.push(Edge {
-                        dest,
-                        base_cost: cost,
-                        rise: rise(dz, voxel_size),
-                        cost,
-                    });
-                }
-            }
+            let mut edges = Vec::new();
+            edges_of(&view, surface_lookup, terrain, id, &mut edges);
             (id, edges)
         })
         .collect();
@@ -577,7 +669,7 @@ mod tests {
         let mut lookup = SurfaceLookup::new();
         build_surface_lookup(cells, &mut lookup);
         let mut sc = SurfaceCells::default();
-        build_surface_cells(&mut sc, &lookup, VOXEL, 2);
+        build_whole_voxel_cells(&mut sc, &lookup, VOXEL, 2);
         (lookup, sc)
     }
 
@@ -667,7 +759,7 @@ mod tests {
     fn alloc_after_remove_reuses_freed_slot() {
         let (_, mut sc) = build(&[(0, 0, 0), (1, 0, 0)]);
         let removed_id = sc.remove((1, 0, 0)).unwrap();
-        let new_id = sc.insert((5, 5, 0));
+        let new_id = sc.insert((5, 5, 0), (VOXEL, None));
         assert_eq!(new_id, removed_id);
         assert_eq!(sc.coord(new_id), (5, 5, 0));
         assert!(sc.is_live(new_id));

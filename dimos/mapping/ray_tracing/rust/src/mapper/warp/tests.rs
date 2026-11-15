@@ -33,6 +33,7 @@ fn config() -> Config {
         max_health: 3,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         support_min: 0,
         emit_every: 0,
         global_emit_every: 0,

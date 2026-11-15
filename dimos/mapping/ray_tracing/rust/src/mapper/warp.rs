@@ -188,7 +188,7 @@ impl Mapper {
             .zip(warped.par_iter())
             .map(|(p, w)| [w[0] - p[0], w[1] - p[1], w[2] - p[2]])
             .collect();
-        self.map.shift_in_place(&offsets);
+        self.map.shift_in_place(&offsets, vs);
         let inv = 1.0 / vs;
         self.displaced = keys
             .par_iter()
@@ -239,7 +239,7 @@ impl Mapper {
         let moves = voxel_moves(&keys, &means, &means, vs, |k| {
             voxels.contains_key(k) && !moving.contains(k)
         });
-        self.map.move_voxels(&moves);
+        self.map.move_voxels(&moves, vs);
         self.displaced.retain(|(k, _)| !moving.contains(k));
         keys.len()
     }

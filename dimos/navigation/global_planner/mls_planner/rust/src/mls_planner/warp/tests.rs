@@ -16,6 +16,7 @@ use super::super::region_tests::{
     assert_chains_reach_their_nodes, big_world, path_len, slice, surface_set, voxel_set,
 };
 use super::*;
+use crate::mls_planner::region_tests::bare;
 use crate::mls_planner::test_config;
 use std::collections::BTreeSet;
 
@@ -88,7 +89,7 @@ fn placed_surface(p: &Planner, vs: f32) -> BTreeSet<VoxelKey> {
 
 fn built(cfg: &Config, points: &[(f32, f32, f32)]) -> Planner {
     let mut p = Planner::new(cfg.worker_threads);
-    p.update_global_map(points, cfg);
+    p.update_global_map(&bare(points), cfg);
     p
 }
 
@@ -99,7 +100,7 @@ fn shifted(points: &[(f32, f32, f32)], dx: f32, dy: f32) -> Vec<(f32, f32, f32)>
 /// Every pair of key-adjacent surface cells within a step has a hop each way, as a full build gives them.
 fn assert_adjacency_matches_keys(p: &Planner, cfg: &Config) {
     let g = p.graph();
-    let step = cfg.step_cells();
+    let step = (cfg.step_threshold_m / cfg.voxel_size).floor() as i32;
     for u in g.cells.ids() {
         let k = g.cells.coord(u);
         for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
@@ -208,7 +209,7 @@ fn region_updates_after_a_warp_keep_the_graph_whole() {
     let all = big_world();
     let mut p = Planner::new(cfg.worker_threads);
     p.track_voxel_times();
-    p.update_global_map(&all, &cfg);
+    p.update_global_map(&bare(&all), &cfg);
     let (start, goal) = ((0.5, 0.5, 0.05), (7.5, 7.5, 0.05));
     assert!(!waypoints(p.plan_or_truncate(start, goal, &cfg)).is_empty());
     p.apply_warp(&warp_of(shift(0.8, 0.3), |_| true), &mut [], &cfg);
@@ -222,7 +223,7 @@ fn region_updates_after_a_warp_keep_the_graph_whole() {
             z_min: -1.0,
             z_max: 1.0,
         };
-        p.update_region(&slice(&moved, &bounds, vs), &bounds, &cfg);
+        p.update_region(&bare(&slice(&moved, &bounds, vs)), &bounds, &cfg);
         assert_chains_reach_their_nodes(&p);
         assert!(
             !waypoints(p.plan_or_truncate((1.3, 0.8, 0.05), (8.3, 7.8, 0.05), &cfg)).is_empty()
@@ -274,7 +275,7 @@ fn voxel_times_stay_with_their_voxels_through_a_warp() {
     let mut p = Planner::new(cfg.worker_threads);
     p.track_voxel_times();
     p.set_clock(10.0);
-    p.update_global_map(&all, &cfg);
+    p.update_global_map(&bare(&all), &cfg);
     p.apply_warp(&warp_of(shift(0.8, 0.3), |_| true), &mut [], &cfg);
     p.rebin_near((4.0, 4.0), 100.0, &cfg);
     let times = p.voxel_times.as_ref().unwrap();
@@ -305,7 +306,7 @@ fn a_shift_beyond_the_rebin_reach_keeps_the_route() {
     let all = big_world();
     let mut p = Planner::new(cfg.worker_threads);
     p.track_voxel_times();
-    p.update_global_map(&all, &cfg);
+    p.update_global_map(&bare(&all), &cfg);
     let (start, goal) = ((0.5, 0.5, 0.05), (0.5, 7.5, 0.05));
     assert!(!waypoints(p.plan_or_truncate(start, goal, &cfg)).is_empty());
     let mut held = [goal];

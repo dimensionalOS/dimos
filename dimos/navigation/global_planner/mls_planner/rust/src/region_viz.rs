@@ -28,10 +28,13 @@ use crate::voxel::VoxelKey;
 pub type Cell = (i32, i32);
 pub type Segment = (VoxelKey, VoxelKey, f32);
 
+/// A surface cell, its surface height, and its wall clearance.
+pub type SurfaceEntry = (VoxelKey, f32, f32);
+
 /// One cell's surface voxels with their clearance, and its corridor segments.
 #[derive(Default)]
 struct RegionContent {
-    surface: Vec<(VoxelKey, f32)>,
+    surface: Vec<SurfaceEntry>,
     segments: Vec<Segment>,
 }
 
@@ -42,7 +45,7 @@ impl RegionContent {
         let surface = self
             .surface
             .iter()
-            .map(|(key, clearance)| hash_item((key, clearance.to_bits())));
+            .map(|(key, z, clearance)| hash_item((key, z.to_bits(), clearance.to_bits())));
         let segments = self
             .segments
             .iter()
@@ -58,7 +61,7 @@ impl RegionContent {
 /// last got it.
 #[derive(Default)]
 pub struct RegionUpdate {
-    pub surface: Option<Vec<(VoxelKey, f32)>>,
+    pub surface: Option<Vec<SurfaceEntry>>,
     pub segments: Option<Vec<Segment>>,
 }
 
@@ -111,7 +114,7 @@ impl Dirty {
 /// The surface and segments bucketed into their cells, keeping the wanted
 /// cells only, or every cell when none are named.
 fn bucket(
-    surface: impl Iterator<Item = (VoxelKey, f32)>,
+    surface: impl Iterator<Item = SurfaceEntry>,
     segments: impl Iterator<Item = Segment>,
     pitch: i32,
     wanted: Option<&AHashSet<Cell>>,
@@ -191,7 +194,7 @@ impl RegionViz {
     /// first since congestion drops the tail of a burst.
     pub fn tick(
         &mut self,
-        surface: impl Iterator<Item = (VoxelKey, f32)>,
+        surface: impl Iterator<Item = SurfaceEntry>,
         segments: impl Iterator<Item = Segment>,
         near: VoxelKey,
     ) -> Vec<(Cell, RegionUpdate)> {
@@ -323,8 +326,8 @@ impl RegionViz {
 mod tests {
     use super::*;
 
-    fn surface(cells: &[(i32, i32)]) -> Vec<(VoxelKey, f32)> {
-        cells.iter().map(|&(x, y)| ((x, y, 0), 1.0)).collect()
+    fn surface(cells: &[(i32, i32)]) -> Vec<SurfaceEntry> {
+        cells.iter().map(|&(x, y)| ((x, y, 0), 0.1, 1.0)).collect()
     }
 
     fn due_cells(due: &[(Cell, RegionUpdate)]) -> Vec<Cell> {

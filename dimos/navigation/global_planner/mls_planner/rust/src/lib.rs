@@ -26,4 +26,5 @@ pub use dimos_reform as reform;
 mod region_viz;
 mod smoother;
 mod surfaces;
+mod terrain;
 pub mod voxel;
