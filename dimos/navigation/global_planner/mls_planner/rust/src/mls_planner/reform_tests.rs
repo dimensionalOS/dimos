@@ -46,6 +46,7 @@ fn toy_config() -> Config {
         box_pad_m: 0.5,
         version_history: 4,
         min_shift_m: 0.0,
+        closure_migrate_per_update: 0,
     };
     // a wall clearance, so a layer seam misread as a wall shows up as impassable links
     cfg.wall_clearance_m = 2.0 * cfg.voxel_size;
@@ -417,6 +418,47 @@ fn many_small_closures_keep_one_layer_and_a_real_closure_starts_another() {
     assert_eq!(lazy.layers.current, 21);
     assert_eq!(lazy.table.frame_version(), 21);
     toy.dump("toy0_tiny_closures");
+}
+
+#[test]
+fn a_closure_merge_spread_over_updates_ends_like_one_done_at_once() {
+    // Toy 1's corridor out and back, with the closing boxes migrated one submesh per region update.
+    let mut toy = Toy::new(|x, y| (0.0..12.0).contains(&x) && (0.0..2.0).contains(&y));
+    toy.cfg.reform.closure_migrate_per_update = 1;
+    for i in 0..6 {
+        let x = 1.0 + 2.0 * i as f64;
+        toy.scan_at(pose(x, 1.0, 0.0), pose(x, 1.0, 0.0), (x as f32, 1.0));
+    }
+    for i in (0..6).rev() {
+        let x = 1.0 + 2.0 * i as f64;
+        toy.scan_at(
+            pose(x, 1.0, std::f64::consts::PI),
+            pose(x, 4.0, std::f64::consts::PI),
+            (x as f32, 1.0),
+        );
+    }
+    assert!(toy.close_to_truth(&[(0, 11)]).new_layer);
+    let queued = toy.planner.lazy.as_ref().unwrap().pending.len();
+    assert!(
+        queued > 0,
+        "the closure left part of the merge for later updates"
+    );
+    // Scans far from the merge drain the queue, one submesh each.
+    // Scans far from the merge drain the queue, one submesh each; odometry still carries the 3 m jump.
+    let (truth, raw) = (
+        pose(11.0, 1.0, std::f64::consts::PI),
+        pose(11.0, 4.0, std::f64::consts::PI),
+    );
+    for _ in 0..queued {
+        toy.scan_at(truth, raw, (11.0, 1.0));
+    }
+    assert!(toy.planner.lazy.as_ref().unwrap().pending.is_empty());
+    assert_eq!(toy.components(), 1, "the merge joins them");
+    assert_eq!(
+        toy.duplicates_in([0.0, 3.9, 0.0, 2.0]),
+        0,
+        "one surface where they merged"
+    );
 }
 
 #[test]

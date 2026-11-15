@@ -38,6 +38,8 @@ pub struct LazyState {
     pub(crate) layers: Layers,
     /// The planner's voxel edge, for placing stale cells.
     voxel_size: f32,
+    /// Closing-box submeshes a closure has yet to migrate, a few per region update.
+    pub(crate) pending: BTreeSet<(Version, (i32, i32))>,
 }
 
 fn center(k: VoxelKey, voxel_size: f32) -> [f64; 3] {
@@ -147,6 +149,7 @@ impl Planner {
             table: KeyframeTable::new(config.reform.table_params()),
             layers: Layers::new(config.reform.layer_params()),
             voxel_size: config.voxel_size,
+            pending: BTreeSet::new(),
         });
         for record in records {
             lazy.table.add(record);
@@ -210,8 +213,13 @@ impl Planner {
             .iter()
             .filter_map(|&slot| lazy.table.current_rect(slot))
             .collect();
+        let found: BTreeSet<(Version, (i32, i32))> = rects
+            .iter()
+            .flat_map(|&rect| lazy.layers.lookup(&lazy.table, rect))
+            .collect();
+        lazy.pending.extend(found);
         let pool = Arc::clone(&self.pool);
-        pool.install(|| self.reform_rects(&rects, config));
+        pool.install(|| self.migrate_pending(config));
         Some(ClosureOutcome {
             closure,
             new_layer: true,
@@ -234,6 +242,7 @@ impl Planner {
         if self.lazy.is_none() {
             return;
         }
+        self.migrate_pending(config);
         let margin = bounds.radius + self.migrate_margin_m(config);
         let rect = [
             bounds.origin_x - margin,
@@ -544,6 +553,29 @@ impl Planner {
             .iter()
             .flat_map(|&rect| lazy.layers.lookup(&lazy.table, rect))
             .collect();
+        if found.is_empty() {
+            return;
+        }
+        let migrated = self.migrate(&found, config);
+        self.repair_migrated(migrated, config);
+    }
+
+    /// Migrate the next closing-box submeshes a closure queued: reform.closure_migrate_per_update of them, all for 0.
+    fn migrate_pending(&mut self, config: &Config) {
+        let Some(lazy) = self.lazy.as_mut() else {
+            return;
+        };
+        let take = match config.reform.closure_migrate_per_update {
+            0 => lazy.pending.len(),
+            n => n as usize,
+        };
+        let mut found = BTreeSet::new();
+        while found.len() < take {
+            let Some(next) = lazy.pending.pop_first() else {
+                break;
+            };
+            found.insert(next);
+        }
         if found.is_empty() {
             return;
         }

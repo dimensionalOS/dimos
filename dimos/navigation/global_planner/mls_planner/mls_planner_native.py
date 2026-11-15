@@ -53,6 +53,8 @@ class MLSReformConfig(BaseModel):
     version_history: int = 4
     # a closure starts a new layer when it closes a loop or moves some keyframe's box corner this far from the layer's frame, m (0 = half a voxel)
     min_shift_m: float = 0.0
+    # submeshes inside the closing keyframes' boxes migrated per region update after a closure (0 = all at the closure)
+    closure_migrate_per_update: int = 2
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
