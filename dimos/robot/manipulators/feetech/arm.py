@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import math
+import threading
 import time
 from typing import Any
 
@@ -50,6 +51,14 @@ _FEETECH_STATUS_FLAGS = (
     (8, "over_current"),
     (32, "overload"),
 )
+# Status bits a read may carry while its position is still used. The bit
+# meanings come from scservo_sdk's ERRBIT_* constants in
+# protocol_packet_handler.py; no Feetech datasheet was available. These four
+# report the servo's supply, temperature and load, not its encoder. The
+# angle-sensor bit (2) can mean the position itself is wrong, and a wrong
+# leader position would send the follower to a wrong pose, so that bit, and
+# any bit outside the known set, keep failing the read: stopping is safe.
+_FEETECH_TOLERATED_STATUS = 1 | 4 | 8 | 32
 # Largest believable hand motion, for reads that carry a status flag: 4 turns
 # per second (a fast flick of a hand-moved leader joint), plus a small margin
 # for encoder noise. At the 100 Hz read loop that allows about 230 ticks
@@ -97,9 +106,10 @@ def decode_status_flags(status: int) -> list[str]:
 def _read_motor(packet_handler: Any, motor_id: int) -> tuple[int, int]:
     """One motor's position (wrapped to one turn) and its servo status byte.
 
-    Raises only when the communication failed. A successful reply with a
-    status flag still carries a valid position, so it is returned with the
-    flag for the caller to judge.
+    Raises when the communication failed, or when the status byte has a bit
+    outside the tolerated set (the angle sensor or an unknown bit). A reply
+    with only tolerated flags still carries a valid position, so it is
+    returned with the flags for the caller to judge.
     """
     result = packet_handler.ReadPos(motor_id)
     status = 0
@@ -113,6 +123,12 @@ def _read_motor(packet_handler: Any, motor_id: int) -> tuple[int, int]:
             if comm_result != FEETECH_COMM_SUCCESS:
                 raise RuntimeError(
                     f"Feetech motor {motor_id} position read failed with result {values!r}"
+                )
+            if status & ~_FEETECH_TOLERATED_STATUS:
+                raise RuntimeError(
+                    f"Feetech motor {motor_id} position read failed: status flag "
+                    f"{'+'.join(decode_status_flags(status))} (0x{status:02x}) "
+                    f"with result {values!r}"
                 )
         position = values[0]
     else:
@@ -142,13 +158,22 @@ class _StatusMonitor:
 
     def __init__(self) -> None:
         self._motors: dict[tuple[str, int], _MotorHealth] = {}
+        # The read thread mutates the state; counts() may be called from any thread.
+        self._lock = threading.Lock()
 
     def counts(self) -> dict[tuple[str, int], dict[str, int]]:
         """Flagged reads so far, per (bus, motor id), by flag name."""
-        return {key: dict(h.flagged_total) for key, h in self._motors.items() if h.flagged_total}
+        with self._lock:
+            return {
+                key: dict(h.flagged_total) for key, h in self._motors.items() if h.flagged_total
+            }
 
     def accept(self, bus: str, motor_id: int, position: int, status: int) -> int:
         """Return the position, or raise if a flagged read is implausible."""
+        with self._lock:
+            return self._accept(bus, motor_id, position, status)
+
+    def _accept(self, bus: str, motor_id: int, position: int, status: int) -> int:
         health = self._motors.setdefault((bus, motor_id), _MotorHealth())
         now = time.monotonic()
         if status:

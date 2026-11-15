@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -142,7 +142,7 @@ def test_a_status_flag_keeps_a_plausible_position_and_a_comm_failure_still_fails
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = [100.0]
-    monkeypatch.setattr(arm_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(arm_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     robot = FeetechRobot(
         buses=(
             FeetechBus("left", (FeetechMotor("joint_1", "left_joint1", lower=-3.0, upper=3.0),)),
@@ -171,6 +171,11 @@ def test_a_status_flag_keeps_a_plausible_position_and_a_comm_failure_still_fails
     # A flagged read far from the last accepted position fails like any bad read.
     with pytest.raises(RuntimeError, match="flagged read"):
         read((1500, 0, 1))
+    # Flags that may mean a wrong position fail the read, alone or mixed with
+    # a tolerated flag: angle sensor (2), voltage + angle sensor, unknown bit (16).
+    for status, name in [(2, "angle_sensor"), (3, "voltage\\+angle_sensor"), (16, "unknown")]:
+        with pytest.raises(RuntimeError, match=f"position read failed: status flag {name}"):
+            read((3775, 0, status))
     # A communication failure still fails, flagged or not.
     with pytest.raises(RuntimeError, match="failed with result"):
         read((0, -6, 0))
