@@ -460,6 +460,33 @@ impl Planner {
         });
     }
 
+    /// A planner built from scratch over this one's current-layer voxels and planes, for checking incremental repair against a full rebuild.
+    pub fn rebuilt(&self, config: &Config) -> Planner {
+        let mut fresh = Planner::new(config.worker_threads);
+        let keys: Vec<VoxelKey> = self.by_col.keys().collect();
+        fresh.by_col = ColumnIz::from_voxels(&keys);
+        fresh.planes = self.planes.iter().map(|(&k, &p)| (k, p)).collect();
+        let pool = Arc::clone(&fresh.pool);
+        pool.install(|| fresh.rebuild_from_voxels(config));
+        fresh
+    }
+
+    /// Current-layer surface cells this planner has and `other` lacks, then the ones `other` has and this lacks, sorted.
+    pub fn surface_difference(&self, other: &Planner) -> (Vec<VoxelKey>, Vec<VoxelKey>) {
+        let keys = |p: &Planner| -> std::collections::BTreeSet<VoxelKey> {
+            p.graph
+                .surface_lookup
+                .iter()
+                .flat_map(|(&(x, y), zs)| zs.iter().map(move |&z| (x, y, z)))
+                .collect()
+        };
+        let (a, b) = (keys(self), keys(other));
+        (
+            a.difference(&b).copied().collect(),
+            b.difference(&a).copied().collect(),
+        )
+    }
+
     /// Re-derive surfaces, cells, nodes and edges from the whole voxel map.
     fn rebuild_from_voxels(&mut self, config: &Config) {
         let mut surface: Vec<VoxelKey> = Vec::new();
