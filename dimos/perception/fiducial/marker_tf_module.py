@@ -103,7 +103,7 @@ class MarkerTfModule(Module):
         ]
 
         for detection in marker_detections:
-            marker_id = self._marker_id_from_detection(detection)
+            marker_id = self.marker_id_from_detection(detection)
             if marker_id is None:
                 logger.debug("MarkerTfModule: skipping detection without marker id")
                 continue
@@ -126,7 +126,7 @@ class MarkerTfModule(Module):
             self.tf.publish(TFMessage(*out))
 
     @staticmethod
-    def _marker_id_from_detection(detection: Detection3D) -> str | None:
+    def marker_id_from_detection(detection: Detection3D) -> str | None:
         marker_id = str(getattr(detection, "id", "")).strip()
         if marker_id:
             return marker_id
