@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import math
+import time
 from typing import Any
 
 from dimos.robot.manipulators.feetech.calibration import (
@@ -33,10 +34,30 @@ from dimos.robot.manipulators.feetech.calibration import (
     FeetechMotorCalibration,
 )
 from dimos.robot.manipulators.feetech.robot import FeetechRobot
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 FEETECH_EXTRA = "leader-teleop"
 FEETECH_COMM_SUCCESS = 0
 _FEETECH_ENCODER_TICKS = FEETECH_POSITION_SPAN + 1
+
+# Bits of the servo status byte, as in scservo_sdk's ERRBIT_* constants.
+_FEETECH_STATUS_FLAGS = (
+    (1, "voltage"),
+    (2, "angle_sensor"),
+    (4, "overheat"),
+    (8, "over_current"),
+    (32, "overload"),
+)
+# Largest believable hand motion, for reads that carry a status flag: 4 turns
+# per second (a fast flick of a hand-moved leader joint), plus a small margin
+# for encoder noise. At the 100 Hz read loop that allows about 230 ticks
+# (20 degrees) per cycle, and proportionally more after skipped cycles.
+_MAX_HAND_TICKS_PER_S = 4 * _FEETECH_ENCODER_TICKS
+_PLAUSIBILITY_MARGIN_TICKS = 64
+# At most one warning per motor and flag set this often, in seconds.
+_FLAG_LOG_INTERVAL_S = 5.0
 
 
 class FeetechDependencyError(ImportError):
@@ -64,16 +85,32 @@ def _create_sdk_handlers(port: str) -> tuple[Any, Any]:
     return port_handler, sms_sts(port_handler)
 
 
-def _read_motor_position(packet_handler: Any, motor_id: int) -> int:
+def decode_status_flags(status: int) -> list[str]:
+    """Names of the bits set in a servo status byte."""
+    names = [name for bit, name in _FEETECH_STATUS_FLAGS if status & bit]
+    unknown = status & ~sum(bit for bit, _ in _FEETECH_STATUS_FLAGS)
+    if unknown:
+        names.append(f"unknown(0x{unknown:02x})")
+    return names
+
+
+def _read_motor(packet_handler: Any, motor_id: int) -> tuple[int, int]:
+    """One motor's position (wrapped to one turn) and its servo status byte.
+
+    Raises only when the communication failed. A successful reply with a
+    status flag still carries a valid position, so it is returned with the
+    flag for the caller to judge.
+    """
     result = packet_handler.ReadPos(motor_id)
+    status = 0
     if isinstance(result, tuple):
         values: list[Any] = list(result)
         if not values:
             raise RuntimeError(f"Feetech motor {motor_id} position read returned no data")
         if len(values) >= 3:
             comm_result = values[-2]
-            error = values[-1]
-            if comm_result != FEETECH_COMM_SUCCESS or error != 0:
+            status = int(values[-1])
+            if comm_result != FEETECH_COMM_SUCCESS:
                 raise RuntimeError(
                     f"Feetech motor {motor_id} position read failed with result {values!r}"
                 )
@@ -83,7 +120,82 @@ def _read_motor_position(packet_handler: Any, motor_id: int) -> int:
     # STS3215 firmware accumulates multi-turn ticks, so reads legitimately
     # leave 0..4095 whenever a joint crosses the encoder boundary; wrap to
     # one turn instead of rejecting.
-    return int(position) % _FEETECH_ENCODER_TICKS
+    return int(position) % _FEETECH_ENCODER_TICKS, status
+
+
+class _MotorHealth:
+    """Per-motor record of flagged reads and of the last accepted position."""
+
+    def __init__(self) -> None:
+        self.last_position: int | None = None
+        self.last_time = 0.0
+        self.flagged_total: dict[str, int] = {}
+        self.flags = 0
+        self.logged_this_episode = False
+        self._since_log: dict[int, int] = {}
+        self._last_log: dict[int, float] = {}
+
+
+class _StatusMonitor:
+    """Counts flagged reads, warns about them at a limited rate, and rejects
+    implausible jumps in flagged reads."""
+
+    def __init__(self) -> None:
+        self._motors: dict[tuple[str, int], _MotorHealth] = {}
+
+    def counts(self) -> dict[tuple[str, int], dict[str, int]]:
+        """Flagged reads so far, per (bus, motor id), by flag name."""
+        return {key: dict(h.flagged_total) for key, h in self._motors.items() if h.flagged_total}
+
+    def accept(self, bus: str, motor_id: int, position: int, status: int) -> int:
+        """Return the position, or raise if a flagged read is implausible."""
+        health = self._motors.setdefault((bus, motor_id), _MotorHealth())
+        now = time.monotonic()
+        if status:
+            self._note_flags(bus, motor_id, health, status, now)
+            last = health.last_position
+            if last is not None:
+                jump = abs(
+                    (position - last + _FEETECH_ENCODER_TICKS // 2) % _FEETECH_ENCODER_TICKS
+                    - _FEETECH_ENCODER_TICKS // 2
+                )
+                allowed = _PLAUSIBILITY_MARGIN_TICKS + _MAX_HAND_TICKS_PER_S * (
+                    now - health.last_time
+                )
+                if jump > allowed:
+                    raise RuntimeError(
+                        f"Feetech {bus} motor {motor_id} flagged read "
+                        f"({'+'.join(decode_status_flags(status))}) jumped {jump} ticks "
+                        f"from the last accepted position, more than the {allowed:.0f} allowed"
+                    )
+        elif health.flags:
+            if health.logged_this_episode:
+                logger.warning(
+                    f"Feetech {bus} motor {motor_id}: status flags cleared "
+                    f"({'+'.join(decode_status_flags(health.flags))})"
+                )
+            health.flags = 0
+            health.logged_this_episode = False
+        health.last_position = position
+        health.last_time = now
+        return position
+
+    @staticmethod
+    def _note_flags(bus: str, motor_id: int, health: _MotorHealth, status: int, now: float) -> None:
+        names = decode_status_flags(status)
+        for name in names:
+            health.flagged_total[name] = health.flagged_total.get(name, 0) + 1
+        health.flags = status
+        health._since_log[status] = health._since_log.get(status, 0) + 1
+        if now - health._last_log.get(status, float("-inf")) < _FLAG_LOG_INTERVAL_S:
+            return
+        health._last_log[status] = now
+        count = health._since_log.pop(status)
+        health.logged_this_episode = True
+        logger.warning(
+            f"Feetech {bus} bus motor {motor_id}: status flag {'+'.join(names)} "
+            f"(0x{status:02x}) on {count} reads since the last report; positions are still used"
+        )
 
 
 def calibrated_motor_radians(raw_position: int, calibration: FeetechMotorCalibration) -> float:
@@ -128,6 +240,15 @@ class FeetechArm:
             bus: calibrations[bus].require_motors(robot.bus(bus).motor_names) for bus in ports
         }
         self._handlers: dict[str, tuple[Any, Any]] = {}
+        self._monitor = _StatusMonitor()
+
+    def flagged_read_counts(self) -> dict[tuple[str, int], dict[str, int]]:
+        """Reads that carried a servo status flag, per (bus, motor id), by flag name."""
+        return self._monitor.counts()
+
+    def _read_motor_position(self, bus: str, packet_handler: Any, motor_id: int) -> int:
+        position, status = _read_motor(packet_handler, motor_id)
+        return self._monitor.accept(bus, motor_id, position, status)
 
     def connect(self) -> None:
         """Open every bus's serial port at the robot's baudrate."""
@@ -158,7 +279,9 @@ class FeetechArm:
             calibration = self._calibrations[bus.name]
             readings[bus.name] = {
                 motor: calibrated_motor_radians(
-                    _read_motor_position(packet_handler, calibration.motors[motor].id),
+                    self._read_motor_position(
+                        bus.name, packet_handler, calibration.motors[motor].id
+                    ),
                     calibration.motors[motor],
                 )
                 for motor in bus.motor_names
