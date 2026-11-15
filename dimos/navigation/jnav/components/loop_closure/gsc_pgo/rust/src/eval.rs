@@ -177,6 +177,8 @@ struct Args {
     landmark_sightings: Option<PathBuf>,
     /// `--until-s <seconds>`: replay only the lidar stream's first this many seconds (a quick speed check on a crop).
     until_s: f64,
+    /// `--stationary-tail-s <s>`: after the last scan the robot stands still for s seconds (lockstep only); no finish().
+    stationary_tail_s: f64,
 }
 
 /// A CSV file's non-blank, non-`#` lines, each with its numbers.
@@ -297,6 +299,7 @@ fn parse_args() -> Result<Args, String> {
     let mut landmark_sightings = None;
     let mut icp_cache = None;
     let mut until_s = f64::INFINITY;
+    let mut stationary_tail_s = 0.0;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -310,6 +313,7 @@ fn parse_args() -> Result<Args, String> {
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
             "--until-s" => until_s = value()?.parse().map_err(|e| format!("{e}"))?,
+            "--stationary-tail-s" => stationary_tail_s = value()?.parse().map_err(|e| format!("{e}"))?,
             "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
             "--landmark-sightings" => landmark_sightings = Some(PathBuf::from(value()?)),
             "--icp-cache-record" => {
@@ -340,6 +344,7 @@ fn parse_args() -> Result<Args, String> {
         landmark_sightings,
         icp_cache,
         until_s,
+        stationary_tail_s,
     })
 }
 
@@ -597,6 +602,7 @@ fn run() -> Result<(), String> {
     let mut cursor = 0usize;
     let mut scans_processed = 0usize;
     let mut recorder = Recorder::new(args.event_dump.as_deref(), event_thresholds)?;
+    let mut last_scan: Option<(CloudWithPose, f64)> = None;
     let started = Instant::now();
     let mut lidar_frame: Option<String> = None;
     let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
@@ -770,6 +776,7 @@ fn run() -> Result<(), String> {
                 }
                 next_sighting += 1;
             }
+            last_scan = Some((cloud_with_pose.clone(), ts));
             let step_started = Instant::now();
             if !recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
                 return Ok(());
@@ -781,9 +788,43 @@ fn run() -> Result<(), String> {
             Ok(())
         })?;
     }
+    // --stationary-tail-s: the robot stands still after the last scan. The live module keeps getting the same scan at the
+    // recording's scan rate (no new keyframes, so no closure search steps) and adopts a solve when it finishes past its
+    // hold (its solve-finished wake): each repeat steps the solver that way. No finish(): a live robot runs it only at
+    // shutdown, so nothing it does (settle, evidence solve) reaches a live map.
+    let stationary = args.stationary_tail_s > 0.0 && !args.live;
+    if stationary {
+        if let Some((last, last_scan_ts)) = last_scan.take() {
+            let period = if scans_processed > 1 { (last_ts - first_ts) / (scans_processed - 1) as f64 } else { 0.1 };
+            let tail_scans = (args.stationary_tail_s / period).ceil() as usize;
+            let mut keyframes = 0usize;
+            for i in 1..=tail_scans {
+                let ts = last_scan_ts + i as f64 * period;
+                let mut scan = last.clone();
+                let seconds = ts.floor() as i32;
+                scan.pose.set_time(seconds, ((ts - seconds as f64) * 1e9) as u32);
+                let step_started = Instant::now();
+                if recorder.add_scan(&mut pgo, &scan, ts) {
+                    keyframes += 1;
+                    pgo.search_for_closure_pairs();
+                    recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
+                        pgo.wait_for_due_solve();
+                    })?;
+                } else if pgo.wait_for_due_solve() {
+                    recorder.dump(&pgo, ts)?;
+                }
+            }
+            eprintln!(
+                "pgo-eval: stationary tail: {tail_scans} repeats of the last scan every {period:.4}s ({:.0}s), {keyframes} became keyframes; finish() skipped",
+                args.stationary_tail_s
+            );
+        }
+    }
     let finish_started = Instant::now();
     let replay_s = (finish_started - started).as_secs_f64();
-    pgo.finish();
+    if !stationary {
+        pgo.finish();
+    }
     let finish_s = finish_started.elapsed().as_secs_f64();
     let overshoots = pgo.overshoot_report();
     let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
