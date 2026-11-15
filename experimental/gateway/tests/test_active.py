@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from typing import Any
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 import psutil
@@ -29,6 +30,7 @@ from pytest_mock import MockerFixture
 
 from dimos.core.run_registry import RunEntry
 from experimental.gateway import launches, shared_config
+from experimental.gateway.introspect import IntrospectError
 from experimental.gateway.routes import active as active_routes
 from experimental.gateway.state import State
 
@@ -227,6 +229,93 @@ def test_direct_start_normalizes_globals(client: TestClient, checkout: Path) -> 
         "replay": False,
         "n_workers": 3,
     }
+
+
+def test_nested_launch_and_relaunch_keep_secrets_out_of_args_and_metadata(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock
+) -> None:
+    config = {
+        "modules": {
+            "camera": {
+                "auth": {"token": "nested-token", "region": "west"},
+                "credentials": {"Service-A": "private-value", "public.region": "east"},
+            }
+        },
+        "secrets": ["camera.credentials.Service-A"],
+    }
+    expected_config = {
+        "global": {},
+        "modules": {
+            "camera": {
+                "auth": {"token": launches.HIDDEN, "region": "west"},
+                "credentials": {"Service-A": launches.HIDDEN, "public.region": "east"},
+            }
+        },
+    }
+
+    def assert_private_launch() -> int:
+        until(running(client))
+        current = launch_of(client)
+        process = psutil.Process(current["pid"])
+        env = process.environ()
+        assert env["CAMERA__AUTH__TOKEN"] == "nested-token"
+        assert json.loads(env["CAMERA__CREDENTIALS"]) == {
+            "Service-A": "private-value",
+            "public.region": "east",
+        }
+        assert process.cmdline()[-3:] == ["run", "demo", "--camera.auth.region=west"]
+        assert current["config"] == expected_config
+        shown = json.dumps(current) + launches.launch_file().read_text()
+        assert "nested-token" not in shown
+        assert "private-value" not in shown
+        assert "--camera.auth.region=west" in current["output"].splitlines()[0]
+        return current["pid"]
+
+    started = client.post("/active/launch", json={"blueprint": "demo", "config": config})
+    assert started.status_code == 200, started.text
+    first_pid = assert_private_launch()
+    launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={})
+    launch_targets.reset_mock()
+
+    relaunched = client.post("/active/relaunch")
+    assert relaunched.status_code == 200, relaunched.text
+    assert assert_private_launch() != first_pid
+    launch_targets.assert_awaited_once_with(checkout, ["targets", "demo"], stdin={})
+
+
+def test_launch_introspection_receives_global_mode_settings(
+    client: TestClient, checkout: Path, launch_targets: AsyncMock
+) -> None:
+    started = client.post(
+        "/active/launch",
+        json={
+            "blueprint": "demo",
+            "config": {
+                "global": {"simulation": "mujoco"},
+                "modules": {"camera": {"auth.region": "west"}},
+            },
+        },
+    )
+    assert started.status_code == 200, started.text
+    launch_targets.assert_awaited_once_with(
+        checkout, ["targets", "demo"], stdin={"simulation": "mujoco"}
+    )
+
+
+def test_launch_refuses_unreadable_schema_before_spawning_or_saving_config(
+    client: TestClient, launch_targets: AsyncMock, mocker: MockerFixture
+) -> None:
+    launch_targets.side_effect = IntrospectError("blueprint unavailable")
+    spawn = mocker.patch.object(launches, "_spawn")
+    refused = client.post(
+        "/active/launch",
+        json={"blueprint": "demo", "config": {"modules": {"camera": {"auth.token": "key"}}}},
+    )
+    assert refused.status_code == 400
+    assert refused.json()["error"] == "could not read launch config fields: blueprint unavailable"
+    spawn.assert_not_called()
+    assert not launches.launch_file().exists()
+    assert not launches.request_file().exists()
 
 
 def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(

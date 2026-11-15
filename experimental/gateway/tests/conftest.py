@@ -20,12 +20,14 @@ from pathlib import Path
 import signal
 import sys
 from typing import Any
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core import run_registry
-from experimental.gateway import events, launches, logs, shared_config, store
+from experimental.gateway import events, introspect, launches, logs, shared_config, store
 from experimental.gateway.app import create_app
 from experimental.gateway.state import State, new_state
 
@@ -96,7 +98,25 @@ def state(checkout: Path, sent: list[tuple[str, Any]]) -> State:
 
 
 @pytest.fixture
-def client(state: State, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def launch_targets(mocker: MockerFixture) -> AsyncMock:
+    run_child = introspect.run_child
+
+    async def read(dimos_dir: Path, args: list[str], *rest: Any, **kwargs: Any) -> dict[str, Any]:
+        if args[0] == "targets":
+            return {
+                "agent": ["api_key"],
+                "camera": ["auth.token", "auth.region", "credentials"],
+            }
+        return await run_child(dimos_dir, args, *rest, **kwargs)
+
+    # The fake checkout has a runnable CLI, but no importable robot blueprint.
+    return mocker.patch.object(introspect, "run_child", side_effect=read)
+
+
+@pytest.fixture
+def client(
+    state: State, monkeypatch: pytest.MonkeyPatch, launch_targets: AsyncMock
+) -> Iterator[TestClient]:
     spawned: list[tuple[int, float | None]] = []
     spawn = launches._spawn
 
