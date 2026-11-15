@@ -69,6 +69,20 @@ pub fn snap_candidates(
     found.into_iter().map(|(_, c)| c).collect()
 }
 
+/// The current-layer cell a goal snaps to: the nearest with a passable link.
+pub(crate) fn snap_goal_current(
+    plg: &PlannerGraph,
+    goal: (f32, f32, f32),
+    voxel_size: f32,
+    tolerance_m: f32,
+) -> Option<CellId> {
+    snap_candidates(&plg.surface_lookup, goal, voxel_size, tolerance_m)
+        .into_iter()
+        .take(MAX_SNAP_ATTEMPTS)
+        .filter_map(|k| plg.cells.id(k))
+        .find(|&id| plg.cells.neighbors(id).iter().any(|e| e.cost.is_finite()))
+}
+
 /// Snap a pose to the nearest surface cell.
 pub fn snap_pose_to_cell(
     surface_lookup: &SurfaceLookup,
@@ -158,12 +172,7 @@ pub fn plan_reusing(
     }
     // The goal snaps in the current layer, to the nearest cell with a passable link (a lone cell a region's edge
     // left is no place to plan to), or else to the stale cell standing nearest it now.
-    let linked = |id: &CellId| plg.cells.neighbors(*id).iter().any(|e| e.cost.is_finite());
-    let goal_cell = snap_candidates(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
-        .into_iter()
-        .take(MAX_SNAP_ATTEMPTS)
-        .filter_map(|k| plg.cells.id(k))
-        .find(linked)
+    let goal_cell = snap_goal_current(plg, goal_pose, voxel_size, z_tolerance_m)
         .or_else(|| (stale.nearest)(goal_pose));
     let Some(goal_cell) = goal_cell else {
         tracing::debug!(
