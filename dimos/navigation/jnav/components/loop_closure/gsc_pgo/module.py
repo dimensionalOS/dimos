@@ -222,6 +222,10 @@ class PGOConfig(NativeModuleConfig):
         "learned_odometry_error_estimate_stiffness"
     ]
 
+    # loop_closure_event only once a keyframe moved this far (m; default = the ray tracer's reform min_shift_m) or turned this much (rad) since last sent
+    event_min_shift_m: float = DEFAULTS["event_min_shift_m"]
+    event_min_turn_rad: float = DEFAULTS["event_min_turn_rad"]
+
     # depth of each scan queue: waiting for tf drops the oldest, waiting for the solver keeps only the newest (<= 0 = unbounded)
     max_scan_queue: int = 5
     # rayon threads for closure search and solves (0 = every core)

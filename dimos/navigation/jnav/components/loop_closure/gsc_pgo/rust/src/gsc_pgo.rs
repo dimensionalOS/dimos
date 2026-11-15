@@ -617,6 +617,10 @@ pub struct Config {
     pub landmark_warm_start_xy_variance_scale: f64,
     /// ...then a solve per stage, each from the last with that scale divided by this, down to the stated variances.
     pub landmark_warm_start_xy_variance_ladder: f64,
+    /// A loop_closure_event goes out only once some keyframe moved past this (m) or `event_min_turn_rad` since consumers
+    /// last heard it; smaller moves add up until one does. Default 4 cm, the ray tracer's reform `min_shift_m`.
+    pub event_min_shift_m: f64,
+    pub event_min_turn_rad: f64,
 }
 
 impl Config {
@@ -722,6 +726,14 @@ impl Config {
         }
         if !(self.overshoot_warning_interval_s >= 0.0) {
             return Err("overshoot_warning_interval_s must be >= 0".into());
+        }
+        for (name, value) in [
+            ("event_min_shift_m", self.event_min_shift_m),
+            ("event_min_turn_rad", self.event_min_turn_rad),
+        ] {
+            if !(value >= 0.0) {
+                return Err(format!("{name} must be >= 0 (got {value})"));
+            }
         }
         if let Some((name, value)) = estimates.iter().find(|(_, v)| !(*v >= 0.0)) {
             return Err(format!("{name} must be >= 0 (got {value})"));
