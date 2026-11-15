@@ -16,22 +16,27 @@ from dimos.mapping.reform import ReformConfig
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNative,
     MLSPlannerNativeConfig,
+    MLSReformConfig,
 )
 
 
 def test_both_modules_take_the_closure_inputs_with_reform_off_by_default():
-    for module, config, inputs in [
-        (RayTracingVoxelMap, RayTracingVoxelMapConfig(), {"loop_closure_event"}),
-        (MLSPlannerNative, MLSPlannerNativeConfig(), {"pose_graph", "loop_closure_event"}),
+    for module, config, inputs, reform in [
+        (RayTracingVoxelMap, RayTracingVoxelMapConfig(), {"loop_closure_event"}, ReformConfig()),
+        (
+            MLSPlannerNative,
+            MLSPlannerNativeConfig(),
+            {"new_keyframe", "loop_closure_event"},
+            MLSReformConfig(),
+        ),
     ]:
         assert inputs <= set(module.__annotations__)
-        assert config.to_config_dict()["reform"] == ReformConfig().model_dump()
+        assert config.to_config_dict()["reform"] == reform.model_dump()
         assert config.reform.enabled is False
 
 
 def test_the_planner_keeps_its_fallback_and_limits_by_default():
     config = MLSPlannerNativeConfig()
     assert config.require_full_route is False
-    assert config.reform_rekey_radius_m == 3.0
     assert config.max_region_columns == 10_000_000
     assert config.max_closing_box_cells == 250_000_000

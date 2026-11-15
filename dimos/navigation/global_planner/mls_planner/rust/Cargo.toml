@@ -28,7 +28,7 @@ region_bounds = "geometry_msgs.PoseStamped"
 seed_map = "sensor_msgs.PointCloud2"
 seed_bounds = "geometry_msgs.PoseStamped"
 goal = "geometry_msgs.PointStamped"
-pose_graph = "sensor_msgs.PointCloud2"
+new_keyframe = "sensor_msgs.PointCloud2"
 loop_closure_event = "sensor_msgs.PointCloud2"
 tf = "tf2_msgs.TFMessage"
 
@@ -41,8 +41,6 @@ nav_status = "actionlib_msgs.GoalStatus"
 
 [dependencies]
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "30482d5b99126e5404b3c0a56dd0eddc8fcea6a8" }
-# The loop-closure warp, shared by the ray tracer and the MLS planner.
-dimos-reform = { git = "https://github.com/dimensionalOS/dimos", rev = "8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }
@@ -52,8 +50,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.21", features = ["derive"] }
 rayon = "1"
 smallvec = "1"
-# Warps the graph through a pose-graph correction (config.reform).
-fast-reform = "0.2.1"
 
 [workspace]
 members = ["py"]

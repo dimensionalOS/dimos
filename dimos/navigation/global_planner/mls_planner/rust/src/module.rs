@@ -22,11 +22,14 @@ use crate::goal_status::{
     StatusReporter, NO_GOAL_FRAME, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED,
     PREEMPT_REPLACED,
 };
+use crate::lazy::{
+    decode_loop_closure_event, decode_new_keyframe, DecodeError, EventRecord, KeyframeRecord,
+};
+use crate::mls_planner::VersionGap;
 use crate::mls_planner::{
     ms_since, Config, MapPoint, Plan, Planner, RegionBounds, DEBUG_LOG_PERIOD,
 };
 use crate::planner::snap_pose_to_cell;
-use crate::reform::{decode_loop_closure_event, decode_pose_graph, DecodeError, ReformState, Warp};
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment, SurfaceEntry};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey, Xyz};
 use dimos_module::nalgebra::Vector3;
@@ -56,11 +59,18 @@ enum MapUpdate {
         points: Vec<MapPoint>,
         bounds: PoseStamped,
         received: Instant,
+        /// The closure version the ray tracer's map was in, None when the cloud carries none.
+        version: Option<u32>,
     },
     Global {
         points: Vec<MapPoint>,
-        stamp: f64,
     },
+}
+
+/// GscPGO's reform stream, applied by the worker in arrival order.
+enum ReformEvent {
+    Keyframes(Vec<KeyframeRecord>),
+    Closure(Vec<EventRecord>),
 }
 
 /// One region of a seeded map, as the ray tracer hands them on.
@@ -257,11 +267,11 @@ pub struct MlsPlanner {
     #[input(decode = PointStamped::decode, handler = on_goal)]
     goal: Input<PointStamped>,
 
-    // Every keyframe's pose, for the anchors that hold the unmoved parts (config.reform).
-    #[input(decode = PointCloud2::decode, handler = on_pose_graph)]
-    pose_graph: Input<PointCloud2>,
+    // Each new keyframe's raw pose and the box around its scans, once (config.reform).
+    #[input(decode = PointCloud2::decode, handler = on_new_keyframe)]
+    new_keyframe: Input<PointCloud2>,
 
-    // Per closure, each keyframe it moved: its pre pose and the delta (config.reform).
+    // Per closure, every keyframe's pre pose and delta, the version and the keyframes that closed (config.reform).
     #[input(decode = PointCloud2::decode, handler = on_loop_closure_event)]
     loop_closure_event: Input<PointCloud2>,
 
@@ -292,10 +302,10 @@ pub struct MlsPlanner {
     pending_bounds: Option<PoseStamped>,
     pending_seeds: SeedPairs,
 
-    // Written by the handle loop, read by the worker, so the loop never blocks on map processing. Seed regions and warps queue in arrival order.
+    // Written by the handle loop, read by the worker, so the loop never blocks on map processing. Seed regions and reform events queue in arrival order.
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
-    warps: Arc<Mutex<VecDeque<Warp>>>,
+    reform_events: Arc<Mutex<VecDeque<ReformEvent>>>,
     active_goal: Shared<Goal>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
@@ -308,8 +318,7 @@ pub struct MlsPlanner {
     viz_publisher: Option<tokio::task::JoinHandle<()>>,
     heartbeat: Option<tokio::task::JoinHandle<()>>,
 
-    reform: ReformState,
-    // Whether the last pose_graph or loop_closure_event failed to decode, so a bad stream warns once.
+    // Whether the last new_keyframe or loop_closure_event failed to decode, so a bad stream warns once.
     undecodable: bool,
 }
 
@@ -328,7 +337,8 @@ impl MlsPlanner {
         let worker = Worker {
             pending: Arc::clone(&self.pending),
             seed_regions: Arc::clone(&self.seed_regions),
-            warps: Arc::clone(&self.warps),
+            reform_events: Arc::clone(&self.reform_events),
+            held_region: Arc::new(Mutex::new(None)),
             active_goal: Arc::clone(&self.active_goal),
             goal_changed: Arc::clone(&self.goal_changed),
             wake: Arc::clone(&self.wake),
@@ -364,8 +374,7 @@ impl MlsPlanner {
 
     async fn on_global_map(&mut self, msg: PointCloud2) {
         if let Some(points) = cloud_points(&msg, "global_map") {
-            let stamp = seconds(&msg.header.stamp);
-            self.hand_off(MapUpdate::Global { points, stamp });
+            self.hand_off(MapUpdate::Global { points });
         }
     }
 
@@ -391,12 +400,12 @@ impl MlsPlanner {
         }
     }
 
-    async fn on_pose_graph(&mut self, msg: PointCloud2) {
+    async fn on_new_keyframe(&mut self, msg: PointCloud2) {
         if !self.config.reform.enabled {
             return;
         }
-        if let Some(records) = self.decoded(decode_pose_graph(&msg), "pose_graph") {
-            self.reform.add_keyframes(&records);
+        if let Some(records) = self.decoded(decode_new_keyframe(&msg), "new_keyframe") {
+            self.queue_reform(ReformEvent::Keyframes(records));
         }
     }
 
@@ -404,20 +413,17 @@ impl MlsPlanner {
         if !self.config.reform.enabled {
             return;
         }
-        let Some(moved) = self.decoded(decode_loop_closure_event(&msg), "loop_closure_event")
-        else {
-            return;
-        };
-        match self.reform.closure(&moved, &self.config.reform) {
-            Some(warp) => {
-                self.warps.lock().expect("warp mutex").push_back(warp);
-                self.wake.notify_one();
-            }
-            None => debug!(
-                keyframes = moved.len(),
-                "Loop closure moved nothing past reform.min_shift_m, held for the next."
-            ),
+        if let Some(records) = self.decoded(decode_loop_closure_event(&msg), "loop_closure_event") {
+            self.queue_reform(ReformEvent::Closure(records));
         }
+    }
+
+    fn queue_reform(&self, event: ReformEvent) {
+        self.reform_events
+            .lock()
+            .expect("reform mutex")
+            .push_back(event);
+        self.wake.notify_one();
     }
 
     /// The decoded records, or None with a warning when the stream turns undecodable.
@@ -444,6 +450,7 @@ impl MlsPlanner {
                 points,
                 bounds,
                 received,
+                version: cloud_version(&cloud),
             });
         }
     }
@@ -527,10 +534,6 @@ impl MlsPlanner {
     fn set_active_goal(&self, goal: Option<Goal>) -> Option<Goal> {
         std::mem::replace(&mut *self.active_goal.lock().expect("goal mutex"), goal)
     }
-}
-
-fn seconds(t: &Time) -> f64 {
-    t.sec as f64 + t.nsec as f64 * 1e-9
 }
 
 /// True when bounds and a local cloud are both present with matching stamps.
@@ -676,7 +679,9 @@ impl GoalProgress {
 struct Worker {
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
-    warps: Arc<Mutex<VecDeque<Warp>>>,
+    reform_events: Arc<Mutex<VecDeque<ReformEvent>>>,
+    // A region stamped with a closure not yet applied, waiting for it.
+    held_region: Shared<MapUpdate>,
     active_goal: Shared<Goal>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
@@ -725,9 +730,6 @@ impl VizPublisher {
 impl Worker {
     async fn run(self) {
         let mut planner = Planner::new(self.config.worker_threads);
-        if self.config.reform.enabled {
-            planner.track_voxel_times();
-        }
         let mut last_viz_at: Option<Instant> = None;
         let mut viz = RegionViz::new(
             (self.config.viz_cell_m / self.config.voxel_size).round() as i32,
@@ -740,13 +742,17 @@ impl Worker {
             self.abort_if_timed_out(&mut progress).await;
             self.abort_if_stalled(&mut progress).await;
 
-            // A warp moves the frame everything else is in, so it goes first.
-            let warp = self.warps.lock().expect("warp mutex").pop_front();
-            if let Some(warp) = warp {
-                tokio::task::block_in_place(|| self.apply_warp(&mut planner, &warp, &mut viz));
-                self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
-                    .await;
-                self.maybe_replan(&mut planner, false, &mut progress).await;
+            // A closure changes the frame everything else is in, so reform events go first.
+            let event = self.reform_events.lock().expect("reform mutex").pop_front();
+            if let Some(event) = event {
+                let closed = tokio::task::block_in_place(|| {
+                    self.apply_reform(&mut planner, event, &mut viz)
+                });
+                if closed {
+                    self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
+                        .await;
+                    self.maybe_replan(&mut planner, false, &mut progress).await;
+                }
                 continue;
             }
             let goal_changed = self.goal_changed.swap(false, Ordering::SeqCst);
@@ -810,55 +816,60 @@ impl Worker {
         }
     }
 
-    /// Carry the graph and the active goal through a warp.
-    fn apply_warp(&self, planner: &mut Planner, warp: &Warp, viz: &mut RegionViz) {
-        let started = Instant::now();
-        // The lock is not held through the warp, so a goal clicked meanwhile is already in the new frame and stays.
-        // Only a world-frame goal moves with the map; one in another frame follows that frame's tf.
-        let before = self.active_goal.lock().expect("goal mutex").clone();
-        let in_world = |g: &Goal| {
-            g.frame
-                .as_deref()
-                .is_none_or(|f| !is_tf_frame(f) || f == &*self.config.world_frame)
+    /// Apply a keyframe batch or a closure; a closure also carries a world-frame goal by the newest keyframe's move. True for a closure.
+    fn apply_reform(&self, planner: &mut Planner, event: ReformEvent, viz: &mut RegionViz) -> bool {
+        let records = match event {
+            ReformEvent::Keyframes(records) => {
+                planner.add_keyframes(&records, &self.config);
+                return false;
+            }
+            ReformEvent::Closure(records) => records,
         };
-        let mut held: Vec<Xyz> = before
-            .iter()
-            .filter(|g| in_world(g))
-            .map(|g| g.position)
-            .collect();
-        let report = planner.apply_warp(warp, &mut held, &self.config);
-        let mut goal = self.active_goal.lock().expect("goal mutex");
-        if let (Some(g), Some(&moved)) = (goal.as_mut(), held.first()) {
-            if Some(&*g) == before.as_ref() {
-                g.position = moved;
+        let started = Instant::now();
+        let Some(outcome) = planner.on_closure(&records, &self.config) else {
+            debug!(
+                keyframes = records.len(),
+                "A loop closure listed no known keyframe, ignored."
+            );
+            return false;
+        };
+        if outcome.new_layer {
+            // Only a world-frame goal moves with the map; one in another frame follows that frame's tf.
+            let mut goal = self.active_goal.lock().expect("goal mutex");
+            if let Some(g) = goal.as_mut().filter(|g| {
+                g.frame
+                    .as_deref()
+                    .is_none_or(|f| !is_tf_frame(f) || f == &*self.config.world_frame)
+            }) {
+                let (x, y, z) = g.position;
+                let p = outcome.carry_newest.apply([x as f64, y as f64, z as f64]);
+                g.position = (p[0] as f32, p[1] as f32, p[2] as f32);
             }
         }
-        drop(goal);
         viz.mark_all();
-        let (median_shift_m, max_shift_m) = warp.keyframe_shift_m();
-        warn!(
-            total_ms = ms_since(started),
-            warp_ms = report.warp_ms,
-            move_ms = report.move_ms,
-            keyframes = warp.keyframes(),
-            keyframes_moved = warp.moved_keyframes(),
-            keyframes_blended = warp.blended_keyframes(),
-            median_shift_m,
-            max_shift_m,
-            voxels_warped = report.voxels_warped,
-            cells_warped = report.cells_warped,
-            nodes = report.nodes,
-            "Loop closure applied in place."
-        );
-        if let Some((from, to)) = report.worst_implausible {
-            warn!(
-                held_in_place = report.implausible,
-                limit_m = warp.max_plausible_move_m(),
-                worst_from = ?from,
-                worst_to = ?to,
-                "A warp sent points somewhere non-finite or implausibly far; they stayed put."
+        // A region held for this closure can land now.
+        if let Some(held) = self.held_region.lock().expect("held mutex").take() {
+            let mut pending = self.pending.lock().expect("pending mutex");
+            if pending.is_none() {
+                *pending = Some(held);
+            }
+            self.wake.notify_one();
+        }
+        if outcome.new_layer {
+            info!(
+                ms = ms_since(started),
+                version = outcome.closure.version,
+                closing_keyframes = outcome.closure.closing.len(),
+                layers = planner.layer_count(),
+                "Loop closure applied in a new layer."
+            );
+        } else {
+            debug!(
+                version = outcome.closure.version,
+                "Loop closure moved keyframes under reform.min_shift_m, kept the layer."
             );
         }
+        outcome.new_layer
     }
 
     /// Live work has kept seed regions queued and unapplied for too long.
@@ -944,6 +955,7 @@ impl Worker {
                 points,
                 bounds,
                 received,
+                version,
             } => {
                 let Some((_, _, sensor_z)) = self.base_position() else {
                     warn!(
@@ -954,10 +966,29 @@ impl Worker {
                     return false;
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
-                planner.set_clock(seconds(&bounds.header.stamp));
                 let process_start = Instant::now();
-                if let Some(window) = planner.update_region(&points, &region, &self.config) {
-                    viz.mark_window(window);
+                let version = version.unwrap_or(planner.reform_version());
+                match planner.update_region_at_version(&points, &region, version, &self.config) {
+                    Ok(Some(window)) => viz.mark_window(window),
+                    Ok(None) => {}
+                    Err(VersionGap::Ahead) => {
+                        *self.held_region.lock().expect("held mutex") = Some(MapUpdate::Region {
+                            points,
+                            bounds,
+                            received,
+                            version: Some(version),
+                        });
+                        return false;
+                    }
+                    Err(VersionGap::Forgotten) => {
+                        warn_throttled!(
+                            Duration::from_secs(5),
+                            version,
+                            current = planner.reform_version(),
+                            "A region stamped with a closure version older than the poses kept, dropped it."
+                        );
+                        return false;
+                    }
                 }
                 debug_throttled!(
                     DEBUG_LOG_PERIOD,
@@ -968,11 +999,10 @@ impl Worker {
                 );
                 true
             }
-            MapUpdate::Global { points, stamp } => {
+            MapUpdate::Global { points } => {
                 if points.is_empty() {
                     return false;
                 }
-                planner.set_clock(stamp);
                 planner.update_global_map(&points, &self.config);
                 viz.mark_all();
                 debug!(global_map_points = points.len(), "global_map processed");
@@ -985,7 +1015,6 @@ impl Worker {
     /// premap's own, so no sensor ceiling applies.
     fn ingest_seed(&self, planner: &mut Planner, seed: QueuedSeed, viz: &mut RegionViz) {
         let region = region_bounds(&seed.bounds);
-        planner.set_clock(seconds(&seed.bounds.header.stamp));
         if let Some(window) = planner.update_seed_region(&seed.points, &region, &self.config) {
             viz.mark_window(window);
         }
@@ -1438,6 +1467,17 @@ impl std::fmt::Display for ExtractError {
 }
 
 /// The points of a cloud, or None with a warning when it cannot be read.
+/// The closure version a ray tracer cloud carries in its points' `version` field, None without one.
+fn cloud_version(msg: &PointCloud2) -> Option<u32> {
+    let field = msg
+        .fields
+        .iter()
+        .find(|f| f.name == "version" && f.datatype == PointField::UINT32 as u8)?;
+    let offset = field.offset as usize;
+    let bytes = msg.data.get(offset..offset + 4)?;
+    Some(u32::from_le_bytes(bytes.try_into().ok()?))
+}
+
 fn cloud_points(msg: &PointCloud2, topic: &'static str) -> Option<Vec<MapPoint>> {
     match extract_points(msg) {
         Ok(points) => Some(points),

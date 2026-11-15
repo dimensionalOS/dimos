@@ -18,11 +18,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use dimos_mls_planner::mls_planner::{Config, MapPoint, Planner, RegionBounds};
-use dimos_mls_planner::reform::{
-    decode_loop_closure_event, decode_pose_graph, loop_event_fields, numpy_dtype, record_cloud,
-    ReformConfig, ReformState, KEYFRAME_FIELDS,
+use dimos_mls_planner::lazy::{
+    decode_cloud, decode_loop_closure_event, decode_new_keyframe, DecodeError, ReformConfig,
 };
+use dimos_mls_planner::mls_planner::{Config, MapPoint, Planner, RegionBounds, VersionGap};
 use dimos_mls_planner::voxel::surface_point_xyz;
 use pyo3::types::PyDict;
 
@@ -30,8 +29,6 @@ use pyo3::types::PyDict;
 pub struct MLSPlanner {
     config: Config,
     planner: Planner,
-    voxel_times: bool,
-    reform: ReformState,
 }
 
 /// Rows of xyz, or the tracer's (N, 7) xyz plus plane, as float32, dropping non-finite coordinates; xyz rows get no plane.
@@ -61,14 +58,35 @@ fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<MapPoint>> {
         .collect())
 }
 
-fn check_records(records: &[u8], size: usize) -> PyResult<()> {
-    if !records.len().is_multiple_of(size) {
-        return Err(PyValueError::new_err(format!(
-            "{} bytes is not a whole number of {size}-byte records",
-            records.len()
-        )));
+fn decode_err(e: DecodeError) -> PyErr {
+    PyValueError::new_err(e.0)
+}
+
+/// ReformConfig::off() with the given dict's keys set; a reform dict turns it on unless it says enabled=False.
+fn reform_config(reform: Option<&Bound<'_, PyDict>>) -> PyResult<ReformConfig> {
+    let mut out = ReformConfig::off();
+    let Some(dict) = reform else {
+        return Ok(out);
+    };
+    out.enabled = true;
+    for (key, value) in dict.iter() {
+        let key: String = key.extract()?;
+        match key.as_str() {
+            "enabled" => out.enabled = value.extract()?,
+            "tile_m" => out.tile_m = value.extract()?,
+            "tile_pad" => out.tile_pad = value.extract()?,
+            "box_grid_m" => out.box_grid_m = value.extract()?,
+            "box_pad_m" => out.box_pad_m = value.extract()?,
+            "version_history" => out.version_history = value.extract()?,
+            "min_shift_m" => out.min_shift_m = value.extract()?,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown reform setting {other:?}"
+                )))
+            }
+        }
     }
-    Ok(())
+    Ok(out)
 }
 
 #[pymethods]
@@ -90,8 +108,7 @@ impl MLSPlanner {
         plane_noise_m = 0.01,
         step_penalty_weight = 4.0,
         worker_threads = 4,
-        voxel_times = false,
-        reform_rekey_radius_m = 3.0,
+        reform = None,
         require_full_route = false,
         max_region_columns = 10_000_000,
         max_closing_box_cells = 250_000_000,
@@ -110,8 +127,7 @@ impl MLSPlanner {
         plane_noise_m: f32,
         step_penalty_weight: f32,
         worker_threads: u32,
-        voxel_times: bool,
-        reform_rekey_radius_m: f32,
+        reform: Option<&Bound<'_, PyDict>>,
         require_full_route: bool,
         max_region_columns: u64,
         max_closing_box_cells: u64,
@@ -144,8 +160,7 @@ impl MLSPlanner {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             worker_threads,
-            reform: ReformConfig::off(),
-            reform_rekey_radius_m,
+            reform: reform_config(reform)?,
             require_full_route,
             max_region_columns,
             max_closing_box_cells,
@@ -153,37 +168,22 @@ impl MLSPlanner {
         config
             .validate()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let mut planner = Planner::new(config.worker_threads);
-        if voxel_times {
-            planner.track_voxel_times();
-        }
         Ok(Self {
-            planner,
+            planner: Planner::new(config.worker_threads),
             config,
-            voxel_times,
-            reform: ReformState::default(),
         })
     }
 
-    /// `stamp` (s) is when the points were seen, kept per voxel with voxel_times.
-    #[pyo3(signature = (points, stamp = None))]
-    fn update_global_map(
-        &mut self,
-        py: Python<'_>,
-        points: &Bound<'_, PyAny>,
-        stamp: Option<f64>,
-    ) -> PyResult<()> {
+    fn update_global_map(&mut self, py: Python<'_>, points: &Bound<'_, PyAny>) -> PyResult<()> {
         let pts = extract_points(points)?;
-        if let Some(t) = stamp {
-            self.planner.set_clock(t);
-        }
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(move || planner.update_global_map(&pts, config));
         Ok(())
     }
 
-    #[pyo3(signature = (points, origin, radius, z_min, z_max, sensor_z, stamp = None))]
+    /// Apply one ray tracer region cloud. `version` is the closure version stamped on it (None: the planner's own); returns False when it is newer than the closures received, for the caller to hold and retry.
+    #[pyo3(signature = (points, origin, radius, z_min, z_max, sensor_z, version = None))]
     #[allow(clippy::too_many_arguments)]
     fn update_region(
         &mut self,
@@ -194,12 +194,9 @@ impl MLSPlanner {
         z_min: f32,
         z_max: f32,
         sensor_z: f32,
-        stamp: Option<f64>,
-    ) -> PyResult<()> {
+        version: Option<u32>,
+    ) -> PyResult<bool> {
         let pts = extract_points(points)?;
-        if let Some(t) = stamp {
-            self.planner.set_clock(t);
-        }
         let bounds = RegionBounds {
             origin_x: origin.0,
             origin_y: origin.1,
@@ -210,8 +207,15 @@ impl MLSPlanner {
         .capped_at(sensor_z, self.config.max_overhead_m);
         let config = &self.config;
         let planner = &mut self.planner;
-        py.allow_threads(|| planner.update_region(&pts, &bounds, config));
-        Ok(())
+        let version = version.unwrap_or(planner.reform_version());
+        match py.allow_threads(|| planner.update_region_at_version(&pts, &bounds, version, config))
+        {
+            Ok(_) => Ok(true),
+            Err(VersionGap::Ahead) => Ok(false),
+            Err(VersionGap::Forgotten) => Err(PyValueError::new_err(format!(
+                "version {version} is older than the keyframe poses kept"
+            ))),
+        }
     }
 
     /// Apply one region of a seeded map. Its bounds are the premap's own, so
@@ -328,7 +332,8 @@ impl MLSPlanner {
         let config = &self.config;
         let planner = &mut self.planner;
         let waypoints = py.allow_threads(|| {
-            planner.rebin_for_plan(start, goal, config);
+            planner.reform_around(start, config);
+            planner.reform_around(goal, config);
             planner.plan(start, goal, config)
         })?;
         let mut flat: Vec<f32> = Vec::with_capacity(waypoints.len() * 3);
@@ -353,7 +358,7 @@ impl MLSPlanner {
     fn voxel_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let vs = self.config.voxel_size;
         let half = vs * 0.5;
-        let keys: Vec<(i32, i32, i32)> = self.planner.placed_voxels(vs).collect();
+        let keys: Vec<(i32, i32, i32)> = self.planner.voxel_keys().collect();
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(keys.len() * 3);
             for (kx, ky, kz) in keys {
@@ -371,69 +376,39 @@ impl MLSPlanner {
 
     fn clear(&mut self) {
         self.planner = Planner::new(self.config.worker_threads);
-        if self.voxel_times {
-            self.planner.track_voxel_times();
-        }
-        self.reform = ReformState::default();
     }
 
-    /// Take keyframes from raw pose_graph records; known keyframes keep the pose the map holds them at.
-    fn add_keyframes(&mut self, records: Vec<u8>) -> PyResult<usize> {
-        check_records(&records, 40)?;
-        let msg = record_cloud(&KEYFRAME_FIELDS, records);
-        let records = decode_pose_graph(&msg).map_err(|e| PyValueError::new_err(e.0))?;
-        self.reform.add_keyframes(&records);
-        Ok(self.reform.len())
+    /// Take an LCM-encoded GscPGO new_keyframe cloud; returns the keyframes known.
+    fn add_keyframes(&mut self, cloud: &[u8]) -> PyResult<usize> {
+        let records =
+            decode_new_keyframe(&decode_cloud(cloud).map_err(decode_err)?).map_err(decode_err)?;
+        self.planner.add_keyframes(&records, &self.config);
+        Ok(self.planner.keyframe_count())
     }
 
-    /// Warp the planner through raw loop_closure_event records, `held` points along; None when no keyframe moved past min_shift_m, else what the warp did and cost.
-    #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, thin_cell_m = 0.0, reach_sigmas = 3.0))]
-    #[allow(clippy::too_many_arguments)]
-    fn apply_loop_closure<'py>(
+    /// Apply an LCM-encoded GscPGO loop_closure_event cloud; None when it names no known keyframe, else its version, closing keyframes, whether it started a layer, and the layer count.
+    fn on_closure<'py>(
         &mut self,
         py: Python<'py>,
-        records: Vec<u8>,
-        held: Vec<(f32, f32, f32)>,
-        blend_sigma_m: f64,
-        blend_time_sigma_s: f64,
-        min_shift_m: f64,
-        thin_cell_m: f64,
-        reach_sigmas: f64,
+        cloud: &[u8],
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
-        check_records(&records, 68)?;
-        let msg = record_cloud(&loop_event_fields(), records);
-        let moved = decode_loop_closure_event(&msg).map_err(|e| PyValueError::new_err(e.0))?;
-        let params = ReformConfig {
-            blend_sigma_m,
-            blend_time_sigma_s,
-            min_shift_m,
-            thin_cell_m,
-            reach_sigmas,
-            enabled: true,
-        };
-        let started = std::time::Instant::now();
-        let Some(warp) = self.reform.closure(&moved, &params) else {
-            return Ok(None);
-        };
-        let build_ms = started.elapsed().as_secs_f64() * 1e3;
-        let mut held = held;
+        let records = decode_loop_closure_event(&decode_cloud(cloud).map_err(decode_err)?)
+            .map_err(decode_err)?;
         let config = &self.config;
         let planner = &mut self.planner;
-        let report = py.allow_threads(|| planner.apply_warp(&warp, &mut held, config));
+        let Some(outcome) = py.allow_threads(|| planner.on_closure(&records, config)) else {
+            return Ok(None);
+        };
         let out = PyDict::new(py);
-        out.set_item("build_ms", build_ms)?;
-        out.set_item("warp_ms", report.warp_ms)?;
-        out.set_item("move_ms", report.move_ms)?;
-        out.set_item("voxels_warped", report.voxels_warped)?;
-        out.set_item("cells_warped", report.cells_warped)?;
-        out.set_item("nodes", report.nodes)?;
-        out.set_item("keyframes", warp.keyframes())?;
-        out.set_item("keyframes_moved", warp.moved_keyframes())?;
-        out.set_item("keyframes_blended", warp.blended_keyframes())?;
-        out.set_item("sigma", warp.sigma())?;
-        out.set_item("time_sigma", warp.time_sigma())?;
-        out.set_item("held", held)?;
+        out.set_item("version", outcome.closure.version)?;
+        out.set_item("closing", outcome.closure.closing)?;
+        out.set_item("new_layer", outcome.new_layer)?;
+        out.set_item("layers", self.planner.layer_count())?;
         Ok(Some(out))
+    }
+
+    fn reform_version(&self) -> u32 {
+        self.planner.reform_version()
     }
 
     fn __repr__(&self) -> String {
@@ -458,10 +433,5 @@ fn dimos_mls_planner_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .with_writer(std::io::stderr)
         .try_init();
     m.add_class::<MLSPlanner>()?;
-    m.add("POSE_GRAPH_DTYPE", numpy_dtype(&KEYFRAME_FIELDS))?;
-    m.add(
-        "LOOP_CLOSURE_EVENT_DTYPE",
-        numpy_dtype(&loop_event_fields()),
-    )?;
     Ok(())
 }

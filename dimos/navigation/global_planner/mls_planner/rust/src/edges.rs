@@ -112,8 +112,8 @@ fn walk_live_chain(cells: &SurfaceCells, state: &DijkstraState, from: CellId) ->
 /// The corridor still runs from a's cell to b's cell. Slot recycling can hand
 /// an edge's node ids to unrelated cells, which this catches.
 fn endpoints_match(cells: &SurfaceCells, edge: &NodeEdge) -> bool {
-    let first = edge.chain.first().and_then(|&c| cells.id(c));
-    let last = edge.chain.last().and_then(|&c| cells.id(c));
+    let first = edge.chain.first().and_then(|&c| cells.resolve(c));
+    let last = edge.chain.last().and_then(|&c| cells.resolve(c));
     first == Some(edge.a) && last == Some(edge.b)
 }
 
@@ -126,9 +126,9 @@ fn corridor_cost(cells: &SurfaceCells, edge: &NodeEdge) -> Option<f32> {
         return None;
     }
     let mut total = 0.0f32;
-    let mut prev = cells.id(chain[0])?;
+    let mut prev = cells.resolve(chain[0])?;
     for &coord in &chain[1..] {
-        let cur = cells.id(coord)?;
+        let cur = cells.resolve(coord)?;
         let hop = cells.neighbors(prev).iter().find(|e| e.dest == cur)?.cost;
         if !hop.is_finite() {
             return None;
@@ -240,7 +240,7 @@ impl NodeEdges {
             Self::renumber_adj(&mut self.adj, moved.a, last, i);
             Self::renumber_adj(&mut self.adj, moved.b, last, i);
             for &c in &moved.chain {
-                if let Some(slot) = cells.id(c) {
+                if let Some(slot) = cells.resolve(c) {
                     if let Some(x) = self.through[slot as usize].iter_mut().find(|x| **x == last) {
                         *x = i;
                     }
@@ -376,7 +376,7 @@ impl NodeEdges {
         chain: &[VoxelKey],
     ) {
         for &c in chain {
-            if let Some(slot) = cells.id(c) {
+            if let Some(slot) = cells.resolve(c) {
                 through[slot as usize].push(i);
             }
         }
@@ -391,7 +391,7 @@ impl NodeEdges {
         chain: &[VoxelKey],
     ) {
         for &c in chain {
-            if let Some(slot) = cells.id(c) {
+            if let Some(slot) = cells.resolve(c) {
                 let list = &mut through[slot as usize];
                 if let Some(p) = list.iter().position(|&x| x == i) {
                     list.swap_remove(p);

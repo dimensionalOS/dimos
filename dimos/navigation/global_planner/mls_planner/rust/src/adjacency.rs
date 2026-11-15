@@ -19,6 +19,7 @@
 use ahash::AHashMap;
 use rayon::prelude::*;
 
+use crate::lazy::Version;
 use crate::terrain::{climb, surface_gap, within_step, Gap, Slope, Surface, Terrain};
 use crate::voxel::VoxelKey;
 
@@ -44,7 +45,7 @@ pub struct Edge {
 }
 
 /// Coordinate to cell id, sharded by hash so a full build indexes cells in parallel and lookups touch one shard.
-struct CoordIndex {
+pub struct CoordIndex {
     hasher: ahash::RandomState,
     shards: Vec<AHashMap<VoxelKey, CellId>>,
 }
@@ -67,29 +68,29 @@ impl CoordIndex {
     }
 
     #[inline]
-    fn get(&self, k: &VoxelKey) -> Option<CellId> {
+    pub fn get(&self, k: &VoxelKey) -> Option<CellId> {
         self.shards[self.shard(k)].get(k).copied()
     }
 
-    fn insert(&mut self, k: VoxelKey, id: CellId) {
+    pub fn insert(&mut self, k: VoxelKey, id: CellId) {
         let s = self.shard(&k);
         self.shards[s].insert(k, id);
     }
 
-    fn remove(&mut self, k: &VoxelKey) -> Option<CellId> {
+    pub fn remove(&mut self, k: &VoxelKey) -> Option<CellId> {
         let s = self.shard(k);
         self.shards[s].remove(k)
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.shards.iter().map(|s| s.len()).sum()
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.shards.iter().all(|s| s.is_empty())
     }
 
-    fn keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
+    pub fn keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
         self.shards.iter().flat_map(|s| s.keys().copied())
     }
 
@@ -127,15 +128,20 @@ pub struct SurfaceCells {
     z: Vec<f32>,
     /// Each cell's surface slope when a plane gave its height.
     slope: Vec<Option<Slope>>,
-    /// Per slot: where a warp moved the cell's point off its key's surface point, as cells outside the local area move un-re-keyed.
-    offset: Vec<[f32; 3]>,
     /// Every cell's outgoing edges in one buffer at its span; a grown list moves to the end and the buffer compacts once stranded edges outweigh live ones.
     flat: Vec<Edge>,
     /// Per slot: (start, len) into `flat`.
     spans: Vec<(u32, u32)>,
     /// Edges in `flat` no span covers.
     stranded: usize,
+    /// The current layer's cells by key; a stale layer's cells keep their slot, edges and key but leave this index.
     by_coord: CoordIndex,
+    /// Per slot: the layer the cell's key is in.
+    layer: Vec<Version>,
+    /// The layer inserts land in.
+    current_layer: Version,
+    /// The stale layers' cells by key, each in its own version's frame.
+    stale: std::collections::BTreeMap<Version, CoordIndex>,
     free: Vec<CellId>,
     /// Whether every id was appended in coordinate order, as a full build does; a reused slot breaks it.
     coord_ordered: bool,
@@ -182,7 +188,9 @@ impl SurfaceCells {
         self.coord.clear();
         self.z.clear();
         self.slope.clear();
-        self.offset.clear();
+        self.layer.clear();
+        self.current_layer = 0;
+        self.stale.clear();
         self.by_coord.clear();
         self.free.clear();
         self.coord_ordered = true;
@@ -244,7 +252,7 @@ impl SurfaceCells {
             self.coord[free_id as usize] = k;
             self.z[free_id as usize] = z;
             self.slope[free_id as usize] = slope;
-            self.offset[free_id as usize] = [0.0; 3];
+            self.layer[free_id as usize] = self.current_layer;
             self.coord_ordered = false;
             free_id
         } else {
@@ -259,7 +267,7 @@ impl SurfaceCells {
             self.coord.push(k);
             self.z.push(z);
             self.slope.push(slope);
-            self.offset.push([0.0; 3]);
+            self.layer.push(self.current_layer);
             self.spans.push((self.flat.len() as u32, 0));
             id
         };
@@ -267,9 +275,52 @@ impl SurfaceCells {
         id
     }
 
-    /// Remove a cell, tombstoning its slot and dropping its edges.
+    /// Remove a current-layer cell, tombstoning its slot and dropping its edges.
     pub fn remove(&mut self, k: VoxelKey) -> Option<CellId> {
         let id = self.by_coord.remove(&k)?;
+        self.drop_slot(id);
+        Some(id)
+    }
+
+    /// Remove a cell of any layer by id; a stale one must already be out of its layer's index.
+    pub fn remove_id(&mut self, id: CellId) {
+        let (layer, k) = (self.layer[id as usize], self.coord[id as usize]);
+        if layer == self.current_layer {
+            if self.by_coord.get(&k) == Some(id) {
+                self.by_coord.remove(&k);
+            }
+        } else {
+            self.leave_stale(id);
+        }
+        self.drop_slot(id);
+    }
+
+    /// Take a stale cell out of its layer's index, dropping an emptied layer.
+    fn leave_stale(&mut self, id: CellId) {
+        let (layer, k) = (self.layer[id as usize], self.coord[id as usize]);
+        if let Some(index) = self.stale.get_mut(&layer) {
+            if index.get(&k) == Some(id) {
+                index.remove(&k);
+            }
+            if index.is_empty() {
+                self.stale.remove(&layer);
+            }
+        }
+    }
+
+    /// A cell by key in any layer: the current one first, then the stale ones newest first. For stored corridors, whose hops are checked.
+    pub fn resolve(&self, k: VoxelKey) -> Option<CellId> {
+        self.by_coord
+            .get(&k)
+            .or_else(|| self.stale.values().rev().find_map(|index| index.get(&k)))
+    }
+
+    /// A stale layer's cell by key.
+    pub fn stale_id(&self, layer: Version, k: VoxelKey) -> Option<CellId> {
+        self.stale.get(&layer)?.get(&k)
+    }
+
+    fn drop_slot(&mut self, id: CellId) {
         let outbound: Vec<CellId> = self.neighbors(id).iter().map(|e| e.dest).collect();
         self.stranded += self.spans[id as usize].1 as usize;
         self.spans[id as usize].1 = 0;
@@ -288,9 +339,62 @@ impl SurfaceCells {
             self.spans[dest as usize].1 = kept as u32;
         }
         self.coord[id as usize] = TOMBSTONE;
-        self.offset[id as usize] = [0.0; 3];
         self.free.push(id);
-        Some(id)
+    }
+
+    /// Whether an edge from `a` to `b` is one key adjacency would not rebuild: across layers, or not between 4-neighbor columns.
+    pub fn stretched(&self, a: CellId, b: CellId) -> bool {
+        if !self.is_live(b) {
+            return false;
+        }
+        if self.layer(a) != self.layer(b) {
+            return true;
+        }
+        let (ka, kb) = (self.coord(a), self.coord(b));
+        (ka.0 - kb.0).abs() + (ka.1 - kb.1).abs() != 1
+    }
+
+    /// The layer a cell's key is in.
+    #[inline]
+    pub fn layer(&self, id: CellId) -> Version {
+        self.layer[id as usize]
+    }
+
+    pub fn current_layer(&self) -> Version {
+        self.current_layer
+    }
+
+    /// Start a new current layer; the old one's cells keep their ids, edges and keys, indexed as stale.
+    pub fn begin_layer(&mut self, layer: Version) {
+        let old = std::mem::take(&mut self.by_coord);
+        if !old.is_empty() {
+            self.stale.insert(self.current_layer, old);
+        }
+        self.current_layer = layer;
+    }
+
+    /// Move a cell into the current layer at a free key, keeping its id and edges.
+    pub fn move_to_layer(&mut self, id: CellId, to: VoxelKey) {
+        debug_assert!(self.by_coord.get(&to).is_none(), "move into a taken key");
+        if self.layer[id as usize] != self.current_layer {
+            self.leave_stale(id);
+        } else {
+            self.by_coord.remove(&self.coord[id as usize]);
+        }
+        self.coord[id as usize] = to;
+        self.layer[id as usize] = self.current_layer;
+        self.by_coord.insert(to, id);
+        self.coord_ordered = false;
+    }
+
+    /// Add an edge unless `src` already has one to `dest`.
+    pub fn link(&mut self, src: CellId, edge: Edge) {
+        if self.neighbors(src).iter().any(|e| e.dest == edge.dest) {
+            return;
+        }
+        let mut edges = self.neighbors(src).to_vec();
+        edges.push(edge);
+        self.set_edges(src, &edges);
     }
 
     /// Coord to cell ID.
@@ -342,57 +446,6 @@ impl SurfaceCells {
             z: &self.z,
             slope: &self.slope,
             by_coord: &self.by_coord,
-        }
-    }
-
-    /// How far a warp moved a cell's point off its key's surface point.
-    #[inline]
-    pub fn offset(&self, id: CellId) -> [f32; 3] {
-        self.offset[id as usize]
-    }
-
-    /// The key a cell's point sits in now.
-    pub fn placed(&self, id: CellId, voxel_size: f32) -> VoxelKey {
-        let (ix, iy, iz) = self.coord(id);
-        let o = self.offset(id);
-        crate::voxel::voxelize(
-            (
-                (ix as f32 + 0.5) * voxel_size + o[0],
-                (iy as f32 + 0.5) * voxel_size + o[1],
-                (iz as f32 + 0.5) * voxel_size + o[2],
-            ),
-            voxel_size,
-        )
-    }
-
-    /// Move cells' points by `deltas`, keeping their keys.
-    pub fn shift(&mut self, ids: &[CellId], deltas: &[[f32; 3]]) {
-        for (&id, d) in ids.iter().zip(deltas) {
-            let o = &mut self.offset[id as usize];
-            for a in 0..3 {
-                o[a] += d[a];
-            }
-        }
-    }
-
-    /// Re-key cells, each to a free key, keeping their ids and edges; the offset left is what the new key does not account for.
-    pub fn rekey(&mut self, moves: &[(CellId, VoxelKey)], voxel_size: f32) {
-        for &(id, _) in moves {
-            self.by_coord.remove(&self.coord[id as usize]);
-        }
-        for &(id, to) in moves {
-            let from = self.coord[id as usize];
-            let o = &mut self.offset[id as usize];
-            o[0] -= (to.0 - from.0) as f32 * voxel_size;
-            o[1] -= (to.1 - from.1) as f32 * voxel_size;
-            o[2] -= (to.2 - from.2) as f32 * voxel_size;
-            self.coord[id as usize] = to;
-            let previous = self.by_coord.get(&to);
-            debug_assert!(previous.is_none(), "rekey into a taken key");
-            self.by_coord.insert(to, id);
-        }
-        if !moves.is_empty() {
-            self.coord_ordered = false;
         }
     }
 
@@ -575,7 +628,7 @@ pub fn build_surface_cells(
         .map(|&k| terrain.surface(k))
         .collect();
     (cells.z, cells.slope) = surfaces.into_iter().unzip();
-    cells.offset.resize(n, [0.0; 3]);
+    cells.layer.resize(n, cells.current_layer);
     cells.by_coord.fill(&cells.coord);
 
     // Each block of ids builds its edges in parallel, then the blocks are laid out in id order.
@@ -646,6 +699,14 @@ pub fn rebuild_edges_around(
         .map(|&id| {
             let mut edges = Vec::new();
             edges_of(&view, surface_lookup, terrain, id, &mut edges);
+            // Links to another layer, or past the 4-neighborhood a reform stretched them across, are kept as they are.
+            edges.extend(
+                cells
+                    .neighbors(id)
+                    .iter()
+                    .filter(|e| cells.stretched(id, e.dest))
+                    .copied(),
+            );
             (id, edges)
         })
         .collect();

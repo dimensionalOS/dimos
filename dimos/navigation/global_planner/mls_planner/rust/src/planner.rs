@@ -102,6 +102,9 @@ fn best_iz_in_column(
     Some((ix, iy, iz))
 }
 
+/// Where a stale layer's cell is now, None for a current-layer cell.
+pub type StalePoint<'a> = &'a dyn Fn(CellId) -> Option<(f32, f32, f32)>;
+
 /// Plan path from start pose to goal pose using the node graph.
 /// Returns the waypoints and the string-pulled cell path, or none if either
 /// pose can't be snapped to surface or there is no valid path.
@@ -110,6 +113,7 @@ pub fn plan(
     start_pose: (f32, f32, f32),
     goal_pose: (f32, f32, f32),
     config: &Config,
+    stale_point: StalePoint<'_>,
 ) -> Option<PlannedPath> {
     let voxel_size = config.voxel_size;
     let z_tolerance_m = config.robot_height;
@@ -198,10 +202,40 @@ pub fn plan(
         &goal_segment
     };
     let cells = assemble_cells(plg, &node_seq, &lead_in, goal_segment);
-    let cells = string_pull(plg, &cells, &limits);
-    let waypoints = cells_to_waypoints(plg, &cells, start_pose, goal_pose, voxel_size);
-    let waypoints =
-        crate::smoother::smooth_path(plg, waypoints, &limits, config.step_penalty_weight);
+    // Pulling and smoothing read the current layer's grid, so runs through stale cells keep their cells' points.
+    let current = |id: CellId| plg.cells.layer(id) == plg.cells.current_layer();
+    let mut pulled: Vec<CellId> = Vec::with_capacity(cells.len());
+    for run in cells.chunk_by(|&a, &b| current(a) == current(b)) {
+        if current(run[0]) {
+            pulled.extend(string_pull(plg, run, &limits));
+        } else {
+            pulled.extend_from_slice(run);
+        }
+    }
+    let cells = pulled;
+    let mut points: Vec<((f32, f32, f32), bool)> = Vec::with_capacity(cells.len() + 2);
+    points.push((start_pose, true));
+    for &id in &cells {
+        match stale_point(id) {
+            Some(p) => points.push((p, false)),
+            None => points.push((plg.cells.point(id, voxel_size), true)),
+        }
+    }
+    points.push((goal_pose, true));
+    let mut waypoints: Vec<(f32, f32, f32)> = Vec::with_capacity(points.len());
+    for run in points.chunk_by(|a, b| a.1 == b.1) {
+        let run_points: Vec<(f32, f32, f32)> = run.iter().map(|&(p, _)| p).collect();
+        if run[0].1 {
+            waypoints.extend(crate::smoother::smooth_path(
+                plg,
+                run_points,
+                &limits,
+                config.step_penalty_weight,
+            ));
+        } else {
+            waypoints.extend(run_points);
+        }
+    }
     let path_cells: Vec<VoxelKey> = cells.iter().map(|&id| plg.cells.coord(id)).collect();
     Some((waypoints, path_cells))
 }
@@ -652,7 +686,7 @@ fn assemble_cells(
 
         // The stored corridor runs a to b. Dead cells are skipped: the update
         // safety walk drops broken corridors, so gaps here are rare races.
-        let resolve = |coord: &VoxelKey| plg.cells.id(*coord);
+        let resolve = |coord: &VoxelKey| plg.cells.resolve(*coord);
         if a == edge.a {
             for c in edge.chain.iter().filter_map(resolve) {
                 push_cell(&mut cells, c);
@@ -669,24 +703,6 @@ fn assemble_cells(
     }
 
     cells
-}
-
-/// Convert the cell path to world waypoints, with the raw start and goal poses
-/// as the endpoints.
-fn cells_to_waypoints(
-    plg: &PlannerGraph,
-    cells: &[CellId],
-    start_pose: (f32, f32, f32),
-    goal_pose: (f32, f32, f32),
-    voxel_size: f32,
-) -> Vec<(f32, f32, f32)> {
-    let mut waypoints: Vec<(f32, f32, f32)> = Vec::with_capacity(cells.len() + 2);
-    waypoints.push(start_pose);
-    for &id in cells {
-        waypoints.push(plg.cells.point(id, voxel_size));
-    }
-    waypoints.push(goal_pose);
-    waypoints
 }
 
 /// Clearance and step limits the smoother holds the path to.
@@ -842,7 +858,7 @@ mod tests {
         goal: (f32, f32, f32),
     ) -> Option<Vec<(f32, f32, f32)>> {
         let config = truncate_config();
-        plan(plg, start, goal, &config).map(|(wp, _)| wp)
+        plan(plg, start, goal, &config, &|_| None).map(|(wp, _)| wp)
     }
 
     fn surface_graph(cells: &[VoxelKey]) -> PlannerGraph {

@@ -167,26 +167,43 @@ impl Nodes {
         }
     }
 
-    /// Re-bin every node by its cell's key, after cells were re-keyed.
-    pub(crate) fn rebin(&mut self, cells: &SurfaceCells, params: &PlacementParams) {
-        self.bins.clear();
-        for n in &self.list {
-            if n.cell_id != NO_CELL {
-                let bin = bin_of(cells.coord(n.cell_id), params);
-                self.bins.entry(bin).or_default().push(n.cell_id);
-            }
+    /// Re-file the node on a cell that moved from `old` to its current key, at the cell's new point.
+    pub(crate) fn rekey_cell(
+        &mut self,
+        cells: &SurfaceCells,
+        params: &PlacementParams,
+        cell: CellId,
+        old: VoxelKey,
+    ) {
+        if let Some(i) = self.node_at(cell) {
+            self.unindex(params, cell, old);
+            self.list[i].pos = cells.point(cell, params.voxel_size);
+            self.index(cells, params, i);
         }
     }
 
-    /// Set each node's point to its cell's, after a warp moved the cells.
-    pub(crate) fn follow_cells(&mut self, cells: &SurfaceCells, voxel_size: f32) {
-        for n in &mut self.list {
-            if n.cell_id != NO_CELL {
-                let (x, y, z) = cells.point(n.cell_id, voxel_size);
-                let o = cells.offset(n.cell_id);
-                n.pos = (x + o[0], y + o[1], z + o[2]);
-            }
+    /// Hand the node on `from` (keyed `from_key`) to `into`, or drop it when `into` holds one. Returns the node id given up.
+    pub(crate) fn transfer(
+        &mut self,
+        cells: &SurfaceCells,
+        params: &PlacementParams,
+        from: CellId,
+        from_key: VoxelKey,
+        into: CellId,
+    ) -> Option<NodeId> {
+        let i = self.node_at(from)?;
+        self.unindex(params, from, from_key);
+        if self.has(into) {
+            self.list[i].cell_id = NO_CELL;
+            self.swap_remove(cells, params, i);
+        } else {
+            self.list[i] = NodeData {
+                cell_id: into,
+                pos: cells.point(into, params.voxel_size),
+            };
+            self.index(cells, params, i);
         }
+        Some(from)
     }
 
     /// Move the node on `cell`, if any, to the cell's surface point.

@@ -616,8 +616,6 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "dimos-module",
- "dimos-reform",
- "fast-reform",
  "lcm-msgs",
  "rayon",
  "serde",
@@ -669,19 +667,6 @@ dependencies = [
  "quote",
  "syn 3.0.5",
  "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "dimos-reform"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08#8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08"
-dependencies = [
- "ahash",
- "fast-reform",
- "lcm-msgs",
- "rayon",
- "serde",
- "validator",
 ]
 
 [[package]]
@@ -768,15 +753,6 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
-]
-
-[[package]]
-name = "fast-reform"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86745d8d58bfe3e9a731ce1b7426f13f8ab0c96399ebe261a88973ac626eb8cb"
-dependencies = [
- "rayon",
 ]
 
 [[package]]

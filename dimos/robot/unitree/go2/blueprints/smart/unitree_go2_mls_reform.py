@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Go2 GSC PGO feeding the ray tracer and MLS planner, which warp their map and graph in place through each loop closure."""
+"""Go2 GSC PGO feeding the ray tracer, which warps its map through each loop closure, and the MLS planner, which reforms its graph lazily where it is touched."""
 
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.reform import ReformConfig
-from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
+    MLSPlannerNative,
+    MLSReformConfig,
+)
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import GscPGO, PGOConfig
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.robot.unitree.go2.nav_3d_config import mls_planner_config, ray_tracing_config
@@ -41,7 +44,7 @@ unitree_go2_mls_reform = autoconnect(
     MLSPlannerNative.blueprint(
         **mls_planner_config.model_dump(exclude_unset=True),
         world_frame=map_frame,
-        reform=ReformConfig(enabled=True),
+        reform=MLSReformConfig(enabled=True),
         require_full_route=True,
         viz_publish_hz=2.0,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
