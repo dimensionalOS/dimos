@@ -140,7 +140,7 @@ fn odom_from_pose(
     OdomRow {
         ts,
         translation,
-        rotation: mat3::mat_from_quat(&[qw, qx, qy, qz]),
+        rotation: mat3::rotation_from_quat(&[qw, qx, qy, qz]),
         quaternion_xyzw,
         frame_id,
         child_frame_id,
