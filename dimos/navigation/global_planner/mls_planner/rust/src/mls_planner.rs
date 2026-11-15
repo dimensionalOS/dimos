@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ahash::AHashMap;
+use crate::fixed_hash::AHashMap;
 use dimos_module::{debug_throttled, native_config, worker_pool};
 use rayon::prelude::*;
 use validator::{Validate, ValidationError};
@@ -1034,7 +1034,7 @@ impl Planner {
         voxel_size: f32,
     ) -> VoxelEdits {
         let mut voxel_edits = VoxelEdits::default();
-        let mut changed: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
+        let mut changed: AHashMap<(i32, i32), Vec<i32>> = AHashMap::default();
         for edit in edits {
             let (ix, iy) = edit.col;
             let was_empty = self.by_col.get(edit.col).is_none();

@@ -20,7 +20,7 @@
 
 use std::collections::hash_map::Entry;
 
-use ahash::{AHashMap, AHashSet};
+use crate::fixed_hash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 use smallvec::SmallVec;
 
@@ -170,26 +170,26 @@ impl NodeEdges {
         }
     }
 
-    /// Point corridors through a merged cell at the cell it merged into, which then lists them.
+    /// Point corridors through a merged cell at the cell it merged into, which then lists them once per time they
+    /// pass it (a corridor that already passed it lists it twice, as a reindex would).
     pub fn redirect_cells(&mut self, merged: &[(CellId, CellId)]) {
         for &(from, into) in merged {
             let Some(list) = self.through.get_mut(from as usize).map(std::mem::take) else {
                 continue;
             };
-            for &i in &list {
-                for c in &mut self.edges[i as usize].chain {
-                    if *c == from {
-                        *c = into;
-                    }
-                }
-            }
             if self.through.len() <= into as usize {
                 self.through.resize_with(into as usize + 1, SmallVec::new);
             }
             for i in list {
-                if !self.through[into as usize].contains(&i) {
-                    self.through[into as usize].push(i);
+                let mut chain = std::mem::take(&mut self.edges[i as usize].chain);
+                Self::unindex_chain(&mut self.through, i, &chain);
+                for c in &mut chain {
+                    if *c == from {
+                        *c = into;
+                    }
                 }
+                Self::index_chain(&mut self.through, i, &chain);
+                self.edges[i as usize].chain = chain;
             }
         }
     }
@@ -586,7 +586,7 @@ fn owned_cells(
     let owned = |c: CellId| {
         state.dist[c as usize].is_finite() && owners.contains(&state.source[c as usize])
     };
-    let mut seen: AHashSet<CellId> = AHashSet::new();
+    let mut seen: AHashSet<CellId> = AHashSet::default();
     let mut stack: Vec<CellId> = Vec::new();
     for r in roots {
         // The chain a failed walk followed, as far as it stays on live cells.
@@ -692,7 +692,7 @@ fn flood_region(
     out: &mut AHashSet<CellId>,
 ) {
     let owned = |c: CellId| state.source[c as usize] == node && state.dist[c as usize].is_finite();
-    let mut seen: AHashSet<CellId> = AHashSet::new();
+    let mut seen: AHashSet<CellId> = AHashSet::default();
     let mut stack: Vec<CellId> = vec![node];
     seen.insert(node);
     while let Some(u) = stack.pop() {
@@ -715,7 +715,7 @@ fn boundary_edge_map(
 ) -> AHashMap<(NodeId, NodeId), NodeEdge> {
     scan.par_iter()
         .fold(
-            AHashMap::<(NodeId, NodeId), NodeEdge>::new,
+            AHashMap::<(NodeId, NodeId), NodeEdge>::default,
             |mut local, &u| {
                 let du = state.dist[u as usize];
                 if !du.is_finite() {
@@ -759,7 +759,7 @@ fn boundary_edge_map(
                 local
             },
         )
-        .reduce(AHashMap::new, |mut a, b| {
+        .reduce(AHashMap::default, |mut a, b| {
             merge_min(&mut a, b);
             a
         })

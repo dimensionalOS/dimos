@@ -665,6 +665,65 @@ fn second_pass_crossing_the_old_run(budget: u32) {
     assert!(home.is_some(), "a path from A back to the start");
 }
 
+/// Toy 2 on `threads` worker threads, migrating a little per update: the loop driven, closed and crossed, planning
+/// after every scan. Returns every plan's waypoints, then the nodes and node edges as they end.
+fn loop_run_fingerprint(threads: u32) -> String {
+    let mut toy = Toy::new(loop_floor);
+    toy.cfg.worker_threads = threads;
+    toy.cfg.reform.migrate_per_update = 60;
+    toy.planner = Planner::new(threads);
+    let mut out = String::new();
+    let mut plan = |toy: &mut Toy, out: &mut String| {
+        let (start, goal) = ((1.0, 1.0, 0.1), (10.0, 9.0, 0.1));
+        let waypoints = match toy.planner.plan_or_truncate(start, goal, &toy.cfg) {
+            Plan::Full(w) | Plan::Truncated(w) => w,
+            Plan::Blocked => Vec::new(),
+        };
+        writeln!(out, "{waypoints:?}").unwrap();
+    };
+    let path = loop_path();
+    for (k, &truth) in path.iter().enumerate() {
+        let t = truth.translation;
+        toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
+        plan(&mut toy, &mut out);
+    }
+    assert!(toy.close_to_truth(&[(0, path.len() - 1)]).new_layer);
+    let across = (1..6).map(|i| pose(10.0, 1.0 + 2.0 * i as f64, std::f64::consts::FRAC_PI_2));
+    for truth in (1..5)
+        .map(|i| pose(1.0 + 2.0 * i as f64, 1.0, 0.0))
+        .chain(across)
+    {
+        let k = toy.keyframes.len();
+        let t = truth.translation;
+        toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
+        plan(&mut toy, &mut out);
+    }
+    for node in toy.planner.graph.nodes.iter() {
+        writeln!(out, "node {} {:?}", node.cell_id, node.pos).unwrap();
+    }
+    for e in toy.planner.graph.node_edges.edges() {
+        writeln!(
+            out,
+            "edge {} {} {:?} {} {} {:?}",
+            e.a, e.b, e.cost, e.boundary_u, e.boundary_v, e.chain
+        )
+        .unwrap();
+    }
+    out
+}
+
+#[test]
+fn the_same_scans_and_closure_give_the_same_routes_and_graph_twice() {
+    let first = loop_run_fingerprint(4);
+    assert!(first.contains("node "), "the run places nodes");
+    assert_eq!(first, loop_run_fingerprint(4));
+}
+
+#[test]
+fn one_worker_thread_gives_the_same_routes_and_graph_as_four() {
+    assert_eq!(loop_run_fingerprint(1), loop_run_fingerprint(4));
+}
+
 #[test]
 fn a_box_far_from_its_keyframe_finds_what_that_keyframe_saw() {
     let floor = |x: f32, y: f32| {

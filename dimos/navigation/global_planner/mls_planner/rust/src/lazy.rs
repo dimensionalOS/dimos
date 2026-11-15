@@ -27,6 +27,7 @@ use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 
 use crate::adjacency::{CellId, SurfaceLookup};
 use crate::columns::ColumnIz;
+use crate::fixed_hash::AHashSet;
 use crate::sharded_map::ShardedMap;
 use crate::terrain::{PlaneMap, SurfacePlane};
 use crate::voxel::VoxelKey;
@@ -890,9 +891,9 @@ impl Layers {
 
     /// lookup over each of `rects`, the union once, ascending.
     pub fn lookup_all(&self, table: &KeyframeTable, rects: &[Rect]) -> Vec<(Version, (i32, i32))> {
-        let mut tiles: ahash::AHashSet<(i32, i32)> = ahash::AHashSet::new();
+        let mut tiles: AHashSet<(i32, i32)> = AHashSet::default();
         let pad = self.params.tile_pad;
-        let add_square = |tiles: &mut ahash::AHashSet<(i32, i32)>, corners: &[[f64; 3]; 4]| {
+        let add_square = |tiles: &mut AHashSet<(i32, i32)>, corners: &[[f64; 3]; 4]| {
             let (mut lo, mut hi) = ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN));
             for c in corners {
                 let t = self.tile_of(c[0], c[1]);

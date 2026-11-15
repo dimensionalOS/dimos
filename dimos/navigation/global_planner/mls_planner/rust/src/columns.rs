@@ -16,7 +16,7 @@
 //! column lookup is one hash probe per tile and an array index, and a scan
 //! over a region walks contiguous memory.
 
-use ahash::AHashMap;
+use crate::fixed_hash::AHashMap;
 use rayon::prelude::*;
 use smallvec::SmallVec;
 
