@@ -175,6 +175,18 @@ pub fn mat_from_quat(q: &[f64; 4]) -> Mat3 {
     ]
 }
 
+/// Quaternion `[w, x, y, z]` of any length -> rotation matrix (normalized first, so the matrix is orthonormal).
+pub fn rotation_from_quat(q: &[f64; 4]) -> Mat3 {
+    let norm = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    mat_from_quat(&q.map(|v| v / norm))
+}
+
+/// Turn angle of rotation `r` (rad), from both its trace and its skew part, so it reads 0 for R * R^T even when R is slightly non-orthonormal.
+pub fn rotation_angle(r: &Mat3) -> f64 {
+    let skew = [r[2][1] - r[1][2], r[0][2] - r[2][0], r[1][0] - r[0][1]];
+    (norm(&skew) / 2.0).atan2((r[0][0] + r[1][1] + r[2][2] - 1.0) / 2.0)
+}
+
 /// Geodesic rotation angle between two orientations, in radians (Eigen `angularDistance`).
 pub fn angular_distance(r1: &Mat3, r2: &Mat3) -> f64 {
     let q1 = quat_from_mat(r1);
@@ -263,4 +275,44 @@ pub fn jacobi_eigen<const N: usize>(mut a: [[f64; N]; N]) -> ([f64; N], [[f64; N
         }
     }
     (values, vectors)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// A turn quaternion with |q| = 1 - 1.3e-6, as odometry quaternions arrive.
+    pub(crate) fn short_quat() -> [f64; 4] {
+        let q = [0.9, 0.3, -0.2, 0.1];
+        let scale = (1.0 - 1.3e-6) / q.iter().map(|v| v * v).sum::<f64>().sqrt();
+        q.map(|v| v * scale)
+    }
+
+    #[test]
+    fn rotation_from_quat_is_orthonormal_for_a_non_unit_quaternion() {
+        let r = rotation_from_quat(&short_quat());
+        let rrt = mat_mul(&r, &transpose(&r));
+        for (i, row) in rrt.iter().enumerate() {
+            for (j, v) in row.iter().enumerate() {
+                assert!((v - if i == j { 1.0 } else { 0.0 }).abs() < 1e-14, "R R^T [{i}][{j}] = {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn rotation_angle_reads_zero_for_a_non_orthonormal_matrix_against_itself() {
+        let r = mat_from_quat(&short_quat());
+        let same = mat_mul(&r, &transpose(&r));
+        // the trace alone reads a phantom turn here
+        let cos = ((same[0][0] + same[1][1] + same[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
+        assert!(cos.acos() > 1e-3);
+        assert!(rotation_angle(&same) < 1e-12);
+    }
+
+    #[test]
+    fn rotation_angle_matches_known_turns() {
+        for angle in [1e-6, 0.004, 0.5, 2.0, 3.1] {
+            assert!((rotation_angle(&rot_z(angle)) - angle).abs() < 1e-12, "{angle}");
+        }
+    }
 }

@@ -581,7 +581,7 @@ impl GscPgoModule {
             }));
         let norm = (qw * qw + qx * qx + qy * qy + qz * qz).sqrt();
         let seen: Mat3 = if norm > 0.0 {
-            mat3::mat_from_quat(&[qw / norm, qx / norm, qy / norm, qz / norm])
+            mat3::rotation_from_quat(&[qw, qx, qy, qz])
         } else {
             for (i, row) in information.iter_mut().enumerate() {
                 for (j, entry) in row.iter_mut().enumerate() {
