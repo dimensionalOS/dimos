@@ -945,6 +945,8 @@ pub struct GscPgo {
     pub(crate) reseen_previous: std::collections::HashSet<[i64; 3]>,
     /// `auto_aggregate_cloud_size`: the scans since the last keyframe, in the odometry frame, voxelized.
     pub(crate) gathered: PointCloud,
+    /// The corners of each scan's box since the last keyframe, in the odometry frame (the next keyframe's `scan_box`).
+    pub(crate) scan_box_corners: Vec<Vec3>,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Arc<Vec<Mat3>>)>,
     /// The reduced pose graph (`graph_simplify`).
@@ -1931,6 +1933,9 @@ impl GscPgo {
             self.recent_motion
                 .push_back((pose.second, pose.translation));
         }
+        if let Some(cloud) = &cloud_with_pose.cloud {
+            self.note_scan_box(cloud, &cloud_with_pose.pose);
+        }
         let due = self.is_key_pose(pose);
         // re-sent points are matched where the odometry as given places them
         let cloud = if self.config.drop_reseen_points {
@@ -1989,6 +1994,38 @@ impl GscPgo {
         }
         self.timing.pressure_s += checked.elapsed().as_secs_f64();
         keyframe
+    }
+    /// Add the corners of the scan's body-frame box, placed where the scan was taken, to the next keyframe's box.
+    fn note_scan_box(&mut self, cloud: &PointCloud, pose: &PoseWithTime) {
+        let Some(first) = cloud.first() else {
+            return;
+        };
+        let (mut low, mut high) = (*first, *first);
+        for p in cloud {
+            for axis in 0..3 {
+                low[axis] = low[axis].min(p[axis]);
+                high[axis] = high[axis].max(p[axis]);
+            }
+        }
+        for corner in 0..8 {
+            let pick = |axis: usize| if corner >> axis & 1 == 0 { low[axis] } else { high[axis] } as f64;
+            let body = [pick(0), pick(1), pick(2)];
+            self.scan_box_corners
+                .push(mat3::add(&mat3::mat_vec(&pose.rotation, &body), &pose.translation));
+        }
+    }
+    /// The box, in the keyframe frame `pose`, around the scan corners noted since the last keyframe (taken).
+    fn take_scan_box(&mut self, pose: &PoseWithTime) -> [f32; 6] {
+        let to_keyframe = mat3::transpose(&pose.rotation);
+        let mut scan_box = crate::store::EMPTY_BOX;
+        for corner in std::mem::take(&mut self.scan_box_corners) {
+            let local = mat3::mat_vec(&to_keyframe, &mat3::sub(&corner, &pose.translation));
+            for axis in 0..3 {
+                scan_box[axis] = scan_box[axis].min(local[axis] as f32);
+                scan_box[axis + 3] = scan_box[axis + 3].max(local[axis] as f32);
+            }
+        }
+        scan_box
     }
     /// Gather the scan; a due keyframe is made once gathered points reach `auto_aggregate_cloud_size` (cloud in its body frame), else it waits.
     fn gather(
@@ -2475,13 +2512,11 @@ impl GscPgo {
         self.scan_context_ring_keys
             .push(similarity_discovery::make_ring_key(&descriptor));
         // placed by the current correction (`KeyFrames::global` rides it on the odometry pose when read)
-        self.key_poses.push(crate::store::KeyFixed::new(
-            pose.rotation,
-            pose.translation,
-            pose.second,
-            stored,
-            Arc::new(descriptor),
-        ));
+        let scan_box = self.take_scan_box(pose);
+        self.key_poses.push(
+            crate::store::KeyFixed::new(pose.rotation, pose.translation, pose.second, stored, Arc::new(descriptor))
+                .with_scan_box(scan_box),
+        );
         self.simplify_step();
     }
 

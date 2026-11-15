@@ -145,6 +145,40 @@ const DELTA_FIELDS: [(&str, u8); 7] = [
     ("dqw", F32),
 ];
 
+const BOX_FIELDS: [(&str, u8); 6] = [
+    ("min_x", F32),
+    ("min_y", F32),
+    ("min_z", F32),
+    ("max_x", F32),
+    ("max_y", F32),
+    ("max_z", F32),
+];
+const CLOSURE_ID_FIELDS: [(&str, u8); 2] = [
+    ("version", PointField::UINT32 as u8),
+    ("closed_with", PointField::UINT32 as u8),
+];
+/// `closed_with` for a keyframe no closure since the previous loop_closure_event touched.
+pub const CLOSED_WITH_NONE: u32 = u32::MAX;
+
+/// new_keyframe as packed records: keyframes `range` at their raw odometry pose, each with its `scan_box`.
+pub fn build_new_keyframe_records(
+    key_poses: &KeyFrames,
+    range: std::ops::Range<usize>,
+    ts: f64,
+    frame_id: &str,
+) -> PointCloud2 {
+    let mut data = Vec::with_capacity(range.len() * 64);
+    for k in range {
+        let kp = key_poses.get(k);
+        put_keyframe_record(&mut data, k, kp.time, &kp.rotation_local, &kp.translation_local);
+        for v in key_poses.scan_box(k) {
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    let fields: Vec<(&str, u8)> = KEYFRAME_FIELDS.iter().chain(&BOX_FIELDS).copied().collect();
+    record_cloud(&fields, data, frame_id, ts)
+}
+
 /// pose_graph as packed records, one per keyframe at its current pose.
 pub fn build_pose_graph_records(
     key_poses: &KeyFrames,
@@ -164,14 +198,93 @@ pub fn build_pose_graph_records(
     record_cloud(&KEYFRAME_FIELDS, data, frame_id, ts)
 }
 
-/// loop_closure_event from `HeardPoses::take_changes` records.
-pub fn build_loop_closure_records(data: Vec<u8>, ts: f64, frame_id: &str) -> PointCloud2 {
+/// loop_closure_event from `HeardPoses::take_changes` records (record i is keyframe i), each followed by the event's
+/// `version` and the keyframe a closure since the previous event paired it with (`closed_with`, the newest such).
+pub fn build_loop_closure_records(
+    changes: &[u8],
+    version: u32,
+    closed_pairs: &[(usize, usize)],
+    ts: f64,
+    frame_id: &str,
+) -> PointCloud2 {
+    let count = changes.len() / POSE_CHANGE_RECORD_BYTES;
+    let mut closed_with = vec![CLOSED_WITH_NONE; count];
+    for &(a, b) in closed_pairs {
+        if a < count && b < count {
+            closed_with[a] = b as u32;
+            closed_with[b] = a as u32;
+        }
+    }
+    let mut data = Vec::with_capacity(count * (POSE_CHANGE_RECORD_BYTES + 8));
+    for (record, partner) in changes.chunks_exact(POSE_CHANGE_RECORD_BYTES).zip(closed_with) {
+        data.extend_from_slice(record);
+        data.extend_from_slice(&version.to_le_bytes());
+        data.extend_from_slice(&partner.to_le_bytes());
+    }
     let fields: Vec<(&str, u8)> = KEYFRAME_FIELDS
         .iter()
         .chain(&DELTA_FIELDS)
+        .chain(&CLOSURE_ID_FIELDS)
         .copied()
         .collect();
     record_cloud(&fields, data, frame_id, ts)
+}
+
+/// What one graph snapshot publishes: new keyframes, a loop_closure_event (with the raw pose changes, for dumping), and
+/// the pose graph when a render asked for it.
+#[derive(Default)]
+pub struct GraphMessages {
+    pub new_keyframe: Option<PointCloud2>,
+    pub loop_closure_event: Option<(PointCloud2, Vec<u8>)>,
+    pub pose_graph: Option<PointCloud2>,
+}
+
+/// The graph outputs' memory across snapshots: keyframes sent, poses heard, events sent, closures reported.
+#[derive(Default)]
+pub struct GraphOutputs {
+    heard: HeardPoses,
+    keyframes_sent: usize,
+    version: u32,
+    closures_reported: usize,
+}
+
+impl GraphOutputs {
+    /// The messages for this snapshot; `closure_closed` / `pose_graph_requested` are or-ed over skipped snapshots.
+    pub fn step(
+        &mut self,
+        key_poses: &KeyFrames,
+        closures: &crate::store::Closures,
+        closure_closed: bool,
+        pose_graph_requested: bool,
+        ts: f64,
+        frame_id: &str,
+    ) -> GraphMessages {
+        let mut out = GraphMessages::default();
+        if key_poses.len() > self.keyframes_sent {
+            out.new_keyframe = Some(build_new_keyframe_records(
+                key_poses,
+                self.keyframes_sent..key_poses.len(),
+                ts,
+                frame_id,
+            ));
+            self.keyframes_sent = key_poses.len();
+        }
+        self.heard.add_new(key_poses);
+        if let Some(changes) = self.heard.take_changes(key_poses, closure_closed) {
+            self.version += 1;
+            let closed_pairs: Vec<(usize, usize)> = (self.closures_reported..closures.len())
+                .map(|i| closures.fixed(i))
+                .map(|c| (c.source_id, c.target_id))
+                .collect();
+            self.closures_reported = closures.len();
+            let records = build_loop_closure_records(&changes, self.version, &closed_pairs, ts, frame_id);
+            out.loop_closure_event = Some((records, changes));
+        }
+        if pose_graph_requested {
+            out.pose_graph = Some(build_pose_graph_records(key_poses, ts, frame_id));
+        }
+        out
+    }
 }
 
 /// Each keyframe's pose as fast-reform consumers last heard it.
