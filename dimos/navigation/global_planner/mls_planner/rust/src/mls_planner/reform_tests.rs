@@ -439,7 +439,10 @@ fn a_closure_merge_spread_over_updates_ends_like_one_done_at_once() {
         let lazy = toy.planner.lazy.as_ref().unwrap();
         lazy.pending.len() + lazy.urgent.len()
     };
-    assert!(queued(&toy) > 0, "the closure left part of the merge for later updates");
+    assert!(
+        queued(&toy) > 0,
+        "the closure left part of the merge for later updates"
+    );
     // Scans far from the merge drain the queue; odometry still carries the 3 m jump.
     let (truth, raw) = (
         pose(11.0, 1.0, std::f64::consts::PI),
@@ -458,7 +461,10 @@ fn a_closure_merge_spread_over_updates_ends_like_one_done_at_once() {
             .map(|c| c.2)
             .sum();
         // whole columns move, so the budget is passed by at most one column's few elements
-        assert!(migrated <= 60, "one update migrates about the budget, not {migrated}");
+        assert!(
+            migrated <= 60,
+            "one update migrates about the budget, not {migrated}"
+        );
     }
     assert!(scans > 2, "the merge took several updates");
     assert_eq!(toy.components(), 1, "the merge joins them");
@@ -542,7 +548,19 @@ fn loop_path() -> Vec<Pose> {
 
 #[test]
 fn a_second_pass_crossing_the_old_run_reforms_what_it_meets() {
+    second_pass_crossing_the_old_run(0);
+}
+
+#[test]
+fn a_second_pass_on_a_migration_budget_reforms_what_it_meets_a_little_per_update() {
+    second_pass_crossing_the_old_run(60);
+}
+
+/// Toy 2: the loop closed, then a second pass across its middle to the old run's far side at A, migrating at most
+/// `budget` stale elements per update (0 = all); the scans at A repeat until nothing stale is queued.
+fn second_pass_crossing_the_old_run(budget: u32) {
     let mut toy = Toy::new(loop_floor);
+    toy.cfg.reform.migrate_per_update = budget;
     let path = loop_path();
     for (k, &truth) in path.iter().enumerate() {
         let t = truth.translation;
@@ -575,10 +593,35 @@ fn a_second_pass_crossing_the_old_run_reforms_what_it_meets() {
     );
     toy.dump("toy2_second_pass_before");
     across.pop();
+    let queued = |toy: &Toy| {
+        let lazy = toy.planner.lazy.as_ref().unwrap();
+        lazy.pending.len() + lazy.urgent.len()
+    };
+    let mut at_a = 0;
     for truth in along.into_iter().chain(across).chain([a]) {
         let k = toy.keyframes.len();
         let t = truth.translation;
         toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
+        if budget > 0 {
+            let migrated: u64 = toy
+                .planner
+                .last_stage_counts()
+                .iter()
+                .filter(|c| c.1 == "rekeyed" || c.1 == "migrated_voxels")
+                .map(|c| c.2)
+                .sum();
+            // whole columns move, so the budget is passed by at most one column's few elements
+            assert!(
+                migrated <= budget as u64 + 10,
+                "an update migrated {migrated}"
+            );
+        }
+    }
+    while queued(&toy) > 0 {
+        let k = toy.keyframes.len();
+        toy.scan_at(a, drift(k).compose(&a), (ax as f32, ay as f32));
+        at_a += 1;
+        assert!(at_a < 400, "the queue drains");
     }
     toy.dump("toy2_second_pass");
     toy.planner.graph.node_edges.assert_indexed(toy.cells());
