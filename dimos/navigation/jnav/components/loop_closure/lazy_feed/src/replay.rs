@@ -39,6 +39,8 @@ struct Args {
     dump_dir: Option<PathBuf>,
     dump_radius_m: f32,
     dump_limit: usize,
+    /// Snapshots to dump after a scan, by scan index and center.
+    snapshot_at: Vec<(u64, f32, f32)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -51,6 +53,7 @@ fn parse_args() -> Result<Args, String> {
         dump_dir: None,
         dump_radius_m: 40.0,
         dump_limit: 4,
+        snapshot_at: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -66,6 +69,19 @@ fn parse_args() -> Result<Args, String> {
             "--dump-dir" => args.dump_dir = Some(value()?.into()),
             "--dump-radius-m" => args.dump_radius_m = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
             "--dump-limit" => args.dump_limit = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
+            "--snapshot-at" => {
+                let v = value()?;
+                let parts: Vec<&str> = v.split(',').collect();
+                let bad = || format!("{flag} takes SCAN,X,Y, not {v}");
+                if parts.len() != 3 {
+                    return Err(bad());
+                }
+                args.snapshot_at.push((
+                    parts[0].parse().map_err(|_| bad())?,
+                    parts[1].parse().map_err(|_| bad())?,
+                    parts[2].parse().map_err(|_| bad())?,
+                ));
+            }
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -74,7 +90,7 @@ fn parse_args() -> Result<Args, String> {
         || args.output.as_os_str().is_empty()
     {
         return Err("usage: lazy-replay --feed F --planner-config C.json --output DIR \
-                    [--goal-along-path-m M] [--until-scan S] [--dump-dir D [--dump-radius-m R] [--dump-limit N]]"
+                    [--goal-along-path-m M] [--until-scan S] [--dump-dir D [--dump-radius-m R] [--dump-limit N] [--snapshot-at SCAN,X,Y]...]"
             .into());
     }
     Ok(args)
@@ -399,6 +415,10 @@ fn run() -> Result<(), String> {
                         Err(VersionGap::Forgotten) => {}
                         Ok(_) => live_update_applied = true,
                     }
+                }
+                for &(_, x, y) in args.snapshot_at.iter().filter(|s| s.0 == index) {
+                    let cyl: Vec<_> = last_cylinder.into_iter().collect();
+                    dump(&format!("at{index}"), &planner.snapshot_json(&format!("scan {index}"), (x, y), args.dump_radius_m, &cyl, &[]));
                 }
                 let xyz = [pose[0], pose[1], pose[2]];
                 robot_xy = (pose[0] as f32, pose[1] as f32);
