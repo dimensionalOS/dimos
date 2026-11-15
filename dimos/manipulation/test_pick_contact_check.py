@@ -53,7 +53,7 @@ def gripper(module: PickAndPlaceModule) -> MagicMock:
     state: Any = module._manipulation.get_state.return_value
     state.groups["arm/tool"].joints = JointState(name=["j1", "j2"], position=[0.1, 0.2])
     scene: Any = module._scene
-    scene.get_full_scene_pointcloud.return_value = _table()
+    scene.scene_cloud.return_value = _table()
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1, 0.9), _candidate(0.12, 0.5)]
     )
@@ -83,6 +83,27 @@ def test_pick_skips_grasps_the_contact_check_rejects(
     assert (seed.name, seed.position) == (["j1", "j2"], [0.1, 0.2])
 
 
+def test_the_contact_check_leaves_out_the_cup_but_not_the_table_or_a_neighbour(
+    module: PickAndPlaceModule, gripper: MagicMock
+) -> None:
+    gripper.check.return_value = [True, True]
+    # The cup spans z 0.18 to 0.22 around (0.1, 0.0); a block stands 1.5 cm off its side.
+    cup_middle, block = [0.1, 0.0, 0.2], [0.135, 0.0, 0.2]
+    table = _table().points_f32()
+    scene: Any = module._scene
+    scene.scene_cloud.return_value = PointCloud2.from_numpy(
+        np.vstack([table, [cup_middle, block]]).astype(np.float32), frame_id="world"
+    )
+
+    module.pick_object("cup-1")
+
+    obstacles = [[round(v, 3) for v in p] for p in gripper.check.call_args.args[2].tolist()]
+    assert cup_middle not in obstacles
+    assert block in obstacles
+    # The table right under the cup stays.
+    assert [0.1, 0.0, 0.175] in obstacles
+
+
 def test_pick_says_when_the_contact_check_rejects_every_grasp(
     module: PickAndPlaceModule, gripper: MagicMock
 ) -> None:
@@ -108,6 +129,19 @@ def test_pick_tries_every_grasp_when_the_check_fails(
 
     assert result.metadata["score"] == 0.9
     assert result.metadata["contact_check_skipped"] == "ValueError: bad mesh"
+
+
+def test_pick_tries_every_grasp_when_the_scene_cloud_fails(
+    module: PickAndPlaceModule, gripper: MagicMock
+) -> None:
+    scene: Any = module._scene
+    scene.scene_cloud.side_effect = RuntimeError("no depth")
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert result.metadata["contact_check_skipped"] == "RuntimeError: no depth"
+    gripper.check.assert_not_called()
 
 
 def test_a_given_grasp_that_fails_the_contact_check_is_not_tried(

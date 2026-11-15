@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -421,6 +423,80 @@ def test_flags_spell_values_as_dimos_reads_them() -> None:
         f"--token={launches.HIDDEN}",
         "--fps=3",
     ]
+
+
+@pytest.mark.parametrize(
+    ("values", "expected", "flags"),
+    [
+        (
+            {"replay": "true", "n_workers": 3.0},
+            {"replay": True, "n_workers": 3},
+            ["--n-workers=3", "--replay"],
+        ),
+        (
+            {"replay": "false", "n_workers": "3"},
+            {"replay": False, "n_workers": 3},
+            ["--n-workers=3", "--no-replay"],
+        ),
+        (
+            {"zenoh_gossip": "no", "robot_ip": "yes", "robot_width": "0.5"},
+            {"zenoh_gossip": False, "robot_ip": "yes", "robot_width": 0.5},
+            ["--robot-ip=yes", "--robot-width=0.5", "--no-zenoh-gossip"],
+        ),
+        ({"replay": None}, {"replay": None}, []),
+        ({}, {}, []),
+    ],
+)
+def test_normalization_preserves_only_explicit_overrides(
+    values: dict[str, Any],
+    expected: dict[str, Any],
+    flags: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPLAY", "true")
+    monkeypatch.setenv("N_WORKERS", "9")
+    original = dict(values)
+
+    normalized = launches.normalize_global(values)
+
+    assert normalized == expected
+    assert launches.global_flags(normalized) == flags
+    assert values == original
+
+
+@pytest.mark.parametrize("values", [{"replay": "maybe"}, {"n_workers": 3.5}, {"robot_iq": None}])
+def test_invalid_normalization_leaves_input_unchanged(values: dict[str, Any]) -> None:
+    original = dict(values)
+    with pytest.raises(launches.LaunchConfigError):
+        launches.normalize_global(values)
+    assert values == original
+
+
+@pytest.mark.parametrize(("replay", "expected"), [("yes", "True"), ("no", "False")])
+def test_normalized_flags_are_accepted_by_the_real_cli(
+    home: Path, monkeypatch: pytest.MonkeyPatch, replay: str, expected: str
+) -> None:
+    monkeypatch.setenv("REPLAY", "true")
+    monkeypatch.setenv("N_WORKERS", "9")
+    launch = LaunchConfig({"replay": replay, "n_workers": 3.0}).normalized()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dimos.cli.dimos",
+            *launches.global_flags(launch.global_),
+            "show-config",
+        ],
+        cwd=home,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"replay: {expected}" in result.stdout.splitlines()
+    assert "n_workers: 3" in result.stdout.splitlines()
 
 
 def test_dotted_module_fields_become_one_object_flag() -> None:

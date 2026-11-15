@@ -45,6 +45,7 @@ from textual.widgets import Input, RichLog, Static
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.cli import theme
+from dimos.cli.tui_args import parse_tui_args
 from dimos.core.transport_factory import apply_transport_arg, make_transport
 from dimos.utils.generic import truncate_display_string
 
@@ -671,9 +672,10 @@ Tool calls are displayed in cyan with ▶ prefix"""
 
 
 def main() -> None:
+    args = parse_tui_args("Chat with the running DimOS agent.")
     apply_transport_arg(sys.argv)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "web":
+    if args.mode == "web":
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")

@@ -16,6 +16,8 @@ import {
   type RobotInfo,
   TOPIC_GUARD_STREAM_MAGIC,
   TOPIC_PUBLISH_STREAM_MAGIC,
+  type TopicSubMsg,
+  type TopicUpdateMsg,
 } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import type { RelayInfo, WebTransportLike } from "../transport.ts";
@@ -69,6 +71,7 @@ export class FakeRelayEnd {
   /** Refuse this many publish/guard stream opens, like a relay that resets them. */
   failBinaryStreams = 0;
   pings = 0;
+  aborted: number | undefined;
   answerPings = true;
   /** Decoded datagrams the viewer sent (the teleop twist path). */
   readonly sentDatagrams: Msg[] = [];
@@ -96,7 +99,14 @@ export class FakeRelayEnd {
             // of `sent`, which tests compare exactly) unless a test holds
             // the pongs back.
             this.pings += 1;
-            if (this.answerPings) this.push({ t: "pong", n: msg.n, ts: msg.ts });
+            if (this.answerPings) {
+              this.push({
+                t: "pong",
+                n: msg.n,
+                ts: msg.ts,
+                ...(this.aborted === undefined ? {} : { aborted: this.aborted }),
+              });
+            }
             continue;
           }
           this.sent.push(msg);
@@ -226,6 +236,14 @@ export class FakeRelayEnd {
 
   subs(): string[] {
     return this.sent.flatMap((m) => (m.t === "sub" ? [m.ch] : []));
+  }
+
+  topicSubs(): TopicSubMsg[] {
+    return this.sent.filter((m): m is TopicSubMsg => m.t === "topic_sub");
+  }
+
+  topicUpdates(): TopicUpdateMsg[] {
+    return this.sent.filter((m): m is TopicUpdateMsg => m.t === "topic_update");
   }
 
   unsubs(): string[] {

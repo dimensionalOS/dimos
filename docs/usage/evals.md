@@ -488,22 +488,22 @@ from dimos.evals.environments.lib.recorded_poses import first_body_transform, la
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 
 
-def lifted_apple(o):
+def lifted_red_cube(o):
     with recording(o) as store:
-        start = first_body_transform(store, "apple").translation.z
-        end = last_body_transform(store, "apple").translation.z
+        start = first_body_transform(store, "red_cube").translation.z
+        end = last_body_transform(store, "red_cube").translation.z
     return min(max((end - start) / 0.05, 0.0), 1.0)
 
 
-lift_apple = EvalCase(
-    id="lift_apple",
-    inputs="Pick up the apple and hold it in the air above the table.",
+lift_red_cube = EvalCase(
+    id="lift_red_cube",
+    inputs="Pick up the red cube and hold it in the air above the table.",
     environment=MujocoEnvironment(
         blueprint=["xarm-perception-sim"],
         disable=("rerun-bridge-module",),
-        tracked_bodies=("apple", "orange", "cup"),
+        tracked_bodies=("red_cube", "blue_cube", "orange_cylinder"),
     ),
-    grade=lifted_apple,
+    grade=lifted_red_cube,
     timeout_s=600.0,
 )
 ```
@@ -518,9 +518,9 @@ values, so a case can retune a module without a new blueprint. `scene` selects a
 existing `base_pose` to world `(0, 0, height)` with identity orientation. Without it,
 the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
-modules disabled: pick up the cylinder, then put the red ball on top of it.
+modules disabled: pick up the orange cylinder, then put the red cube in the blue bowl.
 
-`dimos.evals.suites.mujoco_xarm_pick` evaluates a cylinder lift in the default
+`dimos.evals.suites.mujoco_xarm_pick` evaluates an orange cylinder lift in the default
 scene using plain robot commands and observations (see Raw robot topics). Run it
 with Pi and `--set no_dimos=true --set max_steps=120`.
 

@@ -69,7 +69,7 @@ Every one of these unpins the listener back to zenoh's all-interfaces default.
 run (`Blueprint.hosted()`, placed on `dimos host` daemons) gets its run id as its domain. A
 rerun bridge listens to every domain and drops the domain from entity paths, so a viewer that
 dials the robot's router on its own still shows such a run. With `topics` set it only listens to
-its own domain. `dimos topic` and `dimos record` show the domain's keys.
+its own domain. `dimos topic` shows the domain's keys.
 
 **Two ways to override for one run or for your shell:**
 
@@ -81,7 +81,7 @@ Architecture notes (Rerun bridge) live under [Zenoh](#zenoh) in PubSub transport
 
 ### Per-topic QoS
 
-Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L27)):
+Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L49)):
 
 ```python skip
 from dimos.core.transport import ZenohTransport
@@ -92,7 +92,7 @@ blueprint = blueprint.transports(
 )
 ```
 
-When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L65)):
+When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L97)):
 
 * The agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
 * `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
@@ -154,16 +154,18 @@ See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
 
 From [`unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
-Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L187)) so you can visualize in **rviz2**.
+Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L207)) so you can visualize in **rviz2**.
 
 ```python skip
 nav = autoconnect(
-    basic,
-    voxel_mapper(voxel_size=0.1),
-    cost_mapper(),
-    replanning_a_star_planner(),
-    wavefront_frontier_explorer(),
-).global_config(n_workers=6, robot_model="unitree_go2")
+    unitree_go2_basic,
+    PGOVoxelMapper.blueprint(emit_every=5),
+    CostMapper.blueprint(),
+    ReplanningAStarPlanner.blueprint(),
+    WavefrontFrontierExplorer.blueprint(),
+    PatrollingModule.blueprint(),
+    MovementManager.blueprint(),
+).global_config(n_workers=10, robot_model="unitree_go2")
 
 ros = nav.transports(
     {
@@ -289,7 +291,7 @@ Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28
 
 ## Implementing a transport
 
-At the stream layer, a transport is implemented by subclassing `Transport` (see [`core/stream.py`](/dimos/core/stream.py#L83)) and implementing:
+At the stream layer, a transport is implemented by subclassing `Transport` (see [`core/stream.py`](/dimos/core/stream.py#L92)) and implementing:
 
 * `broadcast(...)`
 * `subscribe(...)`
@@ -445,7 +447,7 @@ See [`pubsub/impl/memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the com
 
 Transports often need to serialize messages before sending and deserialize after receiving.
 
-`PubSubEncoderMixin` at [`pubsub/encoders.py`](/dimos/protocol/pubsub/encoders.py#L39) provides a clean way to add encoding/decoding to any pubsub implementation.
+`PubSubEncoderMixin` at [`pubsub/encoders.py`](/dimos/protocol/pubsub/encoders.py#L42) provides a clean way to add encoding/decoding to any pubsub implementation.
 
 ### Available mixins
 

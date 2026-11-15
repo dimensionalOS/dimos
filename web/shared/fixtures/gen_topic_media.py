@@ -76,7 +76,7 @@ def generate() -> list[dict[str, Any]]:
     jpeg = encode_media(
         "image.jpeg.balanced.v1", image("rgb8", bytes([255, 0, 0]) * 128, 16, 8, 48).lcm_encode()
     ).payload
-    cases = [
+    cases: list[tuple[str, str, Any, str, dict[str, Any]]] = [
         (
             "color_compressed",
             "image.jpeg.balanced.v1",
@@ -87,9 +87,10 @@ def generate() -> list[dict[str, Any]]:
                 data=jpeg,
             ),
             "",
+            {},
         ),
-        ("depth16", "depth.lossless.v1", image("16UC1", depth16, 3, 2, 6), depth16.hex()),
-        ("depth32", "depth.lossless.v1", image("32FC1", depth32, 3, 2, 12), depth32.hex()),
+        ("depth16", "depth.lossless.v1", image("16UC1", depth16, 3, 2, 6), depth16.hex(), {}),
+        ("depth32", "depth.lossless.v1", image("32FC1", depth32, 3, 2, 12), depth32.hex(), {}),
         (
             "depth16_big_padding",
             "depth.lossless.v1",
@@ -105,31 +106,52 @@ def generate() -> list[dict[str, Any]]:
                 True,
             ),
             depth16.hex(),
+            {},
         ),
         (
             "color_rgb",
             "image.jpeg.balanced.v1",
             image("rgb8", bytes([255, 0, 0]) * 128, 16, 8, 48),
             "",
+            {},
         ),
         (
             "color_bgr",
             "image.jpeg.balanced.v1",
             image("bgr8", bytes([0, 0, 255]) * 128, 16, 8, 48),
             "",
+            {},
         ),
-        ("cloud", "cloud.q16.full.v1", cloud(), ""),
-        ("cloud_big", "cloud.q16.full.v1", cloud(True), ""),
-        ("cloud_low", "cloud.q16.low.v1", cloud(), ""),
+        # Viewer settings (PLAN_2a): a box below the profile size, a lower
+        # quality, a coarser stride, a subset of the optional buffers.
+        (
+            "color_rgb_boxed",
+            "image.jpeg.balanced.v1",
+            image("rgb8", bytes([255, 0, 0]) * 512, 32, 16, 96),
+            "",
+            {"maxResolution": [16, 16], "quality": 40},
+        ),
+        ("cloud", "cloud.q16.full.v1", cloud(), "", {}),
+        ("cloud_big", "cloud.q16.full.v1", cloud(True), "", {}),
+        ("cloud_low", "cloud.q16.low.v1", cloud(), "", {}),
+        (
+            "cloud_color_stride",
+            "cloud.q16.full.v1",
+            cloud(),
+            "",
+            {"keepEvery": 2, "fields": ["color"]},
+        ),
+        ("cloud_positions_only", "cloud.q16.full.v1", cloud(), "", {"fields": []}),
     ]
     vectors = []
-    for name, profile, message, expected in cases:
+    for name, profile, message, expected, settings in cases:
         data = message.lcm_encode()
-        result = encode_media(profile, data)
+        result = encode_media(profile, data, settings)
         vectors.append(
             {
                 "name": name,
                 "profile": profile,
+                "settings": settings,
                 "lcm": data.hex(),
                 "payload": result.payload.hex(),
                 "encoding": result.encoding,

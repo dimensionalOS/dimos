@@ -62,8 +62,8 @@ class LegacyPickleStore(TimeSeriesStore[T]):
         """
         Args:
             name: Data directory name (e.g. "unitree_go2_bigoffice/lidar") or absolute path.
-            autocast: Optional function to transform data after loading (for replay) or
-                      before saving (for storage). E.g., `Odometry.from_msg`.
+            autocast: Optional function to transform data after loading (for replay).
+                      E.g., `Odometry.from_msg`. Saving stores frames unchanged.
         """
         self._name = str(name)
         self._root_dir: Path | None = None

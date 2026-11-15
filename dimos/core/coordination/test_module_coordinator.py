@@ -40,6 +40,7 @@ from dimos.core.coordination.module_coordinator import (
     _deploy_all_modules,
     _materialize_transports,
     _verify_no_conflicts_with_existing,
+    check_module_dependencies,
     resolve_module_refs,
     stream_name_types,
     verify_no_name_conflicts,
@@ -841,6 +842,48 @@ def test_check_requirements_failure(mocker) -> None:
 
     with pytest.raises(SystemExit):
         _check_requirements(bp)
+
+
+def test_missing_dependency_prevents_worker_and_transport_startup(mocker) -> None:
+    mocker.patch.object(ModuleB, "check_dependencies", side_effect=ImportError("install extra"))
+    start = mocker.patch.object(ModuleCoordinator, "start")
+    transports = mocker.patch("dimos.core.coordination.module_coordinator._materialize_transports")
+
+    with pytest.raises(ImportError, match="install extra"):
+        ModuleCoordinator.build(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
+
+    start.assert_not_called()
+    transports.assert_not_called()
+
+
+def test_dependency_checks_receive_resolved_config_and_skip_disabled_modules(mocker) -> None:
+    check_a = mocker.patch.object(ModuleA, "check_dependencies")
+    check_b = mocker.patch.object(ModuleB, "check_dependencies")
+    blueprint = autoconnect(
+        ModuleA.blueprint(frame_id="pinned"), ModuleB.blueprint()
+    ).disabled_modules(ModuleB)
+    parsed = BlueprintConfigParser(blueprint).parse(
+        overrides={ModuleA.name: {"frame_id": "overridden"}}, environ={}
+    )
+
+    check_module_dependencies(blueprint, parsed)
+
+    assert check_a.call_args.kwargs["frame_id"] == "overridden"
+    check_b.assert_not_called()
+
+
+def test_dynamic_load_checks_dependencies_before_adding_workers(
+    dynamic_coordinator, mocker
+) -> None:
+    mocker.patch.object(ModuleA, "check_dependencies", side_effect=ImportError("install extra"))
+    add_workers = mocker.patch.object(WorkerManagerPython, "add_workers")
+    transports = mocker.patch("dimos.core.coordination.module_coordinator._materialize_transports")
+
+    with pytest.raises(ImportError, match="install extra"):
+        dynamic_coordinator.load_blueprint(ModuleA.blueprint().global_config(n_workers=1))
+
+    add_workers.assert_not_called()
+    transports.assert_not_called()
 
 
 @pytest.mark.parametrize("dedicated", [False, True], ids=["pool-worker", "dedicated-worker"])

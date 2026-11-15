@@ -162,7 +162,8 @@ class GlobalPlanner(Resource):
         if no_goal and self._local_planner.get_state() == NavigationState.IDLE:
             return
 
-        logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
+        if not but_will_try_again or self._local_planner.get_state() != NavigationState.IDLE:
+            logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
 
         with self._lock:
             self._position_tracker.reset_data()

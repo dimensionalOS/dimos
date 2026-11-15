@@ -30,7 +30,7 @@ The `CartesianMotionController` provides closed-loop Cartesian pose tracking by:
            │                                │ (current_pose)
            ▼                                ▼
 ┌─────────────────────────────────┐    (feedback to caller)
-│  Hardware Driver (xArm, etc.)   │
+│  Arm driver (ArmDriverSpec)     │
 │  - 100Hz control loop           │
 │  - Sends commands to robot      │
 │  - Publishes JointState         │
@@ -44,9 +44,8 @@ The `CartesianMotionController` provides closed-loop Cartesian pose tracking by:
 ## Key Features
 
 ### ✓ Hardware Agnostic
-- Works with **any** arm driver implementing `ArmDriverSpec` protocol
+- Works with **any** arm driver implementing `ArmDriverSpec` protocol (none ships with dimos yet)
 - Only requires `get_inverse_kinematics()` and `get_forward_kinematics()` RPC methods
-- Supports xArm, Piper, UR, Franka, or custom arms
 
 ### ✓ PID-Based Control
 - Separate PIDs for position (X, Y, Z) and orientation (roll, pitch, yaw)
@@ -68,56 +67,55 @@ The `CartesianMotionController` provides closed-loop Cartesian pose tracking by:
 
 ### Basic Example
 
-```python
-from dimos.hardware.manipulators.xarm import XArmDriver, XArmDriverConfig
-from dimos.manipulation.control import CartesianMotionController, CartesianMotionControllerConfig
+The controller needs an arm driver module that implements `ArmDriverSpec`. No arm in dimos ships one today (the xArm
+driver this example used was removed in January 2026), so `MyArmDriver` below is yours: see [Adding a New Arm](#adding-a-new-arm).
 
-# 1. Create hardware driver
-arm_driver = XArmDriver(config=XArmDriverConfig(ip_address="192.168.1.235"))
+Save the example alongside your driver implementation, import `MyArmDriver` from
+that module, and keep process startup inside the `__main__` guard.
 
-# 2. Create Cartesian controller (hardware-agnostic!)
-controller = CartesianMotionController(
-    arm_driver=arm_driver,
-    config=CartesianMotionControllerConfig(
-        control_frequency=20.0,
-        position_kp=1.0,
-        max_linear_velocity=0.15,  # m/s
-    )
-)
+```python skip
+import time
 
-# 3. Set up topic connections using the configured backend
-from dimos.core.transport_factory import make_transport
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.manipulation.control.servo_control.cartesian_motion_controller import CartesianMotionController
 
-transport_joint_state = make_transport("joint_state")
-transport_joint_cmd = make_transport("joint_cmd")
+# Workers import this script again, so build and drive modules under the guard.
+if __name__ == "__main__":
+    # 1. Build your driver and controller; autoconnect connects their streams by name
+    coordinator = ModuleCoordinator.build(autoconnect(
+        MyArmDriver.blueprint(),
+        CartesianMotionController.blueprint(
+            control_frequency=20.0,
+            position_kp=1.0,
+            max_linear_velocity=0.15,  # m/s
+        ),
+    ))
+    try:
+        controller = coordinator.get_instance(CartesianMotionController)
 
-arm_driver.joint_state.connection = transport_joint_state
-controller.joint_state.connection = transport_joint_state
-controller.joint_position_command.connection = transport_joint_cmd
-arm_driver.joint_position_command.connection = transport_joint_cmd
+        # 2. Send an absolute Cartesian goal
+        controller.set_target_pose(
+            position=[0.3, 0.0, 0.5],  # xyz in meters
+            orientation=[0, 0, 0],     # roll, pitch, yaw in radians
+            frame_id="world",
+        )
 
-# 4. Start modules
-arm_driver.start()
-controller.start()
+        # 3. Wait for convergence
+        while not controller.is_converged():
+            time.sleep(0.1)
 
-# 5. Send Cartesian goal (move 10cm in X)
-controller.set_target_pose(
-    position=[0.3, 0.0, 0.5],  # xyz in meters
-    orientation=[0, 0, 0],     # roll, pitch, yaw in radians
-    frame_id="world"
-)
-
-# 6. Wait for convergence
-while not controller.is_converged():
-    time.sleep(0.1)
-
-print("Target reached!")
+        print("Target reached!")
+    finally:
+        coordinator.stop()
 ```
+
+The following goal examples replace step 2 inside the `__main__` block above, before `coordinator.stop()`.
 
 ### Using Quaternions
 
 ```python
-from dimos.msgs.geometry_msgs import Quaternion
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
 # Create quaternion (identity rotation)
 quat = Quaternion(x=0, y=0, z=0, w=1)
@@ -131,7 +129,7 @@ controller.set_target_pose(
 ### Using PoseStamped Messages
 
 ```python
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 # Create target pose
 target = PoseStamped(
@@ -152,21 +150,22 @@ controller.target_pose.publish(target)
 
 ### Sending Target Poses
 
-Target poses can be published to the controller's `/target_pose` topic via LCM transport. The controller will track the target using its PID loop.
+Target poses can be published to the controller's `/target_pose` topic on the active transport. The controller will track the target using its PID loop.
 
 
 ## Configuration
 
 ```python
-@dataclass
-class CartesianMotionControllerConfig:
+from dimos.core.module import ModuleConfig
+
+class CartesianMotionControllerConfig(ModuleConfig):
     # Control loop
     control_frequency: float = 20.0  # Hz (recommend 10-50Hz)
-    command_timeout: float = 1.0     # seconds
+    command_timeout: float = 30.0    # seconds - timeout for stale targets
 
     # PID gains (position)
-    position_kp: float = 1.0   # m/s per meter of error
-    position_ki: float = 0.0   # Integral gain
+    position_kp: float = 5.0   # m/s per meter of error
+    position_ki: float = 0.1   # Integral gain
     position_kd: float = 0.1   # Derivative gain (damping)
 
     # PID gains (orientation)
@@ -177,15 +176,16 @@ class CartesianMotionControllerConfig:
     # Safety limits
     max_linear_velocity: float = 0.2   # m/s
     max_angular_velocity: float = 1.0  # rad/s
-    max_position_error: float = 0.5    # m (emergency stop threshold)
-    max_orientation_error: float = 1.57  # rad (~90°)
+    max_position_error: float = 0.7    # m (emergency stop threshold)
+    max_orientation_error: float = 6.28  # rad (~360°, allows any orientation)
 
     # Convergence
     position_tolerance: float = 0.001  # m (1mm)
     orientation_tolerance: float = 0.01  # rad (~0.57°)
 
     # Control mode
-    velocity_control_mode: bool = True  # Use velocity-based control
+    velocity_control_mode: bool = True  # Logged only, not used yet
+    control_frame: str = "world"  # Not used yet
 ```
 
 ## Hardware Abstraction
@@ -193,15 +193,21 @@ class CartesianMotionControllerConfig:
 The controller uses the **Protocol pattern** for hardware abstraction:
 
 ```python
-# spec.py
-class ArmDriverSpec(Protocol):
+from typing import Protocol
+
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.spec.utils import Spec
+
+# The RPCs are ArmDriverSpec (dimos/manipulation/control/arm_driver_spec.py); the topics are what autoconnect connects
+class ArmDriverSpec(Spec, Protocol):
     # Required RPC methods
     def get_inverse_kinematics(self, pose: list[float]) -> tuple[int, list[float] | None]: ...
-    def get_forward_kinematics(self, angles: list[float]) -> tuple[int, list[float] | None]: ...
+    def get_forward_kinematics(self, joint_positions: list[float]) -> tuple[int, list[float] | None]: ...
 
     # Required topics
     joint_state: Out[JointState]
-    robot_state: Out[RobotState]
     joint_position_command: In[JointCommand]
 ```
 
@@ -211,22 +217,35 @@ class ArmDriverSpec(Protocol):
 
 1. Implement `ArmDriverSpec` protocol:
    ```python
+   from dimos.core.core import rpc
+   from dimos.core.module import Module
+   from dimos.core.stream import In, Out
+   from dimos.msgs.sensor_msgs.JointState import JointState
+   from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+
    class MyArmDriver(Module):
+       joint_state: Out[JointState]
+       joint_position_command: In[JointCommand]
+
        @rpc
        def get_inverse_kinematics(self, pose: list[float]) -> tuple[int, list[float] | None]:
-           # Your IK implementation
+           # Your IK implementation; pose is [x, y, z] in mm, then roll, pitch, yaw in radians
            return (0, joint_angles)
 
        @rpc
-       def get_forward_kinematics(self, angles: list[float]) -> tuple[int, list[float] | None]:
-           # Your FK implementation
+       def get_forward_kinematics(self, joint_positions: list[float]) -> tuple[int, list[float] | None]:
+           # Your FK implementation; return the pose in the same units as IK's
            return (0, tcp_pose)
    ```
 
+   Implement the IK/FK bodies for your arm. In the driver's lifecycle, subscribe
+   to `joint_position_command` and send its positions to the hardware. Publish
+   measured positions on `joint_state` continuously so the controller has feedback.
+   Dispose subscriptions and stop hardware polling in `stop()`.
+
 2. Use with controller:
    ```python
-   my_driver = MyArmDriver()
-   controller = CartesianMotionController(arm_driver=my_driver)
+   blueprint = autoconnect(MyArmDriver.blueprint(), CartesianMotionController.blueprint())
    ```
 
 **That's it! No changes to the controller needed.**
@@ -268,7 +287,7 @@ def is_converged() -> bool
 | Topic | Type | Description |
 |-------|------|-------------|
 | `joint_state` | `JointState` | Current joint positions/velocities (from driver) |
-| `robot_state` | `RobotState` | Robot status (from driver) |
+| `robot_state` | `RobotState` | Optional robot status; stored but not read by the control loop |
 | `target_pose` | `PoseStamped` | Desired TCP pose (from planner) |
 
 ### Outputs (Publications)
@@ -301,7 +320,7 @@ def is_converged() -> bool
 
 ### Conservative (Safe)
 ```python
-config = CartesianMotionControllerConfig(
+controller_blueprint = CartesianMotionController.blueprint(
     control_frequency=10.0,
     position_kp=0.5,
     max_linear_velocity=0.1,  # Slow!
@@ -310,7 +329,7 @@ config = CartesianMotionControllerConfig(
 
 ### Moderate (Recommended)
 ```python
-config = CartesianMotionControllerConfig(
+controller_blueprint = CartesianMotionController.blueprint(
     control_frequency=20.0,
     position_kp=1.0,
     position_kd=0.1,
@@ -320,7 +339,7 @@ config = CartesianMotionControllerConfig(
 
 ### Aggressive (Fast)
 ```python
-config = CartesianMotionControllerConfig(
+controller_blueprint = CartesianMotionController.blueprint(
     control_frequency=50.0,
     position_kp=2.0,
     position_kd=0.2,
@@ -363,9 +382,8 @@ config = CartesianMotionControllerConfig(
 ## Troubleshooting
 
 ### Controller not moving
-- Check `arm_driver` is started and publishing `joint_state`
-- Verify topic connections are set up
-- Check robot is in correct mode (servo mode for xArm)
+- Check your arm driver is in the blueprint and publishing `joint_state`
+- Check the robot is in the mode that accepts joint position commands
 
 ### Oscillation / Instability
 - Reduce `position_kp` or `orientation_kp`
@@ -387,17 +405,15 @@ config = CartesianMotionControllerConfig(
 
 ```
 dimos/manipulation/control/
-├── __init__.py                          # Module exports
-├── cartesian_motion_controller.py       # Main controller
-├── example_cartesian_control.py         # Usage example
-└── README.md                            # This file
+├── arm_driver_spec.py                   # ArmDriverSpec protocol
+└── servo_control/
+    ├── cartesian_motion_controller.py   # Main controller
+    └── README.md                        # This file
 ```
 
 ## Related Modules
 
-- [xarm_driver.py](../../hardware/manipulators/xarm/xarm_driver.py) - Hardware driver for xArm
-- [spec.py](../../hardware/manipulators/xarm/spec.py) - Protocol specification
-- [simple_controller.py](../../utils/simple_controller.py) - PID implementation
+- [simple_controller.py](/dimos/utils/simple_controller.py) - PID implementation
 
 ## License
 

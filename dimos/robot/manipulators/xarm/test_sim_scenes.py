@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""xArm MuJoCo scenes cancel the arm's weight within each joint's actuator force range."""
+"""xArm MuJoCo scenes: arm weight cancelled within actuator limits, shapes rest on the table."""
 
 import mujoco
 import numpy as np
@@ -42,6 +42,29 @@ def test_arm_gravity_compensation_is_force_limited(scene: str) -> None:
         assert model.jnt_actgravcomp[joint]
         assert model.jnt_actfrclimited[joint]
         np.testing.assert_allclose(model.jnt_actfrcrange[joint], model.actuator_forcerange[a])
+
+
+@pytest.mark.parametrize("scene", ["xarm6/scene.xml", "xarm7/scene.xml"])
+def test_shapes_stay_on_the_table(scene: str) -> None:
+    model = mujoco.MjModel.from_xml_path(str(LfsPath(scene)))
+    data = mujoco.MjData(model)
+    balls = ("purple_ball", "teal_ball")
+    for ball in balls:
+        dof = model.jnt_dofadr[model.body(ball).jntadr[0]]
+        data.qvel[dof] = 1.0  # roll fast toward the front rim
+    for _ in range(int(3.0 / model.opt.timestep)):
+        mujoco.mj_step(model, data)
+
+    shapes = [
+        model.body(b).name
+        for b in range(model.nbody)
+        if model.body_jntnum[b]
+        and model.jnt_type[model.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE
+    ]
+    assert len(shapes) == 7, f"expected the 7 loose shapes, found {shapes}"
+    for name in shapes:
+        assert data.body(name).xpos[2] > 0.12, f"{name} fell off the table"
+        assert np.linalg.norm(data.body(name).cvel) < 0.01, f"{name} is still moving"
 
 
 def _joints(model: mujoco.MjModel) -> set[str]:

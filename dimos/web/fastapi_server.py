@@ -27,6 +27,7 @@
 import asyncio
 from pathlib import Path
 from queue import Empty, Queue
+import socket
 import subprocess
 from threading import Lock
 
@@ -42,6 +43,7 @@ import uvicorn
 
 from dimos.core.global_config import global_config
 from dimos.stream.audio.decode import decode_audio_bytes
+from dimos.utils.generic import connect_host, get_local_ips
 from dimos.web.edge_io import EdgeIO
 
 # TODO: Resolve threading, start/stop stream functionality.
@@ -305,6 +307,15 @@ class FastAPIServer(EdgeIO):
         if result.returncode != 0:
             raise RuntimeError(f"Failed to generate certificates: {result.stderr.decode()}")
         return str(cert_path), str(key_path)
+
+    def get_urls(self, path: str = "/", *, ssl: bool = False) -> list[str]:
+        """Return browser URLs for the bound host, including LAN interfaces."""
+        hosts = [connect_host(self.host)]
+        if self.host in ("0.0.0.0", "::"):
+            family = socket.AF_INET6 if self.host == "::" else socket.AF_INET
+            hosts.extend(connect_host(ip) for ip, _ in get_local_ips(family=family))
+        scheme = "https" if ssl else "http"
+        return [f"{scheme}://{host}:{self.port}{path}" for host in dict.fromkeys(hosts)]
 
     def run(self, ssl: bool = False, ssl_certs_dir: Path | str | None = None) -> None:
         ssl_certfile = None

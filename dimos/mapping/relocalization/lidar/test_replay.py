@@ -54,7 +54,6 @@ def test_fix_error_wraps_yaw_and_measures_translation() -> None:
 
 
 @pytest.mark.skipif_aarch64
-@pytest.mark.skipif_macos
 def test_write_loaded_map_writes_once(tmp_path: Path) -> None:
     pts = np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
     premap = PointCloud2.from_numpy(pts, frame_id="map")
@@ -73,7 +72,6 @@ def test_write_loaded_map_writes_once(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif_aarch64
-@pytest.mark.skipif_macos
 def test_recorded_fix_is_the_first_world_to_map_edge(tmp_path: Path) -> None:
     with SqliteStore(path=str(tmp_path / "r.db")) as store:
         assert recorded_fix(store, "odom", "map") is None
@@ -92,7 +90,6 @@ def test_recorded_fix_is_the_first_world_to_map_edge(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif_aarch64
-@pytest.mark.skipif_macos
 def test_replay_spaces_attempts_and_stops_after_the_fix(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
