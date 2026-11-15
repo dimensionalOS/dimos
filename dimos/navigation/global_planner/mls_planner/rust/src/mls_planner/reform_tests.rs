@@ -210,7 +210,12 @@ impl Toy {
         if layer == lazy.layers.current {
             return c;
         }
-        let el = lazy.layers.cells[&id];
+        let el = lazy
+            .layers
+            .cells
+            .get(&id)
+            .copied()
+            .expect("a live cell has an element");
         lazy.layers.stale[&layer]
             .carry(el.anchor, &lazy.table)
             .apply(c)
