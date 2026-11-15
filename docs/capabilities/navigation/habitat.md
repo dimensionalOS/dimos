@@ -12,7 +12,7 @@ dimos run habitat-nav
 
 The first run builds the simulator environment, which takes 5 to 10 minutes and about 3.5 GB of disk: a python 3.9 conda env with habitat-sim, plus one annotated HM3D house with 908 labelled objects that needs no Matterport credentials. Later runs start in seconds.
 
-Drive with the viewer's keyboard controls. Click the planner's surface in the 3D view to set a goal.
+Click the viewer's Keyboard Teleop panel to engage it, then drive with WASD. Click the planner's surface in the 3D view to set a goal.
 
 ## Blueprints
 

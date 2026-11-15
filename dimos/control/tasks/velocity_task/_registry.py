@@ -14,12 +14,15 @@
 
 TASK_FACTORIES = {
     "velocity": "dimos.control.tasks.velocity_task.velocity_task:create_task",
+    "twist_velocity": "dimos.control.tasks.velocity_task.twist_velocity_task:create_task",
 }
 
 TASK_CONSUMES = {
     "velocity": {"joint_command": ("on_joint_command", "claim_overlap")},
+    "twist_velocity": {"twist_command": ("on_twist_command", "direct")},
 }
 
 TASK_EXPOSES = {
     "velocity": ["start"],
+    "twist_velocity": ["start"],
 }

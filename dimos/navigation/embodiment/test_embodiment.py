@@ -22,12 +22,24 @@ import pytest
 
 from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.embodiment.go2 import GO2
+from dimos.navigation.embodiment.m20 import M20
+from dimos.robot.deeprobotics.m20.constants import (
+    BASE_LINK_HEIGHT_M,
+    BODY_LENGTH_M,
+    BODY_WIDTH_M,
+    PLANNING_HEIGHT_M,
+)
 from dimos.robot.diy.alfred.config import alfred_model
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
 
 
 def test_go2_height_matches_the_robot_constant() -> None:
     assert GO2.height == ROBOT_HEIGHT
+
+
+def test_m20_matches_the_robot_constants() -> None:
+    assert (M20.length, M20.width) == (BODY_LENGTH_M, BODY_WIDTH_M)
+    assert (M20.height, M20.base_height) == (PLANNING_HEIGHT_M, BASE_LINK_HEIGHT_M)
 
 
 def test_the_base_rides_under_the_body_top() -> None:

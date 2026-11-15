@@ -7,7 +7,7 @@
 <text x="382.775" y="105.3" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">human_input</text>
 <text x="382.775" y="128.7" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">In[str]</text>
 <path d="M451.475,159.84L720.247,159.84A7.5 7.5 0 0 0 727.747 152.34L727.747,81.66A7.5 7.5 0 0 0 720.247 74.16L451.475,74.16A7.5 7.5 0 0 0 443.975 81.66L443.975,152.34A7.5 7.5 0 0 0 451.475 159.84Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
-<text x="585.861" y="106.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">McpClient</text>
+<text x="585.861" y="106.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Agent</text>
 <text x="585.861" y="127.08" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">LangGraph + LLM</text>
 <path d="M864.847,159.84L1087.99,159.84A7.5 7.5 0 0 0 1095.49 152.34L1095.49,81.66A7.5 7.5 0 0 0 1087.99 74.16L864.847,74.16A7.5 7.5 0 0 0 857.347 81.66L857.347,152.34A7.5 7.5 0 0 0 864.847 159.84Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
 <text x="976.418" y="106.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">@skill methods</text>

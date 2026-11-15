@@ -63,7 +63,7 @@ def mock_profile(camera_count: int) -> CollectionProfile:
         actions={
             "target": state.model_copy(
                 update={
-                    "stream": "accepted",
+                    "stream": "commanded",
                     "source_kind": "joint_position_updates",
                 },
                 deep=True,
@@ -91,8 +91,8 @@ def recorded_profile(tmp_path: Path, mock_profile: CollectionProfile, camera_cou
                 ts=message.ts,
             )
 
-        emit("accepted", JointState(ts=9.9, name=["left"], position=[1000]))
-        emit("accepted", JointState(ts=9.9, name=["right"], position=[2000]))
+        emit("commanded", JointState(ts=9.9, name=["left"], position=[1000]))
+        emit("commanded", JointState(ts=9.9, name=["right"], position=[2000]))
         emit(
             "status",
             EpisodeStatus(
@@ -110,9 +110,9 @@ def recorded_profile(tmp_path: Path, mock_profile: CollectionProfile, camera_cou
                 "measured", JointState(ts=ts, name=["left", "right"], position=[frame, 100 + frame])
             )
             if frame == 1:
-                emit("accepted", JointState(ts=ts, name=["left"], position=[1001]))
+                emit("commanded", JointState(ts=ts, name=["left"], position=[1001]))
             elif frame == 2:
-                emit("accepted", JointState(ts=ts, name=["right"], position=[2002]))
+                emit("commanded", JointState(ts=ts, name=["right"], position=[2002]))
             for camera in range(camera_count):
                 emit(
                     f"camera_{camera}",
@@ -146,7 +146,7 @@ def test_mock_profile_recording_converts_to_training_dataset(
     recorded_profile.rename(moved)
     schema = RecordingSchema.read(moved)
     assert schema.observation["joint_state"].stream == "measured"
-    assert schema.action["target"].stream == "accepted"
+    assert schema.action["target"].stream == "commanded"
     assert schema.episodes.status_stream == "status"
     config = schema.dataprep_config(moved, OutputConfig(path=tmp_path / "dataset"))
 

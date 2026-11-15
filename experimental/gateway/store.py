@@ -22,9 +22,8 @@ import sys
 import tempfile
 from typing import Any
 
-import yaml
-
-from dimos.constants import RECORDINGS_DIR, STATE_DIR
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
+from experimental.gateway import shared_config
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -40,20 +39,22 @@ def logs_dir() -> Path:
     return gateway_dir() / "logs"
 
 
-def setting(section: str, key: str) -> Any:
-    """A value from the shared `$DIMOS_HOME/config.yaml` (default ~/.dimos/config.yaml), None when unset."""
-    home = Path(os.environ.get("DIMOS_HOME") or Path.home() / ".dimos")
-    try:
-        loaded = yaml.safe_load((home / "config.yaml").read_text()) or {}
-    except (OSError, yaml.YAMLError):
-        return None
-    value = (loaded.get(section) or {}).get(key) if isinstance(loaded, dict) else None
-    return None if value == "" else value
+# the checkout the gateway serves (new_state), which may not be the gateway's own (Desktop's pinned copy)
+_served: Path = DIMOS_PROJECT_ROOT
 
 
-def recordings_dir() -> Path:
-    configured = setting("recordings", "dir")
-    return Path(configured).expanduser() if configured else RECORDINGS_DIR
+def serve(dimos_dir: Path) -> None:
+    global _served
+    _served = dimos_dir
+
+
+def recordings_dir(dimos_dir: Path | None = None) -> Path:
+    """The configured one (a relative one is under the checkout, where launches run), else the checkout's default."""
+    dimos_dir = dimos_dir or _served
+    configured = shared_config.shared_config().recordings_dir
+    if configured:
+        return dimos_dir / Path(str(configured)).expanduser()
+    return dimos_dir / "recordings" if (dimos_dir / ".git").exists() else STATE_DIR / "recordings"
 
 
 def write_atomic(path: Path, text: str) -> None:
@@ -88,9 +89,35 @@ def dimos_bin(dimos_dir: Path) -> Path:
     return venv_dir(dimos_dir) / "bin" / "dimos"
 
 
+def _stat_key(*paths: Path) -> tuple[tuple[int, int] | None, ...]:
+    def one(path: Path) -> tuple[int, int] | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
+
+    return tuple(one(path) for path in paths)
+
+
+# GET /info is polled: what it reads is redone only when the files behind it change
+_versions: dict[Path, tuple[Any, tuple[bool, str | None]]] = {}
+_git_ids: dict[Path, tuple[Any, tuple[str | None, str | None]]] = {}
+
+
 def checkout_version(dimos_dir: Path) -> tuple[bool, str | None]:
+    pyproject = dimos_dir / "pyproject.toml"
+    key = _stat_key(pyproject)
+    cached = _versions.get(dimos_dir)
+    if cached is None or cached[0] != key:
+        cached = (key, _read_version(pyproject))
+        _versions[dimos_dir] = cached
+    return cached[1]
+
+
+def _read_version(pyproject: Path) -> tuple[bool, str | None]:
     try:
-        project = tomllib.loads((dimos_dir / "pyproject.toml").read_text()).get("project", {})
+        project = tomllib.loads(pyproject.read_text()).get("project", {})
     except (OSError, tomllib.TOMLDecodeError):
         return False, None
     if project.get("name") != "dimos":
@@ -107,18 +134,54 @@ def git(dimos_dir: Path, *args: str) -> str | None:
     return done.stdout.strip() or None if done.returncode == 0 else None
 
 
+def _git_dirs(dimos_dir: Path) -> tuple[Path, Path]:
+    """The checkout's git dir and the common one (a worktree's .git is a `gitdir:` file), without running git."""
+    dot_git = dimos_dir / ".git"
+    try:
+        text = dot_git.read_text() if dot_git.is_file() else None
+    except OSError:
+        text = None
+    git_dir = (
+        (dimos_dir / text.split("gitdir:", 1)[1].strip()) if text and "gitdir:" in text else dot_git
+    )
+    try:
+        common = git_dir / (git_dir / "commondir").read_text().strip()
+    except OSError:
+        common = git_dir
+    return git_dir, common
+
+
+def git_ids(dimos_dir: Path) -> tuple[str | None, str | None]:
+    """HEAD's short commit and its desktop-gateway-v* tag, rerun only when HEAD (its reflog) or the tags move."""
+    git_dir, common = _git_dirs(dimos_dir)
+    key = _stat_key(
+        git_dir / "HEAD",
+        git_dir / "logs" / "HEAD",
+        common / "packed-refs",
+        common / "refs" / "tags",
+    )
+    cached = _git_ids.get(dimos_dir)
+    if cached is None or cached[0] != key:
+        ids = (
+            git(dimos_dir, "rev-parse", "--short=10", "HEAD"),
+            git(dimos_dir, "describe", "--tags", "--exact-match", "--match", "desktop-gateway-v*"),
+        )
+        cached = (key, ids)
+        _git_ids[dimos_dir] = cached
+    return cached[1]
+
+
 def info(dimos_dir: Path) -> dict[str, Any]:
     from experimental.gateway.state import API_VERSION
 
     found, version = checkout_version(dimos_dir)
+    commit, tag = git_ids(dimos_dir)
     return {
         "dir": str(dimos_dir),
         "found": found,
         "installed": found and dimos_bin(dimos_dir).exists(),
         "version": version,
         "api": API_VERSION,
-        "commit": git(dimos_dir, "rev-parse", "--short=10", "HEAD"),
-        "tag": git(
-            dimos_dir, "describe", "--tags", "--exact-match", "--match", "desktop-gateway-v*"
-        ),
+        "commit": commit,
+        "tag": tag,
     }

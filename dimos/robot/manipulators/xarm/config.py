@@ -30,6 +30,8 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
@@ -82,6 +84,34 @@ XARM_HEURISTIC_AIM = {
     "fingertip_reach": 0.0031,
     "palm_behind_tcp": 0.0499,
 }
+
+
+def xarm_wrist_camera_transform(dof: int) -> Transform:
+    """Where the wrist RealSense sits on the arm's last link.
+
+    Measured on the xArm7's link7, with the pitch set so the table the camera sees
+    comes out level at the height of the arm's base. The xArm6 gets the same
+    numbers on link6, not measured there.
+
+    Args:
+        dof: The arm's joint count: 7 for the xArm7, 6 for the xArm6.
+    """
+    # RealSenseCamera publishes only its own subtree, so without this edge
+    # camera_link has no parent, nothing resolves into world, and every cloud the
+    # camera produces is silently unusable. The last link is a frame the model
+    # already publishes, so ManipulationModule emits the whole chain from one
+    # loop at one rate.
+    return Transform(
+        translation=Vector3(x=0.06685201, y=-0.03095927, z=0.00688431),
+        rotation=Quaternion(0.59138443, 0.00099956, 0.80629644, -0.01222741),  # xyzw
+        frame_id=f"link{dof}",
+        child_frame_id="camera_link",
+    )
+
+
+def xarm_link_frames(dof: int) -> list[str]:
+    """The xArm's base and arm links: the frames a viewer needs to draw the arm as it moves."""
+    return ["link_base", *(f"link{i}" for i in range(1, dof + 1))]
 
 
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
@@ -179,7 +209,6 @@ def make_xarm7_sim_robot_config(
     """
     return make_xarm7_model_config(
         add_gripper=True,
-        gripper_hardware_id="arm",
         base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
         tf_extra_links=["link7"] if tf_extra_links is None else tf_extra_links,
         home_joints=XARM7_SIM_HOME,
@@ -378,7 +407,6 @@ def make_xarm_model_config(
     prefix: str = "",
     robot: str | None = None,
     add_gripper: bool = True,
-    gripper_hardware_id: str | None = None,
     base_pose: PoseStamped | None = None,
     tf_extra_links: list[str] | None = None,
     home_joints: list[float] | None = None,
@@ -417,7 +445,6 @@ def make_xarm_model_config(
         auto_convert_meshes=True,
         collision_exclusion_pairs=collision_exclusions if xarm_gripper else [],
         gripper=xarm_gripper_config(prefix, robot=robot) if xarm_gripper else None,
-        gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,

@@ -371,7 +371,22 @@ def relock_cargo(manifest: Path) -> tuple[Path, bool, list[str]]:
     return manifest, changed, []
 
 
+def stale_pins() -> dict[str, list[str]]:
+    """Every lock or manifest whose in-repo pins do not hold this commit's tree, with what is stale."""
+    stale = {_rel(lock): names for lock in flake_locks() if (names := stale_flake_inputs(lock))}
+    stale |= {
+        _rel(manifest): why for manifest in cargo_manifests() if (why := stale_cargo_pins(manifest))
+    }
+    return stale
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--check"]:
+        stale = stale_pins()
+        for path, names in sorted(stale.items()):
+            print(f"stale {path}: {', '.join(names)}")
+        return 1 if stale else 0
+
     locks, manifests = flake_locks(), cargo_manifests()
     workers = int(os.environ.get("RELOCK_WORKERS") or min(8, len(locks) + len(manifests) or 1))
     touched, failed = [], []

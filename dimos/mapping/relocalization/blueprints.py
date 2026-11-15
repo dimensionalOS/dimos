@@ -23,6 +23,8 @@ relocalizer. In Rerun, `loaded_map` appears once a fix lands, on top of
 
 from typing import Any
 
+from reactivex.disposable import CompositeDisposable
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -61,7 +63,11 @@ class RecordingPlayer(Module):
     def start(self) -> None:
         super().start()
         path = resolve_named_path(self.config.dataset, ".db")
-        store = self.register_disposable(SqliteStore(path=str(path), must_exist=True))
+        store = SqliteStore(path=str(path), must_exist=True)
+        subscriptions = CompositeDisposable()
+        # One disposer drains the subscriptions before closing their store,
+        # even when stop() is called concurrently or setup fails partway through.
+        self.register_disposable(CompositeDisposable(subscriptions, store))
         store.start()
         replay = store.replay(
             speed=self.config.speed,
@@ -73,10 +79,10 @@ class RecordingPlayer(Module):
             f"Replaying {path.name}:{self.config.stream} "
             f"({lidar.count()} frames at {self.config.speed}x)"
         )
-        self.register_disposable(lidar.observable().subscribe(self.lidar.publish))
+        subscriptions.add(lidar.observable().subscribe(self.lidar.publish))
 
         tf: ReplayStream[TFMessage] = replay.stream("tf")
-        self.register_disposable(tf.observable().subscribe(self.tf.publish))
+        subscriptions.add(tf.observable().subscribe(self.tf.publish))
 
 
 def _fine_points(cloud: Any) -> Any:

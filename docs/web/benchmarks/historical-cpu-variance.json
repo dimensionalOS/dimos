@@ -1,0 +1,44 @@
+{
+  "baseline": {
+    "reports": [
+      "events-paired-ack90-gateway-1.json",
+      "events-paired-ack90-gateway-2.json",
+      "events-paired-ack90-gateway-3.json"
+    ],
+    "count": 3,
+    "values": [
+      4.066631650792088,
+      4.3499589543643395,
+      4.149961652484159
+    ],
+    "mean": 4.188850752546863,
+    "sampleVariance": 0.021202861815145902,
+    "sampleStddev": 0.14561202496753453,
+    "minimum": 4.066631650792088,
+    "maximum": 4.3499589543643395
+  },
+  "candidate": {
+    "reports": [
+      "events-burst3-60s-1.json",
+      "events-burst3-60s-2.json",
+      "events-burst3-60s-3.json"
+    ],
+    "count": 3,
+    "values": [
+      4.533274652056144,
+      4.633271121162359,
+      4.466626005188985
+    ],
+    "mean": 4.544390592802496,
+    "sampleVariance": 0.0070353217734521216,
+    "sampleStddev": 0.08387682500817566,
+    "minimum": 4.466626005188985,
+    "maximum": 4.633271121162359
+  },
+  "relativeIncreasePercent": 8.48776576819934,
+  "meanWithinTenPercent": true,
+  "variationCrossesTenPercent": true,
+  "measurementEligible": false,
+  "qualifiedMeanGatePassed": false,
+  "note": "Variance and range are descriptive, not a confidence interval. Runs must use equivalent workloads and host conditions."
+}

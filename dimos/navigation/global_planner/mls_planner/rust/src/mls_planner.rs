@@ -40,7 +40,7 @@ use crate::nodes::{
 use crate::planner;
 use crate::reform::ReformConfig;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region};
-use crate::voxel::{voxelize, VoxelKey};
+use crate::voxel::{voxelize, VoxelKey, Xyz};
 
 #[native_config]
 #[derive(Clone)]
@@ -86,6 +86,18 @@ pub struct Config {
     /// Ground-plane distance from goal at which the planner stops replanning.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
+    /// Vertical distance from goal within which the planner counts arrival.
+    #[validate(range(exclusive_min = 0.0))]
+    pub goal_z_tolerance: f32,
+    /// Seconds a goal may go without a safe path before it is aborted.
+    #[validate(range(min = 0.0))]
+    pub blocked_timeout_s: f32,
+    /// Seconds a followed goal may go without the robot moving before it is aborted.
+    #[validate(range(min = 0.0))]
+    pub progress_timeout_s: f32,
+    /// Ground-plane meters the robot must move within the progress timeout window.
+    #[validate(range(exclusive_min = 0.0))]
+    pub progress_min_m: f32,
     /// Rate cap for the surface_map / nodes / node_edges viz artifacts. 0
     /// disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
@@ -122,6 +134,17 @@ fn validate_wall_buffer(config: &Config) -> Result<(), ValidationError> {
         ));
     }
     Ok(())
+}
+
+/// How a plan toward the goal ended, with the waypoints to follow.
+#[derive(Debug, PartialEq)]
+pub enum Plan {
+    /// A full path to the goal.
+    Full(Vec<Xyz>),
+    /// No full path, so the cached one cut where it stops being safe.
+    Truncated(Vec<Xyz>),
+    /// No full path and nothing safe ahead.
+    Blocked,
 }
 
 impl Config {
@@ -955,12 +978,7 @@ impl Planner {
     }
 
     /// Plan to the goal, re-keying along a route a warp moved; with no full route follow the cached path while safe, or nothing with require_full_route.
-    pub fn plan_or_truncate(
-        &mut self,
-        start: (f32, f32, f32),
-        goal: (f32, f32, f32),
-        config: &Config,
-    ) -> Vec<(f32, f32, f32)> {
+    pub fn plan_or_truncate(&mut self, start: Xyz, goal: Xyz, config: &Config) -> Plan {
         self.rebin_for_plan(start, goal, config);
         let mut waypoints = self.plan_or_truncate_keys(start, goal, config);
         // No full route while a warp left cells off their keys: re-key everything still displaced and plan again.
@@ -987,15 +1005,15 @@ impl Planner {
             .as_ref()
             .map(|(_, cells)| cells.clone())
             .unwrap_or_default();
-        self.placed_waypoints(waypoints, &path, config.voxel_size)
+        let vs = config.voxel_size;
+        match waypoints {
+            Plan::Full(wp) => Plan::Full(self.placed_waypoints(wp, &path, vs)),
+            Plan::Truncated(wp) => Plan::Truncated(self.placed_waypoints(wp, &path, vs)),
+            Plan::Blocked => Plan::Blocked,
+        }
     }
 
-    fn plan_or_truncate_keys(
-        &mut self,
-        start: (f32, f32, f32),
-        goal: (f32, f32, f32),
-        config: &Config,
-    ) -> Vec<(f32, f32, f32)> {
+    fn plan_or_truncate_keys(&mut self, start: Xyz, goal: Xyz, config: &Config) -> Plan {
         if !self.graph.nodes.is_empty() {
             if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
                 if self.last_result != Some((goal, true)) {
@@ -1003,7 +1021,7 @@ impl Planner {
                 }
                 self.last_result = Some((goal, true));
                 self.last_path = Some((goal, cells));
-                return waypoints;
+                return Plan::Full(waypoints);
             }
         }
         if self.last_result != Some((goal, false)) {
@@ -1019,13 +1037,18 @@ impl Planner {
         self.last_result = Some((goal, false));
         if config.require_full_route {
             self.last_path = None;
-            return Vec::new();
+            return Plan::Blocked;
         }
-        match &self.last_path {
+        let waypoints = match &self.last_path {
             Some((cached_goal, cells)) if *cached_goal == goal => {
                 planner::truncate_to_safe(&self.graph, cells, start, config)
             }
             _ => Vec::new(),
+        };
+        if waypoints.is_empty() {
+            Plan::Blocked
+        } else {
+            Plan::Truncated(waypoints)
         }
     }
 
@@ -1172,6 +1195,39 @@ fn bfs_ball(
 
 mod warp;
 pub use warp::WarpReport;
+
+#[cfg(test)]
+pub(crate) fn test_config() -> Config {
+    Config {
+        world_frame: String::new(),
+        base_frame: String::new(),
+        voxel_size: 0.1,
+        robot_height: 0.5,
+        start_z_offset_m: 0.0,
+        max_overhead_m: 2.0,
+        surface_closing_radius: 0.3,
+        node_spacing_m: 1.0,
+        wall_clearance_m: 0.0,
+        wall_buffer_m: 0.3,
+        wall_buffer_weight: 1.0,
+        step_threshold_m: 0.25,
+        step_penalty_weight: 0.0,
+        goal_tolerance: 0.3,
+        goal_z_tolerance: 0.5,
+        blocked_timeout_s: 2.0,
+        progress_timeout_s: 10.0,
+        progress_min_m: 0.2,
+        viz_publish_hz: 2.0,
+        viz_cell_m: 4.0,
+        viz_sweep_cells: 0,
+        worker_threads: 4,
+        reform: ReformConfig::off(),
+        reform_rekey_radius_m: 3.0,
+        require_full_route: false,
+        max_region_columns: 10_000_000,
+        max_closing_box_cells: 250_000_000,
+    }
+}
 
 #[cfg(test)]
 mod region_tests;

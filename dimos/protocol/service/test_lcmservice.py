@@ -349,6 +349,22 @@ class TestTopic:
 # LCMService tests
 
 
+@pytest.fixture
+def mock_lcm():
+    """An autospec LCM whose fileno() is a real, never-readable descriptor.
+
+    The dispatch loop waits on that descriptor between messages.
+    """
+    read_end, write_end = os.pipe()
+    instance = create_autospec(LCM, spec_set=True, instance=True)
+    instance.fileno.return_value = read_end
+    try:
+        yield instance
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
 class TestLCMService:
     def test_init_with_defaults(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
@@ -379,10 +395,9 @@ class TestLCMService:
             mock_lcm_class.assert_not_called()
             assert service.l == mock_lcm_instance
 
-    def test_start_and_stop(self) -> None:
+    def test_start_and_stop(self, mock_lcm) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
+            mock_lcm_class.return_value = mock_lcm
 
             service = LCMService()
             service.start()
@@ -397,9 +412,9 @@ class TestLCMService:
             time.sleep(0.1)
             assert service._thread is None
 
-    def test_codec_round_trip_and_deepcopy_rebuild_an_unstarted_service(self) -> None:
+    def test_codec_round_trip_and_deepcopy_rebuild_an_unstarted_service(self, mock_lcm) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_class.return_value = create_autospec(LCM, spec_set=True, instance=True)
+            mock_lcm_class.return_value = mock_lcm
             service = LCMService(url="udpm://239.255.76.68:7799?ttl=1", ttl=1)
             service.start()
             try:
@@ -414,10 +429,9 @@ class TestLCMService:
             finally:
                 service.stop()
 
-    def test_stop_cleans_up_lcm_instance(self) -> None:
+    def test_stop_cleans_up_lcm_instance(self, mock_lcm) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
+            mock_lcm_class.return_value = mock_lcm
 
             service = LCMService()
             service.start()
@@ -426,16 +440,14 @@ class TestLCMService:
             # LCM instance should be cleaned up when we created it
             assert service.l is None
 
-    def test_stop_preserves_external_lcm_instance(self) -> None:
-        mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-
+    def test_stop_preserves_external_lcm_instance(self, mock_lcm) -> None:
         # Pass lcm as kwarg
-        service = LCMService(lcm=mock_lcm_instance)
+        service = LCMService(lcm=mock_lcm)
         service.start()
         service.stop()
 
         # External LCM instance should not be cleaned up
-        assert service.l == mock_lcm_instance
+        assert service.l == mock_lcm
 
     def test_get_call_thread_pool_reuses_executor(self, memory_lcm_service):
         service, _ = memory_lcm_service

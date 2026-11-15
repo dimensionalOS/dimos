@@ -39,7 +39,7 @@ from dimos.navigation.global_planner.mls_planner.viz import planner_visual_overr
 from dimos.navigation.global_planner.viz import render_path
 from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
+from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
 from dimos.simulation.habitat.connection import HabitatConnection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module

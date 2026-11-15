@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
+from dimos.control.contract.keys import Interface
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -236,7 +237,7 @@ class TickLoop:
 
         self._write_all_hardware(hw_commands)
 
-        self._write_all_connections(hw_commands)
+        self._write_all_connections(joint_commands)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -253,7 +254,7 @@ class TickLoop:
 
         # Optional logging
         if self._log_ticks:
-            active = len([c for c in commands if c[2] is not None])
+            active = len({task.name for task, _, output in commands if output is not None})
             logger.debug(
                 f"Tick {self._tick_count}: dt={dt:.4f}s, "
                 f"{len(joint_states.joint_positions)} joints, "
@@ -267,10 +268,12 @@ class TickLoop:
         joint_positions: dict[str, float] = {}
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
+        joint_command_interfaces: dict[str, frozenset[Interface]] = {}
         per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
 
         with self._hardware_lock:
             for hw in self._hardware.values():
+                joint_command_interfaces.update(hw.joint_command_interfaces)
                 if not hw.ready_for_control():
                     continue
                 try:
@@ -290,12 +293,14 @@ class TickLoop:
                 joint_positions.update(joints.joint_positions)
                 joint_velocities.update(joints.joint_velocities)
                 joint_efforts.update(joints.joint_efforts)
+                joint_command_interfaces.update(joints.joint_command_interfaces)
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
             joint_velocities=joint_velocities,
             joint_efforts=joint_efforts,
             timestamp=time.time(),
+            joint_command_interfaces=joint_command_interfaces,
         )
         return snapshot, per_hardware
 
@@ -347,7 +352,12 @@ class TickLoop:
                 try:
                     claim = task.claim()
                     output = task.compute(state)
-                    results.append((task, claim, output))
+                    # One task may command disjoint joint groups in different modes.
+                    # Normalize here so arbitration and preemption stay per task/joint.
+                    if isinstance(output, list):
+                        results.extend((task, claim, command) for command in output)
+                    else:
+                        results.append((task, claim, output))
                 except Exception as e:
                     logger.error(f"Task {task.name} compute error: {e}")
 
@@ -445,6 +455,9 @@ class TickLoop:
     ) -> dict[str, tuple[dict[str, float], ControlMode]]:
         """Route joint-centric commands to hardware.
 
+        Connection commands retain their per-joint modes in
+        ``_write_all_connections``. Legacy adapters keep one mode per hardware.
+
         Returns:
             {hardware_id: ({joint: value}, mode)}
         """
@@ -457,6 +470,8 @@ class TickLoop:
                     logger.warning(f"Unknown joint {joint_name}, cannot route")
                     continue
 
+                if hw_id in self._connections:
+                    continue
                 if hw_id not in hw_commands:
                     hw_commands[hw_id] = ({}, mode)
                 else:
@@ -521,7 +536,7 @@ class TickLoop:
 
     def _write_all_connections(
         self,
-        hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+        joint_commands: dict[str, tuple[float, ControlMode, str]],
     ) -> None:
         """Send every robot behind a connection module its complete command.
 
@@ -538,12 +553,13 @@ class TickLoop:
                 if not source.ready_for_control(now):
                     self._note_silence(name, source, now)
                     continue
-                winners: dict[str, float] = {}
-                mode: ControlMode | None = None
-                if name in hw_commands:
-                    winners, mode = hw_commands[name]
+                winners = {
+                    joint: (value, mode)
+                    for joint, (value, mode, _) in joint_commands.items()
+                    if self._joint_to_hardware.get(joint) == name
+                }
                 try:
-                    publish(name, source.command(winners, mode))
+                    publish(name, source.command(winners))
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
 
@@ -569,7 +585,18 @@ class TickLoop:
         )
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
-        """Publish aggregated JointState for external consumers."""
+        """Publish an aggregate only after every connection's initial readings are complete."""
+        if any(source.unreported() for source in self._connections.values()):
+            return
+        reported = (
+            snapshot.joint_positions.keys()
+            | snapshot.joint_velocities.keys()
+            | snapshot.joint_efforts.keys()
+        )
+        if any(
+            not reported.issuperset(source.joint_names) for source in self._connections.values()
+        ):
+            return
         names = list(snapshot.joint_positions.keys())
         msg = JointState(
             ts=snapshot.timestamp,

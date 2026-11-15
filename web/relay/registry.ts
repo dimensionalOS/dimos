@@ -28,6 +28,8 @@ import {
 import { MAX_MANIFEST_ID_LEN, TRACK_ENCODING } from "@dimos/shared/manifest";
 
 import type { CarrierStats } from "./carrier.ts";
+import { TopicRegistry } from "./topics.ts";
+import type { TopicMsg } from "@dimos/shared";
 import {
   type ChannelPolicy,
   LatestChannel,
@@ -147,8 +149,7 @@ interface ViewerPubState {
 
 interface RobotEntry {
   peer: RobotPeer;
-  /** Normalized manifest spec per channel (delivery, publish policy, rate);
-   * frame-header delivery is the undeclared-channel fallback. */
+  /** Normalized manifest spec per channel (delivery, publish policy, rate). */
   specs: Map<string, ChannelSpec>;
   /** Viewer holding the exclusive teleop lease, or null. Dies with the
    * entry: a re-registered robot starts lease-free. */
@@ -178,6 +179,7 @@ interface RobotEntry {
 }
 
 export class Registry {
+  readonly topics: TopicRegistry;
   #robots = new Map<string, RobotEntry>();
   #viewers = new Set<ViewerPeer>();
   #pubViewers = new Map<ViewerPeer, ViewerPubState>();
@@ -197,8 +199,13 @@ export class Registry {
 
   /** Clock injected so tests fabricate time (buckets and pending deadlines
    * are the only time-dependent state beyond stats). A null `hub` disables
-   * track channels. */
-  constructor(now: () => number = Date.now, hub: RtcBroker | null = null) {
+   * track channels; `openTopics` false disables raw topic sources. */
+  constructor(
+    now: () => number = Date.now,
+    hub: RtcBroker | null = null,
+    openTopics = true,
+  ) {
+    this.topics = new TopicRegistry(now, openTopics);
     this.#now = now;
     this.#hub = hub;
   }
@@ -248,6 +255,7 @@ export class Registry {
 
   viewerClosed(viewer: ViewerPeer): void {
     if (!this.#viewers.delete(viewer)) return;
+    this.topics.viewerClosed(viewer);
     this.#hub?.viewerClosed(viewer);
     disposePolicies(viewer);
     // Release the viewer's pending publishes silently (there is nobody left
@@ -342,6 +350,10 @@ export class Registry {
       });
       return false;
     }
+    if (msg.t.startsWith("topic_")) {
+      this.topics.onViewerMsg(viewer, msg as TopicMsg, reply);
+      return true;
+    }
     switch (msg.t) {
       case "hello": {
         if (msg.v !== PROTOCOL_VERSION) {
@@ -365,6 +377,7 @@ export class Registry {
         // channel is datagrams, so this is its loss-healing path.
         reply({ t: "welcome", v: PROTOCOL_VERSION });
         reply(this.robotsMsg());
+        if (msg.topicsVersion === 1) this.topics.addViewer(viewer, reply);
         if (this.#hub !== null) reply(this.#hub.iceMsg());
         break;
       }
@@ -416,8 +429,7 @@ export class Registry {
             break;
           }
           // Manifest ids are length-bounded; hold undeclared subs to the
-          // same cap so a manifest-less robot (transport tests accept any
-          // sub) cannot accumulate ch strings that push its subs snapshot
+          // same cap so arbitrary requests cannot accumulate ch strings that push its subs snapshot
           // past the @control payload cap and fail the carrier.
           if (msg.ch.length > MAX_MANIFEST_ID_LEN) {
             reply({
@@ -427,16 +439,14 @@ export class Registry {
             });
             break;
           }
-          // Manifest-validated: arbitrary ch strings must not grow relay and
-          // bridge subscription state. A robot that declared no manifest at
-          // all (transport tests) has nothing to validate against and
-          // accepts any sub - production bridges always declare.
+          // Empty and absent manifests grant no reads. Transport tests must
+          // declare their channels too; there is no production bypass.
           const entry = this.#robots.get(viewer.watched);
           if (entry === undefined) {
             reply({ t: "error", code: "unknown_robot", message: `no robot ${viewer.watched}` });
             break;
           }
-          if (entry.specs.size > 0 && !entry.specs.has(msg.ch)) {
+          if (entry.specs.get(msg.ch)?.dir !== "rx") {
             reply({
               t: "error",
               code: "unknown_channel",
@@ -737,16 +747,17 @@ export class Registry {
       return;
     }
     const declared = spec?.delivery;
-    // Manifest delivery wins; the header's is the undeclared-channel fallback.
+    // The declared policy is authoritative; unknown channels are counted but
+    // never routed, including surviving subscriptions after a source restart.
     const delivery = declared ?? header.delivery;
 
     if (declared === undefined) {
-      // Aggregate bucket only: arbitrary header ch strings must not grow the
-      // per-channel map. Routing below still forwards to subscribed viewers
-      // (a robot that declared no manifest accepts any sub).
+      // Aggregate bucket only: arbitrary header ch strings cannot grow state.
       entry.undeclared.framesIn++;
       entry.undeclared.bytesIn += bytes.byteLength;
       entry.undeclared.rate.push(bytes.byteLength, Date.now());
+      this.#framesDropped++;
+      return;
     } else {
       // delivery is fixed at creation: the manifest cannot change within a
       // registration.
@@ -756,6 +767,10 @@ export class Registry {
       stats.bytesIn += bytes.byteLength;
       stats.rate.push(bytes.byteLength, Date.now());
       entry.channelsIn.set(ch, stats);
+    }
+    if (spec?.dir !== "rx") {
+      this.#framesDropped++;
+      return;
     }
 
     for (const viewer of this.#viewers) {
@@ -778,6 +793,7 @@ export class Registry {
    * opportunistically, but an idle input stops offering; server.ts drives
    * this on an interval. Clock passed in so tests fabricate time. */
   reapAll(nowMs: number): void {
+    this.topics.reap(nowMs);
     for (const viewer of this.#viewers) {
       for (const policy of viewer.policies.values()) policy.reap(nowMs);
     }
@@ -874,14 +890,14 @@ export class Registry {
   }
 
   /** Sorted union of the subs of every viewer watching `robotId`, kept to
-   * the current manifest when one was declared (a reconnect can shrink the
+   * the current manifest (a reconnect can shrink the
    * manifest under surviving subs). */
   #activeChs(robotId: string, specs: Map<string, ChannelSpec>): string[] {
     const chs = new Set<string>();
     for (const viewer of this.#viewers) {
       if (viewer.watched !== robotId) continue;
       for (const ch of viewer.subs) {
-        if (specs.size === 0 || specs.has(ch)) chs.add(ch);
+        if (specs.get(ch)?.dir === "rx") chs.add(ch);
       }
     }
     return [...chs].sort();

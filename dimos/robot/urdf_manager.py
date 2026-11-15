@@ -89,7 +89,8 @@ class UrdfManager(Module):
             return
         # Only files the URDF names: a request is never an arbitrary path into the filesystem.
         if name not in self._file_paths:
-            logger.warning(f"render_file_request for {name!r}, which is not a file the URDF names")
+            # another module's file (the sim's scene, ...): it answers, this stays silent
+            logger.debug(f"render_file_request for {name!r}, which is not a file the URDF names")
             return
         data = await asyncio.to_thread(Path(name).read_bytes)
         self.file_info.publish(File(name, data))

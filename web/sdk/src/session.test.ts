@@ -193,6 +193,7 @@ describe("Session over a fake WebTransport", () => {
       v: PROTOCOL_VERSION,
       role: "viewer",
       token: "viewer-token-0123456789abcdef",
+      topicsVersion: 1,
     });
     relay.push({ t: "error", code: "auth_failed", message: "invalid viewer token" });
     await until(() => handle.status.get().transport.phase === "failed", "failed");
@@ -222,6 +223,7 @@ describe("Session over a fake WebTransport", () => {
       t: "hello",
       v: PROTOCOL_VERSION,
       role: "viewer",
+      topicsVersion: 1,
     });
     relays[0].push({ t: "error", code: "auth_failed", message: "missing viewer token" });
     await until(() => handle.status.get().transport.phase === "failed", "failed");
@@ -603,6 +605,40 @@ describe("Session over a fake WebTransport", () => {
     handle.close();
     await expectPublishError(first, "unknown", "closed");
     await expectPublishError(second, "unknown", "closed");
+  });
+
+  it("close flushes unsubscribe through a relay acknowledgement before closing QUIC", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle);
+    handle.subscribe("odom", () => {});
+    await until(() => relay.sent.some((m) => m.t === "sub"), "subscription");
+    relay.answerPings = false;
+    const close = vi.spyOn(relay.wt, "close");
+    handle.close();
+    await until(() => relay.pings === 1, "close barrier");
+    teleopHooks(handle).control({ t: "teleop_start" });
+    await Promise.resolve();
+    expect(relay.sent.at(-1)).toEqual({ t: "unsub", ch: "odom" });
+    expect(close).not.toHaveBeenCalled();
+    relay.push({ t: "pong", n: Number.MAX_SAFE_INTEGER, ts: 0 });
+    await until(() => close.mock.calls.length === 1, "QUIC closed");
+  });
+
+  it("close cannot wait indefinitely for a missing shutdown acknowledgement", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle);
+    relay.answerPings = false;
+    const close = vi.spyOn(relay.wt, "close");
+    vi.useFakeTimers();
+    try {
+      handle.close();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(close).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("the local safety timer settles a never-answered publish as unknown", async () => {

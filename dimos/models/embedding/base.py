@@ -22,17 +22,11 @@ import numpy as np
 import torch
 
 from dimos.core.resource import Resource
-from dimos.models.base import HuggingFaceModelConfig, LocalModelConfig
+from dimos.models.base import HuggingFaceModelConfig
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.Image import Image
-
-
-class EmbeddingModelConfig(LocalModelConfig):
-    """Base config for embedding models."""
-
-    normalize: bool = True
 
 
 class HuggingFaceEmbeddingModelConfig(HuggingFaceModelConfig):
@@ -80,12 +74,6 @@ class Embedding(Timestamped):
         if device is not None and self.vector.device != torch.device(device):
             return self.vector.to(device)
         return self.vector
-
-    def to_cpu(self) -> Embedding:
-        """Move embedding to CPU, returning self for chaining."""
-        if isinstance(self.vector, torch.Tensor):
-            self.vector = self.vector.cpu()
-        return self
 
 
 class EmbeddingModel(Resource, ABC):

@@ -40,6 +40,7 @@ from dimos.navigation.bench.runner import (
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.scenes.procedural import Scene
 from dimos.simulation.sim_world.world import ROOT_QUAT, load_display_spec, open_viewer, scene_model
+from dimos.utils.executable import find_executable
 
 
 @dataclass(frozen=True)
@@ -147,11 +148,13 @@ def open_rerun(replay: Path) -> subprocess.Popen[bytes]:
     for command in ("dimos-viewer", "rerun"):
         try:
             return subprocess.Popen(
-                [command, "--new", str(replay)], stdin=subprocess.DEVNULL, start_new_session=True
+                [find_executable(command) or command, "--new", str(replay)],
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
             )
         except FileNotFoundError:
             continue
-    raise FileNotFoundError("no rerun viewer on PATH")
+    raise FileNotFoundError("no rerun viewer found")
 
 
 def play(episode_dir: Path, speed: float = 1.0, loop: bool = True, rerun: bool = True) -> None:

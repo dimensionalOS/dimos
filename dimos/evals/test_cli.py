@@ -41,14 +41,14 @@ class FailingEnvironment(Environment):
     def preflight(self, agent: EvalSubject) -> None:
         raise RuntimeError("offline preflight")
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         raise AssertionError("invalid test setup: execution reached")
 
 
 class StaticEnvironment(Environment):
     """Starts nothing and produces no artifacts."""
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         return RunningEnvironment(mcp_url="", streams=(), artifacts={})
 
 

@@ -61,6 +61,7 @@ from dimos.robot.unitree.go2.constants import (
     ROBOT_WIDTH,
 )
 from dimos.utils.data import resolve_named_path
+from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
@@ -307,12 +308,17 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: Local
     rr.init("plan_rrd", recording_id=db_path.stem)
     if out is not None and live:
         # Generous viewer memory so the gRPC sink never backpressures the writer.
-        rr.spawn(connect=False, memory_limit="16GB", server_memory_limit="16GB")
+        rr.spawn(
+            connect=False,
+            memory_limit="16GB",
+            server_memory_limit="16GB",
+            executable_path=find_executable("rerun"),
+        )
         rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
     elif out is not None:
         rr.save(str(out))
     else:
-        rr.spawn()
+        rr.spawn(executable_path=find_executable("rerun"))
     rr.send_blueprint(_blueprint(crop))
     register_colormap_annotation("turbo")
     for group, series in (("timing", TIMING_SERIES), ("size", SIZE_SERIES)):

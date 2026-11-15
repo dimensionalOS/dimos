@@ -35,7 +35,7 @@ def test_hardware_namespace_exposes_a1z_diagnostics_and_configuration() -> None:
 def test_software_only_doctor_checks_every_linux_dependency_without_hardware(mocker) -> None:
     mocker.patch.object(a1z_cli.platform, "system", return_value="Linux")
     mocker.patch.object(a1z_cli, "_verify_sdk", return_value="/sdk/a1z")
-    mocker.patch.object(a1z_cli, "_verify_adapter_import", return_value="/dimos/adapter.py")
+    mocker.patch.object(a1z_cli, "_verify_connection_import", return_value="/dimos/connection.py")
     mocker.patch.object(a1z_cli, "_verify_linux_dependencies", return_value="/usr/bin/cansend")
     hardware = mocker.patch.object(a1z_cli, "_verify_linux_can")
 
@@ -43,7 +43,7 @@ def test_software_only_doctor_checks_every_linux_dependency_without_hardware(moc
 
     assert result.exit_code == 0, result.output
     assert "PASS  A1Z SDK: /sdk/a1z" in result.output
-    assert "PASS  DimOS A1Z adapter: /dimos/adapter.py" in result.output
+    assert "PASS  DimOS A1Z connection: /dimos/connection.py" in result.output
     assert "PASS  can-utils: /usr/bin/cansend" in result.output
     assert "A1Z doctor passed." in result.output
     hardware.assert_not_called()
@@ -52,7 +52,7 @@ def test_software_only_doctor_checks_every_linux_dependency_without_hardware(moc
 def test_doctor_reports_all_failures_in_one_run(mocker) -> None:
     mocker.patch.object(a1z_cli.platform, "system", return_value="Linux")
     mocker.patch.object(a1z_cli, "_verify_sdk", side_effect=RuntimeError("SDK missing"))
-    mocker.patch.object(a1z_cli, "_verify_adapter_import", return_value="/dimos/adapter.py")
+    mocker.patch.object(a1z_cli, "_verify_connection_import", return_value="/dimos/connection.py")
     mocker.patch.object(
         a1z_cli,
         "_verify_linux_dependencies",
@@ -64,7 +64,7 @@ def test_doctor_reports_all_failures_in_one_run(mocker) -> None:
 
     assert result.exit_code == 1
     assert "FAIL  A1Z SDK: SDK missing" in result.output
-    assert "PASS  DimOS A1Z adapter: /dimos/adapter.py" in result.output
+    assert "PASS  DimOS A1Z connection: /dimos/connection.py" in result.output
     assert "FAIL  can-utils: cansend missing" in result.output
     assert "FAIL  Linux USB-CAN: CAN is down" in result.output
     assert "A1Z doctor found 3 problem(s)" in result.output
@@ -73,7 +73,7 @@ def test_doctor_reports_all_failures_in_one_run(mocker) -> None:
 def test_doctor_checks_selected_linux_interface(mocker) -> None:
     mocker.patch.object(a1z_cli.platform, "system", return_value="Linux")
     mocker.patch.object(a1z_cli, "_verify_sdk", return_value="/sdk/a1z")
-    mocker.patch.object(a1z_cli, "_verify_adapter_import", return_value="/dimos/adapter.py")
+    mocker.patch.object(a1z_cli, "_verify_connection_import", return_value="/dimos/connection.py")
     mocker.patch.object(a1z_cli, "_verify_linux_dependencies", return_value="/usr/bin/cansend")
     hardware = mocker.patch.object(a1z_cli, "_verify_linux_can", return_value="can7 is ready")
 

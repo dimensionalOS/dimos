@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -326,145 +327,65 @@ def _base_component() -> HardwareComponent:
 
 
 class TestTwistRouting:
-    """Base virtual-joint mapping is hardware-side; the fan-out is card-routed."""
+    """Only task cards consume input; joint names and hardware types grant no routes."""
 
-    def test_base_twist_maps_to_virtual_joint_velocities(self, make_coordinator):
+    @pytest.mark.parametrize(
+        "joints,axes,expected",
+        [
+            (
+                ["base/vx", "base/vy", "base/wz"],
+                ["linear.x", "linear.y", "angular.z"],
+                [1.0, 2.0, 6.0],
+            ),
+            (["arm/unusual", "arm/other"], ["linear.x", "angular.z"], [1.0, 6.0]),
+            (
+                ["device/a", "device/b", "device/c", "device/d", "device/e", "device/f"],
+                ["linear.x", "linear.y", "linear.z", "angular.x", "angular.y", "angular.z"],
+                [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            ),
+        ],
+    )
+    def test_registered_task_maps_explicit_axes(self, make_coordinator, joints, axes, expected):
+        from dimos.control.task import CoordinatorState, JointStateSnapshot
+
         coordinator, taps = make_coordinator(
-            hardware=[_base_component()],
             tasks=[
                 TaskConfig(
-                    name="basevel",
-                    type="velocity",
-                    joint_names=make_twist_base_joints("base"),
+                    name="input", type="twist_velocity", joint_names=joints, params={"axes": axes}
                 )
-            ],
-        )
-        coordinator.start()
-
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
-
-        assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0]
-
-    def test_base_twist_both_maps_joints_and_fans_out(self, make_coordinator):
-        coordinator, taps = make_coordinator(
-            hardware=[_base_component()],
-            tasks=[
-                TaskConfig(
-                    name="basevel",
-                    type="velocity",
-                    joint_names=make_twist_base_joints("base"),
-                )
-            ],
+            ]
         )
         capable = G1ShapedVelocityTask("capable")
         coordinator.add_task(capable, task_type="g1_groot_wbc")
         coordinator.start()
-
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
-
-        assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0]
+        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 3.0], angular=[4.0, 5.0, 6.0]))
+        out = coordinator.get_task("input").compute(
+            CoordinatorState(joints=JointStateSnapshot(), t_now=time.perf_counter())
+        )
+        assert out.joint_names == joints
+        assert out.velocities == expected
         assert len(capable.velocity_commands) == 1
 
-    def test_twist_subscribed_for_base_hardware_without_tasks(self, make_coordinator):
-        coordinator, taps = make_coordinator(hardware=[_base_component()])
-        coordinator.start()
-
-        assert taps["twist_command"].subscribed
-
-    def test_twist_not_subscribed_without_base_or_velocity_capable_task(self, make_coordinator):
+    def test_base_and_unregistered_velocity_tasks_do_not_subscribe(self, make_coordinator):
         coordinator, taps = make_coordinator(
+            hardware=[_base_component()],
             tasks=[
                 TaskConfig(
-                    name=JOINT_TRAJECTORY_TASK_NAME,
-                    type="trajectory",
-                    joint_names=ARM_JOINTS,
+                    name="velocity", type="velocity", joint_names=make_twist_base_joints("base")
                 )
-            ]
+            ],
         )
         coordinator.start()
-
         assert not taps["twist_command"].subscribed
+        assert coordinator.get_task("velocity")._velocities is None
 
-    def test_base_suffix_subset_maps_only_declared_joints(self, make_coordinator):
-        carlike_joints = make_twist_base_joints("base", ["vx", "wz"])
-        coordinator, taps = make_coordinator(
-            hardware=[
-                HardwareComponent(
-                    hardware_id="base",
-                    hardware_type=HardwareType.BASE,
-                    joints=carlike_joints,
-                    adapter_type="mock_twist_base",
-                )
-            ],
-            tasks=[TaskConfig(name="basevel", type="velocity", joint_names=carlike_joints)],
-        )
-        coordinator.start()
-
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
-
-        assert coordinator.get_task("basevel")._velocities == [1.0, 3.0]
-
-    def test_base_full_6d_twist_maps_all_axes(self, make_coordinator):
-        # Drones and such: a base may declare all six twist axes.
-        drone_joints = make_twist_base_joints("base", ["vx", "vy", "vz", "wx", "wy", "wz"])
-        coordinator, taps = make_coordinator(
-            hardware=[
-                HardwareComponent(
-                    hardware_id="base",
-                    hardware_type=HardwareType.BASE,
-                    joints=drone_joints,
-                    adapter_type="mock_twist_base",
-                )
-            ],
-            tasks=[TaskConfig(name="basevel", type="velocity", joint_names=drone_joints)],
-        )
-        coordinator.start()
-
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 3.0], angular=[4.0, 5.0, 6.0]))
-
-        assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-
-    def test_twist_mapping_ignores_non_base_hardware(self, make_coordinator):
-        # A manipulator joint named like a twist axis must not be mapped.
-        coordinator, taps = make_coordinator(
-            hardware=[
-                _base_component(),
-                HardwareComponent(
-                    hardware_id="arm",
-                    hardware_type=HardwareType.MANIPULATOR,
-                    joints=["arm/vx"],
-                    adapter_type="mock",
-                ),
-            ],
-            tasks=[
-                TaskConfig(
-                    name="basevel",
-                    type="velocity",
-                    joint_names=make_twist_base_joints("base"),
-                ),
-                TaskConfig(name="armvel", type="velocity", joint_names=["arm/vx"]),
-            ],
-        )
-        coordinator.start()
-
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
-
-        assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0]
-        assert coordinator.get_task("armvel")._velocities is None
-
-    def test_twist_reaches_declaring_velocity_task_without_base(self, make_coordinator):
+    def test_twist_reaches_declaring_task_without_base(self, make_coordinator):
         coordinator, taps = make_coordinator()
         task = G1ShapedVelocityTask("g1")
         coordinator.add_task(task, task_type="g1_groot_wbc")
         coordinator.start()
-
-        assert taps["twist_command"].subscribed
         taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
-
         assert len(task.velocity_commands) == 1
-        vx, vy, wz, t_now = task.velocity_commands[0]
-        assert (vx, vy, wz) == (1.0, 2.0, 3.0)
-        assert isinstance(t_now, float)
 
 
 class TestTwistCardContract:
@@ -488,30 +409,29 @@ class TestTwistCardContract:
         bare = VelocityCapableTask("bare")
         coordinator.add_task(bare)
         coordinator.start()
-        assert taps["twist_command"].subscribed  # the base keeps the stream alive
-
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
-
-        assert bare.velocity_commands == []
-
-    def test_runtime_base_add_remove_toggles_twist_subscription(self, make_coordinator):
-        coordinator, taps = make_coordinator()
-        coordinator.start()
         assert not taps["twist_command"].subscribed
 
+        coordinator._make_stream_cb("twist_command")(
+            Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+        )
+        assert bare.velocity_commands == []
+
+    def test_runtime_base_add_remove_does_not_subscribe_twist(self, make_coordinator):
+        coordinator, taps = make_coordinator()
+        coordinator.start()
         component = _base_component()
         adapter = twist_base_adapter_registry.create(
             "mock_twist_base", dof=len(component.joints), hardware_id="base"
         )
         assert adapter.connect()
         assert coordinator.add_hardware(adapter, component)
-        assert taps["twist_command"].subscribed
-
+        assert not taps["twist_command"].subscribed
         assert coordinator.remove_hardware("base")
-        taps["twist_command"].unsub.assert_called_once()
+        assert not taps["twist_command"].subscribed
 
     def test_twist_delivery_concurrent_with_remove_hardware(self, make_coordinator):
         coordinator, taps = make_coordinator(hardware=[_base_component()])
+        coordinator.add_task(G1ShapedVelocityTask("g1"), task_type="g1_groot_wbc")
         coordinator.start()
         assert taps["twist_command"].subscribed
 
@@ -581,7 +501,12 @@ class TestSubscriptionLifecycle:
                     type="trajectory",
                     joint_names=ARM_JOINTS,
                 ),
-                TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
+                TaskConfig(
+                    name="input",
+                    type="twist_velocity",
+                    joint_names=["arm/j1"],
+                    params={"axes": ["linear.x"]},
+                ),
             ],
         )
         coordinator.start()

@@ -24,6 +24,7 @@ from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.unitree.type.odometry import Odometry
 
 
@@ -81,7 +82,7 @@ def test_classmethods(navigation) -> None:
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
     assert "get_stream_descriptors" in class_rpcs
-    assert len(class_rpcs) == 9
+    assert len(class_rpcs) == 10
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -92,6 +93,20 @@ def test_classmethods(navigation) -> None:
         "navigate_to should have __rpc__ attribute"
     )
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
+
+
+def test_rpc_signatures_keep_plain_and_message_types(navigation: Navigation) -> None:
+    infos = {info.name: info for info in navigation.get_rpc_signatures()}
+
+    navigate_to = infos["navigate_to"]
+    assert [(param.name, param.annotation) for param in navigate_to.params] == [("target", Vector3)]
+    assert navigate_to.return_annotation is bool
+    assert infos["start"].return_annotation is None
+    # Any becomes object.
+    assert infos["peek_stream"].return_annotation is object
+    # The second hint cannot be resolved, and the first still is.
+    assert [param.annotation for param in infos["set_module_ref"].params] == [str, object]
+    assert decode(encode(navigate_to)) == navigate_to
 
 
 @pytest.mark.self_hosted

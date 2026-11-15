@@ -37,9 +37,10 @@ surface_map = "sensor_msgs.PointCloud2"
 nodes = "sensor_msgs.PointCloud2"
 node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
+nav_status = "actionlib_msgs.GoalStatus"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "30482d5b99126e5404b3c0a56dd0eddc8fcea6a8" }
 # The loop-closure warp, shared by the ray tracer and the MLS planner.
 dimos-reform = { git = "https://github.com/dimensionalOS/dimos", rev = "8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }

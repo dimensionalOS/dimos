@@ -185,6 +185,16 @@ class Observation(Generic[T]):
             return val
         return val
 
+    def load(self) -> T:
+        """The payload without caching it: held data as is, else a fresh decode."""
+        val = self._data
+        if not isinstance(val, _Unloaded):
+            return val
+        loader = self._loader
+        if loader is None:
+            return self.data
+        return loader()
+
     def derive(self, *, data: R, **overrides: Any) -> Observation[R]:
         """New observation with replaced ``data``; other fields carry over.
 
@@ -200,6 +210,15 @@ class Observation(Generic[T]):
         kwargs.update(overrides)
         kwargs.update(data_type=type(data), _data=data, _loader=None)
         return cast("Observation[R]", cls(**kwargs))
+
+    def derive_lazy(self, **overrides: Any) -> Observation[T]:
+        """``derive`` keeping the payload as it is, loaded or not, so nothing is decoded here."""
+        promote = "embedding" in overrides and not isinstance(self, EmbeddedObservation)
+        cls: type[Observation[Any]] = EmbeddedObservation if promote else type(self)
+        kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
+        kwargs.update(overrides)
+        kwargs.update(_data_lock=threading.Lock())
+        return cast("Observation[T]", cls(**kwargs))
 
     def tag(self, **tags: Any) -> Self:
         """Return a new observation with tags merged in."""

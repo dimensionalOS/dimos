@@ -31,6 +31,9 @@ from dimos.simulation.sensors.lidar import Raycaster, SimLidar
 Vec3 = tuple[float, float, float]
 CloudFrame = Literal["sensor", "base"]
 
+ROBOT_VISUAL_GROUP = 2
+COLLISION_GROUP = 3
+
 
 @dataclass(frozen=True)
 class BodyShape:
@@ -48,7 +51,7 @@ class BodyShape:
 
 @dataclass(frozen=True)
 class Sensor:
-    """A lidar mounted on the robot's base."""
+    """A lidar mounted on the robot's base; one looking out through a window in the base mesh does not see the base."""
 
     name: str
     mount_xyz: NDArray[np.float64]
@@ -57,21 +60,23 @@ class Sensor:
     housing_half_extents: Vec3
     lio_blind_range: float = 0.0
     lio_keep_every: int = 1
+    sees_base: bool = True
 
 
 @dataclass(frozen=True)
 class Rig:
-    """A robot as a scene is built around it. Odometry and the cloud report at cloud_frame."""
+    """A robot as a scene is built around it: odometry and the cloud report at cloud_frame, the lidars see its lidar_group."""
 
     spec: Callable[[], mujoco.MjSpec]
     base_body: str
     sensors: tuple[Sensor, ...]
     shape: BodyShape
     command_timeout: float
-    tune: Callable[[mujoco.MjModel], None]
     world_frame: str
     odom_child_frame: str
     cloud_frame: CloudFrame
+    lidar_group: int = ROBOT_VISUAL_GROUP
+    tune: Callable[[mujoco.MjModel], None] | None = None
 
     def __post_init__(self) -> None:
         if self.cloud_frame == "sensor" and len(self.sensors) != 1:

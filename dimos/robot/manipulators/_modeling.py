@@ -16,7 +16,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import replace
 from typing import TypeAlias
+
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 
 DegreesOfFreedom: TypeAlias = int
 JointPrefix: TypeAlias = str
@@ -29,3 +33,33 @@ def joint_names(
     prefix: JointPrefix = "joint",
 ) -> list[UrdfJointName]:
     return [f"{prefix}{i}" for i in range(1, dof + 1)]
+
+
+def named_for_robot(
+    config: RobotModelConfig, robot: str | None, *, fingers: Sequence[str] = ()
+) -> RobotModelConfig:
+    """Name every commanded joint under ``robot``, e.g. ``arm/joint1``.
+
+    The deployment calls its robots by name (``arm``), so the coordinator, the
+    connection and the planner all see the same namespaced joints.
+
+    Args:
+        config: The planning config, with its joints named as in its URDF.
+        robot: The robot's name, or ``None`` to keep the URDF names.
+        fingers: The gripper's finger joints, which the config does not plan
+            with but the model moves: renamed too, e.g. ``arm/joint7``.
+    """
+    if robot is None:
+        return config
+    names = {name: f"{robot}/{name}" for name in config.joint_names}
+    finger_names = {name: f"{robot}/{name}" for name in fingers}
+    return config.model_copy(
+        update={
+            "model": config.model.with_renamed_joints({**names, **finger_names}),
+            "joint_names": list(names.values()),
+            "planning_groups": [
+                replace(group, joint_names=tuple(names[name] for name in group.joint_names))
+                for group in config.planning_groups
+            ],
+        }
+    )

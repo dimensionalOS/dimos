@@ -21,6 +21,7 @@ against virtual_mid360 over loopback.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 import json
 import math
 import os
@@ -157,26 +158,41 @@ class Spawner:
         process.stdin.flush()
         return process
 
+    @contextmanager
     def collect(
         self, topics: dict[str, type[PointCloud2 | Imu]], seconds: float, enough: dict[str, int]
-    ) -> dict[str, list[bytes]]:
-        """Buffer each topic's raw messages until every count in enough is met or time runs out."""
+    ) -> Iterator[dict[str, list[bytes]]]:
+        """Subscribe before yielding, then collect after the caller starts the binaries."""
         raw: dict[str, list[bytes]] = {topic: [] for topic in topics}
         lc = lcm_module.LCM()
-        for topic in topics:
-            # Buffer bytes only. Decoding inline drops packets.
-            def on_msg(_ch: str, data: bytes, topic: str = topic) -> None:
-                raw[topic].append(data)
+        subscriptions = []
+        try:
+            for topic in topics:
+                # Buffer bytes only. Decoding inline drops packets.
+                def on_msg(_ch: str, data: bytes, topic: str = topic) -> None:
+                    raw[topic].append(data)
 
-            msg_type = topics[topic]
-            lc.subscribe(f"{topic}#sensor_msgs.{msg_type.__name__}", on_msg)
-        end = time.monotonic() + seconds
-        while not all(len(raw[topic]) >= count for topic, count in enough.items()):
-            self._assert_running()
-            if time.monotonic() >= end:
-                break
-            lc.handle_timeout(200)
-        return raw
+                msg_type = topics[topic]
+                subscriptions.append(
+                    lc.subscribe(f"{topic}#sensor_msgs.{msg_type.__name__}", on_msg)
+                )
+            yield raw
+            end = time.monotonic() + seconds
+            while not all(len(raw[topic]) >= count for topic, count in enough.items()):
+                self._assert_running()
+                if time.monotonic() >= end:
+                    counts = {topic: len(messages) for topic, messages in raw.items()}
+                    logs = "\n".join(
+                        f"{binary.name} stderr:\n{stderr.read_text(errors='replace')[-4000:]}"
+                        for binary, _, stderr in self._spawned
+                    )
+                    pytest.fail(
+                        f"Timed out collecting streams: {counts}, expected {enough}\n{logs}"
+                    )
+                lc.handle_timeout(200)
+        finally:
+            for subscription in subscriptions:
+                lc.unsubscribe(subscription)
 
     def _assert_running(self) -> None:
         """A binary that exited says why on stderr, e.g. a port a stray process still holds."""
@@ -246,12 +262,12 @@ def test_real_capture_replay_publishes_streams(spawn: Spawner) -> None:
         "config": config.to_config_dict(),
         "session": {"id": "pointlio-e2e", "links": []},
     }
-    spawn(binary, blob)
-    received = spawn.collect(
+    with spawn.collect(
         {"/e2e_real_lidar": PointCloud2, "/e2e_real_imu": Imu},
         seconds=15.0,
         enough={"/e2e_real_lidar": 20, "/e2e_real_imu": 800},
-    )
+    ) as received:
+        spawn(binary, blob)
 
     clouds = [PointCloud2.lcm_decode(data) for data in received["/e2e_real_lidar"]]
     imus = [Imu.lcm_decode(data) for data in received["/e2e_real_imu"]]
@@ -283,7 +299,9 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
     virtual_config = VirtualMid360Config(
         pcap=str(synth_pcap),
         rate=0.5,
-        delay=1.0,
+        # A positive delay also enables streaming without a handshake. Wait for
+        # the driver's request instead, which comes after its receive sockets bind.
+        delay=0.0,
         lidar_ip="127.0.0.1",
         host_ip="127.0.0.1",
         mcast_data=SDK_MULTICAST_GROUP,
@@ -308,14 +326,14 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
         "session": {"id": "pointlio-e2e", "links": []},
     }
 
-    spawn(driver_binary, driver_blob)
-    spawn(virtual_binary, virtual_blob)
-    # Handshake arms the virtual within ~1 s, then 2 s of half-rate stream.
-    received = spawn.collect(
+    # Subscribe before either process can publish the finite, half-rate capture.
+    with spawn.collect(
         {"/e2e_live_lidar": PointCloud2, "/e2e_live_imu": Imu},
         seconds=10.0,
         enough={"/e2e_live_lidar": 3, "/e2e_live_imu": 120},
-    )
+    ) as received:
+        spawn(driver_binary, driver_blob)
+        spawn(virtual_binary, virtual_blob)
 
     clouds = [PointCloud2.lcm_decode(data) for data in received["/e2e_live_lidar"]]
     imus = [Imu.lcm_decode(data) for data in received["/e2e_live_imu"]]

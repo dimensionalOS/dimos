@@ -25,6 +25,7 @@ fn config() -> Config {
         fine_divisor: 0,
         emit_fine: false,
         max_range: 100.0,
+        pre_trace_subsample: 1,
         ray_subsample: 1,
         shadow_depth: 0.0,
         grace_depth: 0.0,
