@@ -30,7 +30,7 @@ use crate::lazy::{
     Pose, Rect, Submesh, Version,
 };
 use crate::nodes::NodeId;
-use crate::surfaces::{extract_surfaces_region, riser_reach};
+use crate::surfaces::extract_surfaces_region;
 use crate::voxel::{voxelize, VoxelKey};
 
 /// The keyframe table and the version layers.
@@ -615,7 +615,7 @@ impl Planner {
 
     /// The ring around a touched area that must be in the current layer: what the surface extraction pads by and the node window reaches.
     pub(super) fn migrate_margin_m(&self, config: &Config) -> f32 {
-        let pad = 2 * config.closing_passes() as i32 + riser_reach(config.closing_passes());
+        let pad = 2 * config.closing_passes() as i32;
         (pad + config.buffer_window_cells()) as f32 * config.voxel_size
     }
 
@@ -1064,7 +1064,7 @@ impl Planner {
         }
         self.clock.add("redirect", stage);
         let stage = Instant::now();
-        let reach = 2 * config.closing_passes() as i32 + riser_reach(config.closing_passes());
+        let reach = 2 * config.closing_passes() as i32;
         let mut bbox = (first.0, first.0, first.1, first.1);
         for &(x, y) in &migrated.columns {
             bbox = (bbox.0.min(x), bbox.1.max(x), bbox.2.min(y), bbox.3.max(y));
