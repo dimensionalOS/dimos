@@ -134,7 +134,8 @@ impl Toy {
         let bounds = RegionBounds {
             origin_x: center[0] as f32,
             origin_y: center[1] as f32,
-            radius: self.scan_radius_m + self.cfg.voxel_size,
+            // the points cover exactly this disc, as the tracer's region surfaces cover its bounds
+            radius: self.scan_radius_m,
             z_min: -0.5,
             z_max: 1.0,
         };
@@ -218,11 +219,6 @@ impl Toy {
     /// Connected groups of live cells over their links, any layer.
     fn components(&self) -> usize {
         self.component_sizes().len()
-    }
-
-    /// Connected groups of more than one cell: surfaces, not the odd lone cell a cylinder's edge leaves.
-    fn surfaces(&self) -> usize {
-        self.component_sizes().iter().filter(|&&n| n > 1).count()
     }
 
     /// The sizes of the connected groups of live cells, largest first.
@@ -792,7 +788,7 @@ fn a_bending_closure_through_a_mixed_anchor_surface_stretches_links_without_spli
             .collect()
     };
     assert!(anchors.len() > 4, "one surface, many anchors");
-    assert_eq!(toy.surfaces(), 1, "{:?}", toy.component_sizes());
+    assert_eq!(toy.components(), 1, "{:?}", toy.component_sizes());
     // A closure that bends the corridor at its middle: the far half's keyframes slide 35 cm sideways, the near half's stay.
     for kf in toy.keyframes.iter_mut().skip(8) {
         kf.1 = pose(0.0, 0.35, 0.0).compose(&kf.1);
@@ -802,7 +798,7 @@ fn a_bending_closure_through_a_mixed_anchor_surface_stretches_links_without_spli
     toy.scan_at(pose(8.0, 1.0, 0.0), pose(8.0, 1.0, 0.0), (8.0, 1.0));
     toy.dump("toy4_mixed_anchors");
     toy.planner.graph.node_edges.assert_indexed(toy.cells());
-    assert_eq!(toy.surfaces(), 1, "stretched links keep one surface");
+    assert_eq!(toy.components(), 1, "stretched links keep one surface");
     assert!(
         toy.cross_layer_links() > 0,
         "links between the reformed bend and the stale ends"
@@ -938,7 +934,7 @@ fn a_lookup_after_two_closures_finds_what_is_stale_since_each() {
     }
     toy.dump("toy5_two_closures");
     toy.planner.graph.node_edges.assert_indexed(toy.cells());
-    assert_eq!(toy.surfaces(), 1, "{:?}", toy.component_sizes());
+    assert_eq!(toy.components(), 1, "{:?}", toy.component_sizes());
     assert_eq!(toy.duplicates_in([0.0, 20.0, 0.0, 2.0]), 0);
 }
 
