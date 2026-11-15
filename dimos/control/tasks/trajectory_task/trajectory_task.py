@@ -51,12 +51,6 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 JOINT_TRAJECTORY_TASK_NAME = "joint_trajectory"
-# With continuous_stream, how far a streamed command may run from the measured
-# position, in radians, unless stream_lead_limits names each joint's. On the dual
-# OpenYAM it clears the worst gravity sag (0.19 rad, joint 2 at kp 80) and the
-# wrists' recorded lag, while kp x 0.3 stays under the peak push of restarting
-# every target from the reading.
-DEFAULT_STREAM_LEAD_LIMIT = 0.3
 # With continuous_stream, a streamed target arriving more than this long after
 # the previous one starts again from the measured position, in seconds. Recorded
 # dual OpenYAM leader streams paused under 33 ms, or over 1 s when reads failed.
@@ -163,9 +157,12 @@ class JointTrajectoryTaskConfig:
             target, one after a stop, a cancel, an e-stop or a preemption, and
             one arriving more than ``stream_gap_timeout`` after a reached target
             start from the measured position, as without it.
-        stream_lead_limits: With ``continuous_stream``, how far a streamed
-            command may be from the measured position, in radians, for every
-            configured joint. Defaults to ``DEFAULT_STREAM_LEAD_LIMIT`` per joint.
+        stream_lead_limits: Required with ``continuous_stream``: for every
+            configured joint, the most a streamed command may differ from the
+            measured position, in radians. It bounds command minus measured,
+            not torque: a joint that cannot reach its target is pushed with
+            about kp x limit for as long as the stream lasts, so size it per
+            joint against the motor's continuous torque rating.
         stream_gap_timeout: With ``continuous_stream``, the longest silence
             between streamed targets, in seconds, that still continues from
             the last command.
@@ -264,17 +261,18 @@ class JointTrajectoryTask(BaseControlTask):
                 raise ValueError("velocity_limits must be finite and positive")
             self._velocity_limits = dict(configured_limits)
 
-        lead_limits = config.stream_lead_limits
-        if lead_limits is None:
-            self._stream_lead_limits = {
-                name: DEFAULT_STREAM_LEAD_LIMIT for name in config.joint_names
-            }
-        else:
-            if set(lead_limits) != self._joint_names:
-                raise ValueError("stream_lead_limits must name every configured trajectory joint")
+        lead_limits = config.stream_lead_limits or {}
+        if config.continuous_stream or lead_limits:
+            missing = sorted(self._joint_names - set(lead_limits))
+            unknown = sorted(set(lead_limits) - self._joint_names)
+            if missing or unknown:
+                raise ValueError(
+                    "continuous_stream needs stream_lead_limits for exactly the trajectory "
+                    f"joints; missing {missing}, unknown {unknown}"
+                )
             if any(not math.isfinite(value) or value <= 0.0 for value in lead_limits.values()):
                 raise ValueError("stream_lead_limits must be finite and positive")
-            self._stream_lead_limits = dict(lead_limits)
+        self._stream_lead_limits = dict(lead_limits)
 
         logger.info(
             f"JointTrajectoryTask {self._name} initialized for joints: {config.joint_names}"
@@ -367,20 +365,31 @@ class JointTrajectoryTask(BaseControlTask):
             elapsed = max(0.0, state.t_now - run.start_time)
             self._last_elapsed = max(self._last_elapsed, elapsed)
             desired = run.trajectory.sample(elapsed)[0][index]
+            max_delta = self._velocity_limits[joint_name] * max(0.0, state.dt)
             current = self._commanded_positions.get(joint_name)
-            if current is None:
-                current = self._stream_anchors.get(joint_name)
+            anchor = self._stream_anchors.get(joint_name)
+            if current is None and anchor is not None:
+                # Only an anchor still near the arm: another task may have moved it.
+                # One tick's allowance of slack keeps reading noise at the limit
+                # from restarting the ramp at every target.
+                reading = state.joints.get_position(joint_name)
+                if (
+                    reading is not None
+                    and math.isfinite(reading)
+                    and abs(anchor - reading) <= self._stream_lead_limits[joint_name] + max_delta
+                ):
+                    current = anchor
             if current is None:
                 current = state.joints.get_position(joint_name)
                 if current is None or not math.isfinite(current):
                     all_complete = False
                     continue
-            max_delta = self._velocity_limits[joint_name] * max(0.0, state.dt)
             delta = max(-max_delta, min(max_delta, desired - current))
             commanded = current + delta
             if joint_name in self._stream_heard:
-                # Never lead the measured position by more than the limit, so a
-                # blocked joint or a stale reading cannot wind the command up.
+                # Keep command minus measured within the limit, so a stale reading
+                # cannot wind the command up; a blocked joint still gets about
+                # kp x limit of sustained torque.
                 measured = state.joints.get_position(joint_name)
                 if measured is None or not math.isfinite(measured):
                     self._commanded_positions.pop(joint_name, None)
