@@ -735,10 +735,17 @@ impl Planner {
                     (a, (carry, carry.inverse()))
                 })
                 .collect();
-            for &(bbox, cols) in &boxes {
+            for (&(bbox, cols), &rect) in boxes.iter().zip(&rects) {
+                // Only an anchor whose keyframe's padded box reaches the block can have an element standing in it now.
+                let reaching: BTreeMap<u32, (crate::lazy::Pose, crate::lazy::Pose)> = lazy
+                    .table
+                    .candidates(rect)
+                    .into_iter()
+                    .filter_map(|a| Some((a, *carries.get(&a)?)))
+                    .collect();
                 // Each landing column carried back by each group's pose, widened by how far any member's carry and
                 // a point's place in its column and the height band can take it from there; read once for all groups.
-                let groups = carry_groups(&carries, bbox, band, vs);
+                let groups = carry_groups(&reaching, bbox, band, vs);
                 self.clock.count("stitch_groups", groups.len());
                 let mid = 0.5 * (band[0] + band[1]);
                 let mut mapped: Vec<(i32, i32)> = Vec::with_capacity(cols.len() * groups.len());
@@ -788,7 +795,7 @@ impl Planner {
                                     continue;
                                 }
                                 let (px, py, pz) = cells.point(id, vs);
-                                let Some((carry, _)) = carries.get(&el.anchor) else {
+                                let Some((carry, _)) = reaching.get(&el.anchor) else {
                                     continue;
                                 };
                                 let p = carry.apply([px as f64, py as f64, pz as f64]);
