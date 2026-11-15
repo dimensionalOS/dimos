@@ -27,7 +27,7 @@ use crate::adjacency::{CellId, Edge, SurfaceCells};
 use crate::columns::{ColumnEdit, ColumnMask, VoxelEdits};
 use crate::lazy::{
     carry_plane, Closure, Element, EventRecord, FrozenLayer, KeyframeRecord, KeyframeTable, Layers,
-    Pose, Rect, Version,
+    Pose, Rect, Submesh, Version,
 };
 use crate::nodes::NodeId;
 use crate::surfaces::extract_surfaces_region;
@@ -39,8 +39,10 @@ pub struct LazyState {
     pub(crate) layers: Layers,
     /// The planner's voxel edge, for placing stale cells.
     voxel_size: f32,
-    /// Closing-box submeshes a closure has yet to migrate, a few per region update.
+    /// Closing-box submeshes a closure has yet to migrate, reform.migrate_per_update elements per region update.
     pub(crate) pending: BTreeSet<(Version, (i32, i32))>,
+    /// Submeshes a region update's lookup found around it, migrated before the pending ones.
+    pub(crate) urgent: BTreeSet<(Version, (i32, i32))>,
 }
 
 fn center(k: VoxelKey, voxel_size: f32) -> [f64; 3] {
@@ -151,6 +153,7 @@ impl Planner {
             layers: Layers::new(config.reform.layer_params()),
             voxel_size: config.voxel_size,
             pending: BTreeSet::new(),
+            urgent: BTreeSet::new(),
         });
         for record in records {
             lazy.table.add(record);
@@ -228,9 +231,9 @@ impl Planner {
             .iter()
             .flat_map(|&rect| lazy.layers.lookup(&lazy.table, rect))
             .collect();
-        lazy.pending.extend(found);
+        lazy.pending.extend(found.difference(&lazy.urgent));
         self.clock.add("lookup", stage);
-        self.clock.count("pending", lazy.pending.len());
+        self.clock.count("pending", lazy.pending.len() + lazy.urgent.len());
         let pool = Arc::clone(&self.pool);
         pool.install(|| self.migrate_pending(config));
         Some(ClosureOutcome {
@@ -250,22 +253,28 @@ impl Planner {
         self.lazy.as_ref().map_or(1, |l| 1 + l.layers.stale.len())
     }
 
-    /// Migrate the stale submeshes a region update is about to touch, out to the margin its repair reads.
+    /// Queue the stale submeshes a region update is about to touch, out to the margin its repair reads, ahead of a
+    /// closure's, then migrate the next reform.migrate_per_update elements of the queues.
     pub(super) fn reform_near(&mut self, bounds: &RegionBounds, config: &Config) {
-        if self.lazy.is_none() {
-            return;
-        }
-        self.migrate_pending(config);
-        let outer = self.clock.enter("near");
         let margin = bounds.radius + self.migrate_margin_m(config);
+        let Some(lazy) = self.lazy.as_mut() else {
+            return;
+        };
+        let stage = Instant::now();
         let rect = [
             bounds.origin_x - margin,
             bounds.origin_x + margin,
             bounds.origin_y - margin,
             bounds.origin_y + margin,
         ];
-        self.reform_rects(&[rect], config);
+        for key in lazy.layers.lookup(&lazy.table, rect) {
+            lazy.pending.remove(&key);
+            lazy.urgent.insert(key);
+        }
+        let outer = self.clock.enter("near");
+        self.clock.add("lookup", stage);
         self.clock.enter(outer);
+        self.migrate_pending(config);
     }
 
     /// The stale cell standing nearest `p` now, by where its anchor carries it, among the submeshes a lookup finds within
@@ -598,90 +607,88 @@ impl Planner {
         (pad + config.buffer_window_cells()) as f32 * config.voxel_size
     }
 
-    /// Look up and migrate the stale submeshes under each current-frame rectangle, then repair the current layer around them.
-    fn reform_rects(&mut self, rects: &[Rect], config: &Config) {
-        let Some(lazy) = &self.lazy else {
-            return;
-        };
-        let stage = Instant::now();
-        let found: BTreeSet<(Version, (i32, i32))> = rects
-            .iter()
-            .flat_map(|&rect| lazy.layers.lookup(&lazy.table, rect))
-            .collect();
-        self.clock.add("lookup", stage);
-        if found.is_empty() {
-            return;
-        }
-        let stage = Instant::now();
-        let migrated = self.migrate(&found, config);
-        self.clock.add("migrate", stage);
-        self.repair_migrated(migrated, config);
-    }
-
     /// Link current-layer cells in the columns around `keys` to stale cells beside them now, so a patch that meets
     /// an older pass it never shared a link with stays connected; returns the keys of the current cells it linked.
     pub(super) fn stitch_stale(&mut self, keys: &[VoxelKey], config: &Config) -> Vec<VoxelKey> {
         let Some(lazy) = self.lazy.as_ref() else {
             return Vec::new();
         };
-        let Some(&first) = keys.first() else {
+        if keys.is_empty() || lazy.layers.submeshes.range(..(lazy.layers.current, (i32::MIN, i32::MIN))).next().is_none() {
             return Vec::new();
-        };
-        let mut bbox = (first.0, first.0, first.1, first.1);
-        for k in keys {
-            bbox = (
-                bbox.0.min(k.0),
-                bbox.1.max(k.0),
-                bbox.2.min(k.1),
-                bbox.3.max(k.1),
-            );
         }
         let vs = config.voxel_size;
-        let (x0, x1, y0, y1) = (bbox.0 - 1, bbox.1 + 1, bbox.2 - 1, bbox.3 + 1);
-        let rect = [
-            x0 as f32 * vs,
-            (x1 + 1) as f32 * vs,
-            y0 as f32 * vs,
-            (y1 + 1) as f32 * vs,
-        ];
-        let found = lazy.layers.lookup(&lazy.table, rect);
+        const RING: [(i32, i32); 5] = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)];
+        // The current cells in and beside the keys' columns link; a stale cell one column past them can be linked to.
+        let columns: BTreeSet<(i32, i32)> = keys
+            .iter()
+            .flat_map(|k| RING.map(|(dx, dy)| (k.0 + dx, k.1 + dy)))
+            .collect();
+        let mut reach: ahash::AHashSet<(i32, i32)> = ahash::AHashSet::new();
+        // One lookup per tile-sized block of columns.
+        let block = ((lazy.layers.params.tile_m / vs).floor() as i32).max(1);
+        let mut blocks: BTreeMap<(i32, i32), (i32, i32, i32, i32)> = BTreeMap::new();
+        for &(x, y) in &columns {
+            for (dx, dy) in RING {
+                reach.insert((x + dx, y + dy));
+            }
+            let b = blocks
+                .entry((x.div_euclid(block), y.div_euclid(block)))
+                .or_insert((x, x, y, y));
+            *b = (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y));
+        }
+        let mut found: BTreeSet<(Version, (i32, i32))> = BTreeSet::new();
+        for &(x0, x1, y0, y1) in blocks.values() {
+            let rect = [
+                (x0 - 1) as f32 * vs,
+                (x1 + 2) as f32 * vs,
+                (y0 - 1) as f32 * vs,
+                (y1 + 2) as f32 * vs,
+            ];
+            found.extend(lazy.layers.lookup(&lazy.table, rect));
+        }
         if found.is_empty() {
             return Vec::new();
         }
         let cells = &self.graph.cells;
+        // One carry per layer and anchor, not per cell.
+        let mut carries: AHashMap<(Version, u32), Pose> = AHashMap::new();
         let mut stale_at: BTreeMap<(i32, i32), Vec<(CellId, f32)>> = BTreeMap::new();
-        for key in &found {
-            let Some(sub) = lazy.layers.submeshes.get(key) else {
+        for key @ &(layer, _) in &found {
+            let (Some(sub), Some(frozen)) = (lazy.layers.submeshes.get(key), lazy.layers.stale.get(&layer)) else {
                 continue;
             };
             for &id in &sub.cells {
-                if !cells.is_live(id) {
+                if !cells.is_live(id) || cells.layer(id) != layer {
                     continue;
                 }
-                let Some(p) = lazy.stale_point(cells, id) else {
+                let Some(el) = lazy.layers.cells.get(&id) else {
                     continue;
                 };
+                let carry = carries
+                    .entry((layer, el.anchor))
+                    .or_insert_with(|| frozen.carry(el.anchor, &lazy.table));
+                let (x, y, z) = cells.point(id, vs);
+                let p = carry.apply([x as f64, y as f64, z as f64]);
+                let p = (p[0] as f32, p[1] as f32, p[2] as f32);
                 let k = voxelize(p, vs);
-                if (x0..=x1).contains(&k.0) && (y0..=y1).contains(&k.1) {
+                if reach.contains(&(k.0, k.1)) {
                     stale_at.entry((k.0, k.1)).or_default().push((id, p.2));
                 }
             }
         }
         let max_rise = config.step_threshold_m + config.plane_noise_m;
         let mut links: Vec<(CellId, CellId, f32)> = Vec::new();
-        for x in bbox.0..=bbox.1 {
-            for y in bbox.2..=bbox.3 {
-                for &iz in self.graph.surface_lookup.get(&(x, y)).into_iter().flatten() {
-                    let Some(a) = cells.id((x, y, iz)) else {
-                        continue;
-                    };
-                    let za = cells.z(a);
-                    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                        for &(b, zb) in stale_at.get(&(x + dx, y + dy)).into_iter().flatten() {
-                            let rise = (zb - za).abs();
-                            if rise <= max_rise {
-                                links.push((a, b, rise));
-                            }
+        for &(x, y) in &columns {
+            for &iz in self.graph.surface_lookup.get(&(x, y)).into_iter().flatten() {
+                let Some(a) = cells.id((x, y, iz)) else {
+                    continue;
+                };
+                let za = cells.z(a);
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    for &(b, zb) in stale_at.get(&(x + dx, y + dy)).into_iter().flatten() {
+                        let rise = (zb - za).abs();
+                        if rise <= max_rise {
+                            links.push((a, b, rise));
                         }
                     }
                 }
@@ -714,35 +721,30 @@ impl Planner {
         linked.into_iter().collect()
     }
 
-    /// Migrate the next closing-box submeshes a closure queued: reform.closure_migrate_per_update of them, all for 0.
+    /// Migrate the next reform.migrate_per_update elements (voxels and cells) of the queued submeshes, the ones a
+    /// region update found around it first; 0 migrates them all. A submesh larger than what is left of the budget
+    /// moves a strip of its columns and stays queued.
     fn migrate_pending(&mut self, config: &Config) {
-        let Some(lazy) = self.lazy.as_mut() else {
+        let Some(lazy) = self.lazy.as_ref() else {
             return;
         };
-        let take = match config.reform.closure_migrate_per_update {
-            0 => lazy.pending.len(),
+        if lazy.urgent.is_empty() && lazy.pending.is_empty() {
+            return;
+        }
+        let budget = match config.reform.migrate_per_update {
+            0 => usize::MAX,
             n => n as usize,
         };
-        let mut found = BTreeSet::new();
-        while found.len() < take {
-            let Some(next) = lazy.pending.pop_first() else {
-                break;
-            };
-            found.insert(next);
-        }
-        if found.is_empty() {
-            return;
-        }
         let outer = self.clock.enter("pending");
         let stage = Instant::now();
-        let migrated = self.migrate(&found, config);
+        let migrated = self.migrate(budget, config);
         self.clock.add("migrate", stage);
         self.repair_migrated(migrated, config);
         self.clock.enter(outer);
     }
 
-    /// Move every element of the found submeshes into the current layer by its anchor's pose then and now.
-    fn migrate(&mut self, found: &BTreeSet<(Version, (i32, i32))>, config: &Config) -> Migrated {
+    /// Move up to `budget` elements of the queued submeshes into the current layer by their anchors' poses then and now.
+    fn migrate(&mut self, budget: usize, config: &Config) -> Migrated {
         let vs = config.voxel_size;
         let min_normal_z = config.min_normal_z();
         let params = config.placement_params();
@@ -751,20 +753,53 @@ impl Planner {
         let mut changed: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
         let lazy = self.lazy.as_mut().expect("migrate needs the lazy state");
         let current = lazy.layers.current;
-        for &(layer, tile) in found {
-            let Some(sub) = lazy.layers.submeshes.remove(&(layer, tile)) else {
+        let mut left = budget;
+        let (mut submeshes, mut voxels_moved) = (0usize, 0usize);
+        while left > 0 {
+            let (key, urgent) = match lazy.urgent.pop_first() {
+                Some(key) => (key, true),
+                None => match lazy.pending.pop_first() {
+                    Some(key) => (key, false),
+                    None => break,
+                },
+            };
+            let (layer, tile) = key;
+            let Some(mut sub) = lazy.layers.submeshes.remove(&key) else {
                 continue;
             };
-            if let Some(layers) = lazy.layers.tiles.get_mut(&tile) {
-                layers.remove(&layer);
-                if layers.is_empty() {
-                    lazy.layers.tiles.remove(&tile);
-                }
-            }
             let Some(mut frozen) = lazy.layers.stale.remove(&layer) else {
                 continue;
             };
-            for &k in &sub.voxels {
+            submeshes += 1;
+            let (strip_voxels, strip_cells) = take_strip(&mut sub, left, &self.graph.cells);
+            left -= (strip_voxels.len() + strip_cells.len()).min(left);
+            if sub.is_empty() {
+                if let Some(layers) = lazy.layers.tiles.get_mut(&tile) {
+                    layers.remove(&layer);
+                    if layers.is_empty() {
+                        lazy.layers.tiles.remove(&tile);
+                    }
+                }
+            } else {
+                for k in &strip_voxels {
+                    if let Some(el) = frozen.voxels.get(k) {
+                        sub.count(el.anchor, -1);
+                    }
+                }
+                for id in &strip_cells {
+                    if let Some(el) = lazy.layers.cells.get(id) {
+                        sub.count(el.anchor, -1);
+                    }
+                }
+                lazy.layers.submeshes.insert(key, sub);
+                if urgent {
+                    lazy.urgent.insert(key);
+                } else {
+                    lazy.pending.insert(key);
+                }
+            }
+            voxels_moved += strip_voxels.len();
+            for k in strip_voxels {
                 let Some(el) = frozen.voxels.remove(&k) else {
                     continue;
                 };
@@ -789,7 +824,7 @@ impl Planner {
                 lazy.layers.add_voxel(to, el);
                 out.columns.insert(col);
             }
-            for &id in &sub.cells {
+            for id in strip_cells {
                 if !self.graph.cells.is_live(id) || self.graph.cells.layer(id) != layer {
                     continue;
                 }
@@ -857,7 +892,8 @@ impl Planner {
             })
             .collect();
         out.edits.changed.sort_unstable_by_key(|&(col, _)| col);
-        self.clock.count("submeshes", found.len());
+        self.clock.count("submeshes", submeshes);
+        self.clock.count("migrated_voxels", voxels_moved);
         self.clock.count("migrated_columns", out.columns.len());
         self.clock.count("rekeyed", out.rekeyed.len());
         out
@@ -981,6 +1017,49 @@ pub enum VersionGap {
     Ahead,
     /// Stamped with a version older than the poses kept: drop it.
     Forgotten,
+}
+
+/// Take the elements of `sub` in its lowest columns by (x, y), all of them when they fit in `budget`; whole columns,
+/// so a column's voxels and cells move together and the budget is passed by at most one column.
+fn take_strip(
+    sub: &mut Submesh,
+    budget: usize,
+    cells: &SurfaceCells,
+) -> (Vec<VoxelKey>, Vec<CellId>) {
+    if sub.voxels.len() + sub.cells.len() <= budget {
+        return (
+            std::mem::take(&mut sub.voxels).into_iter().collect(),
+            std::mem::take(&mut sub.cells).into_iter().collect(),
+        );
+    }
+    let column = |k: VoxelKey| (k.0, k.1);
+    let mut columns: Vec<(i32, i32)> = sub
+        .voxels
+        .iter()
+        .map(|&k| column(k))
+        .chain(sub.cells.iter().map(|&id| column(cells.coord(id))))
+        .collect();
+    let (_, &mut cut, _) = columns.select_nth_unstable(budget.max(1) - 1);
+    // Voxel keys order by column first.
+    let voxels: Vec<VoxelKey> = sub
+        .voxels
+        .iter()
+        .copied()
+        .take_while(|&k| column(k) <= cut)
+        .collect();
+    for k in &voxels {
+        sub.voxels.remove(k);
+    }
+    let taken: Vec<CellId> = sub
+        .cells
+        .iter()
+        .copied()
+        .filter(|&id| column(cells.coord(id)) <= cut)
+        .collect();
+    for id in &taken {
+        sub.cells.remove(id);
+    }
+    (voxels, taken)
 }
 
 /// Give `into` every link of `from` it lacks, both ways, so links to the rest of the map survive the merge.

@@ -64,9 +64,9 @@ pub struct ReformConfig {
     /// A closure starts a new layer when it closes a loop or moves some keyframe's box corner this far from the current layer's frame, m (0 = half a voxel).
     #[validate(range(min = 0.0))]
     pub min_shift_m: f32,
-    /// Submeshes inside the closing keyframes' boxes migrated per region update after a closure, so no one update
-    /// carries the whole merge (0 = all at the closure).
-    pub closure_migrate_per_update: u32,
+    /// Stale elements (voxels and cells) migrated per region update, from the submeshes around the update first and
+    /// then those inside a closure's closing boxes, so no one update carries a whole merge (0 = all at once).
+    pub migrate_per_update: u32,
 }
 
 impl ReformConfig {
@@ -80,7 +80,7 @@ impl ReformConfig {
             box_pad_m: 1.0,
             version_history: 4,
             min_shift_m: 0.0,
-            closure_migrate_per_update: 2,
+            migrate_per_update: 4000,
         }
     }
 
@@ -712,11 +712,11 @@ pub struct Submesh {
 }
 
 impl Submesh {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.voxels.is_empty() && self.cells.is_empty()
     }
 
-    fn count(&mut self, anchor: u32, delta: i64) {
+    pub(crate) fn count(&mut self, anchor: u32, delta: i64) {
         let entry = self.counts.entry(anchor).or_default();
         *entry = (*entry as i64 + delta).max(0) as u32;
         if *entry == 0 {

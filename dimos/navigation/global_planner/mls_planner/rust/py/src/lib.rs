@@ -79,7 +79,7 @@ fn reform_config(reform: Option<&Bound<'_, PyDict>>) -> PyResult<ReformConfig> {
             "box_pad_m" => out.box_pad_m = value.extract()?,
             "version_history" => out.version_history = value.extract()?,
             "min_shift_m" => out.min_shift_m = value.extract()?,
-            "closure_migrate_per_update" => out.closure_migrate_per_update = value.extract()?,
+            "migrate_per_update" => out.migrate_per_update = value.extract()?,
             other => {
                 return Err(PyValueError::new_err(format!(
                     "unknown reform setting {other:?}"
