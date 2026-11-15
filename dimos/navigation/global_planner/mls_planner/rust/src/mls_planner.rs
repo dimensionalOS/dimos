@@ -549,6 +549,8 @@ impl Planner {
         seeds.extend_from_slice(&removed);
         seeds.extend_from_slice(rekeyed);
         seeds.extend(patch.retuned.iter().map(|&id| self.graph.cells.coord(id)));
+        let stitched = self.stitch_stale(&seeds, config);
+        seeds.extend(stitched);
         if seeds.is_empty() && edits.is_empty() && gone.is_empty() {
             return;
         }

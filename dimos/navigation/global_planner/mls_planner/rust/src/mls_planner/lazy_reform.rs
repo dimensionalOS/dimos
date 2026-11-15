@@ -16,7 +16,7 @@
 //! layer at each closure, and migrating stale submeshes into the current layer
 //! when a closure or a region update reaches them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ahash::AHashMap;
@@ -575,6 +575,102 @@ impl Planner {
         }
         let migrated = self.migrate(&found, config);
         self.repair_migrated(migrated, config);
+    }
+
+    /// Link current-layer cells in the columns around `keys` to stale cells beside them now, so a patch that meets
+    /// an older pass it never shared a link with stays connected; returns the keys of the current cells it linked.
+    pub(super) fn stitch_stale(&mut self, keys: &[VoxelKey], config: &Config) -> Vec<VoxelKey> {
+        let Some(lazy) = self.lazy.as_ref() else {
+            return Vec::new();
+        };
+        let Some(&first) = keys.first() else {
+            return Vec::new();
+        };
+        let mut bbox = (first.0, first.0, first.1, first.1);
+        for k in keys {
+            bbox = (
+                bbox.0.min(k.0),
+                bbox.1.max(k.0),
+                bbox.2.min(k.1),
+                bbox.3.max(k.1),
+            );
+        }
+        let vs = config.voxel_size;
+        let (x0, x1, y0, y1) = (bbox.0 - 1, bbox.1 + 1, bbox.2 - 1, bbox.3 + 1);
+        let rect = [
+            x0 as f32 * vs,
+            (x1 + 1) as f32 * vs,
+            y0 as f32 * vs,
+            (y1 + 1) as f32 * vs,
+        ];
+        let found = lazy.layers.lookup(&lazy.table, rect);
+        if found.is_empty() {
+            return Vec::new();
+        }
+        let cells = &self.graph.cells;
+        let mut stale_at: BTreeMap<(i32, i32), Vec<(CellId, f32)>> = BTreeMap::new();
+        for key in &found {
+            let Some(sub) = lazy.layers.submeshes.get(key) else {
+                continue;
+            };
+            for &id in &sub.cells {
+                if !cells.is_live(id) {
+                    continue;
+                }
+                let Some(p) = lazy.stale_point(cells, id) else {
+                    continue;
+                };
+                let k = voxelize(p, vs);
+                if (x0..=x1).contains(&k.0) && (y0..=y1).contains(&k.1) {
+                    stale_at.entry((k.0, k.1)).or_default().push((id, p.2));
+                }
+            }
+        }
+        let max_rise = config.step_threshold_m + config.plane_noise_m;
+        let mut links: Vec<(CellId, CellId, f32)> = Vec::new();
+        for x in bbox.0..=bbox.1 {
+            for y in bbox.2..=bbox.3 {
+                for &iz in self.graph.surface_lookup.get(&(x, y)).into_iter().flatten() {
+                    let Some(a) = cells.id((x, y, iz)) else {
+                        continue;
+                    };
+                    let za = cells.z(a);
+                    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        for &(b, zb) in stale_at.get(&(x + dx, y + dy)).into_iter().flatten() {
+                            let rise = (zb - za).abs();
+                            if rise <= max_rise {
+                                links.push((a, b, rise));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut linked: BTreeSet<VoxelKey> = BTreeSet::new();
+        for (a, b, rise) in links {
+            let cost = vs.hypot(rise);
+            let cells = &mut self.graph.cells;
+            cells.link(
+                a,
+                Edge {
+                    dest: b,
+                    base_cost: cost,
+                    rise,
+                    cost,
+                },
+            );
+            cells.link(
+                b,
+                Edge {
+                    dest: a,
+                    base_cost: cost,
+                    rise,
+                    cost,
+                },
+            );
+            linked.insert(cells.coord(a));
+        }
+        linked.into_iter().collect()
     }
 
     /// Migrate the next closing-box submeshes a closure queued: reform.closure_migrate_per_update of them, all for 0.
