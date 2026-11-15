@@ -445,8 +445,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: cargo fmt
         run: |
@@ -555,7 +556,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
       - name: Restore cargo build cache
         uses: actions/cache/restore@v4.3.0
         with:
