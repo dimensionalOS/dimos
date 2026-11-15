@@ -921,7 +921,7 @@ robots:
           description: Guide an OpenYAM arm by hand and record demonstrations.
           recommended_config:
           - *robot_or_simulator
-          - module: openyamteachconnection
+          - module: openyamconnection
             field: can_port
             label: CAN port or USB serial
             placeholder: can0

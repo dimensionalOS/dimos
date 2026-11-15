@@ -66,15 +66,15 @@ Start one or more robot blueprints. Built-in dimOS blueprints use bare names suc
 such as `my-robot-stack.go2`.
 
 ```bash
-dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<config-field> <value> ...]
+dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--<config-field> <value> ...]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
-| `--disable` | Module class names to exclude from the blueprint |
-| `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
+| `--disable` | A module to exclude, by its registry name such as `speak-skill`; repeat the flag for each module |
+| `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--pgovoxelmapper.voxel-size=1` |
 | `--local-relay` | Start a relay on this machine and open the cockpit in the browser (see [Web](/docs/web/index.md)) |
 | `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL. `--relay-ca` adds a private CA and `--relay-key` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
 | `--help` | Display the run options and available blueprint configuration flags |
@@ -82,7 +82,7 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<
 Dynamic values accept both `--field=value` and `--field value`. A shorthand is
 available only when it identifies one active module. If two modules expose the
 same field, the CLI reports the ambiguity and lists stable qualified forms such
-as `--relocalizationmodule.map-file`. Global flags work on either side of
+as `--pgovoxelmapper.map-file`. Global flags work on either side of
 `run`; older wrapper-style overrides are no longer accepted.
 
 ```bash
@@ -119,7 +119,7 @@ dimos run my-robot-stack.go2
 dimos run unitree-go2 my-robot-stack.keyboard-teleop
 
 # Disable specific modules
-dimos run unitree-go2-agentic --disable OsmSkill WebInput
+dimos run unitree-go2-agentic --disable speak-skill --disable web-input
 ```
 
 External blueprint names are always fully qualified as
@@ -378,13 +378,13 @@ Run this machine as a Host for [distributed runs](/docs/usage/distributed/index.
 
 ### `dimos agent-send`
 
-Send a text message to the running agent via LCM.
+Send a text message to the running agent through the MCP server.
 
 ```bash
 dimos agent-send "walk forward 2 meters"
 ```
 
-Works with any agentic blueprint. Does not require MCP. Publishes directly to the `/human_input` LCM topic.
+Requires a blueprint that includes `McpServer` and `Agent`. The server publishes the text on `/human_input` on the active transport.
 
 ### `dimos mcp`
 
@@ -439,7 +439,7 @@ dimos mcp call land
 
 #### `dimos mcp status`
 
-Show MCP server status: PID, uptime, deployed modules, skill count.
+Show MCP server status: PID, deployed modules, and skill names.
 
 ```bash
 dimos mcp status
