@@ -223,7 +223,8 @@ class AuthOptions(BaseModel):
 
 
 class RecursiveOptions(BaseModel):
-    children: list["RecursiveOptions"] = Field(default_factory=list)
+    # the whole annotation is quoted: Python 3.10 leaves a string inside list[...] unresolved
+    children: "list[RecursiveOptions]" = Field(default_factory=list)
     region: str = "west"
 
 
