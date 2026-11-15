@@ -1,0 +1,27 @@
+[package]
+name = "lazy-feed"
+version = "0.1.0"
+edition = "2021"
+description = "Offline: replay a recording through GSC (deterministic) and the ray tracer in lockstep, recording the MLS planner's inputs"
+license = "Apache-2.0"
+
+[[bin]]
+name = "lazy-feed"
+path = "src/main.rs"
+
+[dependencies]
+dimos-gsc-pgo = { path = "../gsc_pgo/rust" }
+dimos-voxel-ray-tracing = { path = "../../../../../mapping/ray_tracing/rust" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+rayon = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"
+sha1_smol = "1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+zstd = "0.13"
+
+[workspace]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
