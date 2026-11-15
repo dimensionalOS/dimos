@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use dimos_module::{debug_throttled, native_config, worker_pool};
 use rayon::prelude::*;
 use validator::{Validate, ValidationError};
@@ -30,9 +30,7 @@ use crate::columns::{
     diff_column, ColumnBuckets, ColumnEdit, ColumnIz, ColumnMask, ColumnWindow, VoxelEdits,
 };
 use crate::dijkstra::RepairWindow;
-use crate::edges::{
-    build_node_edges, build_node_edges_region, edges_to_segments, relink_failed, PlannerGraph,
-};
+use crate::edges::{build_node_edges, build_node_edges_region, relink_failed, PlannerGraph};
 use crate::lazy::ReformConfig;
 use crate::nodes::{
     apply_wall_safe_penalty_region, place_nodes, place_nodes_region, relocate_nodes,
@@ -124,9 +122,6 @@ pub struct Config {
     /// Whether and how the planner follows GscPGO's loop closures.
     #[validate(nested)]
     pub reform: ReformConfig,
-    /// How far around the start, goal and route a plan re-keys cells a warp moved, m.
-    #[validate(range(exclusive_min = 0.0))]
-    pub reform_rekey_radius_m: f32,
     /// With no full route publish no path, instead of following the cached route to a standoff short of the blockage.
     pub require_full_route: bool,
     /// A region update spanning more columns is a bad pose or bound, refused before it allocates per-column scratch.
@@ -317,43 +312,15 @@ pub struct Planner {
     /// Every mapped voxel with its usable plane.
     planes: PlaneMap,
     by_col: ColumnIz,
-    // Last successful path and its goal, which a warp moves: followed while safe when a replan finds no full path.
+    // Last successful path and its goal: followed while safe when a replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
     last_result: Option<((f32, f32, f32), bool)>,
-    // When each voxel landed, for a warp that tells overlapping passes apart (off unless asked for).
-    voxel_times: Option<VoxelTimes>,
-    // What the last warp left off its keys, bucketed by place so a region update re-keys what is near it; built on the first one after a warp.
-    displaced: Option<warp::DisplacedIndex>,
     // Whether the last region update had bad bounds, so a bad pose warns once.
     region_rejected: bool,
     // The keyframe table and version layers, once the first keyframe arrives with config.reform.enabled.
     lazy: Option<lazy_reform::LazyState>,
-}
-
-/// Seconds since `epoch` at which each voxel was added, and the clock edits are stamped with.
-pub(crate) struct VoxelTimes {
-    epoch: Option<f64>,
-    now: f32,
-    by_key: AHashMap<VoxelKey, f32>,
-    /// Where a warped voxel's point sits off its center, so sub-voxel shifts add up over warps; absent is zero.
-    residual: AHashMap<VoxelKey, [f32; 3]>,
-}
-
-impl VoxelTimes {
-    fn stamp(&mut self, t: f64) {
-        let epoch = *self.epoch.get_or_insert(t);
-        self.now = (t - epoch) as f32;
-    }
-
-    /// Absolute time of a voxel, NaN when unknown.
-    fn get(&self, k: &VoxelKey) -> f64 {
-        match (self.by_key.get(k), self.epoch) {
-            (Some(&t), Some(epoch)) => epoch + t as f64,
-            _ => f64::NAN,
-        }
-    }
 }
 
 /// How big the planner's containers are.
@@ -367,35 +334,9 @@ pub struct PlannerSizes {
     pub nodes: usize,
     pub node_edges: usize,
     pub dijkstra_slots: usize,
-    pub voxel_times: usize,
 }
 
 impl Planner {
-    /// Each voxel's key where its point sits, which a warp can move off its own key.
-    pub fn placed_voxels(&self, voxel_size: f32) -> impl Iterator<Item = VoxelKey> + '_ {
-        self.by_col.keys().map(move |k| {
-            let r = self
-                .voxel_times
-                .as_ref()
-                .and_then(|t| t.residual.get(&k).copied())
-                .unwrap_or([0.0; 3]);
-            voxelize(
-                (
-                    (k.0 as f32 + 0.5) * voxel_size + r[0],
-                    (k.1 as f32 + 0.5) * voxel_size + r[1],
-                    (k.2 as f32 + 0.5) * voxel_size + r[2],
-                ),
-                voxel_size,
-            )
-        })
-    }
-
-    /// Each surface cell's key where its point sits.
-    pub fn placed_surface(&self, voxel_size: f32) -> impl Iterator<Item = VoxelKey> + '_ {
-        let cells = &self.graph.cells;
-        cells.ids().map(move |id| cells.placed(id, voxel_size))
-    }
-
     pub fn sizes(&self) -> PlannerSizes {
         PlannerSizes {
             voxels: self.by_col.voxel_count(),
@@ -406,7 +347,6 @@ impl Planner {
             nodes: self.graph.nodes.len(),
             node_edges: self.graph.node_edges.len(),
             dijkstra_slots: self.graph.cell_state.dist.len() + self.graph.wall_state.dist.len(),
-            voxel_times: self.voxel_times.as_ref().map_or(0, |t| t.by_key.len()),
         }
     }
 
@@ -418,31 +358,17 @@ impl Planner {
             by_col: ColumnIz::default(),
             last_path: None,
             last_result: None,
-            voxel_times: None,
-            displaced: None,
             region_rejected: false,
             lazy: None,
         }
     }
 
-    /// Record when each voxel lands, for warps. Costs a map entry per voxel.
-    pub fn track_voxel_times(&mut self) {
-        self.voxel_times.get_or_insert_with(|| VoxelTimes {
-            epoch: None,
-            now: 0.0,
-            by_key: AHashMap::new(),
-            residual: AHashMap::new(),
-        });
-    }
-
-    /// The time, in seconds, the next edits are stamped with.
-    pub fn set_clock(&mut self, t: f64) {
-        if let Some(times) = &mut self.voxel_times {
-            times.stamp(t);
-        }
-    }
-
+    /// Rebuild the map from a whole point set. Refused once the lazy reform holds stale layers, which a rebuild would drop.
     pub fn update_global_map(&mut self, points: &[MapPoint], config: &Config) {
+        if self.layer_count() > 1 {
+            tracing::warn!("Refused a global map rebuild: it would drop the stale layers the lazy reform holds.");
+            return;
+        }
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
@@ -459,11 +385,6 @@ impl Planner {
                 })
                 .collect();
             self.by_col = ColumnIz::from_voxels(&keys);
-            if let Some(times) = &mut self.voxel_times {
-                let now = times.now;
-                times.by_key = self.by_col.keys().map(|k| (k, now)).collect();
-                times.residual.clear();
-            }
             self.rebuild_from_voxels(config);
         });
     }
@@ -538,15 +459,6 @@ impl Planner {
             let voxel_size = config.voxel_size;
             let pad = (2 * config.closing_passes()) as i32;
 
-            // Re-key what a warp moved out of its keys before the region's data meets it.
-            if self.voxel_times.is_some() {
-                let margin = config.buffer_window_cells() as f32 * voxel_size;
-                self.rebin_near(
-                    (bounds.origin_x, bounds.origin_y),
-                    bounds.radius + margin,
-                    config,
-                );
-            }
             // Bring the stale parts of the map near the region into the current layer first.
             self.reform_near(bounds, config);
             let stage = Instant::now();
@@ -585,7 +497,6 @@ impl Planner {
                 removed,
                 &[],
                 &edits,
-                &[],
                 Vec::new(),
                 window_steps,
                 config,
@@ -614,35 +525,23 @@ impl Planner {
         removed: Vec<VoxelKey>,
         rekeyed: &[VoxelKey],
         edits: &VoxelEdits,
-        moves: &[(usize, VoxelKey)],
         gone: Vec<NodeId>,
         window_steps: i32,
         config: &Config,
     ) {
-        // A moving node's coordinate, while its cell id still resolves.
-        let mut relocations: Vec<(usize, VoxelKey, VoxelKey)> = moves
-            .iter()
-            .map(|&(ni, target)| {
-                let cell = self.graph.nodes[ni].cell_id;
-                (ni, self.graph.cells.coord(cell), target)
-            })
-            .collect();
         let patch = self.patch_cells(&added, &removed, &edits.retuned, config);
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
         seeds.extend_from_slice(rekeyed);
         seeds.extend(patch.retuned.iter().map(|&id| self.graph.cells.coord(id)));
-        if seeds.is_empty() && edits.is_empty() && moves.is_empty() && gone.is_empty() {
+        if seeds.is_empty() && edits.is_empty() && gone.is_empty() {
             return;
         }
-        let moving: AHashSet<usize> = moves.iter().map(|&(ni, _)| ni).collect();
-        relocations.extend(
-            patch
-                .dead_nodes
-                .iter()
-                .filter(|(ni, _)| !moving.contains(ni))
-                .map(|&(ni, coord)| (ni, coord, coord)),
-        );
+        let relocations: Vec<(usize, VoxelKey, VoxelKey)> = patch
+            .dead_nodes
+            .iter()
+            .map(|&(ni, coord)| (ni, coord, coord))
+            .collect();
 
         let reach = config
             .terrain(&self.by_col, &self.planes)
@@ -664,13 +563,7 @@ impl Planner {
             &params,
         );
         gone_nodes.extend(gone);
-        // A moved node's region and edges change around both its ends.
-        let mut roots = affected;
-        for &(_, from, to) in &relocations[..moves.len()] {
-            roots.extend(graph.cells.id(from));
-            roots.extend(graph.cells.id(to));
-        }
-        let window_cells = self.node_window(edits, &roots, window_steps, config);
+        let window_cells = self.node_window(edits, &affected, window_steps, config);
         if window_cells.is_empty() && patch.removed.is_empty() && gone_nodes.is_empty() {
             return;
         }
@@ -860,17 +753,6 @@ impl Planner {
             for &iz in &edit.added {
                 self.by_col.add((ix, iy, iz));
             }
-            if let Some(times) = &mut self.voxel_times {
-                // Fresh data sits where it was observed, with no residual.
-                for &iz in &edit.removed {
-                    times.by_key.remove(&(ix, iy, iz));
-                    times.residual.remove(&(ix, iy, iz));
-                }
-                for &iz in &edit.added {
-                    times.by_key.insert((ix, iy, iz), times.now);
-                    times.residual.remove(&(ix, iy, iz));
-                }
-            }
             if let Some(lazy) = &mut self.lazy {
                 lazy.file_voxels(edit, voxel_size);
             }
@@ -1052,6 +934,7 @@ impl Planner {
         );
     }
 
+    /// The path from start to goal over the whole graph, stale layers included, in current-frame points; call reform_around on the start and goal first when they may sit in a stale layer.
     pub fn plan(
         &self,
         start: (f32, f32, f32),
@@ -1061,93 +944,27 @@ impl Planner {
         if self.graph.nodes.is_empty() {
             return None;
         }
-        planner::plan(&self.graph, start, goal, config)
-            .map(|(wp, cells)| self.placed_waypoints(wp, &cells, config.voxel_size))
+        let stale_point = |id| self.stale_point(id);
+        planner::plan(&self.graph, start, goal, config, &stale_point).map(|(wp, _)| wp)
     }
 
-    /// Re-key the cells a warp moved around the start and goal, so a plan finds them where they are.
-    pub fn rebin_for_plan(
-        &mut self,
-        start: (f32, f32, f32),
-        goal: (f32, f32, f32),
-        config: &Config,
-    ) {
-        if self.voxel_times.is_none() {
-            return;
-        }
-        let pool = Arc::clone(&self.pool);
-        pool.install(|| {
-            self.rebin_near((start.0, start.1), config.reform_rekey_radius_m, config);
-            self.rebin_near((goal.0, goal.1), config.reform_rekey_radius_m, config);
-        });
-    }
-
-    /// Where the cached route's cells that a warp moved off their keys sit, in the ground plane.
-    fn displaced_path_points(&self, voxel_size: f32) -> Vec<(f32, f32)> {
-        let Some((_, path)) = &self.last_path else {
-            return Vec::new();
-        };
-        let cells = &self.graph.cells;
-        path.iter()
-            .filter_map(|&k| cells.id(k))
-            .filter(|&id| cells.placed(id, voxel_size) != cells.coord(id))
-            .map(|id| {
-                let (ix, iy, _) = cells.coord(id);
-                let o = cells.offset(id);
-                (
-                    (ix as f32 + 0.5) * voxel_size + o[0],
-                    (iy as f32 + 0.5) * voxel_size + o[1],
-                )
-            })
-            .collect()
-    }
-
-    /// Plan to the goal, re-keying along a route a warp moved; with no full route follow the cached path while safe, or nothing with require_full_route.
+    /// Plan to the goal; with no full route follow the cached path while safe, or nothing with require_full_route.
     pub fn plan_or_truncate(&mut self, start: Xyz, goal: Xyz, config: &Config) -> Plan {
-        self.rebin_for_plan(start, goal, config);
-        let mut waypoints = self.plan_or_truncate_keys(start, goal, config);
-        // No full route while a warp left cells off their keys: re-key everything still displaced and plan again.
-        if self.last_result == Some((goal, false)) && self.voxel_times.is_some() {
-            let pool = Arc::clone(&self.pool);
-            if pool.install(|| self.rebin_all_displaced(config)) {
-                waypoints = self.plan_or_truncate_keys(start, goal, config);
+        self.reform_around(start, config);
+        self.reform_around(goal, config);
+        let planned = if self.graph.nodes.is_empty() {
+            None
+        } else {
+            let stale_point = |id| self.stale_point(id);
+            planner::plan(&self.graph, start, goal, config, &stale_point)
+        };
+        if let Some((waypoints, cells)) = planned {
+            if self.last_result != Some((goal, true)) {
+                tracing::info!(?goal, waypoints = waypoints.len(), "full path to goal");
             }
-        }
-        // A route through cells a warp moved: re-key along it and plan again until it reads one grid, or a re-key changes nothing.
-        let mut displaced = self.displaced_path_points(config.voxel_size);
-        while !displaced.is_empty() {
-            let pool = Arc::clone(&self.pool);
-            pool.install(|| self.rebin_around(&displaced, config.reform_rekey_radius_m, config));
-            waypoints = self.plan_or_truncate_keys(start, goal, config);
-            let next = self.displaced_path_points(config.voxel_size);
-            if next == displaced {
-                break;
-            }
-            displaced = next;
-        }
-        let path = self
-            .last_path
-            .as_ref()
-            .map(|(_, cells)| cells.clone())
-            .unwrap_or_default();
-        let vs = config.voxel_size;
-        match waypoints {
-            Plan::Full(wp) => Plan::Full(self.placed_waypoints(wp, &path, vs)),
-            Plan::Truncated(wp) => Plan::Truncated(self.placed_waypoints(wp, &path, vs)),
-            Plan::Blocked => Plan::Blocked,
-        }
-    }
-
-    fn plan_or_truncate_keys(&mut self, start: Xyz, goal: Xyz, config: &Config) -> Plan {
-        if !self.graph.nodes.is_empty() {
-            if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
-                if self.last_result != Some((goal, true)) {
-                    tracing::info!(?goal, waypoints = waypoints.len(), "full path to goal");
-                }
-                self.last_result = Some((goal, true));
-                self.last_path = Some((goal, cells));
-                return Plan::Full(waypoints);
-            }
+            self.last_result = Some((goal, true));
+            self.last_path = Some((goal, cells));
+            return Plan::Full(waypoints);
         }
         if self.last_result != Some((goal, false)) {
             if config.require_full_route {
@@ -1183,20 +1000,20 @@ impl Planner {
 
     /// Corridor segments of every node edge, for visualization.
     pub fn edge_segments(&self) -> Vec<(VoxelKey, VoxelKey, f32)> {
-        self.pool
-            .install(|| edges_to_segments(self.graph.node_edges.edges()))
+        self.edge_segment_iter().collect()
     }
 
-    /// The same segments without materializing them.
+    /// Node-edge corridor segments, each end where its cell is now.
     pub fn edge_segment_iter(&self) -> impl Iterator<Item = (VoxelKey, VoxelKey, f32)> + '_ {
-        self.graph.node_edges.edges().iter().flat_map(|edge| {
+        let now = |k: VoxelKey| self.graph.cells.resolve(k).map_or(k, |id| self.key_now(id));
+        self.graph.node_edges.edges().iter().flat_map(move |edge| {
             edge.chain
                 .windows(2)
-                .map(move |pair| (pair[0], pair[1], edge.cost))
+                .map(move |pair| (now(pair[0]), now(pair[1]), edge.cost))
         })
     }
 
-    /// Surface cells with their surface height and wall clearance (nearest untraversable edge, +inf unreached).
+    /// Surface cells with their surface height and wall clearance (nearest untraversable edge, +inf unreached), each where it is now.
     pub fn surface_clearance(&self) -> Vec<SurfaceEntry> {
         self.surface_clearance_iter().collect()
     }
@@ -1205,7 +1022,10 @@ impl Planner {
         let dist = &self.graph.wall_state.dist;
         self.graph.cells.ids().map(move |id| {
             let d = dist.get(id as usize).copied().unwrap_or(f32::INFINITY);
-            (self.graph.cells.coord(id), self.graph.cells.z(id), d)
+            match self.stale_point(id) {
+                Some(p) => (self.key_now(id), p.2, d),
+                None => (self.graph.cells.coord(id), self.graph.cells.z(id), d),
+            }
         })
     }
 
@@ -1314,8 +1134,6 @@ fn bfs_ball(
 
 mod lazy_reform;
 pub use lazy_reform::{ClosureOutcome, VersionGap};
-mod warp;
-pub use warp::WarpReport;
 
 #[cfg(test)]
 pub(crate) fn test_config() -> Config {
@@ -1345,7 +1163,6 @@ pub(crate) fn test_config() -> Config {
         viz_sweep_cells: 0,
         worker_threads: 4,
         reform: ReformConfig::off(),
-        reform_rekey_radius_m: 3.0,
         require_full_route: false,
         max_region_columns: 10_000_000,
         max_closing_box_cells: 250_000_000,

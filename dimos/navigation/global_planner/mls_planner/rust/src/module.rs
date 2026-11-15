@@ -64,7 +64,6 @@ enum MapUpdate {
     },
     Global {
         points: Vec<MapPoint>,
-        stamp: f64,
     },
 }
 
@@ -375,8 +374,7 @@ impl MlsPlanner {
 
     async fn on_global_map(&mut self, msg: PointCloud2) {
         if let Some(points) = cloud_points(&msg, "global_map") {
-            let stamp = seconds(&msg.header.stamp);
-            self.hand_off(MapUpdate::Global { points, stamp });
+            self.hand_off(MapUpdate::Global { points });
         }
     }
 
@@ -536,10 +534,6 @@ impl MlsPlanner {
     fn set_active_goal(&self, goal: Option<Goal>) -> Option<Goal> {
         std::mem::replace(&mut *self.active_goal.lock().expect("goal mutex"), goal)
     }
-}
-
-fn seconds(t: &Time) -> f64 {
-    t.sec as f64 + t.nsec as f64 * 1e-9
 }
 
 /// True when bounds and a local cloud are both present with matching stamps.
@@ -972,7 +966,6 @@ impl Worker {
                     return false;
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
-                planner.set_clock(seconds(&bounds.header.stamp));
                 let process_start = Instant::now();
                 let version = version.unwrap_or(planner.reform_version());
                 match planner.update_region_at_version(&points, &region, version, &self.config) {
@@ -1006,11 +999,10 @@ impl Worker {
                 );
                 true
             }
-            MapUpdate::Global { points, stamp } => {
+            MapUpdate::Global { points } => {
                 if points.is_empty() {
                     return false;
                 }
-                planner.set_clock(stamp);
                 planner.update_global_map(&points, &self.config);
                 viz.mark_all();
                 debug!(global_map_points = points.len(), "global_map processed");
@@ -1023,7 +1015,6 @@ impl Worker {
     /// premap's own, so no sensor ceiling applies.
     fn ingest_seed(&self, planner: &mut Planner, seed: QueuedSeed, viz: &mut RegionViz) {
         let region = region_bounds(&seed.bounds);
-        planner.set_clock(seconds(&seed.bounds.header.stamp));
         if let Some(window) = planner.update_seed_region(&seed.points, &region, &self.config) {
             viz.mark_window(window);
         }

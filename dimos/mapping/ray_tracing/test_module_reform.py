@@ -38,6 +38,5 @@ def test_both_modules_take_the_closure_inputs_with_reform_off_by_default():
 def test_the_planner_keeps_its_fallback_and_limits_by_default():
     config = MLSPlannerNativeConfig()
     assert config.require_full_route is False
-    assert config.reform_rekey_radius_m == 3.0
     assert config.max_region_columns == 10_000_000
     assert config.max_closing_box_cells == 250_000_000

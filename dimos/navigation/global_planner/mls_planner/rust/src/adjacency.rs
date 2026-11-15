@@ -128,8 +128,6 @@ pub struct SurfaceCells {
     z: Vec<f32>,
     /// Each cell's surface slope when a plane gave its height.
     slope: Vec<Option<Slope>>,
-    /// Per slot: where a warp moved the cell's point off its key's surface point, as cells outside the local area move un-re-keyed.
-    offset: Vec<[f32; 3]>,
     /// Every cell's outgoing edges in one buffer at its span; a grown list moves to the end and the buffer compacts once stranded edges outweigh live ones.
     flat: Vec<Edge>,
     /// Per slot: (start, len) into `flat`.
@@ -190,7 +188,6 @@ impl SurfaceCells {
         self.coord.clear();
         self.z.clear();
         self.slope.clear();
-        self.offset.clear();
         self.layer.clear();
         self.current_layer = 0;
         self.stale.clear();
@@ -255,7 +252,6 @@ impl SurfaceCells {
             self.coord[free_id as usize] = k;
             self.z[free_id as usize] = z;
             self.slope[free_id as usize] = slope;
-            self.offset[free_id as usize] = [0.0; 3];
             self.layer[free_id as usize] = self.current_layer;
             self.coord_ordered = false;
             free_id
@@ -271,7 +267,6 @@ impl SurfaceCells {
             self.coord.push(k);
             self.z.push(z);
             self.slope.push(slope);
-            self.offset.push([0.0; 3]);
             self.layer.push(self.current_layer);
             self.spans.push((self.flat.len() as u32, 0));
             id
@@ -344,7 +339,6 @@ impl SurfaceCells {
             self.spans[dest as usize].1 = kept as u32;
         }
         self.coord[id as usize] = TOMBSTONE;
-        self.offset[id as usize] = [0.0; 3];
         self.free.push(id);
     }
 
@@ -388,7 +382,6 @@ impl SurfaceCells {
             self.by_coord.remove(&self.coord[id as usize]);
         }
         self.coord[id as usize] = to;
-        self.offset[id as usize] = [0.0; 3];
         self.layer[id as usize] = self.current_layer;
         self.by_coord.insert(to, id);
         self.coord_ordered = false;
@@ -453,57 +446,6 @@ impl SurfaceCells {
             z: &self.z,
             slope: &self.slope,
             by_coord: &self.by_coord,
-        }
-    }
-
-    /// How far a warp moved a cell's point off its key's surface point.
-    #[inline]
-    pub fn offset(&self, id: CellId) -> [f32; 3] {
-        self.offset[id as usize]
-    }
-
-    /// The key a cell's point sits in now.
-    pub fn placed(&self, id: CellId, voxel_size: f32) -> VoxelKey {
-        let (ix, iy, iz) = self.coord(id);
-        let o = self.offset(id);
-        crate::voxel::voxelize(
-            (
-                (ix as f32 + 0.5) * voxel_size + o[0],
-                (iy as f32 + 0.5) * voxel_size + o[1],
-                (iz as f32 + 0.5) * voxel_size + o[2],
-            ),
-            voxel_size,
-        )
-    }
-
-    /// Move cells' points by `deltas`, keeping their keys.
-    pub fn shift(&mut self, ids: &[CellId], deltas: &[[f32; 3]]) {
-        for (&id, d) in ids.iter().zip(deltas) {
-            let o = &mut self.offset[id as usize];
-            for a in 0..3 {
-                o[a] += d[a];
-            }
-        }
-    }
-
-    /// Re-key cells, each to a free key, keeping their ids and edges; the offset left is what the new key does not account for.
-    pub fn rekey(&mut self, moves: &[(CellId, VoxelKey)], voxel_size: f32) {
-        for &(id, _) in moves {
-            self.by_coord.remove(&self.coord[id as usize]);
-        }
-        for &(id, to) in moves {
-            let from = self.coord[id as usize];
-            let o = &mut self.offset[id as usize];
-            o[0] -= (to.0 - from.0) as f32 * voxel_size;
-            o[1] -= (to.1 - from.1) as f32 * voxel_size;
-            o[2] -= (to.2 - from.2) as f32 * voxel_size;
-            self.coord[id as usize] = to;
-            let previous = self.by_coord.get(&to);
-            debug_assert!(previous.is_none(), "rekey into a taken key");
-            self.by_coord.insert(to, id);
-        }
-        if !moves.is_empty() {
-            self.coord_ordered = false;
         }
     }
 
@@ -686,7 +628,6 @@ pub fn build_surface_cells(
         .map(|&k| terrain.surface(k))
         .collect();
     (cells.z, cells.slope) = surfaces.into_iter().unzip();
-    cells.offset.resize(n, [0.0; 3]);
     cells.layer.resize(n, cells.current_layer);
     cells.by_coord.fill(&cells.coord);
 

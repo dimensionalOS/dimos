@@ -17,10 +17,6 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-# pose_graph and loop_closure_event record layouts, as numpy dtype fields.
-POSE_GRAPH_DTYPE: list[tuple[str, str]]
-LOOP_CLOSURE_EVENT_DTYPE: list[tuple[str, str]]
-
 class MLSPlanner:
     """Multi-level surface path planner over a voxelized global map."""
 
@@ -40,13 +36,12 @@ class MLSPlanner:
         plane_noise_m: float = 0.01,
         step_penalty_weight: float = 4.0,
         worker_threads: int = 4,
-        voxel_times: bool = False,
-        reform_rekey_radius_m: float = 3.0,
+        reform: dict[str, Any] | None = None,
         require_full_route: bool = False,
         max_region_columns: int = 10_000_000,
         max_closing_box_cells: int = 250_000_000,
     ) -> None: ...
-    def update_global_map(self, points: NDArray[np.float32], stamp: float | None = None) -> None:
+    def update_global_map(self, points: NDArray[np.float32]) -> None:
         """Voxelize the map and rebuild surfaces, nodes, and edges.
 
         Points are (N, 3) float32 voxel centers, or (N, 7) with each voxel's
@@ -62,12 +57,14 @@ class MLSPlanner:
         z_min: float,
         z_max: float,
         sensor_z: float,
-        stamp: float | None = None,
-    ) -> None:
+        version: int | None = None,
+    ) -> bool:
         """Replace the cylindrical region with a local map slice and rebuild.
 
         Points are (N, 3) or (N, 7) as for update_global_map. z_max is capped at
-        sensor_z + max_overhead_m.
+        sensor_z + max_overhead_m. `version` is the closure version the ray tracer
+        stamped on the cloud (None: the planner's own). Returns False when it is
+        newer than the closures received, for the caller to hold and retry.
         """
         ...
 
@@ -126,23 +123,22 @@ class MLSPlanner:
         """Drop the graph and buffered state."""
         ...
 
-    def add_keyframes(self, records: bytes) -> int:
-        """Take keyframes from raw pose_graph records; returns how many are known."""
+    def add_keyframes(self, cloud: bytes) -> int:
+        """Take an LCM-encoded GscPGO new_keyframe cloud; returns the keyframes known."""
         ...
 
-    def apply_loop_closure(
-        self,
-        records: bytes,
-        held: list[tuple[float, float, float]] = ...,
-        blend_sigma_m: float = 0.0,
-        blend_time_sigma_s: float = 0.0,
-        min_shift_m: float = 0.04,
-        thin_cell_m: float = 0.0,
-        reach_sigmas: float = 3.0,
-    ) -> dict[str, Any] | None:
-        """Warp the planner through raw loop_closure_event records; None when no keyframe moved past min_shift_m."""
+    def on_closure(self, cloud: bytes) -> dict[str, Any] | None:
+        """Apply an LCM-encoded GscPGO loop_closure_event cloud.
+
+        None when it names no known keyframe, else its version, closing keyframes,
+        whether it started a new layer, and the layer count.
+        """
+        ...
+
+    def reform_version(self) -> int:
+        """The closure version the planner's map is in."""
         ...
 
     def __repr__(self) -> str: ...
 
-__all__ = ["LOOP_CLOSURE_EVENT_DTYPE", "POSE_GRAPH_DTYPE", "MLSPlanner"]
+__all__ = ["MLSPlanner"]

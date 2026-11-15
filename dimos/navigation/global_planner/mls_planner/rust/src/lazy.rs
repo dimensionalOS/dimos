@@ -313,6 +313,11 @@ fn pose_at(record: &[u8], t: &[usize; 3], q: &[usize; 4]) -> Pose {
     )
 }
 
+/// An LCM-encoded PointCloud2, as recorded or sent on the wire.
+pub fn decode_cloud(bytes: &[u8]) -> Result<PointCloud2, DecodeError> {
+    PointCloud2::decode(bytes).map_err(|e| DecodeError(e.to_string()))
+}
+
 /// Decode a `new_keyframe` cloud, one record per keyframe.
 pub fn decode_new_keyframe(msg: &PointCloud2) -> Result<Vec<KeyframeRecord>, DecodeError> {
     let fields = Fields::new(msg)?;

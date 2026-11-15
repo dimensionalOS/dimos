@@ -99,8 +99,6 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     worker_threads: int = 4
     # Whether and how the planner follows GscPGO's loop closures.
     reform: MLSReformConfig = Field(default_factory=MLSReformConfig)
-    # How far around the start, goal and route a plan re-keys cells a warp moved, m.
-    reform_rekey_radius_m: float = 3.0
     # With no full route publish no path, instead of following the cached route to a standoff short of the blockage.
     require_full_route: bool = False
     # A region update spanning more columns is a bad pose or bound (10M is ~126 m of radius at 8 cm), refused before it allocates.

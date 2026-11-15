@@ -36,6 +36,8 @@ use crate::voxel::{voxelize, VoxelKey};
 pub struct LazyState {
     pub(crate) table: KeyframeTable,
     pub(crate) layers: Layers,
+    /// The planner's voxel edge, for placing stale cells.
+    voxel_size: f32,
 }
 
 fn center(k: VoxelKey, voxel_size: f32) -> [f64; 3] {
@@ -121,6 +123,7 @@ impl Planner {
         let lazy = self.lazy.get_or_insert_with(|| LazyState {
             table: KeyframeTable::new(config.reform.table_params()),
             layers: Layers::new(config.reform.layer_params()),
+            voxel_size: config.voxel_size,
         });
         for record in records {
             lazy.table.add(record);
@@ -193,6 +196,11 @@ impl Planner {
         })
     }
 
+    /// How many keyframes the lazy reform knows.
+    pub fn keyframe_count(&self) -> usize {
+        self.lazy.as_ref().map_or(0, |l| l.table.len())
+    }
+
     /// How many version layers hold elements, the current one included.
     pub fn layer_count(&self) -> usize {
         self.lazy.as_ref().map_or(1, |l| 1 + l.layers.stale.len())
@@ -211,6 +219,39 @@ impl Planner {
             bounds.origin_y + margin,
         ];
         self.reform_rects(&[rect], config);
+    }
+
+    /// Migrate the stale submeshes within reach of a plan's start or goal, so it snaps to the current layer: the goal tolerance plus a node spacing around it.
+    pub fn reform_around(&mut self, p: (f32, f32, f32), config: &Config) {
+        if self.lazy.is_none() {
+            return;
+        }
+        let reach = config.goal_tolerance + config.node_spacing_m;
+        let rect = [p.0 - reach, p.0 + reach, p.1 - reach, p.1 + reach];
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| self.reform_rects(&[rect], config));
+    }
+
+    /// Where a stale layer's cell is in the current frame, by its anchor's pose then and now; None for a current-layer cell.
+    pub(crate) fn stale_point(&self, id: CellId) -> Option<(f32, f32, f32)> {
+        let lazy = self.lazy.as_ref()?;
+        let layer = self.graph.cells.layer(id);
+        if layer == lazy.layers.current {
+            return None;
+        }
+        let el = lazy.layers.cells.get(&id)?;
+        let carry = lazy.layers.stale.get(&layer)?.carry(el.anchor, &lazy.table);
+        let (x, y, z) = self.graph.cells.point(id, lazy.voxel_size);
+        let p = carry.apply([x as f64, y as f64, z as f64]);
+        Some((p[0] as f32, p[1] as f32, p[2] as f32))
+    }
+
+    /// A cell's key where it is now: its own in the current layer, its carried point's for a stale one.
+    pub(crate) fn key_now(&self, id: CellId) -> VoxelKey {
+        match (self.stale_point(id), &self.lazy) {
+            (Some(p), Some(lazy)) => voxelize(p, lazy.voxel_size),
+            _ => self.graph.cells.coord(id),
+        }
     }
 
     /// The ring around a touched area that must be in the current layer: what the surface extraction pads by and the node window reaches.
@@ -385,7 +426,6 @@ impl Planner {
             removed,
             &migrated.rekeyed,
             &migrated.edits,
-            &[],
             migrated.gone,
             config.node_window_cells(),
             config,
