@@ -43,6 +43,8 @@ struct Args {
     snapshot_at: Vec<(u64, f32, f32)>,
     /// Scans after which the planner is checked against a full rebuild from its own voxels.
     parity_at: Vec<u64>,
+    /// Inclusive scan ranges left out of path_share_excluded, e.g. where the odometry is known to drift.
+    exclude_scans: Vec<(u64, u64)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -57,6 +59,7 @@ fn parse_args() -> Result<Args, String> {
         dump_limit: 4,
         snapshot_at: Vec::new(),
         parity_at: Vec::new(),
+        exclude_scans: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -85,6 +88,12 @@ fn parse_args() -> Result<Args, String> {
                     parts[2].parse().map_err(|_| bad())?,
                 ));
             }
+            "--exclude-scans" => {
+                let v = value()?;
+                let bad = || format!("{flag} takes FIRST-LAST, not {v}");
+                let (a, b) = v.split_once('-').ok_or_else(bad)?;
+                args.exclude_scans.push((a.parse().map_err(|_| bad())?, b.parse().map_err(|_| bad())?));
+            }
             "--parity-at" => args.parity_at.push(value()?.parse().map_err(|e| format!("{flag}: {e}"))?),
             other => return Err(format!("unknown argument {other}")),
         }
@@ -94,7 +103,7 @@ fn parse_args() -> Result<Args, String> {
         || args.output.as_os_str().is_empty()
     {
         return Err("usage: lazy-replay --feed F --planner-config C.json --output DIR \
-                    [--goal-along-path-m M] [--until-scan S] [--dump-dir D [--dump-radius-m R] [--dump-limit N] [--snapshot-at SCAN,X,Y]...]"
+                    [--goal-along-path-m M] [--until-scan S] [--exclude-scans FIRST-LAST]... [--parity-at SCAN]... [--dump-dir D [--dump-radius-m R] [--dump-limit N] [--snapshot-at SCAN,X,Y]...]"
             .into());
     }
     Ok(args)
@@ -330,6 +339,7 @@ fn run() -> Result<(), String> {
     let mut held: Option<(u64, f64, [f64; 7], u32, ([f32; 5], Vec<MapPoint>))> = None;
     let (mut first_ts, mut last_ts) = (None, 0.0);
     let (mut replans, mut found, mut counted, mut counted_found) = (0u64, 0u64, 0u64, 0u64);
+    let (mut kept, mut kept_found) = (0u64, 0u64);
     let (mut events, mut new_layers, mut seam_checks, mut torn) = (0u64, 0u64, 0u64, 0u64);
     let mut pending_seam_check = false;
     let mut last_found = false;
@@ -518,6 +528,10 @@ fn run() -> Result<(), String> {
                     if found > 0 {
                         counted += 1;
                         counted_found += u64::from(has_path);
+                        if !args.exclude_scans.iter().any(|&(a, b)| (a..=b).contains(&index)) {
+                            kept += 1;
+                            kept_found += u64::from(has_path);
+                        }
                     }
                 }
                 writeln!(
@@ -545,6 +559,8 @@ fn run() -> Result<(), String> {
         "data_s": data_s, "replans": replans, "replans_with_path": found,
         "replans_counted": counted, "counted_with_path": counted_found,
         "path_share": if counted > 0 { counted_found as f64 / counted as f64 } else { f64::NAN },
+        "excluded_scans": args.exclude_scans, "replans_counted_excluded": kept, "counted_with_path_excluded": kept_found,
+        "path_share_excluded": if kept > 0 { kept_found as f64 / kept as f64 } else { f64::NAN },
         "events": events, "new_layers": new_layers, "layers": planner.layer_count(),
         "seam_checks": seam_checks, "torn_seams": torn,
     });
