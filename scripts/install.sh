@@ -21,7 +21,8 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config graphviz"
+# libturbojpeg0-dev depends on the runtime package under its Debian/Ubuntu release-specific name.
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg0-dev pre-commit libgl1 libegl1 libglib2.0-0 libsndfile1 libusb-1.0-0 libgfortran5 pkg-config graphviz"
 MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit libsndfile pkg-config graphviz"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
@@ -549,10 +550,7 @@ install_system_deps() {
         ubuntu|wsl)
             local -a needed=() privilege=(/usr/bin/env)
             if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
-            local ver_major; ver_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
             for pkg in $UBUNTU_PACKAGES; do
-                # Ubuntu 26.04 renamed libturbojpeg to libturbojpeg0, and nothing there provides the old name
-                if [[ "$pkg" == libturbojpeg && "$ver_major" =~ ^[0-9]+$ && "$ver_major" -ge 26 ]]; then pkg=libturbojpeg0; fi
                 # one status line per installed architecture (multiarch), and Ubuntu 24.04 renamed some to <name>t64
                 # (dpkg-query fails for the name that doesn't exist; pipefail is on, so don't let that decide)
                 if ! { dpkg-query -W -f='${Status}\n' "$pkg" "${pkg}t64" 2>/dev/null || true; } | grep -qx "install ok installed"; then

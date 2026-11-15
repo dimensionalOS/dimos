@@ -10,7 +10,7 @@ The installer asks for a mode and project directory, sets up system dependencies
 
 | Platform | Installation path | Validation |
 | --- | --- | --- |
-| [Ubuntu 22.04/24.04](/docs/installation/ubuntu.md), x86_64/ARM64 | apt | Both modes pass CPU installation CI |
+| [Ubuntu 22.04/24.04/26.04](/docs/installation/ubuntu.md), x86_64/ARM64 | apt | Both modes pass CPU installation CI |
 | [macOS](/docs/installation/osx.md), Apple Silicon | Homebrew | CI paused; local testing needed |
 | [NixOS / other Linux](/docs/installation/nix.md), including Arch | Nix | Not covered by installation CI |
 
