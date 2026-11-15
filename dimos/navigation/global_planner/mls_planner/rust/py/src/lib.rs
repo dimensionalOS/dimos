@@ -79,7 +79,7 @@ fn reform_config(reform: Option<&Bound<'_, PyDict>>) -> PyResult<ReformConfig> {
             "box_pad_m" => out.box_pad_m = value.extract()?,
             "version_history" => out.version_history = value.extract()?,
             "min_shift_m" => out.min_shift_m = value.extract()?,
-            "migrate_per_update" => out.migrate_per_update = value.extract()?,
+            "migrate_ms_per_element" => out.migrate_ms_per_element = value.extract()?,
             other => {
                 return Err(PyValueError::new_err(format!(
                     "unknown reform setting {other:?}"
@@ -112,7 +112,9 @@ impl MLSPlanner {
         reform = None,
         require_full_route = false,
         max_region_columns = 10_000_000,
-        region_columns_per_update = 0,
+        scan_period_s = 0.1,
+        update_period_share = 0.4,
+        repair_ms_per_column = 0.0,
         max_closing_box_cells = 250_000_000,
         route_reuse_slack_m = 3.0,
     ))]
@@ -133,7 +135,9 @@ impl MLSPlanner {
         reform: Option<&Bound<'_, PyDict>>,
         require_full_route: bool,
         max_region_columns: u64,
-        region_columns_per_update: u32,
+        scan_period_s: f32,
+        update_period_share: f32,
+        repair_ms_per_column: f32,
         max_closing_box_cells: u64,
         route_reuse_slack_m: f32,
     ) -> PyResult<Self> {
@@ -168,7 +172,9 @@ impl MLSPlanner {
             reform: reform_config(reform)?,
             require_full_route,
             max_region_columns,
-            region_columns_per_update,
+            scan_period_s,
+            update_period_share,
+            repair_ms_per_column,
             max_closing_box_cells,
             route_reuse_slack_m,
         };

@@ -128,10 +128,20 @@ pub struct Config {
     /// A region update spanning more columns is a bad pose or bound, refused before it allocates per-column scratch.
     #[validate(range(min = 1))]
     pub max_region_columns: u64,
-    /// Changed columns one region update repairs the surface and graph of, nearest the region's center first; the rest
-    /// wait, their voxels already in, for the next updates (0 = all at once), so no one update carries a whole region
-    /// rewritten (the first region after a closure starts a layer).
-    pub region_columns_per_update: u32,
+    /// Expected seconds between region updates (the lidar's scan period); with update_period_share it sets how much
+    /// deferred work one update takes on.
+    #[validate(range(exclusive_min = 0.0))]
+    pub scan_period_s: f32,
+    /// Share of scan_period_s one region update's deferred work (stale migration and waiting column repair, half each)
+    /// may cost, by the calibrated per-unit costs.
+    #[validate(range(exclusive_min = 0.0, max = 1.0))]
+    pub update_period_share: f32,
+    /// Calibrated ms one changed column's surface and graph repair costs (stitching to stale layers included). Changed
+    /// columns past the budget's half wait, their voxels already in, for the next updates, nearest the region's center
+    /// first, so no one update carries a whole region rewritten (the first region after a closure starts a layer);
+    /// 0 repairs all at once.
+    #[validate(range(min = 0.0))]
+    pub repair_ms_per_column: f32,
     /// A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     #[validate(range(min = 1))]
     pub max_closing_box_cells: u64,
@@ -162,6 +172,29 @@ pub enum Plan {
 }
 
 impl Config {
+    /// ms of deferred work one region update may take on: scan_period_s × update_period_share.
+    pub fn update_budget_ms(&self) -> f64 {
+        self.scan_period_s as f64 * 1e3 * self.update_period_share as f64
+    }
+
+    /// How many units costing `ms_per_unit` fit half of update_budget_ms, at least 1; unbounded at cost 0.
+    fn units_in_half_budget(&self, ms_per_unit: f32) -> usize {
+        if ms_per_unit <= 0.0 {
+            return usize::MAX;
+        }
+        ((0.5 * self.update_budget_ms() / ms_per_unit as f64).round() as usize).max(1)
+    }
+
+    /// Changed columns one region update repairs, from the budget and repair_ms_per_column.
+    pub fn region_columns_per_update(&self) -> usize {
+        self.units_in_half_budget(self.repair_ms_per_column)
+    }
+
+    /// Stale elements (voxels and cells) one region update migrates, from the budget and reform.migrate_ms_per_element.
+    pub fn migrate_per_update(&self) -> usize {
+        self.units_in_half_budget(self.reform.migrate_ms_per_element)
+    }
+
     /// Number of dilation and erosion passes for the closing radius.
     pub fn closing_passes(&self) -> u32 {
         (self.surface_closing_radius / self.voxel_size).ceil() as u32
@@ -385,7 +418,7 @@ pub struct Planner {
     route: Option<route::RouteWatch>,
     // Stage times of the last update or closure call.
     clock: StageClock,
-    // Columns whose voxels a region update changed and whose surface and graph are still to repair, config.region_columns_per_update a call.
+    // Columns whose voxels a region update changed and whose surface and graph are still to repair, config.region_columns_per_update() a call.
     region_pending: BTreeMap<(i32, i32), PendingColumn>,
 }
 
@@ -664,7 +697,7 @@ impl Planner {
         })
     }
 
-    /// The edits this update repairs: all of them when nothing waits and they fit config.region_columns_per_update,
+    /// The edits this update repairs: all of them when nothing waits and they fit config.region_columns_per_update(),
     /// else they join the waiting columns and the ones nearest `center` (by column, then by key) up to the budget come
     /// out, with the widest window any of them asked for. A route through a column that starts waiting is touched.
     fn repair_share(
@@ -674,10 +707,7 @@ impl Planner {
         center: (i32, i32),
         config: &Config,
     ) -> (VoxelEdits, i32) {
-        let budget = match config.region_columns_per_update {
-            0 => usize::MAX,
-            n => n as usize,
-        };
+        let budget = config.region_columns_per_update();
         if self.region_pending.is_empty() && edits.columns().count() <= budget {
             return (edits, window_steps);
         }
@@ -1479,9 +1509,37 @@ pub(crate) fn test_config() -> Config {
         reform: ReformConfig::off(),
         require_full_route: false,
         max_region_columns: 10_000_000,
-        region_columns_per_update: 0,
+        scan_period_s: 0.1,
+        update_period_share: 0.4,
+        repair_ms_per_column: 0.0,
         max_closing_box_cells: 250_000_000,
         route_reuse_slack_m: 3.0,
+    }
+}
+
+/// Per-update work counts set directly, for tests: a 1 s period at full share, so half the budget is 500 ms.
+#[cfg(test)]
+impl Config {
+    fn unit_cost_for(&mut self, count: u32) -> f32 {
+        self.scan_period_s = 1.0;
+        self.update_period_share = 1.0;
+        if count == 0 {
+            0.0
+        } else {
+            500.0 / count as f32
+        }
+    }
+
+    /// Repair `count` changed columns per region update (0 = all at once).
+    pub(crate) fn set_region_columns_per_update(&mut self, count: u32) {
+        self.repair_ms_per_column = self.unit_cost_for(count);
+        debug_assert!(count == 0 || self.region_columns_per_update() == count as usize);
+    }
+
+    /// Migrate `count` stale elements per region update (0 = all at once).
+    pub(crate) fn set_migrate_per_update(&mut self, count: u32) {
+        self.reform.migrate_ms_per_element = self.unit_cost_for(count);
+        debug_assert!(count == 0 || self.migrate_per_update() == count as usize);
     }
 }
 
