@@ -155,6 +155,9 @@ config! {
     landmark_warm_start_xy_variance_scale: f64,
     // ...and each later stage's scale is the last one's divided by this, down to the stated variances
     landmark_warm_start_xy_variance_ladder: f64,
+    // loop_closure_event only once a keyframe moved past this (m, default 4 cm = the ray tracer's reform min_shift_m) or turn (rad)
+    event_min_shift_m: f64,
+    event_min_turn_rad: f64,
 }
 
 // ---- shared state ---------------------------------------------------------------
@@ -506,12 +509,11 @@ impl GscPgoModule {
 
 // ---- graph publisher ------------------------------------------------------------
 
-/// Next publish: O(1) graph and closure snapshots, whether a closure closed / a render asked for the graph since the
-/// last send (or-ed over skips), data time.
+/// Next publish: O(1) graph and closure snapshots, whether a render asked for the graph since the last send (or-ed over
+/// skips), data time.
 struct Publish {
     keys: dimos_gsc_pgo::store::KeyFrames,
     closures: dimos_gsc_pgo::store::Closures,
-    closure_closed: bool,
     pose_graph_requested: bool,
     ts: f64,
 }
@@ -531,10 +533,11 @@ impl GraphPublisher {
         let (pose_graph, loop_closure_event) = (worker.pose_graph.clone(), worker.loop_closure_event.clone());
         let new_keyframe = worker.new_keyframe.clone();
         let (rt, dump_path) = (worker.rt.clone(), worker.config.dump_path.clone());
+        let event_config = worker.config.pgo();
         std::thread::Builder::new()
             .name("gsc-publish".into())
             .spawn(move || {
-                let mut outputs = GraphOutputs::default();
+                let mut outputs = GraphOutputs::new(&event_config);
                 let publish = |out: &dyn Fn() -> Result<(), String>, what: &str| {
                     if let Err(e) = out() {
                         error!(error = %e, "{what} failed to publish");
@@ -558,8 +561,8 @@ impl GraphPublisher {
                             None => return,
                         }
                     };
-                    let Publish { keys, closures, closure_closed, pose_graph_requested, ts } = next;
-                    let messages = outputs.step(&keys, &closures, closure_closed, pose_graph_requested, ts, &frame_id);
+                    let Publish { keys, closures, pose_graph_requested, ts } = next;
+                    let messages = outputs.step(&keys, &closures, pose_graph_requested, ts, &frame_id);
                     if let Some(records) = &messages.new_keyframe {
                         publish(
                             &|| rt.block_on(new_keyframe.publish(records)).map_err(|e| e.to_string()),
@@ -598,16 +601,14 @@ impl GraphPublisher {
             .expect("spawn graph publisher thread");
         GraphPublisher { pending }
     }
-    /// Hand over the current graph; an unsent older one is replaced, its closure and request flags kept.
-    fn send(&self, pgo: &GscPgo, closure_closed: bool, pose_graph_requested: bool, ts: f64) {
+    /// Hand over the current graph; an unsent older one is replaced, its request flag kept.
+    fn send(&self, pgo: &GscPgo, pose_graph_requested: bool, ts: f64) {
         let (lock, ready) = &*self.pending;
         let mut state = lock.lock().expect("publisher");
-        let closed = closure_closed || state.0.as_ref().is_some_and(|p| p.closure_closed);
         let requested = pose_graph_requested || state.0.as_ref().is_some_and(|p| p.pose_graph_requested);
         state.0 = Some(Publish {
             keys: pgo.key_poses().clone(),
             closures: pgo.committed_closures().clone(),
-            closure_closed: closed,
             pose_graph_requested: requested,
             ts,
         });
@@ -691,7 +692,7 @@ impl Worker {
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
             if solve_finished && pgo.update() {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-                publisher.send(&pgo, false, false, last_time);
+                publisher.send(&pgo, false, last_time);
                 self.log_solve(&pgo, last_time);
             }
             // fixes and sightings join as they arrive; one alone starts a solve
@@ -727,13 +728,13 @@ impl Worker {
                 }
                 if pgo.update() {
                     let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-                    publisher.send(&pgo, false, false, last_time);
+                    publisher.send(&pgo, false, last_time);
                     self.log_solve(&pgo, last_time);
                 }
             }
             if std::mem::take(&mut self.state.lock().expect("state").pose_graph_requested) {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-                publisher.send(&pgo, false, true, last_time);
+                publisher.send(&pgo, true, last_time);
             }
             self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
             self.log_closures(&pgo, &mut closures_logged);
@@ -782,7 +783,7 @@ impl Worker {
 
             pgo.step_closure_search();
             let moved = pgo.update();
-            publisher.send(&pgo, moved, false, cur_time);
+            publisher.send(&pgo, false, cur_time);
             if moved {
                 self.log_solve(&pgo, cur_time);
             }
