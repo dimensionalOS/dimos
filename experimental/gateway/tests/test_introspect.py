@@ -20,14 +20,19 @@ from typing import Literal
 import pytest
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from experimental.gateway.introspect import (
     Cache,
     IntrospectError,
+    blueprint_modules,
+    field_args,
+    module_args,
     rpcs,
     run_child,
     spec_topic,
@@ -40,6 +45,41 @@ def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
         spec_topic(ZenohTransport.spec(ZenohTopic("dimos/head_left_color", Twist)))
         == "/head_left_color"
     )
+
+
+class LeftCamera(Module):
+    jpeg_out: Out[Twist]
+
+
+class RightCamera(Module):
+    jpeg_out: Out[Twist]
+
+
+def test_remapped_streams_show_their_wired_topic() -> None:
+    blueprint = (
+        autoconnect(LeftCamera.blueprint(), RightCamera.blueprint())
+        .remappings(
+            [
+                (LeftCamera, "jpeg_out", "head_left_color"),
+                (RightCamera, "jpeg_out", "head_right_color"),
+            ]
+        )
+        .transports(
+            {
+                ("head_left_color", Twist): ZenohTransport.spec(
+                    ZenohTopic("dimos/head_left_color", Twist)
+                )
+            }
+        )
+    )
+    streams = {
+        (module["name"], stream["name"]): stream
+        for module in blueprint_modules(blueprint, {})
+        for stream in module["streams"]
+    }
+    left = streams["leftcamera", "jpeg_out"]
+    assert (left["wire"], left["topic"]) == ("head_left_color", "/head_left_color")
+    assert streams["rightcamera", "jpeg_out"]["topic"] == "/head_right_color"
 
 
 class Dog(Module):
@@ -99,3 +139,69 @@ def test_another_checkout_is_introspected_with_this_file_and_its_own_dimos(tmp_p
     )
     with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
         asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"], python=sys.executable))
+
+
+def test_a_checkout_with_an_older_gateway_of_its_own_is_introspected_with_this_one(
+    tmp_path: Path,
+) -> None:
+    # Desktop runs a pinned copy of the gateway against the user's checkout, which may hold an older gateway (an
+    # untracked experimental/gateway/ on a dev branch): neither its introspect.py nor its helpers may be the ones run
+    robot = tmp_path / "dimos" / "robot"
+    robot.mkdir(parents=True)
+    (tmp_path / "dimos" / "__init__.py").write_text("")
+    (robot / "__init__.py").write_text("")
+    (robot / "get_all_blueprints.py").write_text(
+        "def get_by_name(name):\n    raise LookupError(f'{name} from the branch checkout')\n"
+    )
+    old = tmp_path / "experimental" / "gateway"
+    old.mkdir(parents=True)
+    for helper in ("introspect.py", "constants.py", "launches.py", "store.py"):
+        (old / helper).write_text("raise SystemExit('the checkout\\'s own older gateway ran')\n")
+    with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
+        asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"]))
+
+
+def test_a_blueprints_source_is_found_without_importing_its_missing_dependencies(
+    tmp_path: Path,
+) -> None:
+    # an R1 checkout lists unitree-go2 without the go2 packages installed: its source must still be found
+    robot = tmp_path / "dimos" / "robot"
+    (robot / "go2").mkdir(parents=True)
+    for package in (tmp_path / "dimos", robot, robot / "go2"):
+        (package / "__init__.py").write_text("")
+    (robot / "go2" / "blueprints.py").write_text(
+        "import not_installed_here\n\n\nclass Go2Connection: ...\n\n\ngo2 = Go2Connection\n"
+    )
+    (robot / "all_blueprints.py").write_text(
+        "all_blueprints = {'unitree-go2': 'dimos.robot.go2.blueprints:go2'}\n"
+        "all_modules = {'go2-connection': 'dimos.robot.go2.blueprints.Go2Connection'}\n"
+    )
+    for name, line in (("unitree-go2", 7), ("go2-connection", 4)):
+        found = asyncio.run(run_child(tmp_path, ["source", name], python=sys.executable))
+        assert found == {"name": name, "file": "dimos/robot/go2/blueprints.py", "line": line}
+
+
+class NeedsArgsConfig(ModuleConfig):
+    rate_hz: float = 1.0
+
+
+class NeedsArgs(Module):
+    config: NeedsArgsConfig
+
+    @classmethod
+    def blueprint(cls, **kwargs):  # type: ignore[no-untyped-def, override]
+        return super().blueprint(**{"must": kwargs["must"]})
+
+
+def test_config_fields_are_read_without_launches_and_its_newer_dimos_imports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a checkout older than this gateway lacks what launches.py imports from dimos (DIM-630: every config was a 500)
+    monkeypatch.setitem(sys.modules, "experimental.gateway.launches", None)
+    args = field_args(NeedsArgsConfig.model_fields, set())
+    assert args["rate_hz"]["default"] == 1.0
+    assert args["rate_hz"]["secret"] is False
+
+
+def test_a_module_whose_blueprint_needs_arguments_still_lists_its_config() -> None:
+    assert "rate_hz" in module_args(NeedsArgs)

@@ -44,7 +44,7 @@ def mock_openstreetmap_org() -> Generator[None, None, None]:
         yield
 
 
-@pytest.mark.skip(reason="flaky in CI, disabled until fixed")
+@pytest.mark.skipif_flaky_in_ci
 def test_get_osm_map(mock_openstreetmap_org: None) -> None:
     position = LatLon(lat=37.751857, lon=-122.431265)
     map_image = get_osm_map(position, 18, 4)

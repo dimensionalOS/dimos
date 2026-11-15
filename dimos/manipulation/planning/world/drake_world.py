@@ -268,7 +268,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         description = self._strip_world_base_joint(description, config)
         for package_name, package_path in description.package_paths.items():
             self._parser.package_map().Add(package_name, package_path)
-        if not description.package_paths:
+        if not description.package_paths and description.source_path is not None:
             self._parser.package_map().Add("robot_description", description.source_path.parent)
         logger.info("Using in-memory model", model_path=str(description.source_path))
         model_instances = self._parser.AddModelsFromString(description.xml, "urdf")

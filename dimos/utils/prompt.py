@@ -43,11 +43,17 @@ def confirm(message: str, *, default: bool = True) -> bool:
 
 
 def sudo_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-    """Run a command, prepending sudo if not already root."""
+    """Run a command, prepending sudo if not already root.
+
+    Without a tty on stdin nobody is there to type a password, so sudo runs with
+    ``-n`` and fails at once instead of prompting on the controlling terminal.
+    Passwordless sudo still works.
+    """
     try:
         is_root = os.geteuid() == 0
     except AttributeError:
         is_root = False
     if is_root:
         return subprocess.run(list(args), **kwargs)
-    return subprocess.run(["sudo", *args], **kwargs)
+    sudo = ["sudo"] if sys.stdin.isatty() else ["sudo", "-n"]
+    return subprocess.run([*sudo, *args], **kwargs)

@@ -17,7 +17,7 @@
 tf gives each frame one parent. Two publishers writing the same child frame make
 the buffer a graph instead, and a lookup then resolves by hop count rather than by
 which source is authoritative, so the wrong odometry can win silently. Each
-blueprint keeps the invariant a different way: nav_3d turns GO2Connection's tf off
+blueprint keeps the invariant a different way: the Mid-360 recorder turns GO2Connection's tf off
 so the static mount tree owns base_link, and the static tree is rooted at
 mid360_link so it never writes the frame PointLio owns.
 """
@@ -26,19 +26,12 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
     unitree_go2_mid360_record,
 )
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
-from dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d import (
-    unitree_go2_nav_3d,
-    unitree_go2_nav_3d_relocalization,
-)
-from dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d_relocalization_replay import (
-    unitree_go2_nav_3d_relocalization_replay,
-)
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     Go2Mid360StaticTf,
@@ -47,9 +40,6 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
 from dimos.simulation.go2_sim.world import SENSOR_FRAME_ID, SimGo2World
 
 BLUEPRINTS = [
-    unitree_go2_nav_3d,
-    unitree_go2_nav_3d_relocalization,
-    unitree_go2_nav_3d_relocalization_replay,
     unitree_go2_mid360_record,
     go2_sim_nav,
 ]
@@ -69,7 +59,7 @@ def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
             children["PointLio"] = {sensor_frame}
         if atom.module is SimGo2World:
             children["SimGo2World"] = {SENSOR_FRAME_ID}
-        if issubclass(atom.module, RelocalizationModule):
+        if issubclass(atom.module, PremapModule):
             children[atom.module.__name__] = {atom.kwargs.get("map_frame", "map")}
     return children
 
@@ -83,12 +73,6 @@ def test_no_frame_has_two_tf_parents(blueprint: Blueprint) -> None:
         clash = claimed & frames
         assert not clash, f"{publisher} also writes {sorted(clash)}"
         claimed |= frames
-
-
-def test_replay_leaves_the_mount_tree_to_the_recording() -> None:
-    """The recording carries the mount tf, so the static publisher must stay disabled."""
-    by_publisher = _tf_children_by_publisher(unitree_go2_nav_3d_relocalization_replay)
-    assert "Go2Mid360StaticTf" not in by_publisher
 
 
 def test_static_tree_does_not_write_the_pointlio_frame() -> None:

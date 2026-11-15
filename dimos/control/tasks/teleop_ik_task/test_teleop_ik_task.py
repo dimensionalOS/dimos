@@ -392,6 +392,7 @@ def test_factory_constructs_plain_pose_target_solver_by_default(
     assert task._config.joint_velocity_limits_rad_s == {}
     assert task._config.joint_command_filter_cutoff_hz == 5.0
     assert task._config.max_command_tracking_error_deg == 10.0
+    assert task._config.feedback_limit_tolerance == 1e-3
     assert init.call_args.args[0].pink == task._config.pink
 
 

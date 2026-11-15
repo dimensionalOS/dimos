@@ -25,7 +25,7 @@ import secrets
 import signal
 import time
 
-from dimos.constants import STATE_DIR
+from dimos.constants import RUN_SHUTDOWN_TIMEOUT, STATE_DIR
 from dimos.core.config_secrets import SECRET_CONFIG_FIELDS, config_field_name, without_secret_values
 from dimos.core.coordination.process_lifecycle import (
     is_pid_alive as is_pid_alive,
@@ -192,11 +192,13 @@ def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:
         return ("Process already dead, cleaning registry", True)
 
     if not force:
-        for _ in range(50):  # 5 seconds
-            if not is_pid_alive(entry.pid):
-                break
-            time.sleep(0.1)
-        else:
+        deadline = time.monotonic() + RUN_SHUTDOWN_TIMEOUT
+        while is_pid_alive(entry.pid):
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.1, remaining))
+                continue
+
             try:
                 os.kill(entry.pid, signal.SIGKILL)
             except ProcessLookupError:

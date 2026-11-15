@@ -32,6 +32,7 @@ logger = setup_logger()
 
 PLANE_DISTANCE = 0.01  # m - RANSAC inlier distance
 MIN_HORIZONTAL_DOT = 0.90  # |normal . z| for a plane to count as horizontal
+PLANE_INLIER_QUANTILE = 0.15  # anchor plane offset near the base of the inlier slab
 PLANE_SEED = 0  # so one window always fits the same plane
 
 
@@ -75,7 +76,7 @@ def fit_support_plane(
     o3d.utility.random.seed(PLANE_SEED)
     remaining = o3d.geometry.PointCloud()
     remaining.points = o3d.utility.Vector3dVector(points)
-    best: tuple[np.ndarray, int] | None = None
+    best: tuple[np.ndarray, int, np.ndarray] | None = None
     for _ in range(4):
         if len(remaining.points) < 500:
             break
@@ -83,16 +84,18 @@ def fit_support_plane(
             distance_threshold=PLANE_DISTANCE, ransac_n=3, num_iterations=1000, probability=1.0
         )
         if abs(model[2]) >= MIN_HORIZONTAL_DOT and (best is None or len(inlier_idx) > best[1]):
-            best = (np.array(model), len(inlier_idx))
+            best = (np.array(model), len(inlier_idx), np.asarray(remaining.points)[inlier_idx])
         remaining = remaining.select_by_index(inlier_idx, invert=True)
 
     if best is None:
         logger.warning("support plane: no horizontal plane found in backdrop")
         return None
 
-    model, _ = best
+    model, _, inliers = best
     if model[2] < 0:
         model = -model
-    return SupportPlane(
-        coefficients=(float(model[0]), float(model[1]), float(model[2]), float(model[3]))
-    )
+    # Thin objects (< 1 cm) sitting on the support surface fall inside the RANSAC
+    # inlier slab and bias the least-squares offset upward; anchoring the offset
+    # at the lower quantile of the inliers keeps the plane on the support surface.
+    d = -float(np.quantile(inliers @ model[:3], PLANE_INLIER_QUANTILE))
+    return SupportPlane(coefficients=(float(model[0]), float(model[1]), float(model[2]), d))

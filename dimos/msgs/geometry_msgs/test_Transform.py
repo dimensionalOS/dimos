@@ -225,11 +225,15 @@ def test_pose_add_transform_with_rotation() -> None:
     assert np.isclose(transformed_pose2.orientation.w, np.cos(total_angle2 / 2), atol=1e-10)
 
 
-def test_lcm_encode_decode() -> None:
+@pytest.mark.parametrize("ts", [0, 0.0, 10, 10.0, 10.25])
+def test_lcm_encode_decode(ts: float) -> None:
     angle = np.pi / 2
     transform = Transform(
         translation=Vector3(2.0, 1.0, 0.0),
         rotation=Quaternion(0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2)),
+        ts=ts,
+        frame_id="world",
+        child_frame_id="base",
     )
 
     data = transform.lcm_encode()
@@ -237,6 +241,9 @@ def test_lcm_encode_decode() -> None:
     decoded_transform = Transform.lcm_decode(data)
 
     assert decoded_transform == transform
+    assert decoded_transform.ts == ts
+    assert decoded_transform.frame_id == "world"
+    assert decoded_transform.child_frame_id == "base"
 
 
 def test_transform_addition() -> None:

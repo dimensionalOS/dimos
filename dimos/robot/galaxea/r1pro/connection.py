@@ -131,6 +131,9 @@ def _ros_stamp_now() -> Any:
 
 class R1ProConnectionConfig(ModuleConfig):
     publish_rate_hz: float = Field(default=100.0)
+    # Runs beside the robot's ROS driver, so losing Desktop/the coordinator
+    # cannot leave its last chassis velocity active.
+    cmd_vel_timeout_s: float = Field(default=0.2, gt=0, le=1.0)
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
     tracking_speed: float = Field(default=0.5)
     # Wheel odometry always goes out on `odometry`; this gates its odom -> base_link tf and the `odom` pose.
@@ -230,6 +233,10 @@ class R1ProConnection(Module):
 
         self._stop_event = threading.Event()
         self._publish_thread: Thread | None = None
+        self._cmd_vel_condition = threading.Condition()
+        self._cmd_vel_deadline = 0.0
+        self._cmd_vel_closed = True
+        self._cmd_vel_thread: Thread | None = None
 
     # Lifecycle
 
@@ -276,6 +283,7 @@ class R1ProConnection(Module):
             )
 
         self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
+        self._start_cmd_vel_watchdog()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
 
         self._publish_thread = Thread(target=self._publish_loop, name="r1pro-publish", daemon=True)
@@ -283,6 +291,7 @@ class R1ProConnection(Module):
 
     @rpc
     def stop(self) -> None:
+        self._stop_cmd_vel_watchdog()
         self._stop_event.set()
         self._sensor_stop.set()
 
@@ -548,6 +557,63 @@ class R1ProConnection(Module):
         return [speed if (v == 0.0 or v == VEL_STOP) else float(v) for v in dqs]
 
     def _on_cmd_vel(self, msg: Twist) -> None:
+        with self._cmd_vel_condition:
+            if self._cmd_vel_closed:
+                return
+            self._publish_cmd_vel(msg)
+            self._cmd_vel_deadline = time.monotonic() + self.config.cmd_vel_timeout_s
+            self._cmd_vel_condition.notify()
+
+    def _start_cmd_vel_watchdog(self) -> None:
+        with self._cmd_vel_condition:
+            if not self._cmd_vel_closed:
+                return
+            self._cmd_vel_closed = False
+            self._cmd_vel_deadline = 0.0
+            self._cmd_vel_thread = Thread(
+                target=self._cmd_vel_watchdog, name="r1pro-cmd-vel", daemon=True
+            )
+            self._cmd_vel_thread.start()
+
+    def _stop_cmd_vel_watchdog(self) -> None:
+        with self._cmd_vel_condition:
+            if self._cmd_vel_closed:
+                return
+            self._cmd_vel_closed = True
+            self._cmd_vel_condition.notify()
+            if self._cmd_vel_deadline:
+                try:
+                    self._publish_cmd_vel(Twist())
+                except (OSError, RuntimeError):
+                    logger.exception("Failed to stop R1 Pro chassis during shutdown")
+                finally:
+                    self._cmd_vel_deadline = 0.0
+        if self._cmd_vel_thread is not None:
+            self._cmd_vel_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._cmd_vel_thread = None
+
+    def _cmd_vel_watchdog(self) -> None:
+        # Independent of sensor decoding, coordinator ticks and browser timers.
+        # Hold the same lock as _on_cmd_vel so an expired command cannot stop
+        # a newer one after it has already been forwarded.
+        with self._cmd_vel_condition:
+            while not self._cmd_vel_closed:
+                if not self._cmd_vel_deadline:
+                    self._cmd_vel_condition.wait()
+                    continue
+                remaining = self._cmd_vel_deadline - time.monotonic()
+                if remaining > 0:
+                    self._cmd_vel_condition.wait(timeout=remaining)
+                    continue
+                try:
+                    self._publish_cmd_vel(Twist())
+                except (OSError, RuntimeError):
+                    logger.exception("Failed to stop R1 Pro chassis after command timeout")
+                    self._cmd_vel_deadline = time.monotonic() + self.config.cmd_vel_timeout_s
+                else:
+                    self._cmd_vel_deadline = 0.0
+
+    def _publish_cmd_vel(self, msg: Twist) -> None:
         from geometry_msgs.msg import TwistStamped
 
         ros = self._ros

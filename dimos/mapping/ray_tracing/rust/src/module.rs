@@ -784,6 +784,7 @@ mod tests {
             fine_divisor: 0,
             emit_fine: false,
             max_range: 1000.0,
+            pre_trace_subsample: 1,
             ray_subsample: 1,
             shadow_depth: 0.0,
             grace_depth: 0.0,

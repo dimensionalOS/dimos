@@ -223,3 +223,19 @@ def test_runtime_implements_the_host_contract() -> None:
     assert inspect.signature(GraspGenXModule.propose_grasps) == inspect.signature(
         GraspGenXRuntimeModule.propose_grasps
     )
+
+
+def test_proposals_name_the_host_module(runtime: Any, mocker: MockerFixture) -> None:
+    """This process serves under a private name; callers know the host's."""
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True,
+        **{**module_args(), "instance_name": "__isolated_python__/GraspGenXModule/abc123"},
+    )
+    try:
+        module.start()
+        proposed = module.propose_grasps_for(cloud())
+    finally:
+        module.stop()
+
+    assert proposed["generator"] == "GraspGenXModule"
+    assert [g["generator"] for g in proposed["grasps"]] == ["GraspGenXModule"]

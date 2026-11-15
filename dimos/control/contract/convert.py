@@ -15,7 +15,7 @@
 """Turn the standard robot messages into named values, and back.
 
 Connection modules and the coordinator talk in standard messages
-(``Twist``, ``JointState``, ``MotorCommandArray``, ``PoseStamped``, ``Imu``).
+(``JointState``, ``MotorCommandArray``, ``Imu``).
 Inside, both work with named values such as ``{"arm/joint1/position": 0.3}``.
 These functions convert between the two, and both sides use the same ones, so
 they always agree on what each field means.
@@ -34,14 +34,11 @@ Every ``_from_values`` needs each value its message carries, and raises
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
-import math
 from typing import TYPE_CHECKING
 
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import PD_INTERFACES, movable_joints
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -56,10 +53,6 @@ JOINT_STATE_FIELDS: tuple[Interface, ...] = (
     Interface.VELOCITY,
     Interface.EFFORT,
 )
-#: What a Twist carries for a base: forwards, leftwards, turning.
-TWIST_INTERFACES: tuple[Interface, ...] = (Interface.VX, Interface.VY, Interface.WZ)
-#: What a PoseStamped carries for a base: where it is and which way it faces.
-POSE_INTERFACES: tuple[Interface, ...] = (Interface.X, Interface.Y, Interface.YAW)
 #: What an Imu carries: orientation, turn rates, accelerations.
 IMU_INTERFACES: tuple[Interface, ...] = (
     Interface.QX,
@@ -82,32 +75,10 @@ def motor_joints(model: RobotModel, source: str) -> list[str]:
     The message has no names, so the sender and the connection module must
     both build the order with this.
     """
-    return [f"{source}{SEPARATOR}{joint.name}" for joint in movable_joints(model)]
-
-
-def twist_to_values(twist: Twist, base: str) -> dict[str, float]:
-    """A base's speeds from a Twist.
-
-    Only forwards (``linear.x``), leftwards (``linear.y``) and turning
-    (``angular.z``) are read; a base on the floor has no other axes.
-
-    Args:
-        twist: Speeds in m/s and rad/s, measured from the base itself.
-        base: The base's full name, e.g. "chassis/base".
-    """
-    vx, vy, wz = twist.linear.x, twist.linear.y, twist.angular.z
-    return {
-        _key(base, Interface.VX): vx,
-        _key(base, Interface.VY): vy,
-        _key(base, Interface.WZ): wz,
-    }
-
-
-def twist_from_values(values: Mapping[str, float], base: str) -> Twist:
-    """A Twist from a base's ``vx``, ``vy`` and ``wz`` (m/s, m/s, rad/s): a
-    speed to command, or one the base measured."""
-    vx, vy, wz = _take(values, base, TWIST_INTERFACES)
-    return Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz))
+    return [
+        joint.name if SEPARATOR in joint.name else f"{source}{SEPARATOR}{joint.name}"
+        for joint in movable_joints(model)
+    ]
 
 
 def joint_state_to_values(msg: JointState, fields: Collection[str]) -> dict[str, float]:
@@ -206,30 +177,6 @@ def motor_command_from_values(
     _require(values, joints, PD_INTERFACES)
     q, dq, tau, kp, kd = ([values[_key(j, i)] for j in joints] for i in PD_INTERFACES)
     return MotorCommandArray(q=q, dq=dq, kp=kp, kd=kd, tau=tau, timestamp=ts)
-
-
-def pose_to_values(pose: PoseStamped, base: str) -> dict[str, float]:
-    """Where a base is (``x``, ``y`` in m) and which way it faces (``yaw`` in
-    rad, 0 along x, growing to the left), from a PoseStamped."""
-    q = pose.orientation
-    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-    return {
-        _key(base, Interface.X): pose.position.x,
-        _key(base, Interface.Y): pose.position.y,
-        _key(base, Interface.YAW): yaw,
-    }
-
-
-def pose_from_values(
-    values: Mapping[str, float], base: str, ts: float | None = None, frame_id: str = ""
-) -> PoseStamped:
-    """A PoseStamped from a base's ``x``, ``y`` (m) and ``yaw`` (rad), flat on
-    the floor."""
-    x, y, yaw = _take(values, base, POSE_INTERFACES)
-    orientation = Quaternion(0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
-    return PoseStamped(
-        ts=ts, frame_id=frame_id, position=Vector3(x, y, 0.0), orientation=orientation
-    )
 
 
 def imu_to_values(imu: Imu, sensor: str) -> dict[str, float]:

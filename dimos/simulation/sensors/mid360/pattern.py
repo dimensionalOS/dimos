@@ -30,6 +30,8 @@ CHANNELS = 4
 
 
 class Mid360Pattern:
+    point_rate = POINT_RATE
+
     def __init__(
         self,
         freq_fast: float,

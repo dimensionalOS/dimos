@@ -99,8 +99,8 @@ class G1Connection(G1ConnectionBase):
 
     @rpc
     def stop(self) -> None:
-        assert self.connection is not None
-        self.connection.stop()
+        if self.connection is not None:
+            self.connection.stop()
         super().stop()
 
     @rpc

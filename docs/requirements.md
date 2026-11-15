@@ -2,6 +2,8 @@
 
 Install dimOS with the [official installer](/docs/installation/index.md). It provisions Python and system dependencies for the supported installation paths.
 
+Supported Python versions are 3.10 (3.10.12 or newer), 3.11 (3.11.4 or newer), and 3.12.
+
 ## Hardware
 
 | Component | Minimum | Recommended |
@@ -50,7 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
 | `cuda` | GPU inference backends | cupy, onnxruntime-gpu | **Yes** |
 | `cpu` | CPU inference backend | onnxruntime | No |
-| `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, torchreid, xarm-sdk | Varies |
+| `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
 

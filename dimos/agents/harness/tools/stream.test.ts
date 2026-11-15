@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { JsonObject } from "@earendil-works/pi-durable";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -17,9 +17,63 @@ import { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
 import { until } from "#dimos/agents/sdk/until.ts";
 import { Status } from "#dimos/agents/shared/protocol/status.ts";
 import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
-import { streamTool } from "#dimos/agents/harness/tools/lib/stream.ts";
+import type { ChannelSpec, Session, Slot } from "@dimos/sdk";
+import { readChannel, streamTool } from "#dimos/agents/harness/tools/lib/stream.ts";
 
 const dimos = dimosFixture();
+
+function fakeSession(t: TestContext, spec: ChannelSpec) {
+  // AbortSignal.timeout() does not keep Node alive; the real relay connection does.
+  const alive = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(alive));
+  let slot: Slot | null = null;
+  const listeners = new Set<() => void>();
+  const session = {
+    status: { get: () => ({ manifest: { channels: [spec] } }), subscribe: () => () => {} },
+    store: {
+      get: () => slot,
+      subscribe: (_ch: string, cb: () => void) => {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+    },
+    subscribe: () => () => {},
+  } as unknown as Session;
+  const push = (seq: number) => {
+    slot = { value: null, seq, ts: seq, version: seq };
+    for (const cb of listeners) cb();
+  };
+  return { session, push };
+}
+
+const odom = { ch: "odom", dir: "rx", encoding: "pose.json.v1" } as ChannelSpec;
+
+test("latest returns a live frame after an earlier read cached one", async (t) => {
+  const { session, push } = fakeSession(t, odom);
+  setTimeout(() => push(1), 50);
+  const first = await readChannel(session, odom, "latest", AbortSignal.timeout(1_000));
+  assert.deepEqual([first.slot.seq, first.stale], [1, false]);
+  setTimeout(() => push(2), 50);
+  const second = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
+  assert.deepEqual([second.slot.seq, second.stale], [2, false]);
+});
+
+test("latest falls back to the cached frame on a quiet stream", async (t) => {
+  const { session, push } = fakeSession(t, odom);
+  push(1);
+  const quiet = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
+  assert.deepEqual([quiet.slot.seq, quiet.stale], [1, true]);
+  const short = await readChannel(session, odom, "latest", AbortSignal.timeout(100));
+  assert.deepEqual([short.slot.seq, short.stale], [1, true], "a caller timeout under 2 s still gets a frame");
+});
+
+test("latest still fails when the caller cancels", async (t) => {
+  const { session, push } = fakeSession(t, odom);
+  push(1);
+  const cancel = new AbortController();
+  setTimeout(() => cancel.abort(), 50);
+  await assert.rejects(readChannel(session, odom, "latest", cancel.signal), { name: "AbortError" });
+});
 
 test(
   "the local stream tool reads fresh relay frames and exports an image for the model",

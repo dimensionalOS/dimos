@@ -7,6 +7,7 @@ import type { SourceFile } from "#dimos/agents/shared/render/lib/artifacts.ts";
 import { MAX_VIEWS } from "#dimos/agents/shared/protocol/media.ts";
 import { MODEL_IMAGE_BOX, modelImage } from "#dimos/agents/shared/render/lib/model-image.ts";
 import { RenderCache, readSource } from "#dimos/agents/shared/render/lib/artifacts.ts";
+import { PREVIEW_PREFIX, previewRefOf } from "#dimos/agents/shared/render/preview-refs.ts";
 import { basename } from "node:path";
 import { clipRenderer } from "#dimos/agents/shared/render/clip.ts";
 import { imageRenderer } from "#dimos/agents/shared/render/image.ts";
@@ -74,8 +75,11 @@ export class FileRenderer {
           }
           const part = await renderer.render(source, basename(file.path), context);
           details.views.push(part.view);
+          // Local callers (e.g. /inspect) may still use images; stored tool results must omit them and hydrate later.
           images.push(part.image.content);
-          lines.push(`${part.view.label} · ${source.path} · sha256 ${source.sha256} · ${part.caption}`);
+          lines.push(
+            `${part.view.label} · ${source.path} · sha256 ${source.sha256} · ${part.caption}\n${PREVIEW_PREFIX}${previewRefOf(part.view).path}`,
+          );
         } catch (error) {
           details.failed.push({ path: file.path, error: error instanceof Error ? error.message : String(error) });
         }

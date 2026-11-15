@@ -29,6 +29,7 @@ the repo data dir / LFS.
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 from dimos.memory.store.mcap import McapStore
 from dimos.robot.unitree.go2.dds.codec import GO2_CODECS
@@ -53,6 +54,12 @@ class Go2McapStore(McapStore):
     """``McapStore`` preset with the Go2 codecs, stream names, and path resolution."""
 
     def __init__(self, *, path: str, **kwargs: Any) -> None:
+        warnings.warn(
+            "Go2McapStore is deprecated; use dimos.memory.cli.dataset.open_dataset "
+            "for native and legacy Go2 MCAP recordings. Legacy DDS codecs remain supported.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(
             path=str(resolve_named_path(path, ".mcap")),
             codecs=GO2_CODECS,

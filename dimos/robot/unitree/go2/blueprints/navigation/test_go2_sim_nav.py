@@ -14,10 +14,17 @@
 
 """The simulator runs the navigation the robot runs, unmodified."""
 
+from pathlib import Path
+
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase
+from dimos.navigation.bench.ground_truth import Difficulty
+from dimos.navigation.bench.runner import Episode, RunConfig, _command
+from dimos.navigation.bench.suite import Case
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.go2_sim import go2_sim
@@ -27,6 +34,7 @@ from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
     go2_nav_static,
 )
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
+from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav_episode import go2_sim_nav_episode
 from dimos.robot.unitree.go2.dds.blueprints import go2_nav
 from dimos.spec.utils import Spec
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -73,3 +81,31 @@ def test_one_worker_per_module_with_gossip_off(blueprint: Blueprint) -> None:
     overrides = blueprint.global_config_overrides
     assert overrides["n_workers"] == len(blueprint.active_blueprints)
     assert overrides["zenoh_gossip"] is False
+
+
+def test_an_episode_world_waits_for_the_driver_to_load_its_scene() -> None:
+    assert _atoms(go2_sim_nav_episode)["simgo2world"].kwargs["wait_for_scene"] is True
+
+
+def test_dimos_run_takes_the_flags_the_bench_runner_passes(tmp_path: Path) -> None:
+    case = Case(
+        family="office",
+        seed=1,
+        params={},
+        start=(1.0, 1.0, 0.0),
+        goal=(4.0, 1.0, 0.0),
+        tag="mined",
+        id="mined-s1-aaaaaa",
+        split="dev",
+        difficulty=Difficulty(0.5, 0, 1.0, 0),
+        route_length=3.0,
+        scene_digest="",
+    )
+    config = RunConfig(suite=tmp_path / "suite.json", overrides=("--simgo2world.policy=/p.bin",))
+    command = _command(config, Episode(case, tmp_path / case.id), 0)
+    run = command.index("run")
+    assert {flag.removeprefix("--").replace("-", "_") for flag in command[1:run:2]} <= set(
+        GlobalConfig.model_fields
+    )
+    assert command[run + 1] == "go2-sim-nav-episode"
+    BlueprintConfigParser(go2_sim_nav_episode).parse(command[run + 2 :], environ={})

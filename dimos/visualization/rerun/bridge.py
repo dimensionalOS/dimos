@@ -21,7 +21,6 @@ from dataclasses import field
 import functools
 from operator import attrgetter
 import os
-import shutil
 import signal
 import socket
 import subprocess
@@ -40,7 +39,7 @@ from typing import (
     get_args,
     runtime_checkable,
 )
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import numpy as np
 from pydantic import Field
@@ -61,6 +60,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTop
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
+from dimos.utils.executable import find_executable
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import (
@@ -565,6 +565,9 @@ class RerunBridgeModule(Module):
                 open_browser=open_web,
                 web_port=self.config.web_port,
             )
+            logger.info(
+                f"Rerun web viewer ready at {web_viewer_url(server_uri, self.config.web_port)}"
+            )
 
         # TODO: `spawned` is supposed to be false when run on the G1 (because viewer doesn't have a display) somehow it returns true
         if (
@@ -791,6 +794,11 @@ class RerunBridgeModule(Module):
             client.wait()
 
 
+def web_viewer_url(server_uri: str, web_port: int) -> str:
+    """The page the web viewer opens. Without the query it shows no data."""
+    return f"http://localhost:{web_port}/?url={quote(server_uri, safe='')}"
+
+
 def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     """A headless ``rerun --save`` client of our gRPC server.
 
@@ -799,9 +807,9 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     its visualization sit together. Running it as a client keeps the server, and
     any live viewer on it, exactly as they are.
     """
-    cli = shutil.which("rerun")
+    cli = find_executable("rerun")
     if cli is None:
-        logger.warning("rerun_save: no `rerun` CLI on PATH, the stream is not saved")
+        logger.warning("rerun_save: no `rerun` CLI found, the stream is not saved")
         return None
     run_id = os.environ.get(DIMOS_RUN_ID_ENV) or time.strftime("%Y%m%d-%H%M%S")
     path = RECORDINGS_DIR / run_id / "rerun.rrd"
