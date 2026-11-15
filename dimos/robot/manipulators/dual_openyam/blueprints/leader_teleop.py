@@ -228,6 +228,12 @@ def dual_openyam_leader_control() -> Blueprint:
                     joint_trajectory_task(
                         DUAL_OPENYAM_LEADER_JOINTS,
                         velocity_limits=dual_openyam_leader_velocity_limits(),
+                        # Each leader target continues from the last command, so a
+                        # follower that lags gets one rate-limited ramp instead of a
+                        # restart from its reading at every target (14-50 Hz teeth).
+                        # The default 0.3 rad lead limit caps the extra push on a
+                        # blocked joint at 24 Nm (kp 80) and 3 Nm (kp 10).
+                        continuous_stream=True,
                     ),
                     stream_bind={"joint_command": "leader_joint_command"},
                 ),
