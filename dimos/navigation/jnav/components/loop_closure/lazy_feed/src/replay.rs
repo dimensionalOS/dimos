@@ -23,6 +23,7 @@ use std::time::Instant;
 
 use dimos_mls_planner::lazy::{decode_cloud, decode_loop_closure_event, decode_new_keyframe, Pose};
 use dimos_mls_planner::mls_planner::{Config, MapPoint, Plan, Planner, RegionBounds, VersionGap};
+use dimos_mls_planner::replan::{pass_replans, replan, PassTrigger, Replan};
 
 const NEW_KEYFRAME: u8 = 1;
 const LOOP_CLOSURE_EVENT: u8 = 2;
@@ -33,7 +34,6 @@ struct Args {
     feed: PathBuf,
     planner_config: PathBuf,
     output: PathBuf,
-    replan_every: u64,
     goal_along_path_m: f64,
     until_scan: u64,
     dump_dir: Option<PathBuf>,
@@ -46,7 +46,6 @@ fn parse_args() -> Result<Args, String> {
         feed: PathBuf::new(),
         planner_config: PathBuf::new(),
         output: PathBuf::new(),
-        replan_every: 1,
         goal_along_path_m: 2.0,
         until_scan: u64::MAX,
         dump_dir: None,
@@ -60,7 +59,6 @@ fn parse_args() -> Result<Args, String> {
             "--feed" => args.feed = value()?.into(),
             "--planner-config" => args.planner_config = value()?.into(),
             "--output" => args.output = value()?.into(),
-            "--replan-every" => args.replan_every = value()?.parse().map_err(|e| format!("{flag}: {e}"))?,
             "--goal-along-path-m" => {
                 args.goal_along_path_m = value()?.parse().map_err(|e| format!("{flag}: {e}"))?
             }
@@ -74,9 +72,8 @@ fn parse_args() -> Result<Args, String> {
     if args.feed.as_os_str().is_empty()
         || args.planner_config.as_os_str().is_empty()
         || args.output.as_os_str().is_empty()
-        || args.replan_every == 0
     {
-        return Err("usage: lazy-replay --feed F --planner-config C.json --output DIR [--replan-every N] \
+        return Err("usage: lazy-replay --feed F --planner-config C.json --output DIR \
                     [--goal-along-path-m M] [--until-scan S] [--dump-dir D [--dump-radius-m R] [--dump-limit N]]"
             .into());
     }
@@ -227,7 +224,7 @@ fn run() -> Result<(), String> {
     let mut scans_out = BufWriter::new(
         std::fs::File::create(args.output.join("scans.csv")).map_err(|e| e.to_string())?,
     );
-    writeln!(scans_out, "scan,ts,version,layers,replanned,path,path_m,seam_check").map_err(|e| e.to_string())?;
+    writeln!(scans_out, "scan,ts,version,layers,pass,replanned,path,path_m,seam_check").map_err(|e| e.to_string())?;
 
     let mut planner = Planner::new(config.worker_threads);
     let mut timings = Timings::default();
@@ -242,6 +239,11 @@ fn run() -> Result<(), String> {
     let (mut events, mut new_layers, mut seam_checks, mut torn) = (0u64, 0u64, 0u64, 0u64);
     let mut pending_seam_check = false;
     let mut last_found = false;
+    // the module's state between worker passes: a closure that started a layer, the route it follows
+    let mut closure_pending = false;
+    let mut route: Option<(f64, bool)> = None;
+    let mut planned_once = false;
+    let mut passes = 0u64;
     let mut robot_xy = (0.0f32, 0.0f32);
     let mut last_cylinder: Option<(f32, f32, f32)> = None;
     // a closure that started a layer while paths were found: the snapshot from just before it, kept until the next replan
@@ -289,6 +291,9 @@ fn run() -> Result<(), String> {
                         planner.snapshot_json("before", robot_xy, args.dump_radius_m, &cyl, &[])
                     });
                     let outcome = timings.time("closure", || planner.on_closure(&records, &config));
+                    if outcome.as_ref().is_some_and(|o| pass_replans(PassTrigger::Closure { new_layer: o.new_layer })) {
+                        closure_pending = true;
+                    }
                     if outcome.is_some_and(|o| o.new_layer) {
                         new_layers += 1;
                         pending_seam_check = last_found;
@@ -311,12 +316,13 @@ fn run() -> Result<(), String> {
                 }
                 first_ts.get_or_insert(ts);
                 last_ts = ts;
+                let mut live_update_applied = false;
                 if let Some(region) = region {
                     last_cylinder = Some((region.0[0], region.0[1], region.0[2]));
                     match apply_region(&mut planner, &mut timings, &pose, version, &region) {
                         Err(VersionGap::Ahead) => held = Some((index, ts, pose, version, region)),
                         Err(VersionGap::Forgotten) => {}
-                        Ok(_) => {}
+                        Ok(_) => live_update_applied = true,
                     }
                 }
                 let xyz = [pose[0], pose[1], pose[2]];
@@ -332,25 +338,38 @@ fn run() -> Result<(), String> {
                     }
                 }
                 let mut replanned = false;
+                let mut pass = false;
                 let mut path_m = f64::NAN;
                 let mut has_path = false;
                 let mut seam_check = false;
                 if let Some((node, local)) = goal {
-                    if index % args.replan_every == 0 {
+                    // as the module's worker: a pass plans after a closure that started a layer, a goal change or an applied live update
+                    let goal_changed = !planned_once;
+                    if closure_pending || pass_replans(PassTrigger::Update { goal_changed, live_update_applied }) {
+                        closure_pending = false;
+                        pass = true;
+                        passes += 1;
                         let g = keyframes[&node].apply(local);
                         let goal_xyz = (g[0] as f32, g[1] as f32, g[2] as f32);
                         let start = (pose[0] as f32, pose[1] as f32, (pose[2] - config.start_z_offset_m as f64) as f32);
-                        let plan = timings.time("replan", || planner.plan_or_truncate(start, goal_xyz, &config));
-                        replanned = true;
-                        replans += 1;
-                        if let Plan::Full(w) = &plan {
-                            has_path = true;
-                            path_m = path_length(w);
-                            found += 1;
+                        let decided = timings.time("plan_pass", || replan(&mut planner, start, goal_xyz, goal_changed, &config));
+                        planned_once = true;
+                        match &decided {
+                            Replan::Planned(plan) => {
+                                replanned = true;
+                                replans += 1;
+                                route = match plan {
+                                    Plan::Full(w) => Some((path_length(w), true)),
+                                    _ => None,
+                                };
+                            }
+                            Replan::Kept => {}
+                            Replan::Reached => route = Some((0.0, true)),
                         }
-                        if found > 0 {
-                            counted += 1;
-                            counted_found += u64::from(has_path);
+                        has_path = route.is_some();
+                        path_m = route.map_or(f64::NAN, |r| r.0);
+                        if has_path {
+                            found += 1;
                         }
                         if pending_seam_check {
                             seam_check = true;
@@ -369,14 +388,27 @@ fn run() -> Result<(), String> {
                                 }
                             }
                         }
+                        if last_found && !has_path && !seam_check && dumps < args.dump_limit {
+                            dumps += 1;
+                            eprintln!("lost path at scan {index} connectivity: {}", planner.connectivity_json(start, goal_xyz, &config));
+                            dump(&format!("lost{index}"), &planner.snapshot_json(&format!("lost path {index}"), robot_xy, args.dump_radius_m, &[], &[]));
+                        }
                         last_found = has_path;
+                    } else {
+                        has_path = route.is_some();
+                        path_m = route.map_or(f64::NAN, |r| r.0);
+                    }
+                    if found > 0 {
+                        counted += 1;
+                        counted_found += u64::from(has_path);
                     }
                 }
                 writeln!(
                     scans_out,
-                    "{index},{ts:.6},{},{},{},{},{:.3},{}",
+                    "{index},{ts:.6},{},{},{},{},{},{:.3},{}",
                     planner.reform_version(),
                     planner.layer_count(),
+                    u8::from(pass),
                     u8::from(replanned),
                     u8::from(has_path),
                     path_m,
@@ -392,7 +424,7 @@ fn run() -> Result<(), String> {
     let wall_s = wall.elapsed().as_secs_f64();
     let summary = serde_json::json!({
         "feed": args.feed, "feed_header": header, "feed_summary": summary_in,
-        "replan_every": args.replan_every, "goal_along_path_m": args.goal_along_path_m,
+        "goal_along_path_m": args.goal_along_path_m, "plan_passes": passes,
         "data_s": data_s, "replans": replans, "replans_with_path": found,
         "replans_counted": counted, "counted_with_path": counted_found,
         "path_share": if counted > 0 { counted_found as f64 / counted as f64 } else { f64::NAN },
