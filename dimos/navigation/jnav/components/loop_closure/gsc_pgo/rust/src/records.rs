@@ -316,8 +316,7 @@ impl HeardPoses {
             .any(|(kp, (rotation, translation))| {
                 let shift = mat3::sub(&kp.translation_global, translation);
                 let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
-                let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
-                mat3::norm(&shift) > self.min_shift_m || cos.acos() > self.min_turn_rad
+                mat3::norm(&shift) > self.min_shift_m || mat3::rotation_angle(&turn) > self.min_turn_rad
             });
         if !moved {
             return None;
@@ -465,4 +464,28 @@ pub fn extract_xyz(msg: &PointCloud2) -> Result<PointCloud, ExtractError> {
         out.push([read(ox), read(oy), read(oz)]);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::KeyFixed;
+    use std::sync::Arc;
+
+    #[test]
+    fn take_changes_sends_nothing_for_an_unmoved_non_orthonormal_keyframe() {
+        // what an unnormalized odometry quaternion used to make: its trace alone reads a phantom ~1.75 mrad turn
+        let rotation = mat3::mat_from_quat(&mat3::tests::short_quat());
+        let mut key_poses = KeyFrames::default();
+        key_poses.push(KeyFixed::new(
+            rotation,
+            [1.0, 2.0, 0.0],
+            0.0,
+            None,
+            Arc::new(crate::similarity_discovery::Descriptor::empty()),
+        ));
+        let mut heard = HeardPoses::new(0.04, 1e-3);
+        heard.add_new(&key_poses);
+        assert!(heard.take_changes(&key_poses).is_none());
+    }
 }
