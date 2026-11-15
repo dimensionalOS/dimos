@@ -28,6 +28,10 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.constants import RUNTIME_MODULES_DIR
+from dimos.core.coordination.blueprint_config.fields import (
+    module_config_cls,
+    validate_module_config,
+)
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
 from dimos.core.coordination.blueprints import transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -444,6 +448,8 @@ class ModuleCoordinator(Resource):
             blueprint, parsed_config
         )
         global_config.update(**global_values)
+        if parsed_config is None:
+            _validate_module_configs(blueprint, module_kwargs, global_config)
         transports = _materialize_transports(blueprint, transport_overrides)
 
         _run_configurators(blueprint)
@@ -537,6 +543,7 @@ class ModuleCoordinator(Resource):
             blueprint, parsed_config, sparse_globals=True
         )
         self._global_config.update(**global_values)
+        _validate_module_configs(blueprint, module_kwargs, self._global_config)
         transports = _materialize_transports(blueprint, transport_overrides)
 
         # Scale worker pool.
@@ -1029,6 +1036,18 @@ def _check_requirements(blueprint: Blueprint) -> None:
         for error in errors:
             print(f"{red}Error: {error}{reset}", file=sys.stderr)
         sys.exit(1)
+
+
+def _validate_module_configs(
+    blueprint: Blueprint,
+    module_kwargs: Mapping[str, Mapping[str, Any]],
+    g: GlobalConfig,
+) -> None:
+    for atom in blueprint.active_blueprints:
+        # Pinned kwargs may also hold constructor arguments that are not config fields.
+        config_fields = module_config_cls(atom).model_fields
+        pinned = {key: value for key, value in atom.kwargs.items() if key in config_fields}
+        validate_module_config(atom, {**pinned, **module_kwargs.get(atom.name, {})}, g)
 
 
 def _deploy_all_modules(

@@ -32,8 +32,10 @@ from reactivex import Subject
 from reactivex.disposable import Disposable
 from reactivex.testing import TestScheduler
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.global_config import GlobalConfig
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -53,7 +55,7 @@ def stub_webrtc(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> None:
     """Webrtc branch forwards aes_128_key as a kwarg to UnitreeWebRTCConnection."""
-    cfg = ConnectionConfig(g=GlobalConfig())
+    cfg = ConnectionConfig(ip="192.168.123.161", g=GlobalConfig(replay=False, simulation=""))
     go2_conn.make_connection("192.168.123.161", cfg, aes_128_key="cafe" * 8)
     stub_webrtc.assert_called_once_with(
         "192.168.123.161",
@@ -62,10 +64,120 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
     )
 
 
+@pytest.mark.parametrize("ip", [None, "", "   "])
+def test_make_connection_without_an_ip_names_the_ways_out(ip: str | None) -> None:
+    cfg = ConnectionConfig(ip="192.0.2.1", g=GlobalConfig(replay=False, simulation=""))
+    with pytest.raises(ValueError, match="--robot-ip.*--replay.*--simulation"):
+        go2_conn.make_connection(ip, cfg)
+
+
+@pytest.mark.parametrize("ip", [None, "", "   "])
+def test_config_rejects_missing_and_blank_hardware_ips(ip: str | None) -> None:
+    with pytest.raises(ValueError, match="--robot-ip.*--replay.*--simulation"):
+        ConnectionConfig(g=GlobalConfig(robot_ip=ip, replay=False, simulation=""))
+
+
+@pytest.mark.parametrize(
+    "defaults",
+    [{"replay": True}, {"simulation": "mujoco"}, {"simulation": "dimsim"}, {"simulation": "true"}],
+)
+def test_blueprint_offline_defaults_allow_no_ip(defaults, monkeypatch) -> None:
+    monkeypatch.setattr(global_config, "robot_ip", None)
+    monkeypatch.setattr(global_config, "replay", False)
+    monkeypatch.setattr(global_config, "simulation", "")
+
+    parsed = BlueprintConfigParser(GO2Connection.blueprint().global_config(**defaults)).parse(
+        environ={}
+    )
+    cfg = ConnectionConfig(
+        g=GlobalConfig(**parsed.global_config_values()), **parsed.module_kwargs("go2connection")
+    )
+
+    assert cfg.ip is None
+    assert go2_conn.connection_type(replay=cfg.g.replay, simulation=cfg.g.simulation) != "webrtc"
+
+
+@pytest.mark.parametrize("ip", ["replay", "mock", "fake", "mujoco"])
+def test_config_preserves_offline_ip_aliases(ip: str) -> None:
+    cfg = ConnectionConfig(ip=ip, g=GlobalConfig(replay=False, simulation=""))
+    assert cfg.ip == ip
+
+
+@pytest.mark.parametrize(
+    ("cli", "environ", "pinned"),
+    [
+        (["--robot-ip", "192.0.2.1"], {}, {}),
+        (["--go2connection.ip", "192.0.2.1"], {}, {}),
+        ([], {"ROBOT_IP": "192.0.2.1"}, {}),
+        ([], {"GO2CONNECTION__IP": "192.0.2.1"}, {}),
+        ([], {}, {"ip": "192.0.2.1"}),
+        (["--go2connection.ip", "192.0.2.1"], {"ROBOT_IP": "192.0.2.2"}, {}),
+    ],
+)
+def test_ip_sources_validate_without_process_global_ip(cli, environ, pinned, monkeypatch) -> None:
+    monkeypatch.setattr(global_config, "robot_ip", None)
+    monkeypatch.setattr(global_config, "replay", False)
+    monkeypatch.setattr(global_config, "simulation", "")
+
+    parsed = BlueprintConfigParser(GO2Connection.blueprint(**pinned)).parse(cli, environ=environ)
+    cfg = ConnectionConfig(
+        g=GlobalConfig(**parsed.global_config_values()), **parsed.module_kwargs("go2connection")
+    )
+
+    assert cfg.ip == "192.0.2.1"
+
+
+def test_missing_ip_cannot_be_hidden_by_stale_process_globals(monkeypatch) -> None:
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.1")
+    monkeypatch.setattr(global_config, "replay", True)
+    with pytest.raises(BlueprintConfigError, match="go2connection:.*No robot IP"):
+        BlueprintConfigParser(GO2Connection.blueprint()).parse(environ={})
+
+
+def test_namespaced_ip_override_validates() -> None:
+    parsed = BlueprintConfigParser(GO2Connection.blueprint().namespace("robot0")).parse(
+        ["--robot0/go2connection.ip", "192.0.2.1"], environ={}
+    )
+    assert parsed.module_kwargs("robot0/go2connection")["ip"] == "192.0.2.1"
+
+
+def test_hosted_connection_validates_with_the_host_environment() -> None:
+    blueprint = GO2Connection.blueprint()
+    root = BlueprintConfigParser(blueprint.hosted(host="robot")).parse(
+        ["--go2connection.camera", "false"], environ={}
+    )
+
+    host = BlueprintConfigParser(blueprint).parse(
+        overrides=root.file_and_cli, environ={"ROBOT_IP": "192.0.2.1"}
+    )
+    assert host.global_config_values()["robot_ip"] == "192.0.2.1"
+    assert host.module_kwargs("go2connection")["camera"] is False
+    with pytest.raises(BlueprintConfigError, match="No robot IP"):
+        BlueprintConfigParser(blueprint).parse(overrides=root.file_and_cli, environ={})
+
+
+def test_python_build_rejects_missing_ip_before_starting_resources(monkeypatch, mocker) -> None:
+    for field, value in {"robot_ip": None, "replay": False, "simulation": ""}.items():
+        monkeypatch.setattr(global_config, field, value)
+    materialize = mocker.patch("dimos.core.coordination.module_coordinator._materialize_transports")
+    start = mocker.patch.object(ModuleCoordinator, "start")
+
+    with pytest.raises(BlueprintConfigError, match="go2connection:.*No robot IP"):
+        ModuleCoordinator.build(GO2Connection.blueprint())
+
+    materialize.assert_not_called()
+    start.assert_not_called()
+
+
 def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:
     path = tmp_path / "robot.json"
     path.write_text(
-        json.dumps({"go2connection": {"mujoco": {"room": "custom", "steps_per_frame": 4}}})
+        json.dumps(
+            {
+                "g": {"robot_ip": "192.0.2.1"},
+                "go2connection": {"mujoco": {"room": "custom", "steps_per_frame": 4}},
+            }
+        )
     )
     parsed = BlueprintConfigParser(
         GO2Connection.blueprint(obstacle_avoidance=False, mujoco={"shadows": "off"})
@@ -78,8 +190,11 @@ def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path
             "GO2CONNECTION__MUJOCO__START_POS": "[2.5, -3]",
         },
     )
-    config = ConnectionConfig(**parsed.module_kwargs("go2connection"))
+    config = ConnectionConfig(
+        g=GlobalConfig(**parsed.global_config_values()), **parsed.module_kwargs("go2connection")
+    )
 
+    assert config.ip == "192.0.2.1"
     assert config.mujoco == MujocoConfig(
         room="custom", steps_per_frame=9, start_pos=(2.5, -3), shadows="off"
     )

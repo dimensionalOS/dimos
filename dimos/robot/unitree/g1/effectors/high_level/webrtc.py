@@ -14,8 +14,9 @@
 
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
+from typing_extensions import Self
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -24,6 +25,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.unitree.config import require_robot_ip
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.g1.effectors.high_level.commands import (
     ARM_API_ID,
@@ -41,12 +43,19 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+_ROBOT_IP_GUIDANCE = "Set G1HIGHLEVELWEBRTC__IP or --g1highlevelwebrtc.ip."
+
 
 class G1HighLevelWebRtcConfig(ModuleConfig):
     ip: str | None = None
     connection_mode: str = "ai"
     # Per-device AES-128 key (G1 fw >=1.5.1).
     aes_128_key: str | None = Field(default=None, repr=False)
+
+    @model_validator(mode="after")
+    def validate_connection(self) -> Self:
+        require_robot_ip(self.ip, _ROBOT_IP_GUIDANCE)
+        return self
 
 
 class G1HighLevelWebRtc(Module, HighLevelG1Spec):
@@ -64,9 +73,8 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     @rpc
     def start(self) -> None:
         super().start()
-        assert self.config.ip is not None, "ip must be set in G1HighLevelWebRtcConfig"
         self.connection = UnitreeWebRTCConnection(
-            self.config.ip,
+            require_robot_ip(self.config.ip, _ROBOT_IP_GUIDANCE),
             self.config.connection_mode,
             aes_128_key=self.config.aes_128_key,
         )
