@@ -298,6 +298,10 @@ async def test_overflowing_peer_drops_its_queue_and_waits_for_the_next_idr(
 async def test_slow_encode_is_dropped_and_followed_by_a_keyframe_despite_the_force_window(
     harness: Harness, mocker: MockerFixture
 ) -> None:
+    # Freeze only the video clock, leaving asyncio's clock real. Otherwise
+    # the recovery frame can also exceed the 10 ms deadline under CI load.
+    clock = mocker.patch.object(topic_video, "time", wraps=time)
+    clock.monotonic.return_value = 100.0
     # The production force window stays on: the first frame opened the codec
     # as an IDR a moment ago, so a window-bound request would leave the next
     # frames referencing the dropped one.
@@ -310,7 +314,7 @@ async def test_slow_encode_is_dropped_and_followed_by_a_keyframe_despite_the_for
     original = SharedEncoder.encode
 
     def slow(self: SharedEncoder, payload: bytes) -> list[av.Packet]:
-        time.sleep(0.05)
+        clock.monotonic.return_value += 0.05
         return original(self, payload)
 
     mocker.patch.object(SharedEncoder, "encode", slow)
@@ -321,6 +325,7 @@ async def test_slow_encode_is_dropped_and_followed_by_a_keyframe_despite_the_for
     assert track.waiting_idr
     mocker.patch.object(SharedEncoder, "encode", original)
     await harness.encode(3)
+    assert encoder.dropped == 1
     assert len(track._queue) == 1
     assert (await track.recv()).is_keyframe
     assert encoder.keyframes == 2
