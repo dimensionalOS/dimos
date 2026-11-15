@@ -30,7 +30,7 @@ use crate::lazy::{
     Pose, Rect, Submesh, Version,
 };
 use crate::nodes::NodeId;
-use crate::surfaces::{extract_surfaces_region, riser_reach};
+use crate::surfaces::extract_surfaces_region;
 use crate::voxel::{voxelize, VoxelKey};
 
 /// The keyframe table and the version layers.
@@ -615,7 +615,7 @@ impl Planner {
 
     /// The ring around a touched area that must be in the current layer: what the surface extraction pads by and the node window reaches.
     pub(super) fn migrate_margin_m(&self, config: &Config) -> f32 {
-        let pad = 2 * config.closing_passes() as i32 + riser_reach(config.closing_passes());
+        let pad = 2 * config.closing_passes() as i32;
         (pad + config.buffer_window_cells()) as f32 * config.voxel_size
     }
 
@@ -736,11 +736,16 @@ impl Planner {
                 })
                 .collect();
             for &(bbox, cols) in &boxes {
-                for (back, members, slack) in carry_groups(&carries, bbox, band, vs) {
-                    // Each landing column carried back by the group's pose, widened by how far any member's carry and
-                    // a point's place in its column and the height band can take it from there.
-                    let mid = 0.5 * (band[0] + band[1]);
-                    let old = |&(x, y): &(i32, i32)| {
+                // Each landing column carried back by each group's pose, widened by how far any member's carry and
+                // a point's place in its column and the height band can take it from there; read once for all groups.
+                let groups = carry_groups(&carries, bbox, band, vs);
+                self.clock.count("stitch_groups", groups.len());
+                let mid = 0.5 * (band[0] + band[1]);
+                let mut mapped: Vec<(i32, i32)> = Vec::with_capacity(cols.len() * groups.len());
+                let mut r = 0;
+                for (back, _, slack) in &groups {
+                    r = r.max((slack / vs as f64).floor() as i32 + 1);
+                    mapped.extend(cols.iter().map(|&(x, y)| {
                         let p = back.apply([
                             (x as f64 + 0.5) * vs as f64,
                             (y as f64 + 0.5) * vs as f64,
@@ -750,14 +755,14 @@ impl Planner {
                             (p[0] / vs as f64).floor() as i32,
                             (p[1] / vs as f64).floor() as i32,
                         )
-                    };
-                    let mapped: Vec<(i32, i32)> = cols.iter().map(old).collect();
+                    }));
+                }
+                {
                     let mb = mapped
                         .iter()
                         .fold((i32::MAX, i32::MIN, i32::MAX, i32::MIN), |b, &(x, y)| {
                             (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y))
                         });
-                    let r = (slack / vs as f64).floor() as i32 + 1;
                     let mut mask = ColumnMask::new(mb, r);
                     for &c in &mapped {
                         mask.set(c);
@@ -779,15 +784,14 @@ impl Planner {
                                 let Some(el) = lazy.layers.cells.get(&id) else {
                                     continue;
                                 };
-                                if members.binary_search(&el.anchor).is_err()
-                                    || tiles.binary_search(&(layer, el.tile)).is_err()
-                                {
+                                if tiles.binary_search(&(layer, el.tile)).is_err() {
                                     continue;
                                 }
                                 let (px, py, pz) = cells.point(id, vs);
-                                let p = carries[&el.anchor]
-                                    .0
-                                    .apply([px as f64, py as f64, pz as f64]);
+                                let Some((carry, _)) = carries.get(&el.anchor) else {
+                                    continue;
+                                };
+                                let p = carry.apply([px as f64, py as f64, pz as f64]);
                                 let p = (p[0] as f32, p[1] as f32, p[2] as f32);
                                 let k = voxelize(p, vs);
                                 let at = (k.0, k.1);
@@ -1060,7 +1064,7 @@ impl Planner {
         }
         self.clock.add("redirect", stage);
         let stage = Instant::now();
-        let reach = 2 * config.closing_passes() as i32 + riser_reach(config.closing_passes());
+        let reach = 2 * config.closing_passes() as i32;
         let mut bbox = (first.0, first.0, first.1, first.1);
         for &(x, y) in &migrated.columns {
             bbox = (bbox.0.min(x), bbox.1.max(x), bbox.2.min(y), bbox.3.max(y));

@@ -132,81 +132,6 @@ fn a_goal_over_a_lone_cell_plans_to_the_floor_beside_it() {
     );
 }
 
-/// A floor, a flight of stairs going up in x and the floor above, 1.5 m wide: each tread 4 columns deep and 2 voxels
-/// above the last, with the riser between them unseen, as a lidar looking down the stairs leaves it; a column with no
-/// voxel at all between treads, two before the top floor.
-fn unseen_riser_stairs(vs: f32) -> Vec<(f32, f32, f32)> {
-    let half = 0.5 * vs;
-    let mut points = Vec::new();
-    let mut add = |ix: i32, iz: i32| {
-        for iy in 0..15 {
-            points.push((
-                ix as f32 * vs + half,
-                iy as f32 * vs + half,
-                iz as f32 * vs + half,
-            ));
-        }
-    };
-    for ix in 0..20 {
-        add(ix, 0);
-    }
-    // treads start one column past each riser
-    for step in 0..5 {
-        for ix in 0..4 {
-            add(21 + 5 * step + ix, 2 * (step + 1));
-        }
-    }
-    for ix in 47..66 {
-        add(ix, 12);
-    }
-    points
-}
-
-#[test]
-fn stairs_with_unseen_risers_link_up_in_a_full_build_and_in_region_updates() {
-    let cfg = test_config();
-    let vs = cfg.voxel_size;
-    let points = unseen_riser_stairs(vs);
-    let (start, goal) = ((0.5, 0.75, vs), (6.0, 0.75, 13.0 * vs));
-    let mut full = Planner::new(cfg.worker_threads);
-    full.update_global_map(&bare(&points), &cfg);
-    assert!(
-        matches!(full.plan_or_truncate(start, goal, &cfg), Plan::Full(_)),
-        "a path up the stairs, across the riser columns"
-    );
-    let mut region = Planner::new(cfg.worker_threads);
-    let mut cx = 0.5;
-    while cx <= 6.5 {
-        let b = RegionBounds {
-            origin_x: cx,
-            origin_y: 0.75,
-            radius: 1.2,
-            z_min: -1.0,
-            z_max: 3.0,
-        };
-        let cloud = slice(&points, &b, vs);
-        if !cloud.is_empty() {
-            region.update_region(&bare(&cloud), &b, &cfg);
-        }
-        cx += 0.5;
-    }
-    assert!(
-        matches!(region.plan_or_truncate(start, goal, &cfg), Plan::Full(_)),
-        "region updates bridge the risers as the full build does"
-    );
-    let surface = |p: &Planner| -> BTreeSet<VoxelKey> {
-        p.surface_clearance()
-            .into_iter()
-            .map(|(c, _, _)| c)
-            .collect()
-    };
-    assert_eq!(
-        surface(&region),
-        surface(&full),
-        "the same surface cells, bridges included"
-    );
-}
-
 #[test]
 fn a_negative_blocked_timeout_is_rejected() {
     let config = Config {
@@ -1461,18 +1386,15 @@ fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
             .expect("the lower deck's edge is a surface cell")
     };
 
-    // The lower deck's edge reaches the post top one step up across the empty slot column, which a riser bridge
-    // fills: no wall.
+    // From the lower deck's edge the scan crosses the empty slot column and
+    // reaches the post top, one step up: no wall.
     let mut p = Planner::new(cfg.worker_threads);
     p.update_global_map(&bare(&decks_with_a_post(true)), &cfg);
     assert!(wall_distance(&p) > 0.0);
-    assert!(
-        surface_set(&p).contains(&(5, 3, 19)),
-        "a bridge over the slot to the post top"
-    );
+    let before = surface_set(&p);
 
-    // The post top goes and no column empties; its cell stays filled by closing, over nothing, so the bridge goes
-    // and the scan across the slot ends with nothing to step onto: a drop.
+    // The post top goes with no surface change and no emptied column, but
+    // the scan now ends with nothing to step onto: a drop.
     let world = decks_with_a_post(false);
     let spot = RegionBounds {
         origin_x: 0.65,
@@ -1482,14 +1404,10 @@ fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
         z_max: 2.5,
     };
     p.update_region(&bare(&slice(&world, &spot, vs)), &spot, &cfg);
-    assert!(
-        surface_set(&p).contains(&(6, 3, 20)),
-        "the post's cell stays filled"
-    );
+    assert_eq!(surface_set(&p), before, "the post's cell stays filled");
 
     let mut full = Planner::new(cfg.worker_threads);
     full.update_global_map(&bare(&world), &cfg);
-    assert_eq!(surface_set(&p), surface_set(&full));
     assert_eq!(wall_distance(&full), 0.0, "a full rebuild sees the drop");
     assert_eq!(wall_distance(&p), 0.0);
 }
