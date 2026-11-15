@@ -34,9 +34,9 @@ from reactivex.disposable import Disposable, SerialDisposable, SingleAssignmentD
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
+from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
-from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -50,8 +50,8 @@ _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
 
 
 def resolve_db_path(dataset: str | Path) -> Path:
-    """Map a dataset name to an on-disk .db path (LFS-downloading on miss)."""
-    return resolve_named_path(dataset, ".db")
+    """Resolve a recording, trying the exact input before appending ``.db``."""
+    return resolve_dataset(dataset, suffix=".db")
 
 
 class ReplayConfig(BaseConfig):
