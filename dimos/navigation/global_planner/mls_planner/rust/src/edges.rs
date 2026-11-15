@@ -44,9 +44,9 @@ pub struct NodeEdge {
     pub boundary_u: CellId,
     /// Cell on b's side.
     pub boundary_v: CellId,
-    /// The corridor: cell coordinates from a toward b, captured when the edge
-    /// was built. Coordinates, not ids, so slot recycling cannot alias it.
-    pub chain: Vec<VoxelKey>,
+    /// The corridor: cells from a toward b, captured when the edge was built. Ids stay through a layer move; a
+    /// removed cell's slot is recycled only after the repair that drops its corridors.
+    pub chain: Vec<CellId>,
 }
 
 /// A fresh crossing replaces a valid cached corridor only when clearly
@@ -66,11 +66,7 @@ fn capture_chain(cells: &SurfaceCells, state: &DijkstraState, edge: &mut NodeEdg
         return false;
     }
     from_a.reverse();
-    edge.chain = from_a
-        .into_iter()
-        .chain(to_b)
-        .map(|c| cells.coord(c))
-        .collect();
+    edge.chain = from_a.into_iter().chain(to_b).collect();
     true
 }
 
@@ -109,12 +105,12 @@ fn walk_live_chain(cells: &SurfaceCells, state: &DijkstraState, from: CellId) ->
     chain
 }
 
-/// The corridor still runs from a's cell to b's cell. Slot recycling can hand
-/// an edge's node ids to unrelated cells, which this catches.
+/// The corridor still runs from a's live cell to b's live cell.
 fn endpoints_match(cells: &SurfaceCells, edge: &NodeEdge) -> bool {
-    let first = edge.chain.first().and_then(|&c| cells.resolve(c));
-    let last = edge.chain.last().and_then(|&c| cells.resolve(c));
-    first == Some(edge.a) && last == Some(edge.b)
+    edge.chain.first() == Some(&edge.a)
+        && edge.chain.last() == Some(&edge.b)
+        && cells.is_live(edge.a)
+        && cells.is_live(edge.b)
 }
 
 /// Walk a corridor on the current surface and price it at current costs.
@@ -126,9 +122,11 @@ fn corridor_cost(cells: &SurfaceCells, edge: &NodeEdge) -> Option<f32> {
         return None;
     }
     let mut total = 0.0f32;
-    let mut prev = cells.resolve(chain[0])?;
-    for &coord in &chain[1..] {
-        let cur = cells.resolve(coord)?;
+    let mut prev = chain[0];
+    for &cur in &chain[1..] {
+        if !cells.is_live(cur) {
+            return None;
+        }
         let hop = cells.neighbors(prev).iter().find(|e| e.dest == cur)?.cost;
         if !hop.is_finite() {
             return None;
@@ -173,14 +171,59 @@ impl NodeEdges {
         }
     }
 
-    /// Rename re-keyed cells in every corridor. Cell ids stay, so the indexes do.
-    pub fn rename_cells(&mut self, renamed: &AHashMap<VoxelKey, VoxelKey>) {
-        for e in &mut self.edges {
-            for c in &mut e.chain {
-                if let Some(&to) = renamed.get(c) {
-                    *c = to;
+    /// Point corridors through a merged cell at the cell it merged into, which then lists them.
+    pub fn redirect_cells(&mut self, merged: &[(CellId, CellId)]) {
+        for &(from, into) in merged {
+            let Some(list) = self.through.get_mut(from as usize).map(std::mem::take) else {
+                continue;
+            };
+            for &i in &list {
+                for c in &mut self.edges[i as usize].chain {
+                    if *c == from {
+                        *c = into;
+                    }
                 }
             }
+            if self.through.len() <= into as usize {
+                self.through.resize_with(into as usize + 1, SmallVec::new);
+            }
+            for i in list {
+                if !self.through[into as usize].contains(&i) {
+                    self.through[into as usize].push(i);
+                }
+            }
+        }
+    }
+
+    /// Panics unless the adjacency and per-cell index match a fresh reindex of the edge list.
+    #[cfg(test)]
+    pub(crate) fn assert_indexed(&self, cells: &SurfaceCells) {
+        let ne = self;
+        let mut fresh = NodeEdges {
+            edges: ne.edges.clone(),
+            ..NodeEdges::default()
+        };
+        fresh.reindex(cells);
+        let sorted = |adj: &AHashMap<NodeId, Vec<NodeEdgeIdx>>| {
+            let mut v: Vec<(NodeId, Vec<NodeEdgeIdx>)> = adj
+                .iter()
+                .map(|(k, l)| {
+                    let mut l = l.clone();
+                    l.sort_unstable();
+                    (*k, l)
+                })
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        assert_eq!(sorted(&ne.adj), sorted(&fresh.adj));
+        for slot in 0..cells.slot_capacity() {
+            let mut have: Vec<NodeEdgeIdx> =
+                ne.through.get(slot).map_or(Vec::new(), |l| l.to_vec());
+            let mut want: Vec<NodeEdgeIdx> = fresh.through[slot].to_vec();
+            have.sort_unstable();
+            want.sort_unstable();
+            assert_eq!(have, want, "edges through slot {slot}");
         }
     }
 
@@ -216,34 +259,34 @@ impl NodeEdges {
 
     /// List an edge under its two nodes and its corridor cells.
     fn index_edge(&mut self, cells: &SurfaceCells, i: NodeEdgeIdx) {
+        self.ensure_capacity(cells.slot_capacity());
         let e = &self.edges[i as usize];
         self.adj.entry(e.a).or_default().push(i);
         self.adj.entry(e.b).or_default().push(i);
-        Self::index_chain(&mut self.through, cells, i, &e.chain);
+        Self::index_chain(&mut self.through, i, &e.chain);
     }
 
     /// Swap in a new corridor for the same node pair.
     fn replace(&mut self, cells: &SurfaceCells, i: NodeEdgeIdx, edge: NodeEdge) {
+        self.ensure_capacity(cells.slot_capacity());
         let old = std::mem::replace(&mut self.edges[i as usize], edge);
-        Self::unindex_chain(&mut self.through, cells, i, &old.chain);
-        Self::index_chain(&mut self.through, cells, i, &self.edges[i as usize].chain);
+        Self::unindex_chain(&mut self.through, i, &old.chain);
+        Self::index_chain(&mut self.through, i, &self.edges[i as usize].chain);
     }
 
-    fn swap_remove(&mut self, cells: &SurfaceCells, i: NodeEdgeIdx) {
+    fn swap_remove(&mut self, i: NodeEdgeIdx) {
         let last = (self.edges.len() - 1) as NodeEdgeIdx;
         let gone = self.edges.swap_remove(i as usize);
         Self::drop_adj(&mut self.adj, gone.a, i);
         Self::drop_adj(&mut self.adj, gone.b, i);
-        Self::unindex_chain(&mut self.through, cells, i, &gone.chain);
+        Self::unindex_chain(&mut self.through, i, &gone.chain);
         if i != last {
             let moved = &self.edges[i as usize];
             Self::renumber_adj(&mut self.adj, moved.a, last, i);
             Self::renumber_adj(&mut self.adj, moved.b, last, i);
             for &c in &moved.chain {
-                if let Some(slot) = cells.resolve(c) {
-                    if let Some(x) = self.through[slot as usize].iter_mut().find(|x| **x == last) {
-                        *x = i;
-                    }
+                if let Some(x) = self.through[c as usize].iter_mut().find(|x| **x == last) {
+                    *x = i;
                 }
             }
         }
@@ -308,7 +351,7 @@ impl NodeEdges {
                         let e = &self.edges[i as usize];
                         broken.extend([e.a, e.b]);
                     }
-                    self.swap_remove(cells, i);
+                    self.swap_remove(i);
                 }
             }
         }
@@ -369,33 +412,17 @@ impl NodeEdges {
         }
     }
 
-    fn index_chain(
-        through: &mut [SmallVec<[NodeEdgeIdx; 2]>],
-        cells: &SurfaceCells,
-        i: NodeEdgeIdx,
-        chain: &[VoxelKey],
-    ) {
+    fn index_chain(through: &mut [SmallVec<[NodeEdgeIdx; 2]>], i: NodeEdgeIdx, chain: &[CellId]) {
         for &c in chain {
-            if let Some(slot) = cells.resolve(c) {
-                through[slot as usize].push(i);
-            }
+            through[c as usize].push(i);
         }
     }
 
-    /// Cells the corridor lost no longer list the edge, so a dead coordinate
-    /// is skipped here and its slot cleared by the region repair.
-    fn unindex_chain(
-        through: &mut [SmallVec<[NodeEdgeIdx; 2]>],
-        cells: &SurfaceCells,
-        i: NodeEdgeIdx,
-        chain: &[VoxelKey],
-    ) {
+    fn unindex_chain(through: &mut [SmallVec<[NodeEdgeIdx; 2]>], i: NodeEdgeIdx, chain: &[CellId]) {
         for &c in chain {
-            if let Some(slot) = cells.resolve(c) {
-                let list = &mut through[slot as usize];
-                if let Some(p) = list.iter().position(|&x| x == i) {
-                    list.swap_remove(p);
-                }
+            let list = &mut through[c as usize];
+            if let Some(p) = list.iter().position(|&x| x == i) {
+                list.swap_remove(p);
             }
         }
     }
@@ -758,19 +785,6 @@ fn merge_min(
     }
 }
 
-/// Expand each node-graph edge into VoxelKey segments along its corridor.
-pub fn edges_to_segments(node_edges: &[NodeEdge]) -> Vec<(VoxelKey, VoxelKey, f32)> {
-    node_edges
-        .par_iter()
-        .flat_map_iter(|edge| {
-            edge.chain
-                .windows(2)
-                .map(|pair| (pair[0], pair[1], edge.cost))
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -886,8 +900,6 @@ mod tests {
             plg.node_edges.is_empty(),
             "an infinite crossing is not an edge"
         );
-        // Walking boundaries must not panic on an unset boundary cell.
-        edges_to_segments(&plg.node_edges.edges);
     }
 
     #[test]
@@ -1014,32 +1026,7 @@ mod tests {
     /// The adjacency and per-cell index match what a rebuild from the edge
     /// list would give.
     fn assert_indexed(cells: &SurfaceCells, ne: &NodeEdges) {
-        let mut fresh = NodeEdges {
-            edges: ne.edges.clone(),
-            ..NodeEdges::default()
-        };
-        fresh.reindex(cells);
-        let sorted = |adj: &AHashMap<NodeId, Vec<NodeEdgeIdx>>| {
-            let mut v: Vec<(NodeId, Vec<NodeEdgeIdx>)> = adj
-                .iter()
-                .map(|(k, l)| {
-                    let mut l = l.clone();
-                    l.sort_unstable();
-                    (*k, l)
-                })
-                .collect();
-            v.sort_unstable();
-            v
-        };
-        assert_eq!(sorted(&ne.adj), sorted(&fresh.adj));
-        for slot in 0..cells.slot_capacity() {
-            let mut have: Vec<NodeEdgeIdx> =
-                ne.through.get(slot).map_or(Vec::new(), |l| l.to_vec());
-            let mut want: Vec<NodeEdgeIdx> = fresh.through[slot].to_vec();
-            have.sort_unstable();
-            want.sort_unstable();
-            assert_eq!(have, want, "edges through slot {slot}");
-        }
+        ne.assert_indexed(cells);
     }
 
     #[test]
@@ -1055,7 +1042,8 @@ mod tests {
         );
         // A corridor cell near the first node goes, and the repair window
         // around it reaches nowhere near the line where the two regions meet.
-        let broken = pg.node_edges.edges[0].chain[4];
+        let broken_id = pg.node_edges.edges[0].chain[4];
+        let broken = pg.cells.coord(broken_id);
         assert!(broken.0 < 10, "the break is on the first node's side");
         let removed = pg.cells.remove(broken).unwrap();
         let window: Vec<CellId> = floor
@@ -1071,7 +1059,7 @@ mod tests {
             .between(a, b)
             .expect("the nodes still touch, so they keep an edge");
         let edge = &pg.node_edges.edges[i as usize];
-        assert!(!edge.chain.contains(&broken));
+        assert!(!edge.chain.contains(&broken_id));
         assert!(corridor_cost(&pg.cells, edge).is_some());
     }
 
@@ -1087,7 +1075,11 @@ mod tests {
             pg.cells.id((27, 5, 0)).unwrap(),
         );
         // A corridor cell near the first node dies inside a small window.
-        let chain = pg.node_edges.edges[0].chain.clone();
+        let chain: Vec<VoxelKey> = pg.node_edges.edges[0]
+            .chain
+            .iter()
+            .map(|&c| pg.cells.coord(c))
+            .collect();
         let broken = chain[4];
         let removed = pg.cells.remove(broken).unwrap();
         let window: Vec<CellId> = floor
@@ -1153,7 +1145,7 @@ mod tests {
             .expect("the regions still touch, so the pair is linked again");
         let edge = &node_edges.edges[i as usize];
         assert!(corridor_cost(cells, edge).is_some());
-        assert!(!edge.chain.contains(&broken));
+        assert!(!edge.chain.contains(&removed));
         assert_indexed(cells, node_edges);
     }
 
@@ -1271,7 +1263,7 @@ mod tests {
         assert!(e.cost < CORRIDOR_ADOPT_FRAC * old_cost);
         assert_ne!(e.chain, cached, "the cheaper crossing is adopted");
         assert!(
-            e.chain.iter().any(|&(_, y, _)| y == 1),
+            e.chain.iter().any(|&c| pg.cells.coord(c).1 == 1),
             "the adopted corridor routes through the cheap row"
         );
     }

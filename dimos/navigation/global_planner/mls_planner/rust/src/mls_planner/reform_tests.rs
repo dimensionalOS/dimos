@@ -414,6 +414,7 @@ fn many_small_closures_keep_one_layer_and_a_real_closure_starts_another() {
     let lazy = toy.planner.lazy.as_ref().unwrap();
     assert_eq!(lazy.layers.current, 21);
     assert_eq!(lazy.table.frame_version(), 21);
+    toy.dump("toy0_tiny_closures");
 }
 
 #[test]
@@ -434,6 +435,7 @@ fn a_closure_merges_two_surfaces_and_keeps_links_to_the_rest() {
     let outcome = toy.close_to_truth(&[(0, 11)]);
     assert!(outcome.new_layer);
     toy.dump("toy1_merge");
+    toy.planner.graph.node_edges.assert_indexed(toy.cells());
     assert_eq!(toy.components(), 1, "the merge joins them");
     assert!(
         toy.cross_layer_links() > 0,
@@ -526,6 +528,7 @@ fn a_second_pass_crossing_the_old_run_reforms_what_it_meets() {
         toy.scan_at(truth, drift(k).compose(&truth), (t[0] as f32, t[1] as f32));
     }
     toy.dump("toy2_second_pass");
+    toy.planner.graph.node_edges.assert_indexed(toy.cells());
     // Each stale cell that was near A now has a current-layer cell where its anchor put it (ids recycle, so match by place).
     let vs = toy.cfg.voxel_size as f64;
     let reformed: Vec<[f64; 3]> = toy
@@ -680,6 +683,7 @@ fn a_cloud_from_an_older_layer_is_carried_and_one_from_a_future_closure_is_held(
         toy.cells().id(voxelize((9.05, 2.45, 0.05), vs)).is_none(),
         "nothing at the old frame's place"
     );
+    toy.dump("toy6_version_race");
 }
 
 /// Live links whose ends sit more than `factor` voxels apart where they are now.
@@ -727,6 +731,7 @@ fn a_bending_closure_through_a_mixed_anchor_surface_stretches_links_without_spli
     // Reform around the bend only: neighbors with different anchors land apart.
     toy.planner.reform_around((8.0, 1.0, 0.1), &toy.cfg);
     toy.dump("toy4_mixed_anchors");
+    toy.planner.graph.node_edges.assert_indexed(toy.cells());
     assert_eq!(toy.surfaces(), 1, "stretched links keep one surface");
     assert!(
         toy.cross_layer_links() > 0,
@@ -787,6 +792,7 @@ fn a_lookup_after_two_closures_finds_what_is_stale_since_each() {
         toy.scan_at(pose(x, 1.0, PI), pose(x, 5.0, PI), (x as f32, 1.0));
     }
     toy.dump("toy5_two_closures");
+    toy.planner.graph.node_edges.assert_indexed(toy.cells());
     assert_eq!(toy.surfaces(), 1, "{:?}", toy.component_sizes());
     assert_eq!(toy.duplicates_in([0.0, 20.0, 0.0, 2.0]), 0);
 }

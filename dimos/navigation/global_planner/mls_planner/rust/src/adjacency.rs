@@ -143,6 +143,8 @@ pub struct SurfaceCells {
     /// The stale layers' cells by key, each in its own version's frame.
     stale: std::collections::BTreeMap<Version, CoordIndex>,
     free: Vec<CellId>,
+    /// Slots removed since the last repair finished; corridors may still name them, so they are not reused yet.
+    freed: Vec<CellId>,
     /// Whether every id was appended in coordinate order, as a full build does; a reused slot breaks it.
     coord_ordered: bool,
 }
@@ -193,6 +195,7 @@ impl SurfaceCells {
         self.stale.clear();
         self.by_coord.clear();
         self.free.clear();
+        self.freed.clear();
         self.coord_ordered = true;
         self.flat.clear();
         self.spans.clear();
@@ -339,7 +342,12 @@ impl SurfaceCells {
             self.spans[dest as usize].1 = kept as u32;
         }
         self.coord[id as usize] = TOMBSTONE;
-        self.free.push(id);
+        self.freed.push(id);
+    }
+
+    /// Let inserts reuse the slots removed since the last call; called once a repair has dropped their corridors.
+    pub fn recycle_freed(&mut self) {
+        self.free.append(&mut self.freed);
     }
 
     /// Whether an edge from `a` to `b` is one key adjacency would not rebuild: across layers, or not between 4-neighbor columns.
@@ -817,9 +825,15 @@ mod tests {
     }
 
     #[test]
-    fn alloc_after_remove_reuses_freed_slot() {
+    fn a_freed_slot_is_reused_only_after_the_repair_recycles_it() {
         let (_, mut sc) = build(&[(0, 0, 0), (1, 0, 0)]);
         let removed_id = sc.remove((1, 0, 0)).unwrap();
+        let before = sc.insert((6, 6, 0), (VOXEL, None));
+        assert_ne!(
+            before, removed_id,
+            "a corridor may still name the removed slot"
+        );
+        sc.recycle_freed();
         let new_id = sc.insert((5, 5, 0), (VOXEL, None));
         assert_eq!(new_id, removed_id);
         assert_eq!(sc.coord(new_id), (5, 5, 0));

@@ -529,6 +529,21 @@ impl Planner {
         window_steps: i32,
         config: &Config,
     ) {
+        self.repair_region_graph(added, removed, rekeyed, edits, gone, window_steps, config);
+        self.graph.cells.recycle_freed();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn repair_region_graph(
+        &mut self,
+        added: Vec<VoxelKey>,
+        removed: Vec<VoxelKey>,
+        rekeyed: &[VoxelKey],
+        edits: &VoxelEdits,
+        gone: Vec<NodeId>,
+        window_steps: i32,
+        config: &Config,
+    ) {
         let patch = self.patch_cells(&added, &removed, &edits.retuned, config);
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
@@ -853,6 +868,7 @@ impl Planner {
             &self.graph.surface_lookup,
             &config.terrain(&self.by_col, &self.planes),
         );
+        self.graph.cells.recycle_freed();
         self.rebuild_nodes(config);
     }
 
@@ -1005,10 +1021,13 @@ impl Planner {
 
     /// Node-edge corridor segments, each end where its cell is now.
     pub fn edge_segment_iter(&self) -> impl Iterator<Item = (VoxelKey, VoxelKey, f32)> + '_ {
-        let now = |k: VoxelKey| self.graph.cells.resolve(k).map_or(k, |id| self.key_now(id));
+        let now = |id: CellId| self.key_now(id);
         self.graph.node_edges.edges().iter().flat_map(move |edge| {
             edge.chain
                 .windows(2)
+                .filter(|pair| {
+                    self.graph.cells.is_live(pair[0]) && self.graph.cells.is_live(pair[1])
+                })
                 .map(move |pair| (now(pair[0]), now(pair[1]), edge.cost))
         })
     }

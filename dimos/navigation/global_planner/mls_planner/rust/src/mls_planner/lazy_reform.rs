@@ -105,8 +105,8 @@ struct Migrated {
     rekeyed: Vec<VoxelKey>,
     /// Nodes given up by merged cells.
     gone: Vec<NodeId>,
-    /// Old key -> new key of every moved cell, for stored corridors.
-    renamed: AHashMap<VoxelKey, VoxelKey>,
+    /// Every merged cell and the cell it merged into, for stored corridors.
+    merged: Vec<(CellId, CellId)>,
 }
 
 impl Planner {
@@ -354,10 +354,10 @@ impl Planner {
                             .rekey_cell(&self.graph.cells, &params, id, from);
                         lazy.layers.cells.remove(&id);
                         lazy.layers.add_cell(id, current, el);
-                        out.renamed.insert(from, to);
                     }
                     Some(into) => {
                         merge_cell(&mut self.graph.cells, id, into);
+                        out.merged.push((id, into));
                         out.gone.extend(self.graph.nodes.transfer(
                             &self.graph.cells,
                             &params,
@@ -400,9 +400,7 @@ impl Planner {
         let Some((&first, _)) = migrated.columns.iter().next().map(|c| (c, ())) else {
             return;
         };
-        if !migrated.renamed.is_empty() {
-            self.graph.node_edges.rename_cells(&migrated.renamed);
-        }
+        self.graph.node_edges.redirect_cells(&migrated.merged);
         let pad = 2 * config.closing_passes() as i32;
         let mut bbox = (first.0, first.0, first.1, first.1);
         for &(x, y) in &migrated.columns {
