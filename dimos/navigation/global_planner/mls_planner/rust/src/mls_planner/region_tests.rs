@@ -112,6 +112,27 @@ fn a_cached_path_is_followed_up_to_a_new_gap_and_no_further() {
 }
 
 #[test]
+fn a_goal_over_a_lone_cell_plans_to_the_floor_beside_it() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    // A 6 m by 2 m floor, and one lone voxel a little past its end, as a region's edge can leave.
+    let mut points: Vec<(f32, f32, f32)> = (0..60)
+        .flat_map(|ix| (0..20).map(move |iy| (ix as f32 * vs + half, iy as f32 * vs + half, half)))
+        .collect();
+    let lone = (6.0 + 3.0 * vs + half, 1.0 + half, half);
+    points.push(lone);
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&bare(&points), &cfg);
+    let start = (0.5, 1.0, vs);
+    let goal = (lone.0, lone.1, vs);
+    assert!(
+        matches!(p.plan_or_truncate(start, goal, &cfg), Plan::Full(_)),
+        "the goal snaps to the floor beside the lone cell, not to the lone cell"
+    );
+}
+
+#[test]
 fn a_negative_blocked_timeout_is_rejected() {
     let config = Config {
         blocked_timeout_s: -1.0,
