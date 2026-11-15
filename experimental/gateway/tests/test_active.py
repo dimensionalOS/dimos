@@ -142,8 +142,95 @@ def test_bad_launch_names_are_refused_before_starting(
     assert not launches.request_file().exists()
 
 
+@pytest.mark.parametrize(
+    ("values", "normalized", "flags"),
+    [
+        (
+            {"replay": "true", "n_workers": 3.0},
+            {"replay": True, "n_workers": 3},
+            "--n-workers=3 --replay",
+        ),
+        (
+            {"replay": "false", "n_workers": "4"},
+            {"replay": False, "n_workers": 4},
+            "--n-workers=4 --no-replay",
+        ),
+    ],
+)
+def test_launch_and_legacy_relaunch_normalize_saved_globals(
+    client: TestClient, values: dict[str, Any], normalized: dict[str, Any], flags: str
+) -> None:
+    values = {**values, "robot_ip": None}
+    normalized = {**normalized, "robot_ip": None}
+    started = client.post(
+        "/active/launch", json={"blueprint": "demo", "config": {"global": values}}
+    )
+    assert started.status_code == 200, started.text
+    until(output_has(client, f"args {flags} run demo\n"))
+    until(running(client))
+    assert started.json()["config"] == {"global": normalized, "modules": {}}
+    saved = json.loads(launches.request_file().read_text())
+    assert saved["global"] == normalized
+
+    # Older gateways persisted the accepted JSON values before Pydantic coercion.
+    launches.request_file().write_text(json.dumps({**saved, "global": values}))
+    relaunched = client.post("/active/relaunch")
+    assert relaunched.status_code == 200, relaunched.text
+    assert relaunched.json()["pid"] != started.json()["pid"]
+    until(output_has(client, f"args {flags} run demo\n"))
+    assert relaunched.json()["config"] == {"global": normalized, "modules": {}}
+    assert json.loads(launches.request_file().read_text())["global"] == normalized
+
+
+@pytest.mark.parametrize("values", [{"replay": "maybe"}, {"n_workers": 2.5}, {"robot_iq": 1}])
+def test_invalid_globals_are_rejected_without_spawning(
+    client: TestClient, mocker: MockerFixture, values: dict[str, Any]
+) -> None:
+    spawn = mocker.patch.object(launches, "_spawn")
+    response = client.post(
+        "/active/launch", json={"blueprint": "demo", "config": {"global": values}}
+    )
+    assert response.status_code == 400, response.text
+    spawn.assert_not_called()
+    assert not launches.request_file().exists()
+
+
+@pytest.mark.parametrize(("blueprint", "phase"), [("demo", "running"), ("slow", "starting")])
+def test_invalid_saved_globals_do_not_stop_the_current_launch(
+    client: TestClient, mocker: MockerFixture, blueprint: str, phase: str
+) -> None:
+    started = client.post("/active/launch", json={"blueprint": blueprint})
+    assert started.status_code == 200, started.text
+    until(output_has(client, "args"))
+    until(lambda: launch_of(client).get("phase") == phase)
+    saved = json.loads(launches.request_file().read_text())
+    invalid = {**saved, "global": {"replay": "maybe"}}
+    launches.request_file().write_text(json.dumps(invalid))
+    spawn = mocker.patch.object(launches, "_spawn")
+
+    response = client.post("/active/relaunch")
+
+    assert response.status_code == 400, response.text
+    spawn.assert_not_called()
+    assert launches.alive(started.json()["pid"])
+    assert launch_of(client)["phase"] == phase
+    assert json.loads(launches.request_file().read_text()) == invalid
+
+
+def test_direct_start_normalizes_globals(client: TestClient, checkout: Path) -> None:
+    started = launches.start(
+        checkout, "demo", launches.LaunchConfig(global_={"replay": "false", "n_workers": "3"})
+    )
+    until(output_has(client, "args --n-workers=3 --no-replay run demo\n"))
+    assert started["config"]["global"] == {"replay": False, "n_workers": 3}
+    assert json.loads(launches.request_file().read_text())["global"] == {
+        "replay": False,
+        "n_workers": 3,
+    }
+
+
 def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     started = client.post("/active/launch", json={"module": "cam", "config": {"n_workers": 3}})
     assert started.status_code == 200, started.text
@@ -153,6 +240,8 @@ def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     until(running(client))
     client.post("/active/stop")
     until(stopped(client))
+    # Raw commands bypass structured validation, including validation of inherited env values.
+    monkeypatch.setenv("N_WORKERS", "invalid")
     typed = client.post("/active/exec", json={"args": ["demo", "--n-workers=7"]})
     assert typed.status_code == 200, typed.text
     until(running(client))
