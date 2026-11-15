@@ -55,9 +55,10 @@ pub fn extract_surfaces(
 }
 
 /// Cells for the gaps a stair riser or a ramp leaves: a run of up to `widest` columns with no voxel and no surface
-/// cell, along x or y between two surface cells on voxels of their own (not filled over a hole) that differ by up to a
-/// step, gets cells stepping evenly (rounded down) from one height to the other, so they link through it. Per-z closing cannot fill
-/// such a gap, since its two sides are at different heights. Only columns `at` accepts are filled.
+/// cell, along x or y between two surface cells that differ by up to a step, each on a voxel of its own or filled in
+/// a column with no voxel at all (not filled over a pit or a post that holds voxels elsewhere), gets cells stepping
+/// evenly (rounded down) from one height to the other, so they link through it. Per-z closing cannot fill such a
+/// gap, since its two sides are at different heights. Only columns `at` accepts are filled.
 fn bridge_risers(
     surface: &[VoxelKey],
     terrain: &Terrain,
@@ -68,7 +69,7 @@ fn bridge_risers(
     let mut held: ahash::AHashSet<(i32, i32)> = ahash::AHashSet::new();
     for &k @ (ix, iy, iz) in surface {
         held.insert((ix, iy));
-        if terrain.by_col.contains(k) {
+        if terrain.by_col.contains(k) || terrain.by_col.get((ix, iy)).is_none() {
             by_col.entry((ix, iy)).or_default().push(iz);
         }
     }
