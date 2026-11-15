@@ -22,7 +22,7 @@ from dimos.teleop.esp32.esp32_gesture_teleop import Esp32GestureTeleop
 
 @pytest.fixture
 def module() -> Iterator[Esp32GestureTeleop]:
-    module = Esp32GestureTeleop(address="d4:e9:f4:e2:79:02")
+    module = Esp32GestureTeleop(address="aa:bb:cc:dd:ee:01", press_hold_s=0)
     try:
         yield module
     finally:
@@ -34,7 +34,7 @@ def published(publish) -> list[Joy]:  # type: ignore[no-untyped-def]
 
 
 def test_gesture_is_published_as_a_tap_on_joy(module: Esp32GestureTeleop, mocker) -> None:
-    publish = mocker.patch.object(module.joystick, "publish")
+    publish = mocker.patch.object(module.gesture_joy, "publish")
 
     module._on_payload(bytes([0, 0, 1, 20, 1]), now=0.0)  # baseline
     module._on_payload(bytes([0, 1, 2, 35, 2]), now=0.1)  # STAND
@@ -43,10 +43,11 @@ def test_gesture_is_published_as_a_tap_on_joy(module: Esp32GestureTeleop, mocker
     assert press.buttons == [0, 1]
     assert release.buttons == [0, 0]
     assert press.axes == pytest.approx([0.35])
+    assert press.frame_id == release.frame_id == "esp32_gesture"
 
 
 def test_repeated_advertisements_publish_once(module: Esp32GestureTeleop, mocker) -> None:
-    publish = mocker.patch.object(module.joystick, "publish")
+    publish = mocker.patch.object(module.gesture_joy, "publish")
 
     module._on_payload(bytes([0, 0, 2, 20, 1]), now=0.0)
     for i in range(5):
@@ -56,7 +57,7 @@ def test_repeated_advertisements_publish_once(module: Esp32GestureTeleop, mocker
 
 
 def test_malformed_payload_publishes_nothing(module: Esp32GestureTeleop, mocker) -> None:
-    publish = mocker.patch.object(module.joystick, "publish")
+    publish = mocker.patch.object(module.gesture_joy, "publish")
     module._on_payload(bytes(3), now=0.0)
     publish.assert_not_called()
 
@@ -75,3 +76,41 @@ def test_start_requires_an_address() -> None:
             module.start()
     finally:
         module.stop()
+
+
+def test_advertisement_without_manufacturer_data_is_ignored(
+    module: Esp32GestureTeleop, mocker
+) -> None:
+    on_payload = mocker.patch.object(module, "_on_payload")
+    board = mocker.Mock(address="AA:BB:CC:DD:EE:01")
+    module._on_advertisement(board, mocker.Mock(manufacturer_data={}))
+    on_payload.assert_not_called()
+
+
+def test_press_is_held_until_the_release(mocker) -> None:
+    module = Esp32GestureTeleop(address="aa:bb:cc:dd:ee:01", press_hold_s=60)
+    publish = mocker.patch.object(module.gesture_joy, "publish")
+    try:
+        module._on_payload(bytes([0, 0, 1, 20, 1]), now=0.0)  # baseline
+        module._on_payload(bytes([0, 1, 2, 20, 2]), now=0.1)  # STAND, release pending
+        assert [msg.buttons for msg in published(publish)] == [[0, 1]]
+
+        module._on_payload(bytes([0, 2, 1, 20, 3]), now=0.2)  # SIT releases STAND first
+        assert [msg.buttons for msg in published(publish)] == [[0, 1], [0, 0], [1, 0]]
+    finally:
+        module.stop()  # stop sends the last pending release
+    assert [msg.buttons for msg in published(publish)][-1] == [0, 0]
+
+
+def test_scanner_failure_is_retried(module: Esp32GestureTeleop, mocker) -> None:
+    attempts = []
+
+    async def listen() -> None:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("no Bluetooth adapter")
+
+    mocker.patch.object(module, "_listen", side_effect=listen)
+    mocker.patch.object(module._stop_event, "wait", return_value=False)
+    module._run()
+    assert len(attempts) == 2

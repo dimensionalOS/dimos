@@ -69,10 +69,17 @@ class GestureTracker:
     def observe(self, packet: GesturePacket, now: float) -> tuple[bool, str | None]:
         """Return (is_new_gesture, warning)."""
         previous = self.packet
-        baseline = previous is None or self.is_stale(now) or packet.posture == 0
+        stale = self.is_stale(now)
+        gap = None if self.last_seen is None else now - self.last_seen
         self.last_seen = now
-        if previous is None or baseline:
+        if previous is None or stale or packet.posture == 0:
             self.packet = packet
+            if previous is not None and stale and packet.posture != 0:
+                skipped = (packet.count - previous.count) % 256
+                if skipped:
+                    return False, (
+                        f"{skipped} gesture(s) made during a {gap:.1f} s gap were not published"
+                    )
             return False, None
         delta = (packet.count - previous.count) % 256
         if delta == 0:

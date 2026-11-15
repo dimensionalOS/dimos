@@ -16,11 +16,13 @@
 
 Only listens to advertisements from one configured board. It never connects to the
 board, loads a robot connection or sends robot commands; what a gesture does is up to
-whichever module subscribes to ``joystick``.
+whichever module subscribes to ``gesture_joy``.
 
-Each gesture is published as a tap on ``joystick``: one ``Joy`` with that gesture's
-button set to 1, then one with all buttons 0. ``buttons`` follows ``GESTURES``
-(``[SIT, STAND]``); ``axes[0]`` is the hand distance in metres.
+Each gesture is published as a tap on ``gesture_joy``: one ``Joy`` with that gesture's
+button set to 1, then, ``press_hold_s`` later, one with all buttons 0. ``buttons``
+follows ``GESTURES`` (``[SIT, STAND]``). ``axes[0]`` is how far the hand was from the
+sensor, scaled to 0..1 over 0..1 m (1 also means no echo). ``frame_id`` is
+``"esp32_gesture"``.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ import time
 from typing import Any
 
 from bleak import BleakScanner
+from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -47,24 +50,43 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+FRAME_ID = "esp32_gesture"
+FULL_SCALE_CM = 100.0
+
 
 class Esp32GestureTeleopConfig(ModuleConfig):
-    address: str = ""  # BLE address of the board, e.g. "D4:E9:F4:E2:79:02"
-    scan_start_timeout_s: float = 15.0
-    poll_interval_s: float = 0.5
+    """Settings for the ESP32 gesture sensor.
+
+    Attributes:
+        address: BLE address of the board, e.g. "AA:BB:CC:DD:EE:FF". Required.
+        press_hold_s: How long a gesture's button stays pressed before the release.
+        scan_start_timeout_s: How long starting the Bluetooth scan may take.
+        poll_interval_s: How often the online/stale state is checked and logged.
+        retry_max_s: Longest wait between retries after the Bluetooth scanner fails.
+    """
+
+    address: str = ""
+    press_hold_s: float = Field(default=0.1, ge=0, allow_inf_nan=False)
+    scan_start_timeout_s: float = Field(default=15.0, gt=0, allow_inf_nan=False)
+    poll_interval_s: float = Field(default=0.5, gt=0, allow_inf_nan=False)
+    retry_max_s: float = Field(default=30.0, gt=0, allow_inf_nan=False)
 
 
-def gesture_joy(packet: GesturePacket) -> list[Joy]:
-    """The press-then-release pair for one gesture."""
-    axes = [packet.distance_cm / 100.0]
+def gesture_joy(packet: GesturePacket) -> tuple[Joy, Joy]:
+    """The press and the release for one gesture."""
+    cm = packet.distance_cm or FULL_SCALE_CM  # 0 means no echo: as far as it gets
+    axes = [min(cm, FULL_SCALE_CM) / FULL_SCALE_CM]
     pressed = [int(name == packet.gesture) for name in GESTURES]
-    return [Joy(axes=axes, buttons=pressed), Joy(axes=axes, buttons=[0] * len(GESTURES))]
+    return (
+        Joy(frame_id=FRAME_ID, axes=axes, buttons=pressed),
+        Joy(frame_id=FRAME_ID, axes=axes, buttons=[0] * len(GESTURES)),
+    )
 
 
 class Esp32GestureTeleop(Module):
     config: Esp32GestureTeleopConfig
 
-    joystick: Out[Joy]
+    gesture_joy: Out[Joy]
 
     _thread: threading.Thread | None = None
 
@@ -73,6 +95,9 @@ class Esp32GestureTeleop(Module):
         self._stop_event = threading.Event()
         self._tracker = GestureTracker()
         self._last_warning: str | None = None
+        self._release_lock = threading.Lock()
+        self._release_timer: threading.Timer | None = None
+        self._pending_release: Joy | None = None
 
     @rpc
     def start(self) -> None:
@@ -87,18 +112,27 @@ class Esp32GestureTeleop(Module):
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
+        self._flush_release()  # never leave a button pressed
         if self._thread is not None:
-            self._thread.join(timeout=10)
+            # The scanner may still be starting (scan_start_timeout_s) or stopping (5 s).
+            self._thread.join(timeout=self.config.scan_start_timeout_s + 5)
             if self._thread.is_alive():
-                logger.warning("[esp32] Bluetooth scanner did not stop within 10 seconds")
+                logger.warning("[esp32] Bluetooth scanner did not stop in time")
             self._thread = None
         super().stop()
 
     def _run(self) -> None:
-        try:
-            asyncio.run(self._listen())
-        except Exception:
-            logger.exception("[esp32] Bluetooth scanner failed")
+        """Scan until stopped; if the scanner fails, log it and retry with backoff."""
+        wait_s = 1.0
+        while not self._stop_event.is_set():
+            try:
+                asyncio.run(self._listen())
+                return
+            except Exception:
+                logger.exception(f"[esp32] Bluetooth scanner failed; retrying in {wait_s:.0f} s")
+            if self._stop_event.wait(wait_s):
+                return
+            wait_s = min(wait_s * 2, self.config.retry_max_s)
 
     async def _listen(self) -> None:
         scanner = BleakScanner(detection_callback=self._on_advertisement)
@@ -137,9 +171,31 @@ class Esp32GestureTeleop(Module):
         self._warn(warning)
         if not is_new:
             return
-        for msg in gesture_joy(packet):
-            self.joystick.publish(msg)
+        press, release = gesture_joy(packet)
+        self._publish_tap(press, release)
         logger.info(f"[esp32] {packet.gesture} count={packet.count} cm={packet.distance_cm}")
+
+    def _publish_tap(self, press: Joy, release: Joy) -> None:
+        # A still-pending release from the previous gesture goes out first, so taps never overlap.
+        self._flush_release()
+        self.gesture_joy.publish(press)
+        if self.config.press_hold_s <= 0:
+            self.gesture_joy.publish(release)
+            return
+        with self._release_lock:
+            self._pending_release = release
+            self._release_timer = threading.Timer(self.config.press_hold_s, self._flush_release)
+            self._release_timer.daemon = True
+            self._release_timer.start()
+
+    def _flush_release(self) -> None:
+        with self._release_lock:
+            if self._release_timer is not None:
+                self._release_timer.cancel()
+                self._release_timer = None
+            release, self._pending_release = self._pending_release, None
+            if release is not None:
+                self.gesture_joy.publish(release)
 
     def _warn(self, warning: str | None) -> None:
         if warning is not None and warning != self._last_warning:

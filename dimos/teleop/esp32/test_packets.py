@@ -70,8 +70,16 @@ def test_stale_board_rebaselines_instead_of_emitting() -> None:
     tracker = GestureTracker(stale_after_s=2.0)
     tracker.observe(packet(1, count=1), now=0.0)
     assert tracker.state(now=3.0) == "stale"
-    assert tracker.observe(packet(2, count=2), now=3.0) == (False, None)
+    is_new, warning = tracker.observe(packet(2, count=2), now=3.0)
+    assert not is_new
+    assert warning == "1 gesture(s) made during a 3.0 s gap were not published"
     assert tracker.state(now=3.0) == "online"
+
+
+def test_stale_board_with_the_same_counter_rebaselines_quietly() -> None:
+    tracker = GestureTracker(stale_after_s=2.0)
+    tracker.observe(packet(1, count=1), now=0.0)
+    assert tracker.observe(packet(1, count=1), now=3.0) == (False, None)
 
 
 def test_firmware_reset_rebaselines() -> None:
