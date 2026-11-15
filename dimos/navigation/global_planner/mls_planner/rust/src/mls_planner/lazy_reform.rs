@@ -246,6 +246,94 @@ impl Planner {
         Some((p[0] as f32, p[1] as f32, p[2] as f32))
     }
 
+    /// The cells within `radius` of `center` where they are now, their links (flagged when across layers) and the
+    /// keyframes, as the JSON the toy render page draws; `cylinders` (x, y, radius) and `found` (layer, v0 tile)
+    /// come from the caller.
+    pub fn snapshot_json(
+        &self,
+        name: &str,
+        center: (f32, f32),
+        radius: f32,
+        cylinders: &[(f32, f32, f32)],
+        found: &[(Version, (i32, i32))],
+    ) -> String {
+        use std::fmt::Write;
+        let cells = &self.graph.cells;
+        let Some(lazy) = self.lazy.as_ref() else {
+            return String::new();
+        };
+        let vs = lazy.voxel_size;
+        let now = |id: CellId| self.stale_point(id).unwrap_or_else(|| cells.point(id, vs));
+        let near = |p: (f32, f32, f32)| (p.0 - center.0).hypot(p.1 - center.1) <= radius;
+        let ids: Vec<CellId> = cells.ids().filter(|&id| near(now(id))).collect();
+        let kept: BTreeSet<CellId> = ids.iter().copied().collect();
+        let mut j = String::new();
+        let _ = write!(j, "{{\"name\":\"{name}\",\"current_layer\":{},\"voxel_size\":{vs},\"cells\":[", lazy.layers.current);
+        for (n, &id) in ids.iter().enumerate() {
+            let (p, k) = (now(id), cells.coord(id));
+            let anchor = lazy.layers.cells.get(&id).map_or(-1, |e| e.anchor as i64);
+            let _ = write!(
+                j,
+                "{}{{\"id\":{id},\"layer\":{},\"key\":[{},{},{}],\"now\":[{:.3},{:.3},{:.3}],\"anchor\":{anchor}}}",
+                if n > 0 { "," } else { "" },
+                cells.layer(id),
+                k.0,
+                k.1,
+                k.2,
+                p.0,
+                p.1,
+                p.2
+            );
+        }
+        j.push_str("],\"edges\":[");
+        let mut first = true;
+        for &id in &ids {
+            for e in cells.neighbors(id) {
+                if kept.contains(&e.dest) && (e.dest > id || !cells.neighbors(e.dest).iter().any(|b| b.dest == id)) {
+                    let cross = u8::from(cells.layer(e.dest) != cells.layer(id));
+                    let _ = write!(j, "{}[{id},{},{cross}]", if first { "" } else { "," }, e.dest);
+                    first = false;
+                }
+            }
+        }
+        j.push_str("],\"keyframes\":[");
+        let yaw = |p: &Pose| 2.0 * p.rotation[2].atan2(p.rotation[3]);
+        let mut first = true;
+        for slot in 0..lazy.table.len() as u32 {
+            let (raw, pose) = (lazy.table.raw(slot), lazy.table.now(slot));
+            let t = pose.translation;
+            if (t[0] as f32 - center.0).hypot(t[1] as f32 - center.1) > radius {
+                continue;
+            }
+            let rect = lazy.table.current_rect(slot).map_or("null".to_string(), |r| {
+                format!("[{:.3},{:.3},{:.3},{:.3}]", r[0], r[1], r[2], r[3])
+            });
+            let _ = write!(
+                j,
+                "{}{{\"node_id\":{},\"raw\":[{:.3},{:.3},{:.3}],\"now\":[{:.3},{:.3},{:.3}],\"rect\":{rect}}}",
+                if first { "" } else { "," },
+                lazy.table.node_id(slot),
+                raw.translation[0],
+                raw.translation[1],
+                yaw(&raw),
+                t[0],
+                t[1],
+                yaw(&pose)
+            );
+            first = false;
+        }
+        j.push_str("],\"cylinders\":[");
+        for (n, c) in cylinders.iter().enumerate() {
+            let _ = write!(j, "{}[{:.3},{:.3},{:.3}]", if n > 0 { "," } else { "" }, c.0, c.1, c.2);
+        }
+        j.push_str("],\"found\":[");
+        for (n, (layer, tile)) in found.iter().enumerate() {
+            let _ = write!(j, "{}[{layer},{},{}]", if n > 0 { "," } else { "" }, tile.0, tile.1);
+        }
+        let _ = write!(j, "],\"tile_m\":{}}}", lazy.layers.params.tile_m);
+        j
+    }
+
     /// A cell's key where it is now: its own in the current layer, its carried point's for a stale one.
     pub(crate) fn key_now(&self, id: CellId) -> VoxelKey {
         match (self.stale_point(id), &self.lazy) {

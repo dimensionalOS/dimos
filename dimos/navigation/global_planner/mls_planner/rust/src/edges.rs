@@ -30,7 +30,6 @@ use crate::dijkstra::{
     DijkstraState, Frontier, RepairWindow, Weight,
 };
 use crate::nodes::{NodeId, NodeScratch, Nodes};
-use crate::voxel::VoxelKey;
 
 /// Index into the planner graph node edges.
 pub type NodeEdgeIdx = u32;
@@ -788,6 +787,7 @@ fn merge_min(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voxel::VoxelKey;
     use crate::adjacency::{build_surface_lookup, build_whole_voxel_cells};
     use crate::nodes::{NodeData, PlacementParams};
     use crate::voxel::surface_point_xyz;
