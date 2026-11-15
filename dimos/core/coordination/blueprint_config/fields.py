@@ -55,8 +55,7 @@ def validate_module_config(
 ) -> BaseModel:
     """Validate a module's config against the globals it will receive in its worker."""
     config_cls = module_config_cls(atom)
-    config_values = {key: value for key, value in values.items() if key in config_cls.model_fields}
-    prepared = prepare_model_input(config_cls, config_values)
+    prepared = prepare_model_input(config_cls, values)
     if "g" in config_cls.model_fields:
         prepared["g"] = g.model_copy(deep=True)
     try:

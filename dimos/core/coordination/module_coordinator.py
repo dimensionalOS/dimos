@@ -28,7 +28,10 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.constants import RUNTIME_MODULES_DIR
-from dimos.core.coordination.blueprint_config.fields import validate_module_config
+from dimos.core.coordination.blueprint_config.fields import (
+    module_config_cls,
+    validate_module_config,
+)
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
 from dimos.core.coordination.blueprints import transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -1041,7 +1044,10 @@ def _validate_module_configs(
     g: GlobalConfig,
 ) -> None:
     for atom in blueprint.active_blueprints:
-        validate_module_config(atom, {**atom.kwargs, **module_kwargs.get(atom.name, {})}, g)
+        # Pinned kwargs may also hold constructor arguments that are not config fields.
+        config_fields = module_config_cls(atom).model_fields
+        pinned = {key: value for key, value in atom.kwargs.items() if key in config_fields}
+        validate_module_config(atom, {**pinned, **module_kwargs.get(atom.name, {})}, g)
 
 
 def _deploy_all_modules(
