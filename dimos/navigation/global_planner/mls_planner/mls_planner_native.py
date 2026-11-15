@@ -107,6 +107,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     max_region_columns: int = 10_000_000
     # A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     max_closing_box_cells: int = 250_000_000
+    # A replan to the same goal keeps the last route from this far past where the new cell path rejoins it and past the last change on it; only the stretch before is pulled and smoothed again.
+    route_reuse_slack_m: float = 3.0
 
 
 class MLSPlannerNative(NativeModule, spec.GlobalPlanner):

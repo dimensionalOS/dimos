@@ -798,8 +798,8 @@ fn a_bending_closure_through_a_mixed_anchor_surface_stretches_links_without_spli
         kf.1 = pose(0.0, 0.35, 0.0).compose(&kf.1);
     }
     assert!(toy.close_to_truth(&[]).new_layer);
-    // Reform around the bend only: neighbors with different anchors land apart.
-    toy.planner.reform_around((8.0, 1.0, 0.1), &toy.cfg);
+    // A scan at the bend reforms around it only: neighbors with different anchors land apart.
+    toy.scan_at(pose(8.0, 1.0, 0.0), pose(8.0, 1.0, 0.0), (8.0, 1.0));
     toy.dump("toy4_mixed_anchors");
     toy.planner.graph.node_edges.assert_indexed(toy.cells());
     assert_eq!(toy.surfaces(), 1, "stretched links keep one surface");
@@ -811,6 +811,8 @@ fn a_bending_closure_through_a_mixed_anchor_surface_stretches_links_without_spli
         stretched_links(&toy, 1.5) > 0,
         "links across the bend stretch past neighbors"
     );
+    // The robot back at the start sees it fresh; the goal is in the stale far end.
+    toy.scan_at(pose(1.0, 1.0, 0.0), pose(1.0, 1.0, 0.0), (1.0, 1.0));
     let plan = toy
         .planner
         .plan_or_truncate((1.0, 1.0, 0.1), (15.0, 1.35, 0.1), &toy.cfg);
@@ -818,6 +820,79 @@ fn a_bending_closure_through_a_mixed_anchor_surface_stretches_links_without_spli
         matches!(plan, Plan::Full(_)),
         "a path end to end across the stretched links, got {plan:?}"
     );
+}
+
+#[test]
+fn a_closure_that_moves_route_cells_needs_a_replan_and_one_that_moves_none_does_not() {
+    let mut toy = Toy::new(|x, y| (0.0..16.0).contains(&x) && (0.0..2.0).contains(&y));
+    for k in 0..16 {
+        let x = 0.5 + k as f64;
+        toy.scan_at(pose(x, 1.0, 0.0), pose(x, 1.0, 0.0), (x as f32, 1.0));
+    }
+    let (start, goal) = ((1.0, 1.0, 0.1), (15.0, 1.0, 0.1));
+    let ids: Vec<u32> = toy.keyframes.iter().map(|k| k.0).collect();
+    let nudge = |toy: &Toy| -> Vec<EventRecord> {
+        let table = &toy.planner.lazy.as_ref().unwrap().table;
+        ids.iter()
+            .map(|&node_id| EventRecord {
+                node_id,
+                pre: table.now(table.slot(node_id).unwrap()),
+                delta: pose(0.0, 0.001, 0.0),
+                version: None,
+                closed_with: None,
+            })
+            .collect()
+    };
+    assert!(matches!(
+        toy.planner.plan_or_truncate(start, goal, &toy.cfg),
+        Plan::Full(_)
+    ));
+    // a millimeter solve keeps the layer, and every route cell is in it: nothing on the route moved
+    let records = nudge(&toy);
+    assert!(
+        !toy.planner
+            .on_closure(&records, &toy.cfg)
+            .unwrap()
+            .new_layer
+    );
+    assert!(!toy.planner.replan_needed(start, goal, &toy.cfg));
+    // a closure that bends the corridor starts a layer, carrying every route cell
+    for kf in toy.keyframes.iter_mut().skip(8) {
+        kf.1 = pose(0.0, 0.35, 0.0).compose(&kf.1);
+    }
+    assert!(toy.close_to_truth(&[]).new_layer);
+    assert!(toy.planner.replan_needed(start, goal, &toy.cfg));
+    // the robot sees the start fresh; a route from it over cells still stale, then a millimeter solve: those cells
+    // are carried, so it is planned again
+    toy.scan_at(pose(1.0, 1.0, 0.0), pose(1.0, 1.0, 0.0), (1.0, 1.0));
+    let goal = (15.0, 1.35, 0.1);
+    assert!(matches!(
+        toy.planner.plan_or_truncate(start, goal, &toy.cfg),
+        Plan::Full(_)
+    ));
+    let current = toy.cells().current_layer();
+    let route = &toy.planner.route.as_ref().unwrap().cache;
+    assert!(
+        route.stale_cells(current).next().is_some(),
+        "the route crosses stale cells"
+    );
+    assert!(!toy.planner.replan_needed(start, goal, &toy.cfg));
+    let records = nudge(&toy);
+    assert!(
+        !toy.planner
+            .on_closure(&records, &toy.cfg)
+            .unwrap()
+            .new_layer
+    );
+    assert_eq!(
+        toy.planner.replan_reason(start, goal, &toy.cfg),
+        Some(ReplanReason::RouteChanged)
+    );
+    assert!(matches!(
+        toy.planner.plan_or_truncate(start, goal, &toy.cfg),
+        Plan::Full(_)
+    ));
+    assert!(!toy.planner.replan_needed(start, goal, &toy.cfg));
 }
 
 #[test]

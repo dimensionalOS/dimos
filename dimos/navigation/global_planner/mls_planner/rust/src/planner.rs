@@ -19,9 +19,10 @@ use ahash::{AHashMap, AHashSet};
 use crate::adjacency::{CellId, SurfaceCells, SurfaceLookup};
 use crate::dijkstra::{walk_preds, Scored};
 use crate::edges::PlannerGraph;
-use crate::mls_planner::Config;
+use crate::lazy::Version;
+use crate::mls_planner::{ms_since, Config};
 use crate::nodes::penalty_of;
-use crate::nodes::{NodeId, NO_NODE};
+use crate::nodes::{NodeId, Nodes, NO_NODE};
 use crate::terrain::{climb, within_step};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
@@ -29,7 +30,7 @@ use crate::voxel::{surface_point_xyz, VoxelKey};
 const CANDIDATE_RADIUS_FACTOR: f32 = 3.0;
 
 /// Horizontal search radius when snapping a pose to the surface.
-const SNAP_SEARCH_RADIUS_M: f32 = 1.5;
+pub(crate) const SNAP_SEARCH_RADIUS_M: f32 = 1.5;
 
 /// Max snap candidates tried when connecting the start.
 const MAX_SNAP_ATTEMPTS: usize = 64;
@@ -105,6 +106,21 @@ fn best_iz_in_column(
 /// Where a stale layer's cell is now, None for a current-layer cell.
 pub type StalePoint<'a> = &'a dyn Fn(CellId) -> Option<(f32, f32, f32)>;
 
+/// The stale layers as a plan sees them: where a stale cell is now, and the stale cell nearest a goal no current-layer cell is near.
+#[derive(Clone, Copy)]
+pub struct Stale<'a> {
+    pub point: StalePoint<'a>,
+    pub nearest: &'a dyn Fn((f32, f32, f32)) -> Option<CellId>,
+}
+
+impl Stale<'_> {
+    /// No stale layers.
+    pub const NONE: Stale<'static> = Stale {
+        point: &|_| None,
+        nearest: &|_| None,
+    };
+}
+
 /// Plan path from start pose to goal pose using the node graph.
 /// Returns the waypoints and the string-pulled cell path, or none if either
 /// pose can't be snapped to surface or there is no valid path.
@@ -113,8 +129,22 @@ pub fn plan(
     start_pose: (f32, f32, f32),
     goal_pose: (f32, f32, f32),
     config: &Config,
-    stale_point: StalePoint<'_>,
+    stale: Stale<'_>,
 ) -> Option<PlannedPath> {
+    plan_reusing(plg, start_pose, goal_pose, config, stale, None).map(|(path, _)| path)
+}
+
+/// plan, reusing `reuse`'s cached route: every stretch of it the new cell path runs along that no change reached
+/// since, a slack clear of the robot and of what changed, keeps its pulled cells and smoothed points, and only the
+/// stretches between are pulled and smoothed and spliced in, so a replan costs what changed, not the route's length.
+pub fn plan_reusing(
+    plg: &PlannerGraph,
+    start_pose: (f32, f32, f32),
+    goal_pose: (f32, f32, f32),
+    config: &Config,
+    stale: Stale<'_>,
+    reuse: Option<(&RouteCache, &RouteChanges)>,
+) -> Option<(PlannedPath, RouteCache)> {
     let voxel_size = config.voxel_size;
     let z_tolerance_m = config.robot_height;
     let start_candidates =
@@ -126,26 +156,25 @@ pub fn plan(
         );
         return None;
     }
-    let Some(goal_coord) =
-        snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
-    else {
+    // The goal snaps in the current layer, or else to the stale cell standing nearest it now.
+    let goal_cell = snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
+        .and_then(|k| plg.cells.id(k))
+        .or_else(|| (stale.nearest)(goal_pose));
+    let Some(goal_cell) = goal_cell else {
         tracing::debug!(
             ?goal_pose,
             "plan failed: goal does not snap to any surface cell"
         );
         return None;
     };
-    let Some(goal_cell) = plg.cells.id(goal_coord) else {
-        tracing::debug!(?goal_coord, "plan failed: goal cell is not in the graph");
-        return None;
-    };
+    let goal_coord = plg.cells.coord(goal_cell);
     let start_cells: Vec<CellId> = start_candidates
         .iter()
         .take(MAX_SNAP_ATTEMPTS)
         .filter_map(|&candidate| plg.cells.id(candidate))
         .collect();
 
-    let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+    let node_cells = &plg.nodes;
 
     // The penalized Voronoi cannot own sub-clearance goals, so fall back to the
     // nearest node by hops. A real failure then reports as disconnected below.
@@ -153,8 +182,8 @@ pub fn plan(
     let mut goal_node = *goal_segment
         .last()
         .expect("the goal cell is live, so the walk keeps at least it");
-    if !node_cells.contains(&goal_node) {
-        let Some((node, path)) = nearest_node(&plg.cells, goal_cell, &node_cells) else {
+    if !node_cells.has(goal_node) {
+        let Some((node, path)) = nearest_node(&plg.cells, goal_cell, node_cells) else {
             tracing::debug!(
                 ?goal_coord,
                 "plan failed: goal's connected component has no graph node"
@@ -165,25 +194,42 @@ pub fn plan(
         goal_segment = path;
     }
 
-    // Rooted at the goal so one pass covers every node's cost-to-go.
-    let (cost_to_go, pred_to_goal) = node_dijkstra(plg, goal_node);
-
+    let began = std::time::Instant::now();
     let radius = (config.node_spacing_m * CANDIDATE_RADIUS_FACTOR).max(voxel_size);
     // Nearest candidate first so the lead-in anchors at the robot's own cell.
     // The rest are only a fallback when it cannot connect.
     let (near, rest) = start_cells.split_at(start_cells.len().min(1));
-    let entry = [near, rest].into_iter().find_map(|group| {
-        select_entry(
-            plg,
-            group,
-            goal_cell,
-            goal_node,
-            &cost_to_go,
-            &pred_to_goal,
-            &node_cells,
-            radius,
-        )
-    });
+    let searches = [near, rest].map(|group| robot_search(&plg.cells, group, radius));
+    // Rooted at the goal, and run only until every node an entry could take is settled, so its cost is the
+    // stretch of map out to the robot rather than all of it.
+    let mut entries: AHashSet<NodeId> = searches
+        .iter()
+        .flat_map(|(dist, _)| dist.keys().copied())
+        .filter(|&c| node_cells.has(c))
+        .collect();
+    entries.extend(
+        start_cells
+            .iter()
+            .filter_map(|&c| walk_live_preds(plg, c).last().copied())
+            .filter(|&c| node_cells.has(c)),
+    );
+    let (cost_to_go, pred_to_goal) = node_dijkstra(plg, goal_node, &entries);
+    let search_ms = ms_since(began);
+    let entry = [near, rest]
+        .into_iter()
+        .zip(&searches)
+        .find_map(|(group, search)| {
+            select_entry_from(
+                plg,
+                group,
+                search,
+                goal_cell,
+                goal_node,
+                &cost_to_go,
+                &pred_to_goal,
+                node_cells,
+            )
+        });
     let Some((lead_in, node_seq)) = entry else {
         tracing::debug!(
             candidates = start_cells.len(),
@@ -202,42 +248,365 @@ pub fn plan(
         &goal_segment
     };
     let cells = assemble_cells(plg, &node_seq, &lead_in, goal_segment);
-    // Pulling and smoothing read the current layer's grid, so runs through stale cells keep their cells' points.
-    let current = |id: CellId| plg.cells.layer(id) == plg.cells.current_layer();
-    let mut pulled: Vec<CellId> = Vec::with_capacity(cells.len());
-    for run in cells.chunk_by(|&a, &b| current(a) == current(b)) {
-        if current(run[0]) {
-            pulled.extend(string_pull(plg, run, &limits));
+    let entry_ms = ms_since(began) - search_ms;
+    let stage = std::time::Instant::now();
+    let kept = match reuse {
+        Some((cache, changes)) if cache.goal_pose == goal_pose => {
+            kept_stretches(plg, cache, changes, &cells, config)
+        }
+        _ => Vec::new(),
+    };
+    let align_ms = ms_since(stage);
+    let stage = std::time::Instant::now();
+    let fresh = Fresh {
+        plg,
+        cells: &cells,
+        limits: &limits,
+        stale_point: stale.point,
+        step_weight: config.step_penalty_weight,
+    };
+    let mut route = Spliced::default();
+    // Pull and smooth from the robot to the first kept stretch, between kept stretches, and on to the goal past the last.
+    let (mut from, mut first) = (0, End::Pose(start_pose));
+    let (mut to_goal, mut kept_cells) = (false, 0);
+    for (k, cache) in kept
+        .iter()
+        .zip(reuse.map(|(cache, _)| cache).into_iter().cycle())
+    {
+        let span = cache.pulled_at[k.last] - cache.pulled_at[k.first];
+        let join = cache.points[cache.point_of_pulled[k.first]];
+        route.append(fresh.piece(from, k.at, first, End::Join(join)));
+        route.append(cache.stretch(k));
+        kept_cells += span;
+        to_goal = k.to_goal;
+        if to_goal {
+            break;
+        }
+        from = k.at + span;
+        first = End::Join(cache.points[cache.point_of_pulled[k.last]]);
+    }
+    if !to_goal {
+        route.append(fresh.piece(from, cells.len() - 1, first, End::Pose(goal_pose)));
+    }
+    let splice_ms = ms_since(stage);
+    tracing::debug!(
+        search_ms,
+        entry_ms,
+        align_ms,
+        splice_ms,
+        assembled = cells.len(),
+        kept_cells,
+        kept_stretches = kept.len(),
+        smoothed = route.smoothed,
+        points = route.points.len(),
+        "plan stages"
+    );
+    let path_cells: Vec<VoxelKey> = route
+        .pulled
+        .iter()
+        .map(|&i| plg.cells.coord(cells[i]))
+        .collect();
+    let layers = cells.iter().map(|&id| plg.cells.layer(id)).collect();
+    let mut cell_at = AHashMap::with_capacity(cells.len());
+    for (i, &id) in cells.iter().enumerate() {
+        cell_at.insert(id, i);
+    }
+    let cache = RouteCache {
+        goal_pose,
+        assembled: cells,
+        layers,
+        cell_at,
+        pulled_at: route.pulled,
+        points: route.points.clone(),
+        point_of_pulled: route.point_of_pulled,
+        smoothed: route.smoothed,
+        kept_cells,
+    };
+    Some(((route.points, path_cells), cache))
+}
+
+/// A full plan's route, kept so the next plan to the same goal pulls and smooths only what changed: the assembled
+/// cell path with each cell's layer then and index by id, which of its cells the pull kept, and the smoothed points
+/// with where each kept cell sits among them.
+#[derive(Clone, Debug)]
+pub struct RouteCache {
+    pub(crate) goal_pose: (f32, f32, f32),
+    pub(crate) assembled: Vec<CellId>,
+    layers: Vec<Version>,
+    pub(crate) cell_at: AHashMap<CellId, usize>,
+    pub(crate) pulled_at: Vec<usize>,
+    pub(crate) points: Vec<(f32, f32, f32)>,
+    point_of_pulled: Vec<usize>,
+    /// Points this plan put through the smoother; the rest it took from the route before.
+    pub(crate) smoothed: usize,
+    /// Assembled cells this plan took, pulled and smoothed, from the route before.
+    pub(crate) kept_cells: usize,
+}
+
+impl RouteCache {
+    /// The assembled indices whose cell is in a stale layer, the cells a closure carries.
+    pub(crate) fn stale_cells(&self, current_layer: Version) -> impl Iterator<Item = usize> + '_ {
+        (0..self.layers.len()).filter(move |&i| self.layers[i] != current_layer)
+    }
+
+    /// A kept stretch's points and pulled cells, as a piece starting on its first pulled cell.
+    fn stretch(&self, k: &Kept) -> Piece {
+        let first_point = self.point_of_pulled[k.first];
+        let end = if k.to_goal {
+            self.points.len()
         } else {
-            pulled.extend_from_slice(run);
+            self.point_of_pulled[k.last] + 1
+        };
+        let base = self.pulled_at[k.first];
+        Piece {
+            at: k.at,
+            points: self.points[first_point..end].to_vec(),
+            pulled: self.pulled_at[k.first..=k.last]
+                .iter()
+                .map(|&i| i - base)
+                .collect(),
+            point_of_pulled: self.point_of_pulled[k.first..=k.last]
+                .iter()
+                .map(|&i| i - first_point)
+                .collect(),
+            smoothed: 0,
         }
     }
-    let cells = pulled;
-    let mut points: Vec<((f32, f32, f32), bool)> = Vec::with_capacity(cells.len() + 2);
-    points.push((start_pose, true));
-    for &id in &cells {
-        match stale_point(id) {
-            Some(p) => points.push((p, false)),
-            None => points.push((plg.cells.point(id, voxel_size), true)),
+}
+
+/// What changed on a cached route since it was planned: per assembled cell and per smoothed point, whether a change
+/// reached it. Empty is unchanged.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RouteChanges {
+    pub cells: Vec<bool>,
+    pub points: Vec<bool>,
+}
+
+impl RouteChanges {
+    /// No change, on a route of `cells` assembled cells and `points` points.
+    pub fn none(cells: usize, points: usize) -> Self {
+        Self {
+            cells: vec![false; cells],
+            points: vec![false; points],
         }
     }
-    points.push((goal_pose, true));
-    let mut waypoints: Vec<(f32, f32, f32)> = Vec::with_capacity(points.len());
-    for run in points.chunk_by(|a, b| a.1 == b.1) {
-        let run_points: Vec<(f32, f32, f32)> = run.iter().map(|&(p, _)| p).collect();
-        if run[0].1 {
-            waypoints.extend(crate::smoother::smooth_path(
-                plg,
-                run_points,
-                &limits,
-                config.step_penalty_weight,
-            ));
-        } else {
-            waypoints.extend(run_points);
+}
+
+/// A stretch of the cached route kept as it was: its first and last pulled cells (indices into the cache's pulled
+/// cells), where its first sits in the new cell path, and whether it runs on to the goal.
+#[derive(Clone, Copy, Debug)]
+struct Kept {
+    first: usize,
+    last: usize,
+    at: usize,
+    to_goal: bool,
+}
+
+/// The cached route's stretches a new cell path can keep: the same cells in the same order, none of them or the
+/// points over them reached by a change, dead or in another layer since, all at least route_reuse_slack_m along the
+/// new path from the robot and from anything that is not kept, and spanning two or more pulled cells.
+fn kept_stretches(
+    plg: &PlannerGraph,
+    cache: &RouteCache,
+    changes: &RouteChanges,
+    cells: &[CellId],
+    config: &Config,
+) -> Vec<Kept> {
+    let n = cache.assembled.len();
+    // cached cells that cannot be kept: changed, dead, moved layer, or under a changed point's chord
+    let mut bad: Vec<bool> = (0..n)
+        .map(|i| {
+            let id = cache.assembled[i];
+            changes.cells.get(i).copied().unwrap_or(false)
+                || !plg.cells.is_live(id)
+                || plg.cells.layer(id) != cache.layers[i]
+        })
+        .collect();
+    for (t, _) in changes.points.iter().enumerate().filter(|(_, &c)| c) {
+        // the chord pulled k -> k + 1 holds points point_of_pulled[k] ..= point_of_pulled[k + 1]
+        let k = cache
+            .point_of_pulled
+            .partition_point(|&p| p <= t)
+            .saturating_sub(1);
+        let from = cache.pulled_at[k];
+        let to = cache.pulled_at.get(k + 1).copied().unwrap_or(n - 1);
+        bad[from..=to].iter_mut().for_each(|b| *b = true);
+    }
+    // each new cell's cached index, and whether it continues the cached path from the cell before
+    let at: Vec<Option<usize>> = cells
+        .iter()
+        .map(|id| cache.cell_at.get(id).copied())
+        .collect();
+    let follows =
+        |j: usize| j > 0 && matches!((at[j - 1], at[j]), (Some(a), Some(b)) if b == a + 1);
+    let slack = (config.route_reuse_slack_m / config.voxel_size).ceil() as usize;
+    let mut fresh: Vec<bool> = (0..cells.len())
+        .map(|j| j < slack || at[j].is_none_or(|i| bad[i]))
+        .collect();
+    // grow what is planned fresh by the slack either way, so the smoothing settles before it meets what is kept
+    let seeds: Vec<usize> = (0..cells.len()).filter(|&j| fresh[j]).collect();
+    let mut grown = fresh.clone();
+    let mut reach_until = 0usize;
+    for &j in &seeds {
+        let lo = j.saturating_sub(slack).max(reach_until);
+        let hi = (j + slack).min(cells.len() - 1);
+        grown[lo..=hi].iter_mut().for_each(|g| *g = true);
+        reach_until = hi;
+    }
+    fresh = grown;
+    let mut kept = Vec::new();
+    let mut j = 0;
+    while j < cells.len() {
+        if fresh[j] {
+            j += 1;
+            continue;
+        }
+        let a = j;
+        j += 1;
+        while j < cells.len() && !fresh[j] && follows(j) {
+            j += 1;
+        }
+        let (lo, hi) = (at[a].unwrap(), at[j - 1].unwrap());
+        let first = cache.pulled_at.partition_point(|&i| i < lo);
+        let Some(last) = cache.pulled_at.partition_point(|&i| i <= hi).checked_sub(1) else {
+            continue;
+        };
+        if first >= last {
+            continue;
+        }
+        let at_first = a + cache.pulled_at[first] - lo;
+        let to_goal = last == cache.pulled_at.len() - 1
+            && cache.pulled_at[last] == n - 1
+            && at_first + cache.pulled_at[last] - cache.pulled_at[first] == cells.len() - 1;
+        kept.push(Kept {
+            first,
+            last,
+            at: at_first,
+            to_goal,
+        });
+    }
+    kept
+}
+
+/// How a pulled and smoothed piece ends: on a pose before or after its cells (the robot, the goal), or on a kept
+/// stretch's point in place of its end cell's, held fixed.
+#[derive(Clone, Copy)]
+enum End {
+    Pose((f32, f32, f32)),
+    Join((f32, f32, f32)),
+}
+
+/// Part of a route: its points, its pulled cells as offsets from cell `at` of the new path, and where each sits among the points.
+struct Piece {
+    at: usize,
+    points: Vec<(f32, f32, f32)>,
+    pulled: Vec<usize>,
+    point_of_pulled: Vec<usize>,
+    smoothed: usize,
+}
+
+/// What a fresh piece of route is pulled and smoothed over.
+struct Fresh<'a> {
+    plg: &'a PlannerGraph,
+    cells: &'a [CellId],
+    limits: &'a PathLimits,
+    stale_point: StalePoint<'a>,
+    step_weight: f32,
+}
+
+impl Fresh<'_> {
+    /// String-pull cells `from ..= to` per current-layer run, then smooth each current run of the points.
+    fn piece(&self, from: usize, to: usize, first: End, last: End) -> Piece {
+        let (plg, voxel_size) = (self.plg, self.limits.voxel_size);
+        let cells = &self.cells[from..=to];
+        let current = |id: CellId| plg.cells.layer(id) == plg.cells.current_layer();
+        let mut pulled: Vec<usize> = Vec::with_capacity(cells.len());
+        let mut run_start = 0;
+        for run in cells.chunk_by(|&a, &b| current(a) == current(b)) {
+            if current(run[0]) {
+                pulled.extend(
+                    string_pull_at(plg, run, self.limits)
+                        .into_iter()
+                        .map(|i| run_start + i),
+                );
+            } else {
+                pulled.extend(run_start..run_start + run.len());
+            }
+            run_start += run.len();
+        }
+        let mut points: Vec<((f32, f32, f32), bool)> = Vec::with_capacity(pulled.len() + 2);
+        if let End::Pose(p) = first {
+            points.push((p, true));
+        }
+        let lead = points.len();
+        for &i in &pulled {
+            match (self.stale_point)(cells[i]) {
+                Some(p) => points.push((p, false)),
+                None => points.push((plg.cells.point(cells[i], voxel_size), true)),
+            }
+        }
+        if let End::Join(p) = first {
+            points[0].0 = p;
+        }
+        match last {
+            End::Pose(p) => points.push((p, true)),
+            End::Join(p) => points.last_mut().expect("a piece has a cell").0 = p,
+        }
+        let mut out: Vec<(f32, f32, f32)> = Vec::with_capacity(points.len());
+        // where each of `points` landed among the smoothed points
+        let mut landed: Vec<usize> = Vec::with_capacity(points.len());
+        let mut smoothed = 0;
+        for run in points.chunk_by(|a, b| a.1 == b.1) {
+            let run_points: Vec<(f32, f32, f32)> = run.iter().map(|&(p, _)| p).collect();
+            let offset = out.len();
+            if run[0].1 {
+                let (pts, at) = crate::smoother::smooth_path_indexed(
+                    plg,
+                    run_points,
+                    self.limits,
+                    self.step_weight,
+                );
+                smoothed += pts.len();
+                landed.extend(at.into_iter().map(|i| offset + i));
+                out.extend(pts);
+            } else {
+                landed.extend(offset..offset + run_points.len());
+                out.extend(run_points);
+            }
+        }
+        let point_of_pulled = landed[lead..lead + pulled.len()].to_vec();
+        Piece {
+            at: from,
+            points: out,
+            pulled,
+            point_of_pulled,
+            smoothed,
         }
     }
-    let path_cells: Vec<VoxelKey> = cells.iter().map(|&id| plg.cells.coord(id)).collect();
-    Some((waypoints, path_cells))
+}
+
+/// A route assembled piece by piece, each new piece starting on the last one's end point.
+#[derive(Default)]
+struct Spliced {
+    points: Vec<(f32, f32, f32)>,
+    /// Pulled cells as indices into the new cell path.
+    pulled: Vec<usize>,
+    point_of_pulled: Vec<usize>,
+    smoothed: usize,
+}
+
+impl Spliced {
+    fn append(&mut self, piece: Piece) {
+        // after the first piece, a piece's first point and first pulled cell are the last piece's end
+        let skip = usize::from(!self.points.is_empty());
+        let base = self.points.len() - skip;
+        self.points.extend_from_slice(&piece.points[skip..]);
+        self.pulled
+            .extend(piece.pulled[skip..].iter().map(|&i| piece.at + i));
+        self.point_of_pulled
+            .extend(piece.point_of_pulled[skip..].iter().map(|&i| base + i));
+        self.smoothed += piece.smoothed;
+    }
 }
 
 /// Re-validate a cached path against the current surface. Returns the route
@@ -441,6 +810,7 @@ fn point_segment_dist2(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
 /// Pick the entry node by connect cost plus cost-to-go, with its on-surface
 /// lead-in and the node sequence to the goal. A goal cell inside the search
 /// radius connects directly instead, signalled by an empty node sequence.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn select_entry(
     plg: &PlannerGraph,
@@ -449,13 +819,36 @@ fn select_entry(
     goal_node: NodeId,
     cost_to_go: &AHashMap<NodeId, f32>,
     pred_to_goal: &AHashMap<NodeId, NodeId>,
-    node_cells: &AHashSet<NodeId>,
+    node_cells: &Nodes,
     radius_m: f32,
 ) -> Option<(Vec<CellId>, Vec<NodeId>)> {
-    let (connect_dist, connect_pred) = robot_search(&plg.cells, start_cells, radius_m);
+    let search = robot_search(&plg.cells, start_cells, radius_m);
+    select_entry_from(
+        plg,
+        start_cells,
+        &search,
+        goal_cell,
+        goal_node,
+        cost_to_go,
+        pred_to_goal,
+        node_cells,
+    )
+}
 
+/// select_entry, from the robot search over `start_cells` already run.
+#[allow(clippy::too_many_arguments)]
+fn select_entry_from(
+    plg: &PlannerGraph,
+    start_cells: &[CellId],
+    (connect_dist, connect_pred): &(AHashMap<CellId, f32>, AHashMap<CellId, CellId>),
+    goal_cell: CellId,
+    goal_node: NodeId,
+    cost_to_go: &AHashMap<NodeId, f32>,
+    pred_to_goal: &AHashMap<NodeId, NodeId>,
+    node_cells: &Nodes,
+) -> Option<(Vec<CellId>, Vec<NodeId>)> {
     if connect_dist.contains_key(&goal_cell) {
-        let mut lead = walk_local_preds(&connect_pred, goal_cell);
+        let mut lead = walk_local_preds(connect_pred, goal_cell);
         lead.reverse();
         return Some((lead, Vec::new()));
     }
@@ -464,8 +857,8 @@ fn select_entry(
     let mut best_score = f32::INFINITY;
     // Scan the bounded reachable set, not every node. Tie-break by cell id for
     // deterministic order.
-    for (&cell, &connect) in &connect_dist {
-        if !node_cells.contains(&cell) {
+    for (&cell, &connect) in connect_dist {
+        if !node_cells.has(cell) {
             continue;
         }
         let Some(&ctg) = cost_to_go.get(&cell) else {
@@ -484,7 +877,7 @@ fn select_entry(
     }
 
     if best_score.is_finite() {
-        let mut lead = walk_local_preds(&connect_pred, entry_node);
+        let mut lead = walk_local_preds(connect_pred, entry_node);
         lead.reverse();
         return Some((lead, follow_preds(entry_node, goal_node, pred_to_goal)?));
     }
@@ -494,7 +887,7 @@ fn select_entry(
         let region_node = *start_segment
             .last()
             .expect("the start cell is live, so the walk keeps at least it");
-        if !node_cells.contains(&region_node)
+        if !node_cells.has(region_node)
             || !cost_to_go.get(&region_node).is_some_and(|c| c.is_finite())
         {
             continue;
@@ -551,9 +944,9 @@ fn robot_search(
 fn nearest_node(
     cells: &SurfaceCells,
     from: CellId,
-    node_cells: &AHashSet<NodeId>,
+    node_cells: &Nodes,
 ) -> Option<(NodeId, Vec<CellId>)> {
-    if node_cells.contains(&from) {
+    if node_cells.has(from) {
         return Some((from, vec![from]));
     }
     let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
@@ -569,7 +962,7 @@ fn nearest_node(
                 continue;
             }
             pred.insert(v, u);
-            if node_cells.contains(&v) {
+            if node_cells.has(v) {
                 let mut path = vec![v];
                 let mut cur = v;
                 while let Some(&p) = pred.get(&cur) {
@@ -607,34 +1000,46 @@ fn walk_local_preds(pred: &AHashMap<CellId, CellId>, from: CellId) -> Vec<CellId
     path
 }
 
-/// Cost-to-go to source for every reachable node, with a predecessor pointing
-/// one hop toward it. Nodes are keyed by their CellId. Unreachable nodes are
-/// simply absent from the maps.
+/// Cost-to-go to source for the reachable nodes, with a predecessor pointing one hop toward it, settled out until
+/// every node in `targets` is (or nothing more is reachable). Nodes are keyed by their CellId; unsettled ones are absent.
 fn node_dijkstra(
     plg: &PlannerGraph,
     source: NodeId,
+    targets: &AHashSet<NodeId>,
 ) -> (AHashMap<NodeId, f32>, AHashMap<NodeId, NodeId>) {
+    let mut tentative: AHashMap<NodeId, f32> = AHashMap::new();
     let mut dist: AHashMap<NodeId, f32> = AHashMap::new();
     let mut pred: AHashMap<NodeId, NodeId> = AHashMap::new();
-    dist.insert(source, 0.0);
+    tentative.insert(source, 0.0);
     let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
     heap.push(Scored(0.0, source));
+    let mut left = targets.len();
 
     while let Some(Scored(d, u)) = heap.pop() {
-        if d > dist.get(&u).copied().unwrap_or(f32::INFINITY) {
+        if left == 0 {
+            break;
+        }
+        if dist.contains_key(&u) || d > tentative.get(&u).copied().unwrap_or(f32::INFINITY) {
             continue;
+        }
+        dist.insert(u, d);
+        if targets.contains(&u) {
+            left -= 1;
         }
         for &edge_idx in plg.node_edges.adjacent(u) {
             let edge = &plg.node_edges.edges()[edge_idx as usize];
             let neighbor = if edge.a == u { edge.b } else { edge.a };
             let nd = d + edge.cost;
-            if nd < dist.get(&neighbor).copied().unwrap_or(f32::INFINITY) {
-                dist.insert(neighbor, nd);
+            if !dist.contains_key(&neighbor)
+                && nd < tentative.get(&neighbor).copied().unwrap_or(f32::INFINITY)
+            {
+                tentative.insert(neighbor, nd);
                 pred.insert(neighbor, u);
                 heap.push(Scored(nd, neighbor));
             }
         }
     }
+    pred.retain(|n, _| dist.contains_key(n));
     (dist, pred)
 }
 
@@ -754,14 +1159,23 @@ impl PathLimits {
 
 /// Replace runs of cells with straight chords that come no closer to a wall and
 /// climb no more than the run they replace.
+#[cfg(test)]
 fn string_pull(plg: &PlannerGraph, cells: &[CellId], limits: &PathLimits) -> Vec<CellId> {
+    string_pull_at(plg, cells, limits)
+        .into_iter()
+        .map(|i| cells[i])
+        .collect()
+}
+
+/// string_pull, as the indices of the kept cells.
+fn string_pull_at(plg: &PlannerGraph, cells: &[CellId], limits: &PathLimits) -> Vec<usize> {
     if cells.len() <= 2 {
-        return cells.to_vec();
+        return (0..cells.len()).collect();
     }
     let metrics = |from: CellId, to: CellId| {
         segment_metrics(plg, plg.cells.coord(from), plg.cells.coord(to), limits)
     };
-    let mut out = vec![cells[0]];
+    let mut out = vec![0];
     let mut anchor = 0;
     while anchor + 1 < cells.len() {
         let mut best = anchor + 1;
@@ -788,7 +1202,7 @@ fn string_pull(plg: &PlannerGraph, cells: &[CellId], limits: &PathLimits) -> Vec
             }
             j += 1;
         }
-        out.push(cells[best]);
+        out.push(best);
         anchor = best;
     }
     out
@@ -858,7 +1272,7 @@ mod tests {
         goal: (f32, f32, f32),
     ) -> Option<Vec<(f32, f32, f32)>> {
         let config = truncate_config();
-        plan(plg, start, goal, &config, &|_| None).map(|(wp, _)| wp)
+        plan(plg, start, goal, &config, Stale::NONE).map(|(wp, _)| wp)
     }
 
     fn surface_graph(cells: &[VoxelKey]) -> PlannerGraph {
@@ -993,6 +1407,251 @@ mod tests {
         // Further back, the standoff is still ahead to drive to.
         let robot = (standoff_x - 0.5, 0.0, z);
         assert!(!truncate_to_safe(&surface_graph(&blocked), &cached, robot, &cfg).is_empty());
+    }
+
+    /// An L corridor 5 cells wide, nodes along it, a start at its foot and a goal at its top.
+    fn l_corridor() -> PlannerGraph {
+        let mut cells: Vec<VoxelKey> = Vec::new();
+        for x in 0..80 {
+            for y in 0..5 {
+                cells.push((x, y, 0));
+            }
+        }
+        for x in 75..80 {
+            for y in 5..60 {
+                cells.push((x, y, 0));
+            }
+        }
+        let nodes = [
+            (10, 2, 0),
+            (30, 2, 0),
+            (50, 2, 0),
+            (70, 2, 0),
+            (77, 20, 0),
+            (77, 40, 0),
+            (77, 57, 0),
+        ];
+        graph_with_nodes(&cells, &nodes)
+    }
+
+    /// A staircase corridor 5 cells wide: `steps` legs along x, each 20 cells and then 10 up, with a node per leg and turn.
+    fn staircase(steps: i32) -> (PlannerGraph, (f32, f32, f32), (f32, f32, f32)) {
+        let mut cells: AHashSet<VoxelKey> = AHashSet::new();
+        let mut nodes: Vec<VoxelKey> = Vec::new();
+        for s in 0..steps {
+            let (x0, y0) = (20 * s, 10 * s);
+            for x in x0..x0 + 25 {
+                for y in y0..y0 + 5 {
+                    cells.insert((x, y, 0));
+                }
+            }
+            for x in x0 + 20..x0 + 25 {
+                for y in y0..y0 + 15 {
+                    cells.insert((x, y, 0));
+                }
+            }
+            nodes.push((x0 + 10, y0 + 2, 0));
+            nodes.push((x0 + 22, y0 + 8, 0));
+        }
+        let mut cells: Vec<VoxelKey> = cells.into_iter().collect();
+        cells.sort_unstable();
+        let start = (0.25, 0.25, 0.05);
+        // at the top of the last turn
+        let goal = (
+            (20 * steps + 2) as f32 * VOXEL + 0.05,
+            (10 * steps + 2) as f32 * VOXEL + 0.05,
+            0.05,
+        );
+        (graph_with_nodes(&cells, &nodes), start, goal)
+    }
+
+    const L_GOAL: (f32, f32, f32) = (7.75, 5.85, 0.05);
+
+    fn plan_l(
+        plg: &PlannerGraph,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+        reuse: Option<(&RouteCache, &RouteChanges)>,
+    ) -> (PlannedPath, RouteCache) {
+        plan_reusing(plg, start, goal, &truncate_config(), Stale::NONE, reuse).unwrap()
+    }
+
+    fn unchanged(route: &RouteCache) -> RouteChanges {
+        RouteChanges::none(route.assembled.len(), route.points.len())
+    }
+
+    /// Every point of `a` within `tol` m of some point of `b`, in the ground plane.
+    fn assert_near(a: &[(f32, f32, f32)], b: &[(f32, f32, f32)], tol: f32) {
+        for p in a {
+            let gap = b
+                .iter()
+                .map(|q| (p.0 - q.0).hypot(p.1 - q.1))
+                .fold(f32::INFINITY, f32::min);
+            assert!(gap < tol, "point {p:?} is {gap} m off the other route");
+        }
+    }
+
+    /// How close a reused route stays to a whole replan's: a voxel.
+    const MATCH_M: f32 = VOXEL;
+
+    #[test]
+    fn a_replan_to_the_same_goal_reuses_the_route_past_the_robot() {
+        let plg = l_corridor();
+        let (_, route) = plan_l(&plg, (0.25, 0.25, 0.05), L_GOAL, None);
+        assert_eq!(route.kept_cells, 0);
+        // a little further along: the robot's end is planned again, the cached rest kept as it was
+        let start = (0.65, 0.25, 0.05);
+        let ((reused, cells), again) =
+            plan_l(&plg, start, L_GOAL, Some((&route, &unchanged(&route))));
+        let ((whole, whole_cells), fresh) = plan_l(&plg, start, L_GOAL, None);
+        assert_eq!(again.assembled, fresh.assembled);
+        assert!(
+            again.kept_cells > again.assembled.len() / 3,
+            "{} of {} cells kept",
+            again.kept_cells,
+            again.assembled.len()
+        );
+        assert!(
+            again.smoothed < fresh.smoothed,
+            "{} vs {} points smoothed",
+            again.smoothed,
+            fresh.smoothed
+        );
+        let tail = 20;
+        assert_eq!(
+            reused[reused.len() - tail..],
+            route.points[route.points.len() - tail..],
+            "the cached tail was not kept"
+        );
+        assert_eq!(reused.first(), Some(&start));
+        assert_eq!(reused.last(), Some(&L_GOAL));
+        // the pulled cells near the robot are a whole plan's
+        assert_eq!(cells[0], whole_cells[0]);
+        // and the route is the one a whole plan smooths, to within a voxel
+        assert_near(&reused, &whole, MATCH_M);
+        assert_near(&whole, &reused, MATCH_M);
+    }
+
+    #[test]
+    fn a_change_on_a_long_route_resmooths_only_its_stretch() {
+        let (plg, start, goal) = staircase(30);
+        let config = truncate_config();
+        let (_, route) = plan_l(&plg, start, goal, None);
+        let n = route.assembled.len();
+        // one cell changed halfway: the stretch around it is pulled and smoothed again, both ends kept
+        let mut halfway = unchanged(&route);
+        halfway.cells[n / 2] = true;
+        let ((reused, _), again) = plan_l(&plg, start, goal, Some((&route, &halfway)));
+        let ((whole, _), fresh) = plan_l(&plg, start, goal, None);
+        assert_eq!(again.assembled, fresh.assembled);
+        let slack_cells = (config.route_reuse_slack_m / config.voxel_size).ceil() as usize;
+        // what is planned again: the robot's slack, the change a slack either side, and the chords those reach into
+        assert!(
+            again.kept_cells * 2 > n && again.kept_cells + 4 * slack_cells < n,
+            "kept {} of {n} cells around a {slack_cells}-cell slack",
+            again.kept_cells
+        );
+        assert!(
+            again.smoothed * 3 < fresh.smoothed,
+            "{} of {} points smoothed",
+            again.smoothed,
+            fresh.smoothed
+        );
+        assert_eq!(reused.first(), Some(&start));
+        assert_eq!(reused.last(), Some(&goal));
+        assert_near(&reused, &whole, MATCH_M);
+        assert_near(&whole, &reused, MATCH_M);
+        // a changed point near the goal leaves the goal's end planned again
+        let mut near_goal = unchanged(&route);
+        near_goal.points[route.points.len() - 3] = true;
+        let ((reused, _), _) = plan_l(&plg, start, goal, Some((&route, &near_goal)));
+        let tail = &reused[reused.len() - 10..];
+        assert_near(tail, &whole, MATCH_M);
+        // a route to a goal that moved is planned whole
+        let moved = (goal.0, goal.1 - VOXEL, goal.2);
+        let ((reused, _), _) = plan_l(&plg, start, moved, Some((&route, &unchanged(&route))));
+        let ((whole, _), _) = plan_l(&plg, start, moved, None);
+        assert_eq!(reused, whole);
+    }
+
+    /// Timing, not a check: a whole plan of a long staircase route against a replan with one cell changed halfway.
+    #[test]
+    #[ignore]
+    fn route_reuse_cost_on_a_long_route() {
+        let (plg, start, goal) = staircase(200);
+        let time = |f: &dyn Fn()| {
+            let mut ms: Vec<f64> = (0..20)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    f();
+                    t.elapsed().as_secs_f64() * 1e3
+                })
+                .collect();
+            ms.sort_by(f64::total_cmp);
+            ms[ms.len() / 2]
+        };
+        let (_, route) = plan_l(&plg, start, goal, None);
+        let mut halfway = unchanged(&route);
+        halfway.cells[route.assembled.len() / 2] = true;
+        let whole = time(&|| {
+            plan_l(&plg, start, goal, None);
+        });
+        let reused = time(&|| {
+            plan_l(&plg, start, goal, Some((&route, &halfway)));
+        });
+        eprintln!(
+            "route of {} cells, {} points: whole plan {whole:.2} ms, replan with one change {reused:.2} ms",
+            route.assembled.len(),
+            route.points.len()
+        );
+    }
+
+    #[test]
+    fn a_change_everywhere_plans_the_whole_route_again() {
+        let plg = l_corridor();
+        let (_, route) = plan_l(&plg, (0.25, 0.25, 0.05), L_GOAL, None);
+        let start = (0.65, 0.25, 0.05);
+        let mut all = unchanged(&route);
+        all.cells.iter_mut().for_each(|c| *c = true);
+        let ((reused, _), again) = plan_l(&plg, start, L_GOAL, Some((&route, &all)));
+        let ((whole, _), _) = plan_l(&plg, start, L_GOAL, None);
+        assert_eq!(again.kept_cells, 0);
+        assert_eq!(reused, whole);
+    }
+
+    #[test]
+    fn a_route_cell_that_changed_layer_is_planned_again() {
+        let (mut plg, start, goal) = staircase(8);
+        // a closure froze the map, and all of it but a band across the corridor migrated into the new layer
+        let band = |k: VoxelKey| (80..83).contains(&k.0);
+        let ids: Vec<CellId> = plg.cells.ids().collect();
+        plg.cells.begin_layer(1);
+        for &id in &ids {
+            let k = plg.cells.coord(id);
+            if !band(k) {
+                plg.cells.move_to_layer(id, k);
+            }
+        }
+        let (_, route) = plan_l(&plg, start, goal, None);
+        let in_band: Vec<usize> = (0..route.assembled.len())
+            .filter(|&i| band(plg.cells.coord(route.assembled[i])))
+            .collect();
+        assert!(!in_band.is_empty(), "the route crosses the band");
+        let (_, kept) = plan_l(&plg, start, goal, Some((&route, &unchanged(&route))));
+        // the band migrates too
+        for &i in &in_band {
+            let id = route.assembled[i];
+            plg.cells.move_to_layer(id, plg.cells.coord(id));
+        }
+        let ((reused, _), again) = plan_l(&plg, start, goal, Some((&route, &unchanged(&route))));
+        let ((whole, _), fresh) = plan_l(&plg, start, goal, None);
+        assert!(
+            again.kept_cells < kept.kept_cells,
+            "the band is planned again"
+        );
+        assert!(again.kept_cells > 0, "the rest is kept");
+        assert!(again.smoothed < fresh.smoothed);
+        assert_near(&reused, &whole, MATCH_M);
     }
 
     #[test]
@@ -1151,8 +1810,9 @@ mod tests {
         let start = plg.cells.id((10, 0, 0)).unwrap();
         let goal = plg.cells.id((15, 0, 0)).unwrap();
         let goal_node = plg.nodes[0].cell_id;
-        let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
-        let (ctg, pred) = node_dijkstra(&plg, goal_node);
+        let node_cells = &plg.nodes;
+        let all: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+        let (ctg, pred) = node_dijkstra(&plg, goal_node, &all);
 
         let (lead, node_seq) = select_entry(
             &plg,
@@ -1161,7 +1821,7 @@ mod tests {
             goal_node,
             &ctg,
             &pred,
-            &node_cells,
+            node_cells,
             3.0,
         )
         .unwrap();
@@ -1187,20 +1847,12 @@ mod tests {
         let near = plg.cells.id((10, 0, 0)).unwrap();
         let goal = plg.cells.id((19, 0, 0)).unwrap();
         let goal_node = plg.nodes[0].cell_id;
-        let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
-        let (ctg, pred) = node_dijkstra(&plg, goal_node);
+        let node_cells = &plg.nodes;
+        let all: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+        let (ctg, pred) = node_dijkstra(&plg, goal_node, &all);
 
-        let (lead, node_seq) = select_entry(
-            &plg,
-            &[near],
-            goal,
-            goal_node,
-            &ctg,
-            &pred,
-            &node_cells,
-            0.3,
-        )
-        .unwrap();
+        let (lead, node_seq) =
+            select_entry(&plg, &[near], goal, goal_node, &ctg, &pred, node_cells, 0.3).unwrap();
         assert_eq!(
             lead.first(),
             Some(&near),
@@ -1223,19 +1875,11 @@ mod tests {
         let reaching_rest = plg.cells.id((14, 0, 0)).unwrap();
         let goal = plg.cells.id((19, 0, 0)).unwrap();
         let goal_node = plg.nodes[0].cell_id;
-        let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
-        let (ctg, pred) = node_dijkstra(&plg, goal_node);
+        let node_cells = &plg.nodes;
+        let all: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+        let (ctg, pred) = node_dijkstra(&plg, goal_node, &all);
 
-        let entry = select_entry(
-            &plg,
-            &[near],
-            goal,
-            goal_node,
-            &ctg,
-            &pred,
-            &node_cells,
-            0.3,
-        );
+        let entry = select_entry(&plg, &[near], goal, goal_node, &ctg, &pred, node_cells, 0.3);
         assert!(entry.is_none(), "disconnected candidate must not connect");
 
         let (lead, node_seq) = select_entry(
@@ -1245,7 +1889,7 @@ mod tests {
             goal_node,
             &ctg,
             &pred,
-            &node_cells,
+            node_cells,
             0.3,
         )
         .unwrap();

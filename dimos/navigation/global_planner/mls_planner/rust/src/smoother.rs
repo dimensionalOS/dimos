@@ -35,17 +35,29 @@ const CONVERGED_MOVE_M: f32 = 1e-3;
 /// Elastic-band smoothing: pull interior waypoints toward their neighbor
 /// midpoint and up the wall-clearance gradient. A move is kept only when its
 /// two chords stay feasible and their penalized cost does not increase.
+#[cfg(test)]
 pub(crate) fn smooth_path(
     plg: &PlannerGraph,
     waypoints: Vec<(f32, f32, f32)>,
     limits: &PathLimits,
     step_weight: f32,
 ) -> Vec<(f32, f32, f32)> {
+    smooth_path_indexed(plg, waypoints, limits, step_weight).0
+}
+
+/// smooth_path, with the index each input waypoint has among the smoothed points.
+pub(crate) fn smooth_path_indexed(
+    plg: &PlannerGraph,
+    waypoints: Vec<(f32, f32, f32)>,
+    limits: &PathLimits,
+    step_weight: f32,
+) -> (Vec<(f32, f32, f32)>, Vec<usize>) {
     if waypoints.len() < 3 {
-        return waypoints;
+        let at = (0..waypoints.len()).collect();
+        return (waypoints, at);
     }
     let vs = limits.voxel_size;
-    let mut pts = densify(&waypoints, SMOOTH_SPACING_CELLS * vs);
+    let (mut pts, waypoint_at) = densify(&waypoints, SMOOTH_SPACING_CELLS * vs);
 
     // Cached cost of each chord pts[i] -> pts[i+1], updated on accepted moves.
     let mut costs: Vec<f32> = pts
@@ -102,12 +114,14 @@ pub(crate) fn smooth_path(
             break;
         }
     }
-    pts
+    (pts, waypoint_at)
 }
 
-/// Subdivide each segment so no gap exceeds `spacing` in the ground plane.
-fn densify(waypoints: &[(f32, f32, f32)], spacing: f32) -> Vec<(f32, f32, f32)> {
+/// Subdivide each segment so no gap exceeds `spacing` in the ground plane, with the index of each input waypoint in the output.
+fn densify(waypoints: &[(f32, f32, f32)], spacing: f32) -> (Vec<(f32, f32, f32)>, Vec<usize>) {
     let mut out = Vec::with_capacity(waypoints.len() * 2);
+    let mut at = Vec::with_capacity(waypoints.len());
+    at.push(0);
     out.push(waypoints[0]);
     for w in waypoints.windows(2) {
         let (a, b) = (w[0], w[1]);
@@ -121,8 +135,9 @@ fn densify(waypoints: &[(f32, f32, f32)], spacing: f32) -> Vec<(f32, f32, f32)> 
                 a.2 + t * (b.2 - a.2),
             ));
         }
+        at.push(out.len() - 1);
     }
-    out
+    (out, at)
 }
 
 /// Wall distance of the surface cell under a world point.

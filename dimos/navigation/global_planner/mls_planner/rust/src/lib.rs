@@ -24,6 +24,7 @@ pub mod module;
 mod nodes;
 mod planner;
 mod region_viz;
+pub mod replan;
 mod smoother;
 mod surfaces;
 mod terrain;

@@ -113,6 +113,7 @@ impl MLSPlanner {
         require_full_route = false,
         max_region_columns = 10_000_000,
         max_closing_box_cells = 250_000_000,
+        route_reuse_slack_m = 3.0,
     ))]
     fn new(
         voxel_size: f32,
@@ -132,6 +133,7 @@ impl MLSPlanner {
         require_full_route: bool,
         max_region_columns: u64,
         max_closing_box_cells: u64,
+        route_reuse_slack_m: f32,
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
@@ -165,6 +167,7 @@ impl MLSPlanner {
             require_full_route,
             max_region_columns,
             max_closing_box_cells,
+            route_reuse_slack_m,
         };
         config
             .validate()
@@ -332,11 +335,7 @@ impl MLSPlanner {
     ) -> Option<Bound<'py, PyArray2<f32>>> {
         let config = &self.config;
         let planner = &mut self.planner;
-        let waypoints = py.allow_threads(|| {
-            planner.reform_around(start, config);
-            planner.reform_around(goal, config);
-            planner.plan(start, goal, config)
-        })?;
+        let waypoints = py.allow_threads(|| planner.plan(start, goal, config))?;
         let mut flat: Vec<f32> = Vec::with_capacity(waypoints.len() * 3);
         for (x, y, z) in waypoints {
             flat.push(x);
