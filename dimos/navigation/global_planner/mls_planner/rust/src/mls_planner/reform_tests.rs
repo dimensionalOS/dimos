@@ -673,7 +673,7 @@ fn loop_run_fingerprint(threads: u32) -> String {
     toy.cfg.set_migrate_per_update(60);
     toy.planner = Planner::new(threads);
     let mut out = String::new();
-    let mut plan = |toy: &mut Toy, out: &mut String| {
+    let plan = |toy: &mut Toy, out: &mut String| {
         let (start, goal) = ((1.0, 1.0, 0.1), (10.0, 9.0, 0.1));
         let waypoints = match toy.planner.plan_or_truncate(start, goal, &toy.cfg) {
             Plan::Full(w) | Plan::Truncated(w) => w,

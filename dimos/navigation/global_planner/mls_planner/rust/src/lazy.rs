@@ -65,10 +65,10 @@ pub struct ReformConfig {
     /// A closure starts a new layer when it closes a loop or moves some keyframe's box corner this far from the current layer's frame, m (0 = half a voxel).
     #[validate(range(min = 0.0))]
     pub min_shift_m: f32,
-    /// Calibrated ms migrating one stale element (voxel or cell) costs, with its share of the re-extraction and graph
-    /// repair after; a region update migrates what fits half its budget (Config::migrate_per_update), from the
-    /// submeshes around the update first and then those inside a closure's closing boxes, so no one update carries a
-    /// whole merge (0 = all at once).
+    /// Calibrated ms moving one stale element (voxel or cell) costs; a region update migrates what fits half its
+    /// budget (Config::half_budget_ms), the repair window around where they land charged at
+    /// Config::repair_ms_per_window_cell, from the submeshes around the update first and then those inside a closure's
+    /// closing boxes, so no one update carries a whole merge (both 0 = all at once).
     #[validate(range(min = 0.0))]
     pub migrate_ms_per_element: f32,
 }
@@ -84,7 +84,7 @@ impl ReformConfig {
             box_pad_m: 1.0,
             version_history: 4,
             min_shift_m: 0.0,
-            migrate_ms_per_element: 0.008,
+            migrate_ms_per_element: 0.0015,
         }
     }
 

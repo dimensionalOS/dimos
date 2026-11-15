@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::fixed_hash::AHashMap;
+use crate::fixed_hash::{AHashMap, AHashSet};
 use dimos_module::{debug_throttled, native_config, worker_pool};
 use rayon::prelude::*;
 use validator::{Validate, ValidationError};
@@ -136,12 +136,13 @@ pub struct Config {
     /// may cost, by the calibrated per-unit costs.
     #[validate(range(exclusive_min = 0.0, max = 1.0))]
     pub update_period_share: f32,
-    /// Calibrated ms one changed column's surface and graph repair costs (stitching to stale layers included). Changed
-    /// columns past the budget's half wait, their voxels already in, for the next updates, nearest the region's center
-    /// first, so no one update carries a whole region rewritten (the first region after a closure starts a layer);
-    /// 0 repairs all at once.
+    /// Calibrated ms the graph repair costs per cell of its window (the cells within the repair window of a changed
+    /// column, by WindowEstimate; stitching to stale layers and wall distances included). Changed columns past what
+    /// fits the budget's half wait, their voxels already in, for the next updates, nearest the region's center first,
+    /// so no one update carries a whole region rewritten (the first region after a closure starts a layer); a stale
+    /// migration's repair is charged the same. 0 repairs all at once.
     #[validate(range(min = 0.0))]
-    pub repair_ms_per_column: f32,
+    pub repair_ms_per_window_cell: f32,
     /// A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     #[validate(range(min = 1))]
     pub max_closing_box_cells: u64,
@@ -177,22 +178,17 @@ impl Config {
         self.scan_period_s as f64 * 1e3 * self.update_period_share as f64
     }
 
-    /// How many units costing `ms_per_unit` fit half of update_budget_ms, at least 1; unbounded at cost 0.
-    fn units_in_half_budget(&self, ms_per_unit: f32) -> usize {
-        if ms_per_unit <= 0.0 {
+    /// Half of update_budget_ms: what the waiting column repair, and apart the stale migration, may each cost.
+    pub fn half_budget_ms(&self) -> f64 {
+        0.5 * self.update_budget_ms()
+    }
+
+    /// Estimated repair window cells one region update's waiting column repair takes on; unbounded at cost 0.
+    pub fn repair_window_cells_per_update(&self) -> usize {
+        if self.repair_ms_per_window_cell <= 0.0 {
             return usize::MAX;
         }
-        ((0.5 * self.update_budget_ms() / ms_per_unit as f64).round() as usize).max(1)
-    }
-
-    /// Changed columns one region update repairs, from the budget and repair_ms_per_column.
-    pub fn region_columns_per_update(&self) -> usize {
-        self.units_in_half_budget(self.repair_ms_per_column)
-    }
-
-    /// Stale elements (voxels and cells) one region update migrates, from the budget and reform.migrate_ms_per_element.
-    pub fn migrate_per_update(&self) -> usize {
-        self.units_in_half_budget(self.reform.migrate_ms_per_element)
+        (self.half_budget_ms() / self.repair_ms_per_window_cell as f64).round() as usize
     }
 
     /// Number of dilation and erosion passes for the closing radius.
@@ -418,8 +414,48 @@ pub struct Planner {
     route: Option<route::RouteWatch>,
     // Stage times of the last update or closure call.
     clock: StageClock,
-    // Columns whose voxels a region update changed and whose surface and graph are still to repair, config.region_columns_per_update() a call.
+    // Columns whose voxels a region update changed and whose surface and graph are still to repair, as many a call as config.repair_window_cells_per_update() covers.
     region_pending: BTreeMap<(i32, i32), PendingColumn>,
+}
+
+/// How many cells a repair window around a set of columns holds, roughly and cheaply: blocks of the window's reach on
+/// a side, each column counting the 3x3 blocks around its own, every block once. Deterministic in the columns added.
+pub(crate) struct WindowEstimate {
+    block: i32,
+    blocks: AHashSet<(i32, i32)>,
+}
+
+impl WindowEstimate {
+    pub(crate) fn new(window_steps: i32) -> Self {
+        Self {
+            block: window_steps.max(1),
+            blocks: AHashSet::default(),
+        }
+    }
+
+    fn around(&self, (x, y): (i32, i32)) -> impl Iterator<Item = (i32, i32)> {
+        let (bx, by) = (x.div_euclid(self.block), y.div_euclid(self.block));
+        (-1..=1).flat_map(move |dx| (-1..=1).map(move |dy| (bx + dx, by + dy)))
+    }
+
+    pub(crate) fn add(&mut self, col: (i32, i32)) {
+        for b in self.around(col).collect::<Vec<_>>() {
+            self.blocks.insert(b);
+        }
+    }
+
+    /// cells() once `col` is added, without adding it.
+    pub(crate) fn cells_with(&self, col: (i32, i32)) -> usize {
+        let new = self
+            .around(col)
+            .filter(|b| !self.blocks.contains(b))
+            .count();
+        (self.blocks.len() + new) * (self.block * self.block) as usize
+    }
+
+    pub(crate) fn cells(&self) -> usize {
+        self.blocks.len() * (self.block * self.block) as usize
+    }
 }
 
 /// What changed in a column whose repair waits: whether it gained or lost its only voxel, the heights edited, the
@@ -697,9 +733,10 @@ impl Planner {
         })
     }
 
-    /// The edits this update repairs: all of them when nothing waits and they fit config.region_columns_per_update(),
-    /// else they join the waiting columns and the ones nearest `center` (by column, then by key) up to the budget come
-    /// out, with the widest window any of them asked for. A route through a column that starts waiting is touched.
+    /// The edits this update repairs: all of them when nothing waits and their estimated window fits
+    /// config.repair_window_cells_per_update(), else they join the waiting columns and the ones nearest `center` (by
+    /// distance, then by key) come out while their window estimate fits (the nearest always), with the widest window
+    /// any of them asked for. A route through a column that starts waiting is touched.
     fn repair_share(
         &mut self,
         edits: VoxelEdits,
@@ -707,8 +744,12 @@ impl Planner {
         center: (i32, i32),
         config: &Config,
     ) -> (VoxelEdits, i32) {
-        let budget = config.region_columns_per_update();
-        if self.region_pending.is_empty() && edits.columns().count() <= budget {
+        let budget = config.repair_window_cells_per_update();
+        if self.region_pending.is_empty() && {
+            let mut estimate = WindowEstimate::new(window_steps);
+            edits.columns().for_each(|col| estimate.add(col));
+            estimate.cells() <= budget
+        } {
             return (edits, window_steps);
         }
         if let Some(route) = &mut self.route {
@@ -737,10 +778,23 @@ impl Planner {
                 (dx * dx + dy * dy, (x, y))
             })
             .collect();
-        if order.len() > budget {
-            order.select_nth_unstable(budget);
-            order.truncate(budget);
+        // Each column's window holds at least its own cell, so no more than the budget's cell count can come out.
+        if order.len() > budget.max(1) {
+            order.select_nth_unstable(budget.max(1));
+            order.truncate(budget.max(1));
         }
+        order.sort_unstable();
+        let mut estimate = WindowEstimate::new(window_steps);
+        let mut taken = 0;
+        for &(_, col) in &order {
+            if taken > 0 && estimate.cells_with(col) > budget {
+                break;
+            }
+            estimate.add(col);
+            taken += 1;
+        }
+        order.truncate(taken);
+        self.clock.count("window_estimate", estimate.cells());
         order.sort_unstable_by_key(|&(_, col)| col);
         let mut out = VoxelEdits::default();
         let mut steps = 0;
@@ -1511,7 +1565,7 @@ pub(crate) fn test_config() -> Config {
         max_region_columns: 10_000_000,
         scan_period_s: 0.1,
         update_period_share: 0.4,
-        repair_ms_per_column: 0.0,
+        repair_ms_per_window_cell: 0.0,
         max_closing_box_cells: 250_000_000,
         route_reuse_slack_m: 3.0,
     }
@@ -1530,16 +1584,15 @@ impl Config {
         }
     }
 
-    /// Repair `count` changed columns per region update (0 = all at once).
-    pub(crate) fn set_region_columns_per_update(&mut self, count: u32) {
-        self.repair_ms_per_column = self.unit_cost_for(count);
-        debug_assert!(count == 0 || self.region_columns_per_update() == count as usize);
+    /// Repair windows of about `count` estimated cells per region update (0 = all at once).
+    pub(crate) fn set_repair_window_cells_per_update(&mut self, count: u32) {
+        self.repair_ms_per_window_cell = self.unit_cost_for(count);
     }
 
-    /// Migrate `count` stale elements per region update (0 = all at once).
+    /// Migrate `count` stale elements per region update, the repair after free (0 = all at once).
     pub(crate) fn set_migrate_per_update(&mut self, count: u32) {
+        self.repair_ms_per_window_cell = 0.0;
         self.reform.migrate_ms_per_element = self.unit_cost_for(count);
-        debug_assert!(count == 0 || self.migrate_per_update() == count as usize);
     }
 }
 
