@@ -65,6 +65,15 @@ logger = setup_logger()
 # Following a human arm needs more than the URDF's 2 rad/s.
 DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 3.0
 DUAL_OPENYAM_LEADER_WRIST_VELOCITY_RAD_S = 4.0
+# How far a command may run from the follower's reading, in radians. It bounds
+# command minus measured, not torque: a joint that cannot reach the leader is
+# pushed with kp x limit for as long as the leader holds it there. That is 12 Nm
+# at kp 80 on the DM4340s, rated about 9 Nm continuous and 27 Nm peak, and 3 Nm at
+# kp 10 on the DM4310s, rated about 3 Nm continuous. Gravity is fed forward in the
+# MIT frame, so the limit only has to cover tracking lag, recorded at 8-15 mrad at
+# rest and 120-150 mrad on the arm joints at 3 rad/s.
+DUAL_OPENYAM_LEADER_LEAD_LIMIT_RAD = 0.15
+DUAL_OPENYAM_LEADER_WRIST_LEAD_LIMIT_RAD = 0.3
 DUAL_OPENYAM_WRIST_JOINTS = ("joint4", "joint5", "joint6")
 # Measured on the OpenArm leaders: a 6 Hz low-pass halves wrist roughness for
 # about 10 ms of lag, and a reading every coordinator tick halves each ramp.
@@ -97,6 +106,17 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
             DUAL_OPENYAM_LEADER_WRIST_VELOCITY_RAD_S
             if joint.endswith(DUAL_OPENYAM_WRIST_JOINTS)
             else DUAL_OPENYAM_LEADER_VELOCITY_RAD_S
+        )
+        for joint in DUAL_OPENYAM_LEADER_JOINTS
+    }
+
+
+def dual_openyam_leader_lead_limits() -> dict[str, float]:
+    return {
+        joint: (
+            DUAL_OPENYAM_LEADER_WRIST_LEAD_LIMIT_RAD
+            if joint.endswith(DUAL_OPENYAM_WRIST_JOINTS)
+            else DUAL_OPENYAM_LEADER_LEAD_LIMIT_RAD
         )
         for joint in DUAL_OPENYAM_LEADER_JOINTS
     }
@@ -231,9 +251,8 @@ def dual_openyam_leader_control() -> Blueprint:
                         # Each leader target continues from the last command, so a
                         # follower that lags gets one rate-limited ramp instead of a
                         # restart from its reading at every target (14-50 Hz teeth).
-                        # The default 0.3 rad lead limit caps the extra push on a
-                        # blocked joint at 24 Nm (kp 80) and 3 Nm (kp 10).
                         continuous_stream=True,
+                        stream_lead_limits=dual_openyam_leader_lead_limits(),
                     ),
                     stream_bind={"joint_command": "leader_joint_command"},
                 ),
