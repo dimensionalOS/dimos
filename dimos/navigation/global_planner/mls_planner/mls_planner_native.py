@@ -107,7 +107,7 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     max_region_columns: int = 10_000_000
     # Changed columns one region update repairs, nearest its center first; the rest wait for the next updates, so the
     # first region after a closure (a whole region rewritten) is spread out instead of one long update (0 = all at once).
-    region_columns_per_update: int = 6000
+    region_columns_per_update: int = 2000
     # A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     max_closing_box_cells: int = 250_000_000
     # A replan to the same goal keeps the last route from this far past where the new cell path rejoins it and past the last change on it; only the stretch before is pulled and smoothed again.

@@ -709,6 +709,9 @@ impl Planner {
         }
         self.clock.count("stitch_submeshes", found.len());
         let in_columns = |c: &(i32, i32)| columns.binary_search(c).is_ok();
+        // Anchors whose carries agree this closely share one read window, widened by as much: no wider than the
+        // surface extraction reads around a change.
+        let tolerance = (2 * config.closing_passes()).max(1) as f64 * vs as f64;
         // Stale cells standing now in a landing column, with their z now, each once.
         let mut near: Vec<((i32, i32), CellId, f32)> = Vec::new();
         let mut taken: ahash::AHashSet<CellId> = ahash::AHashSet::new();
@@ -745,7 +748,7 @@ impl Planner {
                     .collect();
                 // Each landing column carried back by each group's pose, widened by how far any member's carry and
                 // a point's place in its column and the height band can take it from there; read once for all groups.
-                let groups = carry_groups(&reaching, bbox, band, vs);
+                let groups = carry_groups(&reaching, bbox, band, vs, tolerance);
                 self.clock.count("stitch_groups", groups.len());
                 let mid = 0.5 * (band[0] + band[1]);
                 let mut mapped: Vec<(i32, i32)> = Vec::with_capacity(cols.len() * groups.len());
@@ -1242,7 +1245,7 @@ fn merge_cell(cells: &mut SurfaceCells, from: CellId, into: CellId) {
 }
 
 /// The anchors of `carries` in groups whose carries back from the box `bbox` (columns) over the height band agree
-/// within a voxel: each group's first member's pose back, its members (sorted), and how far (m, in xy) a point of a
+/// within `tolerance` m: each group's first member's pose back, its members (sorted), and how far (m, in xy) a point of a
 /// landing column, anywhere in the box and band, carried back by a member can sit from its column's center carried
 /// back by the group's pose at mid band.
 fn carry_groups(
@@ -1250,6 +1253,7 @@ fn carry_groups(
     (x0, x1, y0, y1): (i32, i32, i32, i32),
     band: [f64; 2],
     voxel_size: f32,
+    tolerance: f64,
 ) -> Vec<(crate::lazy::Pose, Vec<u32>, f64)> {
     let v = voxel_size as f64;
     let corners: Vec<[f64; 3]> = (0..8)
@@ -1281,7 +1285,7 @@ fn carry_groups(
     };
     let mut groups: Vec<(crate::lazy::Pose, Vec<u32>, f64)> = Vec::new();
     for (&anchor, (_, back)) in carries {
-        match groups.iter_mut().find(|g| apart(&g.0, back) <= v) {
+        match groups.iter_mut().find(|g| apart(&g.0, back) <= tolerance) {
             Some(g) => {
                 g.2 = g.2.max(apart(&g.0, back));
                 g.1.push(anchor);
