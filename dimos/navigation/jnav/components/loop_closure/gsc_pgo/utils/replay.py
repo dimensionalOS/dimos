@@ -18,7 +18,7 @@
 back its optimized pose graph. The replay itself comes in two flavors:
 ``LockstepReplay`` (ack-paced, machine-speed independent).
 ``GraphCapture`` collects the output graph of a module publishing GscPGO's packed records,
-``Graph3DCapture`` that of one publishing ``Graph3D`` (BaselinePGO).
+``Graph3DCapture`` that of one publishing ``Graph3D``.
 """
 
 from __future__ import annotations
