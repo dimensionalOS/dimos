@@ -273,6 +273,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.web.cockpit import Channel, cockpit
 
@@ -301,7 +302,12 @@ class HealthMonitor(Module):
 go2_web = autoconnect(
     unitree_go2,
     HealthMonitor.blueprint(),
-    cockpit(channels=[Channel("health", Health, max_hz=1.0)]),
+    cockpit(
+        channels=[
+            Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+            Channel("health", Health, max_hz=1.0),
+        ]
+    ),
 )
 ```
 
@@ -311,6 +317,17 @@ How the pieces connect:
 - `Channel("health", Health)` uses `json.v1`, the default for JSON scalars, lists, dicts and plain dataclasses. The browser decodes it without registration.
 - Encoding is lazy. A channel costs nothing until some viewer subscribes, and stops encoding when the last viewer leaves.
 - `cockpit(layout=..., channels=[...])` is fine too. For a pure SDK setup, leave `layout` out and declare only the channels you want to serve.
+- A nonempty `channels` list with no `layout` replaces the default preset, even when `pages` are supplied. Explicit layouts and pages still contribute their requested channels. This example declares `odom` at the preset's 20 Hz so the first page's subscription keeps working. Subscribing to an omitted channel reports `unknown_channel`.
+
+To retain a built-in receive stream, its declaration must match the built-in message type, [encoding](/docs/web/bridge.md#encodings) and delivery mode:
+
+| Stream | Message type | Encoding | Delivery |
+|---|---|---|---|
+| `odom` | `PoseStamped` | `pose.json.v1` | `reliable` (the `Channel` default) |
+| `color_image` | `Image` | `jpeg.v1` | `latest` |
+| `global_costmap` | `OccupancyGrid` | `costmap.zlib.v1` | `latest` |
+
+Set `delivery="latest"` explicitly for `color_image` and `global_costmap`; the default `reliable` delivery is rejected for those streams. To keep the full cockpit with extra channels, pass an explicit [layout](/docs/web/cockpit.md#describe-the-layout-in-python) containing `Video()`, `Map2D()` and `Teleop()`. Teleop is requested through `Teleop()` in a layout or page: its specialized protocol cannot be restored with a generic publish `Channel`.
 
 `page/index.html` shows the value:
 
@@ -345,7 +362,7 @@ The page opens automatically and the health line updates once a second.
 
 The Go2's `lidar` stream is a `PointCloud2`. Its default LCM encoding costs 16 bytes per point at the full rate. This step sends a quarter of the points as bare (x, y) pairs instead and draws them as a live 2D scatter. It adds an encoder and a channel on the robot side, and a decoder and a canvas on the page.
 
-In `web.py`, the encoder and the second channel:
+Add the encoder and its imports to `web.py`:
 
 ```python skip
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -359,13 +376,14 @@ def encode_lidar_xy(msg: PointCloud2) -> EncodedPayload:
     return EncodedPayload(points.tobytes(), {"n": len(points)})
 ```
 
+Then replace the `cockpit(...)` argument inside `autoconnect(...)`, keeping the earlier channels:
+
 ```python skip
-    cockpit(
-        channels=[
-            Channel("health", Health, max_hz=1.0),
-            Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
-        ]
-    ),
+cockpit(channels=[
+    Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+    Channel("health", Health, max_hz=1.0),
+    Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
+])
 ```
 
 `autoconnect` wires `lidar` to the driver's `lidar: Out[PointCloud2]` already inside `unitree_go2`. An encoder returns `bytes`, an `EncodedPayload` (payload plus a small JSON meta mapping sent in the frame header), or `None` to skip a sample. Because dimOS modules live in different processes, codec functions must be importable by name (the registry ships them by reference). A function defined inline in a script or a lambda is rejected.
@@ -454,8 +472,13 @@ A peer that fails is offered again after 1 second, then after 2. The third failu
 
 A `dir="tx"` channel with `publish="shared"` is a browser input. Any viewer may publish on it. The bridge decodes the JSON value with the matching decoder and publishes it on a typed `Out` port, and your modules consume it like any other stream.
 
+Append the input declaration to the existing channel list. Continuing the tutorial, replace the `cockpit(...)` argument with:
+
 ```python skip
 cockpit(channels=[
+    Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+    Channel("health", Health, max_hz=1.0),
+    Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
     Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
 ])
 ```
