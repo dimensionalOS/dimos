@@ -112,6 +112,7 @@ impl MLSPlanner {
         reform = None,
         require_full_route = false,
         max_region_columns = 10_000_000,
+        region_columns_per_update = 0,
         max_closing_box_cells = 250_000_000,
         route_reuse_slack_m = 3.0,
     ))]
@@ -132,6 +133,7 @@ impl MLSPlanner {
         reform: Option<&Bound<'_, PyDict>>,
         require_full_route: bool,
         max_region_columns: u64,
+        region_columns_per_update: u32,
         max_closing_box_cells: u64,
         route_reuse_slack_m: f32,
     ) -> PyResult<Self> {
@@ -166,6 +168,7 @@ impl MLSPlanner {
             reform: reform_config(reform)?,
             require_full_route,
             max_region_columns,
+            region_columns_per_update,
             max_closing_box_cells,
             route_reuse_slack_m,
         };

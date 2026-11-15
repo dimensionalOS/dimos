@@ -14,6 +14,7 @@
 
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -127,6 +128,10 @@ pub struct Config {
     /// A region update spanning more columns is a bad pose or bound, refused before it allocates per-column scratch.
     #[validate(range(min = 1))]
     pub max_region_columns: u64,
+    /// Changed columns one region update repairs the surface and graph of, nearest the region's center first; the rest
+    /// wait, their voxels already in, for the next updates (0 = all at once), so no one update carries a whole region
+    /// rewritten (the first region after a closure starts a layer).
+    pub region_columns_per_update: u32,
     /// A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
     #[validate(range(min = 1))]
     pub max_closing_box_cells: u64,
@@ -380,6 +385,18 @@ pub struct Planner {
     route: Option<route::RouteWatch>,
     // Stage times of the last update or closure call.
     clock: StageClock,
+    // Columns whose voxels a region update changed and whose surface and graph are still to repair, config.region_columns_per_update a call.
+    region_pending: BTreeMap<(i32, i32), PendingColumn>,
+}
+
+/// What changed in a column whose repair waits: whether it gained or lost its only voxel, the heights edited, the
+/// kept voxels whose plane moved, and the widest repair window an update asked for it.
+#[derive(Default)]
+struct PendingColumn {
+    flipped: bool,
+    heights: Vec<i32>,
+    retuned: Vec<i32>,
+    window_steps: i32,
 }
 
 /// How big the planner's containers are.
@@ -421,6 +438,7 @@ impl Planner {
             lazy: None,
             route: None,
             clock: StageClock::default(),
+            region_pending: BTreeMap::new(),
         }
     }
 
@@ -456,6 +474,7 @@ impl Planner {
                 })
                 .collect();
             self.by_col = ColumnIz::from_voxels(&keys);
+            self.region_pending.clear();
             self.rebuild_from_voxels(config);
         });
     }
@@ -565,14 +584,33 @@ impl Planner {
             let edits = self.replace_region_voxels(local_points, bounds, config);
             let diff_ms = ms_since(stage);
             self.clock.add("replace_voxels", stage);
-            // No voxel changed, so surfaces and the graph are untouched.
+            self.clock.count("edit_columns", edits.columns().count());
+            // No voxel changed and no repair waits, so surfaces and the graph are untouched.
+            if edits.is_empty() && self.region_pending.is_empty() {
+                return None;
+            }
+            let stage = Instant::now();
+            let center = (
+                (bounds.origin_x / voxel_size).floor() as i32,
+                (bounds.origin_y / voxel_size).floor() as i32,
+            );
+            let (edits, window_steps) = self.repair_share(edits, window_steps, center, config);
+            self.clock.add("pending", stage);
+            self.clock
+                .count("repaired_columns", edits.columns().count());
+            self.clock
+                .count("pending_columns", self.region_pending.len());
             if edits.is_empty() {
                 return None;
             }
 
             // A changed column shifts surfaces only within pad of it (and a
             // riser bridge one column more), and the extraction reads as much again.
-            let bbox = bounds.column_bbox(voxel_size);
+            let mut cols = edits.columns();
+            let first = cols.next().expect("the edits are not empty");
+            let bbox = cols.fold((first.0, first.0, first.1, first.1), |b, (x, y)| {
+                (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y))
+            });
             let reach = pad + riser_reach(config.closing_passes());
             let mut footprint = ColumnMask::new(bbox, 2 * reach);
             for col in edits.columns() {
@@ -618,8 +656,82 @@ impl Planner {
                 cells_removed,
                 "region update stages"
             );
+            // A route through a column still waiting for repair crosses what is not there yet, so it plans again.
+            if let Some(route) = &mut self.route {
+                route.note_columns(self.region_pending.keys().copied());
+            }
             write.bounds()
         })
+    }
+
+    /// The edits this update repairs: all of them when nothing waits and they fit config.region_columns_per_update,
+    /// else they join the waiting columns and the ones nearest `center` (by column, then by key) up to the budget come
+    /// out, with the widest window any of them asked for. A route through a column that starts waiting is touched.
+    fn repair_share(
+        &mut self,
+        edits: VoxelEdits,
+        window_steps: i32,
+        center: (i32, i32),
+        config: &Config,
+    ) -> (VoxelEdits, i32) {
+        let budget = match config.region_columns_per_update {
+            0 => usize::MAX,
+            n => n as usize,
+        };
+        if self.region_pending.is_empty() && edits.columns().count() <= budget {
+            return (edits, window_steps);
+        }
+        if let Some(route) = &mut self.route {
+            route.note_columns(edits.columns());
+        }
+        let pending = &mut self.region_pending;
+        for &col in &edits.flipped {
+            let entry = pending.entry(col).or_default();
+            entry.flipped = true;
+            entry.window_steps = entry.window_steps.max(window_steps);
+        }
+        for (col, heights) in &edits.changed {
+            let entry = pending.entry(*col).or_default();
+            entry.heights.extend_from_slice(heights);
+            entry.window_steps = entry.window_steps.max(window_steps);
+        }
+        for &(x, y, z) in &edits.retuned {
+            let entry = pending.entry((x, y)).or_default();
+            entry.retuned.push(z);
+            entry.window_steps = entry.window_steps.max(window_steps);
+        }
+        let mut order: Vec<(i64, (i32, i32))> = pending
+            .keys()
+            .map(|&(x, y)| {
+                let (dx, dy) = ((x - center.0) as i64, (y - center.1) as i64);
+                (dx * dx + dy * dy, (x, y))
+            })
+            .collect();
+        if order.len() > budget {
+            order.select_nth_unstable(budget);
+            order.truncate(budget);
+        }
+        order.sort_unstable_by_key(|&(_, col)| col);
+        let mut out = VoxelEdits::default();
+        let mut steps = 0;
+        for (_, col) in order {
+            let Some(mut entry) = pending.remove(&col) else {
+                continue;
+            };
+            steps = steps.max(entry.window_steps);
+            entry.heights.sort_unstable();
+            entry.heights.dedup();
+            entry.retuned.sort_unstable();
+            entry.retuned.dedup();
+            out.retuned
+                .extend(entry.retuned.iter().map(|&z| (col.0, col.1, z)));
+            if entry.flipped {
+                out.flipped.push(col);
+            } else if !entry.heights.is_empty() {
+                out.changed.push((col, entry.heights));
+            }
+        }
+        (out, steps)
     }
 
     /// Patch changed cells and repair nodes and edges around them and the edits; `moves` carry nodes to target cells and `rekeyed` keys get their adjacency rebuilt.
@@ -1367,6 +1479,7 @@ pub(crate) fn test_config() -> Config {
         reform: ReformConfig::off(),
         require_full_route: false,
         max_region_columns: 10_000_000,
+        region_columns_per_update: 0,
         max_closing_box_cells: 250_000_000,
         route_reuse_slack_m: 3.0,
     }
