@@ -1751,6 +1751,52 @@ fn a_region_rewritten_on_a_column_budget_repairs_it_nearest_first_and_ends_like_
     assert_plans_equivalent(&once, &spread, &cfg);
 }
 
+/// A whole region rewritten on a voxel budget puts in at most the budget a call, nearest the center first, the rest
+/// coming in from the next calls' clouds, and ends like one done at once.
+#[test]
+fn a_region_rewritten_on_a_voxel_budget_goes_in_nearest_first_and_ends_like_one_done_at_once() {
+    let mut cfg = test_config();
+    let all = big_world();
+    let b = whole_world_bounds();
+    let cloud = bare(&slice(&all, &b, cfg.voxel_size));
+    let mut once = Planner::new(cfg.worker_threads);
+    once.update_region(&cloud, &b, &cfg);
+
+    cfg.set_voxels_per_update(1500);
+    let mut spread = Planner::new(cfg.worker_threads);
+    let count = |p: &Planner, name: &str| {
+        p.last_stage_counts()
+            .iter()
+            .find(|c| c.1 == name)
+            .map_or(0, |c| c.2)
+    };
+    spread.update_region(&cloud, &b, &cfg);
+    assert!(count(&spread, "waiting_voxel_columns") > 0, "a whole region waits past the budget");
+    let has = |p: &Planner, (x, y): (f32, f32)| {
+        let col = ((x / cfg.voxel_size) as i32, (y / cfg.voxel_size) as i32);
+        p.by_col.get(col).is_some()
+    };
+    assert!(has(&spread, (4.05, 4.05)), "the center goes in first");
+    assert!(!has(&spread, (0.05, 0.05)), "a far corner waits");
+    let mut calls = 1;
+    while count(&spread, "waiting_voxel_columns") > 0 {
+        assert!(spread.by_col.voxel_count() <= 1500 * calls, "a call put in more than the budget");
+        spread.update_region(&cloud, &b, &cfg);
+        calls += 1;
+        assert!(calls < 100, "the waiting voxels go in");
+    }
+    assert!(calls > 2);
+    assert_eq!(spread.by_col.voxel_count(), once.by_col.voxel_count());
+    assert_eq!(surface_set(&spread), surface_set(&once), "surfaces differ");
+    assert_eq!(cell_edges(&spread), cell_edges(&once), "cell links differ");
+    assert_eq!(
+        clearance_map(&spread, &cfg),
+        clearance_map(&once, &cfg),
+        "wall clearances differ"
+    );
+    assert_plans_equivalent(&once, &spread, &cfg);
+}
+
 /// A route across columns whose repair waits plans again: what it crosses there is the map before the update.
 #[test]
 fn a_route_across_columns_still_waiting_for_repair_plans_again() {
@@ -1797,6 +1843,14 @@ fn per_update_work_counts_come_from_the_scan_period_share_and_unit_costs() {
     assert_eq!(cfg.region_columns_per_update(), 1);
     cfg.repair_ms_per_column = 0.0;
     assert_eq!(cfg.region_columns_per_update(), usize::MAX);
+    // Putting voxels in shares the repair half: 0.001 ms a voxel fits 40000, and 20000 of them leave 20 ms to repair.
+    cfg.repair_ms_per_column = 0.04;
+    cfg.apply_ms_per_voxel = 0.001;
+    assert_eq!(cfg.voxels_per_update(), 40000);
+    assert_eq!(cfg.region_columns_after(20000), 500);
+    assert_eq!(cfg.region_columns_after(40000), 1);
+    cfg.apply_ms_per_voxel = 0.0;
+    assert_eq!(cfg.voxels_per_update(), usize::MAX);
     assert!(cfg.validate().is_ok());
     cfg.update_period_share = 1.5;
     assert!(cfg.validate().is_err());

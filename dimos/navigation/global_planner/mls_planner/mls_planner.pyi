@@ -42,6 +42,7 @@ class MLSPlanner:
         scan_period_s: float = 0.1,
         update_period_share: float = 0.4,
         repair_ms_per_column: float = 0.0,
+        apply_ms_per_voxel: float = 0.0,
         max_closing_box_cells: int = 250_000_000,
     ) -> None: ...
     def update_global_map(self, points: NDArray[np.float32]) -> None:
