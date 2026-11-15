@@ -386,6 +386,8 @@ dimos agent-send "walk forward 2 meters"
 
 Requires a blueprint that includes `McpServer` and `Agent`. The server publishes the text on `/human_input` on the active transport.
 
+A successful send confirms publication, not that an agent received or processed the message.
+
 ### `dimos mcp`
 
 Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `Agent` in the blueprint find the endpoint themselves).

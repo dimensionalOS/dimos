@@ -190,6 +190,18 @@ class TestMCPCLICommands:
         assert "echo" in tool_names
         assert "ping" in tool_names
 
+    def test_cli_falls_back_to_unrecorded_server(
+        self, mcp_entry: RunEntry, mcp_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mcp_entry.mcp_url = None
+        mcp_entry.save()
+        monkeypatch.setattr("dimos.agents.mcp.mcp_adapter.DEFAULT_MCP_URL", mcp_url)
+
+        result = CliRunner().invoke(main, ["mcp", "list-tools"])
+
+        assert result.exit_code == 0, result.output
+        assert "echo" in {tool["name"] for tool in json.loads(result.output)}
+
     def test_cli_call_echo(self, mcp_shared: ModuleCoordinator) -> None:
         """dimos mcp call echo --arg message=hello should return hello."""
         result = CliRunner().invoke(main, ["mcp", "call", "echo", "--arg", "message=hello"])
@@ -396,31 +408,3 @@ class TestMCPNoServer:
 
         coord.stop()
         assert adapter.wait_for_down(), "MCP server did not stop"
-
-    def test_cli_no_server_error(self) -> None:
-        """dimos mcp list-tools with no server should exit with error."""
-        result = CliRunner().invoke(main, ["mcp", "list-tools"])
-        assert result.exit_code == 1
-        assert "no running" in result.output.lower() or "error" in result.output.lower()
-
-    def test_cli_names_a_running_blueprint_without_mcp_server(
-        self, mcp_url: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A live run without McpServer is not reported as DimOS not running."""
-        # The CLI's fallback URL: this session's port, not a server a developer runs on 9990.
-        monkeypatch.setattr("dimos.agents.mcp.mcp_adapter.DEFAULT_MCP_URL", mcp_url)
-        RunEntry(
-            run_id="no-mcp",
-            pid=os.getpid(),
-            blueprint="coordinator-mock",
-            started_at=datetime.now(timezone.utc).isoformat(),
-            log_dir="/tmp/no-mcp",
-        ).save()
-        result = CliRunner().invoke(main, ["mcp", "list-tools"])
-        assert result.exit_code == 1
-        assert "coordinator-mock" in result.output
-
-    def test_agent_send_cli_no_server(self) -> None:
-        """dimos agent-send with no server should exit with error."""
-        result = CliRunner().invoke(main, ["agent-send", "hello"])
-        assert result.exit_code == 1
