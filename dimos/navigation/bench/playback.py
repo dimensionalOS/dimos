@@ -43,7 +43,7 @@ from dimos.simulation.scenes.procedural import Scene
 from dimos.simulation.sim_world.world import ROOT_QUAT, load_display_spec, open_viewer, scene_model
 from dimos.utils.executable import find_executable
 
-# The sim M20 publishes its joints as coordinator_joint_state.
+# Sims and drivers publish joint_state, a ControlCoordinator publishes coordinator_joint_state.
 JOINT_STREAMS = ("joint_state", "coordinator_joint_state")
 
 

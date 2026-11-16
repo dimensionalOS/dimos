@@ -21,7 +21,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.bench.playback import frames
 
 
-def test_frames_pose_the_joints_a_sim_m20_recording_holds(tmp_path: Path) -> None:
+def test_frames_read_coordinator_joint_state_when_joint_state_is_empty(tmp_path: Path) -> None:
     recording = tmp_path / "memory.db"
     store = SqliteStore(path=str(recording))
     store.start()
