@@ -26,7 +26,7 @@ from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
-from dimos.simulation.mujoco.menagerie import menagerie_path
+from dimos.simulation.mujoco.menagerie import ensure_menagerie, menagerie_path
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
 from dimos.utils.data import get_data
 
@@ -44,6 +44,9 @@ def _update_assets(assets: dict[str, bytes], path: Path, glob: str = "*") -> Non
 def get_assets() -> dict[str, bytes]:
     data_dir = _get_data_dir()
     assets: dict[str, bytes] = {}
+
+    # update_assets() silently skips a missing dir, so make sure the checkout exists first
+    ensure_menagerie()
 
     # Assets used from https://sketchfab.com/3d-models/mersus-office-8714be387bcd406898b2615f7dae3a47
     # Created by Ryan Cassidy and Coleman Costello

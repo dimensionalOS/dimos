@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,10 +29,10 @@ from dimos.simulation.scenes.catalog import resolve_scene_package
 StaticRerunFactory = Callable[[Any], Any]
 
 
-@dataclass(frozen=True)
 class SceneVisualFactory:
-    visual_path: Path
-    alignment: SceneMeshAlignment
+    def __init__(self, visual_path: Path, alignment: SceneMeshAlignment) -> None:
+        self.visual_path = visual_path
+        self.alignment = alignment
 
     def __call__(self, rr: Any) -> list[Any]:
         if not self.visual_path.exists():

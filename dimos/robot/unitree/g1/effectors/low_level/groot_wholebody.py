@@ -83,7 +83,7 @@ def _imu_from_unitree_wxyz(
 
 
 class G1WholeBodyConnectionConfig(ModuleConfig):
-    network_interface: str = Field(default="")
+    network_interface: str = Field(default="eth0")
     release_sport_mode: bool = True
     publish_rate_hz: float = 500.0
     frame_id: str = "g1_pelvis"
