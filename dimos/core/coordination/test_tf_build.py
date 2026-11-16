@@ -19,18 +19,18 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator, verify_tf_tree
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.spatial_module import SpatialModule, SpatialModuleConfig
 from dimos.core.stream import Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
-class OdomConfig(SpatialModuleConfig):
+class OdomConfig(TfModuleConfig):
     tf_frames_local: dict[str, str] = {"body": "base_link"}
     tf_frames_global: dict[str, str] = {"world": "world"}
     tf_edges: list[tuple[str, str]] = [("world", "body")]
 
 
-class Odom(SpatialModule):
+class Odom(TfModule):
     config: OdomConfig
 
     @rpc
@@ -72,12 +72,12 @@ class BackupOdom(Odom):
     """Publishes the same edge as Odom; autoconnect merges two copies of one class."""
 
 
-class LidarConfig(SpatialModuleConfig):
+class LidarConfig(TfModuleConfig):
     tf_frames_local: dict[str, str] = {"body": "base_link", "lidar": "lidar"}
     tf_edges: list[tuple[str, str]] = [("body", "lidar")]
 
 
-class Lidar(SpatialModule):
+class Lidar(TfModule):
     config: LidarConfig
 
 

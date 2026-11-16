@@ -41,8 +41,8 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.resource import Resource
-from dimos.core.spatial_module import SpatialModule
 from dimos.core.stream import Transport, TransportSpec
+from dimos.core.tf_module import TfModule
 from dimos.core.transport import (
     LCMTransport,
     PubSubTransport,
@@ -1080,9 +1080,9 @@ def _deploy_all_modules(
 
 
 def _namespace_tf_frames_local(atom: BlueprintAtom, kwargs: dict[str, Any]) -> None:
-    """Prefix a namespaced SpatialModule's local frames with its namespace, so copies don't share frames."""
+    """Prefix a namespaced TfModule's local frames with its namespace, so copies don't share frames."""
     namespace = _atom_namespace(atom.name)
-    if not namespace or not issubclass(atom.module, SpatialModule):
+    if not namespace or not issubclass(atom.module, TfModule):
         return
     frames = kwargs.get("tf_frames_local")
     if frames is None:
@@ -1104,7 +1104,7 @@ def verify_tf_tree(atoms: list[BlueprintAtom]) -> None:
     """Refuse a frame with two parents (or two publishers), and declared edges that form a cycle or several trees."""
     publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
     for atom in atoms:
-        if not issubclass(atom.module, SpatialModule):
+        if not issubclass(atom.module, TfModule):
             continue
         frames = {
             **_spatial_field(atom, "tf_frames_global"),
@@ -1151,16 +1151,16 @@ def verify_tf_tree(atoms: list[BlueprintAtom]) -> None:
             sorted(frames - publishers.keys()) or sorted(frames)[:1] for frames in trees.values()
         )
         message = f"declared tf edges form {len(trees)} separate trees, rooted at {roots}"
-        # A module that isn't a SpatialModule may publish the edges that join them, so only warn then.
+        # A module that isn't a TfModule may publish the edges that join them, so only warn then.
         undeclared_publishers = sorted(
             atom.name
             for atom in atoms
-            if not issubclass(atom.module, SpatialModule)
+            if not issubclass(atom.module, TfModule)
             and any(stream.name == "tf" and stream.direction != "in" for stream in atom.streams)
         )
         if undeclared_publishers:
             logger.warning(
-                f"{message}; {', '.join(undeclared_publishers)} may join them (not SpatialModules)"
+                f"{message}; {', '.join(undeclared_publishers)} may join them (not TfModules)"
             )
         else:
             errors.append(f"    - {message}")
