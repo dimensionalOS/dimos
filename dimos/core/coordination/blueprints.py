@@ -335,8 +335,9 @@ class Blueprint:
     def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> "Blueprint":
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
-        Instance names, stream names (and so their topics), TF frame ids, and RPC
-        topics all get the `{prefix}/` prefix, which disconnects the namespaced
+        Instance names, stream names (and so their topics), and RPC topics all get
+        the `{prefix}/` prefix; each module's ``handle_blueprint_namespace`` namespaces
+        its own config (TF frame ids), which disconnects the namespaced
         modules from everything outside.
 
         Stream names listed in *expose* are left unprefixed, so they connect
@@ -378,15 +379,9 @@ class Blueprint:
 
         for atom in self.blueprints:
             new_name = f"{prefix}/{atom.name}"
-            kwargs = dict(atom.kwargs)
+            # Before instance_name changes, so the hook can still see the old namespace.
+            kwargs = atom.module.handle_blueprint_namespace(dict(atom.kwargs), prefix)
             kwargs["instance_name"] = new_name
-            old_namespace = atom.name.rsplit("/", 1)[0] if "/" in atom.name else ""
-            frame_id_prefix = kwargs.get("frame_id_prefix")
-            if frame_id_prefix is None:
-                kwargs["frame_id_prefix"] = prefix
-            elif old_namespace and frame_id_prefix == old_namespace:
-                # Auto-set by an inner .namespace(); extend it. User-set values are kept.
-                kwargs["frame_id_prefix"] = f"{prefix}/{frame_id_prefix}"
             new_atoms.append(replace(atom, kwargs=kwargs, instance_name=new_name))
 
             for stream in atom.streams:

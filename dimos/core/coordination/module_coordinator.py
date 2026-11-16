@@ -1067,9 +1067,6 @@ def _deploy_all_modules(
         kwargs.pop("instance_name", None)
         if bp.instance_name is not None:
             kwargs["instance_name"] = bp.instance_name
-        # A module may adjust its own config, e.g. TfModule namespaces its local frames.
-        if adjust := getattr(bp.module, "blueprint_kwargs", None):
-            kwargs = adjust(kwargs, namespace=_atom_namespace(bp.name))
         module_specs.append((bp.module, gc, kwargs))
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 

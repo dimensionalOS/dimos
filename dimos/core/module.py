@@ -116,6 +116,11 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
+def blueprint_namespace(instance_name: str) -> str:
+    """ "robot1/inner/odom" -> "robot1/inner"."""
+    return instance_name.rsplit("/", 1)[0] if "/" in instance_name else ""
+
+
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
@@ -202,6 +207,26 @@ class ModuleBase(Configurable, CompositeResource):
         if self.config.frame_id_prefix:
             return f"{self.config.frame_id_prefix}/{base}"
         return base
+
+    @property
+    def namespace(self) -> str:
+        """The blueprint namespace this instance runs in, e.g. "robot1/inner"; "" outside any."""
+        return blueprint_namespace(self.config.instance_name or "")
+
+    @classmethod
+    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], prefix: str) -> dict[str, Any]:
+        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it (once per level, innermost first).
+
+        The default sets ``frame_id_prefix`` to the namespace, extending one an inner
+        ``.namespace()`` set; a user-set value is kept.
+        """
+        old_namespace = blueprint_namespace(kwargs.get("instance_name") or "")
+        frame_id_prefix = kwargs.get("frame_id_prefix")
+        if frame_id_prefix is None:
+            return {**kwargs, "frame_id_prefix": prefix}
+        if old_namespace and frame_id_prefix == old_namespace:
+            return {**kwargs, "frame_id_prefix": f"{prefix}/{frame_id_prefix}"}
+        return kwargs
 
     @rpc
     def build(self) -> None:
