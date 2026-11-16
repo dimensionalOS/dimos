@@ -63,13 +63,7 @@ def test_cli_import_does_not_pull_ipython() -> None:
 
 
 def test_help_startup_time() -> None:
-    """`dimos --help` must need under {HELP_TIMEOUT_SECONDS}s of CPU time.
-
-    CPU time rather than wall-clock: `--help` is ~0.8s of pure import work, but
-    on a CI runner with every xdist worker spawning module processes the child
-    gets starved and its wall-clock stretches past 8s (12.8s seen on macOS) while
-    its CPU time stays within ~20% of idle. Heavy imports show up in CPU time.
-    """
+    """`dimos --help` must finish in under {HELP_TIMEOUT_SECONDS}s."""
     with subprocess.Popen(
         [sys.executable, "-m", "dimos.cli.dimos", "--help"],
         stdout=subprocess.PIPE,
