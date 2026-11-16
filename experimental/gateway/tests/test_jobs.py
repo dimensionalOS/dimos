@@ -362,6 +362,32 @@ def test_a_rescan_forgets_what_was_introspected(
     assert probes_after("/catalog/scan") == 3
 
 
+def test_a_changed_checkout_forgets_what_was_introspected(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subprocess.run(["git", "init", "-q", str(state.dimos_dir)], check=True)
+    source = state.dimos_dir / "blueprint.py"
+    source.write_text("x = 1\n")
+    state.listed = [{"name": "good", "kind": "builtin"}]
+    # every read looks at the checkout again
+    monkeypatch.setattr(constants, "FINGERPRINT_CACHE_S", 0.0)
+    probes: list[list[str]] = []
+
+    async def probe(dimos_dir: Path, args: list[str], *rest: Any, **options: Any) -> Any:
+        probes.append(args)
+        return {"name": "good", "global": {}, "modules": {}}
+
+    monkeypatch.setattr(introspect, "run_child", probe)
+    config = "/catalog/blueprints/good/config"
+    assert client.get(config).status_code == 200
+    client.get(config)
+    assert len(probes) == 1
+    source.write_text("x = 2\n")
+    client.get(config)
+    client.get(config)
+    assert len(probes) == 2
+
+
 def test_an_extras_install_forgets_the_cached_package_probe(
     client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
 ) -> None:
