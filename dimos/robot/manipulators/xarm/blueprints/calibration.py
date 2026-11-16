@@ -384,7 +384,10 @@ xarm7_handeye_calibrate_sim = autoconnect(
 # fingers facing one point after another of the band the tripod may stand in, 0.4 to 0.9 m out
 # from the front edge and 0.5 to 0.95 m above the table, until the camera sees it; that view gives
 # the nominal the solve is checked against.
-XARM7_SCENE_HOLDS = [(0.45, 0.0, 0.30), (0.40, -0.25, 0.30)]
+# The card stops decoding about 1 m from the lens, so for a tripod off to one side the plate is
+# also held out toward that side (sim: corners 0.7 m out, 0.45 m across, 0.75 m up failed from the
+# middle hold alone and passed at 0.5 to 0.6 mm with these).
+XARM7_SCENE_HOLDS = [(0.45, 0.0, 0.30), (0.50, 0.25, 0.38), (0.50, -0.25, 0.38)]
 XARM7_SCENE_AIMS = [(x, y, 0.70) for x in (1.20, 1.50) for y in (0.0, -0.45, 0.45)]
 # The middle of the band, looking back at the arm: only the keep-out sphere and the default aim
 # use it.
