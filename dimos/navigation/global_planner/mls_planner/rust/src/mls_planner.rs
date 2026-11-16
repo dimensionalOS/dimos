@@ -86,7 +86,7 @@ pub struct Config {
     /// Vertical distance from goal within which the planner counts arrival.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_z_tolerance: f32,
-    /// Heading error under which a goal with a heading counts as reached.
+    /// Heading error in radians under which a goal with a heading counts as reached.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_yaw_tolerance: f32,
     /// Seconds a goal may go without a safe path before it is aborted.

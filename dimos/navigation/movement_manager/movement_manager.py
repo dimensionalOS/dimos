@@ -104,11 +104,12 @@ class MovementManager(Module):
         # NOTE: this NaN goal is more of a safety fallback.
         # It can be REALLY bad if a robot is supposed to stop moving but wont
         # we should probably think a more robust/strict requirement on planners
+        frame = "map"
         cancel = PointStamped(
-            ts=time.time(), frame_id="map", x=float("nan"), y=float("nan"), z=float("nan")
+            ts=time.time(), frame_id=frame, x=float("nan"), y=float("nan"), z=float("nan")
         )
         self.way_point.publish(cancel)
-        self.goal.publish(cancel_goal("map"))
+        self.goal.publish(cancel_goal(frame))
         logger.debug("Navigation cancelled — waiting for new goal")
 
     def _on_nav(self, msg: Twist) -> None:
