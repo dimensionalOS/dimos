@@ -22,16 +22,19 @@ Usage::
     from dimos.core.coordination.blueprints import autoconnect
 
     autoconnect(
-        VirtualMid360.blueprint(pcap="/path/to/ruwik2.pcap"),
+        VirtualMid360.blueprint(pcap="/path/to/ruwik2.pcap", host_ip="192.168.1.5"),
         Mid360.blueprint(lidar_ip="192.168.1.155"),
     )
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
+
+from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -60,7 +63,7 @@ class VirtualMid360Config(NativeModuleConfig):
     cli_exclude: frozenset[str] = frozenset({"setup_network", "alias_iface"})
 
     # Required: empty makes the binary error.
-    pcap: str = ""
+    pcap: str = Field(min_length=1)
     # Replay speed; 1.0 = original timing.
     rate: float = 1.0
     # Seconds to wait before streaming begins.
@@ -68,7 +71,7 @@ class VirtualMid360Config(NativeModuleConfig):
     # IP the fake lidar sends from (on the dummy alias interface).
     lidar_ip: str = "192.168.1.155"
     # Host IP the data is delivered to (where the SDK listens).
-    host_ip: str = ""
+    host_ip: str = Field(min_length=1)
     lidar_netns: str = ""
     # Multicast group for point/IMU. 224.1.1.5 is the Livox default the SDK joins.
     mcast_data: str = "224.1.1.5"
@@ -87,6 +90,8 @@ class VirtualMid360Config(NativeModuleConfig):
 class VirtualMid360(NativeModule):
     config: VirtualMid360Config
 
+    _nic_setup_started: bool = False
+
     def _sudo(self, args: list[str], *, check: bool = True) -> None:
         """Run a privileged command via sudo, raising on failure (when check)."""
         result = subprocess.run(["sudo", *args], capture_output=True)
@@ -96,6 +101,20 @@ class VirtualMid360(NativeModule):
                 f"[{self._module_label}] `sudo {' '.join(args)}` failed "
                 f"(exit {result.returncode}): {stderr}"
             )
+
+    def _check_sudo(self) -> None:
+        """Fail before the first privileged command when sudo could only fail: it needs a
+        password and this process has no terminal to ask on (a Desktop launch, a daemon)."""
+        if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
+            return
+        try:
+            os.close(os.open("/dev/tty", os.O_RDWR))
+        except OSError:
+            raise RuntimeError(
+                f"[{self._module_label}] setup_network needs sudo, which needs a password and has "
+                "no terminal to ask on. Run from a terminal, or provision the interface yourself "
+                "and set setup_network=False."
+            ) from None
 
     def _teardown_virtual_nic(self) -> None:
         # Idempotent: missing aliases/routes/interface are fine (check=False).
@@ -111,6 +130,7 @@ class VirtualMid360(NativeModule):
             self._sudo(["ip", "link", "del", cfg.alias_iface], check=False)
 
     def _setup_virtual_nic(self) -> None:
+        self._nic_setup_started = True
         self._teardown_virtual_nic()
         if sys.platform == "darwin":
             self._setup_macos()
@@ -158,6 +178,8 @@ class VirtualMid360(NativeModule):
 
     @rpc
     def build(self) -> None:
+        if self.config.setup_network:
+            self._check_sudo()
         super().build()
         if self.config.setup_network:
             self._setup_virtual_nic()
@@ -165,7 +187,7 @@ class VirtualMid360(NativeModule):
     @rpc
     def stop(self) -> None:
         super().stop()
-        if self.config.setup_network:
+        if self._nic_setup_started:
             self._teardown_virtual_nic()
 
 
