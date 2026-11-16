@@ -23,6 +23,7 @@ from threading import Condition, Event, RLock, Thread
 import time
 from typing import Any, Literal, TypeVar
 
+from dimos_lcm.sensor_msgs import BatteryState as LCMBatteryState
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -154,7 +155,15 @@ def dock_failure(
     return None
 
 
-def _battery_state(report: BatteryReport) -> BatteryState | None:
+# basic_server Charge state -> BatteryState power_supply_status; any other state is off the dock.
+_POWER_SUPPLY_STATUS: dict[int | None, int] = {
+    None: LCMBatteryState.POWER_SUPPLY_STATUS_UNKNOWN,
+    CHARGE_CHARGING: LCMBatteryState.POWER_SUPPLY_STATUS_CHARGING,
+    CHARGE_ON_DOCK: LCMBatteryState.POWER_SUPPLY_STATUS_NOT_CHARGING,
+}
+
+
+def _battery_state(report: BatteryReport, charge_status: int | None) -> BatteryState | None:
     """Combine the two packs into one BatteryState. A pack at 0 V is absent, not empty."""
     packs = [pack for pack in (report.left, report.right) if pack.voltage > 0.0]
     if not packs:
@@ -163,6 +172,9 @@ def _battery_state(report: BatteryReport) -> BatteryState | None:
         voltage=sum(pack.voltage for pack in packs) / len(packs),
         percentage=sum(pack.level for pack in packs) / len(packs) / 100.0,
         temperature=max(pack.temperature for pack in packs),
+        power_supply_status=_POWER_SUPPLY_STATUS.get(
+            charge_status, LCMBatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+        ),
     )
 
 
@@ -665,7 +677,7 @@ class M20Connection(Module):
         report = self._basic_server.battery
         if report is None or time.monotonic() - report.received_at > _REPORT_MAX_AGE_S:
             return None
-        return _battery_state(report)
+        return _battery_state(report, self._fresh_charge_status())
 
     def _wait_for_charge_status(self, timeout_s: float) -> bool:
         with self._state_condition:
@@ -683,7 +695,7 @@ class M20Connection(Module):
             self._state_condition.notify_all()
 
     def _on_battery_report(self, report: BatteryReport) -> None:
-        state = _battery_state(report)
+        state = _battery_state(report, self._fresh_charge_status())
         if state is not None:
             self.battery.publish(state)
 
