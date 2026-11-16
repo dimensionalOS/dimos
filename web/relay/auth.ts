@@ -1,10 +1,12 @@
 // Static secrets for a relay that can be exposed (--auth-file): robot keys
-// bound to robot ids, and viewer tokens. Robots and viewers present them in
-// hello; /api/stats takes a viewer token as a bearer. All-or-nothing: a
-// viewer token can do everything on every robot. Compares are constant-time,
-// and error messages name sections, ids, and names, never a secret.
+// bound to robot ids, viewer tokens, and topic source keys bound to source
+// ids. Robots, viewers and topic providers present them in hello; /api/stats
+// takes a viewer token as a bearer. All-or-nothing: a viewer token can do
+// everything on every robot, and on every topic source when the relay runs
+// with --open-topics. Compares are constant-time, and error messages name
+// sections, ids, and names, never a secret.
 import { timingSafeEqual } from "@std/crypto/timing-safe-equal";
-import { MAX_TOKEN_LEN } from "@dimos/shared";
+import { MAX_TOKEN_LEN, MAX_TOPIC_SOURCES, topicSourceOk } from "@dimos/shared";
 
 export const MIN_SECRET_LEN = 16;
 
@@ -22,10 +24,16 @@ export function secretsEqual(a: string, b: string): boolean {
 export class Auth {
   readonly #robots: Map<string, string>;
   readonly #viewers: Map<string, string>;
+  readonly #topicSources: Map<string, string>;
 
-  constructor(robots: Map<string, string>, viewers: Map<string, string>) {
+  constructor(
+    robots: Map<string, string>,
+    viewers: Map<string, string>,
+    topicSources: Map<string, string> = new Map(),
+  ) {
     this.#robots = robots;
     this.#viewers = viewers;
+    this.#topicSources = topicSources;
   }
 
   /** True when `key` is the key bound to robot `id`. */
@@ -43,6 +51,12 @@ export class Auth {
     return null;
   }
 
+  /** True when `key` is the key bound to topic source `source`. */
+  topicSourceKeyOk(source: string, key: string | undefined): boolean {
+    const expected = this.#topicSources.get(source);
+    return expected !== undefined && key !== undefined && secretsEqual(expected, key);
+  }
+
   /** An `Authorization: Bearer <viewer token>` header value. */
   bearerOk(header: string | null): boolean {
     const scheme = "Bearer ";
@@ -55,8 +69,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function section(data: Record<string, unknown>, key: "robots" | "viewers"): Map<string, string> {
-  const what = key === "robots" ? "robot id" : "viewer name";
+function section(
+  data: Record<string, unknown>,
+  key: "robots" | "viewers" | "topicSources",
+): Map<string, string> {
+  const what = key === "robots" ? "robot id" : key === "viewers" ? "viewer name" : "topic source";
   const value = data[key];
   if (!isRecord(value)) {
     throw new Error(`auth file: "${key}" must be an object of ${what} -> secret`);
@@ -79,6 +96,22 @@ function section(data: Record<string, unknown>, key: "robots" | "viewers"): Map<
   return out;
 }
 
+function topicSources(data: Record<string, unknown>): Map<string, string> {
+  if (data.topicSources === undefined) return new Map();
+  const sources = section(data, "topicSources");
+  if (sources.size > MAX_TOPIC_SOURCES) throw new Error("auth file: too many topic sources");
+  // The same rule the provider hello is checked against, so an id the file
+  // accepts can always register.
+  for (const name of sources.keys()) {
+    if (!topicSourceOk(name)) {
+      throw new Error(
+        "auth file: topic source ids start with a letter or digit, then up to 63 letters, digits, _, . or -",
+      );
+    }
+  }
+  return sources;
+}
+
 /** Parses and validates the auth file text (see the file's shape in
  * docs/web/relay.md). A JSON error is reported without V8's message, which
  * quotes file text. */
@@ -94,10 +127,17 @@ export function parseAuthFile(text: string): Auth {
   }
   const robots = section(data, "robots");
   const viewers = section(data, "viewers");
+  const sources = topicSources(data);
   // One secret, one owner: a shared secret would let a robot act as a viewer
   // (or two robots swap identities) by accident.
   const owners = new Map<string, string>();
-  for (const [key, entries] of [["robots", robots], ["viewers", viewers]] as const) {
+  for (
+    const [key, entries] of [
+      ["robots", robots],
+      ["viewers", viewers],
+      ["topicSources", sources],
+    ] as const
+  ) {
     for (const [name, secret] of entries) {
       const owner = `${key}["${name}"]`;
       const other = owners.get(secret);
@@ -105,7 +145,7 @@ export function parseAuthFile(text: string): Auth {
       owners.set(secret, owner);
     }
   }
-  return new Auth(robots, viewers);
+  return new Auth(robots, viewers, sources);
 }
 
 export async function loadAuthFile(path: string): Promise<Auth> {

@@ -29,7 +29,7 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     LidarRelocalizer,
     RelocalizeConfig,
 )
-from dimos.mapping.relocalization.module import Config, RelocalizationModule
+from dimos.mapping.relocalization.module import Config, PremapModule
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -58,7 +58,7 @@ class LidarConfig(Config):
     relocalize: RelocalizeConfig = MID360
 
 
-class CloudRelocalization(RelocalizationModule):
+class CloudRelocalization(PremapModule):
     """Coarse FPFH+RANSAC then ICP of a windowed live cloud against a pointcloud premap.
 
     Subclasses supply :meth:`clouds`.
@@ -111,7 +111,7 @@ class CloudRelocalization(RelocalizationModule):
         t0 = time.monotonic()
         try:
             tf = self._relocalizer.relocalize(
-                msg.pointcloud, self.config.world_frame, self.config.map_frame
+                msg.pointcloud, self.config.world_frame, self.map_frame
             )
         except Exception:
             logger.exception("relocalize() failed")

@@ -36,11 +36,13 @@ Stores blobs in a separate SQLite table per stream.
 CREATE TABLE "{stream}_blob" (id INTEGER PRIMARY KEY, data BLOB NOT NULL)
 ```
 
-`__init__(conn: sqlite3.Connection)` — does NOT own the connection.
+`__init__(conn=...)` borrows a connection. The caller commits and closes it.
+
+`__init__(path=...)` opens and owns a connection. Every write is committed at once.
 
 **Internal use** (same db as metadata): `SqliteStore._create_backend()` creates one connection per stream, passes it to both the index and the blob store.
 
-**External use** (separate db): user creates a separate connection and passes it. User manages that connection's lifecycle.
+**External use** (separate db): pass `path=`. A borrowed connection to a separate db also works, but the caller must commit it, because `Backend` commits only the metadata connection.
 
 **JOIN optimization**: when `eager_blobs=True` and the blob store shares the same connection as the index, `SqliteObservationStore` can optimize with a JOIN instead of separate queries:
 

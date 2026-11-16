@@ -4,7 +4,7 @@ import type { AgentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import type { ChildProcess } from "node:child_process";
 import type { Host, Readable, Ref, WebSocketLike } from "@earendil-works/chord";
 import type { ModelRef } from "@earendil-works/pi-durable";
-import type { Provider } from "@earendil-works/pi-ai";
+import type { Message, Provider } from "@earendil-works/pi-ai";
 import type { TerminalId } from "#dimos/agents/shared/protocol/auth.ts";
 import { ConfigStore } from "#dimos/agents/gateway/config/store.ts";
 import { ConversationContract } from "#dimos/agents/shared/protocol/conversation/contract.ts";
@@ -18,7 +18,7 @@ import { unixSocket } from "#dimos/agents/sdk/node.ts";
 import { dirname, join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { gatewayState, stopGateway } from "#dimos/agents/cli/process.ts";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
 import { once } from "node:events";
 import { parseJobName } from "#dimos/agents/harness/jobs/registry.ts";
@@ -160,6 +160,58 @@ async function startGateway(
     }
   }
 }
+
+test("file and stream references reach the model as ordinary text", { timeout: 120_000 }, async (t) => {
+  const { root, paths, remove } = await scratch();
+  const secret = `file-content-${randomUUID()}`;
+  await writeFile(join(root, "notes.txt"), secret);
+  await writeFile(
+    join(root, "camera.png"),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  const text =
+    'inspect notes.txt "camera.png" stream://camera%2Ffront "stream://camera front" @notes.txt @camera.png @missing/ref';
+  const scripted = scriptedModel();
+  const faux = scripted.models.getProvider("faux");
+  assert(faux !== undefined);
+  let messages: readonly Message[] = [];
+  scripted.script([
+    (request) => {
+      messages = request.messages;
+      return fauxAssistantMessage("Paths received.");
+    },
+  ]);
+  await startGateway(t, root, paths, faux, scripted.model);
+  t.after(remove);
+  const client = await connect(paths, randomUUID() as TerminalId, "path-text");
+  t.after(() => client.host.close());
+  const gateway = await client.host.get(GatewayContract, {});
+  assert(gateway.variant === "owner");
+  const created = await gateway.createConversation({ request: newActionRequest(), cwd: root });
+  assert(created.ok);
+  const owner = await client.host.get(ConversationContract, {
+    conversation: created.value.conversation,
+    role: "owner",
+  });
+  assert(owner.variant === "owner");
+  const sent = await owner.send({ request: newUserRequest(), text, images: [], whenBusy: "followUp" });
+  assert(sent.ok);
+  const outcome = await until(owner.outcomes, (rows) => rows.find((row) => row.submission === sent.value.submission));
+  assert.equal(outcome.status, "done");
+  const message = messages.findLast((message) => message.role === "user");
+  assert(message !== undefined);
+  assert(typeof message.content !== "string");
+  assert.deepEqual(message.content.at(-1), { type: "text", text });
+  assert(message.content.every((part) => part.type === "text"));
+  assert(!JSON.stringify(messages).includes(secret));
+  const input = await until(owner.transcript, (transcript) => transcript.items.find((item) => item.kind === "input"));
+  assert(input.kind === "input");
+  assert.equal(input.input.text, text);
+  assert.equal(input.input.render, null);
+});
 
 test(
   "multiple owners and an explicit viewer, idempotent sends, outcomes, a dead link and a reconnect",

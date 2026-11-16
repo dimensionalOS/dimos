@@ -15,14 +15,17 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
+from functools import partial
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel, JsonValue
 
-from experimental.gateway import launches, responses
+from experimental.gateway import catalog, launches, responses
 from experimental.gateway.launches import LaunchConfig
 from experimental.gateway.live import NothingRunningError
+from experimental.gateway.names import check_name
 from experimental.gateway.routes.history import read_log
 from experimental.gateway.state import ApiError, GatewayState, State
 
@@ -46,7 +49,35 @@ class CallRequest(BaseModel):
     kwargs: dict[str, JsonValue] = {}
 
 
+def known_names(state: State) -> set[str] | None:
+    """Names `dimos run` would accept; None (dimos decides) until a full scan of the checkout as it is now."""
+    if state.listed is None:
+        return None
+    cache = state.scanner.cache()
+    if cache is None or not cache.get("finished_at"):
+        return None
+    if cache.get("fingerprint") != state.scanner.current_fingerprint():
+        return None
+    names = {str(entry["name"]) for entry in state.listed}
+    # every registered module, including one whose import failed or timed out in the scan (a launch may still run it)
+    names.update(str(name) for name in (cache.get("names") or {}).get("modules") or [])
+    for record in catalog.modules(cache):
+        names.update((str(record["name"]), str(record["class"])))
+    return names
+
+
+def check_known(state: State, name: str) -> None:
+    """404 before anything is spawned when the checkout is known not to have `name`."""
+    names = known_names(state)
+    if names is None or name in names:
+        return
+    close = difflib.get_close_matches(name, sorted(names), n=3)
+    hint = f"; did you mean {', '.join(close)}?" if close else ""
+    raise ApiError(404, f"no blueprint or module {name}{hint}")
+
+
 async def started(state: State, name: str, config: LaunchConfig) -> dict[str, Any]:
+    await asyncio.to_thread(check_known, state, name)
     launch = await asyncio.to_thread(launches.start, state.dimos_dir, name, config)
     state.bus.launch(launch)
     return launch
@@ -84,25 +115,24 @@ async def active_log(
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
     if (request.blueprint is None) == (request.module is None):
         raise ApiError(400, "give exactly one of blueprint or module")
-    name = str(request.blueprint or request.module)
-    if not name or name.startswith("-"):
-        raise ApiError(400, f"bad name: {name}")
+    name = check_name(request.module if request.blueprint is None else request.blueprint)
     launch_config = launches.parse(request.config)
-    launches.check_global(launch_config.global_)
     return await started(state, name, launch_config)
 
 
 @router.post("/exec", response_model=responses.Launch)
 async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
-    if not request.args or request.args[0].startswith("-"):
+    if not request.args:
         raise ApiError(400, "args must start with a blueprint or module name")
     name, *rest = request.args
-    return await started(state, name, LaunchConfig(args=rest, exact=True))
+    return await started(state, check_name(name), LaunchConfig(args=rest, exact=True))
 
 
 @router.post("/relaunch", response_model=responses.Launch)
 async def relaunch(state: GatewayState) -> dict[str, Any]:
-    launch = await asyncio.to_thread(launches.relaunch, state.dimos_dir)
+    launch = await asyncio.to_thread(
+        launches.relaunch, state.dimos_dir, partial(check_known, state)
+    )
     state.bus.launch(launch)
     return launch
 

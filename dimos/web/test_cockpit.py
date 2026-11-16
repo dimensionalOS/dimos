@@ -537,7 +537,7 @@ def test_chat_panel_blueprint() -> None:
     assert panel["channels"] == ["human_input", "agent", "agent_idle", "audio_in"]
     assert parse_manifest(manifest).model_dump() == manifest
     # The agent and mic streams ride a generated subclass whose ports
-    # autoconnect to McpClient's and VoiceInput's by name + type.
+    # autoconnect to Agent's and VoiceInput's by name + type.
     ports = {(s.name, s.direction): s.type for s in atom.streams}
     assert ports[("agent", "in")] is BaseMessage
     assert ports[("agent_idle", "in")] is bool

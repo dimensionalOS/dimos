@@ -16,6 +16,9 @@
 
 pub type VoxelKey = (i32, i32, i32);
 
+/// A point in meters.
+pub type Xyz = (f32, f32, f32);
+
 #[inline]
 pub fn voxelize(p: (f32, f32, f32), voxel_size: f32) -> VoxelKey {
     let inv = 1.0 / voxel_size;

@@ -30,8 +30,13 @@ recursive-exclude dimos/web/websocket_vis/node_modules *
 # build_py hook in setup.py (copied to dimos/web/relay_bridge/_relay_dist).
 # The graft keeps them in the sdist so sdist->wheel builds (uv build, pip)
 # can reproduce that copy.
-graft web
-prune web/node_modules
+# Per directory: `graft web` walks web/node_modules symlinks and loses their targets.
+graft web/cockpit
+graft web/examples
+graft web/relay
+graft web/sdk
+graft web/shared
+include web/README.md web/deno.json web/deno.lock
 prune web/cockpit/node_modules
 prune web/sdk/node_modules
 

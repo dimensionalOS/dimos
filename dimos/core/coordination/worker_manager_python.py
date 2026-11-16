@@ -253,7 +253,7 @@ class WorkerManagerPython:
         total_workers = len(self._workers)
         if total_dedicated * 2 > total_workers:
             n_to_add = total_dedicated * 2 - total_workers
-            logger.warning(
+            logger.info(
                 "Auto-scaling worker pool for dedicated modules.",
                 dedicated=total_dedicated,
                 before=total_workers,

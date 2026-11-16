@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { type IceServer, MAX_SDP_LEN, type Msg, PROTOCOL_VERSION } from "@dimos/shared";
 import { TRACK_ENCODING } from "@dimos/shared/manifest";
-import { FakePeerConnection } from "./rtc.test.ts";
+import { FakePeerConnection } from "./testing/fakePeerConnection.ts";
 import { connect, type Session } from "./session.ts";
 import {
   FakeRelayEnd,

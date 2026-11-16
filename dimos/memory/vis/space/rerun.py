@@ -27,6 +27,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
     from dimos.memory.vis.space.space import Space
@@ -60,7 +61,9 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
 
     from dimos.visualization.rerun.init import rerun_init
 
-    rerun_init(app_id, spawn=spawn)
+    rerun_init(app_id)
+    if spawn:
+        rr.spawn(executable_path=find_executable("rerun"))
 
     # Collect elements by type
     points: list[Point] = []

@@ -22,12 +22,14 @@ stored in the system keyring, falling back to a plain-text 0600 file
 backend. `DIMOS_CLOUD_API_KEY` overrides any stored login.
 """
 
+from collections.abc import Callable
 import json
 import os
 import socket
+import threading
 import time
 from types import ModuleType
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,9 +38,25 @@ import typer
 
 from dimos.cloud.config import CloudConfig
 from dimos.constants import CREDENTIALS_PATH
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 _KEYRING_SERVICE = "dimos-cloud"
 _KEYRING_USER = "default"
+
+T = TypeVar("T")
+
+# The keyring backend, memoized: the module when it answers, None when it can't be used.
+# A backend that stalls is re-probed after KEYRING_RETRY_S, so a login stored after this
+# process started is still found, without paying the stall on every single lookup.
+KEYRING_RETRY_S = 60.0
+_backend: tuple[float, ModuleType | None] | None = None
+_backend_lock = threading.Lock()
+
+
+class _KeyringStalledError(Exception):
+    """The OS keyring did not answer within CloudConfig().keyring_timeout."""
 
 
 def _base() -> str:
@@ -53,21 +71,97 @@ def _post(path: str, **params: str | int) -> dict[str, Any]:
         return cast("dict[str, Any]", json.load(r))
 
 
+def _bounded(what: str, call: Callable[[], T]) -> T:
+    """Run one keyring call with a deadline, on a thread we are willing to abandon.
+
+    The OS keyring answers over IPC (D-Bus SecretService on Linux). A *locked* collection
+    answers an ordinary read with an unlock **prompt** and then waits for whoever is at the
+    screen — and in a service with nobody there, that wait never ends. The call blocks inside
+    the socket, where no flag or signal of ours can reach it, so the only way to put a
+    deadline on it is to stop waiting for the thread that made it. One stalled lookup used to
+    take the whole gateway down with it: every poll of the cloud account queued another
+    thread behind the same prompt until the pool was gone, and the upload worker went with it.
+
+    The abandoned thread leaks until the prompt is answered or the process ends; memoizing the
+    stall keeps that to one thread per KEYRING_RETRY_S rather than one per request.
+    """
+    out: list[T] = []
+    failed: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            out.append(call())
+        except BaseException as error:  # re-raised on the calling thread
+            failed.append(error)
+
+    worker = threading.Thread(target=run, name=f"keyring-{what}", daemon=True)
+    worker.start()
+    worker.join(CloudConfig().keyring_timeout)
+    if failed:
+        raise failed[0]
+    if not out:
+        raise _KeyringStalledError(what)
+    return out[0]
+
+
+def _import_keyring() -> ModuleType:
+    import keyring
+
+    return keyring
+
+
+def _probe() -> ModuleType | None:
+    try:
+        kr = _import_keyring()
+        _bounded("probe", lambda: kr.get_password(_KEYRING_SERVICE, "probe"))
+        return kr
+    except _KeyringStalledError:
+        logger.warning(
+            "the system keyring didn't answer, so it is being skipped: is it locked, "
+            "waiting to be unlocked by someone at the screen?",
+            timeout_s=CloudConfig().keyring_timeout,
+            falling_back_to=str(CREDENTIALS_PATH),
+        )
+        return None
+    except Exception:
+        return None
+
+
 def _keyring() -> ModuleType | None:
     """The OS keyring, or None on machines without a usable backend (headless robots)."""
-    try:
-        import keyring
+    global _backend
+    with _backend_lock:
+        if _backend is None or (
+            _backend[1] is None and time.monotonic() - _backend[0] > KEYRING_RETRY_S
+        ):
+            _backend = (time.monotonic(), _probe())
+        return _backend[1]
 
-        keyring.get_password(_KEYRING_SERVICE, "probe")
-        return keyring
-    except Exception:
+
+def _forget_backend() -> None:
+    """Skip the keyring until the next retry window: it stalled on a real lookup."""
+    global _backend
+    with _backend_lock:
+        _backend = (time.monotonic(), None)
+
+
+def _keyring_call(what: str, call: Callable[[ModuleType], T]) -> T | None:
+    """One keyring operation, or None when there is no usable keyring to do it with."""
+    kr = _keyring()
+    if kr is None:
+        return None
+    try:
+        return _bounded(what, lambda: call(kr))
+    except _KeyringStalledError:
+        _forget_backend()
         return None
 
 
 def _store(key: str) -> str:
     """Persist the API key; returns a human-readable location for the login message."""
-    if kr := _keyring():
-        kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, key)
+    if _keyring_call(
+        "set", lambda kr: kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, key) or True
+    ):
         return "system keyring"
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     # No keyring backend (typical on robots): owner-only file, the same convention
@@ -79,9 +173,8 @@ def _store(key: str) -> str:
 
 
 def _load() -> str | None:
-    if kr := _keyring():
-        if key := kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
-            return cast("str", key)
+    if key := _keyring_call("get", lambda kr: kr.get_password(_KEYRING_SERVICE, _KEYRING_USER)):
+        return cast("str", key)
     try:
         return CREDENTIALS_PATH.read_text().strip() or None
     except OSError:
@@ -90,10 +183,9 @@ def _load() -> str | None:
 
 def _forget() -> bool:
     found = False
-    if kr := _keyring():
-        if kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
-            kr.delete_password(_KEYRING_SERVICE, _KEYRING_USER)
-            found = True
+    if _keyring_call("get", lambda kr: kr.get_password(_KEYRING_SERVICE, _KEYRING_USER)):
+        _keyring_call("delete", lambda kr: kr.delete_password(_KEYRING_SERVICE, _KEYRING_USER))
+        found = True
     if CREDENTIALS_PATH.exists():
         CREDENTIALS_PATH.unlink()
         found = True

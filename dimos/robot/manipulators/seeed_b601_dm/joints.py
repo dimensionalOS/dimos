@@ -15,8 +15,9 @@
 """Seeed B601-DM joint names without hardware or model imports."""
 
 B601_DM_DOF = 6
-# The vendor URDF's joint names, so the adapter's gravity model and the
+# The vendor URDF's joint names, so the connection's gravity model and the
 # planner share them without renaming.
 B601_DM_ARM_JOINTS = tuple(f"joint{index}" for index in range(1, B601_DM_DOF + 1))
-B601_DM_GRIPPER_JOINT = "arm/gripper"
+# The jaw's URDF finger joint, named under the robot "arm".
+B601_DM_GRIPPER_JOINT = "arm/finger_left"
 B601_DM_JOINTS = (*B601_DM_ARM_JOINTS, B601_DM_GRIPPER_JOINT)

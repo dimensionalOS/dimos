@@ -150,7 +150,8 @@ class Memento:
                         self._mark(label, key, camera, (a, b))
             for found in fresh.values():
                 for sighting in found:
-                    self._held[sighting.id] = sighting
+                    if sighting.detection is not None:
+                        self._held[sighting.id] = sighting
             return {label: self._within(label, key, window) for label in labels}, gaps
 
     def forget(self, before: float) -> None:

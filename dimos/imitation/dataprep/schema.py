@@ -83,7 +83,7 @@ class FeatureSpec(BaseConfig):
         description=(
             "Recorded source semantics, not an observation/action role: snapshot selects "
             "the nearest complete sample; joint_position_updates reconstructs sparse "
-            "accepted targets using only commands at or before the dataset timestamp."
+            "commanded targets using only commands at or before the dataset timestamp."
         ),
     )
 

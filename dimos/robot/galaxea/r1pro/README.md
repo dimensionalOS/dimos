@@ -24,7 +24,7 @@ vendor profile instead with `--r1proconnection.vendor-profile ATCStandard/R1PROV
   explicitly rather than relying on direnv:
 
   ```bash
-  sudo apt-get install -y libturbojpeg   # pyturbojpeg needs the native lib
+  sudo apt-get install -y libturbojpeg0-dev   # pyturbojpeg needs the native lib
   uv sync --python /usr/bin/python3.10 --python-preference only-system \
           --no-default-groups --extra base --extra manipulation --extra cpu
   uv pip install python-socketio         # runtime dep of the viewer, only declared in the lint group

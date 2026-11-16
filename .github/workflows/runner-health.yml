@@ -19,7 +19,7 @@ jobs:
       issues: write  # To file a broken runner
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Count the self-hosted job results per runner and file issues

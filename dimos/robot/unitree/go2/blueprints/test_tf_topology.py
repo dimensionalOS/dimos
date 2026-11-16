@@ -26,7 +26,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
     unitree_go2_mid360_record,
@@ -59,7 +59,7 @@ def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
             children["PointLio"] = {sensor_frame}
         if atom.module is SimGo2World:
             children["SimGo2World"] = {SENSOR_FRAME_ID}
-        if issubclass(atom.module, RelocalizationModule):
+        if issubclass(atom.module, PremapModule):
             children[atom.module.__name__] = {atom.kwargs.get("map_frame", "map")}
     return children
 
