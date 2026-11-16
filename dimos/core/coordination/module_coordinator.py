@@ -1070,11 +1070,17 @@ def _deploy_all_modules(
         module_specs.append((bp.module, gc, kwargs))
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
-    # Each distinct blueprint_checks on a module class sees every module, once (subclasses share it).
     atoms = [*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()]
-    for check in dict.fromkeys(getattr(atom.module, "blueprint_checks", None) for atom in atoms):
-        if check is not None:
-            check(atoms)
+    # Distinct functions, so modules sharing one (e.g. every TfModule subclass) run it once.
+    checkers = list(
+        dict.fromkeys(
+            atom.module.blueprint_checks
+            for atom in atoms
+            if hasattr(atom.module, "blueprint_checks")
+        )
+    )
+    for checker in checkers:
+        checker(atoms)
     module_coordinator.deploy_parallel(module_specs)
 
     for bp in blueprint.active_blueprints:

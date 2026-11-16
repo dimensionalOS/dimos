@@ -116,11 +116,6 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
-def blueprint_namespace(instance_name: str) -> str:
-    """ "robot1/inner/odom" -> "robot1/inner"."""
-    return instance_name.rsplit("/", 1)[0] if "/" in instance_name else ""
-
-
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
@@ -131,6 +126,8 @@ class ModuleConfig(BaseConfig):
     # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
     # from the class name to this name.
     instance_name: str | None = None
+    # Set by Blueprint.namespace(), e.g. "robot1/inner"; "" outside any namespace.
+    namespace: str = ""
     # Optional RPC-only address. Unlike instance_name, this does not change the
     # module's Blueprint identity, configuration key, or stream namespace.
     rpc_name: str | None = None
@@ -211,21 +208,20 @@ class ModuleBase(Configurable, CompositeResource):
     @property
     def namespace(self) -> str:
         """The blueprint namespace this instance runs in, e.g. "robot1/inner"; "" outside any."""
-        return blueprint_namespace(self.config.instance_name or "")
+        return self.config.namespace
 
     @classmethod
-    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], prefix: str) -> dict[str, Any]:
-        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it (once per level, innermost first).
+    def handle_blueprint_namespace(
+        cls, kwargs: dict[str, Any], *, prefix: str, namespace: str
+    ) -> dict[str, Any]:
+        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it into *namespace*.
 
-        The default sets ``frame_id_prefix`` to the namespace, extending one an inner
-        ``.namespace()`` set; a user-set value is kept.
+        Called once per level, innermost first; ``kwargs["namespace"]`` is still the inner one.
+        The default sets ``frame_id_prefix`` to the namespace unless the user set it.
         """
-        old_namespace = blueprint_namespace(kwargs.get("instance_name") or "")
         frame_id_prefix = kwargs.get("frame_id_prefix")
-        if frame_id_prefix is None:
-            return {**kwargs, "frame_id_prefix": prefix}
-        if old_namespace and frame_id_prefix == old_namespace:
-            return {**kwargs, "frame_id_prefix": f"{prefix}/{frame_id_prefix}"}
+        if frame_id_prefix is None or frame_id_prefix == kwargs.get("namespace"):
+            return {**kwargs, "frame_id_prefix": namespace}
         return kwargs
 
     @rpc

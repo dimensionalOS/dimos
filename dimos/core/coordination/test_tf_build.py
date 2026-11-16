@@ -16,7 +16,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -148,3 +148,27 @@ def test_build_checks_the_namespaced_tree() -> None:
             blueprint,
             BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),
         )
+
+
+calls: list[int] = []
+
+
+class CountedCheck(Module):
+    @staticmethod
+    def blueprint_checks(atoms: list[BlueprintAtom]) -> None:
+        calls.append(len(atoms))
+
+
+class CountedCheckChild(CountedCheck):
+    pass
+
+
+def test_a_shared_blueprint_check_runs_once() -> None:
+    calls.clear()
+    blueprint = autoconnect(CountedCheck.blueprint(), CountedCheckChild.blueprint())
+    coordinator = ModuleCoordinator.build(
+        blueprint,
+        BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),
+    )
+    coordinator.stop()
+    assert calls == [2]

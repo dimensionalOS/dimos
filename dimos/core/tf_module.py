@@ -66,9 +66,11 @@ class TfModule(Module):
     config: TfModuleConfig
 
     @classmethod
-    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], prefix: str) -> dict[str, Any]:
+    def handle_blueprint_namespace(
+        cls, kwargs: dict[str, Any], *, prefix: str, namespace: str
+    ) -> dict[str, Any]:
         """Also prefix the local frames, so namespaced copies don't share frames."""
-        kwargs = super().handle_blueprint_namespace(kwargs, prefix)
+        kwargs = super().handle_blueprint_namespace(kwargs, prefix=prefix, namespace=namespace)
         frames = kwargs.get("tf_frames_local", _config_default(cls, "tf_frames_local"))
         return {
             **kwargs,
