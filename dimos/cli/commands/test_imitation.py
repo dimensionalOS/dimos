@@ -15,6 +15,7 @@
 
 import hashlib
 import json
+from pathlib import Path
 
 from click import unstyle
 import pytest
@@ -103,6 +104,44 @@ def test_prepare_rejects_existing_output(recording, tmp_path):
     )
     assert result.exit_code == 2
     assert "already exists" in result.output
+
+
+@pytest.mark.parametrize(
+    "source", ["collect.db", "collect.mcap", "missing", "empty", "schema-directory"]
+)
+def test_prepare_requires_collection_directory_with_schema(source, tmp_path, mocker):
+    (tmp_path / "collect.db").touch()
+    (tmp_path / "collect.mcap").touch()
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "schema-directory" / "schema.json").mkdir(parents=True)
+    output = tmp_path / "dataset"
+    prepare = mocker.patch("dimos.cli.commands.imitation.run_lerobot_dataprep")
+
+    result = CliRunner().invoke(
+        imitation_app, ["prepare", str(tmp_path / source), "--output", str(output)]
+    )
+
+    assert result.exit_code == 2
+    assert "Expected a collection directory containing" in unstyle(result.output)
+    assert "schema.json" in result.output
+    assert "[Errno" not in result.output
+    prepare.assert_not_called()
+    assert not output.exists()
+
+
+def test_prepare_reports_inaccessible_schema(recording, tmp_path, mocker):
+    output = tmp_path / "dataset"
+    prepare = mocker.patch("dimos.cli.commands.imitation.run_lerobot_dataprep")
+    mocker.patch.object(Path, "is_file", side_effect=PermissionError("Permission denied"))
+
+    result = CliRunner().invoke(imitation_app, ["prepare", str(recording), "--output", str(output)])
+
+    message = " ".join(unstyle(result.output).replace("│", "").split())
+    assert result.exit_code == 2
+    assert "Invalid value for recording" in message
+    assert "Cannot access recording schema: Permission denied" in message
+    prepare.assert_not_called()
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("flags", [["--json"], ["--json", "--verbose"]])
