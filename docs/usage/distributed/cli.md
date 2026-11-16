@@ -38,11 +38,14 @@ reads; `dimos host config` alone shows them. Run `dimos host restart` after chan
 By default a Host listens only on this machine. Open it with zenoh endpoints or interfaces:
 
 ```sh skip
-dimos host config listen=iface/wlan0                     # wlan0's addresses, port 7447
+dimos host config listen=iface/wlan0                     # wlan0's IPv4 addresses, port 7447
 dimos host config listen=tcp/127.0.0.1:7447,iface/eth0   # loopback first, then eth0
 ```
 
-The Host's own fragments dial the first one.
+`iface/<name>` binds the interface's IPv4 addresses as they are when the Host starts, so it
+mixes with `tcp/127.0.0.1` on the same port. An interface without an IPv4 address stops the Host;
+the systemd unit retries every few seconds, which covers e.g. `tailscale0` coming up late. Restart
+the Host if the address changes. The Host's own fragments dial the first endpoint.
 
 On a Go2, `go2-nav` and `go2-dds` dial the Host router on `tcp/127.0.0.1:7447`. Keep it first and
 add the Jetson's robot-side interface, which the Go2 forwards 7447 to:
