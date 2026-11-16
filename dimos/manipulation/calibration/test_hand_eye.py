@@ -48,9 +48,7 @@ def test_solves_the_wrist_camera_within_a_millimetre(rig: Any) -> None:
 
 
 def test_solves_a_wrist_camera_on_a_seven_joint_arm(rig7: Any) -> None:
-    result = solve_hand_eye(
-        rig7.arm, rig7.camera, rig7.board, _nominal(rig7), rig7.home, 20, 300
-    )
+    result = solve_hand_eye(rig7.arm, rig7.camera, rig7.board, _nominal(rig7), rig7.home, 20, 300)
 
     probe = np.array([0.0, 0.0, PROBE_M, 1.0])
     probe_err_mm = np.linalg.norm((result.T @ probe)[:3] - (rig7.X_true @ probe)[:3]) * 1000

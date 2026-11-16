@@ -27,7 +27,6 @@ around a fixed camera, registered with the planner as an obstacle for the run.
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass, field
 import json
 import math
@@ -541,10 +540,10 @@ class HandEyeCalibrationModule(Module):
             if seen is not None:
                 break
         if seen is None:
-            raise RuntimeError("the camera did not see the plate from the home pose or any search pose")
-        logger.info(
-            "Hand-eye camera found", optical_xyz=[round(float(v), 3) for v in seen[:3, 3]]
-        )
+            raise RuntimeError(
+                "the camera did not see the plate from the home pose or any search pose"
+            )
+        logger.info("Hand-eye camera found", optical_xyz=[round(float(v), 3) for v in seen[:3, 3]])
         q = self.plan_flange(aim_plate(hold, seen[:3, 3], board, Z))
         if q is None or not self.move_to(q, capped=False):
             return [float(v) for v in self.read_joints()], seen
@@ -572,8 +571,6 @@ class HandEyeCalibrationModule(Module):
             )
         except Exception as error:  # the planner raises on a start state in collision
             logger.warning("Planner refused the pose", message=str(error))
-            with contextlib.suppress(Exception):
-                self._manipulation.reset()
             return None
         if not plan.succeeded or plan.plan is None or not plan.plan.path:
             return None
@@ -625,10 +622,6 @@ class HandEyeCalibrationModule(Module):
             record["outcome"] = "refused_plan"
             record["message"] = str(error)
             logger.warning("Planner refused the target", message=str(error))
-            # a planner exception leaves the manipulation module in PLANNING, where it
-            # refuses every later target; reset() returns it to IDLE
-            with contextlib.suppress(Exception):
-                self._manipulation.reset()
             return False
         if not plan.succeeded or plan.plan is None:
             run.refused += 1

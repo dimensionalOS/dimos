@@ -38,7 +38,7 @@ def look_down(
     x = np.array([np.cos(yaw), np.sin(yaw), 0.0])
     z = np.array([0.0, 0.0, -1.0])
     T_base_optical = rt_to_T(
-        np.column_stack([x, np.cross(z, x), z]), np.asarray(point) + [0.0, 0.0, height_m]
+        np.column_stack([x, np.cross(z, x), z]), np.asarray(point) + np.array([0.0, 0.0, height_m])
     )
     return T_base_optical @ T_inv(X_flange_optical)
 

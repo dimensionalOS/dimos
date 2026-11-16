@@ -28,14 +28,13 @@ from __future__ import annotations
 import math
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.calibration.hand_eye_module import BoxObstacle, HandEyeCalibrationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.xarm.blueprints.basic import XARM_REMAPS, xarm_coordinator
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.xarm.config import (
     XARM6_JOINT_LIMITS,
     XARM7_JOINT_LIMITS,
@@ -293,7 +292,10 @@ _XARM7_BENCH = {
 def _xarm7_calibration_model() -> RobotModelConfig:
     # the flange, which the poses are read from, and the tip, which pose targets are given for
     return make_xarm_model_config(
-        7, robot="arm", base_pose=PoseStamped(frame_id="world"), tf_extra_links=["link7", "link_tcp"]
+        7,
+        robot="arm",
+        base_pose=PoseStamped(frame_id="world"),
+        tf_extra_links=["link7", "link_tcp"],
     )
 
 

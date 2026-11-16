@@ -87,7 +87,9 @@ class FakePlanner:
         )
         return PlanResult(PlanStatus.SUCCEEDED, plan=plan)
 
-    def plan_to_poses(self, targets: dict[str, Any], speed_scale: float | None = None) -> PlanResult:
+    def plan_to_poses(
+        self, targets: dict[str, Any], speed_scale: float | None = None
+    ) -> PlanResult:
         """The synthetic arm's joints are the flange pose, and the tip is the flange."""
         pose = targets["manipulator"]
         T = Transform(
@@ -436,7 +438,9 @@ def _searching_module(
     module._manipulation = planner
     module._obstacles = MagicMock()
     module._tf = FakeTf(rig.arm)
-    module._on_info(CameraInfo(height=rig.height, width=rig.width, D=[0.0] * 5, K=list(rig.K.ravel())))
+    module._on_info(
+        CameraInfo(height=rig.height, width=rig.width, D=[0.0] * 5, K=list(rig.K.ravel()))
+    )
     stop = threading.Event()
 
     def publish() -> None:
@@ -522,5 +526,8 @@ def test_a_fixed_camera_the_home_pose_turns_the_plate_from_is_found(
 
     assert report["passed"], report["reason"]
     assert len(planner.executed) > 16 + 1
-    solved = rt_to_T(R.from_quat(report["optical"]["rotation_xyzw"]).as_matrix(), np.asarray(report["optical"]["translation_m"]))
+    solved = rt_to_T(
+        R.from_quat(report["optical"]["rotation_xyzw"]).as_matrix(),
+        np.asarray(report["optical"]["translation_m"]),
+    )
     assert np.linalg.norm(solved[:3, 3] - fixed_rig.X_true[:3, 3]) < 0.001
