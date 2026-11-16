@@ -122,6 +122,26 @@ XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_dev
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 
 XArmType = Literal["xarm5", "xarm6", "xarm7", "lite6", "uf850"]
+
+#: The xArm6's joint limits in radians, as xarm_ros2's xarm6.urdf states them.
+XARM6_JOINT_LIMITS: list[tuple[float, float]] = [
+    (-2 * math.pi, 2 * math.pi),
+    (-2.059, 2.0944),
+    (-3.927, 0.19198),
+    (-2 * math.pi, 2 * math.pi),
+    (-1.69297, math.pi),
+    (-2 * math.pi, 2 * math.pi),
+]
+#: The xArm7's joint limits in radians, as xarm_ros2's xarm7.urdf states them.
+XARM7_JOINT_LIMITS: list[tuple[float, float]] = [
+    (-2 * math.pi, 2 * math.pi),
+    (-2.059, 2.0944),
+    (-2 * math.pi, 2 * math.pi),
+    (-0.19198, 3.927),
+    (-2 * math.pi, 2 * math.pi),
+    (-1.69297, math.pi),
+    (-2 * math.pi, 2 * math.pi),
+]
 XArmGripperType = Literal["xarm"]
 
 #: Each arm's joint count and the ``robot_type`` the xarm_ros2 description takes for it.

@@ -1,0 +1,47 @@
+{
+  "name": "xarm6_chest_camera",
+  "passed": true,
+  "measured": "bench xArm6, D435 on a post to the arm's right, 2026-11-07, xarm6-handeye-calibrate-chest; 14 of 14 views, probe error 1.1 mm, misclosure 1.6 mm; lens 0.32 m forward, 0.46 m right, 0.71 m up of the base. Valid for that post only: a moved camera needs a new run.",
+  "mount": {
+    "frame_id": "world",
+    "child_frame_id": "camera_link",
+    "translation_m": [
+      0.33386085200226406,
+      -0.458302076503655,
+      0.7129453089701016
+    ],
+    "rotation_xyzw": [
+      -0.34334065480928166,
+      0.3275966980181002,
+      0.6145728394119981,
+      0.6301569830287097
+    ]
+  },
+  "optical": {
+    "frame_id": "world",
+    "child_frame_id": "camera_color_optical_frame",
+    "translation_m": [
+      0.31922755550503285,
+      -0.4583768664970189,
+      0.7127061710624563
+    ],
+    "rotation_xyzw": [
+      0.9586525631016996,
+      -0.0021815835233246587,
+      0.017531739618258768,
+      -0.28403017807590497
+    ]
+  },
+  "confidence": {
+    "detections": 14.0,
+    "views_used": 14.0,
+    "seen_unsolved": 2.0,
+    "probe_err_mm": 1.1430448182127124,
+    "probe_worst_mm": 3.435576902556999,
+    "standoff_m": 0.5268983933806172,
+    "misclosure_mm": 1.6487155227070984,
+    "mean_pnp_px": 0.26850523161036627,
+    "refined_rms_px": 0.7519915497274715,
+    "deviation_from_nominal_mm": 293.2843570273491
+  }
+}

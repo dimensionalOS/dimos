@@ -1,0 +1,47 @@
+{
+  "name": "xarm6_wrist_camera",
+  "passed": true,
+  "measured": "bench xArm6 with the kit D435 wrist mount, 2026-11-03, run 8 of the hand-eye blueprint; 13 of 14 views, ruler hover 1 to 2 mm in the default posture family",
+  "mount": {
+    "frame_id": "link6",
+    "child_frame_id": "camera_link",
+    "translation_m": [
+      0.07700300129077209,
+      -0.026148165579928294,
+      0.028765802383417038
+    ],
+    "rotation_xyzw": [
+      0.6133151092679604,
+      0.0036456767577164283,
+      0.7898197144788666,
+      0.0040130294205061355
+    ]
+  },
+  "optical": {
+    "frame_id": "link6",
+    "child_frame_id": "camera_color_optical_frame",
+    "translation_m": [
+      0.07701820647059406,
+      -0.0408053384820956,
+      0.028579326289940726
+    ],
+    "rotation_xyzw": [
+      -0.09277512767249323,
+      -0.08076429838198125,
+      0.7044101039526893,
+      0.6990538671959268
+    ]
+  },
+  "confidence": {
+    "detections": 14.0,
+    "views_used": 13.0,
+    "seen_unsolved": 0.0,
+    "probe_err_mm": 1.4779257843423987,
+    "probe_worst_mm": 2.705592189533899,
+    "standoff_m": 0.33639836669405426,
+    "misclosure_mm": 2.737254273920427,
+    "mean_pnp_px": 0.5047606436105875,
+    "refined_rms_px": 3.045984934831313,
+    "deviation_from_nominal_mm": 3.2585768074003587
+  }
+}
