@@ -25,6 +25,7 @@ from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.cli.human import humancli
 from dimos.cli.human.humancli import HumanCLIApp
+from dimos.utils.asyncio_timeout import timeout
 
 # What the OpenAI Responses API path produces: blocks, never a plain string.
 RESPONSES_CONTENT: list[Any] = [
@@ -109,7 +110,7 @@ async def test_tool_panel_elapsed_ticks_without_messages(
     clock.now.return_value = start
     app = HumanCLIApp()
     async with app.run_test(size=(160, 40)) as pilot:
-        async with asyncio.timeout(5):
+        async with timeout(5):
             while transports["/agent"].callback is None:
                 await pilot.pause(0.01)
         for name in ("start_patrol", "lookout"):
@@ -123,7 +124,7 @@ async def test_tool_panel_elapsed_ticks_without_messages(
 
         for seconds in (1, 2):
             clock.now.return_value = start + timedelta(seconds=seconds)
-            async with asyncio.timeout(2):
+            async with timeout(2):
                 while not all(
                     f"running  00:0{seconds}" in panel.render_line(0).text for panel in panels
                 ):
@@ -140,14 +141,14 @@ async def test_tool_panel_elapsed_ticks_without_messages(
                 "params": {"tool_name": "start_patrol"},
             },
         )
-        async with asyncio.timeout(5):
+        async with timeout(5):
             while len(app.query("#tool-panels Static")) != 1:
                 await pilot.pause(0.01)
         finalized = [line.text for line in app.chat_log.lines]
         assert "start_patrol  1 updates  00:02" in finalized[0]
 
         clock.now.return_value = start + timedelta(seconds=4)
-        async with asyncio.timeout(2):
+        async with timeout(2):
             while "lookout  running  00:04" not in panels[1].render_line(0).text:
                 await pilot.pause(0.01)
         assert [line.text for line in app.chat_log.lines] == finalized
@@ -159,7 +160,7 @@ async def test_finalized_tool_panel_uses_current_terminal_width(
 ) -> None:
     app = HumanCLIApp()
     async with app.run_test(size=(120, 40)) as pilot:
-        async with asyncio.timeout(5):
+        async with timeout(5):
             while transports["/agent"].callback is None:
                 await pilot.pause(0.01)
         await asyncio.to_thread(
@@ -180,7 +181,7 @@ async def test_finalized_tool_panel_uses_current_terminal_width(
                 "params": {"tool_name": "start_patrol"},
             },
         )
-        async with asyncio.timeout(5):
+        async with timeout(5):
             while app.query("#tool-panels Static"):
                 await pilot.pause(0.01)
 
