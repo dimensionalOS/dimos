@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -108,9 +109,11 @@ def test_two_parents_is_refused() -> None:
         )
 
 
-def test_same_edge_from_two_modules_is_refused() -> None:
-    with pytest.raises(ValueError, match="published by several modules"):
-        _verify(autoconnect(Odom.blueprint(), BackupOdom.blueprint()))
+def test_same_edge_from_two_modules_warns(mocker: MockerFixture) -> None:
+    logger = mocker.patch("dimos.core.coordination.module_coordinator.logger")
+    _verify(autoconnect(Odom.blueprint(), BackupOdom.blueprint()))
+    (message,), _ = logger.warning.call_args
+    assert "'world' -> 'base_link' is declared by several modules (odom, backupodom)" in message
 
 
 def test_cycle_is_refused() -> None:
@@ -138,9 +141,9 @@ def test_build_checks_the_namespaced_tree() -> None:
         Odom.blueprint().namespace("robot0"),
         Odom.blueprint().namespace("robot1"),
         Odom.blueprint(),
-        BackupOdom.blueprint(),
+        BackupOdom.blueprint(tf_frames_global={"world": "map"}),
     )
-    with pytest.raises(ValueError, match="'world' -> 'base_link' is published by several modules"):
+    with pytest.raises(ValueError, match="'base_link' has several parents"):
         ModuleCoordinator.build(
             blueprint,
             BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),

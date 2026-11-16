@@ -1101,7 +1101,7 @@ def _spatial_field(atom: BlueprintAtom, name: str) -> Any:
 
 
 def verify_tf_tree(atoms: list[BlueprintAtom]) -> None:
-    """Refuse a frame with two parents (or two publishers), and declared edges that form a cycle or several trees."""
+    """Refuse a frame with two parents, or declared edges that form a cycle or several trees; warn on an edge with two owners."""
     publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
     for atom in atoms:
         if not issubclass(atom.module, TfModule):
@@ -1124,8 +1124,9 @@ def verify_tf_tree(atoms: list[BlueprintAtom]) -> None:
             errors.append(f"    - '{child}' has several parents: {listed}")
         for parent, names in parents.items():
             if len(names) > 1:
-                errors.append(
-                    f"    - '{parent}' -> '{child}' is published by several modules: {', '.join(names)}"
+                logger.warning(
+                    f"tf edge '{parent}' -> '{child}' is declared by several modules "
+                    f"({', '.join(names)}); only one module should own an edge"
                 )
 
     # Union-find over the declared edges: one component per tree.
