@@ -18,8 +18,8 @@ This file defines:
 1. Shared enums and dataclasses used by all arms
 2. ManipulatorAdapter Protocol that adapters must implement
 
-Note: No ABC for drivers. Each arm implements its own driver
-with full control over threading and logic.
+Each arm implements an adapter conforming to the protocol. The
+ControlCoordinator owns the control loop and calls the adapter for hardware I/O.
 """
 
 from dataclasses import dataclass

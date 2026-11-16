@@ -4,7 +4,7 @@ OpenYAM and Dual OpenYAM use `ConnectionModule` implementations that own the
 native `can-motor-control` robot. The coordinator receives `JointState` feedback
 and sends position commands through streams. It does not construct hardware
 adapters. `openyam-teach-collection` uses the same path with
-`OpenYamTeachConnection`: zero stiffness, teaching damping, gravity compensation
+`OpenYamConnection` in teach mode (`teach=True`): zero stiffness, teaching damping, gravity compensation
 and passive grippers, declared as zero-stiffness joints. Seeed B601-DM also uses
 its own direct connection.
 
@@ -69,11 +69,14 @@ preserving the native Damiao serial USB-CAN transport.
 
 ## Models and joint names
 
-The canonical planning assets retain their arm joint names. Shipped deployments
+The canonical planning model is the managed OpenYAM single-arm description from
+`dimensionalOS/dim_description` (`openyam_single`, pinned by commit). Its arm
+joints are mapped onto `yam_joint1` through `yam_joint6`. Shipped deployments
 use connection source `arm`, with `arm/yam_joint1` through `arm/yam_joint6` and
-`arm/joint7` for a single YAM. `joint7` is the URDF's finger joint, in metres:
-0 is closed and -0.04695 fully open, and `joint8` copies it. The gripper task
-maps its 0.0 (closed) to 1.0 (open) command onto that range. Dual YAM uses
+`arm/joint7` for a single YAM. `joint7` is the managed model's driven finger
+joint, in metres: 0.0594641 is closed and 0.01081 fully open, and `joint8`
+copies it. The gripper task maps its 0.0 (closed) to 1.0 (open) command onto
+that range. Dual YAM uses
 `arm/left_joint1` through `arm/left_joint6`, `arm/right_joint1` through
 `arm/right_joint6`, then `arm/left_gripper` and `arm/right_gripper`. Its URDF has
 its finger joints fixed, so these two are openings from 0.0 closed to 1.0 open.
@@ -84,13 +87,14 @@ Single YAM retains a separate physical model for gravity compensation. Dual
 YAM uses its arm-only combined model for planning and gravity compensation.
 
 `OpenYamConnection()` and `DualOpenYamConnection()` default to sources `yam` and
-`dual_openyam` when used directly. For a custom stack, the coordinator's model is
-`make_openyam_model_config(robot="arm").model` or
-`dual_openyam_control_model(robot="arm")`.
+`dual_openyam` when used directly. For a custom stack, declare the connection on
+the coordinator with `connections=[arm_declaration(OpenYamConnection)]` or
+`connections=[arm_declaration(DualOpenYamConnection)]`. The `arm_declaration` helper
+in `dimos/robot/manipulators/damiao/damiao_blueprint.py` sets source `arm` for both.
 
-New Quest recordings and policy rollout use the deployed seven-coordinate names.
-Hand-guided teaching retains its original bare names, PD gains and passive-jaw
-behavior; its CAN override remains `--controlcoordinator.can-port`.
+Quest recordings, policy rollout and hand-guided teaching all use the deployed
+seven-coordinate names. Hand-guided teaching keeps its zero-stiffness gains and
+passive-jaw behavior. Its CAN override is `--can-port`, as for the other single-arm stacks.
 
 Planner gripper routing is explicit through `ManipulationModuleConfig.gripper_tasks`:
 single YAM binds `manipulator` to `arm_gripper`; dual YAM binds
@@ -130,3 +134,5 @@ for focused tests, software-only checks and physical bring-up. The YAM tests
 cover deployed joint names, gripper routing, planner priority, Dual YAM hand
 isolation, model limits and the Quest profile. The native recorder test verifies
 Zenoh serialization and episode extraction with synthetic input streams.
+
+- Dual OpenYAM leader teleop: [Dual OpenYAM Leader Teleop](/docs/capabilities/manipulation/dual_openyam_leader_teleop.md)

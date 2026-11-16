@@ -16,6 +16,7 @@
 
 import pytest
 
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
@@ -67,7 +68,7 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam_planner,
     teleop_webxr_openyam,
 )
-from dimos.robot.manipulators.openyam.config import OPENYAM, make_openyam_model_config
+from dimos.robot.manipulators.openyam.config import OPENYAM
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
 CASES = [
@@ -108,6 +109,16 @@ def test_retained_entry_routes_every_task_through_its_connection(name, blueprint
     assert connection.module.deployment == "python"
     assert connection.kwargs["source"] == "arm"
     assert coordinator.kwargs.get("hardware", []) == []
+    [declaration] = coordinator.kwargs["connections"]
+    driver = ConnectionConfig.model_validate(
+        {
+            key: value
+            for key, value in connection.kwargs.items()
+            if key in ConnectionConfig.model_fields
+        }
+    )
+    assert declaration.model == driver.model
+    assert declaration.joint_commands == driver.joint_commands
     joints = {f"arm/{name}" for name in connection.module.robot.joint_names}
     for task in coordinator.kwargs["tasks"]:
         assert set(task.joint_names) <= joints
@@ -175,8 +186,19 @@ def test_blueprint_composition_is_coordinator_connection_and_remaps():
         atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
     ]
     assert connection.module is OpenYamConnection
-    assert connection.kwargs == {"source": "arm", "teach": False}
-    assert coordinator.kwargs["model"] == make_openyam_model_config(robot="arm").model
+    assert connection.kwargs["source"] == "arm"
+    assert connection.kwargs["teach"] is False
+    [declaration] = coordinator.kwargs["connections"]
+    assert declaration.model == OpenYamConnection.robot.model
+    driver = ConnectionConfig.model_validate(
+        {
+            key: value
+            for key, value in connection.kwargs.items()
+            if key in ConnectionConfig.model_fields
+        }
+    )
+    assert declaration.model == driver.model
+    assert declaration.joint_commands == driver.joint_commands
     assert coordinator.kwargs["zero_stiffness_joints"] == []
     assert blueprint.remapping_map == {
         (connection.name, "position_command"): "arm_position_command",

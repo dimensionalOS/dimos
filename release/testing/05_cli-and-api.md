@@ -40,7 +40,6 @@ In the REPL, call a skill and display a camera frame. Press a key in the image w
 
 ```python
 import cv2
-import numpy as np
 
 from dimos import Dimos
 
@@ -48,7 +47,7 @@ app = Dimos.connect()
 try:
     app.skills.move_to(x=0.3, relative=True)
     img = app.peek_stream("color_image", timeout=5.0)
-    cv2.imshow("color_image", np.asarray(img.data))
+    cv2.imshow("color_image", img.to_opencv())
     cv2.waitKey(0)
 finally:
     cv2.destroyAllWindows()
@@ -92,7 +91,7 @@ Expected result: `dimos mcp modules` reaches the server on port 9992 and lists n
 
 ## 5.6 Transports and topics
 
-Run the replay blueprint, then use another terminal for the other commands. The LCM run also needs the host multicast and socket-buffer setup described in [2.3](02_replay-and-simulation.md#23-dimsim-browser-simulation). If it was skipped during installation, startup prompts to apply it with `sudo`. Arrange administrator access before starting the LCM run.
+Run the replay blueprint, then use another terminal for the other commands. The default replay recording lasts about a minute and does not loop. Start the spy right after the blueprint is up. Once the recording ends, only the 1 Hz `/camera_info` still publishes; restart the blueprint to replay it. The LCM run also needs the host multicast and socket-buffer setup described in [2.3](02_replay-and-simulation.md#23-dimsim-browser-simulation). If it was skipped during installation, startup prompts to apply it with `sudo`. Arrange administrator access before starting the LCM run.
 
 ```bash
 uv run dimos --replay run unitree-go2

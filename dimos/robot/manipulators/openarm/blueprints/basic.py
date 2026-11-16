@@ -21,6 +21,7 @@ from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
@@ -44,7 +45,7 @@ def openarm_control(tasks: list[TaskConfig] | None = None) -> Blueprint:
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_MODEL.model,
+            connections=[arm_declaration(OpenArmConnection)],
             tasks=list(tasks if tasks is not None else [_trajectory_task()]),
             zero_stiffness_joints=[],
         ),

@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 import numpy as np
-from pydantic import Field
+from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -38,9 +38,17 @@ from dimos.robot.assets.model import RobotModel
 class MockJointConnectionConfig(ConnectionConfig):
     source: str = "arm"
     model: RobotModel
-    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
     initial_positions: dict[str, float] = Field(default_factory=dict)
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def declare_position_joints(self) -> MockJointConnectionConfig:
+        """This concrete connection drives every movable model joint by position."""
+        if "joint_commands" not in self.model_fields_set:
+            self.joint_commands = {
+                joint.name: (Interface.POSITION,) for joint in movable_joints(self.model)
+            }
+        return self
 
 
 class MockJointConnection(ConnectionModule):

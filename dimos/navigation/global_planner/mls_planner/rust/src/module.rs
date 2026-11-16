@@ -20,15 +20,18 @@ use std::time::{Duration, Instant};
 
 use crate::goal_status::{
     clear_if_held, stop_on_arrival, Blocked, Goal, GoalId, LatestStatus, Report, Stall,
-    StatusReporter, HEADING_NOT_REACHED, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED,
-    PREEMPT_REPLACED,
+    StatusReporter, HEADING_NOT_REACHED, NO_GOAL_FRAME, NO_POSE, NO_PROGRESS, NO_SAFE_PATH,
+    PREEMPT_CANCELED, PREEMPT_REPLACED,
 };
 use crate::mls_planner::{ms_since, Config, Plan, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::planner::snap_pose_to_cell;
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey, Xyz};
+use dimos_module::nalgebra::Vector3;
 use dimos_module::time::now;
-use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
+use dimos_module::{
+    debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
+};
 use lcm_msgs::actionlib_msgs::GoalStatus;
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
@@ -434,7 +437,7 @@ impl MlsPlanner {
         match goal_position(&msg.pose.position) {
             Some(position) => {
                 let id = self.next_goal_id(&msg.header.stamp);
-                let held = *self.active_goal.lock().expect("goal mutex");
+                let held = self.active_goal.lock().expect("goal mutex").clone();
                 // A goal sent again keeps its id, so it is not preempted.
                 if let Some(held) = held.filter(|held| !held.id.same_stamp(&id)) {
                     self.preempt(held, PREEMPT_REPLACED).await;
@@ -442,7 +445,13 @@ impl MlsPlanner {
                 self.status()
                     .report(Report::new(id, GoalStatus::PENDING, "planning"))
                     .await;
-                self.set_active_goal(Some(Goal { id, position, yaw }));
+                let frame = Some(Arc::from(msg.header.frame_id.as_str()));
+                self.set_active_goal(Some(Goal {
+                    id,
+                    position,
+                    yaw,
+                    frame,
+                }));
             }
             None => {
                 if let Some(held) = self.set_active_goal(None) {
@@ -511,6 +520,25 @@ fn angle_diff(a: f32, b: f32) -> f32 {
     (a - b + PI).rem_euclid(2.0 * PI) - PI
 }
 
+/// Viewer clicks carry rerun entity paths (leading "/"); those and "" mean the world frame.
+fn is_tf_frame(frame: &str) -> bool {
+    !frame.is_empty() && !frame.starts_with('/')
+}
+
+/// The goal with its position and heading moved into the world frame.
+fn goal_in_world(goal: &Goal, frame_to_world: &Transform) -> Goal {
+    let at = goal.position;
+    let p = frame_to_world.rotation() * Vector3::new(at.0 as f64, at.1 as f64, at.2 as f64)
+        + frame_to_world.translation();
+    let turn = frame_to_world.rotation().euler_angles().2 as f32;
+    Goal {
+        id: goal.id,
+        position: (p.x as f32, p.y as f32, p.z as f32),
+        yaw: goal.yaw.map(|yaw| yaw + turn),
+        frame: None,
+    }
+}
+
 /// The worker's record of the active goal between passes.
 struct GoalProgress {
     blocked_timeout: Duration,
@@ -539,8 +567,12 @@ impl GoalProgress {
     fn time_left(&self) -> Option<Duration> {
         let now = Instant::now();
         [
-            self.blocked.map(|b| b.remaining(self.blocked_timeout, now)),
-            self.stall.map(|s| s.remaining(self.stall_timeout, now)),
+            self.blocked
+                .as_ref()
+                .map(|b| b.remaining(self.blocked_timeout, now)),
+            self.stall
+                .as_ref()
+                .map(|s| s.remaining(self.stall_timeout, now)),
         ]
         .into_iter()
         .flatten()
@@ -551,8 +583,7 @@ impl GoalProgress {
     fn take_timed_out(&mut self) -> Option<Blocked> {
         let timed_out = self
             .blocked
-            .filter(|b| b.remaining(self.blocked_timeout, Instant::now()).is_zero())?;
-        self.blocked = None;
+            .take_if(|b| b.remaining(self.blocked_timeout, Instant::now()).is_zero())?;
         Some(timed_out)
     }
 
@@ -560,8 +591,7 @@ impl GoalProgress {
     fn take_stalled(&mut self) -> Option<Stall> {
         let stalled = self
             .stall
-            .filter(|s| s.remaining(self.stall_timeout, Instant::now()).is_zero())?;
-        self.stall = None;
+            .take_if(|s| s.remaining(self.stall_timeout, Instant::now()).is_zero())?;
         Some(stalled)
     }
 
@@ -570,7 +600,7 @@ impl GoalProgress {
         self.stall = Some(Stall::track(
             goal,
             position,
-            self.stall,
+            self.stall.take(),
             self.min_move_m,
             Instant::now(),
         ));
@@ -578,7 +608,12 @@ impl GoalProgress {
 
     /// Mark the goal blocked, keeping when its block began.
     fn block(&mut self, goal: Goal, reason: &'static str) {
-        self.blocked = Some(Blocked::of(goal, reason, self.blocked, Instant::now()));
+        self.blocked = Some(Blocked::of(
+            goal,
+            reason,
+            self.blocked.take(),
+            Instant::now(),
+        ));
         self.stall = None;
     }
 
@@ -869,6 +904,21 @@ impl Worker {
         }
     }
 
+    /// The goal in the world frame, or None while its frame is not on tf yet (e.g. before
+    /// relocalization), so it waits.
+    // DIM-638: read only on a replan, so a new relocalization fix waits for the next live region.
+    fn world_goal(&self, goal: &Goal) -> Option<Goal> {
+        let frame = goal
+            .frame
+            .as_deref()
+            .filter(|frame| is_tf_frame(frame) && *frame != &*self.config.world_frame);
+        let Some(frame) = frame else {
+            return Some(goal.clone());
+        };
+        let frame_to_world = self.tf.get_latest(&self.config.world_frame, frame)?;
+        Some(goal_in_world(goal, &frame_to_world))
+    }
+
     /// The base frame position in the world frame, from the latest tf.
     fn base_position(&self) -> Option<Xyz> {
         let t = self
@@ -890,7 +940,7 @@ impl Worker {
         let Some(timed_out) = progress.take_timed_out() else {
             return;
         };
-        if self.clear_goal(timed_out.goal) {
+        if self.clear_goal(&timed_out.goal) {
             self.status
                 .report(Report::new(
                     timed_out.goal.id,
@@ -905,20 +955,22 @@ impl Worker {
     /// timeout, and stop the follower.
     async fn abort_if_stalled(&self, progress: &mut GoalProgress) {
         let position = self.base_position();
-        if let (Some(stall), Some(position)) = (progress.stall, position) {
-            progress.track(stall.goal, position);
+        if let (Some(stall), Some(position)) = (progress.stall.as_ref(), position) {
+            let goal = stall.goal.clone();
+            progress.track(goal, position);
         }
         let Some(stalled) = progress.take_stalled() else {
             return;
         };
-        if !self.clear_goal(stalled.goal) {
+        if !self.clear_goal(&stalled.goal) {
             return;
         }
         progress.followed = None;
         publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
-        let reason = position.map_or(NO_PROGRESS, |p| {
-            stall_reason(&stalled.goal, p, &self.config)
-        });
+        let reason = match (position, self.world_goal(&stalled.goal)) {
+            (Some(p), Some(world)) => stall_reason(&world, p, &self.config),
+            _ => NO_PROGRESS,
+        };
         self.status
             .report(Report::new(stalled.goal.id, GoalStatus::ABORTED, reason))
             .await;
@@ -931,7 +983,7 @@ impl Worker {
         goal_changed: bool,
         progress: &mut GoalProgress,
     ) {
-        let goal = *self.active_goal.lock().expect("goal mutex");
+        let goal = self.active_goal.lock().expect("goal mutex").clone();
         let start = self
             .base_position()
             .map(|s| (s.0, s.1, s.2 - self.config.start_z_offset_m));
@@ -944,7 +996,10 @@ impl Worker {
                 publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             }
             GoalStep::NoPose(goal) => progress.block(goal, NO_POSE),
-            GoalStep::Plan { start, goal } => self.plan(planner, start, goal, progress).await,
+            GoalStep::Plan { start, goal } => match self.world_goal(&goal) {
+                Some(world) => self.plan(planner, start, goal, world, progress).await,
+                None => progress.block(goal, NO_GOAL_FRAME),
+            },
         }
     }
 
@@ -955,23 +1010,24 @@ impl Worker {
         planner: &mut Planner,
         start: Xyz,
         goal: Goal,
+        world: Goal,
         progress: &mut GoalProgress,
     ) {
         let plan_start = Instant::now();
         let facing = self.base_yaw();
         let outcome =
-            tokio::task::block_in_place(|| replan(planner, start, facing, &goal, &self.config));
+            tokio::task::block_in_place(|| replan(planner, start, facing, &world, &self.config));
         let (status, reason) = outcome.status();
-        let heading = path_heading(&outcome, &goal);
+        let heading = path_heading(&outcome, &world);
         let report =
-            Report::new(goal.id, status, reason).with_remaining(distance(start, goal.position));
+            Report::new(goal.id, status, reason).with_remaining(distance(start, world.position));
         let waypoints = match outcome {
             Replan::Reached => {
                 progress.unblock();
                 if progress.arrive(goal.id) {
                     publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
                 }
-                self.clear_goal(goal);
+                self.clear_goal(&goal);
                 self.status.report(report).await;
                 return;
             }
@@ -982,7 +1038,7 @@ impl Worker {
                 self.status.report(report).await;
                 return;
             }
-            Replan::Turning => vec![start, goal.position],
+            Replan::Turning => vec![start, world.position],
             Replan::Planned(Plan::Full(waypoints) | Plan::Truncated(waypoints)) => waypoints,
         };
         progress.unblock();
@@ -1005,7 +1061,7 @@ impl Worker {
 
     /// Clear the active goal unless a newer one replaced it meanwhile. True
     /// when it was cleared.
-    fn clear_goal(&self, goal: Goal) -> bool {
+    fn clear_goal(&self, goal: &Goal) -> bool {
         clear_if_held(&self.active_goal, goal)
     }
 }
@@ -1467,6 +1523,7 @@ mod tests {
             },
             position,
             yaw: None,
+            frame: None,
         }
     }
 
@@ -1559,6 +1616,7 @@ mod tests {
             },
             position: (5.0, 0.0, 0.0),
             yaw: None,
+            frame: None,
         };
         let timeout = Duration::from_secs(10);
         let t0 = Instant::now();
@@ -1566,9 +1624,9 @@ mod tests {
         let end = t0 + timeout;
         let stall = Stall::track(goal(1), (0.0, 0.0, 0.0), None, 0.2, t0);
         // Creeping, or standing higher, is not progress.
-        let still = Stall::track(goal(1), (0.1, 0.0, 0.5), Some(stall), 0.2, later);
+        let still = Stall::track(goal(1), (0.1, 0.0, 0.5), Some(stall.clone()), 0.2, later);
         assert!(still.remaining(timeout, end).is_zero());
-        let moved = Stall::track(goal(1), (0.3, 0.0, 0.0), Some(stall), 0.2, later);
+        let moved = Stall::track(goal(1), (0.3, 0.0, 0.0), Some(stall.clone()), 0.2, later);
         assert_eq!(moved.remaining(timeout, end), Duration::from_secs(4));
         let replaced = Stall::track(goal(2), (0.0, 0.0, 0.0), Some(stall), 0.2, later);
         assert_eq!(replaced.remaining(timeout, end), Duration::from_secs(4));
@@ -1583,11 +1641,14 @@ mod tests {
         };
         let mut progress = GoalProgress::new(&config);
         let goal = goal_at(1, (5.0, 0.0, 0.0));
-        progress.block(goal, NO_SAFE_PATH);
-        assert_eq!(progress.take_timed_out().map(|b| b.goal), Some(goal));
+        progress.block(goal.clone(), NO_SAFE_PATH);
+        assert_eq!(
+            progress.take_timed_out().map(|b| b.goal),
+            Some(goal.clone())
+        );
         assert!(progress.take_timed_out().is_none());
-        progress.track(goal, (0.0, 0.0, 0.0));
-        assert_eq!(progress.take_stalled().map(|s| s.goal), Some(goal));
+        progress.track(goal.clone(), (0.0, 0.0, 0.0));
+        assert_eq!(progress.take_stalled().map(|s| s.goal), Some(goal.clone()));
         assert!(progress.take_stalled().is_none());
     }
 
@@ -1844,23 +1905,29 @@ mod tests {
         let start = Some((0.0, 0.0, 0.0));
         let goal = goal_at(1, (5.0, 0.0, 0.0));
         assert_eq!(
-            goal_step(Some(goal), true, false, start),
+            goal_step(Some(goal.clone()), true, false, start),
             GoalStep::Plan {
                 start: (0.0, 0.0, 0.0),
-                goal
+                goal: goal.clone()
             }
         );
         assert_eq!(
-            goal_step(Some(goal), true, false, None),
-            GoalStep::NoPose(goal)
+            goal_step(Some(goal.clone()), true, false, None),
+            GoalStep::NoPose(goal.clone())
         );
 
         let canceled = goal_position(&point(f64::NAN, f64::NAN, f64::NAN))
             .map(|position| goal_at(2, position));
         // Even with no pose on tf.
-        assert_eq!(goal_step(canceled, true, true, None), GoalStep::Clear);
+        assert_eq!(
+            goal_step(canceled.clone(), true, true, None),
+            GoalStep::Clear
+        );
         // Teleop repeats the cancel every command, and nothing is out to clear.
-        assert_eq!(goal_step(canceled, true, false, start), GoalStep::Idle);
+        assert_eq!(
+            goal_step(canceled.clone(), true, false, start),
+            GoalStep::Idle
+        );
         // A live update with no goal publishes nothing.
         assert_eq!(goal_step(canceled, false, false, start), GoalStep::Idle);
     }
@@ -1869,10 +1936,11 @@ mod tests {
     fn a_reached_goal_keeps_its_path_until_a_cancel_clears_it() {
         let goal = goal_at(1, (5.0, 0.0, 0.0));
         let mut progress = GoalProgress::new(&test_config());
+        let id = goal.id;
         progress.follow(goal, (0.0, 0.0, 0.0), Instant::now());
         // The follower is on this goal's path, so it settles on its own.
-        assert!(!progress.arrive(goal.id));
-        assert_eq!(progress.followed, Some(goal.id));
+        assert!(!progress.arrive(id));
+        assert_eq!(progress.followed, Some(id));
         // A cancel after arrival still clears the held path.
         assert_eq!(
             goal_step(None, true, progress.followed.is_some(), None),
@@ -1883,6 +1951,31 @@ mod tests {
         let next = goal_at(2, (5.1, 0.0, 0.0));
         assert!(progress.arrive(next.id));
         assert_eq!(progress.followed, None);
+    }
+
+    #[test]
+    fn a_goal_follows_its_frame_on_tf() {
+        use dimos_module::nalgebra::{Isometry3, Translation3, UnitQuaternion};
+        let quarter_turn = Isometry3::from_parts(
+            Translation3::new(10.0, 0.0, 0.0),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, std::f64::consts::FRAC_PI_2),
+        );
+        let goal = Goal {
+            yaw: Some(0.0),
+            ..goal_at(1, (1.0, 0.0, 0.0))
+        };
+        let world = goal_in_world(&goal, &Transform::new("odom", "map", 0.0, quarter_turn));
+        let (x, y, z) = world.position;
+        assert!((x - 10.0).abs() < 1e-5 && (y - 1.0).abs() < 1e-5 && z.abs() < 1e-5);
+        assert!((world.yaw.unwrap() - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn only_entity_paths_and_empty_frames_are_not_tf_frames() {
+        assert!(is_tf_frame("map"));
+        assert!(is_tf_frame("map/office"));
+        assert!(!is_tf_frame(""));
+        assert!(!is_tf_frame("/world/global_map"));
     }
 
     #[test]

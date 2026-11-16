@@ -26,6 +26,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     DamiaoTwistCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.openyam.blueprints.basic import _gripper_task, _trajectory_task
@@ -54,7 +55,7 @@ def _twist_control(tasks: list[TaskConfig]) -> Blueprint:
     return autoconnect(
         DamiaoTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_openyam_model.model,
+            connections=[arm_declaration(OpenYamConnection)],
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),
@@ -67,7 +68,7 @@ def _teleop_control(tasks: list[TaskConfig]) -> Blueprint:
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_openyam_model.model,
+            connections=[arm_declaration(OpenYamConnection)],
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),

@@ -62,7 +62,7 @@ Start with a non-motion state check:
 Report the current robot state without moving.
 ```
 
-Scan the latest camera frame for objects without moving the arm:
+Find the objects on the table. The arm looks from two poses first:
 
 ```text
 Scan for objects.
@@ -80,7 +80,7 @@ Move 10 cm above the detected object's pose.
 
 ## Debugging and testing interfaces
 
-Use `agent-send` for one-shot LCM input when testing or diagnosing the agent:
+Use `agent-send` for one-shot input through the MCP server when testing or diagnosing the agent:
 
 ```bash
 uv run dimos agent-send "Report the current robot state and visible objects; do not move the arm or gripper."
@@ -98,5 +98,7 @@ For example:
 
 ```bash
 uv run dimos mcp call get_robot_state
-uv run dimos mcp call scan_objects --json-args '{"prompts": ["cup"]}'
+# localize confirms an object from two camera poses, so look from a second one first
+uv run dimos mcp call move_to_pose --json-args '{"x": 0.4, "y": 0.1, "z": 0.35}'
+uv run dimos mcp call localize --json-args '{"objects": "red cube", "start": -30, "duration": 30}'
 ```

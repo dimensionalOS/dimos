@@ -292,7 +292,7 @@ def test_a_module_answers_with_its_methods_and_config(
         assert args[1] == "x.Cam"
         if args[0] == "module_config":
             return {"name": "cam", "class": "x.Cam", "args": {}}
-        return {"rpcs": [], "skill_methods": [], "file": "x.py", "line": 1}
+        return {"rpcs": [], "file": "x.py", "line": 1}
 
     monkeypatch.setattr(scanned, "introspected", fake)
     cam = client.get("/catalog/modules/x.Cam").json()

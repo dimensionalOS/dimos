@@ -21,6 +21,8 @@ import {
   MAX_SDP_LEN,
   type Msg,
   msgFromUnknown,
+  normalizeTopicSettings,
+  type OptionRanges,
   peekDataFrameLengths,
   PROTOCOL_VERSION,
   RESERVED_CHANNEL_PREFIX,
@@ -34,6 +36,52 @@ import invalidTopics from "./fixtures/topics_invalid.json" with { type: "json" }
 Deno.test("topic messages reject the shared invalid wire vectors", () => {
   for (const vector of invalidTopics.vectors) {
     assertEquals(msgFromUnknown(vector.message), null, vector.name);
+  }
+});
+
+Deno.test("topic settings normalize against advertised ranges with the profile as the ceiling", () => {
+  const jpeg: OptionRanges = {
+    maxHz: { kind: "number", max: 1000, default: 30 },
+    maxResolution: { kind: "size", min: 16, max: 4096, default: [640, 360] },
+    quality: { kind: "int", min: 1, max: 100, default: 60 },
+  };
+  const cloud: OptionRanges = {
+    maxHz: { kind: "number", max: 1000, default: 5 },
+    keepEvery: { kind: "int", min: 1, max: 64, default: 4 },
+    fields: { kind: "enum", values: ["intensity", "color"], default: ["intensity", "color"] },
+  };
+  assertEquals(normalizeTopicSettings(jpeg, {}), {
+    settings: { maxHz: 30, maxResolution: [640, 360], quality: 60 },
+  });
+  assertEquals(
+    normalizeTopicSettings(jpeg, { maxHz: 60, maxResolution: [3000, 3000], quality: 90 }),
+    { settings: { maxHz: 30, maxResolution: [640, 360], quality: 60 } },
+  );
+  assertEquals(normalizeTopicSettings(jpeg, { maxHz: 7.5, maxResolution: null, quality: 40 }), {
+    settings: { maxHz: 7.5, maxResolution: [640, 360], quality: 40 },
+  });
+  assertEquals(normalizeTopicSettings(cloud, { keepEvery: 1, fields: ["color"] }), {
+    settings: { maxHz: 5, keepEvery: 4, fields: ["color"] },
+  });
+  assertEquals(normalizeTopicSettings(cloud, { fields: ["color", "intensity"] }).settings?.fields, [
+    "intensity",
+    "color",
+  ]);
+  // An older provider advertises nothing: only the rate remains, uncapped.
+  assertEquals(normalizeTopicSettings({}, { maxHz: 20 }), { settings: { maxHz: 20 } });
+  for (
+    const [ranges, requested, error] of [
+      [jpeg, { keepEvery: 2 }, "unsupported_option"],
+      [jpeg, { maxBitrate: 1 }, "unsupported_option"],
+      [jpeg, { quality: 0 }, "option_out_of_range"],
+      [jpeg, { quality: 101 }, "option_out_of_range"],
+      [jpeg, { maxResolution: [8, 8] }, "option_out_of_range"],
+      [jpeg, { maxHz: 0 }, "option_out_of_range"],
+      [cloud, { fields: ["normals"] }, "option_out_of_range"],
+      [cloud, { keepEvery: 65 }, "option_out_of_range"],
+    ] as const
+  ) {
+    assertEquals(normalizeTopicSettings(ranges, requested), { error }, JSON.stringify(requested));
   }
 });
 
@@ -449,4 +497,21 @@ Deno.test("peek rejects a frame whose total exceeds MAX_DATA_FRAME_BYTES", () =>
   dv.setUint32(0, 2, true); // small header
   dv.setUint32(4, MAX_DATA_FRAME_BYTES, true); // payload pushes total over the cap
   assertThrows(() => peekDataFrameLengths(bad));
+});
+
+Deno.test("video bitrate is clamped to the normalized size class", () => {
+  const ranges: OptionRanges = {
+    maxHz: { kind: "number", max: 1000, default: 30 },
+    maxResolution: { kind: "size", min: 16, max: 4096, default: [1920, 1080] },
+    maxBitrate: { kind: "int", min: 100000, max: 4500000, default: 4500000 },
+  };
+  assertEquals(
+    normalizeTopicSettings(ranges, { maxResolution: [1280, 720], maxBitrate: 10000000 }),
+    {
+      settings: { maxHz: 30, maxResolution: [1280, 720], maxBitrate: 2500000 },
+    },
+  );
+  assertEquals(normalizeTopicSettings(ranges, { maxBitrate: 99999 }), {
+    error: "option_out_of_range",
+  });
 });

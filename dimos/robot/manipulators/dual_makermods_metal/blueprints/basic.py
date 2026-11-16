@@ -21,6 +21,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.dual_makermods_metal.config import (
@@ -66,7 +67,7 @@ def dual_metal_control() -> Blueprint:
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_MODEL.model,
+            connections=[arm_declaration(DualMetalConnection)],
             tasks=[
                 joint_trajectory_task([f"arm/{name}" for name in ALL_ARM_JOINTS]),
                 # Each side's joint7 is open at its lower end.

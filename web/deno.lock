@@ -21,6 +21,8 @@
     "npm:react-dom@^19.2.0": "19.2.8_react@19.2.8",
     "npm:react@^19.2.0": "19.2.8",
     "npm:reflect-metadata@0.2": "0.2.2",
+    "npm:rollup-plugin-dts@6.3.0": "6.3.0_rollup@4.60.2_typescript@5.9.3",
+    "npm:rollup@^4.60.2": "4.60.2",
     "npm:three@0.186": "0.186.0",
     "npm:typescript@*": "5.9.3",
     "npm:typescript@~5.9.2": "5.9.3",
@@ -1013,6 +1015,17 @@
     "reflect-metadata@0.2.2": {
       "integrity": "sha512-urBwgfrvVP/eAyXx4hluJivBKzuEbSQs9rKWCrCkbSxNv8mxPcUZKeuoF3Uy4mJl3Lwprp6yy5/39VWigZ4K6Q=="
     },
+    "rollup-plugin-dts@6.3.0_rollup@4.60.2_typescript@5.9.3": {
+      "integrity": "sha512-d0UrqxYd8KyZ6i3M2Nx7WOMy708qsV/7fTHMHxCMCBOAe3V/U7OMPu5GkX8hC+cmkHhzGnfeYongl1IgiooddA==",
+      "dependencies": [
+        "magic-string",
+        "rollup",
+        "typescript"
+      ],
+      "optionalDependencies": [
+        "@babel/code-frame"
+      ]
+    },
     "rollup@4.60.2": {
       "integrity": "sha512-J9qZyW++QK/09NyN/zeO0dG/1GdGfyp9lV8ajHnRVLfo/uFsbji5mHnDgn/qYdUHyCkM2N+8VyspgZclfAh0eQ==",
       "dependencies": [
@@ -1251,6 +1264,8 @@
             "npm:happy-dom@^20.11.1",
             "npm:react-dom@^19.2.0",
             "npm:react@^19.2.0",
+            "npm:rollup-plugin-dts@6.3.0",
+            "npm:rollup@^4.60.2",
             "npm:typescript@~5.9.2",
             "npm:vite@^7.1.0",
             "npm:vitest@^3.2.4"

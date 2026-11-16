@@ -61,6 +61,7 @@ _HEARTBEAT_COMMAND = 100
 _HEARTBEAT_PERIOD_S = 0.5
 _REPORT_TYPE = 1002
 _ERROR_LIST_COMMAND = 3
+_BATTERY_STATUS_COMMAND = 5
 _BASIC_STATUS_COMMAND = 6
 _CHARGE_TYPE = 2
 _CHARGE_COMMAND = 24
@@ -69,6 +70,18 @@ _POLL_S = 0.25
 
 class ChargeReport(NamedTuple):
     status: int
+    received_at: float
+
+
+class PackReport(NamedTuple):
+    voltage: float
+    level: float
+    temperature: float
+
+
+class BatteryReport(NamedTuple):
+    left: PackReport
+    right: PackReport
     received_at: float
 
 
@@ -82,17 +95,20 @@ class BasicServerLink:
         udp_port: int,
         timeout_s: float,
         on_report: Callable[[], None],
+        on_battery: Callable[[BatteryReport], None],
     ) -> None:
         self._host = host
         self._tcp_port = tcp_port
         self._udp_port = udp_port
         self._timeout_s = timeout_s
         self._on_report = on_report
+        self._on_battery = on_battery
         self._message_ids = SequentialIds()
         self._stop = Event()
         self._udp: socket.socket | None = None
         self._threads: list[Thread] = []
         self.charge: ChargeReport | None = None
+        self.battery: BatteryReport | None = None
         self.charge_error: int | None = None
         self.usage_mode: int | None = None
 
@@ -235,6 +251,12 @@ class BasicServerLink:
             # The list is every active error, so a charge error no longer listed has cleared.
             charge_errors = [code for code in codes if code in CHARGE_ERROR_NAMES]
             self.charge_error = charge_errors[-1] if charge_errors else None
+        elif command == _BATTERY_STATUS_COMMAND:
+            battery = _battery_report(items.get("BatteryStatus"))
+            if battery is not None:
+                self.battery = battery
+                self._on_battery(battery)
+            return
         else:
             return
         self._on_report()
@@ -257,6 +279,30 @@ class BasicServerLink:
         message_id = self._message_ids.next() & 0xFFFF
         header = _HEADER.pack(_MAGIC, len(payload), message_id, _JSON, b"\0" * 7)
         return message_id, header + payload
+
+
+def _battery_report(status: Any) -> BatteryReport | None:
+    if not isinstance(status, dict):
+        return None
+    packs = [_pack_report(status, side) for side in ("Left", "Right")]
+    if packs[0] is None or packs[1] is None:
+        return None
+    return BatteryReport(packs[0], packs[1], time.monotonic())
+
+
+def _pack_report(status: dict[str, Any], side: str) -> PackReport | None:
+    voltage = _number(status.get(f"Voltage{side}"))
+    level = _number(status.get(f"BatteryLevel{side}"))
+    temperature = _number(status.get(f"battery_temperature{side}"))
+    if voltage is None or level is None or temperature is None:
+        return None
+    return PackReport(voltage, level, temperature)
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
 
 
 def _decode_report(frame: bytes) -> dict[str, Any] | None:

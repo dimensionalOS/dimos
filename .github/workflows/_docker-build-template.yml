@@ -24,6 +24,11 @@ jobs:
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
+      - name: Remove stale git lock files
+        # See the ci.yml self-hosted-tests job.
+        if: ${{ inputs.should-run }}
+        run: if [ -d .git ]; then find .git -type f -name '*.lock' -print -delete; fi
+
       - uses: actions/checkout@v7.0.1
         if: ${{ inputs.should-run }}
         with:

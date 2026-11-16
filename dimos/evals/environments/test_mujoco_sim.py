@@ -15,6 +15,7 @@
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -23,6 +24,7 @@ from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ARM_README, RAW_README
 from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
+from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -75,11 +77,9 @@ def test_launch_flags(monkeypatch):
 
     monkeypatch.setenv("MUJOCOSIMMODULE__HEADLESS", "false")
     proc = DimosCliCall()
-    environment(
-        module_env={"OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "yoloe"}
-    ).configure_launch(proc)
+    environment(module_env={"PERCEPTIONLOCALIZE__DETECTOR": "yoloe"}).configure_launch(proc)
     assert proc.extra_env["MUJOCOSIMMODULE__HEADLESS"] == "false"
-    assert proc.extra_env["OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND"] == "yoloe"
+    assert proc.extra_env["PERCEPTIONLOCALIZE__DETECTOR"] == "yoloe"
 
 
 def test_module_env_reaches_blueprint_parser(monkeypatch):
@@ -92,14 +92,14 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
         tracked_bodies=("apple", "cup"),
         base_height=0.912,
         module_env={
-            "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
-            "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
+            "MANIPULATIONLOCALIZE__DETECTOR": "yoloe",
+            "MANIPULATIONLOCALIZE__SEGMENTER": "yolo",
         },
     ).configure_launch(proc)
     parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
-    perception = parsed.module_kwargs("objectsceneregistrationmodule")
-    assert perception["detector_backend"] == "owlv2"
-    assert perception["segmentation_backend"] == "yolo"
+    perception = parsed.module_kwargs("manipulationlocalize")
+    assert perception["detector"] == "yoloe"
+    assert perception["segmenter"] == "yolo"
     sim = parsed.module_kwargs("mujocosimmodule")
     assert sim["headless"] is True
     assert sim["tracked_bodies"] == ["apple", "cup"]
@@ -223,7 +223,11 @@ def test_settle_waits_for_joints_to_stop():
 
 def test_launch_and_cleanup(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
-    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(mcp_url="http://x/mcp"),
+    )
+    mocker.patch("dimos.evals.environments.live.wait_connectable")
     proc.extra_env = {}
     proc.global_args = []
     mocker.patch(
@@ -252,3 +256,26 @@ def test_launch_and_cleanup(tmp_path, mocker):
         env.stop()
     proc.stop.assert_called_once()
     store.stop.assert_called_once()
+
+
+def test_launch_without_mcp_waits_for_the_coordinator(tmp_path, mocker):
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    proc.extra_env = {}
+    proc.global_args = []
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run", return_value=SimpleNamespace(mcp_url=None)
+    )
+    connectable = mocker.patch("dimos.evals.environments.live.wait_connectable")
+    mcp = mocker.patch("dimos.evals.environments.live.McpAdapter")
+    mocker.patch("dimos.memory.store.sqlite.SqliteStore")
+    env = MujocoEnvironment(blueprint=["xarm-perception-sim"])
+    mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
+    mocker.patch.object(env, "wait_ready")
+    try:
+        result = env.start(())
+        connectable.assert_called_once()
+        mcp.assert_not_called()
+        assert result.mcp_url == ""
+        assert result.python_guide == PYTHON_API_GUIDE
+    finally:
+        env.stop()

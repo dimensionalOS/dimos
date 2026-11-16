@@ -20,6 +20,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.makermods_metal.config import make_metal_model_config
@@ -33,7 +34,7 @@ def metal_control() -> Blueprint:
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_MODEL.model,
+            connections=[arm_declaration(MetalConnection)],
             tasks=[
                 joint_trajectory_task(list(_MODEL.joint_names)),
                 # joint7 is open at its lower end.

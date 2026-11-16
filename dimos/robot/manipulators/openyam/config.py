@@ -21,6 +21,7 @@ from pathlib import Path
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     joint_names,
     named_for_robot,
@@ -40,15 +41,20 @@ from dimos.robot.manipulators.openyam.joints import (
 from dimos.utils.data import LfsPath
 
 OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
-OPENYAM_PACKAGE = LfsPath("yam_description")
-OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
-OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
+OPENYAM_DESCRIPTION_SOURCE = RobotDescriptionSource(
+    url="https://github.com/dimensionalOS/dim_description",
+    ref="f9853344bbc9fa00aade6ff3ffb7db6532d185e1",
+)
+OPENYAM_PACKAGE = OPENYAM_DESCRIPTION_SOURCE / "openyam_single"
+OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "openyam_single.urdf"
+OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"openyam_single": OPENYAM_PACKAGE}
 #: Joint damping while an operator guides the arm by hand. Stiffness is zero
 #: and gravity is compensated, so the arm floats instead of holding a pose.
 OPENYAM_TEACH_DAMPING = [2.0, 2.0, 2.0, 0.5, 0.5, 0.5]
 OPENYAM_GRIPPER_NAME = "gripper"
-#: The jaw's finger joints, in m: joint7 is driven and joint8 copies it.
-#: Both are fully open at their lower end and closed at 0.
+#: The jaw's canonical finger joints, in m: joint7 is driven and joint8 copies
+#: it. The managed model calls them hand_finger_joint1 and hand_finger_joint2;
+#: both are fully open at their lower end and closed at their upper end.
 OPENYAM_FINGER_JOINTS = ("joint7", "joint8")
 
 
@@ -70,8 +76,22 @@ def make_openyam_model_config(
             OPENYAM_MODEL_PATH,
             package_paths=OPENYAM_PACKAGE_PATHS,
         )
-        .with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
-        .with_mimic_joint("joint8", "joint7")
+        .with_renamed_joints(
+            {
+                **dict(
+                    zip(
+                        joint_names(OPENYAM_DOF, prefix="arm_joint_"),
+                        model_joint_names,
+                        strict=True,
+                    )
+                ),
+                # The managed model's jaw keeps its URDF mimic; only its name
+                # is canonicalized to the robot's joint7/joint8.
+                "hand_finger_joint1": OPENYAM_FINGER_JOINTS[0],
+                "hand_finger_joint2": OPENYAM_FINGER_JOINTS[1],
+            }
+        )
+        .with_fixed_frame("gripper_tip", "arm_tcp")
     )
     return named_for_robot(
         RobotModelConfig(

@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 from threading import Event, Thread
 import time
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -81,6 +82,10 @@ class EpisodeDriver(Module):
     _world: SimWorldSpec
     _thread: Thread | None = None
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._stop_event = Event()
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -93,7 +98,6 @@ class EpisodeDriver(Module):
         self._commands: deque[tuple[float, NDArray[np.float64]]] = deque()
         self._echo: float | None = None
         self._arrival: float | None = None
-        self._stop_event = Event()
         self.register_disposable(Disposable(self.ground_truth.subscribe(self._on_pose)))
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
         self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_reached)))

@@ -68,7 +68,10 @@ from dimos.web.relay_bridge.manifest import (
     Publish as Publish,
 )
 from dimos.web.relay_bridge.topic_protocol import (
+    MAX_MID_LEN as MAX_MID_LEN,
+    MAX_SDP_LEN as MAX_SDP_LEN,
     TopicCapabilities,
+    TopicCount,
     TopicMsg,
     TopicSource,
     TopicVersion,
@@ -127,12 +130,8 @@ MAX_REQUEST_ID_LEN = 64
 # Bound for hello.token (a robot key or viewer token, see web/relay/auth.ts).
 MAX_TOKEN_LEN = 256
 
-# An SDP rides a control frame or an @control payload, so it stays well under
-# MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section, at most
-# MAX_RTC_TRACKS of them). SDP is ASCII, so this character count and the TS
-# mirror's string length agree.
-MAX_SDP_LEN = 48 * 1024
-MAX_MID_LEN = 16
+# MAX_SDP_LEN and MAX_MID_LEN live in topic_protocol.py, which the direct
+# topic video signaling shares with the SFU messages here.
 MAX_RTC_TRACKS = 8
 
 # Reject absurd header lengths before allocating (mirrors protocol.ts).
@@ -248,6 +247,7 @@ class Pong(_WireModel):
     t: Literal["pong"] = "pong"
     n: int | float
     ts: int | float
+    aborted: Annotated[TopicCount | None, BeforeValidator(_optional_reject_wire_null)] = None
 
 
 class Error(_WireModel):

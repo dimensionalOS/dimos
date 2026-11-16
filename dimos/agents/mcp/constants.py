@@ -18,13 +18,13 @@ DEFAULT_MCP_PORT = 9990
 DEFAULT_MCP_TIMEOUT = 30
 DEFAULT_MCP_URL = f"http://localhost:{DEFAULT_MCP_PORT}/mcp"
 
-# `HumanMessage.additional_kwargs` key naming the tool a message on McpClient's
+# `HumanMessage.additional_kwargs` key naming the tool a message on Agent's
 # `agent` stream came from. A tool's image result is fed to the model as a user
 # turn (a tool response cannot carry images for OpenAI models), and chat UIs read
 # this key to render that turn as tool output rather than as typed input.
 TOOL_ORIGIN_KEY = "tool_origin"
 
-# `AIMessage.additional_kwargs` key marking McpClient's note that a turn failed:
+# `AIMessage.additional_kwargs` key marking Agent's note that a turn failed:
 # the note has no LLM trace, so the eval adapter must not treat it as a model call.
 TURN_FAILED_KEY = "turn_failed"
 

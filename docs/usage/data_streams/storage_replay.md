@@ -2,6 +2,8 @@
 
 Record sensor streams to disk and replay them with original timing. Useful for testing, debugging, and creating reproducible datasets.
 
+`TimedSensorStorage` writes pickle files, which `LegacyPickleStore` reads back (they are the same class). This is the legacy format, and `TimedSensorReplay` cannot read it. `TimedSensorReplay` reads one stream of a dataset in the memory store (`data/<dataset>.db`). To record into the memory store, run a blueprint with `--record`; see [Recording](/docs/usage/recording.md).
+
 ## Quick Start
 
 ### Recording
@@ -12,8 +14,8 @@ from dimos.utils.testing.replay import TimedSensorStorage
 # Create storage (directory in data folder)
 storage = TimedSensorStorage("my_recording")
 
-# Save frames from a stream
-camera_stream.subscribe(storage.save_one)
+# Save frames from a stream (each frame needs a .ts timestamp)
+storage.consume_stream(camera_stream)
 
 # Or save manually
 storage.save(frame1, frame2, frame3)
@@ -22,17 +24,18 @@ storage.save(frame1, frame2, frame3)
 ### Replaying
 
 ```python skip
-from dimos.utils.testing.replay import TimedSensorReplay
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from reactivex import operators as ops
 
 # Load recording
-replay = TimedSensorReplay("my_recording")
+replay = LegacyPickleStore("my_recording")
 
 # Iterate at original speed
 for frame in replay.iterate_realtime():
     process(frame)
 
-# Or as an Observable stream
-replay.stream(speed=1.0).subscribe(process)
+# Or as an Observable stream, waiting until playback finishes
+replay.stream(speed=1.0).pipe(ops.do_action(process)).run()
 ```
 
 ## TimedSensorStorage
@@ -44,43 +47,43 @@ from dimos.utils.testing.replay import TimedSensorStorage
 
 storage = TimedSensorStorage("lidar_capture")
 
-# Save individual frames
-storage.save_one(lidar_msg)  # Returns frame count
+# Save individual frames (each uses its .ts)
+storage.save(lidar_msg)
 
 # Save multiple frames
 storage.save(frame1, frame2, frame3)
 
 # Subscribe to a stream
-lidar_stream.subscribe(storage.save_one)
+storage.consume_stream(lidar_stream)
 
-# Or pipe through (emits frame count)
-lidar_stream.pipe(
-    ops.flat_map(storage.save_stream)
-).subscribe()
+# Or pipe through (emits each frame after saving it)
+lidar_stream.pipe(storage.pipe_save).subscribe()
 ```
 
-**Storage location:** Files are saved to the data directory under the given name. The directory must not already contain pickle files (prevents accidental overwrites).
+**Storage location:** Files are saved to the data directory under the given name (or to an absolute path). If the directory already contains pickle files, numbering continues after the last one.
 
-**What gets stored:** By default, if a frame has a `.raw_msg` attribute, that's pickled instead of the full object. You can customize with the `autocast` parameter:
+**What gets stored:** Each frame as is. The `autocast` parameter transforms frames when they are read back:
 
 ```python skip
-# Custom serialization
-storage = TimedSensorStorage(
-    "custom_capture",
-    autocast=lambda frame: frame.to_dict()
+from dimos.robot.unitree.type.odometry import Odometry
+
+# Convert raw recorded messages to typed ones on read
+replay = LegacyPickleStore(
+    "unitree_office_walk/odom",
+    autocast=Odometry.from_msg,
 )
 ```
 
 ## TimedSensorReplay
 
-Replays stored sensor data with timestamp-aware iteration and seeking.
+Replays one stream of a dataset in the memory store with timestamp-aware iteration and seeking. Name it `"<dataset>/<stream>"`; the dataset is `data/<dataset>.db`, downloaded on first use like other data.
 
 ### Basic Iteration
 
 ```python skip
 from dimos.utils.testing.replay import TimedSensorReplay
 
-replay = TimedSensorReplay("lidar_capture")
+replay = TimedSensorReplay("go2_bigoffice/lidar")
 
 # Iterate all frames (ignores timing)
 for frame in replay.iterate():
@@ -91,25 +94,31 @@ for ts, frame in replay.iterate_ts():
     print(f"Frame at {ts}: {frame}")
 
 # Iterate with relative timestamps (from start)
-for relative_ts, frame in replay.iterate_duration():
-    print(f"At {relative_ts:.2f}s: {frame}")
+start = replay.first_timestamp()
+for ts, frame in replay.iterate_ts():
+    print(f"At {ts - start:.2f}s: {frame}")
 ```
 
 ### Realtime Playback
 
+`stream()` returns an observable that emits each frame at its recorded time. `.run()` blocks until the last frame, so each playback below finishes before the next one starts:
+
 ```python skip
-# Play at original speed (blocks between frames)
-for frame in replay.iterate_realtime():
-    process(frame)
+from reactivex import operators as ops
 
-# Play at 2x speed
-for frame in replay.iterate_realtime(speed=2.0):
-    process(frame)
+# Play at original speed, blocking until playback finishes
+replay.stream().pipe(ops.do_action(process)).run()
 
-# Play at half speed
-for frame in replay.iterate_realtime(speed=0.5):
-    process(frame)
+# Then play at 2x speed
+replay.stream(speed=2.0).pipe(ops.do_action(process)).run()
+
+# Then play at half speed
+replay.stream(speed=0.5).pipe(ops.do_action(process)).run()
 ```
+
+`.run()` raises `SequenceContainsNoElementsError` if the replay has no frames, and never returns with `stream(loop=True)`. For background playback, see [Observable Stream](#observable-stream) below.
+
+`LegacyPickleStore` also has `iterate_realtime(speed=...)`, which blocks between frames.
 
 ### Seeking and Slicing
 
@@ -123,17 +132,19 @@ for ts, frame in replay.iterate_ts(seek=10.0, duration=5.0):
     process(frame)
 
 # Loop forever
-for frame in replay.iterate(loop=True):
+for ts, frame in replay.iterate_ts(loop=True):
     process(frame)
 ```
 
 ### Finding Specific Frames
 
 ```python skip
-# Find frame closest to absolute timestamp
-frame = replay.find_closest(1704067200.0)
+# First recorded frame within 1s of an absolute timestamp, not the nearest one
+# (None if there is none). Use a small tolerance for a frame near the timestamp.
+timestamp = replay.first_timestamp() + 5.0
+frame = replay.find_closest(timestamp)
 
-# Find frame closest to relative time (30s from start)
+# Find the first frame at or after 30s from the start
 frame = replay.find_closest_seek(30.0)
 
 # With tolerance (returns None if no match within 0.1s)
@@ -142,62 +153,44 @@ frame = replay.find_closest(timestamp, tolerance=0.1)
 
 ### Observable Stream
 
-The `.stream()` method returns an Observable that emits frames with original timing:
+The `.stream()` method returns an Observable that emits frames with original timing.
+`subscribe()` delivers the first frame before returning; subsequent frames arrive
+on timer threads. Keep the program alive while listening, and dispose the
+subscription when finished. For finite playback in a script, use the blocking
+form shown above.
 
 ```python skip
-# Stream at original speed
-replay.stream(speed=1.0).subscribe(process)
-
 # Stream at 2x with seeking
-replay.stream(
+subscription = replay.stream(
     speed=2.0,
     seek=10.0,      # Start 10s in
     duration=30.0,  # Play for 30s
     loop=True       # Loop forever
 ).subscribe(process)
+
+try:
+    input("Press Enter to stop playback\n")
+finally:
+    subscription.dispose()
 ```
 
-## Usage: Stub Connections for Testing
+## Usage: Replay Instead of Hardware
 
-A common pattern is creating replay-based connection stubs for testing without hardware. From [`robot/unitree/go2/connection.py`](/dimos/robot/unitree/go2/connection.py#L83):
+The Go2's [`ReplayConnection`](/dimos/robot/unitree/go2/connection.py) stands in for the robot by playing a recorded dataset from the memory store. `GO2Connection` uses it when replay is on, which runs the full perception pipeline against recorded data:
 
-This is a bit primitive. We'd like to write a higher-order API for recording full module I/O for any module, but this is a work in progress at the moment.
-
-```python skip
-class ReplayConnection(UnitreeWebRTCConnection):
-    dir_name = "go2_sf_office"
-
-    def __init__(self, **kwargs) -> None:
-        get_data(self.dir_name)
-        self.replay_config = {
-            "loop": kwargs.get("loop"),
-            "seek": kwargs.get("seek"),
-            "duration": kwargs.get("duration"),
-        }
-
-    def lidar_stream(self):
-        lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")
-        return lidar_store.stream(**self.replay_config)
-
-    def video_stream(self):
-        video_store = TimedSensorReplay(f"{self.dir_name}/video")
-        return video_store.stream(**self.replay_config)
+```bash skip
+dimos --replay run unitree-go2
 ```
 
-This allows running the full perception pipeline against recorded data:
-
-```python skip
-# Use replay connection instead of real hardware
-connection = ReplayConnection(loop=True, seek=5.0)
-robot = GO2Connection(connection=connection)
-```
+Replay your own recording with
+`dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2`.
 
 ## Data Format
 
-Each pickle file contains a tuple `(timestamp, data)`:
+Each pickle file of a `TimedSensorStorage` recording contains a tuple `(timestamp, data)`:
 
-- **timestamp**: Unix timestamp (float) when the frame was captured
-- **data**: The sensor data (or result of `autocast` if provided)
+- **timestamp**: The frame's `.ts`, a Unix timestamp (float)
+- **data**: The sensor data
 
 Files are numbered sequentially: `000.pickle`, `001.pickle`, etc.
 
@@ -207,24 +200,36 @@ Recordings are stored in the `data/` directory. See [Data Loading](/docs/develop
 
 ### TimedSensorStorage
 
-| Method                       | Description                              |
-|------------------------------|------------------------------------------|
-| `save_one(frame)`            | Save a single frame, returns frame count |
-| `save(*frames)`              | Save multiple frames                     |
-| `save_stream(observable)`    | Pipe an observable through storage       |
-| `consume_stream(observable)` | Subscribe and save without returning     |
+| Method                       | Description                                       |
+|------------------------------|---------------------------------------------------|
+| `save(*frames)`              | Save one or more frames, using each frame's `.ts` |
+| `pipe_save(observable)`      | Operator for `.pipe()`: saves and re-emits frames |
+| `consume_stream(observable)` | Subscribe and save; returns the subscription      |
+
+### LegacyPickleStore (`TimedSensorStorage` is the same class)
+
+| Method                                                      | Description                                    |
+|-------------------------------------------------------------|------------------------------------------------|
+| `iterate(seek, duration, from_timestamp, loop)`                | Iterate frames (no timing)                     |
+| `iterate_ts(seek, duration, from_timestamp, loop)`             | Iterate `(timestamp, frame)`                   |
+| `iterate_realtime(speed, seek, duration, from_timestamp, loop)` | Iterate, sleeping to match the original timing |
+| `stream(speed, seek, duration, from_timestamp, loop)`          | Observable with original timing                |
+| `find_closest(timestamp, tolerance=None)`                     | Nearest frame to an absolute timestamp          |
+| `find_closest_seek(relative_seconds, tolerance=None)`         | Nearest frame to a time from the start          |
+| `first()`, `first_timestamp()`                                | First frame, first timestamp                    |
+| `load_one(index)`                                            | `(timestamp, frame)` of one pickle file         |
+| `len(store)`                                                 | Number of frames                               |
 
 ### TimedSensorReplay
 
-| Method                                           | Description                           |
-|--------------------------------------------------|---------------------------------------|
-| `iterate(loop=False)`                            | Iterate frames (no timing)            |
-| `iterate_ts(seek, duration, loop)`               | Iterate with absolute timestamps      |
-| `iterate_duration(...)`                          | Iterate with relative timestamps      |
-| `iterate_realtime(speed, ...)`                   | Iterate with blocking to match timing |
-| `stream(speed, seek, duration, loop)`            | Observable with original timing       |
-| `find_closest(timestamp, tolerance)`             | Find frame by absolute timestamp      |
-| `find_closest_seek(relative_seconds, tolerance)` | Find frame by relative time           |
-| `first()`                                        | Get first frame                       |
-| `first_timestamp()`                              | Get first timestamp                   |
-| `load(name)`                                     | Load specific frame by name/index     |
+| Method                                                | Description                       |
+|-------------------------------------------------------|-----------------------------------|
+| `iterate()`                                           | Iterate frames (no timing)        |
+| `iterate_ts(seek, duration, from_timestamp, loop)`    | Iterate with absolute timestamps  |
+| `stream(speed, seek, duration, from_timestamp, loop)` | Observable with original timing   |
+| `find_closest(timestamp, tolerance=1.0)`              | First frame within tolerance of an absolute timestamp |
+| `find_closest_seek(seconds)`                          | Find frame by relative time       |
+| `first()`                                             | Get first frame                   |
+| `first_timestamp()`                                   | Get first timestamp               |
+| `count()`                                             | Number of frames                  |
+| `load_one(index)`                                     | `(timestamp, frame)` at an index  |

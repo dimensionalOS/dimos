@@ -182,3 +182,7 @@ and converts it to a real LeRobot dataset. It checks one and two cameras, canoni
 training keys, joint order, causal sparse targets, decoded video, and saved-schema
 independence from the original profile. It does not test the native recorder and
 requires no Rust toolchain, recorder executable, hardware, or policy training.
+
+The OpenYAM collection Blueprints use `coordinator_joint_command` for actions.
+This stream records intended position commands, including commands the hardware
+may reject; it does not confirm hardware acceptance or measured execution.

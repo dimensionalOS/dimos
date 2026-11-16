@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from threading import Condition, Event, RLock, Thread
 import time
@@ -26,14 +26,13 @@ from typing import Any, Literal, TypeVar
 from pydantic import Field
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
-from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
@@ -50,6 +49,7 @@ from dimos.robot.deeprobotics.m20.basic_server import (
     CHARGE_ON_DOCK,
     USAGE_MODE_NAVIGATION,
     BasicServerLink,
+    BatteryReport,
 )
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.utils.logging_config import setup_logger
@@ -83,7 +83,7 @@ _CHARGE_LABELS = {
     CHARGE_ON_DOCK: "on the dock, not charging",
 }
 _CHARGE_BUSY_STATES = frozenset({CHARGE_ENTERING, CHARGE_CHARGING, CHARGE_EXITING, CHARGE_ON_DOCK})
-_CHARGE_STATUS_MAX_AGE_S = 3.0
+_REPORT_MAX_AGE_S = 3.0
 _CHARGE_STATUS_WAIT_S = 5.0
 _CHARGE_POLL_S = 0.25
 # Reports arrive at 2 Hz, so a status read this soon after a command can predate it.
@@ -97,6 +97,8 @@ ChargeTask = Literal["dock", "undock"]
 class _ChargeJob:
     task: ChargeTask
     started: bool = False
+    failure: str | None = None
+    done: Event = field(default_factory=Event)
 
 
 class _StoppingError(Exception):
@@ -152,6 +154,18 @@ def dock_failure(
     return None
 
 
+def _battery_state(report: BatteryReport) -> BatteryState | None:
+    """Combine the two packs into one BatteryState. A pack at 0 V is absent, not empty."""
+    packs = [pack for pack in (report.left, report.right) if pack.voltage > 0.0]
+    if not packs:
+        return None
+    return BatteryState(
+        voltage=sum(pack.voltage for pack in packs) / len(packs),
+        percentage=sum(pack.level for pack in packs) / len(packs) / 100.0,
+        temperature=max(pack.temperature for pack in packs),
+    )
+
+
 class M20Connection(Module):
     """Expose the planner-facing M20 command and terrain surface.
 
@@ -180,6 +194,7 @@ class M20Connection(Module):
     gait_cmd: Out[UInt32]
     odom: Out[PoseStamped]
     goal: Out[PoseStamped]
+    battery: Out[BatteryState]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -197,6 +212,7 @@ class M20Connection(Module):
             udp_port=self.config.basic_server_udp_port,
             timeout_s=self.config.basic_server_timeout_s,
             on_report=self._on_basic_server_report,
+            on_battery=self._on_battery_report,
         )
         self._charge_job: _ChargeJob | None = None
         self._charge_thread: Thread | None = None
@@ -229,7 +245,11 @@ class M20Connection(Module):
             )
         if self._charge_busy():
             logger.info("M20 is on the dock, so it will leave before standing up")
-            self.undock()
+            try:
+                self.undock()
+            except RuntimeError as error:
+                if not self._stopping.is_set():
+                    logger.error("M20 did not leave the dock on start: %s", error)
         elif not self.standup() and not self._stopping.is_set():
             logger.error("M20 did not stand up on start")
 
@@ -285,7 +305,10 @@ class M20Connection(Module):
             )
         if docking:
             logger.info("M20 stop_movement cancels docking")
-            self.undock()
+            try:
+                self._start_undock()
+            except RuntimeError as error:
+                logger.warning("M20 stop_movement did not cancel docking: %s", error)
         elif self._charge_busy():
             logger.info("M20 stop_movement left the robot to the vendor's dock control")
         else:
@@ -395,22 +418,50 @@ class M20Connection(Module):
 
         return switched
 
-    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
-    def dock(self) -> str:
-        """Start docking and charging, and return immediately.
+    @rpc
+    def dock(self) -> None:
+        """Dock and charge. Returns once charging. Raises RuntimeError with the reason otherwise.
 
-        The robot must already stand still, facing the dock with both reflectors in view,
-        about 2 m in front of it. It can't walk to the dock from elsewhere. A tool update
-        reports each stage and the result.
+        The robot must stand still about 2 m in front of the dock, facing both reflectors.
         """
-        self.start_tool("dock")
+        self._finish(self._start_dock())
+
+    @rpc
+    def undock(self) -> None:
+        """Leave the dock and stand ready to navigate. Raises RuntimeError on failure.
+
+        Returns at once when the robot is off the dock.
+        """
+        job = self._start_undock()
+        if job is not None:
+            self._finish(job)
+
+    @rpc
+    def charge_status(self) -> str:
+        """Report the robot's charging state, its battery level and any charging error."""
+        status = self._fresh_charge_status()
+        error = self._basic_server.charge_error
+        parts = ["unknown" if status is None else _CHARGE_LABELS.get(status, "unknown")]
+        battery = self._fresh_battery_state()
+        if battery is not None:
+            parts.append(f"battery {battery.percentage:.0%}")
+        if error is not None:
+            parts.append(f"error {_charge_error_text(error)}")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _finish(job: _ChargeJob) -> None:
+        job.done.wait()
+        if job.failure is not None:
+            raise RuntimeError(job.failure)
+
+    def _start_dock(self) -> _ChargeJob:
         with self._state_condition:
             if self._charge_job is not None and self._charge_job.task == "dock":
-                return "Already docking. A tool update reports the result."
+                raise RuntimeError("Not docking: a dock is already under way.")
             refusal = self._dock_refusal()
             if refusal is not None:
-                self.stop_tool("dock")
-                return f"Not docking: {refusal}."
+                raise RuntimeError(f"Not docking: {refusal}.")
             job = _ChargeJob("dock")
             self._charge_job = job
             self._basic_server.charge_error = None
@@ -420,51 +471,36 @@ class M20Connection(Module):
             target=self._run_dock, args=(job,), name="m20-dock", daemon=True
         )
         self._charge_thread.start()
-        return "Docking. A tool update reports each stage and the result."
+        return job
 
-    @skill(lifecycle="background")
-    def undock(self) -> str:
-        """Stop docking or charging, leave the dock and stand ready to navigate.
-
-        Returns immediately. A tool update reports the result.
-        """
-        self.start_tool("undock")
+    def _start_undock(self) -> _ChargeJob | None:
+        """Start leaving the dock. Returns None when there is nothing to wait for."""
         with self._state_condition:
-            job = self._charge_job
-            if job is not None and job.task == "undock":
-                return "Already undocking. A tool update reports the result."
-            if job is not None and not job.started:
+            current = self._charge_job
+            if current is not None and current.task == "undock":
+                raise RuntimeError("Not undocking: an undock is already under way.")
+            if current is not None and not current.started:
                 self._charge_job = None
                 self._state_condition.notify_all()
-                self.stop_tool("undock")
-                return "Cancelled docking before it started."
+                return None
             status = self._fresh_charge_status()
-            if job is None and status == CHARGE_IDLE:
-                self.stop_tool("undock")
-                return "Not undocking: the robot is not on the dock."
+            if current is None and status == CHARGE_IDLE:
+                return None
             previous = self._charge_thread
-            self._charge_job = _ChargeJob("undock")
+            job = _ChargeJob("undock")
+            self._charge_job = job
             self._basic_server.charge_error = None
             self._state_condition.notify_all()
 
         if status != CHARGE_EXITING and not self._basic_server.send_charge(CHARGE_COMMAND_STOP):
             with self._state_condition:
                 self._charge_job = None
-            self.stop_tool("undock")
-            return "Not undocking: could not reach the robot."
+            raise RuntimeError("Not undocking: could not reach the robot.")
         self._charge_thread = Thread(
-            target=self._run_undock, args=(previous,), name="m20-undock", daemon=True
+            target=self._run_undock, args=(job, previous), name="m20-undock", daemon=True
         )
         self._charge_thread.start()
-        return "Undocking. A tool update reports the result."
-
-    @skill
-    def charge_status(self) -> str:
-        """Report the robot's charging state and the charging error it reports now, if any."""
-        status = self._fresh_charge_status()
-        error = self._basic_server.charge_error
-        label = "unknown" if status is None else _CHARGE_LABELS.get(status, "unknown")
-        return f"{label}, error {_charge_error_text(error)}" if error is not None else label
+        return job
 
     def _dock_refusal(self) -> str | None:
         status = self._fresh_charge_status()
@@ -482,21 +518,21 @@ class M20Connection(Module):
 
     def _run_dock(self, job: _ChargeJob) -> None:
         try:
-            outcome = self._watch_dock(job)
+            job.failure = self._watch_dock(job)
         except _StoppingError:
-            outcome = "Stopped docking, module stopping."
+            job.failure = "Stopped docking, module stopping."
         except Exception:
             logger.exception("M20 dock failed")
-            outcome = "Docking failed with an internal error."
-        logger.info("M20 dock: %s", outcome)
-        self.tool_update("dock", outcome)
-        self.stop_tool("dock")
+            job.failure = "Docking failed with an internal error."
+        logger.info("M20 dock: %s", job.failure or "Docked and charging.")
         with self._state_condition:
             if self._charge_job is job:
                 self._charge_job = None
             self._state_condition.notify_all()
+        job.done.set()
 
-    def _watch_dock(self, job: _ChargeJob) -> str:
+    def _watch_dock(self, job: _ChargeJob) -> str | None:
+        """Wait for the robot to charge and return why it did not, or None."""
         with self._state_condition:
             self._state_condition.wait_for(
                 lambda: self._charge_job is not job or self._stopping.is_set(),
@@ -533,10 +569,9 @@ class M20Connection(Module):
                 reported = status
                 label = _CHARGE_LABELS.get(status, str(status))
                 logger.info("M20 charge status: %s", label)
-                self.tool_update("dock", f"Charge status: {label}.")
 
             if status == CHARGE_CHARGING:
-                return "Docked and charging."
+                return None
             failure = dock_failure(
                 status,
                 entered,
@@ -572,27 +607,23 @@ class M20Connection(Module):
             return "The robot did not return to navigation mode. Call standup() before navigating."
         return "The robot is standing ready to navigate."
 
-    def _run_undock(self, previous: Thread | None) -> None:
+    def _run_undock(self, job: _ChargeJob, previous: Thread | None) -> None:
         try:
             if previous is not None:
                 previous.join()
-            outcome = self._watch_undock()
-            if outcome is None:
-                stood = self._stand()
-                outcome = "Off the dock and ready to navigate."
-                if not stood:
-                    outcome = "Off the dock, but the robot did not stand ready to navigate."
+            job.failure = self._watch_undock()
+            if job.failure is None and not self._stand():
+                job.failure = "Off the dock, but the robot did not stand ready to navigate."
         except _StoppingError:
-            outcome = "Stopped undocking, module stopping."
+            job.failure = "Stopped undocking, module stopping."
         except Exception:
             logger.exception("M20 undock failed")
-            outcome = "Undocking failed with an internal error."
-        logger.info("M20 undock: %s", outcome)
-        self.tool_update("undock", outcome)
-        self.stop_tool("undock")
+            job.failure = "Undocking failed with an internal error."
+        logger.info("M20 undock: %s", job.failure or "Off the dock and ready to navigate.")
         with self._state_condition:
             self._charge_job = None
             self._state_condition.notify_all()
+        job.done.set()
 
     def _watch_undock(self) -> str | None:
         """Wait for the robot to leave the dock and return why it did not, or None."""
@@ -626,9 +657,15 @@ class M20Connection(Module):
 
     def _fresh_charge_status(self) -> int | None:
         report = self._basic_server.charge
-        if report is None or time.monotonic() - report.received_at > _CHARGE_STATUS_MAX_AGE_S:
+        if report is None or time.monotonic() - report.received_at > _REPORT_MAX_AGE_S:
             return None
         return report.status
+
+    def _fresh_battery_state(self) -> BatteryState | None:
+        report = self._basic_server.battery
+        if report is None or time.monotonic() - report.received_at > _REPORT_MAX_AGE_S:
+            return None
+        return _battery_state(report)
 
     def _wait_for_charge_status(self, timeout_s: float) -> bool:
         with self._state_condition:
@@ -644,6 +681,11 @@ class M20Connection(Module):
     def _on_basic_server_report(self) -> None:
         with self._state_condition:
             self._state_condition.notify_all()
+
+    def _on_battery_report(self, report: BatteryReport) -> None:
+        state = _battery_state(report)
+        if state is not None:
+            self.battery.publish(state)
 
     def _on_requested_cmd_vel(self, twist: Twist) -> None:
         if not self._charge_busy():

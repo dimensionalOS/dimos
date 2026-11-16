@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import sys
 from typing import Any
@@ -22,6 +23,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from experimental.gateway import constants, logs, responses, store
 from experimental.gateway.state import GatewayState
 
@@ -53,6 +55,7 @@ async def info(state: GatewayState) -> dict[str, Any]:
         "kind": "dimos",
         "startedAt": state.started_at,
         "zenohNamespace": state.bus.namespace,
+        **gateway_build(),
     }
     return {
         **store.info(state.dimos_dir),
@@ -62,7 +65,17 @@ async def info(state: GatewayState) -> dict[str, Any]:
     }
 
 
+@functools.cache
+def gateway_build() -> dict[str, Any]:
+    """Where this gateway's own code is, and its commit and desktop-gateway tag (the served checkout's are `commit`
+    and `tag`); read once, as the code can't change under a running gateway."""
+    own = DIMOS_PROJECT_ROOT
+    build = store.info(own)
+    return {"gatewayDir": str(own), "gatewayCommit": build["commit"], "gatewayTag": build["tag"]}
+
+
 @router.post("/server/stop", response_model=responses.Stopping)
 async def stop_server(state: GatewayState) -> dict[str, Any]:
+    state.uploads.shutdown()
     asyncio.get_running_loop().call_later(constants.SERVER_STOP_DELAY_S, state.exit)
     return {"stopping": True}

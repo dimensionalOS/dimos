@@ -408,13 +408,13 @@ class SimWorld(Module, ABC):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._started = Event()
+        self._stop_event = Event()
         self._load_lock = Lock()
 
     @rpc
     def start(self) -> None:
         super().start()
         self._hold = CommandHold(self.rig.command_timeout)
-        self._stop_event = Event()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
         self.register_disposable(
             Disposable(self.render_file_request.subscribe(self._on_render_file_request))

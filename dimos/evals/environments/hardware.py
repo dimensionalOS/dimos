@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING
 
 from pydantic import Field
 
-from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.evals.environments.live import LiveEnvironment, LiveEnvironmentConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -44,7 +43,7 @@ class HardwareEnvironmentConfig(LiveEnvironmentConfig):
     task: str
     """The case's instruction, shown to the operator before the robot starts."""
     stop_tool: str | None = None
-    """MCP tool that halts motion before the robot disconnects, e.g. ``cancel``."""
+    """Skill that halts motion before the robot disconnects, e.g. ``cancel``."""
     module_env: dict[str, str] = Field(default_factory=dict)
     launch_timeout_s: float = 300.0
     graceful_stop: bool = True
@@ -60,14 +59,14 @@ class HardwareEnvironment(LiveEnvironment):
             raise RuntimeError("hardware evals need an operator at an interactive terminal")
         super().preflight(agent)
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         answer = input(
             f"\nNext eval task: {self.config.task}\n"
             "Is the scene reset and the robot ready, with the area clear? [y/N] "
         )
         if not answer.strip().lower().startswith("y"):
             raise RuntimeError("operator did not confirm the robot is ready")
-        return super().start(modules)
+        return super().start(modules, requires_mcp=requires_mcp)
 
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = None  # the real robot: no --simulation
@@ -75,12 +74,17 @@ class HardwareEnvironment(LiveEnvironment):
 
     def stop(self) -> None:
         try:
-            if self.config.stop_tool is not None and self._mcp_url is not None:
+            # A recording means start() finished and the agent may have moved the robot.
+            if self.config.stop_tool is not None and self._recording is not None:
                 try:
-                    result = McpAdapter(self._mcp_url).call_tool(self.config.stop_tool)
-                    # A tool that raises comes back as an error result, not an exception.
-                    if result.get("isError"):
-                        raise RuntimeError(f"{self.config.stop_tool}: {result.get('content')}")
+                    # The client loads OpenCV; only a case that ran needs it.
+                    from dimos.porcelain.dimos import Dimos
+
+                    app = Dimos.connect(timeout=5.0)
+                    try:
+                        getattr(app.skills, self.config.stop_tool)()
+                    finally:
+                        app.stop()
                 except Exception as e:
                     logger.error(
                         "HALT FAILED: the robot may still be moving, use the e-stop",

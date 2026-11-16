@@ -17,7 +17,9 @@ from pathlib import Path
 
 import pytest
 
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.keys import Interface
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
@@ -54,7 +56,20 @@ def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
         RobotModel, "load", return_value=LoadedRobotModel(xml, Path("model.urdf"), {})
     )
     source = ConnectionSource(
-        "arm", ["position_command"], ["joint_state"], dual_openyam_control_model(robot="arm"), 1
+        ConnectionConfig(
+            source="arm",
+            model=dual_openyam_control_model(robot="arm"),
+            joint_commands={
+                name: (Interface.POSITION,)
+                for name in [
+                    *names,
+                    *(f"arm/{n}" for n in DualOpenYamConnection.robot.gripper_joints.values()),
+                ]
+            },
+        ),
+        ["position_command"],
+        ["joint_state"],
+        1,
     )
     source.on_message(
         "joint_state",
@@ -77,6 +92,6 @@ def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
     )
     # Every name is tested against its own distinct range, independent of XML order.
     for name in names:
-        source.command({name: bounds[name][1]}, ControlMode.POSITION)
+        source.command({name: (bounds[name][1], ControlMode.POSITION)})
         with pytest.raises(ValueError, match="outside"):
-            source.command({name: bounds[name][1] + 0.1}, ControlMode.POSITION)
+            source.command({name: (bounds[name][1] + 0.1, ControlMode.POSITION)})
