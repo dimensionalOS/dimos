@@ -652,6 +652,21 @@ def solve_hand_eye(
         obs.append(det)
         K = frame.K
         dist = np.resize(np.asarray(frame.dist, dtype=float).ravel(), 5)
+    return solve_views(A, obs, K, dist, nominal, tried, moved, unsolved)
+
+
+def solve_views(
+    A: list[FloatArray],
+    obs: list[_Obs],
+    K: FloatArray | None,
+    dist: FloatArray | None,
+    nominal: CameraNominal,
+    tried: int,
+    moved: int,
+    unsolved: int = 0,
+) -> HandEyeResult:
+    """Solve the views taken and judge the answer by its own consistency. ``A`` is base ->
+    flange per view for a camera on the flange, flange -> base for a fixed one."""
     if len(A) < 3 or K is None or dist is None:
         return HandEyeResult(
             nominal.frame,
