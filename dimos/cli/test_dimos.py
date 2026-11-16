@@ -139,6 +139,17 @@ def test_mcp_malformed_argument_rejected_before_adapter(monkeypatch: pytest.Monk
     assert "expected KEY=VALUE" in result.output
 
 
+def test_global_help_explains_dtop() -> None:
+    result = CliRunner().invoke(main, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    output_plain = " ".join(output_plain.replace("│", "").split())
+    assert "--dtop" in output_plain
+    assert "Publish live resource stats for dtop" in output_plain
+    assert "Override dtop in GlobalConfig" not in output_plain
+
+
 def test_global_config_flag_applies_before_subcommand():
     """A GlobalConfig flag placed before the subcommand (e.g. --transport) must be
     applied by the root callback so every subcommand sees it -- not just
@@ -665,6 +676,7 @@ def test_run_help_lists_dynamic_flags_without_starting(
     assert "--map-file" in output_plain
     assert "--runmodulea.daemon" in output_plain
     assert output_plain.count("--daemon") == 1
+    assert "Publish live resource stats for dtop" in output_plain
     assert "parsed_config" not in stubbed_run
     assert "entry" not in stubbed_run
 
