@@ -379,14 +379,8 @@ class Blueprint:
 
         for atom in self.blueprints:
             new_name = f"{prefix}/{atom.name}"
-            namespace = (
-                f"{prefix}/{atom.kwargs['namespace']}" if atom.kwargs.get("namespace") else prefix
-            )
-            kwargs = atom.module.handle_blueprint_namespace(
-                dict(atom.kwargs), prefix=prefix, namespace=namespace
-            )
+            kwargs = atom.module.handle_blueprint_namespace(dict(atom.kwargs), prefix=prefix)
             kwargs["instance_name"] = new_name
-            kwargs["namespace"] = namespace
             new_atoms.append(replace(atom, kwargs=kwargs, instance_name=new_name))
 
             for stream in atom.streams:

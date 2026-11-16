@@ -400,10 +400,10 @@ def test_namespace_nesting_composes() -> None:
     assert blueprint.remapping_map[("fleet/robot0/modulea", "data1")] == "fleet/robot0/data1"
 
 
-def test_namespace_keeps_user_frame_id_prefix() -> None:
+def test_namespace_stacks_user_frame_id_prefix() -> None:
     blueprint = ModuleA.blueprint(frame_id_prefix="custom").namespace("robot0")
 
-    assert blueprint.blueprints[0].kwargs["frame_id_prefix"] == "custom"
+    assert blueprint.blueprints[0].kwargs["frame_id_prefix"] == "robot0/custom"
 
 
 def test_namespace_allows_duplicate_module_classes() -> None:

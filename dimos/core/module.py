@@ -126,8 +126,6 @@ class ModuleConfig(BaseConfig):
     # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
     # from the class name to this name.
     instance_name: str | None = None
-    # Set by Blueprint.namespace(), e.g. "robot1/inner"; "" outside any namespace.
-    namespace: str = ""
     # Optional RPC-only address. Unlike instance_name, this does not change the
     # module's Blueprint identity, configuration key, or stream namespace.
     rpc_name: str | None = None
@@ -205,24 +203,17 @@ class ModuleBase(Configurable, CompositeResource):
             return f"{self.config.frame_id_prefix}/{base}"
         return base
 
-    @property
-    def namespace(self) -> str:
-        """The blueprint namespace this instance runs in, e.g. "robot1/inner"; "" outside any."""
-        return self.config.namespace
-
     @classmethod
-    def handle_blueprint_namespace(
-        cls, kwargs: dict[str, Any], *, prefix: str, namespace: str
-    ) -> dict[str, Any]:
-        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it into *namespace*.
+    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it (once per level, innermost first).
 
-        Called once per level, innermost first; ``kwargs["namespace"]`` is still the inner one.
-        The default sets ``frame_id_prefix`` to the namespace unless the user set it.
+        The default stacks ``frame_id_prefix`` the way instance names stack: ``prefix/old``.
         """
         frame_id_prefix = kwargs.get("frame_id_prefix")
-        if frame_id_prefix is None or frame_id_prefix == kwargs.get("namespace"):
-            return {**kwargs, "frame_id_prefix": namespace}
-        return kwargs
+        return {
+            **kwargs,
+            "frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix,
+        }
 
     @rpc
     def build(self) -> None:
