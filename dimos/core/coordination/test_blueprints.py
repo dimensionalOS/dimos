@@ -38,6 +38,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.spec.utils import Spec
@@ -379,6 +380,16 @@ def test_namespace_expose_keeps_names_global() -> None:
 
     assert ("robot0/modulea", "data1") not in blueprint.remapping_map
     assert blueprint.remapping_map[("robot0/modulea", "data2")] == "robot0/data2"
+
+
+class TfPublisher(Module):
+    tf: Out[TFMessage]
+
+
+def test_namespace_keeps_tf_global() -> None:
+    blueprint = TfPublisher.blueprint().namespace("robot0").namespace("fleet")
+
+    assert ("fleet/robot0/tfpublisher", "tf") not in blueprint.remapping_map
 
 
 def test_namespace_expose_typo_raises() -> None:
