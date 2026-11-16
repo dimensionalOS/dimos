@@ -237,7 +237,7 @@ class ReplayStream(Generic[T]):
 
         With *skip_late* off nothing is skipped: frames already behind wall
         time are emitted at once, in order, and the rest keep their timing.
-        For a subscriber that is only behind by its own setup, like a module
+        Disabled by a subscriber that is only behind by its own setup, like a module
         subscribing every stream right after pinning the anchor.
 
         Disposing cancels pending emissions and waits for an active callback

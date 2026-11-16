@@ -157,9 +157,8 @@ class ReplayModule(Module):
                 )
                 continue
             # Not a late subscriber, just behind by the setup of the streams
-            # subscribed before it (a query, a timer thread and a log line each),
-            # which on a loaded machine exceeds the late tolerance and would
-            # drop its first frames.
+            # subscribed before it, which on a loaded machine exceeds the
+            # late tolerance and would drop its first frames.
             timed: Observable[DimosMsg] = stream.observable(skip_late=False)
             self.register_disposable(timed.subscribe(port.publish))
 
