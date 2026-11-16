@@ -91,6 +91,23 @@ def test_the_scan_survives_a_restart_and_says_when_the_checkout_changed(
     assert after.snapshot()["stale"] and catalog.modules(after.cache())[0]["name"] == "cam"
 
 
+def test_the_fingerprint_notices_a_second_edit_of_a_modified_file(tmp_path: Path) -> None:
+    def git(*args: str) -> None:
+        identity = ("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false")
+        subprocess.run(["git", "-C", str(tmp_path), *identity, *args], check=True)
+
+    git("init", "-q")
+    source = tmp_path / "blueprint.py"
+    source.write_text("x = 1\n")
+    git("add", "blueprint.py")
+    git("commit", "-q", "--no-verify", "-m", "first")
+    # git status then starts with ` M blueprint.py`, whose leading space is part of the line
+    source.write_text("x = 2\n")
+    edited = discovery.fingerprint(tmp_path)
+    source.write_text("x = 3\n")
+    assert discovery.fingerprint(tmp_path) != edited
+
+
 def test_a_child_dying_right_after_a_record_still_scans_the_rest(
     client: TestClient, scanned: State, monkeypatch: pytest.MonkeyPatch
 ) -> None:
