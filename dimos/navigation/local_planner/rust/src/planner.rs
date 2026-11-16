@@ -1080,11 +1080,30 @@ fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Opt
     let end = *approach.last()?;
     let walk = fps.id(emb, Some(0.0));
     let margin = cl.margin;
-    let fits = |cl: &mut Clear, x: f64, y: f64| {
+    let found = last_along(approach, |x, y| {
         let (i, j) = cl.cell_of(x, y);
         (0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
-    };
-    if fits(cl, end[0], end[1]) {
+    });
+    Some(found.unwrap_or((end[0], end[1])))
+}
+
+/// The last point of `approach` the standing body clears facing `yaw`, or None.
+fn pull_back_facing(
+    cl: &mut Clear,
+    fps: &Fps,
+    approach: &[[f64; 2]],
+    yaw: f64,
+) -> Option<(f64, f64)> {
+    let margin = cl.margin;
+    last_along(approach, |x, y| {
+        pose_clear(cl.w, fps.stand(), x, y, yaw) > margin
+    })
+}
+
+/// The last point of `approach` that `fits`, walking back from its end in half-cell steps.
+fn last_along(approach: &[[f64; 2]], mut fits: impl FnMut(f64, f64) -> bool) -> Option<(f64, f64)> {
+    let end = *approach.last()?;
+    if fits(end[0], end[1]) {
         return Some((end[0], end[1]));
     }
     for pair in approach.windows(2).rev() {
@@ -1094,12 +1113,12 @@ fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Opt
         for q in (0..n).rev() {
             let t = q as f64 / n as f64;
             let (x, y) = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]));
-            if fits(cl, x, y) {
+            if fits(x, y) {
                 return Some((x, y));
             }
         }
     }
-    Some((end[0], end[1]))
+    None
 }
 
 /// `se2_search` on a clearance table the caller owns (a pure memo, so shareable).
@@ -1928,9 +1947,9 @@ pub fn step_reach(emb: &Emb) -> f64 {
 
 /// `plan` with `terrain` priced. The heuristic never sees the price, so the search stays exact.
 /// The goal is pulled back along `approach`, the route from the robot to the carrot, to where
-/// the body fits. With `goal_yaw` the route ends on that exact pose when the standing body
-/// fits it and a route reaches it, else the goal is planned position-only. The flag says
-/// which.
+/// the body fits. With `goal_yaw` the route ends facing it at the last point of `approach`
+/// the standing body clears in that heading, when a route reaches it, else the goal is
+/// planned position-only. The flag says whether the route ends facing the heading.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_explored(
     points: &[[f64; 2]],
@@ -1951,14 +1970,11 @@ pub fn plan_explored(
     let mut w = build_world_explored(points, terrain, step_reach(emb), pose, approach, cap);
     let margin = emb.precision;
     // World from {pose, approach, cloud}, never the incumbent. One clearance table for both.
-    let (fresh, held, honored) = {
+    let (fresh, held) = {
         let (gx, gy) = lattice_axes(&w);
         let mut cl = Clear::new(&mut w, &fps, margin, gx, gy, emb.governor());
-        let exact = goal_yaw.and_then(|yaw| {
-            let end = approach.last()?;
-            let fits = pose_clear(cl.w, fps.stand(), end[0], end[1], yaw) > margin;
-            fits.then_some(((end[0], end[1]), yaw))
-        });
+        let exact =
+            goal_yaw.and_then(|yaw| Some((pull_back_facing(&mut cl, &fps, approach, yaw)?, yaw)));
         let with_heading = exact.and_then(|(goal, yaw)| {
             let fresh = se2_search_in(&mut cl, &fps, pose, goal, Some(yaw), emb, margin);
             let held = incumbent
@@ -1966,13 +1982,13 @@ pub fn plan_explored(
             (fresh.is_some() || held.is_some()).then_some((fresh, held))
         });
         match with_heading {
-            Some((fresh, held)) => (fresh, held, true),
+            Some(found) => found,
             None => {
                 let goal = pull_back(&mut cl, &fps, emb, approach)?;
                 let fresh = se2_search_in(&mut cl, &fps, pose, goal, None, emb, margin);
                 let held = incumbent
                     .and_then(|inc| committed(&mut cl, &fps, emb, inc, pose, goal, None, margin));
-                (fresh, held, false)
+                (fresh, held)
             }
         }
     };
@@ -1991,6 +2007,11 @@ pub fn plan_explored(
             }
         }
     };
+    let honored = goal_yaw.is_some_and(|yaw| {
+        states
+            .last()
+            .is_some_and(|end| rem_2pi(end[2] - yaw).abs() < EXACT_EPS)
+    });
     if dense {
         return Some((states, honored));
     }
@@ -2554,6 +2575,30 @@ mod tests {
         );
         let states = plan_along(&pts, &[[0.0, 0.0], goal]).expect("pulled back, not refused");
         assert_near(end_xy(&states), [1.68, 0.0]);
+    }
+
+    #[test]
+    fn a_heading_against_a_wall_is_kept_where_the_goal_is_pulled_back() {
+        let pts = wall_x(2.0, None);
+        let (states, honored) = plan_explored(
+            &pts,
+            &Terrain::default(),
+            (0.0, 0.0, 0.0),
+            &[[0.0, 0.0], [1.85, 0.0]],
+            Some(PI),
+            &Emb::fixture(),
+            0.1,
+            None,
+            COMMIT_MARGIN,
+        )
+        .expect("pulled back, not refused");
+        assert!(honored, "the reversed body fits short of the wall");
+        let end = states.last().unwrap();
+        assert!(end[0] < 1.85, "pulled back, ends at {end:?}");
+        assert!(
+            rem_2pi(end[2] - PI).abs() < 1e-9,
+            "faces the heading, ends at {end:?}"
+        );
     }
 
     #[test]
