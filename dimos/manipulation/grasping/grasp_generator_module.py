@@ -69,7 +69,10 @@ class GraspGeneratorModule(Module, GraspGenSpec):
         (how many grasps the generator made) and ``nearest_angle_deg`` (the
         smallest angle among those, or None when there were none). Each grasp has
         ``rank`` (0 is best), ``score``, ``angle_deg``, ``position`` ([x, y, z],
-        metres), ``orientation`` ([x, y, z, w]) and ``generator``.
+        metres), ``orientation`` ([x, y, z, w]), ``rpy`` (the same orientation as
+        [roll, pitch, yaw], radians, for move_to_pose) and ``generator``. A grasp
+        is reached only with its orientation: moving to its position alone keeps
+        the gripper turned the way it already is.
 
         Raises ValueError for a cloud without points, an ``approach`` of zero
         length or a ``limit`` below 1.
@@ -96,6 +99,7 @@ class GraspGeneratorModule(Module, GraspGenSpec):
                     "angle_deg": angle,
                     "position": list(c.pose.position.to_tuple()),
                     "orientation": list(c.pose.orientation.to_tuple()),
+                    "rpy": list(c.pose.orientation.to_euler().to_tuple()),
                     "generator": name,
                 }
                 for rank, (c, angle) in enumerate(best)

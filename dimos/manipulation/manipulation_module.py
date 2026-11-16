@@ -147,6 +147,9 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    # Centre (x, y) and size (x, y) of that floor box, metres, in the world frame.
+    floor_center_xy: tuple[float, float] = (0.7, 0.0)
+    floor_size_xy: tuple[float, float] = (0.6, 1.2)
     # Fixed mount edges published alongside the robot's own TF, for rigs bolted
     # to a link the model already publishes -- an eye-in-hand camera, say. One
     # publisher for the whole chain: a second module publishing the mount at its
@@ -344,14 +347,14 @@ class ManipulationModule(Module):
             fz = self.config.floor_z
             thickness = 0.2
             floor_pose = Pose(
-                Vector3(0.7, 0.0, fz - thickness / 2),
+                Vector3(*self.config.floor_center_xy, fz - thickness / 2),
                 Quaternion(0.0, 0.0, 0.0, 1.0),
             )
             floor_obs = Obstacle(
                 name="floor",
                 pose=floor_pose,
                 obstacle_type=ObstacleType.BOX,
-                dimensions=(0.6, 1.2, thickness),
+                dimensions=(*self.config.floor_size_xy, thickness),
             )
             self._world_monitor.add_obstacle(floor_obs)
             logger.info("Floor obstacle added", z=fz)

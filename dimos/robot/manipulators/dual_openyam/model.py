@@ -21,11 +21,11 @@ from dimos.utils.data import LfsPath
 
 # LFS extraction caches by directory name. Version revised artifacts so they cannot
 # silently reuse an obsolete extracted model.
-DUAL_OPENYAM_ARTIFACT = "dual_openyam_abc_box_v2"
+DUAL_OPENYAM_ARTIFACT = "dual_openyam_workcell_v7"
 DUAL_OPENYAM_PACKAGE = LfsPath(DUAL_OPENYAM_ARTIFACT)
 DUAL_OPENYAM_MODEL_PATH = DUAL_OPENYAM_PACKAGE / "dual_openyam.urdf"
 DUAL_OPENYAM_PACKAGE_PATHS: dict[str, Path] = {
-    "dual_openyam_abc_box": DUAL_OPENYAM_PACKAGE,
+    "dual_openyam_workcell": DUAL_OPENYAM_PACKAGE,
 }
 DUAL_OPENYAM_MODEL = RobotModel.from_file(
     DUAL_OPENYAM_MODEL_PATH,

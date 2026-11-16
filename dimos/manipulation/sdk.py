@@ -161,7 +161,9 @@ class Arm:
     ) -> ExecutionResult:
         """Plan and move to world XYZ in metres, with optional XYZW orientation.
 
-        Omitting orientation preserves the current end-effector orientation.
+        Omitting orientation preserves the current end-effector orientation, so
+        a grasp needs its own: a grasp from propose_grasps_for gives
+        ``position`` and ``orientation`` in this form.
         This targets an endpoint; use ``move_linear`` for a straight translation.
         """
         xyz = _vector(position, 3, "position")

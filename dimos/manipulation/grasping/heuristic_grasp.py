@@ -93,7 +93,9 @@ class HeuristicGraspModule(GraspGeneratorModule):
 
         Instant and needs no GPU, but it only ever makes one top-down grasp, so an
         approach from the side finds none. The grasps are not checked for reach or
-        collisions. Pass one entry of ``grasps`` to pick_object as ``grasp``.
+        collisions. Each grasp is a pose for the arm's tool tip, in the cloud's
+        frame: pass one entry of ``grasps`` to pick_object as ``grasp``, or move
+        an arm to its position and orientation.
 
         Args:
             cloud: The object's points, as localize's get_pointcloud gives them.
@@ -103,7 +105,7 @@ class HeuristicGraspModule(GraspGeneratorModule):
             max_angle_deg: Half-angle of the cone around approach, degrees.
             limit: How many grasps to return, best first.
 
-        Returns ``grasps`` (each with position, orientation, score and angle_deg),
+        Returns ``grasps`` (each with position, orientation, rpy, score and angle_deg),
         ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
         made, which says how far off approach is when ``grasps`` is empty.
         """

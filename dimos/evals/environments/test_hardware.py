@@ -70,6 +70,57 @@ def test_a_failed_halt_warns_the_operator_and_still_stops_dimos(mocker):
     release.assert_called_once()
 
 
+def _arm_state(at: float, preset: float = 0.0):
+    from dimos.manipulation.manipulation_spec import PlanningGroupState
+    from dimos.msgs.sensor_msgs.JointState import JointState
+
+    state = MagicMock(spec=PlanningGroupState)
+    state.joints = JointState(name=["j1", "j2"], position=[at, 0.0])
+    state.joint_presets = {"init": JointState(name=["j1", "j2"], position=[preset, 0.0])}
+    return state
+
+
+@pytest.mark.parametrize(("at", "asks"), [(0.01, False), (0.5, True)])
+def test_an_arm_left_unparked_is_held_by_the_operator_before_dimos_stops(mocker, at, asks):
+    calls = []
+    app = MagicMock()
+    app.skills.go_init.side_effect = lambda **kwargs: calls.append(("park", kwargs))
+    app.ManipulationModule.get_state.return_value.groups = {"arm": _arm_state(at)}
+    mocker.patch("dimos.porcelain.dimos.Dimos.connect", return_value=app)
+    mocker.patch("builtins.input", side_effect=lambda text: calls.append(("ask", text)) or "")
+    mocker.patch.object(LiveEnvironment, "stop", side_effect=lambda: calls.append(("release",)))
+    env = environment(
+        stop_tool="cancel",
+        stop_calls=(("go_init", {"planning_group": "arm"}),),
+        parked_presets={"arm": "init"},
+    )
+    env._recording = MagicMock()
+
+    env.stop()
+
+    assert calls[0] == ("park", {"planning_group": "arm"})
+    assert calls[-1] == ("release",)
+    asked = [c for c in calls if c[0] == "ask"]
+    assert bool(asked) is asks
+    if asks:
+        assert "NOT PARKED" in asked[0][1] and "0.50 rad" in asked[0][1]
+
+
+def test_a_failed_park_is_held_by_the_operator_before_dimos_stops(mocker):
+    app = MagicMock()
+    app.skills.go_init.side_effect = RuntimeError("no plan")
+    mocker.patch("dimos.porcelain.dimos.Dimos.connect", return_value=app)
+    ask = mocker.patch("builtins.input", return_value="")
+    release = mocker.patch.object(LiveEnvironment, "stop")
+    env = environment(stop_tool="cancel", stop_calls=(("go_init", {}),))
+    env._recording = MagicMock()
+
+    env.stop()
+
+    assert "no plan" in ask.call_args.args[0]
+    release.assert_called_once()
+
+
 def test_a_case_that_never_started_is_not_halted(mocker):
     connect = mocker.patch("dimos.porcelain.dimos.Dimos.connect")
     mocker.patch.object(LiveEnvironment, "stop")
