@@ -921,7 +921,7 @@ robots:
           description: Guide an OpenYAM arm by hand and record demonstrations.
           recommended_config:
           - *robot_or_simulator
-          - module: openyamteachconnection
+          - module: openyamconnection
             field: can_port
             label: CAN port or USB serial
             placeholder: can0
@@ -969,6 +969,15 @@ robots:
         teleop-webxr-dual-openyam:
           title: Dual OpenYAM VR teleop
           description: Coupled VR teleoperation of both OpenYAM arms.
+        dual-openyam-leader-teleop:
+          title: Dual OpenYAM leader teleop
+          description: Two YAM leader arms drive both OpenYAM arms joint for joint.
+        dual-openyam-joycon-leader-teleop:
+          title: Dual OpenYAM leader teleop with Joy-Cons
+          description: Two YAM leader arms drive both OpenYAM arms; Joy-Cons close the jaws and pause following.
+        learning-collect-leader-dual-openyam:
+          title: Dual OpenYAM leader demonstration recording
+          description: Drive both OpenYAM arms from the leader arms and record demonstrations.
     openarm:
       name: OpenArm
       description: The bimanual OpenArm, over CAN.
@@ -999,6 +1008,12 @@ robots:
         teleop-openarm-mini-leader:
           title: OpenArm Mini leaders (operator machine)
           description: The leader half of a split OpenArm Mini setup; joins the robot's network as a client.
+        teleop-openarm-mini-joycon:
+          title: OpenArm Mini leader teleop with Joy-Cons
+          description: OpenArm Mini leaders without triggers drive the bimanual OpenArm; a Joy-Con on each runs its jaw, episodes and pause, on one machine.
+        teleop-openarm-mini-joycon-leader:
+          title: OpenArm Mini leaders with Joy-Cons (operator machine)
+          description: The leader half of a split OpenArm Mini setup with Joy-Cons; joins the robot's network as a client.
         teleop-openarm-mini-follower:
           title: OpenArm Mini follower (robot machine)
           description: The OpenArm half of a split OpenArm Mini setup; follows leaders on another machine.

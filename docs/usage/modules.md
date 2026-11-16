@@ -448,9 +448,9 @@ A basic Unitree Go2 blueprint looks like what we saw before.
 
 ```python skip session=blueprints output=assets/go2_agentic.svg
 from dimos.core.introspection.svg import to_svg
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
+from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
 
-to_svg(agentic, "assets/go2_agentic.svg")
+to_svg(unitree_go2_agentic, "assets/go2_agentic.svg")
 ```
 
 ![output](assets/go2_agentic.svg)

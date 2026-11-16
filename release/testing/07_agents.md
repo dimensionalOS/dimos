@@ -7,7 +7,7 @@ Agent checks need the configured LLM credentials. Most run on replay data or in 
 Needs Ollama running (`ollama serve`) and `OPENAI_API_KEY`, since `SpeakSkill` speaks through OpenAI TTS. Run each stage below separately: `agent-send` returns when the message is sent, before the model has finished responding.
 
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen3-vl:8b
 uv run dimos --replay run unitree-go2-agentic-ollama --daemon
 ```
 

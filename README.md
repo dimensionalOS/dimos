@@ -166,7 +166,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 See [installer options](docs/installation/index.md), or platform notes:
 
-- <img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable"> [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
+- <img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable"> [Ubuntu 22.04 / 24.04 / 26.04](docs/installation/ubuntu.md)
 - [NixOS / General Linux (not CI-tested)](docs/installation/nix.md)
 - <img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha"> [macOS](docs/installation/osx.md)
 

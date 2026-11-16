@@ -34,7 +34,7 @@ From any language with LCM bindings, publish `Twist` messages to `/cmd_vel`:
 
 ```python
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import Twist
+from dimos.msgs.geometry_msgs.Twist import Twist
 
 transport = LCMTransport("/cmd_vel", Twist)
 transport.publish(Twist(linear=(0.5, 0, 0), angular=(0, 0, 0.3)))

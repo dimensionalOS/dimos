@@ -24,6 +24,7 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_lcm.sensor_msgs import BatteryState as LCMBatteryState
 import pytest
 from pytest_mock import MockerFixture
 
@@ -353,6 +354,27 @@ def test_battery_reports_publish_one_state_for_both_packs(
     assert state.percentage == pytest.approx(0.90)
     assert state.voltage == pytest.approx(82.0)
     assert state.temperature == pytest.approx(35.8, abs=0.01)
+
+
+@pytest.mark.parametrize(
+    ("charge", "power_supply_status"),
+    [
+        (CHARGE_CHARGING, LCMBatteryState.POWER_SUPPLY_STATUS_CHARGING),
+        (CHARGE_ON_DOCK, LCMBatteryState.POWER_SUPPLY_STATUS_NOT_CHARGING),
+        (CHARGE_IDLE, LCMBatteryState.POWER_SUPPLY_STATUS_DISCHARGING),
+    ],
+)
+def test_battery_state_carries_the_charge_state(
+    started: Callable[..., M20Connection],
+    server: FakeBasicServer,
+    charge: int,
+    power_supply_status: int,
+) -> None:
+    server.charge = charge
+    conn = started()
+    _wait_for_status(conn, charge)
+    sent = _transport(conn.battery).sent
+    _wait_until(lambda: any(s.power_supply_status == power_supply_status for s in sent))
 
 
 def test_a_pack_at_zero_volts_is_left_out(

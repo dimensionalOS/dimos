@@ -71,7 +71,7 @@ Use `--config robot.json` for structured settings:
 }
 ```
 
-Python module construction and `.blueprint(...)` accept the same fields as keyword arguments. Direct `.build()` uses blueprint values; use `BlueprintConfigParser` when resolving JSON, environment, and CLI overrides in Python.
+Python module construction and `.blueprint(...)` accept the same fields as keyword arguments. Direct `ModuleCoordinator.build(...)` uses blueprint values; use `BlueprintConfigParser` when resolving JSON, environment, and CLI overrides in Python.
 
 ## Global settings
 
@@ -88,7 +88,7 @@ for firewall guidance and how to disable the Rerun bridge.
 
 The former global names have been removed. Update CLI arguments, `.env`, JSON `g` sections, and Python `.global_config(...)` calls. Unknown fields in `g` are rejected. For environment variables and `.env` entries, `dimos run` and `dimos rerun-bridge` require migration of old credentials and hardware addresses, naming their replacements. Other former names produce a warning and are ignored. `MCP_TIMEOUT` is ignored without a migration warning; use `dimos mcp call --timeout` for each call.
 
-Scoped module environment variables are resolved by `BlueprintConfigParser`, including when invoked by the CLI. They do not configure direct Python module construction or `.build()` calls. Scripts and notebooks must pass module kwargs, such as `McpServer.blueprint(port=9992)` or `TypeSafeNavigationAgent.blueprint(api_key=key)`, or parse the blueprint with `BlueprintConfigParser` before building it.
+Scoped module environment variables are resolved by `BlueprintConfigParser`, including when invoked by the CLI. They do not configure direct Python module construction or `ModuleCoordinator.build(...)` calls. Scripts and notebooks must pass module kwargs, such as `McpServer.blueprint(port=9992)` or `TypeSafeNavigationAgent.blueprint(api_key=key)`, or parse the blueprint with `BlueprintConfigParser` before building it.
 
 | Former global setting | Owner / replacement |
 |---|---|

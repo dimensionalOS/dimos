@@ -16,21 +16,31 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+from pathlib import Path
 import warnings
 
 from mcap.writer import Writer
 import pytest
 from typer.testing import CliRunner
 
+from dimos import constants
+from dimos.cloud.data import _tag
 from dimos.memory.cli.app import mem_app
-from dimos.memory.cli.dataset import open_dataset, open_store
-from dimos.memory.replay_module import stream_types_of
+from dimos.memory.cli.dataset import (
+    AmbiguousDatasetError,
+    open_dataset,
+    open_store,
+    resolve_dataset,
+)
+from dimos.memory.replay import resolve_db_path
+from dimos.memory.replay_module import dataset_path, stream_types_of
 from dimos.memory.store.mcap import McapStore
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
 from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
 from dimos.robot.unitree.go2.dds.store import Go2McapStore
+from dimos.utils import data
 
 
 def test_native_mcap_cli_and_replay_resolve_typed_stream(tmp_path):
@@ -214,3 +224,166 @@ def test_legacy_json_selection_respects_encoding_and_metadata(
             assert decoded.data == payload.decode()
         else:
             assert decoded == payload
+
+
+@pytest.fixture
+def dataset_dirs(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    data_dir = project / "data"
+    (data_dir / ".lfs").mkdir(parents=True)
+    downloads = tmp_path / "downloads"
+    recordings = tmp_path / "recordings"
+    downloads.mkdir()
+    recordings.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(data, "DIMOS_PROJECT_ROOT", project)
+    monkeypatch.setattr(data, "get_project_root", lambda: project)
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data, "_get_lfs_dir", lambda: data_dir / ".lfs")
+    monkeypatch.setattr(constants, "DIMOS_PROJECT_ROOT", project)
+    monkeypatch.setattr(constants, "DOWNLOADS_DIR", downloads)
+    monkeypatch.setattr(constants, "RECORDINGS_DIR", recordings)
+    return recordings, downloads
+
+
+@pytest.mark.parametrize("resolver", [resolve_dataset, resolve_db_path, dataset_path])
+def test_resolve_recording_name(dataset_dirs, resolver):
+    recordings, _ = dataset_dirs
+    run = recordings / "20260830-120000-go2" / "memory.db"
+    run.parent.mkdir()
+    run.touch()
+
+    assert Path(resolver(run.parent.name)) == run
+
+
+@pytest.mark.parametrize("resolver", [resolve_dataset, resolve_db_path])
+@pytest.mark.parametrize("filename", ["memory.db", "memory.mcap"])
+@pytest.mark.parametrize(
+    "timestamp",
+    [{"created_at": "2026-08-30T12:00:00+00:00"}, {}],
+    ids=["timestamped", "no-timestamp"],
+)
+@pytest.mark.parametrize(
+    "alias", ["name", "stem", "filename", "file_stem", "tag", "id", "short_id"]
+)
+def test_resolve_download_alias(dataset_dirs, resolver, filename, timestamp, alias):
+    _, downloads = dataset_dirs
+    upload = {"id": "abcdef1234567890", **timestamp}
+    tag = _tag(upload)
+    pulled = downloads / f"{tag}{filename}"
+    pulled.touch()
+    names = {
+        "name": pulled.name,
+        "stem": pulled.stem,
+        "filename": filename,
+        "file_stem": Path(filename).stem,
+        "tag": tag.removesuffix("-"),
+        "id": upload["id"][:8],
+        "short_id": upload["id"][:4],
+    }
+
+    assert resolver(names[alias]) == pulled
+
+
+@pytest.mark.parametrize("location", ["absolute", "relative", "data"])
+def test_resolve_db_path_appends_db_to_dotted_stem(dataset_dirs, tmp_path, location):
+    paths = {
+        "absolute": (tmp_path / "session.v1", tmp_path / "session.v1.db"),
+        "relative": (Path("session.v1"), tmp_path / "session.v1.db"),
+        "data": (Path("session.v1"), data.get_data_dir() / "session.v1.db"),
+    }
+    stem, recording = paths[location]
+    recording.touch()
+
+    assert resolve_db_path(stem).resolve() == recording
+
+
+def test_resolve_dataset_preserves_dotted_stem_extension(dataset_dirs):
+    (data.get_data_dir() / "session.v1.db").touch()
+
+    with pytest.raises(FileNotFoundError, match="session.v1"):
+        resolve_dataset("session.v1")
+
+
+@pytest.mark.parametrize("resolver", [resolve_dataset, resolve_db_path])
+@pytest.mark.parametrize("name", ["session", "session.v1"])
+@pytest.mark.parametrize("location", ["cwd", "project"])
+def test_resolve_exact_input_before_suffixed_candidate(dataset_dirs, resolver, name, location):
+    roots = {"cwd": Path.cwd(), "project": data.DIMOS_PROJECT_ROOT}
+    exact = roots[location] / name
+    exact.touch()
+    (Path.cwd() / f"{name}.db").touch()
+
+    assert resolver(name).resolve() == exact
+
+
+@pytest.mark.parametrize("resolver", [resolve_dataset, resolve_db_path])
+@pytest.mark.parametrize("location_index", [0, 1, 2], ids=["cwd", "project", "data"])
+def test_resolve_existing_locations_before_recordings_and_downloads(
+    dataset_dirs, resolver, location_index
+):
+    recordings, downloads = dataset_dirs
+    run = recordings / "memory" / "memory.db"
+    run.parent.mkdir()
+    run.touch()
+    (downloads / f"{_tag({'id': 'abcdef1234567890'})}memory.db").touch()
+    roots = [Path.cwd(), data.DIMOS_PROJECT_ROOT, data.get_data_dir()]
+    for root in roots[location_index:]:
+        (root / "memory.db").touch()
+
+    assert resolver("memory").resolve() == roots[location_index] / "memory.db"
+
+
+def test_resolve_mcap_recording_by_folder_name(dataset_dirs):
+    recordings, _ = dataset_dirs
+    run = recordings / "2026-11-11_01-00-00pm-PST" / "memory.mcap"
+    run.parent.mkdir()
+    run.touch()
+
+    assert resolve_dataset(run.parent.name) == run
+    assert dataset_path(run.parent.name) == str(run)
+
+
+@pytest.fixture(params=["downloads", "recording-and-download"])
+def ambiguous_datasets(dataset_dirs, request):
+    recordings, downloads = dataset_dirs
+    locations = {"downloads": downloads, "recording-and-download": recordings / "memory.db"}
+    first = locations[request.param] / f"{_tag({'id': 'abcdef1234567890'})}memory.db"
+    first.parent.mkdir(exist_ok=True)
+    second = downloads / f"{_tag({'id': 'fedcba0987654321'})}memory.db"
+    first.touch()
+    second.touch()
+    return first, second
+
+
+@pytest.mark.parametrize("resolver", [resolve_dataset, resolve_db_path, dataset_path])
+def test_ambiguous_dataset_name_lists_candidates(ambiguous_datasets, resolver):
+    first, second = ambiguous_datasets
+
+    with pytest.raises(AmbiguousDatasetError, match="Ambiguous dataset") as error:
+        resolver("memory.db")
+    assert str(first) in str(error.value)
+    assert str(second) in str(error.value)
+
+
+@pytest.mark.parametrize("args", [["summary", "memory.db"], ["rerun", "memory.db", "--no-gui"]])
+def test_cli_ambiguous_dataset_lists_candidates(ambiguous_datasets, args):
+    first, second = ambiguous_datasets
+
+    result = CliRunner().invoke(mem_app, args, env={"COLUMNS": "1000"})
+
+    assert result.exit_code == 2
+    assert "Ambiguous dataset" in result.output
+    assert str(first) in result.output
+    assert str(second) in result.output
+
+
+def test_unknown_dataset_lists_search_locations(dataset_dirs):
+    recordings, downloads = dataset_dirs
+
+    with pytest.raises(FileNotFoundError, match="Dataset 'unknown' not found") as error:
+        resolve_dataset("unknown")
+    assert str(recordings) in str(error.value)
+    assert str(downloads) in str(error.value)
+    assert str(data.get_data_dir()) in str(error.value)
+    assert "Test file" not in str(error.value)

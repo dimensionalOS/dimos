@@ -194,7 +194,7 @@ pristine scene.
 
 The xArm blueprint uses `UrdfManager`'s self filter (its `self_filter` option, on by
 default; its joint tf off, since `ManipulationModule` owns those frames), which delegates
-geometry loading, kinematics, mimic joints and Narrowphase surface classification to RoboPlan 0.7. dimOS matches
+geometry loading, kinematics, mimic joints and Narrowphase surface classification to RoboPlan. dimOS matches
 joint state and TF to the capture timestamp, preserves point fields, and drops
 unaligned captures. The xArm blueprint filters only the arm using a model without
 the gripper. Gripper points may enter the map; separate gripper control and grasp

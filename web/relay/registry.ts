@@ -382,7 +382,7 @@ export class Registry {
         break;
       }
       case "ping":
-        reply({ t: "pong", n: msg.n, ts: msg.ts });
+        reply({ t: "pong", n: msg.n, ts: msg.ts, ...this.topics.load(viewer) });
         break;
       case "watch": {
         const entry = this.#robots.get(msg.robotId);

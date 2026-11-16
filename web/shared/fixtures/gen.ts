@@ -54,6 +54,11 @@ const topicProfileOptions = {
     maxResolution: { kind: "size", min: 16, max: 4096, default: [640, 360] },
     quality: { kind: "int", min: 1, max: 100, default: 60 },
   },
+  "video.h264.v1": {
+    maxHz: { kind: "number", max: 1000, default: 30 },
+    maxResolution: { kind: "size", min: 16, max: 4096, default: [1920, 1080] },
+    maxBitrate: { kind: "int", min: 100000, max: 4500000, default: 4500000 },
+  },
   "cloud.q16.low.v1": {
     maxHz: { kind: "number", max: 1000, default: 5 },
     keepEvery: { kind: "int", min: 1, max: 64, default: 4 },
@@ -120,6 +125,7 @@ const controlMsgs: Record<string, Msg> = {
       write: false,
       profiles: ["raw", "depth.lossless.v1"],
       guardedPublishers: false,
+      videoReconfigure: false,
     },
   },
   // A media provider advertises the settings each profile accepts; the
@@ -136,6 +142,7 @@ const controlMsgs: Record<string, Msg> = {
       profiles: ["raw", "image.jpeg.low.v1", "cloud.q16.low.v1"],
       guardedPublishers: false,
       profileOptions: topicProfileOptions,
+      videoReconfigure: true,
     },
   },
   topic_sources: {
@@ -148,6 +155,7 @@ const controlMsgs: Record<string, Msg> = {
       write: false,
       profiles: ["raw"],
       guardedPublishers: false,
+      videoReconfigure: false,
     }],
   },
   topic_sources_options: {
@@ -161,6 +169,7 @@ const controlMsgs: Record<string, Msg> = {
       profiles: ["raw", "image.jpeg.low.v1", "cloud.q16.low.v1"],
       guardedPublishers: false,
       profileOptions: topicProfileOptions,
+      videoReconfigure: true,
     }],
   },
   topic_sub: {
@@ -357,6 +366,19 @@ const controlMsgs: Record<string, Msg> = {
   },
   ping: { t: "ping", n: 7, ts: 1752576000.5 },
   pong: { t: "pong", n: 7, ts: 1752576000.5 },
+  topic_bitrate_update: {
+    t: "topic_update",
+    id: "cam",
+    revision: 1,
+    options: { maxBitrate: 10000000 },
+  },
+  topic_bitrate_applied: {
+    t: "topic_applied",
+    id: "cam",
+    revision: 1,
+    settings: { maxHz: 30, maxResolution: [1280, 720], maxBitrate: 2500000 },
+  },
+  pong_aborted: { t: "pong", n: 7, ts: 1752576000.5, aborted: 3 },
   error_version: {
     t: "error",
     code: "version_mismatch",
@@ -1164,6 +1186,10 @@ const manifests = {
 const dir = new URL(".", import.meta.url);
 const invalidTopics = {
   vectors: [
+    ...[-1, 0.5, null, true, 9007199254740992].map((aborted, i) => ({
+      name: `invalid_pong_aborted_${i}`,
+      message: { t: "pong", n: 7, ts: 1752576000.5, aborted },
+    })),
     ...[null, true, 0, -1, 1001, "30"].map((maxHz, i) => ({
       name: `invalid_rate_update_${i}`,
       message: { ...controlMsgs.topic_activate, maxHz },
@@ -1179,11 +1205,22 @@ const invalidTopics = {
       name,
       message: { ...controlMsgs.topic_guard_ready, ...fields as Record<string, unknown> },
     })),
-    ...[null, { read: 1, write: false, profiles: ["raw"] }, {
-      read: true,
-      write: false,
-      profiles: new Array(17).fill("raw"),
-    }, { read: true, write: false, profiles: [""] }].map((topicCapabilities, i) => ({
+    ...[
+      null,
+      { read: 1, write: false, profiles: ["raw"] },
+      {
+        read: true,
+        write: false,
+        profiles: new Array(17).fill("raw"),
+      },
+      { read: true, write: false, profiles: [""] },
+      {
+        read: true,
+        write: false,
+        profiles: ["raw"],
+        videoReconfigure: 1,
+      },
+    ].map((topicCapabilities, i) => ({
       name: `invalid_capabilities_${i}`,
       message: { ...controlMsgs.hello_topic_source, topicCapabilities },
     })),
@@ -1225,8 +1262,12 @@ const invalidTopics = {
       message: { ...controlMsgs.topic_ready, ...fields as Record<string, unknown> },
     })),
     ...[
-      ["unknown_option", { options: { maxBitrate: 1 } }],
+      ["unknown_option", { options: { bandwidth: 1 } }],
       ["negative_keep_every", { options: { keepEvery: -1 } }],
+      ["fractional_bitrate", { options: { maxBitrate: 100000.5 } }],
+      ["negative_bitrate", { options: { maxBitrate: -1 } }],
+      ["unsafe_bitrate", { options: { maxBitrate: 9007199254740992 } }],
+      ["boolean_bitrate", { options: { maxBitrate: true } }],
       ["fractional_quality", { options: { quality: 75.5 } }],
       ["boolean_quality", { options: { quality: true } }],
       ["short_resolution", { options: { maxResolution: [640] } }],

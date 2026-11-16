@@ -116,7 +116,7 @@ if __name__ == "__main__":
     ModuleCoordinator.build(camera_demo).loop()
 ```
 
-Every LCM stream, such as `color_image` (output by WebcamModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
+Every stream, such as `color_image` (output by WebcamModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the topic name as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
 
 ## Performance Tuning
 
@@ -134,11 +134,11 @@ This happens on lower-end hardware (NUC, older laptops) with large maps.
 Edit [`dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py):
 
 ```python skip
-# Before (high detail, slower on large maps)
-voxel_mapper(voxel_size=0.05),  # 5cm voxels
+# Before (high detail, slower on large maps): voxel_size defaults to 0.05, 5cm voxels
+PGOVoxelMapper.blueprint(emit_every=5),
 
-# After (lower detail, 8x faster)
-voxel_mapper(voxel_size=0.1),   # 10cm voxels
+# After (lower detail, fewer voxels)
+PGOVoxelMapper.blueprint(emit_every=5, voxel_size=0.1),  # 10cm voxels
 ```
 
 **Trade-off:**
@@ -177,8 +177,8 @@ port (9999 in this example) in your firewall rules.
 
 When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc`. Just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
 
-## How to use Rerun on `dev` (and the TF/entity nuances)
+## How Rerun is wired (and the TF/entity nuances)
 
-Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
+The blueprint's `RerunBridgeModule` subscribes to every stream, logs each message that has a `to_rerun` method, spawns the shared viewer and sends the default layout.
 
 To use a custom websocket port, set `--rerunwebsocketserver.port`. The bridge in the same blueprint takes the viewer URL from that server. `--rerunbridgemodule.websocket-url` points a bridge at a websocket server elsewhere. `--rerunwebsocketserver.host` controls the websocket bind address and defaults to `listen_host`. The bridge's `host` also defaults to `listen_host`, but only sets its default gRPC connection URL. It does not control the Rerun gRPC or web viewer bind addresses.

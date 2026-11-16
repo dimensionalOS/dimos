@@ -18,8 +18,9 @@ for hardware setup. The example uses CAN interface `follower_l` and camera
 throughout collection.
 
 The teaching stack starts gravity compensation when the robot starts, including
-between episodes. Its hand-guiding task sends zero-stiffness commands on every
-control tick; the hardware adapter adds gravity torque and configured damping.
+between episodes. Its hand-guiding task re-sends the measured joint positions on
+every control tick. The connection commands them with zero stiffness and adds
+gravity torque and the teaching damping.
 Support the arm before stopping the runtime.
 
 ## 2. Start the teaching stack
@@ -28,7 +29,7 @@ Choose a new recording directory and a task description for the demonstration:
 
 ```bash skip
 dimos run openyam-teach-collection --daemon \
-  --controlcoordinator.can-port follower_l \
+  --can-port follower_l \
   --recorder.recording recordings/session-001 \
   --episodes.task "pick up the cube" \
   --wrist.hardware.camera-index /dev/video0

@@ -20,7 +20,7 @@ from threading import Event, Lock, Thread
 import time
 from typing import Any, Protocol
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from reactivex import defer, empty, operators as ops
 from reactivex.abc import SchedulerBase
 from reactivex.disposable import Disposable
@@ -43,7 +43,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.unitree.config import connection_type
+from dimos.robot.unitree.config import connection_type, require_robot_ip
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.simulation.dimsim.config import DimSimConfig
@@ -53,11 +53,16 @@ from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
+    from typing_extensions import Self, TypeVar
 else:
-    from typing import TypeVar
+    from typing import Self, TypeVar
 
 logger = setup_logger()
+
+_ROBOT_IP_GUIDANCE = (
+    "Set ROBOT_IP or --robot-ip (or --go2connection.ip), "
+    "or run without a robot using --replay or --simulation."
+)
 
 
 class Go2Mode(str, Enum):
@@ -66,7 +71,7 @@ class Go2Mode(str, Enum):
 
 
 class ConnectionConfig(ModuleConfig):
-    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
     camera: bool = True
@@ -85,6 +90,16 @@ class ConnectionConfig(ModuleConfig):
     # Turn off where another module owns the base_link edge. The odom port
     # keeps publishing either way.
     publish_tf: bool = True
+
+    @model_validator(mode="after")
+    def validate_connection(self) -> Self:
+        self.validate_ip()
+        return self
+
+    def validate_ip(self) -> None:
+        mode = connection_type(replay=self.g.replay, simulation=self.g.simulation).lower()
+        if mode == "webrtc":
+            require_robot_ip(self.ip, _ROBOT_IP_GUIDANCE)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -160,7 +175,7 @@ def make_connection(
 
         return DimSimConnection(cfg.dimsim, transport=cfg.g.transport)
     elif mode == "webrtc":
-        assert ip is not None, "IP address must be provided"
+        ip = require_robot_ip(ip, _ROBOT_IP_GUIDANCE)
         return UnitreeWebRTCConnection(
             ip,
             aes_128_key=aes_128_key,
