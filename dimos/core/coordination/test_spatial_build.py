@@ -12,20 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator, verify_tf_tree
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.spatial_module import SpatialModule, SpatialModuleConfig
+from dimos.core.stream import Out
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class OdomConfig(SpatialModuleConfig):
     tf_frames_local: dict[str, str] = {"body": "base_link"}
     tf_frames_global: dict[str, str] = {"world": "world"}
+    tf_edges: list[tuple[str, str]] = [("world", "body")]
 
 
-class Odom(SpatialModule, Module):
+class Odom(SpatialModule):
     config: OdomConfig
 
     @rpc
@@ -61,3 +66,82 @@ def test_unnamespaced_local_frames_are_untouched() -> None:
         assert coordinator.get_instance(Odom).frames()[0] == {"body": "base_link"}
     finally:
         coordinator.stop()
+
+
+class BackupOdom(Odom):
+    """Publishes the same edge as Odom; autoconnect merges two copies of one class."""
+
+
+class LidarConfig(SpatialModuleConfig):
+    tf_frames_local: dict[str, str] = {"body": "base_link", "lidar": "lidar"}
+    tf_edges: list[tuple[str, str]] = [("body", "lidar")]
+
+
+class Lidar(SpatialModule):
+    config: LidarConfig
+
+
+class LegacyTfPublisher(Module):
+    tf: Out[TFMessage]
+
+
+def _verify(blueprint: Blueprint) -> None:
+    verify_tf_tree(list(blueprint.active_blueprints))
+
+
+def test_one_tree_passes() -> None:
+    _verify(autoconnect(Odom.blueprint(), Lidar.blueprint()))
+
+
+def test_two_parents_is_refused() -> None:
+    with pytest.raises(
+        ValueError, match=r"'base_link' has several parents: odom_frame \(from lidar\), world"
+    ):
+        _verify(
+            autoconnect(
+                Odom.blueprint(),
+                Lidar.blueprint(
+                    tf_frames_local={"body": "base_link", "lidar": "odom_frame"},
+                    tf_edges=[("lidar", "body")],
+                ),
+            )
+        )
+
+
+def test_same_edge_from_two_modules_is_refused() -> None:
+    with pytest.raises(ValueError, match="published by several modules"):
+        _verify(autoconnect(Odom.blueprint(), BackupOdom.blueprint()))
+
+
+def test_cycle_is_refused() -> None:
+    with pytest.raises(ValueError, match="form a cycle"):
+        _verify(
+            autoconnect(
+                Lidar.blueprint(),
+                Odom.blueprint(
+                    tf_frames_local={"body": "base_link"},
+                    tf_frames_global={"world": "lidar"},
+                ),
+            )
+        )
+
+
+def test_separate_trees_are_refused_unless_a_legacy_module_may_join_them() -> None:
+    lidar_alone = Lidar.blueprint(tf_frames_local={"body": "mount", "lidar": "lidar"})
+    with pytest.raises(ValueError, match="2 separate trees"):
+        _verify(autoconnect(Odom.blueprint(), lidar_alone))
+    _verify(autoconnect(Odom.blueprint(), lidar_alone, LegacyTfPublisher.blueprint()))
+
+
+def test_build_checks_the_namespaced_tree() -> None:
+    blueprint = autoconnect(
+        Odom.blueprint().namespace("robot0"),
+        Odom.blueprint().namespace("robot1"),
+        Odom.blueprint(),
+        BackupOdom.blueprint(),
+    )
+    with pytest.raises(ValueError, match="'world' -> 'base_link' is published by several modules"):
+        ModuleCoordinator.build(
+            blueprint,
+            BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),
+        )

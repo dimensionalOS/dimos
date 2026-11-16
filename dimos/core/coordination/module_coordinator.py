@@ -1072,6 +1072,7 @@ def _deploy_all_modules(
         module_specs.append((bp.module, gc, kwargs))
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
+    verify_tf_tree([*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()])
     module_coordinator.deploy_parallel(module_specs)
 
     for bp in blueprint.active_blueprints:
@@ -1091,6 +1092,83 @@ def _namespace_tf_frames_local(atom: BlueprintAtom, kwargs: dict[str, Any]) -> N
             .get_default(call_default_factory=True)
         )
     kwargs["tf_frames_local"] = {role: f"{namespace}/{frame}" for role, frame in frames.items()}
+
+
+def _spatial_field(atom: BlueprintAtom, name: str) -> Any:
+    if name in atom.kwargs:
+        return atom.kwargs[name]
+    return module_config_cls(atom).model_fields[name].get_default(call_default_factory=True)
+
+
+def verify_tf_tree(atoms: list[BlueprintAtom]) -> None:
+    """Refuse a frame with two parents (or two publishers), and declared edges that form a cycle or several trees."""
+    publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+    for atom in atoms:
+        if not issubclass(atom.module, SpatialModule):
+            continue
+        frames = {
+            **_spatial_field(atom, "tf_frames_global"),
+            **_spatial_field(atom, "tf_frames_local"),
+        }
+        for parent_role, child_role in _spatial_field(atom, "tf_edges"):
+            publishers[frames[child_role]][frames[parent_role]].append(atom.name)
+    if not publishers:
+        return
+
+    errors = []
+    for child, parents in sorted(publishers.items()):
+        if len(parents) > 1:
+            listed = ", ".join(
+                f"{parent} (from {', '.join(names)})" for parent, names in sorted(parents.items())
+            )
+            errors.append(f"    - '{child}' has several parents: {listed}")
+        for parent, names in parents.items():
+            if len(names) > 1:
+                errors.append(
+                    f"    - '{parent}' -> '{child}' is published by several modules: {', '.join(names)}"
+                )
+
+    # Union-find over the declared edges: one component per tree.
+    component: dict[str, str] = {}
+
+    def root_of(frame: str) -> str:
+        while component.setdefault(frame, frame) != frame:
+            frame = component[frame]
+        return frame
+
+    for child, parents in publishers.items():
+        for parent in parents:
+            component[root_of(child)] = root_of(parent)
+    trees: dict[str, set[str]] = defaultdict(set)
+    for frame in list(component):
+        trees[root_of(frame)].add(frame)
+    for frames in trees.values():
+        if not frames - publishers.keys():
+            errors.append(f"    - frames {sorted(frames)} form a cycle (none of them is a root)")
+
+    if len(trees) > 1:
+        roots = sorted(
+            sorted(frames - publishers.keys()) or sorted(frames)[:1] for frames in trees.values()
+        )
+        message = f"declared tf edges form {len(trees)} separate trees, rooted at {roots}"
+        # A module that isn't a SpatialModule may publish the edges that join them, so only warn then.
+        undeclared_publishers = sorted(
+            atom.name
+            for atom in atoms
+            if not issubclass(atom.module, SpatialModule)
+            and any(stream.name == "tf" and stream.direction != "in" for stream in atom.streams)
+        )
+        if undeclared_publishers:
+            logger.warning(
+                f"{message}; {', '.join(undeclared_publishers)} may join them (not SpatialModules)"
+            )
+        else:
+            errors.append(f"    - {message}")
+
+    if errors:
+        raise ValueError(
+            "\n".join(["Blueprint cannot start because its tf tree is broken.", *errors])
+        )
 
 
 def _ref_msg(module_name: str, ref: object, spec_name: str, detail: str) -> str:
