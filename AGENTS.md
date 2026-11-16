@@ -299,9 +299,7 @@ my_skill_container = MySkillContainer.blueprint()
 | Robot | File | Variable |
 |-------|------|----------|
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
-| Drone | `dimos/robot/drone/blueprints/agentic/drone_agentic.py` | `DRONE_SYSTEM_PROMPT` |
 
-Pass the robot-specific prompt: `Agent.blueprint(system_prompt=DRONE_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on another robot causes hallucinated skills.
 
 ### RPC Wiring
 
