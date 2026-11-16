@@ -544,6 +544,7 @@ struct GoalProgress {
     blocked_timeout: Duration,
     stall_timeout: Duration,
     min_move_m: f32,
+    min_turn_rad: f32,
     blocked: Option<Blocked>,
     followed: Option<GoalId>,
     stall: Option<Stall>,
@@ -556,6 +557,7 @@ impl GoalProgress {
             blocked_timeout: Duration::from_secs_f32(config.blocked_timeout_s),
             stall_timeout: Duration::from_secs_f32(config.progress_timeout_s),
             min_move_m: config.progress_min_m,
+            min_turn_rad: config.goal_yaw_tolerance,
             blocked: None,
             followed: None,
             stall: None,
@@ -595,13 +597,15 @@ impl GoalProgress {
         Some(stalled)
     }
 
-    /// Note where the robot stands on its way to the goal.
-    fn track(&mut self, goal: Goal, position: Xyz) {
+    /// Note where the robot stands on its way to the goal, and how far it is from facing its heading.
+    fn track(&mut self, goal: Goal, position: Xyz, heading_error: Option<f32>) {
         self.stall = Some(Stall::track(
             goal,
             position,
+            heading_error,
             self.stall.take(),
             self.min_move_m,
+            self.min_turn_rad,
             Instant::now(),
         ));
     }
@@ -639,13 +643,19 @@ impl GoalProgress {
 
     /// Follow the goal's new path from this position. Milliseconds since the
     /// last path, or -1.
-    fn follow(&mut self, goal: Goal, position: Xyz, produced: Instant) -> f64 {
+    fn follow(
+        &mut self,
+        goal: Goal,
+        position: Xyz,
+        heading_error: Option<f32>,
+        produced: Instant,
+    ) -> f64 {
         let since_last_ms = self
             .last_path_at
             .map_or(-1.0, |t| (produced - t).as_secs_f64() * 1e3);
         self.last_path_at = Some(produced);
         self.followed = Some(goal.id);
-        self.track(goal, position);
+        self.track(goal, position, heading_error);
         since_last_ms
     }
 }
@@ -957,7 +967,10 @@ impl Worker {
         let position = self.base_position();
         if let (Some(stall), Some(position)) = (progress.stall.as_ref(), position) {
             let goal = stall.goal.clone();
-            progress.track(goal, position);
+            let heading_error = self
+                .world_goal(&goal)
+                .and_then(|world| heading_error(&world, self.base_yaw()));
+            progress.track(goal, position, heading_error);
         }
         let Some(stalled) = progress.take_stalled() else {
             return;
@@ -1043,7 +1056,8 @@ impl Worker {
         };
         progress.unblock();
         let plan_ms = ms_since(plan_start);
-        let since_last_ms = progress.follow(goal, start, Instant::now());
+        let since_last_ms =
+            progress.follow(goal, start, heading_error(&world, facing), Instant::now());
 
         let stamp = now();
         let path_msg =
@@ -1161,6 +1175,11 @@ fn stall_reason(goal: &Goal, position: Xyz, config: &Config) -> &'static str {
     } else {
         NO_PROGRESS
     }
+}
+
+/// How far the robot faces from the goal's heading, when the goal has one.
+fn heading_error(world: &Goal, facing: Option<f32>) -> Option<f32> {
+    Some(angle_diff(world.yaw?, facing?).abs())
 }
 
 fn distance(a: Xyz, b: Xyz) -> f32 {
@@ -1620,13 +1639,20 @@ mod tests {
         let t0 = Instant::now();
         let later = t0 + Duration::from_secs(4);
         let end = t0 + timeout;
-        let stall = Stall::track(goal(1), (0.0, 0.0, 0.0), None, 0.2, t0);
-        // Creeping, or standing higher, is not progress.
-        let still = Stall::track(goal(1), (0.1, 0.0, 0.5), Some(stall.clone()), 0.2, later);
+        let track =
+            |id, at, error, earlier| Stall::track(goal(id), at, error, earlier, 0.2, 0.25, later);
+        let stall = Stall::track(goal(1), (0.0, 0.0, 0.0), Some(3.0), None, 0.2, 0.25, t0);
+        // Creeping, standing higher, or a small turn is not progress.
+        let still = track(1, (0.1, 0.0, 0.5), Some(2.9), Some(stall.clone()));
         assert!(still.remaining(timeout, end).is_zero());
-        let moved = Stall::track(goal(1), (0.3, 0.0, 0.0), Some(stall.clone()), 0.2, later);
+        let moved = track(1, (0.3, 0.0, 0.0), Some(3.0), Some(stall.clone()));
         assert_eq!(moved.remaining(timeout, end), Duration::from_secs(4));
-        let replaced = Stall::track(goal(2), (0.0, 0.0, 0.0), Some(stall), 0.2, later);
+        // Turning toward the heading in place is progress, turning away is not.
+        let turned = track(1, (0.0, 0.0, 0.0), Some(2.0), Some(stall.clone()));
+        assert_eq!(turned.remaining(timeout, end), Duration::from_secs(4));
+        let away = track(1, (0.0, 0.0, 0.0), Some(3.1), Some(stall.clone()));
+        assert!(away.remaining(timeout, end).is_zero());
+        let replaced = track(2, (0.0, 0.0, 0.0), Some(3.0), Some(stall));
         assert_eq!(replaced.remaining(timeout, end), Duration::from_secs(4));
     }
 
@@ -1645,7 +1671,7 @@ mod tests {
             Some(goal.clone())
         );
         assert!(progress.take_timed_out().is_none());
-        progress.track(goal.clone(), (0.0, 0.0, 0.0));
+        progress.track(goal.clone(), (0.0, 0.0, 0.0), None);
         assert_eq!(progress.take_stalled().map(|s| s.goal), Some(goal.clone()));
         assert!(progress.take_stalled().is_none());
     }
@@ -1935,7 +1961,7 @@ mod tests {
         let goal = goal_at(1, (5.0, 0.0, 0.0));
         let mut progress = GoalProgress::new(&test_config());
         let id = goal.id;
-        progress.follow(goal, (0.0, 0.0, 0.0), Instant::now());
+        progress.follow(goal, (0.0, 0.0, 0.0), None, Instant::now());
         // The follower is on this goal's path, so it settles on its own.
         assert!(!progress.arrive(id));
         assert_eq!(progress.followed, Some(id));
