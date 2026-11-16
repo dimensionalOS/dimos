@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
+from dimos.core.module import stack_frame_id_prefix
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig
@@ -39,8 +40,10 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     # Own flake: librealsense2 isn't in the root shell.
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
-    # The frame stem and its namespace cross to rust like any other field.
-    base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
+    # The frame stem crosses to rust like any other field.
+    base_fields: frozenset[str] = frozenset({"frame_id"})
+    # Set by .namespace(); rust composes "<prefix>/<frame>".
+    frame_id_prefix: str | None = None
 
     width: int = 848
     height: int = 480
@@ -83,6 +86,7 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
         config["frame_id"] = self.frame_id or "RealSenseCamera"
         # The rust struct has every key; None crosses as an explicit null.
         config["serial_number"] = self.serial_number
+        config["frame_id_prefix"] = self.frame_id_prefix
         config["imu_info"] = (
             None
             if self.imu_info is None
@@ -98,6 +102,13 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
 
 class RealSenseCamera(NativeModule, perception.DepthCamera):
     config: RealSenseCameraConfig
+
+    @classmethod
+    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        return stack_frame_id_prefix(
+            super().handle_blueprint_namespace(kwargs, prefix=prefix), prefix
+        )
+
     color_image: Out[Image]
     depth_image: Out[Image]
     infrared_left: Out[Image]

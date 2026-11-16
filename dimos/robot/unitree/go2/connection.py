@@ -29,7 +29,7 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import Module, ModuleConfig, stack_frame_id_prefix
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.memory.cli.dataset import open_dataset
@@ -71,6 +71,8 @@ class Go2Mode(str, Enum):
 
 
 class ConnectionConfig(ModuleConfig):
+    # Set by .namespace(): robot-local frames (base_link, camera) get "<prefix>/".
+    frame_id_prefix: str | None = None
     ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
@@ -135,7 +137,7 @@ def _camera_info_static() -> CameraInfo:
 
 
 def _prefixed(prefix: str | None, name: str) -> str:
-    """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
+    """Apply a TF namespace prefix (ConnectionConfig.frame_id_prefix) to a frame name."""
     if not prefix or not name:
         return name
     return f"{prefix}/{name}"
@@ -369,6 +371,13 @@ class GO2Connection(Module, Camera, Pointcloud):
     dedicated_worker = True
 
     config: ConnectionConfig
+
+    @classmethod
+    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        return stack_frame_id_prefix(
+            super().handle_blueprint_namespace(kwargs, prefix=prefix), prefix
+        )
+
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]

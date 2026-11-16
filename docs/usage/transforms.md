@@ -163,35 +163,27 @@ print(matrix)
 
 ## Frame IDs in Modules
 
-Modules in dimOS automatically get a `frame_id` property. This is controlled by two config options in [`core/module.py`](/dimos/core/module.py#L78):
-
-- `frame_id` - The base frame name (defaults to the class name)
-- `frame_id_prefix` - Optional prefix for namespacing
+Modules in dimOS automatically get a `frame_id` property: the `frame_id` config option in [`core/module.py`](/dimos/core/module.py#L78), or the class name when it's unset.
 
 ```python
 from dimos.core.module import Module, ModuleConfig
 
 class MyModuleConfig(ModuleConfig):
     frame_id: str = "sensor_link"
-    frame_id_prefix: str | None = None
 
 class MySensorModule(Module):
     config: MyModuleConfig
 
-# With default config:
 sensor = MySensorModule()
 print(f"Default frame_id: {sensor.frame_id}")
-
-# With prefix (useful for multi-robot scenarios):
-sensor2 = MySensorModule(frame_id_prefix="robot1")
-print(f"With prefix: {sensor2.frame_id}")
 ```
 
 ```results
 00:33:00.665 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
 Default frame_id: sensor_link
-With prefix: robot1/sensor_link
 ```
+
+Frames that belong to one robot should be declared in a [`TfModule`](/dimos/core/tf_module.py)'s `tf_frames_local`, which `.namespace()` prefixes (`robot0/sensor_link`).
 
 ## The tf Topic
 

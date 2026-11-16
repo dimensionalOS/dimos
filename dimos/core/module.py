@@ -116,11 +116,19 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
+def stack_frame_id_prefix(kwargs: dict[str, Any], prefix: str) -> dict[str, Any]:
+    """For a config that declares ``frame_id_prefix``: each namespace stacks onto it, ``prefix/old``."""
+    frame_id_prefix = kwargs.get("frame_id_prefix")
+    return {
+        **kwargs,
+        "frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix,
+    }
+
+
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
-    frame_id_prefix: str | None = None
     frame_id: str | None = None
     # Set by the coordinator when the same module class is deployed more than
     # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
@@ -198,22 +206,12 @@ class ModuleBase(Configurable, CompositeResource):
 
     @property
     def frame_id(self) -> str:
-        base = self.config.frame_id or self.__class__.__name__
-        if self.config.frame_id_prefix:
-            return f"{self.config.frame_id_prefix}/{base}"
-        return base
+        return self.config.frame_id or self.__class__.__name__
 
     @classmethod
     def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it (once per level, innermost first).
-
-        The default stacks ``frame_id_prefix`` the way instance names stack: ``prefix/old``.
-        """
-        frame_id_prefix = kwargs.get("frame_id_prefix")
-        return {
-            **kwargs,
-            "frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix,
-        }
+        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it (once per level, innermost first)."""
+        return kwargs
 
     @rpc
     def build(self) -> None:

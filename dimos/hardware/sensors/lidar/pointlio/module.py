@@ -34,11 +34,12 @@ Every config field is sent to the binary as stdin JSON.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field
 
 from dimos.core.core import rpc
+from dimos.core.module import stack_frame_id_prefix
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -55,9 +56,10 @@ IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 class PointLioConfig(NativeModuleConfig):
     stdin_config: bool = True
     frame_id: str = "odom"
-    # frame_id_prefix too: the module composes the namespaced frame itself,
+    base_fields: frozenset[str] = frozenset({"frame_id"})
+    # Set by .namespace(); the module composes the namespaced frame itself,
     # since it publishes odometry and tf without going back through Python.
-    base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
+    frame_id_prefix: str | None = None
     source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build -L path:."
@@ -138,11 +140,23 @@ class PointLioConfig(NativeModuleConfig):
     publish_odometry_without_downsample: bool = False
     odom_only: bool = False
 
+    def to_config_dict(self) -> dict[str, Any]:
+        config = super().to_config_dict()
+        # The rust struct has the key; None crosses as an explicit null.
+        config["frame_id_prefix"] = self.frame_id_prefix
+        return config
+
 
 class PointLio(NativeModule, perception.Lidar, perception.Odometry):
     """Point-LIO fed by the Mid360 driver's messages. Publishes tf itself."""
 
     config: PointLioConfig
+
+    @classmethod
+    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        return stack_frame_id_prefix(
+            super().handle_blueprint_namespace(kwargs, prefix=prefix), prefix
+        )
 
     lidar_raw: In[PointCloud2]
     imu_raw: In[Imu]

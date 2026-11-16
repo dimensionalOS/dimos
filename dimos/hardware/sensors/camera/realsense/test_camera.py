@@ -31,8 +31,8 @@ _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
 
 def _camera_fields() -> set[str]:
     own = set(RealSenseCameraConfig.model_fields) - set(NativeModuleConfig.model_fields)
-    # The frame stem and its namespace are base fields that cross the wire too.
-    return own | {"frame_id", "frame_id_prefix"}
+    # The frame stem is a base field that crosses the wire too.
+    return own | {"frame_id"}
 
 
 def test_config_dict_is_the_camera_config() -> None:

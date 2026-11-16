@@ -35,7 +35,7 @@ from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import Module, ModuleConfig, stack_frame_id_prefix
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -58,6 +58,8 @@ class ConnectionConfig(ModuleConfig):
     """
 
     source: str
+    # Set by .namespace(), or by hand in a fleet: frames become "<prefix>/<name>".
+    frame_id_prefix: str | None = None
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
     deadman_timeout_s: float = 0.1
@@ -118,6 +120,12 @@ class ConnectionModule(Module, ABC):
     """
 
     config: ConnectionConfig
+
+    @classmethod
+    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        return stack_frame_id_prefix(
+            super().handle_blueprint_namespace(kwargs, prefix=prefix), prefix
+        )
 
     dedicated_worker: ClassVar[bool] = True
 
