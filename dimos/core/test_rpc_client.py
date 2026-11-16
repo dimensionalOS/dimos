@@ -51,13 +51,12 @@ def ipython(proxy, tmp_path):
         shell.atexit_operations()
 
 
-def test_dir_exposes_rpcs_and_proxy_attributes_without_transport_calls(proxy):
+def test_dir_exposes_only_rpcs_without_transport_calls(proxy):
     client, transport = proxy
 
     names = dir(client)
 
-    assert set(StressTestModule.rpcs) <= set(names)
-    assert {"remote_name", "stop_rpc_client"} <= set(names)
+    assert names == sorted(StressTestModule.rpcs)
     assert transport.mock_calls == []
 
 
@@ -78,6 +77,16 @@ def test_ipython_completes_rpc_without_transport_calls(ipython, proxy):
         completions = list(ipython.Completer.completions("motion.ec", len("motion.ec")))
 
     assert "echo" in {completion.text for completion in completions}
+    assert transport.mock_calls == []
+
+
+def test_ipython_completes_only_rpcs_without_transport_calls(ipython, proxy):
+    _, transport = proxy
+
+    with provisionalcompleter():
+        completions = list(ipython.Completer.completions("motion.", len("motion.")))
+
+    assert {completion.text.lstrip(".") for completion in completions} == set(StressTestModule.rpcs)
     assert transport.mock_calls == []
 
 
