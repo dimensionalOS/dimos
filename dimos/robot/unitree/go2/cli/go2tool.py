@@ -81,11 +81,16 @@ def discover(
         # calls StopDiscovery; otherwise BlueZ retains the scan session.
         loop = asyncio.get_running_loop()
         interrupted = False
+        stopping = False
 
         def _stop() -> None:
+            # Cancel once. A second cancel would interrupt a scanner's cleanup.
+            nonlocal stopping
+            if stopping:
+                return
+            stopping = True
             for task in tasks.values():
-                if not task.done() and not task.cancelling():
-                    task.cancel()
+                task.cancel()
 
         def _interrupt() -> None:
             nonlocal interrupted

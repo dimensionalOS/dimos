@@ -192,3 +192,28 @@ def test_discover_reports_interruption_and_closes_scanners(
     assert result.stdout.splitlines()[-1] == "Stopped."
     assert "No robots found." not in result.stdout
     closed.assert_called_once_with()
+
+
+def test_discover_lets_scanner_finish_closing_after_second_interrupt(
+    mocker: MockerFixture, scans: dict[str, Mock]
+) -> None:
+    closed = mocker.Mock()
+
+    async def slow_to_close() -> AsyncIterator[ble.Go2Device]:
+        signal.raise_signal(signal.SIGINT)
+        try:
+            await asyncio.Event().wait()
+            yield ble.Go2Device(name="unreachable", address="unreachable")
+        finally:
+            # Closing takes a while, like BlueZ StopDiscovery, and Ctrl-C comes again.
+            signal.raise_signal(signal.SIGINT)
+            await asyncio.sleep(0.01)
+            closed()
+
+    scans["BLE"].return_value = slow_to_close()
+
+    result = CliRunner().invoke(go2tool.app, ["discover", "--ble", "-t", "0"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines()[-1] == "Stopped."
+    closed.assert_called_once_with()
