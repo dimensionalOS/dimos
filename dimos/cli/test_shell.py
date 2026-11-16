@@ -14,7 +14,6 @@
 
 import atexit
 from functools import singledispatch
-from types import SimpleNamespace
 
 from IPython.core.completer import provisionalcompleter
 from IPython.core.interactiveshell import InteractiveShell
@@ -54,8 +53,10 @@ def module_proxy(request, mocker):
 @pytest.fixture
 def ipython(module_proxy, tmp_path):
     module, _ = module_proxy
+    # A plain name, because IPython's non-Jedi completer only looks up attributes on
+    # objects without a custom __getattr__ or __getattribute__, which rules out the app.
     shell = InteractiveShell(
-        user_ns={"app": SimpleNamespace(StressTestModule=module)},
+        user_ns={"module": module},
         ipython_dir=str(tmp_path),
         config=Config({"HistoryManager": {"enabled": False}}),
     )
@@ -72,7 +73,7 @@ def test_shell_completion_offers_only_rpcs(ipython, module_proxy, use_jedi):
     _, transport = module_proxy
     _register_module_completions()
     ipython.Completer.use_jedi = use_jedi
-    text = "app.StressTestModule."
+    text = "module."
 
     with provisionalcompleter():
         completions = list(ipython.Completer.completions(text, len(text)))
