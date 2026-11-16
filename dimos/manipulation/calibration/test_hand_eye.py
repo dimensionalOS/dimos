@@ -47,6 +47,18 @@ def test_solves_the_wrist_camera_within_a_millimetre(rig: Any) -> None:
     assert rig.arm.moves == result.poses_moved == 20
 
 
+def test_solves_a_wrist_camera_on_a_seven_joint_arm(rig7: Any) -> None:
+    result = solve_hand_eye(
+        rig7.arm, rig7.camera, rig7.board, _nominal(rig7), rig7.home, 20, 300
+    )
+
+    probe = np.array([0.0, 0.0, PROBE_M, 1.0])
+    probe_err_mm = np.linalg.norm((result.T @ probe)[:3] - (rig7.X_true @ probe)[:3]) * 1000
+    assert result.passed, result.reason
+    assert probe_err_mm < 1.0
+    assert result.confidence["views_used"] >= 10
+
+
 def test_refuses_a_solution_far_from_the_stated_nominal(rig: Any) -> None:
     # the mount is believed to be 40 mm from where it is, with a 10 mm tolerance
     result = solve_hand_eye(

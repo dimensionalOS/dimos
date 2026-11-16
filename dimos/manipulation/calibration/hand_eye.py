@@ -55,9 +55,13 @@ PROBE_M = 0.4
 
 # Pose draw: how far each joint may move from the centre in one pose, radians, scaled by the
 # amplitude; the widest amplitude an arrangement affords; and how the amplitude reacts to a frame
-# without a board (shrink) and with one (recover).
-STEP_RANGE = np.array([0.25, 0.15, 0.15, 0.5, 0.35, 0.05])
-# The wrist rolls through this cycle on top of the draw. A sideways offset of the camera in the
+# without a board (shrink) and with one (recover). Keyed by the arm's joint count: the xArm7's
+# extra joint 3 turns the upper arm about its own axis and moves the elbow like joint 2 does.
+STEP_RANGES = {
+    6: np.array([0.25, 0.15, 0.15, 0.5, 0.35, 0.05]),
+    7: np.array([0.25, 0.15, 0.15, 0.15, 0.5, 0.35, 0.05]),
+}
+# The last joint rolls the tool through this cycle on top of the draw. A sideways offset of the camera in the
 # flange shows in the images only through rolls about the tool axis, by its sine: 30 degree
 # rolls left 7 mm of offset inside a real arm's pose scatter (xArm6, 2026-11-03, two runs 4 mm
 # apart and 7 mm from a ruler), 60 degree rolls do not. Consecutive steps stay under the 1.2 rad cap.
@@ -293,7 +297,7 @@ def _view_jacobian(Q: FloatArray, U: FloatArray) -> tuple[FloatArray, FloatArray
     Qc, Uc = Q - Q.mean(axis=0), U - U.mean(axis=0)
     s = np.where(Qc.std(axis=0) < 1e-9, 1.0, Qc.std(axis=0))
     Z = Qc / s
-    G = np.linalg.solve(Z.T @ Z + DEPTH_RIDGE * len(Q) * np.eye(6), Z.T @ Uc)
+    G = np.linalg.solve(Z.T @ Z + DEPTH_RIDGE * len(Q) * np.eye(Q.shape[1]), Z.T @ Uc)
     var = np.sum(Uc**2, axis=0)
     sse = np.sum((Uc - Z @ G) ** 2, axis=0)
     r2 = np.where(var > 1e-12, 1.0 - sse / np.where(var > 1e-12, var, 1.0), 0.0)
@@ -323,7 +327,7 @@ def _walk_centre(
     scale = float(np.mean(np.diag(H)))
     if not scale > 0.0:
         return centre
-    step = np.linalg.solve(H + WALK_DAMP * scale * np.eye(6), J.T @ (w2 * ask))
+    step = np.linalg.solve(H + WALK_DAMP * scale * np.eye(len(centre)), J.T @ (w2 * ask))
     big = np.max(np.abs(step)) / STEP_MAX_RAD
     if big > 1.0:
         step /= big
@@ -587,6 +591,9 @@ def solve_hand_eye(
     dist: FloatArray | None = None
     rng = np.random.default_rng(seed)
     home = np.asarray(home_joints, dtype=float)
+    if len(home) not in STEP_RANGES:
+        raise ValueError(f"no pose draw for a {len(home)}-joint arm")
+    step_range = STEP_RANGES[len(home)]
     ceil = AMP_CEIL[eye_to_hand]
     amp = ceil
     # the draw is kept a full swing clear of the joint limits so it stays symmetric about its centre
@@ -594,8 +601,8 @@ def solve_hand_eye(
     # ... and a margin clear of the limit itself: the xArm planner refuses a start within
     # about 0.04 rad of a one-turn joint limit (joint 6 at -3.11 rad on hardware)
     bounds = (
-        lim[:, 0] + ceil * STEP_RANGE + LIMIT_MARGIN_RAD,
-        lim[:, 1] - ceil * STEP_RANGE - LIMIT_MARGIN_RAD,
+        lim[:, 0] + ceil * step_range + LIMIT_MARGIN_RAD,
+        lim[:, 1] - ceil * step_range - LIMIT_MARGIN_RAD,
     )
     centre: FloatArray = np.clip(home.copy(), *bounds)
     anchor = centre.copy()
@@ -606,9 +613,9 @@ def solve_hand_eye(
     R0: FloatArray | None = None
     tried = moved = unsolved = 0
     while tried < max_poses and robot.clock() <= max_seconds - 5:
-        q = centre + amp * rng.uniform(-1.0, 1.0, 6) * STEP_RANGE
+        q = centre + amp * rng.uniform(-1.0, 1.0, len(home)) * step_range
         if not eye_to_hand:  # a plate in the fingers would turn its face from a fixed camera
-            q[5] += WRIST_ROLLS_RAD[tried % len(WRIST_ROLLS_RAD)]
+            q[-1] += WRIST_ROLLS_RAD[tried % len(WRIST_ROLLS_RAD)]
         # a draw that lands on a joint limit is an invalid goal to the planner
         q = np.clip(q, *bounds)
         tried += 1

@@ -142,6 +142,26 @@ def rig() -> SyntheticRig:
     return SyntheticRig(arm=arm, camera=SyntheticCamera(arm))
 
 
+class SevenJointArm(SyntheticArm):
+    """The synthetic arm with a seventh joint that turns the flange about the tool axis, the
+    joint the draw rolls on an xArm7."""
+
+    def joint_limits(self) -> list[tuple[float, float]]:
+        return [*_LIMITS, (-7.0, 7.0)]
+
+    def get_flange_pose(self) -> NDArray[np.float64]:
+        six = rt_to_T(R.from_euler("xyz", self.q[3:6]).as_matrix(), self.q[:3])
+        return six @ rt_to_T(R.from_euler("z", self.q[6]).as_matrix(), np.zeros(3))
+
+
+@pytest.fixture
+def rig7() -> SyntheticRig:
+    home = [*_HOME, 0.0]
+    arm = SevenJointArm(q=np.asarray(home, dtype=float))
+    limits = [*_LIMITS, (-7.0, 7.0)]
+    return SyntheticRig(arm=arm, camera=SyntheticCamera(arm), home=home, limits=limits)
+
+
 # The fixed camera: 0.6 m to the arm's right at the plate's height, looking along +y at the
 # arm, image right along +x, image down along -z.
 _PLATE = BoardSpec(squares_x=5, squares_y=4, square_m=0.030, marker_m=0.0225, ids_from=100)
