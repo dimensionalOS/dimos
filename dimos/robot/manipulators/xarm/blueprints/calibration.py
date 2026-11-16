@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hand-eye calibration of the xArm6 wrist camera.
+"""Hand-eye calibration of the xArm6 and xArm7 wrist cameras and of a fixed camera beside them.
 
 ``dimos run xarm6-handeye-calibrate --xarmconnection.ip <ip>`` brings up the planner, the
 coordinator, the wrist RealSense and the calibration module on the real arm; then from
 ``dimos shell``: ``app.get_module("HandEyeCalibrationModule").calibrate()`` and ``approve()``
 for each of the first moves. ``xarm6-handeye-calibrate-sim`` is the same stack over the MuJoCo
-bench in data/xarm6/calibration_bench.xml, for testing the run without an arm.
+bench in data/xarm6/calibration_bench.xml, for testing the run without an arm. The xArm7
+blueprints are the same over the kitting bench (data/xarm7_kitting_bench), where the board lies
+anywhere on the table and the run finds it.
 """
 
 from __future__ import annotations
@@ -26,14 +28,19 @@ from __future__ import annotations
 import math
 
 from dimos.control.coordinator import TaskConfig
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.manipulation.calibration.hand_eye_module import HandEyeCalibrationModule
+from dimos.manipulation.calibration.hand_eye_module import BoxObstacle, HandEyeCalibrationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.xarm.blueprints.basic import XARM_REMAPS, xarm_coordinator
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.xarm.config import (
     XARM6_JOINT_LIMITS,
+    XARM7_JOINT_LIMITS,
+    make_xarm7_sim_hardware,
+    make_xarm7_sim_robot_config,
     make_xarm_hardware,
     make_xarm_model_config,
 )
@@ -236,5 +243,204 @@ xarm6_handeye_calibrate_chest_sim = autoconnect(
         table_x_m=(0.15, 0.85),
         approve_first_moves=0,
         settle_timeout_s=30.0,
+    ),
+)
+
+
+# ---- xArm7 on the kitting bench ----------------------------------------------------------------
+# Measurements in FDEIssues/xarm7-bench/BENCH_SPEC.md, all in the arm's base frame: x toward the
+# front table edge, y toward the dual OpenYAM end, z up from the bottom of the arm's base.
+
+# The home Krishna set on the arm in UFactory Studio, 2026-11-16.
+XARM7_CALIBRATION_HOME = [
+    round(math.radians(v), 4) for v in (-5.1, -35.0, -0.8, 53.5, -1.8, 87.5, 1.5)
+]
+XARM7_PLANNER_JOINT_LIMITS: list[tuple[float, float]] = [
+    (-math.pi, math.pi) if lo <= -2 * math.pi else (lo, hi) for lo, hi in XARM7_JOINT_LIMITS
+]
+# The table top sits 8 mm under the base, on the mount plate; the box top is 15 mm above it for
+# the taped board and margin. It reaches from just past the base to the front edge and along the
+# whole table; the base itself stands inside x < 0.1.
+XARM7_BENCH_TOP_Z = 0.007
+XARM7_BENCH_X_M = (0.10, 0.695)
+XARM7_BENCH_Y_M = (-0.61, 0.914)
+XARM7_BENCH_BOXES = [
+    # the wall, 12 in behind the table's back edge
+    BoxObstacle(name="hand_eye_wall", centre=(-0.422, 0.15, 0.5), size=(0.1, 2.6, 2.0)),
+    # the dual OpenYAM at the right end of the table, its arms resting, the camera post included
+    BoxObstacle(name="hand_eye_openyam", centre=(0.315, 0.775, 0.245), size=(0.67, 0.65, 0.5)),
+]
+# Where the board may lie: the done and empty-bin zones in front of the arm.
+XARM7_SEARCH_X_M = (0.15, 0.55)
+XARM7_SEARCH_Y_M = (-0.55, 0.35)
+# The wrist RealSense on the same kit mount as the xArm6's, whose link6 and the xArm7's link7 are
+# both the tool flange: the xArm6's measured mount (run 8, 2026-11-05) as the prior.
+XARM7_WRIST_CAMERA_NOMINAL_XYZ = (0.0770182, -0.0408053, 0.0285793)
+XARM7_WRIST_CAMERA_NOMINAL_XYZW = (-0.0927751, -0.0807643, 0.7044101, 0.6990539)
+XARM7_CALIBRATION_BENCH_PATH = LfsPath("xarm7_kitting_bench/calibration_bench.xml")
+
+_XARM7_BENCH = {
+    "table_top_z": XARM7_BENCH_TOP_Z,
+    "table_x_m": XARM7_BENCH_X_M,
+    "table_y_m": XARM7_BENCH_Y_M,
+    "obstacle_boxes": XARM7_BENCH_BOXES,
+    "find_board": True,
+    "search_x_m": XARM7_SEARCH_X_M,
+    "search_y_m": XARM7_SEARCH_Y_M,
+}
+
+
+def _xarm7_calibration_model() -> RobotModelConfig:
+    # the flange, which the poses are read from, and the tip, which pose targets are given for
+    return make_xarm_model_config(
+        7, robot="arm", base_pose=PoseStamped(frame_id="world"), tf_extra_links=["link7", "link_tcp"]
+    )
+
+
+xarm7_handeye_calibrate = autoconnect(
+    planner(
+        model=_xarm7_calibration_model(),
+        gripper_tasks={"manipulator": "arm_gripper"},
+        visualization={"backend": "viser"},
+    ),
+    xarm_coordinator("xarm7"),
+    RealSenseCamera.blueprint(),
+    HandEyeCalibrationModule.blueprint(
+        name="xarm7_wrist_camera",
+        nominal_translation=XARM7_WRIST_CAMERA_NOMINAL_XYZ,
+        nominal_rotation_xyzw=XARM7_WRIST_CAMERA_NOMINAL_XYZW,
+        home_joints=XARM7_CALIBRATION_HOME,
+        joint_limits_rad=XARM7_PLANNER_JOINT_LIMITS,
+        flange_frame="link7",
+        **_XARM7_BENCH,
+    ),
+).remappings(XARM_REMAPS)
+
+
+def _xarm7_sim(
+    *,
+    camera_name: str,
+    base_frame_id: str,
+    width: int,
+    height: int,
+    address: LfsPath = XARM7_CALIBRATION_BENCH_PATH,
+) -> Blueprint:
+    """The simulated xArm7 on the kitting bench twin, streaming one of its cameras."""
+    hardware = make_xarm7_sim_hardware(home_joints=XARM7_CALIBRATION_HOME)
+    return autoconnect(
+        planner(
+            model=make_xarm7_sim_robot_config(
+                base_pose=PoseStamped(frame_id="world"), tf_extra_links=["link7", "link_tcp"]
+            ),
+            gripper_tasks={"manipulator": "arm_gripper"},
+        ),
+        coordinator(
+            hardware=[hardware],
+            tasks=[
+                trajectory_task(hardware),
+                TaskConfig(
+                    name="arm_gripper", type="gripper", joint_names=["arm/gripper"], priority=20
+                ),
+            ],
+        ),
+        MujocoSimModule.blueprint(
+            address=address,
+            headless=True,
+            dof=7,
+            camera_name=camera_name,
+            base_frame_id=base_frame_id,
+            width=width,
+            height=height,
+            fps=5,
+            reset_joint_positions=XARM7_CALIBRATION_HOME,
+        ),
+    )
+
+
+# The twin's wrist camera sits on the measured mount; the run starts from the xArm6 kit drawing's
+# mount, a few millimetres and a degree off it, as a real first run would.
+xarm7_handeye_calibrate_sim = autoconnect(
+    _xarm7_sim(camera_name="wrist_camera", base_frame_id="link7", width=848, height=480),
+    HandEyeCalibrationModule.blueprint(
+        name="xarm7_wrist_camera_sim",
+        nominal_translation=XARM6_WRIST_CAMERA_NOMINAL_XYZ,
+        nominal_rotation_xyzw=XARM6_WRIST_CAMERA_NOMINAL_XYZW,
+        home_joints=XARM7_CALIBRATION_HOME,
+        joint_limits_rad=XARM7_PLANNER_JOINT_LIMITS,
+        flange_frame="link7",
+        optical_frame="wrist_camera_color_optical_frame",
+        camera_link_frame="wrist_camera_link",
+        approve_first_moves=0,
+        settle_timeout_s=30.0,
+        **_XARM7_BENCH,
+    ),
+)
+
+
+# ---- the xArm7's scene camera: a D435 on a floor tripod in front of the table --------------------
+# Nobody measures where the tripod stands. The run holds the printed 5 x 4 plate in the closed
+# fingers facing one point after another of the band the tripod may stand in, 0.4 to 0.9 m out
+# from the front edge and 0.5 to 0.95 m above the table, until the camera sees it; that view gives
+# the nominal the solve is checked against.
+XARM7_SCENE_HOLDS = [(0.45, 0.0, 0.30), (0.40, -0.25, 0.30)]
+XARM7_SCENE_AIMS = [(x, y, 0.70) for x in (1.20, 1.50) for y in (0.0, -0.45, 0.45)]
+# The middle of the band, looking back at the arm: only the keep-out sphere and the default aim
+# use it.
+XARM7_SCENE_CAMERA_GUESS_XYZ = (1.35, 0.0, 0.70)
+XARM7_SCENE_CAMERA_GUESS_XYZW = (0.6311099, 0.6311099, -0.3189048, -0.3189048)
+# The plate in the fingers, its printed face toward the flange's -y: link7 -> the board's frame,
+# from the twin. A centimetre or two out does not matter; it only aims the plate.
+XARM7_PLATE_XYZ = (-0.075, 0.0, 0.277)
+XARM7_PLATE_XYZW = (-0.7071068, 0.0, 0.0, 0.7071068)
+XARM7_SCENE_BENCH_PATH = LfsPath("xarm7_kitting_bench/calibration_bench_scene.xml")
+
+_XARM7_SCENE = {
+    "camera_frame": "base",
+    "nominal_translation": XARM7_SCENE_CAMERA_GUESS_XYZ,
+    "nominal_rotation_xyzw": XARM7_SCENE_CAMERA_GUESS_XYZW,
+    # checked against the first view of the plate, which is good to a few millimetres
+    "nominal_tolerance_m": 0.05,
+    "nominal_tolerance_deg": 10.0,
+    "board": XARM6_CHEST_PLATE,
+    "home_joints": XARM7_CALIBRATION_HOME,
+    "joint_limits_rad": XARM7_PLANNER_JOINT_LIMITS,
+    "flange_frame": "link7",
+    "table_top_z": XARM7_BENCH_TOP_Z,
+    "table_x_m": XARM7_BENCH_X_M,
+    "table_y_m": XARM7_BENCH_Y_M,
+    "obstacle_boxes": XARM7_BENCH_BOXES,
+    "find_camera": True,
+    "hold_points": XARM7_SCENE_HOLDS,
+    "aim_points": XARM7_SCENE_AIMS,
+    "plate_translation": XARM7_PLATE_XYZ,
+    "plate_rotation_xyzw": XARM7_PLATE_XYZW,
+}
+
+xarm7_handeye_calibrate_scene = autoconnect(
+    planner(
+        model=_xarm7_calibration_model(),
+        gripper_tasks={"manipulator": "arm_gripper"},
+        visualization={"backend": "viser"},
+    ),
+    xarm_coordinator("xarm7"),
+    RealSenseCamera.blueprint(width=1280, height=720),
+    HandEyeCalibrationModule.blueprint(name="xarm7_scene_camera", **_XARM7_SCENE),
+).remappings(XARM_REMAPS)
+
+xarm7_handeye_calibrate_scene_sim = autoconnect(
+    _xarm7_sim(
+        camera_name="scene_camera",
+        base_frame_id="world",
+        width=1280,
+        height=720,
+        address=XARM7_SCENE_BENCH_PATH,
+    ),
+    HandEyeCalibrationModule.blueprint(
+        name="xarm7_scene_camera_sim",
+        optical_frame="scene_camera_color_optical_frame",
+        camera_link_frame="scene_camera_link",
+        approve_first_moves=0,
+        settle_timeout_s=30.0,
+        **_XARM7_SCENE,
     ),
 )

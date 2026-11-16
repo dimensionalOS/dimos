@@ -30,6 +30,8 @@ import pytest
 from scipy.spatial.transform import Rotation as R
 
 from dimos.manipulation.calibration import store
+from dimos.manipulation.calibration.conftest import SyntheticCamera
+from dimos.manipulation.calibration.hand_eye import _detectors, charuco_board, detect_board, rt_to_T
 from dimos.manipulation.calibration.hand_eye_module import HandEyeCalibrationModule
 from dimos.manipulation.manipulation_spec import (
     ExecutionResult,
@@ -85,6 +87,16 @@ class FakePlanner:
         )
         return PlanResult(PlanStatus.SUCCEEDED, plan=plan)
 
+    def plan_to_poses(self, targets: dict[str, Any], speed_scale: float | None = None) -> PlanResult:
+        """The synthetic arm's joints are the flange pose, and the tip is the flange."""
+        pose = targets["manipulator"]
+        T = Transform(
+            translation=Vector3(pose.position.x, pose.position.y, pose.position.z),
+            rotation=pose.orientation,
+        ).to_matrix()
+        q = [*T[:3, 3], *R.from_matrix(T[:3, :3]).as_euler("xyz")]
+        return self.plan_to_joints({"manipulator": JointState(name=list(JOINTS), position=q)})
+
     def execute(
         self, blocking: bool = True, timeout: float | None = None, *, plan_id: str | None = None
     ) -> ExecutionResult:
@@ -116,6 +128,8 @@ class FakeTf:
             )
         if (parent, child) == ("camera_link", "camera_color_optical_frame"):
             return T_LINK_OPTICAL
+        if (parent, child) == ("link6", "link_tcp"):
+            return Transform(frame_id=parent, child_frame_id=child)
         return None
 
     def dispose(self) -> None:
@@ -408,3 +422,105 @@ def test_a_fixed_camera_run_keeps_the_arm_out_of_the_camera_and_writes_a_base_mo
     assert report["mount"]["child_frame_id"] == "camera_link"
     assert np.allclose(report["optical"]["translation_m"], fixed_rig.X_true[:3, 3], atol=0.002)
     assert len(planner.executed) == report["poses_moved"]
+
+
+def _searching_module(
+    rig: Any, camera: Any, tmp_path: Any, monkeypatch: Any, **config: Any
+) -> tuple[HandEyeCalibrationModule, FakePlanner, threading.Event]:
+    """A module over ``rig`` whose frames come from ``camera``, started from ``rig.home``."""
+    monkeypatch.setattr(store, "HAND_EYE_DIR", tmp_path)
+    planner = FakePlanner(rig.arm)
+    module = HandEyeCalibrationModule(
+        board=rig.board.__dict__, home_joints=rig.home, joint_limits_rad=rig.limits, **config
+    )
+    module._manipulation = planner
+    module._obstacles = MagicMock()
+    module._tf = FakeTf(rig.arm)
+    module._on_info(CameraInfo(height=rig.height, width=rig.width, D=[0.0] * 5, K=list(rig.K.ravel())))
+    stop = threading.Event()
+
+    def publish() -> None:
+        while not stop.is_set():
+            ts = time.time()
+            module._on_image(Image(data=camera.render(), format=ImageFormat.RGB, ts=ts))
+            time.sleep(FRAME_PERIOD_S)
+
+    threading.Thread(target=publish, name="SearchFrames", daemon=True).start()
+    return module, planner, stop
+
+
+def test_a_board_the_home_pose_cannot_see_is_found_and_the_draw_centred_on_it(
+    rig: Any, tmp_path: Any, monkeypatch: Any
+) -> None:
+    # the board 0.5 m to the side of where the home pose looks, turned 30 degrees
+    far = rt_to_T(R.from_euler("ZX", [0.5, np.pi]).as_matrix(), np.array([0.02, 0.45, 0.0]))
+    camera = SyntheticCamera(rig.arm, T_base_board=far)
+    assert camera.render().std() == 0.0  # nothing of the board at home
+    module, planner, stop = _searching_module(
+        rig,
+        camera,
+        tmp_path,
+        monkeypatch,
+        name="test_search",
+        nominal_translation=tuple(rig.X_true[:3, 3] + np.array([0.005, -0.004, 0.003])),
+        nominal_rotation_xyzw=tuple(R.from_matrix(rig.X_true[:3, :3]).as_quat()),
+        max_poses=12,
+        approve_first_moves=0,
+        find_board=True,
+        table_top_z=0.0,
+        search_x_m=(0.1, 0.7),
+        search_y_m=(-0.6, 0.6),
+    )
+    try:
+        report = module.calibrate()
+    finally:
+        stop.set()
+        module.stop()
+
+    assert report["passed"], report["reason"]
+    expected = rig.X_true @ np.linalg.inv(T_LINK_OPTICAL.to_matrix())
+    assert np.allclose(report["mount"]["translation_m"], expected[:3, 3], atol=0.0005)
+    # searched, then the centring move, both outside the per-move cap, before the 12 draws
+    assert len(planner.executed) > 12 + 1
+
+
+def test_a_fixed_camera_the_home_pose_turns_the_plate_from_is_found(
+    fixed_rig: Any, tmp_path: Any, monkeypatch: Any
+) -> None:
+    # home turns the plate's face away from the camera, half a turn about the vertical
+    fixed_rig.home[5] += np.pi
+    fixed_rig.arm.q = np.asarray(fixed_rig.home, dtype=float)
+    cb = charuco_board(fixed_rig.board)
+    # the camera sees the plate's back, a mirror image no detector reads
+    assert detect_board(cb, _detectors(cb), fixed_rig.camera.capture(), wide_seen=False)[1] is None
+    plate = fixed_rig.camera._T_flange_board
+    module, planner, stop = _searching_module(
+        fixed_rig,
+        fixed_rig.camera,
+        tmp_path,
+        monkeypatch,
+        name="test_camera_search",
+        camera_frame="base",
+        # no tape measure: a guess 0.2 m off, which only the keep-out and the default aim use
+        nominal_translation=tuple(fixed_rig.X_true[:3, 3] + np.array([0.15, 0.1, 0.1])),
+        nominal_rotation_xyzw=tuple(R.from_matrix(fixed_rig.X_true[:3, :3]).as_quat()),
+        nominal_tolerance_m=0.03,
+        max_poses=16,
+        approve_first_moves=0,
+        camera_keepout_m=0.0,
+        find_camera=True,
+        hold_points=[(0.45, 0.0, 0.3)],
+        aim_points=[(0.45, -0.6, 0.6), (0.45, -0.6, 0.2)],
+        plate_translation=tuple(plate[:3, 3] + np.array([0.01, 0.0, -0.01])),
+        plate_rotation_xyzw=tuple(R.from_matrix(plate[:3, :3]).as_quat()),
+    )
+    try:
+        report = module.calibrate()
+    finally:
+        stop.set()
+        module.stop()
+
+    assert report["passed"], report["reason"]
+    assert len(planner.executed) > 16 + 1
+    solved = rt_to_T(R.from_quat(report["optical"]["rotation_xyzw"]).as_matrix(), np.asarray(report["optical"]["translation_m"]))
+    assert np.linalg.norm(solved[:3, 3] - fixed_rig.X_true[:3, 3]) < 0.001

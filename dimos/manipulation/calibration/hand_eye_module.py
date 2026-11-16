@@ -45,17 +45,32 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.manipulation.calibration import store
+from dimos.manipulation.calibration.find_target import (
+    aim_plate,
+    board_in_base,
+    camera_in_base,
+    centre_over_board,
+    image_yaw,
+    look_down,
+    search_points,
+)
 from dimos.manipulation.calibration.hand_eye import (
+    PROBE_M,
     BoardSpec,
     CameraNominal,
     FloatArray,
     Frame,
     HandEyeResult,
+    _detectors,
+    charuco_board,
+    detect_board,
+    rt_to_T,
     solve_hand_eye,
 )
 from dimos.manipulation.calibration.store import save_hand_eye
 from dimos.manipulation.manipulation_spec import ExecutionStatus, ManipulationSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -109,6 +124,14 @@ class HandEyeBoardConfig(BaseModel):
     dictionary: str = "DICT_APRILTAG_36h11"
 
 
+class BoxObstacle(BaseModel):
+    """A fixed box beside the bench the arm keeps clear of for the run, in the base frame."""
+
+    name: str
+    centre: tuple[float, float, float]
+    size: tuple[float, float, float]
+
+
 class HandEyeCalibrationConfig(ModuleConfig):
     # The result file's name under STATE_DIR/calibration, e.g. "xarm6_wrist_camera".
     name: str
@@ -153,6 +176,32 @@ class HandEyeCalibrationConfig(ModuleConfig):
     table_top_z: float | None = None
     table_x_m: tuple[float, float] = (0.25, 1.0)
     table_y_m: tuple[float, float] = (-0.6, 0.6)
+    # Fixed boxes beside the table, a wall or another robot, kept clear of for the run.
+    obstacle_boxes: list[BoxObstacle] = Field(default_factory=list)
+    # The board lies somewhere on the table and nobody measured where. When the home pose does not
+    # show it, the camera looks straight down from search_height_m over a grid search_spacing_m
+    # apart on the table (search_x_m by search_y_m, the table box's extent when None) until a view
+    # does; then the draw is centred straight above the board. A camera on the flange only.
+    find_board: bool = False
+    search_height_m: float = Field(default=0.55, gt=0.0)
+    search_spacing_m: float = Field(default=0.3, gt=0.0)
+    search_x_m: tuple[float, float] | None = None
+    search_y_m: tuple[float, float] | None = None
+    # The planner's tip link, which its pose targets are given for.
+    tcp_frame: str = "link_tcp"
+    # A fixed camera stands somewhere in front of the arm and nobody measured where. When the
+    # home pose does not show it the plate, the arm holds the plate at each of hold_points (where
+    # the home pose holds it when empty) facing each of aim_points (the nominal camera position
+    # when empty) until the camera sees it. The camera pose from that one view is the nominal the
+    # solve is checked against, and the draw is centred on the plate facing it. A fixed camera
+    # only.
+    find_camera: bool = False
+    hold_points: list[tuple[float, float, float]] = Field(default_factory=list)
+    aim_points: list[tuple[float, float, float]] = Field(default_factory=list)
+    # Where the plate sits in the fingers, flange -> the board's frame, for aiming it: a
+    # centimetre or two out does not matter.
+    plate_translation: tuple[float, float, float] = (0.0, 0.0, 0.2)
+    plate_rotation_xyzw: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
     # Keep every captured frame with the joints and flange pose it was taken at, plus the
     # report, under STATE_DIR/calibration/records/<name>_<time>, for inspection afterwards.
     record: bool = False
@@ -271,12 +320,19 @@ class HandEyeCalibrationModule(Module):
             try:
                 try:
                     self.approach_home()
+                    home = list(self.config.home_joints)
+                    nominal = self._nominal()
+                    if self.config.find_board and self.config.camera_frame == "flange":
+                        home = self._find_board()
+                    if self.config.find_camera and self.config.camera_frame == "base":
+                        home, seen = self._find_camera()
+                        nominal = CameraNominal("base", seen, nominal.tol_mm, nominal.tol_deg)
                     result = solve_hand_eye(
                         _Robot(self),
                         _Camera(self),
                         BoardSpec(**self.config.board.model_dump()),
-                        self._nominal(),
-                        list(self.config.home_joints),
+                        nominal,
+                        home,
                         self.config.max_poses,
                         self.config.max_seconds,
                         seed=self._run.seed,
@@ -366,6 +422,12 @@ class HandEyeCalibrationModule(Module):
                     [x1 - x0, y1 - y0, TABLE_THICKNESS_M],
                 )
             )
+        for box in cfg.obstacle_boxes:
+            added.append(
+                self._obstacles.add_obstacle(
+                    box.name, Pose(Vector3(*box.centre), Quaternion()), "box", list(box.size)
+                )
+            )
         if cfg.camera_frame == "base" and cfg.camera_keepout_m > 0.0:
             pose = Pose(Vector3(*cfg.nominal_translation), Quaternion())
             added.append(
@@ -399,6 +461,123 @@ class HandEyeCalibrationModule(Module):
             )
         matrix: FloatArray = np.asarray(t.to_matrix(), dtype=float)
         return matrix
+
+    def _find_board(self) -> list[float]:
+        """The joints the draw is centred on: the camera straight above the board, wherever it
+        lies on the table. See ``find_board``."""
+        cfg = self.config
+        board = BoardSpec(**cfg.board.model_dump())
+        cb = charuco_board(board)
+        dets = _detectors(cb)
+        X = self._nominal().T
+
+        def sighting() -> FloatArray | None:
+            _, det = detect_board(cb, dets, self.capture_frame(), wide_seen=False)
+            if det is None:
+                return None
+            return board_in_base(self.read_flange_pose(), X, det.T_cam_board)
+
+        yaw = image_yaw(self.read_flange_pose(), X)
+        T_board = sighting()
+        if T_board is None:
+            here = (self.read_flange_pose() @ X)[:3, 3]
+            table_z = 0.0 if cfg.table_top_z is None else cfg.table_top_z
+            points = search_points(
+                cfg.search_x_m or cfg.table_x_m,
+                cfg.search_y_m or cfg.table_y_m,
+                table_z,
+                cfg.search_spacing_m,
+                here,
+            )
+            for point in points:
+                q = self.plan_flange(look_down(point, cfg.search_height_m, yaw, X))
+                if q is None or not self.move_to(q, capped=False):
+                    continue
+                T_board = sighting()
+                if T_board is not None:
+                    break
+        if T_board is None:
+            raise RuntimeError("the board was not seen from the home pose or any search pose")
+        centre = (T_board @ np.array([0.0, 0.0, 0.0, 1.0]))[:3]
+        logger.info("Hand-eye board found", corner_xyz=[round(float(v), 3) for v in centre])
+        q = self.plan_flange(centre_over_board(T_board, board, PROBE_M, X, yaw))
+        if q is None or not self.move_to(q, capped=False):
+            raise RuntimeError("no plan to the view straight above the board")
+        return q
+
+    def _find_camera(self) -> tuple[list[float], FloatArray]:
+        """The joints the draw is centred on, the plate facing the fixed camera, and the camera's
+        pose from the view that found it. See ``find_camera``."""
+        cfg = self.config
+        board = BoardSpec(**cfg.board.model_dump())
+        cb = charuco_board(board)
+        dets = _detectors(cb)
+        Z = rt_to_T(
+            Quaternion(*cfg.plate_rotation_xyzw).to_rotation_matrix(),
+            np.asarray(cfg.plate_translation, dtype=float),
+        )
+        # only the printed face reads, so a plate put in the fingers the other way round is the
+        # same plate turned half a turn about the tool axis
+        faces = [Z, rt_to_T(np.diag([-1.0, -1.0, 1.0]), np.zeros(3)) @ Z]
+        w, h = board.squares_x * board.square_m, board.squares_y * board.square_m
+        held = (self.read_flange_pose() @ Z @ np.array([w / 2, h / 2, 0.0, 1.0]))[:3]
+
+        def sighting(plate: FloatArray) -> FloatArray | None:
+            _, det = detect_board(cb, dets, self.capture_frame(), wide_seen=False)
+            if det is None:
+                return None
+            return camera_in_base(self.read_flange_pose(), plate, det.T_cam_board)
+
+        holds = [np.asarray(p, dtype=float) for p in cfg.hold_points] or [held]
+        aims = [np.asarray(p, dtype=float) for p in cfg.aim_points or [cfg.nominal_translation]]
+        hold = held
+        seen = sighting(Z)
+        searches = [(f, hd, a) for f in faces for hd in holds for a in aims] if seen is None else []
+        for Z, hold, aim in searches:
+            q = self.plan_flange(aim_plate(hold, aim, board, Z))
+            if q is None or not self.move_to(q, capped=False):
+                continue
+            seen = sighting(Z)
+            if seen is not None:
+                break
+        if seen is None:
+            raise RuntimeError("the camera did not see the plate from the home pose or any search pose")
+        logger.info(
+            "Hand-eye camera found", optical_xyz=[round(float(v), 3) for v in seen[:3, 3]]
+        )
+        q = self.plan_flange(aim_plate(hold, seen[:3, 3], board, Z))
+        if q is None or not self.move_to(q, capped=False):
+            return [float(v) for v in self.read_joints()], seen
+        return q, seen
+
+    def plan_flange(self, T_base_flange: FloatArray) -> list[float] | None:
+        """Joints that put the flange at ``T_base_flange``, from the planner, or None when it
+        finds no collision-free path there."""
+        cfg = self.config
+        tcp = self.tfbuffer.get(cfg.flange_frame, cfg.tcp_frame)
+        if tcp is None:
+            raise RuntimeError(
+                f"no transform {cfg.flange_frame} -> {cfg.tcp_frame} on tf; "
+                "the planner publishes it when its model lists it in tf_extra_links"
+            )
+        T = T_base_flange @ np.asarray(tcp.to_matrix(), dtype=float)
+        target = PoseStamped(
+            frame_id=cfg.base_frame,
+            position=Vector3(*T[:3, 3]),
+            orientation=Quaternion.from_rotation_matrix(T[:3, :3]),
+        )
+        try:
+            plan = self._manipulation.plan_to_poses(
+                {cfg.planning_group: target}, speed_scale=cfg.speed_scale
+            )
+        except Exception as error:  # the planner raises on a start state in collision
+            logger.warning("Planner refused the pose", message=str(error))
+            with contextlib.suppress(Exception):
+                self._manipulation.reset()
+            return None
+        if not plan.succeeded or plan.plan is None or not plan.plan.path:
+            return None
+        return [float(v) for v in plan.plan.path[-1].position]
 
     def approach_home(self) -> None:
         """The arm may be parked anywhere; one move outside the per-move cap brings it to the
