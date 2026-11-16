@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 import pytest
 import yaml
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import GlobalConfig
 from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
@@ -145,6 +146,29 @@ def test_a_blueprints_config_schema_is_global_and_module_fields(
     schema = client.get("/catalog/blueprints/demo/config").json()
     assert schema["global"]["n_workers"]["default"] == 2
     assert schema["modules"]["camera"]["args"]["api_key"]["secret"]
+
+
+@pytest.mark.parametrize("name", ["unitree-go2-multi", "unitree-go2-multi-teleop"])
+def test_multi_go2_catalog_loads_without_robot_ips(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    monkeypatch.delenv("ROBOT_IPS", raising=False)
+    monkeypatch.setattr(state, "dimos_dir", DIMOS_PROJECT_ROOT)
+    monkeypatch.setattr(state, "listed", [{"name": name, "kind": "builtin"}])
+
+    detail = client.get(f"/catalog/blueprints/{name}")
+    config = client.get(f"/catalog/blueprints/{name}/config")
+
+    assert detail.status_code == 200, detail.text
+    assert config.status_code == 200, config.text
+    assert detail.json()["name"] == config.json()["name"] == name
+    assert config.json()["global"]["robot_ips"]["default"] is None
+    ip_setting = next(
+        setting
+        for setting in detail.json()["recommended_config"]
+        if setting.get("global") == "robot_ips"
+    )
+    assert ip_setting["required"] is True
 
 
 def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(

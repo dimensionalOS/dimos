@@ -11,9 +11,9 @@
 //   relay still never writes on robot-OPENED bidi streams (their send half
 //   is aborted with RESET, never FIN); the carrier is relay-opened, the
 //   proven direction. Data = one-shot bidi streams under the same rule.
-// - Viewer (browser): control = viewer-opened bidi stream (replies + pushes
-//   on the same stream) or datagrams (Python test viewer); data = relay-
-//   opened uni streams.
+// - Viewer (browser and the Python test viewer): control = viewer-opened
+//   bidi stream (replies + pushes on the same stream) or datagrams, which
+//   cap a reply at one packet; data = relay-opened uni streams.
 import {
   type ChannelSpec,
   CONTROL_CHANNEL,

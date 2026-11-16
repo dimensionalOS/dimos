@@ -104,7 +104,7 @@ Use the helper script:
 
 ## CI/CD Pipeline
 
-Images are built by [`.github/workflows/docker-build.yml`](/.github/workflows/docker-build.yml#L4) on merges to `main`/`dev` (when Docker files change) and weekly for base image security patches.
+Images are built by [`.github/workflows/docker-build.yml`](/.github/workflows/docker-build.yml#L4) on merges to `main` (when Docker files change) and weekly for base image security patches.
 
 Tests and type checking run in [`.github/workflows/ci.yml`](/.github/workflows/ci.yml) using pre-built images.
 

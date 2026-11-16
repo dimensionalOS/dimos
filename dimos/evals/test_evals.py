@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import datetime
 import json
+import math
 from pathlib import Path
 import threading
 import time
@@ -62,6 +63,7 @@ from dimos.evals.scorers import (
     final,
     first_number,
     floor,
+    inside,
     mean,
     ramp,
     within,
@@ -85,8 +87,10 @@ from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 def _pose(x: float, y: float) -> PoseStamped:
@@ -818,6 +822,39 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
     every = written(tmp_path / "every.db", rooms)
     assert score(every, str(N_ROOMS)) == 1.0
     assert score(written(tmp_path / "still.db", [(50.0, 50.0)]), str(N_ROOMS)) == 0.5
+
+
+@pytest.mark.parametrize(
+    ("cube", "yaw", "score"),
+    [
+        ((0.0, 0.0, 0.028), 0.0, 1.0),  # centred
+        ((0.03, 0.0, 0.028), 0.0, 1.0),  # against a short wall
+        ((0.0, 0.05, 0.028), 0.0, 1.0),  # at the end of the long side
+        ((0.06, 0.0, 0.028), 0.0, 0.0),  # beside the bowl
+        ((0.0, 0.0, 0.10), 0.0, 0.0),  # held above it
+        ((0.05, 0.0, 0.028), math.pi / 2, 1.0),  # turned bowl: along its long side
+        ((0.0, 0.06, 0.028), math.pi / 2, 0.0),  # turned bowl: past its short side
+    ],
+)
+def test_inside_scores_anywhere_on_the_container_floor(
+    tmp_path: Path, cube: tuple[float, float, float], yaw: float, score: float
+) -> None:
+    db = tmp_path / "poses.db"
+    bowl = Quaternion(0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
+    with SqliteStore(path=str(db)) as store:
+        store.stream("body_poses", TFMessage).append(
+            TFMessage(
+                Transform(
+                    translation=Vector3(*cube), frame_id="world", child_frame_id="cube", ts=1.0
+                ),
+                Transform(rotation=bowl, frame_id="world", child_frame_id="bowl", ts=1.0),
+            ),
+            ts=1.0,
+        )
+    grade = inside("cube", "bowl", half_extents_m=(0.052, 0.072), rise_m=(0.02, 0.04))
+    outcome = Outcome(trajectory=_trajectory("", tmp_path), artifacts={"recording": db})
+    assert grade(outcome) == score
+    assert inside("ball", "bowl", half_extents_m=(1.0, 1.0), rise_m=(-1.0, 1.0))(outcome) == 0.0
 
 
 def test_suites_and_agents_importable() -> None:

@@ -38,8 +38,9 @@ SUITE: Suite = [
     EvalCase(
         id="xarm_pick_cylinder_twist",
         inputs=(
-            "Pick up the cylinder from the table and hold it in the air, at least 5 cm above "
-            "its initial position. Use the robot interface described in ROBOT.md."
+            "Pick up the orange cylinder from the table and hold it in the air, "
+            "at least 5 cm above its initial position. "
+            "Use the robot interface described in ROBOT.md."
         ),
         environment=MujocoEnvironment(
             blueprint=["xarm-sim"],
@@ -47,9 +48,9 @@ SUITE: Suite = [
             raw_guide=RAW_ARM_README + XARM7_NOTES,
             ready_streams=("color_image", "coordinator_joint_state"),
             scene=LfsPath("xarm7/scene.xml"),
-            tracked_bodies=("cup",),
+            tracked_bodies=("orange_cylinder",),
         ),
-        grade=lifted("cup", by_m=0.05),
+        grade=lifted("orange_cylinder", by_m=0.05),
         timeout_s=600.0,
         tags=frozenset({"mujoco", "manipulation", "raw", "pick"}),
     ),

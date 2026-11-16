@@ -64,6 +64,27 @@ def test_latest_selects_newest_before_rate_gate_and_preserves_quiet_keys(mailbox
     assert budget.used == 0
 
 
+def test_refresh_hands_over_the_newer_sample_within_the_period_and_keeps_the_gate(mailboxes):
+    mailbox = mailboxes("latest", 10, TopicIngressBudget(), lambda: None)
+    first = sample("camera", b"first")
+    mailbox.offer(first)
+    assert mailbox.take(10) == ([first], None)
+    assert mailbox.refresh("camera") is None
+    mailbox.offer(sample("camera", b"newer"))
+    mailbox.offer(sample("camera", b"newest"))
+    gated, delay = mailbox.take(10.05)
+    assert gated == []
+    assert delay == pytest.approx(0.05)
+    assert mailbox.refresh("camera") == sample("camera", b"newest")
+    assert mailbox.refresh("camera") is None
+    # The schedule is where the take left it: a later sample waits for 10.1.
+    mailbox.offer(sample("camera", b"later"))
+    gated, delay = mailbox.take(10.05)
+    assert gated == []
+    assert delay == pytest.approx(0.05)
+    assert mailbox.take(10.1) == ([sample("camera", b"later")], None)
+
+
 def test_reliable_order_and_in_progress_samples_remain_within_aggregate_budget(mailboxes):
     event = sample("event", b"one")
     budget = TopicIngressBudget(limit=3 * event.size)
@@ -104,7 +125,9 @@ def test_shared_rate_changes_select_newest_without_reopening_or_losing_quiet_key
     batch, delay = mailbox.take(10.08)
     assert [item.payload for item in batch] == [b"unrelated"]
     mailbox.release(batch[0])
-    assert delay == pytest.approx(0.16)
+    # The gate is anchored to its schedule (due 10 + 1/30 after the rate
+    # change, then one more period), not to the late take at 10.04.
+    assert delay == pytest.approx(10 + 2 / 30 + 0.2 - 1 / 30 - 10.08)
     batch, _ = mailbox.take(10.25)
     assert [item.payload for item in batch] == [b"last"]
     mailbox.release(batch[0])
@@ -145,3 +168,36 @@ def test_only_dense_reliable_arrivals_request_coalescing_and_keep_every_event(ma
     assert coalesced == [False, False, False, False, True, True, False, False, True, False]
     assert delivered == values
     assert budget.used == 0
+
+
+def test_same_rate_source_loses_no_frames_to_late_wakes(mailboxes):
+    """A 30 Hz camera through a 30 Hz gate whose wakes run a millisecond late:
+    a gate re-anchored on each take drifts behind the source and drops one
+    frame per period of accumulated lateness; one anchored to its schedule
+    does not."""
+    period = 1 / 30
+    lateness = 0.001
+    mailbox = mailboxes("latest", 30, TopicIngressBudget(), lambda: None)
+    taken = 0
+    timer = None
+    frame = 0
+    while frame < 300:
+        arrival = frame * period
+        if timer is not None and timer < arrival:
+            batch, delay = mailbox.take(timer + lateness)
+            taken += len(batch)
+            for item in batch:
+                mailbox.release(item)
+            timer = None if delay is None else timer + lateness + delay
+            continue
+        mailbox.offer(sample("camera", str(frame).encode()))
+        frame += 1
+        batch, delay = mailbox.take(arrival + 0.0003)
+        taken += len(batch)
+        for item in batch:
+            mailbox.release(item)
+        timer = None if delay is None else arrival + 0.0003 + delay
+    batch, _ = mailbox.take(400 * period)
+    taken += len(batch)
+    assert mailbox.dropped == 0
+    assert taken == 300

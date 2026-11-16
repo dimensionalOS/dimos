@@ -15,22 +15,25 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
+from typing_extensions import Self
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.robot.unitree.config import connection_type
+from dimos.robot.unitree.config import connection_type, require_robot_ip
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+_ROBOT_IP_GUIDANCE = "Set ROBOT_IP or --robot-ip (or --g1connection.ip)."
+
 
 class G1Config(ModuleConfig):
-    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     connection_type: str = Field(
         default_factory=lambda m: connection_type(
             replay=m["g"].replay, simulation=m["g"].simulation
@@ -38,6 +41,12 @@ class G1Config(ModuleConfig):
     )
     # Per-device AES-128 key (G1 fw >=1.5.1).
     aes_128_key: str | None = Field(default=None, repr=False)
+
+    @model_validator(mode="after")
+    def validate_connection(self) -> Self:
+        if self.connection_type == "webrtc":
+            require_robot_ip(self.ip, _ROBOT_IP_GUIDANCE)
+        return self
 
 
 class G1ConnectionBase(Module, ABC):
@@ -81,7 +90,8 @@ class G1Connection(G1ConnectionBase):
         match self.config.connection_type:
             case "webrtc":
                 self.connection = UnitreeWebRTCConnection(
-                    self.config.ip, aes_128_key=self.config.aes_128_key
+                    require_robot_ip(self.config.ip, _ROBOT_IP_GUIDANCE),
+                    aes_128_key=self.config.aes_128_key,
                 )
             case "replay":
                 raise ValueError("Replay connection not implemented for G1 robot")

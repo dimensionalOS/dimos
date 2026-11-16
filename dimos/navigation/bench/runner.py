@@ -56,8 +56,8 @@ SCORE_FILE = "score.json"
 RECORDING_FILE = "memory.db"
 REPLAY_FILE = "rerun.rrd"
 RECORD_TOPICS = (
-    "ground_truth,joint_state,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,"
-    "goal_reached,reference_path,phase,lidar,local_map,surface_map"
+    "ground_truth,joint_state,coordinator_joint_state,odometry,tf,scene,contacts,goal,"
+    "planner_path,path,cmd_vel,goal_reached,reference_path,phase,lidar,local_map,surface_map"
 )
 LCM_PORT_BASE = 7800
 ZENOH_SCOUT_GROUP = "224.0.0.224"
