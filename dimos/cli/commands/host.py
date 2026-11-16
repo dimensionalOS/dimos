@@ -201,14 +201,19 @@ def doctor(fix: bool = typer.Option(False, "--fix", help="Fix failing checks tha
     marks = {"ok": "✓", "fail": "✗", "warn": "!"} if tty else {}
     results = run_checks(fix=fix)
     for result in results:
-        state = "ok" if result.ok else "warn" if result.warning else "fail"
+        if result.skip_reason is not None:
+            state = "skip"
+        else:
+            state = "ok" if result.ok else "warn" if result.warning else "fail"
         line = f"{marks.get(state, state.upper()):<4}  {result.description}"
         if result.fix_note:
             line += f"  [{result.fix_note}]"
         if result.error and not result.ok:
             line += f"  ({result.error})"
+        if result.skip_reason is not None:
+            line += f"  ({result.skip_reason})"
         typer.echo(line)
-    if not all(result.ok or result.warning for result in results):
+    if not all(result.ok or result.warning or result.skip_reason is not None for result in results):
         raise typer.Exit(1)
 
 
