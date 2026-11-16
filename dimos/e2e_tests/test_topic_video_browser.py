@@ -118,7 +118,11 @@ class Stack:
     frames_published: list[int]
 
 
-@pytest.fixture(scope="module")
+# One stack per test: a browser closed by an earlier test can keep its relay
+# subscription until the WebTransport idle timeout (Chromium does), and the
+# relay moves a viewer whose new settings another variant already encodes onto
+# that variant, with a new peer and track, instead of reconfiguring its own.
+@pytest.fixture
 def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
     root = tmp_path_factory.mktemp("topic-video")
     (root / "index.html").write_text(PAGE % {"key": CAMERA_KEY})
