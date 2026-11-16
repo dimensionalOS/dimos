@@ -1176,8 +1176,6 @@ jobs:
         with:
           report_type: test_results
           use_oidc: true
-          # See the "Upload coverage" step above.
-          binary: .codecov-venv/bin/codecovcli
       - name: Check disk space
         if: failure()
         run: |
