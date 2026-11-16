@@ -808,6 +808,11 @@ jobs:
           enable-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           python-version: ${{ matrix.pyver }}
+      - name: Install codecov CLI
+        # use_pypi installs under the runner Python, which test-results-parser may lack wheels for
+        run: |
+          uv venv .codecov-venv
+          uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Extract Deno version
         id: deno-version
         run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
@@ -910,12 +915,8 @@ jobs:
           files: ./coverage.xml
           flags: OS-${{ matrix.os }},Py-${{ matrix.pyver }}
           use_oidc: true
-          # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
-          # the GPG key for the default download path is served from a dead
-          # keybase.io URL, failing every upload. See
-          # codecov/codecov-action#1955 and #2398.
-          use_pypi: true
-          version: "11.2.8"
+          # The default download fails on a dead GPG key URL, see codecov/codecov-action#1955
+          binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7.1.1
@@ -923,8 +924,7 @@ jobs:
           report_type: test_results
           use_oidc: true
           # See the "Upload coverage" step above.
-          use_pypi: true
-          version: "11.2.8"
+          binary: .codecov-venv/bin/codecovcli
 
   self-hosted-tests:
     # Runs on push, merge_group (trusted — a maintainer must approve + queue the
