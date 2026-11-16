@@ -16,7 +16,6 @@ from collections.abc import Iterator
 
 import pytest
 
-from dimos.core.module import Module
 from dimos.core.spatial_module import SpatialModule, SpatialModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.protocol.tf.tf import TF
@@ -28,7 +27,7 @@ class OdomConfig(SpatialModuleConfig):
     tf_edges: list[tuple[str, str]] = [("world", "body")]
 
 
-class Odom(SpatialModule, Module):
+class Odom(SpatialModule):
     config: OdomConfig
 
 

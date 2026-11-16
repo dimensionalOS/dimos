@@ -18,7 +18,7 @@ from typing import TypeAlias
 
 from pydantic import Field, model_validator
 
-from dimos.core.module import ModuleBase, ModuleConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 
 # A frame that belongs to one robot (base_link, lidar); a namespaced blueprint prefixes it.
@@ -53,7 +53,7 @@ class SpatialModuleConfig(ModuleConfig):
         return {(frames[parent], frames[child]) for parent, child in self.tf_edges}
 
 
-class SpatialModule(ModuleBase):
+class SpatialModule(Module):
     """Looks up only the tf frames it declares, and publishes only the edges in ``tf_edges``."""
 
     config: SpatialModuleConfig
