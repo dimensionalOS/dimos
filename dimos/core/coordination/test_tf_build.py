@@ -17,7 +17,7 @@ from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.coordination.module_coordinator import ModuleCoordinator, verify_tf_tree
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
@@ -87,7 +87,7 @@ class LegacyTfPublisher(Module):
 
 
 def _verify(blueprint: Blueprint) -> None:
-    verify_tf_tree(list(blueprint.active_blueprints))
+    TfModule.blueprint_checks(list(blueprint.active_blueprints))
 
 
 def test_one_tree_passes() -> None:
@@ -110,7 +110,7 @@ def test_two_parents_is_refused() -> None:
 
 
 def test_same_edge_from_two_modules_warns(mocker: MockerFixture) -> None:
-    logger = mocker.patch("dimos.core.coordination.module_coordinator.logger")
+    logger = mocker.patch("dimos.core.tf_module.logger")
     _verify(autoconnect(Odom.blueprint(), BackupOdom.blueprint()))
     (message,), _ = logger.warning.call_args
     assert "'world' -> 'base_link' is declared by several modules (odom, backupodom)" in message

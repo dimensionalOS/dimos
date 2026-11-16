@@ -42,7 +42,6 @@ from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.resource import Resource
 from dimos.core.stream import Transport, TransportSpec
-from dimos.core.tf_module import TfModule
 from dimos.core.transport import (
     LCMTransport,
     PubSubTransport,
@@ -1068,108 +1067,21 @@ def _deploy_all_modules(
         kwargs.pop("instance_name", None)
         if bp.instance_name is not None:
             kwargs["instance_name"] = bp.instance_name
-        _namespace_tf_frames_local(bp, kwargs)
+        # A module may adjust its own config, e.g. TfModule namespaces its local frames.
+        if adjust := getattr(bp.module, "blueprint_kwargs", None):
+            kwargs = adjust(kwargs, namespace=_atom_namespace(bp.name))
         module_specs.append((bp.module, gc, kwargs))
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
-    verify_tf_tree([*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()])
+    # Each distinct blueprint_checks on a module class sees every module, once (subclasses share it).
+    atoms = [*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()]
+    for check in dict.fromkeys(getattr(atom.module, "blueprint_checks", None) for atom in atoms):
+        if check is not None:
+            check(atoms)
     module_coordinator.deploy_parallel(module_specs)
 
     for bp in blueprint.active_blueprints:
         module_coordinator._deployed_atoms[bp.name] = deployed_atoms[bp.name]
-
-
-def _namespace_tf_frames_local(atom: BlueprintAtom, kwargs: dict[str, Any]) -> None:
-    """Prefix a namespaced TfModule's local frames with its namespace, so copies don't share frames."""
-    namespace = _atom_namespace(atom.name)
-    if not namespace or not issubclass(atom.module, TfModule):
-        return
-    frames = kwargs.get("tf_frames_local")
-    if frames is None:
-        frames = (
-            module_config_cls(atom)
-            .model_fields["tf_frames_local"]
-            .get_default(call_default_factory=True)
-        )
-    kwargs["tf_frames_local"] = {role: f"{namespace}/{frame}" for role, frame in frames.items()}
-
-
-def _spatial_field(atom: BlueprintAtom, name: str) -> Any:
-    if name in atom.kwargs:
-        return atom.kwargs[name]
-    return module_config_cls(atom).model_fields[name].get_default(call_default_factory=True)
-
-
-def verify_tf_tree(atoms: list[BlueprintAtom]) -> None:
-    """Refuse a frame with two parents, or declared edges that form a cycle or several trees; warn on an edge with two owners."""
-    publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
-    for atom in atoms:
-        if not issubclass(atom.module, TfModule):
-            continue
-        frames = {
-            **_spatial_field(atom, "tf_frames_global"),
-            **_spatial_field(atom, "tf_frames_local"),
-        }
-        for parent_role, child_role in _spatial_field(atom, "tf_edges"):
-            publishers[frames[child_role]][frames[parent_role]].append(atom.name)
-    if not publishers:
-        return
-
-    errors = []
-    for child, parents in sorted(publishers.items()):
-        if len(parents) > 1:
-            listed = ", ".join(
-                f"{parent} (from {', '.join(names)})" for parent, names in sorted(parents.items())
-            )
-            errors.append(f"    - '{child}' has several parents: {listed}")
-        for parent, names in parents.items():
-            if len(names) > 1:
-                logger.warning(
-                    f"tf edge '{parent}' -> '{child}' is declared by several modules "
-                    f"({', '.join(names)}); only one module should own an edge"
-                )
-
-    # Union-find over the declared edges: one component per tree.
-    component: dict[str, str] = {}
-
-    def root_of(frame: str) -> str:
-        while component.setdefault(frame, frame) != frame:
-            frame = component[frame]
-        return frame
-
-    for child, parents in publishers.items():
-        for parent in parents:
-            component[root_of(child)] = root_of(parent)
-    trees: dict[str, set[str]] = defaultdict(set)
-    for frame in list(component):
-        trees[root_of(frame)].add(frame)
-    for frames in trees.values():
-        if not frames - publishers.keys():
-            errors.append(f"    - frames {sorted(frames)} form a cycle (none of them is a root)")
-
-    if len(trees) > 1:
-        roots = sorted(
-            sorted(frames - publishers.keys()) or sorted(frames)[:1] for frames in trees.values()
-        )
-        message = f"declared tf edges form {len(trees)} separate trees, rooted at {roots}"
-        # A module that isn't a TfModule may publish the edges that join them, so only warn then.
-        undeclared_publishers = sorted(
-            atom.name
-            for atom in atoms
-            if not issubclass(atom.module, TfModule)
-            and any(stream.name == "tf" and stream.direction != "in" for stream in atom.streams)
-        )
-        if undeclared_publishers:
-            logger.warning(
-                f"{message}; {', '.join(undeclared_publishers)} may join them (not TfModules)"
-            )
-        else:
-            errors.append(f"    - {message}")
-
-    if errors:
-        raise ValueError(
-            "\n".join(["Blueprint cannot start because its tf tree is broken.", *errors])
-        )
 
 
 def _ref_msg(module_name: str, ref: object, spec_name: str, detail: str) -> str:

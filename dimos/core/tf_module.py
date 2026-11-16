@@ -14,12 +14,19 @@
 
 """A module whose tf frames are declared in its config, so a blueprint can namespace and check them."""
 
-from typing import TypeAlias
+from collections import defaultdict
+from typing import TYPE_CHECKING, Any, TypeAlias, get_type_hints
 
 from pydantic import Field, model_validator
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.blueprints import BlueprintAtom
+
+logger = setup_logger()
 
 # A frame that belongs to one robot (base_link, lidar); a namespaced blueprint prefixes it.
 TransformFrameLocal: TypeAlias = str
@@ -57,6 +64,90 @@ class TfModule(Module):
     """Looks up only the tf frames it declares, and publishes only the edges in ``tf_edges``."""
 
     config: TfModuleConfig
+
+    @classmethod
+    def blueprint_kwargs(cls, kwargs: dict[str, Any], *, namespace: str) -> dict[str, Any]:
+        """Prefix a namespaced module's local frames with its namespace, so copies don't share frames."""
+        if not namespace:
+            return kwargs
+        frames = kwargs.get("tf_frames_local", _config_default(cls, "tf_frames_local"))
+        return {
+            **kwargs,
+            "tf_frames_local": {role: f"{namespace}/{frame}" for role, frame in frames.items()},
+        }
+
+    @staticmethod
+    def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
+        """Refuse a frame with two parents, or declared edges that form a cycle or several trees; warn on an edge with two owners."""
+        publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+        for atom in atoms:
+            if not issubclass(atom.module, TfModule):
+                continue
+            frames = {
+                **_atom_field(atom, "tf_frames_global"),
+                **_atom_field(atom, "tf_frames_local"),
+            }
+            for parent_role, child_role in _atom_field(atom, "tf_edges"):
+                publishers[frames[child_role]][frames[parent_role]].append(atom.name)
+        if not publishers:
+            return
+
+        errors = []
+        for child, parents in sorted(publishers.items()):
+            if len(parents) > 1:
+                listed = ", ".join(
+                    f"{parent} (from {', '.join(names)})"
+                    for parent, names in sorted(parents.items())
+                )
+                errors.append(f"    - '{child}' has several parents: {listed}")
+            for parent, names in parents.items():
+                if len(names) > 1:
+                    logger.warning(
+                        f"tf edge '{parent}' -> '{child}' is declared by several modules "
+                        f"({', '.join(names)}); only one module should own an edge"
+                    )
+
+        # Union-find over the declared edges: one component per tree.
+        component: dict[str, str] = {}
+
+        def root_of(frame: str) -> str:
+            while component.setdefault(frame, frame) != frame:
+                frame = component[frame]
+            return frame
+
+        for child, parents in publishers.items():
+            for parent in parents:
+                component[root_of(child)] = root_of(parent)
+        trees: dict[str, set[str]] = defaultdict(set)
+        for frame in list(component):
+            trees[root_of(frame)].add(frame)
+        for tree in trees.values():
+            if not tree - publishers.keys():
+                errors.append(f"    - frames {sorted(tree)} form a cycle (none of them is a root)")
+
+        if len(trees) > 1:
+            roots = sorted(
+                sorted(tree - publishers.keys()) or sorted(tree)[:1] for tree in trees.values()
+            )
+            message = f"declared tf edges form {len(trees)} separate trees, rooted at {roots}"
+            # A module that isn't a TfModule may publish the edges that join them, so only warn then.
+            undeclared_publishers = sorted(
+                atom.name
+                for atom in atoms
+                if not issubclass(atom.module, TfModule)
+                and any(stream.name == "tf" and stream.direction != "in" for stream in atom.streams)
+            )
+            if undeclared_publishers:
+                logger.warning(
+                    f"{message}; {', '.join(undeclared_publishers)} may join them (not TfModules)"
+                )
+            else:
+                errors.append(f"    - {message}")
+
+        if errors:
+            raise ValueError(
+                "\n".join(["Blueprint cannot start because its tf tree is broken.", *errors])
+            )
 
     @property
     def tf_frames(self) -> set[str]:
@@ -100,3 +191,15 @@ class TfModule(Module):
             forward_tolerance=forward_tolerance,
             warn=warn,
         )
+
+
+def _config_default(module: type[TfModule], name: str) -> Any:
+    return (
+        get_type_hints(module)["config"].model_fields[name].get_default(call_default_factory=True)
+    )
+
+
+def _atom_field(atom: "BlueprintAtom", name: str) -> Any:
+    if name in atom.kwargs:
+        return atom.kwargs[name]
+    return _config_default(atom.module, name)  # type: ignore[arg-type]
