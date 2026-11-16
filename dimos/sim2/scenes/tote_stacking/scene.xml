@@ -1,0 +1,110 @@
+<!--
+  Tote stacking: a pick table with three totes and a low stand to stack them on.
+
+  A light scene for teleoperation trials: boxes only, flat colors, no meshes.
+  The robot starts at the origin and faces +x, toward the pick table.
+
+  A tote is a straight-walled stacking container, 400 x 300 x 150 mm, 0.6 kg:
+    - walls 12 mm thick, with a 20 mm band around the top 30 mm. The band makes the
+      wall 32 mm thick where a parallel gripper pinches it from above.
+    - a foot under the floor, 15 mm smaller than the opening on every side. It drops
+      10 mm into the tote below, so a stacked tote sits on the rim and cannot slide off.
+  A tote's long side is along y: its short walls are to the left and right of a
+  robot that faces the table, one for each hand.
+-->
+<mujoco model="tote_stacking">
+  <compiler angle="degree" autolimits="true"/>
+  <option timestep="0.002"/>
+
+  <default>
+    <default class="tote">
+      <!-- 0.0052 m^3 of geometry at this density is 0.6 kg. -->
+      <geom type="box" density="118"/>
+    </default>
+    <default class="drawn">
+      <geom type="box" contype="0" conaffinity="0"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 4" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
+
+    <!-- Floor, 7 x 6 m, and a low wall around it. -->
+    <geom name="floor" type="plane" pos="1.0 0.8 0" size="3.5 3.0 0.1" rgba="0.62 0.64 0.66 1"/>
+    <geom name="wall_east" type="box" pos="4.525 0.8 0.3" size="0.025 3.0 0.3" rgba="0.85 0.85 0.82 1"/>
+    <geom name="wall_west" type="box" pos="-2.525 0.8 0.3" size="0.025 3.0 0.3" rgba="0.85 0.85 0.82 1"/>
+    <geom name="wall_north" type="box" pos="1.0 3.825 0.3" size="3.55 0.025 0.3" rgba="0.85 0.85 0.82 1"/>
+    <geom name="wall_south" type="box" pos="1.0 -2.225 0.3" size="3.55 0.025 0.3" rgba="0.85 0.85 0.82 1"/>
+
+    <!-- Pick table: top 0.70 x 1.90 m, surface at 0.74 m. Its front edge is at x = 0.80. -->
+    <geom name="pick_table_top" type="box" pos="1.15 0 0.72" size="0.35 0.95 0.02" rgba="0.72 0.58 0.42 1"/>
+    <geom name="pick_table_leg_1" type="box" pos="0.85 -0.90 0.35" size="0.025 0.025 0.35" rgba="0.25 0.25 0.27 1"/>
+    <geom name="pick_table_leg_2" type="box" pos="0.85 0.90 0.35" size="0.025 0.025 0.35" rgba="0.25 0.25 0.27 1"/>
+    <geom name="pick_table_leg_3" type="box" pos="1.45 -0.90 0.35" size="0.025 0.025 0.35" rgba="0.25 0.25 0.27 1"/>
+    <geom name="pick_table_leg_4" type="box" pos="1.45 0.90 0.35" size="0.025 0.025 0.35" rgba="0.25 0.25 0.27 1"/>
+
+    <!-- Stack stand: top 0.70 x 0.70 m, surface at 0.45 m, 2.4 m to the left of the start. -->
+    <geom name="stack_stand_top" type="box" pos="0 2.40 0.43" size="0.35 0.35 0.02" rgba="0.55 0.57 0.60 1"/>
+    <geom name="stack_stand_leg_1" type="box" pos="-0.30 2.10 0.205" size="0.025 0.025 0.205" rgba="0.25 0.25 0.27 1"/>
+    <geom name="stack_stand_leg_2" type="box" pos="0.30 2.10 0.205" size="0.025 0.025 0.205" rgba="0.25 0.25 0.27 1"/>
+    <geom name="stack_stand_leg_3" type="box" pos="-0.30 2.70 0.205" size="0.025 0.025 0.205" rgba="0.25 0.25 0.27 1"/>
+    <geom name="stack_stand_leg_4" type="box" pos="0.30 2.70 0.205" size="0.025 0.025 0.205" rgba="0.25 0.25 0.27 1"/>
+    <!-- Where the stack goes: a yellow outline of one tote, drawn only. A robot that faces
+         the stand (+y) holds a tote with its long side along x. -->
+    <geom name="stack_mark_1" class="drawn" pos="0 2.222 0.4505" size="0.230 0.008 0.0005" rgba="0.95 0.80 0.10 1"/>
+    <geom name="stack_mark_2" class="drawn" pos="0 2.578 0.4505" size="0.230 0.008 0.0005" rgba="0.95 0.80 0.10 1"/>
+    <geom name="stack_mark_3" class="drawn" pos="-0.222 2.40 0.4505" size="0.008 0.170 0.0005" rgba="0.95 0.80 0.10 1"/>
+    <geom name="stack_mark_4" class="drawn" pos="0.222 2.40 0.4505" size="0.008 0.170 0.0005" rgba="0.95 0.80 0.10 1"/>
+
+    <!-- Floor tape: where the robot starts, and the way to the stand. Drawn only. The start is
+         an outline: a filled mark would hide the floor from a search for a place to stand. -->
+    <geom name="start_mark_1" class="drawn" pos="0 -0.40 0.001" size="0.42 0.02 0.0005" rgba="0.20 0.45 0.85 1"/>
+    <geom name="start_mark_2" class="drawn" pos="0 0.40 0.001" size="0.42 0.02 0.0005" rgba="0.20 0.45 0.85 1"/>
+    <geom name="start_mark_3" class="drawn" pos="-0.40 0 0.001" size="0.02 0.38 0.0005" rgba="0.20 0.45 0.85 1"/>
+    <geom name="start_mark_4" class="drawn" pos="0.40 0 0.001" size="0.02 0.38 0.0005" rgba="0.20 0.45 0.85 1"/>
+    <geom name="path_mark" class="drawn" pos="0 1.05 0.001" size="0.03 0.70 0.0005" rgba="0.95 0.80 0.10 1"/>
+
+    <!-- Totes on the pick table, 0.25 m in from its front edge. z is the wall bottom plus the foot. -->
+    <body name="tote_blue" pos="1.05 -0.60 0.7505">
+      <freejoint/>
+      <geom class="tote" name="tote_blue_floor" pos="0 0 0.005" size="0.138 0.188 0.005" rgba="0.10 0.35 0.80 1"/>
+      <geom class="tote" name="tote_blue_foot" pos="0 0 -0.005" size="0.123 0.173 0.005" rgba="0.08 0.28 0.65 1"/>
+      <geom class="tote" name="tote_blue_wall_front" pos="-0.144 0 0.075" size="0.006 0.200 0.075" rgba="0.10 0.35 0.80 1"/>
+      <geom class="tote" name="tote_blue_wall_back" pos="0.144 0 0.075" size="0.006 0.200 0.075" rgba="0.10 0.35 0.80 1"/>
+      <geom class="tote" name="tote_blue_wall_right" pos="0 -0.194 0.075" size="0.138 0.006 0.075" rgba="0.10 0.35 0.80 1"/>
+      <geom class="tote" name="tote_blue_wall_left" pos="0 0.194 0.075" size="0.138 0.006 0.075" rgba="0.10 0.35 0.80 1"/>
+      <geom class="tote" name="tote_blue_rim_front" pos="-0.160 0 0.135" size="0.010 0.220 0.015" rgba="0.08 0.28 0.65 1"/>
+      <geom class="tote" name="tote_blue_rim_back" pos="0.160 0 0.135" size="0.010 0.220 0.015" rgba="0.08 0.28 0.65 1"/>
+      <geom class="tote" name="tote_blue_rim_right" pos="0 -0.210 0.135" size="0.150 0.010 0.015" rgba="0.08 0.28 0.65 1"/>
+      <geom class="tote" name="tote_blue_rim_left" pos="0 0.210 0.135" size="0.150 0.010 0.015" rgba="0.08 0.28 0.65 1"/>
+    </body>
+
+    <body name="tote_orange" pos="1.05 0 0.7505">
+      <freejoint/>
+      <geom class="tote" name="tote_orange_floor" pos="0 0 0.005" size="0.138 0.188 0.005" rgba="0.95 0.45 0.10 1"/>
+      <geom class="tote" name="tote_orange_foot" pos="0 0 -0.005" size="0.123 0.173 0.005" rgba="0.78 0.36 0.08 1"/>
+      <geom class="tote" name="tote_orange_wall_front" pos="-0.144 0 0.075" size="0.006 0.200 0.075" rgba="0.95 0.45 0.10 1"/>
+      <geom class="tote" name="tote_orange_wall_back" pos="0.144 0 0.075" size="0.006 0.200 0.075" rgba="0.95 0.45 0.10 1"/>
+      <geom class="tote" name="tote_orange_wall_right" pos="0 -0.194 0.075" size="0.138 0.006 0.075" rgba="0.95 0.45 0.10 1"/>
+      <geom class="tote" name="tote_orange_wall_left" pos="0 0.194 0.075" size="0.138 0.006 0.075" rgba="0.95 0.45 0.10 1"/>
+      <geom class="tote" name="tote_orange_rim_front" pos="-0.160 0 0.135" size="0.010 0.220 0.015" rgba="0.78 0.36 0.08 1"/>
+      <geom class="tote" name="tote_orange_rim_back" pos="0.160 0 0.135" size="0.010 0.220 0.015" rgba="0.78 0.36 0.08 1"/>
+      <geom class="tote" name="tote_orange_rim_right" pos="0 -0.210 0.135" size="0.150 0.010 0.015" rgba="0.78 0.36 0.08 1"/>
+      <geom class="tote" name="tote_orange_rim_left" pos="0 0.210 0.135" size="0.150 0.010 0.015" rgba="0.78 0.36 0.08 1"/>
+    </body>
+
+    <body name="tote_green" pos="1.05 0.60 0.7505">
+      <freejoint/>
+      <geom class="tote" name="tote_green_floor" pos="0 0 0.005" size="0.138 0.188 0.005" rgba="0.15 0.60 0.30 1"/>
+      <geom class="tote" name="tote_green_foot" pos="0 0 -0.005" size="0.123 0.173 0.005" rgba="0.12 0.48 0.24 1"/>
+      <geom class="tote" name="tote_green_wall_front" pos="-0.144 0 0.075" size="0.006 0.200 0.075" rgba="0.15 0.60 0.30 1"/>
+      <geom class="tote" name="tote_green_wall_back" pos="0.144 0 0.075" size="0.006 0.200 0.075" rgba="0.15 0.60 0.30 1"/>
+      <geom class="tote" name="tote_green_wall_right" pos="0 -0.194 0.075" size="0.138 0.006 0.075" rgba="0.15 0.60 0.30 1"/>
+      <geom class="tote" name="tote_green_wall_left" pos="0 0.194 0.075" size="0.138 0.006 0.075" rgba="0.15 0.60 0.30 1"/>
+      <geom class="tote" name="tote_green_rim_front" pos="-0.160 0 0.135" size="0.010 0.220 0.015" rgba="0.12 0.48 0.24 1"/>
+      <geom class="tote" name="tote_green_rim_back" pos="0.160 0 0.135" size="0.010 0.220 0.015" rgba="0.12 0.48 0.24 1"/>
+      <geom class="tote" name="tote_green_rim_right" pos="0 -0.210 0.135" size="0.150 0.010 0.015" rgba="0.12 0.48 0.24 1"/>
+      <geom class="tote" name="tote_green_rim_left" pos="0 0.210 0.135" size="0.150 0.010 0.015" rgba="0.12 0.48 0.24 1"/>
+    </body>
+  </worldbody>
+</mujoco>

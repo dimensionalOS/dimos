@@ -19,7 +19,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 import threading
 from types import MappingProxyType
@@ -39,6 +39,7 @@ from dimos.control.task import (
 )
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.kinematics.pink_solver import (
+    _build_joint_mapping,
     _get_frame_id,
     _PinkRobotContext,
     _PinkSolverCore,
@@ -248,6 +249,7 @@ class FrameTargetSnapshot:
 @dataclass
 class _PinkControlContext:
     robot: _PinkRobotContext
+    feedback: _PinkRobotContext
     frames: Mapping[str, _PinkRobotContext]
     tasks: Mapping[str, pink.Task] | None = None
 
@@ -388,11 +390,33 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         previous_positions = _seed_positions_for_mapping(command_state, robot_context.mapping)
         measured_positions = _seed_positions_for_mapping(measured_state, robot_context.mapping)
         raw_command_q = self._q_from_dimos_positions(robot_context, previous_positions)
-        measured_q = self._q_from_dimos_positions(robot_context, measured_positions)
+        feedback = control_context.feedback
+        full_positions = _seed_positions_for_mapping(measured_state, feedback.mapping)
+        measured_q = self._q_from_dimos_positions(feedback, full_positions)
+        locked_positions = {
+            index: float(value)
+            for index, (name, value) in enumerate(
+                zip(feedback.mapping.dimos_joint_names, full_positions, strict=True)
+            )
+            if name not in joint_names
+        }
+        # The persistent command stores only this task's joints. All other
+        # coordinates come from fresh feedback, never the model's zero pose.
+        controlled_q = set(robot_context.mapping.idx_q)
+        controlled_q.update(
+            robot_context.mapping.idx_q[i] + 1 for i in robot_context.mapping.periodic_indices
+        )
+        for index in range(robot_context.model.nq):
+            if index not in controlled_q:
+                raw_command_q[index] = measured_q[index]
         self._validate_streaming_feedback(robot_context, measured_q, feedback_limit_tolerance)
         command_q = self._clamp_streaming_configuration(
             robot_context, raw_command_q, command_limit_margin
         )
+        # On first engagement, soft-stop feedback can seed a command outside the
+        # legal range. Rate-limit from its legal projection so recovery does not
+        # emit another out-of-range command that the connection would reject.
+        previous_positions = self._q_to_dimos_positions(robot_context, command_q)
         configuration = pink.Configuration(
             robot_context.model,
             robot_context.data,
@@ -407,6 +431,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             configuration=configuration,
             tasks=tasks,
             dt=step_dt,
+            constraints=self._locked_joint_constraints(feedback, measured_q, locked_positions),
         )
         candidate_positions = self._q_to_dimos_positions(robot_context, configuration.q)
         if joint_command_filter_cutoff_hz is not None:
@@ -507,8 +532,8 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             tuple(frame_names),
             tuple(controlled_joints),
         )
-        positions = _seed_positions_for_mapping(seed, context.robot.mapping)
-        q = self._q_from_dimos_positions(context.robot, positions)
+        positions = _seed_positions_for_mapping(seed, context.feedback.mapping)
+        q = self._q_from_dimos_positions(context.feedback, positions)
         base_world = pose_to_matrix(robot_model.base_pose)
         poses: dict[str, PoseStamped] = {}
         for frame_name, frame_context in context.frames.items():
@@ -535,8 +560,14 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             tuple(controlled_joints),
         )
         if cache_key not in self._control_contexts:
-            robot_context = self._build_robot_context(
-                prepare_robot_model(config), frames[0], controlled_joints
+            prepared = prepare_robot_model(config)
+            feedback = self._build_robot_context(prepared, frames[0], config.joint_names)
+            robot_context = replace(
+                feedback,
+                mapping=_build_joint_mapping(
+                    feedback.model, prepared.joint_space, controlled_joints
+                ),
+                joint_space=prepared.joint_space.select(tuple(controlled_joints)),
             )
             contexts = {frames[0]: robot_context}
             for frame_name in frames[1:]:
@@ -550,6 +581,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
                 )
             self._control_contexts[cache_key] = _PinkControlContext(
                 robot=robot_context,
+                feedback=feedback,
                 frames=MappingProxyType(contexts),
             )
         return self._control_contexts[cache_key]
@@ -778,12 +810,12 @@ class PoseTargetIKTask(BaseControlTask):
 
     def _measured_joint_state(self, state: CoordinatorState) -> JointState | None:
         positions: list[float] = []
-        for joint_name in self._joint_names:
+        for joint_name in self._config.robot_model.joint_names:
             position = state.joints.get_position(joint_name)
             if position is None:
                 return None
             positions.append(position)
-        return JointState(name=list(self._joint_names), position=positions)
+        return JointState(name=list(self._config.robot_model.joint_names), position=positions)
 
     def _reset_command_state(self) -> None:
         """Discard the active command trajectory and clear a tracking fault."""

@@ -102,9 +102,11 @@ class MujocoBackend:
             joint = self.model.joint(name)
             if kp and self.model.jnt_limited[joint.id]:
                 bounded = np.clip(position, *joint.range)
-                # USD degrees -> URDF radians -> decimal text can round a
-                # boundary slightly beyond the native importer's limit.
-                if abs(position - bounded) > 1e-10:
+                # USD joint limits are float32. Their degrees/radians round trip
+                # can put a legal URDF endpoint just outside the imported range.
+                # Clamp representational roundoff, while rejecting real overtravel.
+                tolerance = np.finfo(np.float32).eps * max(1.0, abs(bounded))
+                if abs(position - bounded) > tolerance:
                     raise ValueError(f"target outside joint limits: {name}")
                 row[0] = bounded
             aid = self._drives[name]

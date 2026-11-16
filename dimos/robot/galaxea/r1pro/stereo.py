@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Factory-calibrated head stereo and rectified wrist RGB-D for spatial teleop."""
+"""Factory-calibrated head stereo depth and rectified wrist depth for spatial teleop."""
 
 from pathlib import Path
 from typing import Any
@@ -81,7 +81,8 @@ class HeadStereo:
         )
         self.roi = cv2.getValidDisparityROI(roi1, roi2, 0, 96, 5)
 
-    def process(self, left: np.ndarray, right: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def process(self, left: np.ndarray, right: np.ndarray) -> np.ndarray:
+        """Metric depth in the rectified left view, from both eyes at this size or larger."""
         rectified = [
             cv2.remap(
                 cv2.resize(im, self.size, interpolation=cv2.INTER_AREA), *maps, cv2.INTER_LINEAR
@@ -95,7 +96,7 @@ class HeadStereo:
         mask = np.zeros(depth.shape, dtype=bool)
         mask[y : y + h, x : x + w] = True
         depth[~mask] = 0
-        return rectified[0], depth
+        return depth
 
 
 def disparity_depth(disparity: np.ndarray, fx_baseline: float) -> np.ndarray:
@@ -106,18 +107,32 @@ def disparity_depth(disparity: np.ndarray, fx_baseline: float) -> np.ndarray:
     return depth
 
 
-def rectify_wrist(
-    color: np.ndarray, depth: np.ndarray, calibration: Any
-) -> tuple[np.ndarray, np.ndarray, CameraInfo]:
-    """Aligned depth shares distorted color pixels; rectify both with the same map."""
+def rectify_wrist_depth(depth: np.ndarray, calibration: Any) -> tuple[np.ndarray, CameraInfo]:
+    """Aligned depth shares the distorted color pixels; make it an ideal pinhole image.
+
+    Returns the depth and the pinhole intrinsics it then has. The color camera
+    keeps its own calibration, lens distortion included.
+    """
     k = np.asarray(calibration.k).reshape(3, 3)
     size = (calibration.width, calibration.height)
     maps = cv2.initUndistortRectifyMap(
         k, np.asarray(calibration.d), np.eye(3), k, size, cv2.CV_32FC1
     )
     info = CameraInfo.from_intrinsics(k[0, 0], k[1, 1], k[0, 2], k[1, 2], *size)
-    return (
-        cv2.remap(color, *maps, cv2.INTER_LINEAR),
-        cv2.remap(depth, *maps, cv2.INTER_NEAREST),
-        info,
+    return cv2.remap(depth, *maps, cv2.INTER_NEAREST), info
+
+
+def color_calibration(calibration: Any, frame_id: str, ts: float) -> CameraInfo:
+    """A ROS color camera_info as it is: the intrinsics and the lens distortion."""
+    k = [float(v) for v in calibration.k]
+    return CameraInfo(
+        height=calibration.height,
+        width=calibration.width,
+        distortion_model=calibration.distortion_model,
+        D=[float(v) for v in calibration.d],
+        K=k,
+        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        P=[k[0], k[1], k[2], 0.0, k[3], k[4], k[5], 0.0, k[6], k[7], k[8], 0.0],
+        frame_id=frame_id,
+        ts=ts,
     )

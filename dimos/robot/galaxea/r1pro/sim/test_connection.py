@@ -49,7 +49,8 @@ def connection(tmp_path, mocker):
 
 
 @pytest.mark.asyncio
-async def test_opposing_fingers_become_canonical_jaw_openings_and_halt_clamps(connection):
+async def test_opposing_fingers_become_canonical_jaw_openings_and_halt_clamps(connection, mocker):
+    mocker.patch("dimos.robot.galaxea.r1pro.sim.connection.time.time", return_value=1_794_000_000.5)
     module, ports = connection
     positions = dict.fromkeys(UPPER, 0.25)
     positions[UPPER[0]] = 2.01  # Physics can overshoot a joint limit slightly.
@@ -65,6 +66,8 @@ async def test_opposing_fingers_become_canonical_jaw_openings_and_halt_clamps(co
         JointState(ts=1, name=list(positions), position=list(positions.values()))
     )
     feedback = ports["joint_state"].call_args.args[0]
+    # The wall clock, not the simulation's: a reader that drops old samples keeps this one.
+    assert feedback.ts == 1_794_000_000.5
     measured = dict(zip(feedback.name, feedback.position, strict=True))
     assert (measured[JAWS[0]], measured[JAWS[1]]) == pytest.approx((0.05, 0.1))
     module.halt()
@@ -77,7 +80,8 @@ async def test_opposing_fingers_become_canonical_jaw_openings_and_halt_clamps(co
 
 
 @pytest.mark.asyncio
-async def test_world_velocity_is_reported_in_the_rotated_body_frame(connection):
+async def test_world_velocity_is_reported_in_the_rotated_body_frame(connection, mocker):
+    mocker.patch("dimos.robot.galaxea.r1pro.sim.connection.time.time", return_value=1_794_000_000.5)
     module, ports = connection
     body = BodyState(
         body_id="r1pro/base_link",
@@ -91,7 +95,7 @@ async def test_world_velocity_is_reported_in_the_rotated_body_frame(connection):
     assert sample.name == list(R1PRO_BODY_AXES)
     assert sample.position == []
     assert sample.velocity == pytest.approx([0.4, -0.2, 0.3])
-    assert sample.ts == 2
+    assert sample.ts == 1_794_000_000.5
 
 
 def test_canonical_commands_convert_to_servo_units(connection):

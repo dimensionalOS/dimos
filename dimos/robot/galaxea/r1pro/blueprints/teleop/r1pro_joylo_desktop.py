@@ -32,7 +32,12 @@ from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
 )
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_real import make_joylo_real
 from dimos.robot.galaxea.r1pro.collection import r1pro_collection
-from dimos.robot.galaxea.r1pro.head_cameras import HeadCameraInfo, HeadLeftCamera, HeadRightCamera
+from dimos.robot.galaxea.r1pro.head_cameras import (
+    HEAD_JPEG_QUALITY,
+    HeadCameraInfo,
+    HeadLeftCamera,
+    HeadRightCamera,
+)
 from dimos.robot.galaxea.r1pro.joylo import UPPER
 from dimos.robot.galaxea.r1pro.spatial_sensors import R1SpatialSensors
 from dimos.robot.usd_manager import UsdManager
@@ -65,8 +70,8 @@ for _side in ("left", "right"):
 
 _vision = (
     autoconnect(
-        HeadLeftCamera.blueprint(jpeg_quality=70, build_command=None),
-        HeadRightCamera.blueprint(jpeg_quality=70, build_command=None),
+        HeadLeftCamera.blueprint(jpeg_quality=HEAD_JPEG_QUALITY, build_command=None),
+        HeadRightCamera.blueprint(jpeg_quality=HEAD_JPEG_QUALITY, build_command=None),
         HeadCameraInfo.blueprint(),
         R1SpatialSensors.blueprint(),
     )

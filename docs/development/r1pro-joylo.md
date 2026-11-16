@@ -10,7 +10,7 @@ the hardware blueprint below connects the same operator inputs to vendor ROS.
 | Run | Blueprint | The robot behind it |
 | --- | --- | --- |
 | Hardware | `r1pro-openarm-joylo-real` | CC's ROS connection and the head and wrist cameras, hosted on the robot |
-| Simulation | `r1pro-openarm-joylo-sim2` | A sim2 world (the SF555 office unless another scene is named) and three MuJoCo cameras |
+| Simulation | `r1pro-openarm-joylo-sim2` | A sim2 world (the SF555 office unless another scene is named) and MuJoCo cameras on the hardware's streams |
 
 Both are the same composition (`blueprints/teleop/r1pro_joylo_inputs.py`): the
 operator devices, the headset page, JoyLo, `R1ProTeleopCoordinator` with its
@@ -63,35 +63,46 @@ hinge or slide joint per body; the command reports what it welded or left out.
 the joints its simulation drives, and the part of the scene that holds those
 joints is the robot. Spatial Desktop runs both from its Scenes panel.
 
-The cameras render with MuJoCo, which draws any scene. In an in-process check
-on an M4 Max it drew the three views in 30 to 90 ms, against the 200 ms that
-5 Hz allows. Unreal (`sim.office.office_renderer`) draws the office with its
-materials but ran the three views at 3.4 to 3.8 Hz on that machine; to use it,
-pass it as the `renderer` of `CameraRenderModule` in `r1pro_joylo.py`.
+The cameras render with MuJoCo, which draws any scene. The four color cameras
+and the three depth cameras each have a rendering worker: in a live run in a
+small scene on an M4 Max the color held 30 Hz at the robot's sizes beside the
+5 Hz depth. Unreal (`sim.office.office_renderer`) draws the office with its
+materials but ran three views at 3.4 to 3.8 Hz on that machine; to use it, pass
+it as the `renderer` of a `CameraRenderModule` in `r1pro_joylo.py`.
 
 ## Real hardware spatial view
 
 `r1pro-openarm-joylo-real` is one distributed run: the robot hosts control,
 native head capture and calibrated stereo depth; the operator Mac hosts
-leaders/Joy-Cons and the installed vendor robot model. The RGB-D processing comes
+leaders/Joy-Cons and the installed vendor robot model. The depth processing comes
 from the earlier `r1pro-spatial` work (`ef8a0548fa`). LiDAR acquisition, Point-LIO
 and voxel mapping are omitted from this teleop run. No Rerun viewer is launched.
 
-The head cameras have a single capture owner. `R1SpatialSensors` pairs their
-compressed images by acquisition time, rectifies using the robot's
-`/opt/galaxea/body/stereo.yaml`, and publishes 480-pixel-wide metric RGB-D at a
-nominal 5 Hz. Results older than 0.5 seconds are discarded. The Desktop's generic
-RGB-D layer makes the textured depth surface.
+A camera has one color stream, its own: `head_left_color`, `head_right_color`,
+`wrist_left_color` and `wrist_right_color`. These forward the cameras' existing
+JPEG frames at acquisition rate (30 Hz), with latest-frame delivery and no
+decode/resize/re-encode on the robot. The operator's camera screens show them
+and the recorder keeps `head_left_color`, `wrist_left_color` and
+`wrist_right_color`.
+
+`R1SpatialSensors` adds depth, and no color. The head cameras have a single
+capture owner: it pairs their compressed images by acquisition time, rectifies
+using the robot's `/opt/galaxea/body/stereo.yaml`, and publishes 480-pixel-wide
+metric depth at a nominal 5 Hz. For each wrist it publishes the vendor's aligned
+depth, undistorted. Results older than 0.5 seconds are discarded. A depth stream
+has the name of its camera: `head_left_depth` with its intrinsics
+`head_left_info`, and `wrist_left_depth`/`wrist_left_info` and the same on the
+right. Every depth image is an ideal pinhole image. The module also publishes
+the wrist color cameras' own calibration (`wrist_left_color_info`,
+`wrist_right_color_info`), which their driver gives to ROS only.
 `R1SpatialSensors.get_status()` reports counts and capture ages.
 
-For operator camera screens, select `head_left_color` (or `head_right_color`),
-`wrist_left_color` and `wrist_right_color`. These forward the cameras' existing
-JPEG frames at acquisition rate, independently of depth, with latest-frame
-delivery and no decode/resize/re-encode on the robot. In particular, wrist
-video does not wait for the vendor's irregular aligned-depth stream.
-`color_image`, `left_wrist` and `right_wrist` remain the paired, rectified
-5 Hz RGB-D colors for the mesh and existing recorder schema. Choosing a faster
-operator screen does not change dataset calibration or camera timestamps.
+The Desktop's generic RGB-D layer makes the textured depth surface: it pairs a
+depth stream with the color stream of the same camera by name, and looks each
+point of the surface up in that camera's picture, from where the camera stands
+(tf) and through its lens (`*_color_info`: intrinsics and distortion). The
+color is the camera's newest frame, so it can be up to one depth period ahead
+of the surface.
 
 `UsdManager` uses upstream `JointTf` for measured hardware transforms. Simulation
 body poses are published separately by `SimTfModule`; the model manager has no
@@ -121,7 +132,7 @@ latest-message mailbox. Those partial packets share a topic and must not replace
 one another. Original timestamps still determine freshness; `status()` exposes
 per-joint feedback ages and pause logs identify stale joints.
 
-Wrist RGB-D subscribes to the installed ROS camera drivers. It needs the physical
+Wrist depth subscribes to the installed ROS camera drivers. It needs the physical
 RealSense cameras to enumerate on USB. Frames use the installed vendor model's
 case-sensitive `{left,right}_D405_link` names. No RealSense USB devices were
 detected on 2026-11-12; adding subscriptions alone cannot restore those cameras.
@@ -259,6 +270,85 @@ The base defaults to 0.1 m/s (0.2 with boost), yaw to 0.25 rad/s, arms to
 generic profile retains conservative 0.25/0.15 rad/s hardware defaults. A/B/Y, capture and rail buttons
 do not start/save/discard episodes in this profile. Recording workflow remains follow-up work. The physical robot binding is described below.
 
+
+## Headset hands with the Joy-Cons
+
+Without the leader arms, a headset that tracks hands can move the arms: the
+operator holds a Joy-Con in each hand, and the arms follow the hands. This is
+the coordinator's third arm source, `hands`, beside `leader` (the leader arms)
+and `webxr` (a headset's tracked controllers).
+
+Spatial Desktop selects it: ENABLE HEADSET ARMS in a headset that shows hands
+and no controllers calls `select_teleop_source("hands")` and sends each wrist's
+pose and the head's pose (`webxr_head`). The headset module turns the wrist
+poses into the robot's axes as it does for controllers. JoyLo takes them in
+place of leader angles and gives the headset arm task a target for each
+gripper; the leader arms are not needed.
+
+Each gripper goes to where its hand is: as far from the robot's eyes (the point
+between the head cameras) as the hand is from the operator's eyes, and turned
+as the hand is. The gripper points where the fingers point, and its jaws close
+across the palm. The operator's eyes and heading are taken once, at the enable
+press, so a head that moves afterwards moves nothing. This is not the clutch of
+the headset's controllers, where an arm moves by as much as the controller
+does from wherever both were: a hand has no such start, and with a clutch the
+arm's place drifts from the hand's at every new start.
+
+The target is in the base link of the arm task's model (`BASE_FRAME`). The task
+follows a pose in that frame as given; that model has the legs straight at all
+times, so a target is a place on the upper body and goes with the torso.
+
+Every Joy-Con function stays with JoyLo:
+
+| Control | Effect with the hands |
+|---|---|
+| Release, then press X | Enable: each arm goes to its hand at the arm speed limit, then stays with it |
+| Home | Pause all following and zero base velocity |
+| Minus / plus | Lock the left / right arm where it is; again, it goes to its hand |
+| Hold L / R | Hold that hand's orientation; its position still follows |
+| ZL / ZR | Toggle the corresponding jaw |
+| Left stick, right stick horizontal | Base translation and yaw, as with the leaders |
+| D-pad up / down | Raise / lower the torso, preserving upper-body pitch |
+| Right stick vertical (without click) | Torso pitch trim, as with the leaders |
+
+Press X while you stand and look as you will work: where your eyes are and the
+way you face then is what the hands are measured from. Press Home and X again
+after you move. Hand IK controls only the 14 arm joints; torso height and pitch
+use the same JoyLo joint targets as the leader arms. A fixed soft shoulder/elbow
+posture cost favors the home posture while the wrists remain free. A hand that is not tracked for 250 ms
+holds motion; it resumes within one second at the same place, and after that
+needs X again. A hand that jumps 0.2 m between two samples stops following.
+`R1ProJoylo.status()` reports `arm_source` and the ages of `hands` and `head`.
+
+The Joy-Cons can be paired to the headset in place of this host. The headset's
+browser then gives the pair to the page as one gamepad in the W3C standard
+layout, and the page sends it as it is on `webxr_gamepad` while the hands are
+selected. `headset_gamepad.py` gives each button the Joy-Con label at its place
+(button 3, the top one of the right four, is X; 16 is Home), and JoyLo takes
+that pair for a side on which this host reads no Joy-Con. A hand that points at
+a panel keeps its trigger and stick for the panel: the page sends them at rest.
+A late pad holds motion as any late input does; `status()` names each side's
+`joycon_source`. Checked with unit tests and with messages the page encoded;
+not checked on a headset: whether its browser gives the pair, with these
+places, and with a Home button, is not known.
+
+Hand mode uses JoyLo's coordinated torso step, including joint 3 compensation
+when raising/lowering. Hand targets ride with the measured upper body, so
+lowering, tilting or turning the torso does not make the arms compensate against
+the chassis. Arm IK uses measured torso angles but cannot command those joints.
+Lowering follows the reachable linkage geometry and joint limits, without the
+old 0.45 m height floor. At fixed fore/aft reach and level pitch, the 2025 model
+reaches about 0.198 m linkage height before torso joint 3 reaches its lower limit
+(about 0.50 m of travel from upright). Other tilt/reach poses have different limits.
+
+Checked in the simulation with injected head and wrist poses and Joy-Con
+samples: at the enable press both grippers went to the hands' places (within
+0.5 cm), a moved and a turned hand were followed (within 0.7 cm and 1 degree),
+a moved head changed nothing, a short hand loss resumed at the same place, and
+an operator who turned 90 degrees and enabled again got the same places. Also:
+arm lock, jaw toggle, base drive, pause. On a Vision Pro the source was selected
+and followed with the earlier clutch rule; this rule is not yet checked on a
+headset, and nothing is checked on the robot.
 
 ## Physical R1 Pro
 
@@ -572,8 +662,7 @@ and wrist-lock checks remain interactive validation.
 
 `r1pro-openarm-joylo-sim2` runs in the SF555 office. The robot starts at
 `(18.0, 8.41, 0.005)`, facing west at the east end of the downstairs engineering
-tables. The head and both wrist RGB-D views are published on the hardware's
-streams. The plain scene has no cameras; only the scripted demo uses it.
+tables. The head and wrist cameras are published on the hardware's streams. The plain scene has no cameras; only the scripted demo uses it.
 
 The existing `Hall_A_middle_water_bottle_*` and
 `Hall_A_outer_water_bottle_*` assemblies become two free rigid bodies. All 21
@@ -596,11 +685,16 @@ With the Unreal renderer, a single Unreal process renders head-left RGB-D and bo
 Switching views resets temporal history to prevent cross-camera ghosting;
 render targets are cached by resolution. Source pose timestamps and camera calibration accompany every pair.
 The 2025 robot's head and uppercase `left_D405_link`/`right_D405_link` frames
-are used directly. The cameras have what `R1SpatialSensors` publishes on the
-robot: the head view 480×384 and the wrists 1280×720, at 5 Hz, with color as
-JPEG (`CompressedImage`, quality 75) and depth raw. Ideal wrist depth is
-restricted to 0.07–0.50 m. `SimCompressedCameraModule` is the sim2 camera device
-with JPEG color; `SimCameraModule` keeps raw color for every other simulation.
+are used directly. The simulation has the robot's camera streams. Each camera's
+own color: a head eye at 1920×1536 and a wrist at 1280×720, JPEG at 30 Hz, on
+`head_left_color`, `head_right_color`, `wrist_left_color` and
+`wrist_right_color`, each with its `*_color_info` (`SimColorCameraModule`: color
+only). And the depth `R1SpatialSensors` publishes: `head_left_depth` 480×384 and
+`wrist_left_depth`/`wrist_right_depth` 1280×720, at 5 Hz, each with its `*_info`
+(`SimDepthCameraModule`: depth only). Ideal wrist depth is restricted to
+0.07–0.50 m. `SimCameraModule` and `SimCompressedCameraModule` remain the RGB-D
+devices of other simulations. All are ideal pinhole views: the head lens
+distortion is not rendered.
 
 Head intrinsics follow the robot's factory stereo calibration when a copy is at
 `~/.cache/dimos/r1pro-hardware/stereo.yaml`, rectified as the hardware does it:
@@ -666,12 +760,10 @@ Run `dimos run r1pro-openarm-joylo-sim2 --daemon` with a new
 `--recorder.recording` folder and an `--episodes.task`, plus the left/right
 serial ports and calibration root when the leaders are attached. X enables
 following; Home pauses. Camera startup is asynchronous: inspect
-`CameraRenderModule.statistics()` for one loaded scene, three cameras and an empty `error`;
-`head_camera.statistics()`, `left_wrist_camera.statistics()` and
-`right_wrist_camera.statistics()` report the individual frame counters.
-RGB-D and CameraInfo are available on
-`color_image`/`depth_image`/`camera_info`, `left_wrist`/`left_wrist_depth`/
-`left_wrist_info`, and the corresponding `right_wrist` topics.
+`CameraRenderModule.statistics()` (the three depth cameras) and
+`video_render.statistics()` (the four color cameras) for one loaded scene and an
+empty `error`; each camera module's `statistics()` reports its own frame counter,
+for example `head_left_color_camera` and `wrist_left_depth_camera`.
 
 ### Contact and camera checks
 

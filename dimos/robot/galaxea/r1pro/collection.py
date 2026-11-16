@@ -28,12 +28,15 @@ from dimos.msgs.std_msgs.String import String
 from dimos.robot.galaxea.r1pro.config import R1PRO_BODY_AXES
 from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER
 
-# Match the spatial camera outputs; capture keeps their existing compressed bytes.
+# The cameras' own color streams, at the camera rate; capture keeps their compressed
+# bytes. The 5 Hz RGB-D of the spatial sensors is for the mesh view, not for a dataset.
 CAMERAS = {
-    "head": ("color_image", (384, 480, 3)),
-    "left_wrist": ("left_wrist", (720, 1280, 3)),
-    "right_wrist": ("right_wrist", (720, 1280, 3)),
+    "head": ("head_left_color", (1536, 1920, 3)),
+    "left_wrist": ("wrist_left_color", (720, 1280, 3)),
+    "right_wrist": ("wrist_right_color", (720, 1280, 3)),
 }
+# The rate of every camera above.
+CAMERA_HZ = 30
 POSITION_JOINTS = (*UPPER, *JAWS)
 
 
@@ -101,14 +104,17 @@ def collection_profile(cameras: Sequence[str] = tuple(CAMERAS)) -> CollectionPro
 def collection_schema(profile: CollectionProfile) -> RecordingSchema:
     schema = profile.to_schema()
     schema.action_vector = ("position", "body_velocity")
-    # Spatial RGBD runs at 5 Hz. Do not label duplicated frames as a 30 Hz dataset.
-    # Independent 5 Hz cameras can differ by half a frame; gaps > two frames fail.
+    # The cameras run independently: two can differ by half a frame, so that and a
+    # little jitter is the tolerance. A gap of more than two frames fails.
+    frame_ms = 1000 / CAMERA_HZ
     schema.sync = SyncConfig(
         anchor=next(k for k, f in profile.observations.items() if f.dtype == "video"),
-        rate_hz=5,
-        tolerance_ms=110,
+        rate_hz=CAMERA_HZ,
+        tolerance_ms=0.55 * frame_ms,
     )
-    schema.quality = QualityConfig(mode="strict", max_alignment_error_ms=110, max_camera_gap_ms=450)
+    schema.quality = QualityConfig(
+        mode="strict", max_alignment_error_ms=0.55 * frame_ms, max_camera_gap_ms=2.25 * frame_ms
+    )
     return schema
 
 

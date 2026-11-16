@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Calibrated RGB-D from the existing head capture and vendor wrist drivers.
+"""Calibrated depth for the head and wrist cameras, beside their own color streams.
 
-Adapted from the r1pro-spatial stack (ef8a0548fa). Head cameras have one owner:
-this module consumes their compressed streams rather than reopening V4L2.
+Adapted from the r1pro-spatial stack (ef8a0548fa). A camera's own stream is its
+picture. This module adds what makes a surface of it: metric depth as an ideal
+pinhole image, with its intrinsics, at a slower rate. A depth stream has the name
+of the color stream it goes with: ``head_left_depth`` with ``head_left_color``.
+Head cameras have one owner: this module consumes their compressed streams
+rather than reopening V4L2.
 """
 
 from collections import deque
@@ -39,7 +43,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.galaxea.r1pro.connection import _make_qos, _stamp_secs
-from dimos.robot.galaxea.r1pro.stereo import HeadStereo, rectify_wrist
+from dimos.robot.galaxea.r1pro.stereo import HeadStereo, color_calibration, rectify_wrist_depth
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -59,15 +63,15 @@ class R1SpatialSensors(Module):
     dedicated_worker: ClassVar[bool] = True
     head_left_color: In[CompressedImage]
     head_right_color: In[CompressedImage]
-    color_image: Out[CompressedImage]
-    depth_image: Out[Image]
-    camera_info: Out[CameraInfo]
-    left_wrist: Out[CompressedImage]
-    left_wrist_depth: Out[Image]
-    left_wrist_info: Out[CameraInfo]
-    right_wrist: Out[CompressedImage]
-    right_wrist_depth: Out[Image]
-    right_wrist_info: Out[CameraInfo]
+    head_left_depth: Out[Image]
+    head_left_info: Out[CameraInfo]
+    wrist_left_depth: Out[Image]
+    wrist_left_info: Out[CameraInfo]
+    wrist_right_depth: Out[Image]
+    wrist_right_info: Out[CameraInfo]
+    # The wrist color cameras' own calibration: their driver gives it to ROS only.
+    wrist_left_color_info: Out[CameraInfo]
+    wrist_right_color_info: Out[CameraInfo]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -105,7 +109,6 @@ class R1SpatialSensors(Module):
         for side in ("left", "right"):
             base = f"/hdas/camera_wrist_{side}"
             topics += [
-                (side + "_color", base + "/color/image_raw/compressed", msgs.CompressedImage),
                 (side + "_depth", base + "/aligned_depth_to_color/image_raw", msgs.Image),
                 (side + "_info", base + "/color/camera_info", msgs.CameraInfo),
             ]
@@ -152,12 +155,23 @@ class R1SpatialSensors(Module):
                 return None
             return x, y
 
+    def _newest(self, key: str) -> Any | None:
+        """The newest frame of a stream, once, and only while it is fresh."""
+        with self._lock:
+            frames = self._frames.get(key)
+            if not frames or self._stamp(frames[-1]) <= self._last.get(key, 0):
+                return None
+            frame = frames[-1]
+            self._last[key] = self._stamp(frame)
+            if not -0.05 <= time.time() - self._stamp(frame) <= self.config.max_age_s:
+                return None
+            return frame
+
     @staticmethod
-    def _color(msg: Any, *, reduced: bool = False) -> np.ndarray:
+    def _eye(msg: CompressedImage) -> np.ndarray:
         # Head stereo is processed at quarter resolution: downsample in the
         # JPEG decoder instead of decoding 3 MP only to discard 15/16 pixels.
-        mode = cv2.IMREAD_REDUCED_COLOR_4 if reduced else cv2.IMREAD_COLOR
-        image = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), mode)
+        image = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), cv2.IMREAD_REDUCED_COLOR_4)
         if image is None:
             raise ValueError("Invalid camera JPEG")
         return image
@@ -179,10 +193,9 @@ class R1SpatialSensors(Module):
                     )
                 )
             )
-            color, depth = self._stereo.process(*(self._color(msg, reduced=True) for msg in pair))
+            depth = self._stereo.process(*(self._eye(msg) for msg in pair))
             published = self._publish(
-                (self.color_image, self.depth_image, self.camera_info),
-                color,
+                (self.head_left_depth, self.head_left_info),
                 depth,
                 self._stereo.info,
                 "head_stereo_optical",
@@ -194,10 +207,9 @@ class R1SpatialSensors(Module):
                 info = self._infos.get(side + "_info")
             if info is None:
                 continue
-            pair = self._pair(side + "_color", side + "_depth")
-            if pair is None:
+            raw = self._newest(side + "_depth")
+            if raw is None:
                 continue
-            rgb, raw = pair
             if raw.encoding != "16UC1":
                 raise ValueError(f"Expected RealSense millimetre depth, got {raw.encoding}")
             # Respect ROS row padding and byte order. RealSense ROS converts device units to mm.
@@ -211,24 +223,22 @@ class R1SpatialSensors(Module):
                 ).astype(np.float32)
                 * 0.001
             )
-            color = self._color(rgb)
-            if color.shape[:2] != depth.shape or depth.shape != (info.height, info.width):
-                raise ValueError("Wrist color/depth/calibration dimensions differ")
-            color, depth, calibration = rectify_wrist(color, depth, info)
-            ports = (
-                (self.left_wrist, self.left_wrist_depth, self.left_wrist_info)
+            if depth.shape != (info.height, info.width):
+                raise ValueError("Wrist depth and color calibration dimensions differ")
+            depth, calibration = rectify_wrist_depth(depth, info)
+            frame, ts = f"{side}_D405_link", _stamp_secs(raw)
+            depth_port, info_port, color_info_port = (
+                (self.wrist_left_depth, self.wrist_left_info, self.wrist_left_color_info)
                 if side == "left"
-                else (self.right_wrist, self.right_wrist_depth, self.right_wrist_info)
+                else (self.wrist_right_depth, self.wrist_right_info, self.wrist_right_color_info)
             )
-            published = self._publish(
-                ports, color, depth, calibration, f"{side}_D405_link", _stamp_secs(rgb)
-            )
-            self._stats[side] += int(published)
+            if self._publish((depth_port, info_port), depth, calibration, frame, ts):
+                color_info_port.publish(color_calibration(info, frame, ts))
+                self._stats[side] += 1
 
     def _publish(
         self,
-        ports: tuple[Out[CompressedImage], Out[Image], Out[CameraInfo]],
-        color: np.ndarray,
+        ports: tuple[Out[Image], Out[CameraInfo]],
         depth: np.ndarray,
         info: CameraInfo,
         frame: str,
@@ -237,11 +247,8 @@ class R1SpatialSensors(Module):
         if time.time() - ts > self.config.max_age_s:
             return False
         info.frame_id, info.ts = frame, ts
-        ports[2].publish(info)
-        ports[0].publish(
-            CompressedImage.from_image(Image.from_numpy(color, ImageFormat.BGR, frame, ts))
-        )
-        ports[1].publish(Image.from_numpy(depth, ImageFormat.DEPTH, frame, ts))
+        ports[1].publish(info)
+        ports[0].publish(Image.from_numpy(depth, ImageFormat.DEPTH, frame, ts))
         with self._lock:
             self._published[frame] = ts
         return True

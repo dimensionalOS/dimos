@@ -81,19 +81,79 @@ async def test_native_head_streams_pair_on_capture_time(sensors, mocker):
     assert sensors._pair("head_left", "head_right") is None
 
 
-def test_rgbd_output_shares_frame_calibration_and_capture_stamp_and_drops_expired_work(
+def test_depth_output_shares_frame_calibration_and_capture_stamp_and_drops_expired_work(
     sensors, mocker
 ):
     now = mocker.patch("dimos.robot.galaxea.r1pro.spatial_sensors.time.time", return_value=100)
-    ports = (sensors.color_image, sensors.depth_image, sensors.camera_info)
+    ports = (sensors.head_left_depth, sensors.head_left_info)
     outputs = [mocker.patch.object(port, "publish") for port in ports]
-    color = np.zeros((24, 32, 3), dtype=np.uint8)
     depth = np.full((24, 32), 1.5, dtype=np.float32)
     info = CameraInfo.from_intrinsics(30, 30, 16, 12, 32, 24)
-    assert sensors._publish(ports, color, depth, info, "optical", 99.9)
+    assert sensors._publish(ports, depth, info, "optical", 99.9)
     messages = [output.call_args.args[0] for output in outputs]
-    assert [(msg.frame_id, msg.ts) for msg in messages] == [("optical", 99.9)] * 3
-    np.testing.assert_array_equal(messages[1].data, depth)
+    assert [(msg.frame_id, msg.ts) for msg in messages] == [("optical", 99.9)] * 2
+    np.testing.assert_array_equal(messages[0].data, depth)
     now.return_value = 101
-    assert not sensors._publish(ports, color, depth, info, "optical", 99.9)
-    assert [output.call_count for output in outputs] == [1, 1, 1]
+    assert not sensors._publish(ports, depth, info, "optical", 99.9)
+    assert [output.call_count for output in outputs] == [1, 1]
+
+
+def test_the_newest_frame_is_taken_once_and_only_while_fresh(sensors, mocker):
+    now = mocker.patch("dimos.robot.galaxea.r1pro.spatial_sensors.time.time", return_value=100)
+    assert sensors._newest("depth") is None
+    old, new = image_stamp(99.8), image_stamp(99.9)
+    sensors._receive("depth", old)
+    sensors._receive("depth", new)
+    assert sensors._newest("depth") is new
+    assert sensors._newest("depth") is None
+    late = image_stamp(100.1)
+    sensors._receive("depth", late)
+    now.return_value = 101
+    assert sensors._newest("depth") is None
+
+
+def wrist_depth(ts, millimetres):
+    values = np.asarray(millimetres, dtype="<u2")
+    return SimpleNamespace(
+        **vars(image_stamp(ts)),
+        encoding="16UC1",
+        is_bigendian=0,
+        height=values.shape[0],
+        width=values.shape[1],
+        step=values.shape[1] * 2,
+        data=values.tobytes(),
+    )
+
+
+def test_a_wrist_publishes_metric_pinhole_depth_and_the_color_cameras_own_calibration(
+    sensors, mocker
+):
+    mocker.patch("dimos.robot.galaxea.r1pro.spatial_sensors.time.time", return_value=100)
+    sensors._stereo = mocker.Mock()  # No head frames arrive in this check.
+    ports = (sensors.wrist_left_depth, sensors.wrist_left_info, sensors.wrist_left_color_info)
+    depth_out, info_out, color_info_out = (mocker.patch.object(p, "publish") for p in ports)
+    right = mocker.patch.object(sensors.wrist_right_depth, "publish")
+    calibration = SimpleNamespace(
+        k=[30.0, 0, 16, 0, 30.0, 12, 0, 0, 1],
+        d=[0.1, -0.05, 0.0, 0.0, 0.0],
+        distortion_model="plumb_bob",
+        width=32,
+        height=24,
+    )
+    sensors._receive("left_info", calibration)
+    sensors._receive("left_depth", wrist_depth(99.9, np.full((24, 32), 250)))
+    sensors.capture()
+    depth, info, color_info = (
+        out.call_args.args[0] for out in (depth_out, info_out, color_info_out)
+    )
+    assert depth.data.dtype == np.float32 and depth.data[12, 16] == pytest.approx(0.25)
+    assert (depth.frame_id, depth.ts) == ("left_D405_link", pytest.approx(99.9))
+    # The depth is an ideal pinhole image; the lens distortion stays with the color camera.
+    assert not any(info.D) and list(info.K[:6]) == [30.0, 0, 16, 0, 30.0, 12]
+    assert list(color_info.D) == [0.1, -0.05, 0.0, 0.0, 0.0]
+    assert color_info.distortion_model == "plumb_bob"
+    assert (color_info.frame_id, color_info.width, color_info.height) == ("left_D405_link", 32, 24)
+    assert sensors.sensor_stats()["left"] == 1 and not right.called
+    # The same depth frame is not published twice.
+    sensors.capture()
+    assert depth_out.call_count == 1

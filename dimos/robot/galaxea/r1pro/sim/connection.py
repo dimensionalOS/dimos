@@ -16,9 +16,14 @@
 
 Canonical jaw opening is 0..0.1 m. The simulation has two opposing fingers
 with 0.050 m travel each; normalize at this boundary, preserving CC's API.
+
+Feedback is stamped with the wall clock, as the hardware connection's is: its
+readers judge how fresh a sample is against that clock. The simulation's own
+clock starts at zero, so a stamp on it reads as a sample from 1970.
 """
 
 import threading
+import time
 from typing import Any
 
 from dimos_lcm.sim_msgs import WorldState
@@ -108,7 +113,7 @@ class R1ProSimConnection(ConnectionModule):
         angular = to_body.apply([w.x, w.y, w.z])
         self.joint_state.publish(
             JointState(
-                ts=truth.header.time_ns / 1e9,
+                ts=time.time(),
                 frame_id=self.frame("joint_state"),
                 name=list(R1PRO_BODY_AXES),
                 velocity=[float(linear[0]), float(linear[1]), float(angular[2])],
@@ -130,7 +135,7 @@ class R1ProSimConnection(ConnectionModule):
             self._positions = positions
         self.joint_state.publish(
             JointState(
-                ts=sample.ts,
+                ts=time.time(),
                 frame_id=self.frame("joint_state"),
                 name=list(positions),
                 position=list(positions.values()),

@@ -26,6 +26,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.galaxea.r1pro.collection import (
+    CAMERA_HZ,
     CAMERAS,
     POSITION_JOINTS,
     collection_profile,
@@ -84,8 +85,21 @@ def write_collection(
             )
 
         event(10, "start", "recording", 0, 0)
-        for i in range(81):
+        frames = 0
+        for i in range(41):
             ts = 10 + i / 100
+            # Camera frames fall between the joint samples; keep the log in time order.
+            while 10 + frames / CAMERA_HZ <= ts:
+                frame_ts = 10 + frames / CAMERA_HZ
+                for camera, (stream, shape) in CAMERAS.items():
+                    if camera != missing_camera:
+                        image = Image(
+                            ts=frame_ts,
+                            format=ImageFormat.RGB,
+                            data=np.full(shape, 80 + frames, dtype=np.uint8),
+                        )
+                        emit(stream, frame_ts, CompressedImage.from_image(image))
+                frames += 1
             # Reverse wire order to verify projection uses names, not array indices.
             emit(
                 "coordinator_joint_state",
@@ -111,16 +125,7 @@ def write_collection(
                         velocity=[0.2 if i < 9 else 0.4, -0.1, 0.3],
                     ),
                 )
-            if i % 20 == 0:
-                for camera, (stream, shape) in CAMERAS.items():
-                    if camera != missing_camera:
-                        image = Image(
-                            ts=ts,
-                            format=ImageFormat.RGB,
-                            data=np.full(shape, 80 + i, dtype=np.uint8),
-                        )
-                        emit(stream, ts, CompressedImage.from_image(image))
-        event(10.81, "save", "idle", 1, 0)
+        event(10.41, "save", "idle", 1, 0)
         event(11, "start", "recording", 1, 0)
         event(11.1, "discard", "idle", 1, 1)
         event(12, "start", "recording", 1, 1)

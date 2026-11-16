@@ -41,10 +41,9 @@ class CompressedCameraModuleConfig(CameraModuleConfig):
 
 
 class _SimCameraDevice(Module):
-    """What the rendering worker needs of a camera device, whatever its color encoding."""
+    """What the rendering worker needs of a camera device, whatever it publishes."""
 
     config: CameraModuleConfig
-    depth_image: Out[Image]
     camera_info: Out[CameraInfo]
 
     @rpc
@@ -86,13 +85,14 @@ class SimCameraModule(_SimCameraDevice):
     """RGB-D camera whose color leaves as raw pixels."""
 
     color_image: Out[Image]
+    depth_image: Out[Image]
 
 
-class SimCompressedCameraModule(_SimCameraDevice):
-    """RGB-D camera whose color leaves as JPEG, as from a driver that publishes encoder bytes.
+class _JpegColorDevice(_SimCameraDevice):
+    """A device whose color leaves as JPEG, as from a driver that publishes encoder bytes.
 
-    Depth stays raw: JPEG cannot carry metric depth. Recorders keep the bytes as
-    they are and browsers decode them directly, with no transcoding in between.
+    Recorders keep the bytes as they are and browsers decode them directly, with
+    no transcoding in between.
     """
 
     config: CompressedCameraModuleConfig
@@ -101,3 +101,19 @@ class SimCompressedCameraModule(_SimCameraDevice):
     @rpc
     def jpeg_quality(self) -> int | None:
         return self.config.jpeg_quality
+
+
+class SimCompressedCameraModule(_JpegColorDevice):
+    """RGB-D camera with JPEG color. Depth stays raw: JPEG cannot carry metric depth."""
+
+    depth_image: Out[Image]
+
+
+class SimColorCameraModule(_JpegColorDevice):
+    """Video camera: JPEG color and no depth. Its sensor is a ``CameraConfig(depth=False)``."""
+
+
+class SimDepthCameraModule(_SimCameraDevice):
+    """Depth camera: metric depth and no color. Its sensor is a ``CameraConfig(color=False)``."""
+
+    depth_image: Out[Image]

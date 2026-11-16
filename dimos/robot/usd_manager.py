@@ -164,6 +164,9 @@ class Mount:
 
 class UsdManagerConfig(ModuleConfig):
     model: RobotModel | UsdModel | None = None
+    # Optional URDF visual description for clients that cannot render a USD scene.
+    # It does not replace the scene or publish a second set of transforms.
+    render_model: RobotModel | None = None
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -217,7 +220,14 @@ class UsdManager(Module):
         super().__init__(**kwargs)
         self._lock = RLock()
         self._description = _as_usd(self.config.model or _world_model())
+        self._render_urdf = (
+            self.config.render_model.load()
+            if self.config.render_model is not None
+            else self._description.urdf()
+        )
         self._file_paths = self._description.referenced_files()
+        if self._render_urdf is not None:
+            self._file_paths.update(self._render_urdf.referenced_files())
         self._frames = self._renamed_own_frames()
         # One description's joints on tf is its own job, not this module's; see dimos.robot.joint_tf.
         self._joint_tf = JointTf(
@@ -513,7 +523,7 @@ class UsdManager(Module):
         name = request.data
         model_name = self.config.instance_name or type(self).__name__
         if name in ("*.urdf", f"{model_name}.urdf"):
-            urdf = self._description.urdf()
+            urdf = self._render_urdf
             if urdf is not None:
                 self.file_info.publish(File(f"{model_name}.urdf", urdf.xml.encode()))
             return

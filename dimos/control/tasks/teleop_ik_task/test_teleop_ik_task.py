@@ -182,6 +182,28 @@ def test_single_binding_tracks_relative_controller_motion(mocker: MockerFixture)
     assert target.position.x == pytest.approx(-0.8)
 
 
+def test_a_pose_in_the_robot_base_frame_is_the_target_itself(mocker: MockerFixture) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask("teleop", _config((_binding("right", "right_tool"),)), solver=solver)
+    base_link = _robot_model().base_link
+    assert base_link
+
+    def target(x: float, t: float, frame_id: str) -> PoseStamped:
+        pose = _pose(x)
+        pose.frame_id = frame_id
+        task.on_right_cartesian_command(pose, t)
+        assert task.compute(_state(t)) is not None
+        result: PoseStamped = solver.step.call_args.args[0]["right_tool"]
+        return result
+
+    task.on_teleop_buttons(_buttons(right=True), 1.0)
+    # The tool is at x = -1. A base-frame pose is not measured from it or from the first pose.
+    assert target(0.5, 1.0, base_link).position.x == pytest.approx(0.5)
+    assert target(0.7, 1.1, base_link).position.x == pytest.approx(0.7)
+    # A device's pose in the same session is followed from the references of engagement.
+    assert target(0.9, 1.2, "right").position.x == pytest.approx(-1.0 + 0.9 - 0.5)
+
+
 def test_bimanual_task_requires_both_hands_and_releases_atomically(
     mocker: MockerFixture,
 ) -> None:

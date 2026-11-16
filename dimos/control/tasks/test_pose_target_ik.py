@@ -387,12 +387,16 @@ def test_measured_frame_poses_are_empty_without_full_feedback(mocker: MockerFixt
 
 
 @pytest.mark.self_hosted
-def test_a_joint_just_past_its_limit_is_steered_back_through_step() -> None:
+@pytest.mark.parametrize("speed", [0.5, 5.0])
+def test_a_joint_just_past_its_limit_is_steered_back_through_step(speed) -> None:
     model = make_xarm7_sim_robot_config()
     names = list(model.joint_names)
     solver = PinkPoseTargetSolver(
         PoseTargetIKTaskConfig(
-            joint_names=tuple(names), robot_model=model, target_frames=("link_tcp",)
+            joint_names=tuple(names),
+            robot_model=model,
+            target_frames=("link_tcp",),
+            max_joint_velocity_rad_s=speed,
         )
     )
     inside = [0.0, 0.3, 0.0, 1.0, 0.0, 0.7, 0.0]
@@ -404,3 +408,44 @@ def test_a_joint_just_past_its_limit_is_steered_back_through_step() -> None:
 
     assert command is not None
     assert command.position[3] <= elbow_limit
+
+
+def test_arm_solver_uses_moving_torso_feedback_without_commanding_it(tmp_path):
+    urdf = tmp_path / "arm.urdf"
+    urdf.write_text("""<robot name="arm">
+      <link name="base"/><link name="torso"/><link name="arm"/><link name="tip"/>
+      <joint name="torso" type="revolute"><parent link="base"/><child link="torso"/>
+        <axis xyz="0 0 1"/><limit lower="-3" upper="3" velocity="2" effort="10"/></joint>
+      <joint name="arm" type="revolute"><parent link="torso"/><child link="arm"/>
+        <origin xyz="1 0 0"/><axis xyz="0 0 1"/>
+        <limit lower="-3" upper="3" velocity="2" effort="10"/></joint>
+      <joint name="tip_joint" type="fixed"><parent link="arm"/><child link="tip"/>
+        <origin xyz="1 0 0"/></joint></robot>""")
+    config = PoseTargetIKTaskConfig(
+        joint_names=("arm",),
+        target_frames=("tip",),
+        robot_model=RobotModelConfig(
+            model=RobotModel.from_file(urdf).with_default_joint_acceleration_limit(2.0),
+            joint_names=["torso", "arm"],
+            base_link="base",
+        ),
+    )
+    solver = PinkPoseTargetSolver(config)
+    arm = 0.0
+    for torso in (0.4, -0.2):
+        desired = JointState(name=["torso", "arm"], position=[torso, 0.2])
+        target = solver.frame_poses(desired, ["tip"])["tip"]
+        assert target.position.to_list() == pytest.approx(
+            [
+                np.cos(torso) + np.cos(torso + 0.2),
+                np.sin(torso) + np.sin(torso + 0.2),
+                0.0,
+            ]
+        )
+        for _ in range(150):
+            command = solver.step(
+                {"tip": target}, JointState(name=["torso", "arm"], position=[torso, arm]), 0.01
+            )
+            assert command.name == ["arm"]
+            arm = command.position[0]
+        assert arm == pytest.approx(0.2, abs=1e-3)

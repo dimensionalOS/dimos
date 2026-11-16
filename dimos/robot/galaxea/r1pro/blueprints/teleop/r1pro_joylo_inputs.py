@@ -28,6 +28,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import ZenohTransport
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -40,6 +41,7 @@ from dimos.robot.galaxea.r1pro.leader import R1ProLeaderConnection
 from dimos.robot.galaxea.r1pro.teleop_coordinator import R1ProTeleopCoordinator, shared_teleop_tasks
 from dimos.robot.galaxea.r1pro.webxr import R1ProWebXR, R1ProWebXRJoystick
 from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
+from dimos.teleop.webxr.controller_types import Buttons
 
 _transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
     (name, kind): ZenohTransport.spec(Topic(f"dimos/r1pro/joylo/{name}", kind, qos=QOS_CONTROL))
@@ -53,6 +55,9 @@ _transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
         ("left_gripper_command", Float32),
         ("right_gripper_command", Float32),
         ("cmd_vel", Twist),
+        ("hand_left_pose", PoseStamped),
+        ("hand_right_pose", PoseStamped),
+        ("hand_buttons", Buttons),
     )
 }
 
@@ -66,9 +71,6 @@ _camera_transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
         "head_right_color",
         "wrist_left_color",
         "wrist_right_color",
-        "color_image",
-        "left_wrist",
-        "right_wrist",
     )
 }
 

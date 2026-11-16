@@ -1867,3 +1867,28 @@ def test_a_usd_native_robot_cuts_itself_out_of_its_own_cloud(tmp_path: Path) -> 
         np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
     finally:
         module.dispose()
+
+
+def test_usd_scene_serves_robot_urdf_and_its_mesh_without_replacing_scene(tmp_path, mocker):
+    mesh = tmp_path / "cube.stl"
+    trimesh.creation.box().export(mesh)
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(_URDF.replace('<box size="0.2 0.2 0.2"/>', f'<mesh filename="{mesh}"/>'))
+    scene = tmp_path / "scene.usda"
+    scene.write_text('#usda 1.0\ndef Xform "room" {}\n')
+    module = UsdManager(
+        model=UsdModel.from_file(scene),
+        render_model=RobotModel.from_file(urdf),
+        publish_joint_tf=False,
+    )
+    publish = mocker.patch.object(module.file_info, "publish")
+    try:
+        for request in ("*.urdf", str(mesh), str(urdf), "scene.usda"):
+            asyncio.run(module.handle_render_file_request(String(request)))
+        files = [call.args[0] for call in publish.call_args_list]
+        assert [file.uri for file in files] == ["UsdManager.urdf", str(mesh), "scene.usda"]
+        assert b'robot name="box_robot"' in files[0].data
+        assert files[1].data == mesh.read_bytes()
+        assert b'Xform "room"' in files[2].data
+    finally:
+        module.dispose()

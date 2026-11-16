@@ -16,7 +16,7 @@
 
 The hardware blueprint and this one are the same stack. Only the robot differs:
 here a sim2 world stands behind CC's connection contract, and MuJoCo renders the
-head and wrist cameras on the hardware's stream names, types and sizes. The
+head and wrist cameras on the hardware's stream names, types, sizes and rates. The
 operator devices, the headset page, the coordinator and the recorder are those
 of the hardware run, so an app or a dataset tool cannot tell the two apart.
 """
@@ -35,8 +35,15 @@ from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import (
 )
 from dimos.robot.galaxea.r1pro.collection import r1pro_collection
 from dimos.robot.galaxea.r1pro.connection import R1ProConnectionConfig
+from dimos.robot.galaxea.r1pro.head_cameras import HEAD_JPEG_QUALITY
 from dimos.robot.galaxea.r1pro.motion import motion_groups
-from dimos.robot.galaxea.r1pro.sim.cameras import head_camera, wrist_camera
+from dimos.robot.galaxea.r1pro.sim.cameras import (
+    WRIST_JPEG_QUALITY,
+    head_color_camera,
+    head_depth_camera,
+    wrist_color_camera,
+    wrist_depth_camera,
+)
 from dimos.robot.galaxea.r1pro.sim.config import (
     ARM_RATE,
     CONTROL_MODEL,
@@ -53,7 +60,8 @@ from dimos.robot.galaxea.r1pro.sim.office import SCENE
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.sensors.camera.module import SimCompressedCameraModule
+from dimos.sim2.sensors.camera.config import CameraConfig
+from dimos.sim2.sensors.camera.module import SimColorCameraModule, SimDepthCameraModule
 from dimos.sim2.sensors.camera.render_module import CameraRenderModule
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
@@ -65,7 +73,9 @@ _declaration = R1ProConnectionConfig(model=CONTROL_MODEL)
 def _world_blueprint(scene: Path = SCENE) -> Blueprint:
     """The simulated robot behind the connection: scene, physics, encoders and servo."""
     return autoconnect(
-        UsdManager.blueprint(model=UsdModel.from_file(scene), publish_joint_tf=False),
+        UsdManager.blueprint(
+            model=UsdModel.from_file(scene), render_model=MODEL, publish_joint_tf=False
+        ),
         SimTfModule.blueprint(),
         SimModule.blueprint(
             scene_manager=UsdManager,
@@ -89,25 +99,68 @@ def _world_blueprint(scene: Path = SCENE) -> Blueprint:
     )
 
 
+# A camera's color and its depth are two views from one frame, at two rates. Each
+# set has a rendering worker: the color runs at the camera rate beside the depth.
+_VIDEO_RENDERER = "video_render"
+_VIDEO_CAMERAS: dict[str, tuple[CameraConfig, int]] = {
+    **{
+        f"head_{side}_color": (head_color_camera(side), HEAD_JPEG_QUALITY)
+        for side in ("left", "right")
+    },
+    **{
+        f"wrist_{side}_color": (wrist_color_camera(side), WRIST_JPEG_QUALITY)
+        for side in ("left", "right")
+    },
+}
+# Depth has the name of the camera it belongs to, as R1SpatialSensors names it.
+_DEPTH_CAMERAS: dict[str, CameraConfig] = {
+    "head_left": head_depth_camera(),
+    "wrist_left": wrist_depth_camera("left"),
+    "wrist_right": wrist_depth_camera("right"),
+}
+
+
+def _video_camera(stream: str, sensor: CameraConfig, jpeg_quality: int) -> Blueprint:
+    """One camera's own color on the stream the hardware camera writes."""
+    return SimColorCameraModule.blueprint(
+        instance_name=f"{stream}_camera",
+        sensor=sensor,
+        jpeg_quality=jpeg_quality,
+        renderer_name=_VIDEO_RENDERER,
+    ).remappings(
+        [
+            (SimColorCameraModule, "color_image", stream),
+            (SimColorCameraModule, "camera_info", f"{stream}_info"),
+        ]
+    )
+
+
+def _depth_camera(camera: str, sensor: CameraConfig) -> Blueprint:
+    """One camera's depth and its intrinsics on the streams R1SpatialSensors writes."""
+    return SimDepthCameraModule.blueprint(
+        instance_name=f"{camera}_depth_camera", sensor=sensor
+    ).remappings(
+        [
+            (SimDepthCameraModule, "depth_image", f"{camera}_depth"),
+            (SimDepthCameraModule, "camera_info", f"{camera}_info"),
+        ]
+    )
+
+
 def _camera_blueprint() -> Blueprint:
-    """Head and wrist RGB-D on the names R1SpatialSensors publishes, color as JPEG."""
+    """Each camera's own color, and its depth as R1SpatialSensors publishes it."""
     return autoconnect(
-        SimCompressedCameraModule.blueprint(instance_name="head_camera", sensor=head_camera()),
-        *(
-            SimCompressedCameraModule.blueprint(
-                instance_name=f"{side}_wrist_camera", sensor=wrist_camera(side)
-            ).remappings(
-                [
-                    (SimCompressedCameraModule, "color_image", f"{side}_wrist"),
-                    (SimCompressedCameraModule, "depth_image", f"{side}_wrist_depth"),
-                    (SimCompressedCameraModule, "camera_info", f"{side}_wrist_info"),
-                ]
-            )
-            for side in ("left", "right")
+        *(_video_camera(stream, *camera) for stream, camera in _VIDEO_CAMERAS.items()),
+        CameraRenderModule.blueprint(
+            instance_name=_VIDEO_RENDERER,
+            scene_manager=UsdManager,
+            cameras=tuple(f"{stream}_camera" for stream in _VIDEO_CAMERAS),
+            renderer=MujocoRenderer,
         ),
+        *(_depth_camera(camera, sensor) for camera, sensor in _DEPTH_CAMERAS.items()),
         CameraRenderModule.blueprint(
             scene_manager=UsdManager,
-            cameras=("head_camera", "left_wrist_camera", "right_wrist_camera"),
+            cameras=tuple(f"{camera}_depth_camera" for camera in _DEPTH_CAMERAS),
             # MuJoCo draws any scene and keeps the camera rate on a laptop. Unreal
             # (sim.office.office_renderer) draws the office with its materials, at
             # a cost that wants a larger machine.

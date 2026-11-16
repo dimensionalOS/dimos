@@ -26,18 +26,34 @@ from dimos.control.motion_limits import MotionLimitsSpec
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER, JoyloConfig, JoyloController
+from dimos.robot.galaxea.r1pro.headset_gamepad import joycon_readings
+from dimos.robot.galaxea.r1pro.joylo import (
+    BASE_FRAME,
+    JAWS,
+    TORSO,
+    UPPER,
+    ArmSource,
+    HandsOutput,
+    JoyloConfig,
+    JoyloController,
+)
 from dimos.robot.manipulators.feetech.connection import GUARDED_JOINT_FRAME_ID
+from dimos.teleop.joycon.mapping import JoyConReading, JoyConSide
 from dimos.teleop.joycon.raw import decode_readings
+from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+_Pad = tuple[JoyConReading | None, JoyConReading | None]
 
 
 class R1ProJoylo(Module):
@@ -52,10 +68,23 @@ class R1ProJoylo(Module):
     torso_tracking_speed: In[Float32]
     drive_speed: In[Float32]
     turn_speed: In[Float32]
+    # The operator's hands as a headset module gives them, and the operator's head
+    # as the headset gives it (x right, y up, z back), for the hands arm source.
+    left_cartesian_command: In[PoseStamped]
+    right_cartesian_command: In[PoseStamped]
+    webxr_head: In[PoseStamped]
+    # A gamepad the headset's page reads, in the W3C standard layout: the Joy-Con
+    # pair when it is paired to the headset and not to this host.
+    webxr_gamepad: In[Joy]
     leader_joint_command: Out[JointState]
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
     cmd_vel: Out[Twist]
+    # With the hands as the arm source: arm poses and the IK deadman.
+    # Torso targets still use leader_joint_command, just like leader mode.
+    hand_left_pose: Out[PoseStamped]
+    hand_right_pose: Out[PoseStamped]
+    hand_buttons: Out[Buttons]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -63,8 +92,16 @@ class R1ProJoylo(Module):
         self._speed_settings: dict[str, dict[str, Any]] = {}
         self._controller: JoyloController | None = None
         self._logged_pause_count = 0
-        self._stamps = {"leader": -math.inf, "joycon": -math.inf}
+        self._stamps = {
+            name: -math.inf for name in ("leader", "joycon", "left", "right", "head", "gamepad")
+        }
         self._feedback: dict[str, tuple[float, float]] = {}
+        # The Joy-Con pair as this host reads it and as a headset's page reads it,
+        # each with when it came.
+        self._host_pad: _Pad = (None, None)
+        self._host_pad_receipt = -math.inf
+        self._headset_pad: _Pad = (None, None)
+        self._headset_pad_receipt = -math.inf
         self._done = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -78,8 +115,10 @@ class R1ProJoylo(Module):
         with self._guard:
             self._controller = JoyloController(limits, self.config)
             self._logged_pause_count = 0
-            self._stamps = {"leader": -math.inf, "joycon": -math.inf}
+            self._stamps = dict.fromkeys(self._stamps, -math.inf)
             self._feedback.clear()
+            self._host_pad, self._host_pad_receipt = (None, None), -math.inf
+            self._headset_pad, self._headset_pad_receipt = (None, None), -math.inf
         self._done.clear()
         super().start()
         # This topic carries partial updates for different joints. A single
@@ -107,6 +146,21 @@ class R1ProJoylo(Module):
         with self._guard:
             if self._controller is not None:
                 self._controller.pause("Paused by operator")
+
+    @rpc
+    def set_arm_source(self, source: ArmSource) -> str:
+        """Take the arms from the leader arms or from a headset's hands.
+
+        Following stops; it starts again on a new press of the enable button.
+
+        Args:
+            source: "leader" for the leader arms, "hands" for the headset's hands.
+        """
+        with self._guard:
+            if self._controller is None:
+                raise RuntimeError("JoyLo is not started")
+            self._controller.set_arm_source(source)
+            return self._controller.arm_source
 
     @rpc
     def set_motion_speeds(
@@ -196,7 +250,9 @@ class R1ProJoylo(Module):
         with self._guard:
             c = self._controller
             ages = (
-                {name: time.monotonic() - stamp for name, stamp in c.receipts.items()} if c else {}
+                {name: time.monotonic() - stamp for name, stamp in c.input_receipts().items()}
+                if c
+                else {}
             )
             ready = bool(
                 c
@@ -211,6 +267,7 @@ class R1ProJoylo(Module):
                 reason = f"Ready; release and press {c.enable_button} to enable tracking"
             return {
                 "active": c.active if c else False,
+                "arm_source": c.arm_source if c else "leader",
                 "recovering": c.recovery_deadline is not None if c else False,
                 "hold_count": c.hold_count if c else 0,
                 "arm_speed_rad_s": self._speed_settings.get("arm_rate", {}).get("rate"),
@@ -226,6 +283,11 @@ class R1ProJoylo(Module):
                 "arm_only": self.config.arm_only,
                 "enable_button": c.enable_button if c else "",
                 "input_age_s": ages,
+                # Where each side's Joy-Con comes from: this host, a headset's page, or nowhere.
+                "joycon_source": [
+                    "host" if ours is not None else "headset" if theirs is not None else None
+                    for ours, theirs in zip(self._host_pad, self._headset_pad, strict=True)
+                ],
                 "feedback_age_s": {
                     name: time.time() - stamp for name, (_, stamp) in self._feedback.items()
                 },
@@ -263,6 +325,20 @@ class R1ProJoylo(Module):
         self._stamps[source] = stamp
         return True
 
+    def _newer(self, source: str, stamp: float) -> bool:
+        """Whether a headset sample moves on from the last one of its hand.
+
+        A headset stamps with its own clock, which need not agree with this
+        host's, so its sample is fresh by when it arrives. The stamp only has to
+        advance: a pose that is sent again does not renew the hand. A stamp far
+        behind the last one is a new headset session.
+        """
+        last = self._stamps[source]
+        if not math.isfinite(stamp) or last - 1.0 <= stamp <= last:
+            return False
+        self._stamps[source] = stamp
+        return True
+
     async def handle_leader_readings(self, sample: JointState) -> None:
         with self._guard:
             if self._controller is None or not self._fresh("leader", sample.ts):
@@ -276,17 +352,82 @@ class R1ProJoylo(Module):
                 dict(zip(sample.name, sample.position, strict=True)), time.monotonic()
             )
 
+    async def handle_left_cartesian_command(self, sample: PoseStamped) -> None:
+        self._on_hand("left", sample)
+
+    async def handle_right_cartesian_command(self, sample: PoseStamped) -> None:
+        self._on_hand("right", sample)
+
+    def _on_hand(self, side: JoyConSide, sample: PoseStamped) -> None:
+        with self._guard:
+            c = self._controller
+            if c is None or c.arm_source != "hands" or not self._newer(side, sample.ts):
+                return
+            p, q = sample.position, sample.orientation
+            c.set_hand(side, ((p.x, p.y, p.z), (q.x, q.y, q.z, q.w)), time.monotonic())
+
+    async def handle_webxr_head(self, sample: PoseStamped) -> None:
+        with self._guard:
+            c = self._controller
+            if c is None or c.arm_source != "hands" or not self._newer("head", sample.ts):
+                return
+            p, q = sample.position, sample.orientation
+            # To the frame of the hands: x forward (the headset's -z), y left (its -x),
+            # z up (its y). The heading is where the head looks, on the floor: a tilt of
+            # the head does not change it. A head that looks straight down or up has
+            # no such direction, and then its own right side gives the heading.
+            forward = (1 - 2 * (q.x * q.x + q.y * q.y), 2 * (q.x * q.z + q.y * q.w))
+            if math.hypot(*forward) < 0.2:
+                forward = (1 - 2 * (q.y * q.y + q.z * q.z), -2 * (q.x * q.z - q.y * q.w))
+            c.set_head((-p.z, -p.x, p.y), math.atan2(forward[1], forward[0]), time.monotonic())
+
     async def handle_joycon_sample(self, sample: Joy) -> None:
         with self._guard:
             if self._controller is None or not self._fresh("joycon", sample.ts):
                 return
+            now = time.monotonic()
             try:
                 readings = decode_readings(sample)
             except ValueError:
                 self._controller.pause("Malformed Joy-Con sample")
-                self._controller.set_joycon(None, None, time.monotonic())
+                self._host_pad, self._host_pad_receipt = (None, None), now
+                self._controller.set_joycon(None, None, now)
                 return
-            self._controller.set_joycon(readings["left"], readings["right"], time.monotonic())
+            self._host_pad, self._host_pad_receipt = (readings["left"], readings["right"]), now
+            self._set_joycons(now)
+
+    async def handle_webxr_gamepad(self, sample: Joy) -> None:
+        with self._guard:
+            if self._controller is None or not self._newer("gamepad", sample.ts):
+                return
+            now = time.monotonic()
+            self._headset_pad = joycon_readings(sample) or (None, None)
+            self._headset_pad_receipt = now
+            self._set_joycons(now)
+
+    def _set_joycons(self, now: float) -> None:
+        """Give the controller each side's Joy-Con: this host's, else the headset's.
+
+        A headset's pad that is late is not a Joy-Con that is gone. Nothing is
+        given then, so the controller holds as for any late input, until the pad
+        is back or the recovery window is over.
+        """
+        assert self._controller is not None
+        silent = now - self._headset_pad_receipt
+        if silent > self.config.input_recovery_timeout_s:
+            self._headset_pad = (None, None)
+        host: _Pad = (
+            self._host_pad
+            if now - self._host_pad_receipt <= self.config.input_timeout_s
+            else (None, None)
+        )
+        left, right = (
+            ours if ours is not None else theirs
+            for ours, theirs in zip(host, self._headset_pad, strict=True)
+        )
+        if silent > self.config.input_timeout_s and (left, right) != host:
+            return
+        self._controller.set_joycon(left, right, now)
 
     def _on_robot_feedback(self, sample: JointState) -> None:
         with self._guard:
@@ -323,7 +464,7 @@ class R1ProJoylo(Module):
                     "JoyLo following paused",
                     reason=c.last_pause_reason,
                     pause_count=c.pause_count,
-                    input_age_s={name: now - stamp for name, stamp in c.receipts.items()},
+                    input_age_s={name: now - stamp for name, stamp in c.input_receipts().items()},
                     stale_feedback_joints=[
                         name
                         for name, (_, stamp) in self._feedback.items()
@@ -333,11 +474,17 @@ class R1ProJoylo(Module):
                 self._logged_pause_count = c.pause_count
             if output is None:
                 self.cmd_vel.publish(Twist.zero())
+                if c is not None and c.arm_source == "hands":
+                    self._publish_hands(HandsOutput(False, None))
                 return
+            positions = output.positions
+            if output.hands is not None:
+                self._publish_hands(output.hands)
+                positions = {name: value for name, value in positions.items() if name in TORSO}
             self.leader_joint_command.publish(
                 JointState(
-                    name=list(output.positions),
-                    position=list(output.positions.values()),
+                    name=list(positions),
+                    position=list(positions.values()),
                     frame_id=GUARDED_JOINT_FRAME_ID,
                 )
             )
@@ -345,6 +492,26 @@ class R1ProJoylo(Module):
             self.right_gripper_command.publish(Float32(data=output.openings[1]))
             x, y, yaw = output.velocity
             self.cmd_vel.publish(Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw)))
+
+    def _publish_hands(self, hands: HandsOutput) -> None:
+        """The headset arm task's inputs: its deadman at every tick, poses while following."""
+        buttons = Buttons()
+        buttons.left_grip = buttons.right_grip = hands.engaged
+        self.hand_buttons.publish(buttons)
+        if hands.poses is None:
+            return
+        now = time.time()
+        for port, (position, orientation) in zip(
+            (self.hand_left_pose, self.hand_right_pose), hands.poses, strict=True
+        ):
+            port.publish(
+                PoseStamped(
+                    ts=now,
+                    frame_id=BASE_FRAME,
+                    position=list(position),
+                    orientation=list(orientation),
+                )
+            )
 
     def _run(self) -> None:
         previous = time.monotonic()

@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One R1 control owner with explicit leader/WebXR input handover."""
+"""One R1 control owner with explicit input handover.
+
+Three devices can move the arms, one at a time: the leader arms with their
+Joy-Cons ("leader"), a headset's tracked controllers ("webxr"), and a headset's
+hands with the Joy-Cons ("hands"). With the hands, JoyLo keeps every Joy-Con
+function and gives the headset arm task the hands to follow.
+"""
 
 from dataclasses import replace
 import threading
@@ -28,16 +34,19 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import _teleop_task
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import (
+    R1PRO_VR_TASK_NAME,
+    _teleop_task,
+)
 from dimos.robot.galaxea.r1pro.config import R1PRO_DESCRIPTION_SOURCE
 from dimos.robot.galaxea.r1pro.joints import PASSIVE_JOINTS
-from dimos.robot.galaxea.r1pro.joylo import UPPER
+from dimos.robot.galaxea.r1pro.joylo import TORSO, UPPER, ArmSource
 from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
 from dimos.robot.galaxea.r1pro.torso_height_task import TORSO_LIFT_JOINTS
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import Buttons
 
-TeleopSource = Literal["leader", "webxr"]
+TeleopSource = Literal["leader", "webxr", "hands"]
 _LEADER_PORTS = frozenset(
     ("leader_joint_command", "joylo_twist_command", "left_gripper_command", "right_gripper_command")
 )
@@ -52,6 +61,8 @@ _WEBXR_PORTS = frozenset(
         "webxr_right_gripper",
     )
 )
+# JoyLo with the hands as its arm source: the hands to follow and the task's deadman.
+_HANDS_PORTS = frozenset(("hand_left_pose", "hand_right_pose", "hand_buttons"))
 
 
 def shared_teleop_tasks(velocity_limits: dict[str, float]) -> list[TaskConfig]:
@@ -89,6 +100,7 @@ def shared_teleop_tasks(velocity_limits: dict[str, float]) -> list[TaskConfig]:
 
 class LeaderPauseSpec(Spec, Protocol):
     def pause(self) -> None: ...
+    def set_arm_source(self, source: ArmSource) -> str: ...
 
 
 class R1ProTeleopCoordinatorConfig(ControlCoordinatorConfig):
@@ -98,8 +110,9 @@ class R1ProTeleopCoordinatorConfig(ControlCoordinatorConfig):
 class R1ProTeleopCoordinator(R1ProJoyloCoordinator):
     """Gate device inputs before shared tasks, arbitration, limits and recording.
 
-    Switching clears old targets and requires a new leader enable or released
-    headset clutches. Browser RPC control retains its existing task interfaces.
+    Switching clears old targets and requires a new enable press on the Joy-Con
+    or released headset clutches. Browser RPC control retains its existing task
+    interfaces.
     """
 
     config: R1ProTeleopCoordinatorConfig
@@ -111,6 +124,9 @@ class R1ProTeleopCoordinator(R1ProJoyloCoordinator):
     webxr_twist_command: In[Twist]
     webxr_left_gripper: In[Float32]
     webxr_right_gripper: In[Float32]
+    hand_left_pose: In[PoseStamped]
+    hand_right_pose: In[PoseStamped]
+    hand_buttons: In[Buttons]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -130,6 +146,16 @@ class R1ProTeleopCoordinator(R1ProJoyloCoordinator):
                 ("vel_chassis", "twist_velocity", {"twist_command": "webxr_twist_command"}),
                 ("left_gripper", "gripper", {"gripper_command": "webxr_left_gripper"}),
                 ("right_gripper", "gripper", {"gripper_command": "webxr_right_gripper"}),
+                # The headset arm task takes the hands from JoyLo as well.
+                (
+                    R1PRO_VR_TASK_NAME,
+                    "teleop_ik",
+                    {
+                        "left_cartesian_command": "hand_left_pose",
+                        "right_cartesian_command": "hand_right_pose",
+                        "teleop_buttons": "hand_buttons",
+                    },
+                ),
             ):
                 self._register_routes(self._tasks[name], task_type, mapping)
 
@@ -140,13 +166,21 @@ class R1ProTeleopCoordinator(R1ProJoyloCoordinator):
 
     @rpc
     def select_teleop_source(self, source: TeleopSource) -> dict[str, Any]:
-        """Select leader or WebXR; clear intent and require fresh device engagement."""
-        if source not in ("leader", "webxr"):
-            raise ValueError("teleop source must be 'leader' or 'webxr'")
+        """Select the device that moves the arms; clear intent and require fresh engagement.
+
+        Args:
+            source: "leader" for the leader arms with their Joy-Cons, "webxr" for a
+                headset's tracked controllers, "hands" for a headset's hands with
+                the Joy-Cons.
+        """
+        if source not in ("leader", "webxr", "hands"):
+            raise ValueError("teleop source must be 'leader', 'webxr' or 'hands'")
         with self._input_lock, self._estop_lock:
             if source == self._teleop_source:
                 return self.get_teleop_source()
             self._leader.pause()
+            # Before anything is reset: a profile that cannot take the hands refuses here.
+            self._leader.set_arm_source("hands" if source == "hands" else "leader")
             loop = self._tick_loop
             running = bool(loop and loop.is_running)
             # A handover is rare. Finish the current tick before resetting tasks
@@ -172,18 +206,31 @@ class R1ProTeleopCoordinator(R1ProJoyloCoordinator):
 
     def _dispatch(self, stream: str, msg: Any) -> None:
         with self._input_lock:
-            if stream in _LEADER_PORTS | _WEBXR_PORTS:
+            source = self._teleop_source
+            if stream in _LEADER_PORTS | _WEBXR_PORTS | _HANDS_PORTS:
                 if isinstance(msg, (JointState, PoseStamped)) and msg.ts < self._selected_at:
                     return
             if stream in _LEADER_PORTS:
-                if self._teleop_source != "leader":
+                if source == "webxr":
                     return
                 if stream == "leader_joint_command":
-                    self._leader_ready = True
+                    if source == "hands":
+                        # Hands own the arms; JoyLo owns explicit torso commands.
+                        # Reject mixed/old leader packets rather than letting them
+                        # compete with the Cartesian task after a source switch.
+                        if not msg.name or not set(msg.name) <= set(TORSO):
+                            return
+                    else:
+                        self._leader_ready = True
                 # Jaw/Twist messages have no timestamp. Require a fresh, stamped
-                # leader target before accepting these after a handover.
+                # leader target or hand pose before accepting these after a handover.
                 if not self._leader_ready:
                     return
+            if stream in _HANDS_PORTS:
+                if source != "hands":
+                    return
+                if stream in ("hand_left_pose", "hand_right_pose"):
+                    self._leader_ready = True
             if stream in _WEBXR_PORTS:
                 if self._teleop_source != "webxr":
                     return

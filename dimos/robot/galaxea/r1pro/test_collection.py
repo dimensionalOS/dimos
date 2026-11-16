@@ -22,6 +22,7 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.galaxea.r1pro._collection_test_fakes import write_collection
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo import r1pro_openarm_joylo_sim2
@@ -48,9 +49,14 @@ SIMULATION = {
     "simjointencodermodule",
     "r1prosimcontrol",
     "r1prosimconnection",
-    "head_camera",
-    "left_wrist_camera",
-    "right_wrist_camera",
+    "head_left_color_camera",
+    "head_right_color_camera",
+    "wrist_left_color_camera",
+    "wrist_right_color_camera",
+    "video_render",
+    "head_left_depth_camera",
+    "wrist_left_depth_camera",
+    "wrist_right_depth_camera",
     "camerarendermodule",
 }
 
@@ -81,12 +87,13 @@ def test_recording_exports_measured_state_compressed_cameras_and_causal_actions(
         assert len(file["episodes"]) == 1  # Discarded and interrupted takes excluded.
         episode = file["episodes/episode_000000"]
         actions = episode["action/action"][:]
-        assert actions.shape == (5, 23)
+        # 0.4 s at the cameras' 30 Hz: one row for each head frame.
+        assert actions.shape == (13, 23)
         np.testing.assert_allclose(actions[:, :20], 0.5)
-        np.testing.assert_allclose(actions[:, 20], [0.2, 0.4, 0.4, 0.4, 0.4])
+        np.testing.assert_allclose(actions[:, 20], [0.2] * 3 + [0.4] * 10)
         np.testing.assert_allclose(episode["observation/observation.state"][0], np.arange(20) / 100)
         for camera, (_, shape) in CAMERAS.items():
-            assert episode[f"observation/observation.images.{camera}"].shape == (5, *shape)
+            assert episode[f"observation/observation.images.{camera}"].shape == (13, *shape)
 
 
 @pytest.mark.parametrize("fault", ["camera", "stale_commands"])
@@ -181,7 +188,8 @@ def test_simulation_is_the_hardware_stack_on_a_simulated_robot():
                 for s in hardware[name].streams
             }, name
 
-    # The cameras write what R1SpatialSensors writes, on its names and types.
+    # One camera contract: the same streams by name and type, each with one writer.
+    # A camera has one color stream, its own, and its depth has that camera's name.
     def outputs(blueprint, names):
         return {
             (blueprint.remapping_map.get((atom.name, s.name), s.name), s.type)
@@ -191,12 +199,20 @@ def test_simulation_is_the_hardware_stack_on_a_simulated_robot():
             if s.direction == "out" and s.name != "tf"
         }
 
-    assert outputs(sim, {"head_camera", "left_wrist_camera", "right_wrist_camera"}) == outputs(
-        real, {"r1spatialsensors"}
-    )
-    for key in ("color_image", "left_wrist", "right_wrist"):
-        kind = recorder.kwargs["input_types"][key]
-        assert sim.transport_map[key, kind] == real.transport_map[key, kind]
+    video = {
+        f"{camera}_color" for camera in ("head_left", "head_right", "wrist_left", "wrist_right")
+    }
+    assert {stream for stream, _ in CAMERAS.values()} <= video
+    cameras = outputs(sim, {name for name in SIMULATION if name.endswith("_camera")})
+    assert cameras == outputs(
+        real, {"headleftcamera", "headrightcamera", "headcamerainfo", "r1spatialsensors"}
+    ) | {(f"wrist_{side}_color", CompressedImage) for side in ("left", "right")}
+    assert {name for name, kind in cameras if kind is CompressedImage} == video
+    for name, kind in cameras:
+        assert len(_publishers(sim, name, kind)) == 1, name
+        if kind is CompressedImage:
+            assert len(_publishers(real, name, kind)) == 1, name
+            assert sim.transport_map[name, kind] == real.transport_map[name, kind]
     # Only the simulation starts with no leader arms attached.
     assert simulated["r1proleaderconnection"].kwargs["required"] is False
     assert "required" not in hardware["r1proleaderconnection"].kwargs

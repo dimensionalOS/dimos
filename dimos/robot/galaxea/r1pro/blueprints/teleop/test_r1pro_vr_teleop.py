@@ -45,7 +45,6 @@ from dimos.robot.galaxea.r1pro._connection_test_fakes import LocalTransport
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import (
     R1PRO_VR_CHASSIS_TASK_NAME,
     R1PRO_VR_START_POSE,
-    R1PRO_VR_STEERED_TORSO_JOINTS,
     R1PRO_VR_TARGET_FRAMES,
     R1PRO_VR_TASK_NAME,
     R1ProVrCoordinator,
@@ -63,6 +62,7 @@ from dimos.robot.galaxea.r1pro.connection import (
     R1ProConnection,
 )
 from dimos.robot.galaxea.r1pro.fake_connection import FakeR1ProConnection, FakeR1ProConnectionConfig
+from dimos.robot.galaxea.r1pro.joylo import BASE_FRAME
 from dimos.robot.galaxea.r1pro.motion import motion_groups
 from dimos.robot.galaxea.r1pro.teleop_coordinator import R1ProTeleopCoordinator, shared_teleop_tasks
 from dimos.robot.galaxea.r1pro.torso_height_task import R1ProTorsoHeightTask
@@ -412,6 +412,102 @@ def test_shared_stack_webxr_ik_uses_2025_model_and_records_limited_actions(share
     assert coordinator.get_teleop_source()["source"] == "webxr"
 
 
+def test_hands_source_takes_the_arms_from_joylo_and_keeps_its_jaws_and_base(shared_chain):
+    chain = shared_chain
+    coordinator = chain.coordinator
+    coordinator.select_teleop_source("hands")
+    coordinator._leader.set_arm_source.assert_called_once_with("hands")
+    assert coordinator.get_teleop_source()["source"] == "hands"
+    held, released = Buttons(), Buttons()
+    held.left_grip = held.right_grip = True
+    assert make_r1pro_model_config().base_link == BASE_FRAME
+    frames = list(R1PRO_VR_TARGET_FRAMES.values())
+
+    def grippers() -> dict[str, PoseStamped]:
+        """Where the grippers are, in the robot's base frame."""
+        state = JointState(name=list(R1PRO_UPPER_BODY_JOINTS), position=chain.body_q())
+        poses: dict[str, PoseStamped] = chain.task._solver.frame_poses(state, frames)
+        return poses
+
+    home = grippers()
+
+    def hands(forward: float = 0.0, buttons: Buttons = held) -> None:
+        """What JoyLo sends at each tick while it follows the hands: where each gripper goes."""
+        coordinator._dispatch("hand_buttons", buttons)
+        for stream, frame, dx in zip(
+            ("hand_left_pose", "hand_right_pose"), frames, (forward, 0.0), strict=True
+        ):
+            p, q = home[frame].position, home[frame].orientation
+            coordinator._dispatch(
+                stream,
+                PoseStamped(
+                    ts=time.time(),
+                    frame_id=BASE_FRAME,
+                    position=[p.x + dx, p.y, p.z],
+                    orientation=[q.x, q.y, q.z, q.w],
+                ),
+            )
+
+    # The leader arms' joint targets and the headset module's own inputs are not this source's.
+    coordinator._dispatch(
+        "leader_joint_command",
+        JointState(name=list(R1PRO_UPPER_BODY_JOINTS), position=[0.3] * 18),
+    )
+    coordinator._dispatch("teleop_buttons", held)
+    coordinator._dispatch("left_gripper_command", Float32(data=1.0))
+    assert not coordinator._trajectory_task.is_active() and not chain.task.is_active()
+    assert coordinator._tasks["left_gripper"]._target is None
+
+    def following() -> bool:
+        hands()
+        return bool(chain.task.is_active())
+
+    wait_until(following, timeout=3, interval=0.02)
+    # Each gripper is told to be where it is: nothing moves, whatever the first pose was.
+    for _ in range(10):
+        hands()
+        time.sleep(0.02)
+    for frame in frames:
+        assert grippers()[frame].position.to_list() == pytest.approx(
+            home[frame].position.to_list(), abs=0.01
+        )
+    assert chain.body_q()[:4] == pytest.approx([0.0] * 4, abs=1e-6)
+
+    # The left gripper is told to be 5 cm further forward: it goes there, and the right one stays.
+    def left_gripper_arrives() -> bool:
+        hands(forward=0.05)
+        left, right = (grippers()[frame].position for frame in frames)
+        return (
+            abs(left.x - home[frames[0]].position.x - 0.05) < 0.01
+            and abs(right.x - home[frames[1]].position.x) < 0.01
+        )
+
+    wait_until(left_gripper_arrives, timeout=5, interval=0.02)
+    assert chain.body_q()[:4] == pytest.approx([0.0] * 4, abs=1e-6)
+    coordinator._dispatch(
+        "leader_joint_command",
+        JointState(name=["r1pro/torso_joint3"], position=[-0.05]),
+    )
+    wait_until(lambda: abs(chain.body_q()[2] + 0.05) < 0.01, timeout=3)
+    # JoyLo still closes a jaw and drives the base.
+    coordinator._dispatch("left_gripper_command", Float32(data=0.0))
+    assert coordinator._tasks["left_gripper"]._target == [0.0]
+
+    def drives() -> bool:
+        hands(forward=0.05)
+        coordinator._dispatch("joylo_twist_command", Twist(linear=[0.1, 0, 0]))
+        return chain.base_state()["vx"] == pytest.approx(0.1)
+
+    wait_until(drives, timeout=3, interval=0.02)
+    # JoyLo paused: its deadman ends the session.
+    hands(buttons=released)
+    wait_until(lambda: not chain.task.is_active(), timeout=2)
+    coordinator.select_teleop_source("leader")
+    assert coordinator._leader.set_arm_source.call_args.args == ("leader",)
+    hands()
+    assert not chain.task.is_active()
+
+
 def test_source_selection_does_not_clear_estop_or_replay_old_leader_packets(shared_chain):
     coordinator = shared_chain.coordinator
     old = JointState(name=list(R1PRO_UPPER_BODY_JOINTS), position=[0.1] * 18)
@@ -539,20 +635,14 @@ def test_blueprint_teleop_scaling_matches_the_base_range() -> None:
         assert atom.kwargs["base_angular_speed"] == pytest.approx(min(wz, 0.5))
 
 
-def test_ik_steers_arms_and_top_torso_joints() -> None:
-    """Top pitch + yaw give the operator reach; the lower waist stays put."""
+def test_ik_steers_only_arms_and_rejects_automatic_torso_motion() -> None:
     teleop = next(t for t in _vr_tasks() if t.type == "teleop_ik")
-    arms = tuple(j for j in R1PRO_UPPER_BODY_JOINTS if "_arm_joint" in j)
-    assert teleop.joint_names == [*R1PRO_VR_STEERED_TORSO_JOINTS, *arms]
-    assert len(teleop.joint_names) == 16
-    # Both lower pitch joints are outside the controlled set, so the solver
-    # locks them at their feedback instead of folding the whole waist.
-    assert not any(j in teleop.joint_names for j in R1PRO_UPPER_BODY_JOINTS[:2])
-    with pytest.raises(ValueError, match="full_torso IK would overlap"):
+    arms = [j for j in R1PRO_UPPER_BODY_JOINTS if "_arm_joint" in j]
+    assert teleop.joint_names == arms
+    with pytest.raises(ValueError, match="explicit controls"):
         make_r1pro_vr_teleop(full_torso=True)
-    full = next(t for t in _vr_tasks(full_torso=True) if t.type == "teleop_ik")
-    assert full.joint_names == list(R1PRO_UPPER_BODY_JOINTS)
-    assert len(full.joint_names) == 18
+    with pytest.raises(ValueError, match="explicit controls"):
+        _vr_tasks(full_torso=True)
 
 
 def test_model_home_pose_is_the_forward_reaching_start() -> None:
@@ -622,15 +712,12 @@ def test_quest_input_drives_upper_body_and_feedback() -> None:
         # Move the left controller +0.15 m in x from its captured reference.
         chain.send_pose("left", 0.45, 0.1, 1.2)
         wait_until(
-            lambda: any(abs(q) > 1e-3 for q in chain.body_q()[:4]),
+            lambda: any(abs(q) > 1e-3 for q in chain.body_q()[4:11]),
             timeout=5.0,
             interval=0.05,
         )
-        # The torso is in the same solve, not pinned: the layout is torso 4,
-        # left 7, right 7, and moving the controller off-centre loads it.
-        assert any(abs(q) > 1e-3 for q in chain.body_q()[:4]), (
-            f"torso did not participate in IK: {chain.body_q()[:4]}"
-        )
+        # Hand motion changes the arms without borrowing any waist joints.
+        assert chain.body_q()[:4] == pytest.approx([0.0] * 4, abs=1e-6)
         # Feedback carries the motion back on the contract names.
         wait_until(
             lambda: any(
@@ -723,16 +810,27 @@ def test_estop_clears_the_session_and_stops_commands() -> None:
         time.sleep(0.3)
         assert not chain.task.is_active()
         held = chain.body_q()
-        # A fresh engagement re-captures both references, so the controller
-        # pose that moved the arm pre-estop produces no jump: zero relative
-        # motion until the operator actually moves.
+        frames = list(R1PRO_VR_TARGET_FRAMES.values())
+        reference = chain.task._solver.frame_poses(
+            JointState(name=list(R1PRO_UPPER_BODY_JOINTS), position=held), frames
+        )
+        # Re-engagement captures the current grippers. The redundant elbows may
+        # relax toward their preferred posture, but old hand targets must not replay.
         chain.coordinator.task_invoke("operator_hold", "acknowledge")
         chain.hold()
         wait_until(lambda: chain.task.is_active(), timeout=5.0, interval=0.02)
-        time.sleep(0.3)
-        # Tolerance covers the IK command-filter's re-convergence transient
-        # (~1e-3 rad); the pre-estop intent would jump orders of magnitude more.
-        assert chain.body_q() == pytest.approx(held, abs=1e-2)
+        first_command = len(chain.stream["position_command"].sent)
+        wait_until(
+            lambda: len(chain.stream["position_command"].sent) > first_command + 20, timeout=3
+        )
+        actual = chain.task._solver.frame_poses(
+            JointState(name=list(R1PRO_UPPER_BODY_JOINTS), position=chain.body_q()), frames
+        )
+        for frame in frames:
+            assert actual[frame].position.to_list() == pytest.approx(
+                reference[frame].position.to_list(), abs=0.01
+            )
+        assert chain.body_q()[:4] == pytest.approx(held[:4], abs=1e-6)
 
 
 def test_gripper_outage_is_gated_by_the_connection_without_replay() -> None:

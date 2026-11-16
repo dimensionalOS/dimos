@@ -18,7 +18,7 @@ ArmTeleopModule emits poses, buttons and original Joy packets. A separate
 JoystickTeleopMapper maps the left stick to chassis translation, right X to
 yaw and right Y to lift rate, while right-stick click enables body motion.
 The chassis uses TwistVelocityTask; R1ProTorsoHeightTask controls only lower
-pitch joints 1/2, alongside TeleopIKTask controlling top pitch/yaw and arms.
+pitch joints 1/2; TeleopIKTask controls only the arms.
 Both tasks read feedback independently and merge through normal arbitration.
 No automatic Home or hardware startup occurs while assembling a blueprint.
 """
@@ -63,10 +63,6 @@ from dimos.teleop.webxr.extensions import ArmTeleopModule
 R1PRO_VR_TASK_NAME = "teleop_r1pro_vr"
 R1PRO_VR_CHASSIS_TASK_NAME = "vel_chassis"
 
-#: The torso joints the IK may steer: the waist's top pitch and yaw. Lower
-#: pitch joints 1/2 belong to the independent joystick height task, not IK.
-R1PRO_VR_STEERED_TORSO_JOINTS = ("r1pro/torso_joint3", "r1pro/torso_joint4")
-
 #: Posture the fake stack starts in (and therefore the IK's first seed): the
 #: same waist-and-arms-forward pose the model declares as ``home_joints``, so
 #: the ``Home`` preset in the manipulation panel and the simulated start agree
@@ -84,13 +80,8 @@ def _teleop_joint_names(*, full_torso: bool = False) -> tuple[str, ...]:
     keeps them still rather than an omission the solver could exploit.
     """
     if full_torso:
-        return tuple(R1PRO_UPPER_BODY_JOINTS)
-    arms = tuple(j for j in R1PRO_UPPER_BODY_JOINTS if "_arm_joint" in j)
-    steered = tuple(j for j in R1PRO_UPPER_BODY_JOINTS if j in R1PRO_VR_STEERED_TORSO_JOINTS)
-    assert len(steered) == len(R1PRO_VR_STEERED_TORSO_JOINTS), (
-        f"steered torso joints not in the upper body: {R1PRO_VR_STEERED_TORSO_JOINTS}"
-    )
-    return (*steered, *arms)
+        raise ValueError("torso motion belongs to explicit controls, not arm IK")
+    return tuple(j for j in R1PRO_UPPER_BODY_JOINTS if "_arm_joint" in j)
 
 
 #: End-effector frames the Quest controllers steer, in the R1 Pro URDF.
@@ -100,8 +91,7 @@ _r1pro_vr_pink = PinkKinematicsConfig(
     dt=0.01,
     position_cost=8.0,
     orientation_cost=2.0,
-    # High posture pull: the solver prefers arm motion and keeps the waist
-    # near its seed, so the torso only leans when the arms cannot reach.
+    # Regularize each step; the R1Pro solver adds a fixed elbow/shoulder preference.
     posture_cost=0.05,
     joint_limit_posture_margin=0.3,
     lm_damping=0.01,
@@ -110,7 +100,7 @@ _r1pro_vr_pink = PinkKinematicsConfig(
 
 
 def _teleop_task(*, full_torso: bool = False) -> TaskConfig:
-    """Both hands on one model: the steered torso joints and both arms together.
+    """Both hands on one model, with the torso fixed at measured positions.
 
     ``max_joint_velocity_rad_s`` matches the vendor tracker's speed cap, so
     teleop never asks the real tracker for more than it follows.
@@ -128,11 +118,13 @@ def _teleop_task(*, full_torso: bool = False) -> TaskConfig:
             ],
             "pink": _r1pro_vr_pink,
             "solver_type": R1ProPinkPoseTargetSolver,
-            "joint_velocity_limits_rad_s": {"r1pro/torso_joint3": 0.15},
             "timeout": 0.5,
             # The vendor tracker follows at config.tracking_speed (0.5 rad/s).
             "max_joint_velocity_rad_s": 0.5,
             "max_command_tracking_error_deg": 10.0,
+            # Soft joint stops can put measured feedback slightly beyond a limit.
+            # Keep issuing bounded inward commands instead of stranding the arm.
+            "feedback_limit_tolerance": 0.05,
             "joint_command_filter_cutoff_hz": 5.0,
         },
     )
@@ -234,7 +226,7 @@ def make_r1pro_vr_teleop(
     deliberate operation.
     """
     if full_torso:
-        raise ValueError("joystick lift owns torso_joint1/2; full_torso IK would overlap")
+        raise ValueError("torso motion belongs to explicit controls, not arm IK")
     declaration: R1ProConnectionConfig
     if backend == "fake":
         declaration = FakeR1ProConnectionConfig(**connection)

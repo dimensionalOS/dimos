@@ -14,18 +14,26 @@
 
 import math
 
+import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.galaxea.r1pro.joylo import (
+    _WRIST_TO_GRIPPER,
     ARMS,
     JAWS,
+    ROBOT_EYES,
     TORSO,
     UPPER,
+    HandsOutput,
     JoyloConfig,
     JoyloController,
+    _turned,
     torso_step,
 )
 from dimos.teleop.joycon.mapping import JoyConReading
+from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 
 
 @pytest.fixture
@@ -302,7 +310,7 @@ def test_2025_torso_height_preserves_reach_and_pitch():
         q = torso_step(q, -1, 0, 0.01, [(-3.0, 3.0)] * 4, config)
     assert 0.4 * math.sin(q[0]) + 0.3 * math.sin(q[0] + q[1]) == pytest.approx(0, abs=2e-4)
     assert q[0] + q[1] - q[2] == pytest.approx(0, abs=1e-10)
-    assert 0.4 * math.cos(q[0]) + 0.3 * math.cos(q[0] + q[1]) == pytest.approx(0.45, abs=1e-3)
+    assert 0.4 * math.cos(q[0]) + 0.3 * math.cos(q[0] + q[1]) == pytest.approx(0.4, abs=1e-3)
 
 
 @pytest.mark.parametrize("paused_feedback", [-1.59, 0.1, 0.8])
@@ -370,3 +378,292 @@ def test_periodic_leader_still_rejects_a_real_discontinuity(controller):
 
     assert not controller.active
     assert "Leader discontinuity" in controller.reason
+
+
+# The hands of a headset as the arm source: the Joy-Cons keep their functions.
+LEFT_HAND = ((0.3, 0.2, 1.0), (0.0, 0.0, 0.0, 1.0))
+RIGHT_HAND = ((0.3, -0.2, 1.0), (0.0, 0.0, 0.0, 1.0))
+TURNED = (0.0, 0.0, math.sin(0.3), math.cos(0.3))
+# The operator's eyes: 0.1 m behind the hands and 0.4 m above them, facing forward.
+HEAD = ((-0.1, 0.0, 1.4), 0.0)
+EYES = ROBOT_EYES
+
+
+def feed_hands(
+    controller,
+    now=0.0,
+    *,
+    left_hand=LEFT_HAND,
+    right_hand=RIGHT_HAND,
+    head=HEAD,
+    left=JoyConReading(),
+    right=JoyConReading(),
+):
+    for side, hand in (("left", left_hand), ("right", right_hand)):
+        if hand is not None:
+            controller.set_hand(side, hand, now)
+    if head is not None:
+        controller.set_head(*head, now)
+    controller.set_feedback({**dict.fromkeys(UPPER, 0), **dict.fromkeys(JAWS, 0.05)}, now)
+    controller.set_joycon(left, right, now)
+    return controller.step(now, 0.02)
+
+
+@pytest.fixture
+def hands(controller):
+    controller.set_arm_source("hands")
+    feed_hands(controller)
+    output = feed_hands(controller, 0.02, right=JoyConReading(frozenset({"X"})))
+    assert controller.active and output.hands.engaged
+    return controller
+
+
+def test_hands_need_no_leader_and_start_only_on_the_enable_press(controller):
+    controller.set_arm_source("hands")
+    output = feed_hands(controller)
+    assert not controller.active and output.hands == HandsOutput(False, None)
+    output = feed_hands(controller, 0.02, right=JoyConReading(frozenset({"X"})))
+    assert controller.active and controller.reason == "Following the headset's hands"
+    assert output.hands.engaged and output.hands.poses is not None
+    # The leader arms' joint targets stay where the robot stood.
+    assert [output.positions[n] for n in ARMS] == [0] * 14
+
+
+def test_a_gripper_goes_where_its_hand_is_from_the_eyes(hands):
+    # Each hand is 0.4 m in front of the operator's eyes, 0.2 m to its side and 0.4 m below.
+    left, right = feed_hands(hands, 0.04).hands.poses
+    assert left[0] == pytest.approx((EYES[0] + 0.4, 0.2, EYES[2] - 0.4))
+    assert right[0] == pytest.approx((EYES[0] + 0.4, -0.2, EYES[2] - 0.4))
+    # The hand moves 0.1 m up and 0.05 m to the right: so does the gripper, from the same place.
+    moved = feed_hands(hands, 0.06, right_hand=((0.3, -0.25, 1.1), RIGHT_HAND[1])).hands.poses[1]
+    assert moved[0] == pytest.approx((EYES[0] + 0.4, -0.25, EYES[2] - 0.3))
+    # The operator's head moves after the enable press: the hands are still measured from where it was.
+    after = feed_hands(hands, 0.08, head=((0.2, 0.3, 1.5), 0.4)).hands.poses
+    assert after[0][0] == pytest.approx(left[0]) and after[0][1] == pytest.approx(left[1])
+
+
+def test_hands_are_measured_in_the_directions_the_operator_faced_at_the_enable_press(controller):
+    # The operator faces left in the headset's space: forward is +y there, and right is +x.
+    controller.set_arm_source("hands")
+    head = ((0.0, -0.1, 1.4), math.pi / 2)
+    quarter = (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5))
+    left_hand, right_hand = ((-0.2, 0.3, 1.0), quarter), ((0.2, 0.3, 1.0), quarter)
+    feed_hands(controller, left_hand=left_hand, right_hand=right_hand, head=head)
+    output = feed_hands(
+        controller,
+        0.02,
+        left_hand=left_hand,
+        right_hand=right_hand,
+        head=head,
+        right=JoyConReading(frozenset({"X"})),
+    )
+    left, right = output.hands.poses
+    assert left[0] == pytest.approx((EYES[0] + 0.4, 0.2, EYES[2] - 0.4))
+    assert right[0] == pytest.approx((EYES[0] + 0.4, -0.2, EYES[2] - 0.4))
+    # A hand that is turned as the operator is, is a hand that is not turned.
+    assert left[1] == pytest.approx(_turned(LEFT_HAND[1], _WRIST_TO_GRIPPER))
+
+
+def test_the_robots_eyes_are_where_the_model_has_the_head_cameras():
+    # With every joint at zero the frames along the torso are not turned: the places add up.
+    joints = {joint.name: joint.origin_xyz for joint in JoyloConfig().model.load().joints}
+    cameras = [joints[f"camera_head_{side}_joint"] for side in ("left", "right")]
+    eyes = [
+        sum(joints[name][i] for name in (*TORSO, "head_joint"))
+        + (cameras[0][i] + cameras[1][i]) / 2
+        for i in range(3)
+    ]
+    assert eyes == pytest.approx(ROBOT_EYES, abs=2e-3)
+
+
+def test_a_gripper_points_where_the_fingers_point_and_closes_across_the_palm(hands):
+    # The wrist joint of a headset: -z out along the fingers, +y out of the back of the hand.
+    # Each hand holds a Joy-Con: the fingers point forward and the back of the hand outward.
+    def wrist(back_of_hand):  # in the headset's axes: x right, y up, z back
+        z = np.array([0.0, 0.0, 1.0])
+        y = np.array(back_of_hand)
+        return Rotation.from_matrix(np.column_stack([np.cross(y, z), y, z]))
+
+    for side, back in (("left", (-1.0, 0.0, 0.0)), ("right", (1.0, 0.0, 0.0))):
+        q = wrist(back).as_quat()
+        hand = webxr_to_robot(
+            PoseStamped(position=[0.0, 1.0, -0.4], orientation=list(q)),
+            is_left_controller=side == "left",
+        )
+        o = hand.orientation
+        target = hands.gripper_target(((0.3, 0.0, 1.0), (o.x, o.y, o.z, o.w)))
+        link = Rotation.from_quat(target[1]).as_matrix()
+        # The gripper link: -z is its approach, y the line its jaws close on.
+        assert -link[:, 2] == pytest.approx([1, 0, 0], abs=1e-6), side
+        # Both arms reach forward with the link's y to the robot's left (their natural roll).
+        assert link[:, 1] == pytest.approx([0, 1, 0], abs=1e-6), side
+    # A flat right hand, palm down: the jaws close up and down.
+    flat = webxr_to_robot(
+        PoseStamped(position=[0.0, 1.0, -0.4], orientation=[0, 0, 0, 1]), is_left_controller=False
+    ).orientation
+    link = Rotation.from_quat(
+        hands.gripper_target(((0.3, 0.0, 1.0), (flat.x, flat.y, flat.z, flat.w)))[1]
+    ).as_matrix()
+    assert -link[:, 2] == pytest.approx([1, 0, 0], abs=1e-6)
+    assert abs(link[2, 1]) == pytest.approx(1)
+
+
+def test_joycons_drive_lift_grip_and_pause_as_with_the_leader_arms(hands):
+    output = feed_hands(
+        hands,
+        0.04,
+        left=JoyConReading(frozenset({"up", "ZL"}), stick=(0, -1)),
+        right=JoyConReading(stick=(-1, 0)),
+    )
+    assert output.velocity == (0.1, 0.0, 0.25)
+    assert output.openings == (0.0, 0.5)
+    output = feed_hands(hands, 0.06, right=JoyConReading(frozenset({"home"})))
+    assert not hands.active and output.hands == HandsOutput(False, None)
+    assert output.velocity == (0.0, 0.0, 0.0)
+
+
+def test_a_lost_hand_or_head_stops_following_and_a_brief_loss_recovers_in_place(hands):
+    before = feed_hands(hands, 0.04).hands.poses
+    output = feed_hands(hands, 0.4, left_hand=None)
+    assert not hands.active and not output.hands.engaged
+    assert hands.reason == "Holding for fresh hands"
+    # The operator moved in the gap: the hands are still measured from the enable press.
+    output = feed_hands(hands, 0.5, head=((0.3, 0.0, 1.4), 0.2))
+    assert hands.active and output.hands.poses == before
+    # A long loss needs the enable button again.
+    feed_hands(hands, 2.0, left_hand=None, right_hand=None, head=None)
+    output = feed_hands(hands, 2.02)
+    assert not hands.active and not output.hands.engaged
+    assert "hands, head" in hands.last_pause_reason or "recovery" in hands.last_pause_reason
+
+
+def test_without_the_operators_head_the_hands_cannot_be_enabled(controller):
+    controller.set_arm_source("hands")
+    feed_hands(controller, head=None)
+    output = feed_hands(controller, 0.02, head=None, right=JoyConReading(frozenset({"X"})))
+    assert not controller.active and not output.hands.engaged
+    assert controller.reason == "Waiting for fresh head"
+    controller.set_head((0.0, 0.0, math.inf), 0.0, 0.04)
+    assert controller.reason == "Malformed head pose"
+
+
+def test_a_locked_arm_keeps_its_pose_and_a_held_wrist_its_orientation(hands):
+    target = hands.gripper_target
+    moved = ((0.4, 0.2, 1.1), TURNED)
+    # Minus locks the left arm at the pose its hand has then.
+    output = feed_hands(hands, 0.04, left=JoyConReading(frozenset({"minus"})))
+    assert output.hands.poses == (target(LEFT_HAND), target(RIGHT_HAND))
+    output = feed_hands(hands, 0.06, left_hand=moved, right_hand=((0.3, -0.2, 1.2), TURNED))
+    assert output.hands.poses == (target(LEFT_HAND), target(((0.3, -0.2, 1.2), TURNED)))
+    # Minus again: the arm goes to where the hand is now.
+    feed_hands(hands, 0.08, left_hand=moved, left=JoyConReading(frozenset({"minus"})))
+    output = feed_hands(hands, 0.10, left_hand=moved)
+    assert output.hands.poses[0] == target(moved)
+    # R holds the right wrist: the position follows, the orientation stays.
+    output = feed_hands(hands, 0.12, left_hand=moved, right=JoyConReading(frozenset({"R"})))
+    output = feed_hands(
+        hands,
+        0.14,
+        left_hand=moved,
+        right_hand=((0.35, -0.2, 1.0), TURNED),
+        right=JoyConReading(frozenset({"R"})),
+    )
+    assert output.hands.poses[1] == target(((0.35, -0.2, 1.0), RIGHT_HAND[1]))
+    output = feed_hands(hands, 0.16, left_hand=moved, right_hand=((0.35, -0.2, 1.0), TURNED))
+    assert output.hands.poses[1] == target(((0.35, -0.2, 1.0), TURNED))
+
+
+def test_a_hand_that_jumps_or_is_malformed_stops_following(hands):
+    feed_hands(hands, 0.04, left_hand=((0.9, 0.2, 1.0), LEFT_HAND[1]))
+    assert not hands.active and "Left hand jumped 0.60 m" in hands.reason
+    hands.set_hand("right", ((0.3, -0.2, math.nan), RIGHT_HAND[1]), 0.06)
+    assert hands.reason == "Malformed hand pose"
+
+
+def test_changing_the_arm_source_stops_following_and_small_profiles_refuse_hands(hands):
+    hands.set_arm_source("leader")
+    assert not hands.active and hands.arm_source == "leader"
+    output = feed(hands, 0.04)
+    assert output.hands is None
+    limits = dict.fromkeys(UPPER, (-2.0, 2.0))
+    with pytest.raises(ValueError, match="both Joy-Cons"):
+        JoyloController(limits, JoyloConfig(enabled_sides=("left",))).set_arm_source("hands")
+    with pytest.raises(ValueError, match="'leader' or 'hands'"):
+        hands.set_arm_source("feet")
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (JoyConReading(), JoyConReading()),
+        (JoyConReading(frozenset({"down"})), JoyConReading()),
+        (JoyConReading(), JoyConReading(stick=(0, 1))),
+        (JoyConReading(), JoyConReading(frozenset({"stick"}), (0, 1))),
+    ],
+)
+def test_hands_use_exactly_the_leader_torso_controls(controller, hands, left, right):
+    leader = JoyloController(controller.limits, controller.config)
+    engage(leader)
+    expected = feed(leader, 0.04, left=left, right=right)
+    actual = feed_hands(hands, 0.04, left=left, right=right)
+    assert [actual.positions[n] for n in TORSO] == pytest.approx(
+        [expected.positions[n] for n in TORSO]
+    )
+
+
+def test_moving_hands_does_not_move_the_torso(hands):
+    before = feed_hands(hands, 0.04)
+    after = feed_hands(hands, 0.06, right_hand=((0.3, -0.25, 1.1), RIGHT_HAND[1]))
+    assert before.hands.poses != after.hands.poses
+    assert [after.positions[n] for n in TORSO] == [before.positions[n] for n in TORSO]
+
+
+def test_torso_lowering_reaches_joint_boundary_and_can_raise_again():
+    config = JoyloConfig(torso_link_lengths=(0.4, 0.3))
+    limits = [(-1.1345, 1.8326), (-2.7925, 2.5307), (-1.8326, 1.5708), (-3.0543, 3.0543)]
+    q = [0.0] * 4
+    for _ in range(3000):
+        q = torso_step(q, -1, 0, 0.02, limits, config)
+    x = 0.4 * math.sin(q[0]) + 0.3 * math.sin(q[0] + q[1])
+    height = 0.4 * math.cos(q[0]) + 0.3 * math.cos(q[0] + q[1])
+    assert height < 0.21
+    assert q[2] == pytest.approx(limits[2][0], abs=1e-7)
+    assert x == pytest.approx(0.0, abs=1e-8)
+    assert q[0] + q[1] - q[2] == pytest.approx(0.0, abs=1e-8)
+    assert all(lo <= value <= hi for value, (lo, hi) in zip(q, limits, strict=True))
+    raised = torso_step(q, 1, 0, 0.02, limits, config)
+    assert 0.4 * math.cos(raised[0]) + 0.3 * math.cos(raised[0] + raised[1]) > height
+
+
+@pytest.mark.parametrize("torso", [(0.4, -0.8, -0.4, 0), (0.4, -0.8, -0.2, 0.3)])
+def test_hand_targets_ride_with_measured_torso(hands, torso):
+    before = hands.gripper_target(LEFT_HAND)
+    hands.feedback.update(zip(TORSO, torso, strict=True))
+    after = hands.gripper_target(LEFT_HAND)
+    # Transform the new target back through the torso: the arm-relative pose is unchanged.
+    neutral_body = np.eye(4)
+    current_body = np.eye(4)
+    joints = {joint.name: joint for joint in hands.config.model.load().joints}
+    for name, angle in zip(TORSO, torso, strict=True):
+        neutral_body = neutral_body @ joints[name].parent_from_child(0)
+        current_body = current_body @ joints[name].parent_from_child(angle)
+
+    def relative_target(pose, body):
+        transform = np.eye(4)
+        transform[:3, :3] = Rotation.from_quat(pose[1]).as_matrix()
+        transform[:3, 3] = pose[0]
+        return np.linalg.inv(body) @ transform
+
+    np.testing.assert_allclose(
+        relative_target(after, current_body), relative_target(before, neutral_body), atol=1e-10
+    )
+    assert after != before
+
+
+def test_lowering_level_torso_lowers_both_hand_targets(hands):
+    before = [hands.gripper_target(hand) for hand in (LEFT_HAND, RIGHT_HAND)]
+    hands.feedback.update(zip(TORSO, (0.4, -0.8, -0.4, 0), strict=True))
+    after = [hands.gripper_target(hand) for hand in (LEFT_HAND, RIGHT_HAND)]
+    for old, new in zip(before, after, strict=True):
+        assert new[0][2] < old[0][2] - 0.05
+        assert new[1] == pytest.approx(old[1])

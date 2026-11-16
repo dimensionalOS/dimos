@@ -31,6 +31,9 @@ _PIXEL_M = 1e-5
 # Headlight strength (RGB, 0 to 1) for a scene with no authored light.
 _UNLIT_AMBIENT = (0.45, 0.45, 0.45)
 _UNLIT_DIFFUSE = (0.7, 0.7, 0.7)
+# What a camera returns in place of an image it does not have.
+_NO_COLOR: NDArray[np.uint8] = np.empty((0, 0, 3), dtype=np.uint8)
+_NO_DEPTH: NDArray[np.float32] = np.empty((0, 0), dtype=np.float32)
 
 
 class MujocoRenderer:
@@ -117,10 +120,13 @@ class MujocoRenderer:
             # triggers software rendering on macOS despite MuJoCo 4's higher limit.
             renderer.scene.nlight = min(renderer.scene.nlight, 8)  # type: ignore[attr-defined]
             renderer.disable_depth_rendering()
-            rgb = renderer.render()
-            renderer.enable_depth_rendering()
-            depth = renderer.render()
-            renderer.disable_depth_rendering()
+            rgb = renderer.render() if c.color else _NO_COLOR
+            if c.depth:
+                renderer.enable_depth_rendering()
+                depth = renderer.render()
+                renderer.disable_depth_rendering()
+            else:
+                depth = _NO_DEPTH
             images[name] = rgb, depth
         return images
 

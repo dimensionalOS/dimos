@@ -62,6 +62,21 @@ def test_camera_renders_recorded_body_poses_without_physics_state(
     np.testing.assert_array_equal(replay, rgb)
 
 
+def test_a_camera_renders_only_the_images_it_has(poses, make_renderer):
+    renderer = make_renderer(
+        (CameraConfig("left/camera", depth=False), CameraConfig("right/camera", color=False))
+    )
+    images = renderer.render(poses(), ("left/camera", "right/camera"))
+    rgb, no_depth = images["left/camera"]
+    assert rgb.shape == (240, 320, 3) and rgb.std() > 5
+    assert no_depth.size == 0
+    no_color, depth = images["right/camera"]
+    assert no_color.size == 0
+    assert depth.shape == (240, 320) and np.isfinite(depth).all()
+    with pytest.raises(ValueError, match="color, depth or both"):
+        CameraConfig("neither", color=False, depth=False)
+
+
 def test_usd_authored_lights_illuminate_camera_image(poses, renderer):
     sample = poses()
     lit, _ = renderer.render(sample, ("left/camera",))["left/camera"]

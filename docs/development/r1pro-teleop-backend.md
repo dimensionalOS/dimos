@@ -124,7 +124,10 @@ Head RGB is forwarded to the headset using the original compressed JPEG bytes.
 The existing Desktop head/wrist RGB-D and three-view RGB recording remain connected.
 Arm/base speeds use the same coordinator settings as leader/browser control;
 the R1 joystick mapper updates physical stick scaling when those settings change.
-CC's IK filtering, tracking-error guard, and slow torso-pitch preference remain.
+CC's IK filtering and tracking-error guard remain. Arm IK commands only the
+14 arm joints, uses measured torso angles for kinematics, and adds a fixed soft
+shoulder/elbow posture preference. Hand tracking with Joy-Cons uses JoyLo's
+existing coordinated torso height and pitch controls.
 The combined hardware stack uses the pinned 2025 kinematics and 0.40/0.30 m lift
 links, matching the existing robot model, rather than CC's standalone 2026 defaults.
 His standalone VR entrypoints remain available separately; do not launch one
@@ -150,17 +153,19 @@ Default camera requirements:
 
 | Feature | Source | Shape (H, W, C) |
 | --- | --- | --- |
-| `observation.images.head` | Spatial aligned head color | 384 × 480 × 3 |
-| `observation.images.left_wrist` | Left wrist compressed color | 720 × 1280 × 3 |
-| `observation.images.right_wrist` | Right wrist compressed color | 720 × 1280 × 3 |
+| `observation.images.head` | Left head eye, the camera's own color (`head_left_color`) | 1536 × 1920 × 3 |
+| `observation.images.left_wrist` | Left wrist camera's own color (`wrist_left_color`) | 720 × 1280 × 3 |
+| `observation.images.right_wrist` | Right wrist camera's own color (`wrist_right_color`) | 720 × 1280 × 3 |
 
 The default profile requires all three cameras. A missing wrist must not silently
 produce a nominally complete dataset. Python compositions can explicitly select a
 subset with `r1pro_collection(cameras=("head", "right_wrist"))`; the selected views
-are persisted in the schema. The default spatial streams run at 5 Hz, and the dataset
-uses 5 Hz. Independent camera phases permit 110 ms alignment error; gaps over 450 ms
-or insufficient source rate fail validation. Commands older than 200 ms also fail.
-These settings are recorded explicitly rather than inventing 30 Hz observations.
+are persisted in the schema. The recorded streams are the cameras' own, at 30 Hz, and
+the dataset uses 30 Hz. The 5 Hz depth of the spatial sensors is for the mesh view and
+is not recorded. Independent camera phases permit 18 ms alignment error; gaps over
+75 ms or insufficient source rate fail validation. Commands older than 200 ms also fail.
+The wrist shape is the vendor driver's 1280 × 720 mode: another driver profile fails
+validation instead of passing as this dataset.
 
 `episodes.command("start")` begins a take; `save` retains it; `discard` excludes it.
 Stopping during a take leaves it incomplete and excluded. Raw capture continues
@@ -210,7 +215,8 @@ Tests cover shared limits, task completion, feedback loss, estop, accepted-comma
 recording, JoyLo mapping/authority, compressed-camera decoding, causal base commands,
 missing/stale source rejection, and exclusion of discarded/interrupted takes.
 Synthetic R1 MCAP is exported to HDF5 and to real LeRobot data; LeRobot's training
-loader verifies the 23-element action, joint ordering, image shapes, and 5 Hz rate.
+loader verified the 23-element action, joint ordering, image shapes and rate at the
+earlier 5 Hz; that LeRobot check has not been repeated at 30 Hz.
 Physical capture performance and driving behavior still need the next supervised
 hardware session. No physical robot or simulator is started by these tests.
 

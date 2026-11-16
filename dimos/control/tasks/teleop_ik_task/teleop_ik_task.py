@@ -109,7 +109,13 @@ class _SessionState(Enum):
 
 
 class TeleopIKTask(PoseTargetIKTask):
-    """Map one or two controller streams into absolute robot frame targets."""
+    """Map one or two controller streams into absolute robot frame targets.
+
+    A pose from an operator's device is followed from where the device and the
+    robot frame were at engagement. A pose whose ``frame_id`` is the robot
+    model's base link is already a target in that frame, and is followed as
+    given: the robot frame goes to it at the task's joint speed limits.
+    """
 
     def __init__(
         self,
@@ -259,6 +265,7 @@ class TeleopIKTask(PoseTargetIKTask):
             ):
                 return None
             targets: dict[str, PoseStamped] = {}
+            base_link = self._teleop_config.robot_model.base_link
             update_times = [self._last_button_update_time]
             for hand, binding in self._bindings.items():
                 hand_state = self._hands[hand]
@@ -267,11 +274,16 @@ class TeleopIKTask(PoseTargetIKTask):
                 robot_reference = hand_state.robot_reference
                 if current is None or controller_reference is None or robot_reference is None:
                     return None
-                delta = current - controller_reference
+                if base_link and current.frame_id == base_link:
+                    position, orientation = current.position, current.orientation
+                else:
+                    delta = current - controller_reference
+                    position = robot_reference.position + delta.position
+                    orientation = delta.orientation * robot_reference.orientation
                 targets[binding.target_frame] = PoseStamped(
                     frame_id=self._teleop_config.robot_model.base_pose.frame_id,
-                    position=robot_reference.position + delta.position,
-                    orientation=delta.orientation * robot_reference.orientation,
+                    position=position,
+                    orientation=orientation,
                 )
                 update_times.append(hand_state.last_update_time)
             return FrameTargetSnapshot(

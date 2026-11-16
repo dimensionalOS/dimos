@@ -62,11 +62,12 @@ def test_invalid_target_batch_is_atomic(backend, motor_commands):
 
 
 @pytest.mark.parametrize("side,direction", [(0, -1), (1, 1)])
+@pytest.mark.parametrize("roundoff", [3e-12, 2.5e-8])
 def test_joint_limit_roundoff_is_clamped_but_out_of_range_is_rejected(
-    backend, motor_commands, side, direction
+    backend, motor_commands, side, direction, roundoff
 ):
     limit = backend.model.joint("left/slide_x").range[side]
-    backend.apply_action(motor_commands(positions=(limit + direction * 3e-12,), kp=100), [])
+    backend.apply_action(motor_commands(positions=(limit + direction * roundoff,), kp=100), [])
     aid = backend.model.actuator("left/slide_x").id
     assert backend.data.ctrl[aid] == 100 * limit
     before = backend.data.ctrl.copy()

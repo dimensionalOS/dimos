@@ -56,6 +56,8 @@ HEAD_HEIGHT = 1536
 # The rate the ISX031 runs at, free or hardware-triggered.
 HEAD_FPS = 30.0
 HEAD_FOURCC = "UYVY"
+# The JPEG quality of the head color streams, on the robot and in simulation.
+HEAD_JPEG_QUALITY = 70
 # Every link on the head's deserializer: a mask of only the two head links stops them streaming.
 HEAD_TRIGGER_LINKS = 0x0F
 
