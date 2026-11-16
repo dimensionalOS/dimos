@@ -41,6 +41,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.resource import Resource
+from dimos.core.spatial_module import SpatialModule
 from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import (
     LCMTransport,
@@ -1067,6 +1068,7 @@ def _deploy_all_modules(
         kwargs.pop("instance_name", None)
         if bp.instance_name is not None:
             kwargs["instance_name"] = bp.instance_name
+        _namespace_tf_frames_local(bp, kwargs)
         module_specs.append((bp.module, gc, kwargs))
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
@@ -1074,6 +1076,21 @@ def _deploy_all_modules(
 
     for bp in blueprint.active_blueprints:
         module_coordinator._deployed_atoms[bp.name] = deployed_atoms[bp.name]
+
+
+def _namespace_tf_frames_local(atom: BlueprintAtom, kwargs: dict[str, Any]) -> None:
+    """Prefix a namespaced SpatialModule's local frames with its namespace, so copies don't share frames."""
+    namespace = _atom_namespace(atom.name)
+    if not namespace or not issubclass(atom.module, SpatialModule):
+        return
+    frames = kwargs.get("tf_frames_local")
+    if frames is None:
+        frames = (
+            module_config_cls(atom)
+            .model_fields["tf_frames_local"]
+            .get_default(call_default_factory=True)
+        )
+    kwargs["tf_frames_local"] = {role: f"{namespace}/{frame}" for role, frame in frames.items()}
 
 
 def _ref_msg(module_name: str, ref: object, spec_name: str, detail: str) -> str:
