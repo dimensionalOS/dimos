@@ -26,6 +26,7 @@ from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
+from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.simulation.mujoco.menagerie import menagerie_path
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
 from dimos.utils.data import get_data
@@ -65,6 +66,7 @@ def get_assets() -> dict[str, bytes]:
 def load_model(
     input_device: InputController, robot: str, scene_xml: str
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
+    configure_mujoco_logging()
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene_xml)
