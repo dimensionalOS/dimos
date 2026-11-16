@@ -32,7 +32,8 @@ from reactivex import interval
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.memory.cli.dataset import open_dataset, resolve_dataset, stream_payload_types
+from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset, stream_payload_types
+from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
 from dimos.utils.generic import classproperty
@@ -126,7 +127,8 @@ class ReplayModule(Module):
         super().start()
         if not self.config.dataset:
             raise ValueError("no recording: pass --replay-db <memory.db>")
-        store: Store = open_dataset(self.config.dataset)
+        path = resolve_dataset(self.config.dataset)
+        store: Store = open_store(path)
         store.start()
         self._store = store
         replay: Replay = store.replay(
@@ -146,6 +148,8 @@ class ReplayModule(Module):
         # would spend that lead time emitting nothing.
         static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
         timed_starts = [t for n, s in streams.items() if n not in static and (t := s.first_ts())]
+        progress = ReplayProgress(str(path))
+        progress.start(replay, (s for n, s in streams.items() if n not in static))
         replay.pin_anchor(min(timed_starts) if timed_starts else None)
         port: Out[DimosMsg]
         for name, port in self.outputs.items():
@@ -160,7 +164,8 @@ class ReplayModule(Module):
             # subscribed before it, which on a loaded machine exceeds the
             # late tolerance and would drop its first frames.
             timed: Observable[DimosMsg] = stream.observable(skip_late=False)
-            self.register_disposable(timed.subscribe(port.publish))
+            self.register_disposable(progress.track(timed).subscribe(port.publish))
+        progress.seal()
 
     @rpc
     def stop(self) -> None:

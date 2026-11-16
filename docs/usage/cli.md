@@ -37,6 +37,8 @@ Module settings go after the blueprint names, for example `dimos run unitree-go2
 
 Module booleans require an explicit value (`--go2connection.replay-exit true` or `--go2connection.replay-exit=true`); they have no bare-flag or `--no-` form. Global booleans still accept paired flags such as `--replay` / `--no-replay`.
 
+Replays log their source, duration (in recorded seconds), speed and loop setting at startup, then report when all recorded streams finish. The stack stays running for inspection unless replay exit is enabled. To keep Go2 replay data flowing during longer checks, run `dimos --replay run unitree-go2 --go2connection.replay-loop true`.
+
 ---
 
 ## Commands
