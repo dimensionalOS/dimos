@@ -134,13 +134,8 @@ class McpClient(Module):
         )
         self._stop_event = Event()
         self._http_client = requests.Session()
-        # One TCP connection per request: a pooled keep-alive connection is closed by
-        # the server once idle for uvicorn's timeout_keep_alive (5s by default), and a
-        # request sent on it at that same instant fails with "Connection aborted"
-        # (RemoteDisconnected / ConnectionResetError). The idle gap between tools/list
-        # and the first tools/call (building the agent) or between two tool calls (a
-        # model turn) lands on that boundary now and then, and a tools/call cannot be
-        # blindly retried.
+        # Reduce errors caused by POST requests failing as the server closes
+        # a keep-alive connection by never reusing the connection.
         self._http_client.headers["Connection"] = "close"
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
