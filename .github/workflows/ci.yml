@@ -1166,10 +1166,6 @@ jobs:
           files: ./coverage.xml
           flags: SelfHosted-${{ matrix.os }}
           use_oidc: true
-          # Use the pinned CLI from the "Install codecov CLI" step (no pip
-          # on self-hosted runners, and the default cli.codecov.io download
-          # has a broken GPG key fetch). See codecov/codecov-action#1955.
-          binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7.1.1
