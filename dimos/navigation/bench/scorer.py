@@ -150,7 +150,7 @@ class Recording:
                 default=0.0,
             )
             pose = stamped("ground_truth", PoseStamped)
-            # Opened without a type so a recording from before goals were poses still reads.
+            # Opened without a type so a recording with PointStamped goals still reads.
             goals: list[Observation[PointStamped | PoseStamped]] | None = (
                 store.stream("goal").to_list() if "goal" in names else None
             )

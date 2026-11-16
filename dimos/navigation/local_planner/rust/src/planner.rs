@@ -33,6 +33,8 @@ const GRID_PAD: f64 = 0.72; // 3 * PERIOD
 const YAW_BINS: usize = 16;
 /// Cells around the goal a route may step onto an exact pose from.
 const GOAL_WINDOW: usize = 2;
+/// Tolerance for a route that already ends on the exact goal pose.
+const EXACT_EPS: f64 = 1e-6;
 const OFFSET_STEP: f64 = 0.05;
 /// Worst-case distance between the fine-grid snaps of two coincident points.
 const SNAP: f64 = FINE * std::f64::consts::SQRT_2;
@@ -1342,7 +1344,7 @@ fn se2_search_in(
 
     let n_states = YAW_BINS * nx * ny;
     // With a heading the route ends on the exact pose, a state past the lattice
-    // entered from any state within `GOAL_WINDOW` of the goal cell by a clear segment.
+    // entered from any state within GOAL_WINDOW of the goal cell by a clear segment.
     let exact = goal_yaw.map(|yaw| [goal.0, goal.1, yaw]);
     let goal_k = n_states;
     let mut dist = vec![f64::INFINITY; n_states + 1];
@@ -1824,9 +1826,9 @@ fn committed(
     // search from the far end. A heading goal is reached only on the exact pose.
     let at_goal = match goal_yaw {
         Some(yaw) => {
-            (end[0] - goal.0).abs() < 1e-6
-                && (end[1] - goal.1).abs() < 1e-6
-                && rem_2pi(end[2] - yaw).abs() < 1e-6
+            (end[0] - goal.0).abs() < EXACT_EPS
+                && (end[1] - goal.1).abs() < EXACT_EPS
+                && rem_2pi(end[2] - yaw).abs() < EXACT_EPS
         }
         None => (cell(end[0]), cell(end[1])) == (cell(goal.0), cell(goal.1)),
     };
@@ -2452,6 +2454,33 @@ mod tests {
     }
 
     #[test]
+    fn a_replan_with_the_held_route_still_ends_on_the_heading() {
+        let replan = |pose: [f64; 3], yaw: f64, held: &[[f64; 3]]| {
+            plan_explored(
+                &[],
+                &Terrain::default(),
+                (pose[0], pose[1], pose[2]),
+                &[[4.0, 0.0]],
+                Some(yaw),
+                &Emb::fixture(),
+                0.1,
+                Some(held),
+                COMMIT_MARGIN,
+            )
+            .expect("a route")
+        };
+        let (first, _) =
+            plan_heading(&[], (0.0, 0.0, 0.0), [4.0, 0.0], Some(FRAC_PI_2)).expect("a route");
+        let moved = first[first.len() / 2];
+        let (again, honored) = replan(moved, FRAC_PI_2, &first);
+        assert!(honored);
+        assert_ends_at(&again, [4.0, 0.0, FRAC_PI_2]);
+        let (turned, honored) = replan(moved, PI, &again);
+        assert!(honored);
+        assert_ends_at(&turned, [4.0, 0.0, PI]);
+    }
+
+    #[test]
     fn a_corridor_honors_a_reversed_heading_and_not_a_sideways_one() {
         let pts = corridor(0.4);
         let (states, honored) =
@@ -2487,11 +2516,10 @@ mod tests {
             plan_heading(&pts, (0.0, 0.0, phi), goal, Some(phi)).expect("a route");
         assert!(honored);
         assert_ends_at(&states, [goal[0], goal[1], phi]);
+        // Facing the wall falls back to the position-only goal, which does not fit either.
         let facing = plan_heading(&pts, (0.0, 0.0, phi), goal, Some(phi + FRAC_PI_2));
-        assert!(
-            facing.is_none_or(|(_, honored)| !honored),
-            "facing the wall does not fit"
-        );
+        assert!(facing.is_none(), "facing the wall does not fit");
+        assert!(plan_heading(&pts, (0.0, 0.0, phi), goal, None).is_none());
     }
 
     fn slot_x(lo: f64, hi: f64, from_y: f64) -> Vec<[f64; 2]> {

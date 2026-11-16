@@ -1121,10 +1121,8 @@ impl Replan {
     }
 }
 
-/// Decide a replan pass. A goal already within tolerance needs no path, unless it
-/// carries a heading the robot does not face yet: then the path is the final turn,
-/// start to goal, with no graph search to snap it. A reached goal keeps its path
-/// out, so the follower settles on its own.
+/// Decide a replan pass. A goal within tolerance is reached once the robot faces its
+/// heading, if it has one, and a reached goal keeps its path out for the follower.
 fn replan(
     planner: &mut Planner,
     start: Xyz,

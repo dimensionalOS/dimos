@@ -28,7 +28,6 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
-from dimos.navigation.spec import cancel_goal
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
@@ -124,4 +123,4 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     @rpc
     def stop_navigation(self) -> None:
         """Cancel the current goal, whoever sent it, and return at once."""
-        self.goal.transport.publish(cancel_goal(self.config.world_frame))
+        self.goal.transport.publish(spec.cancel_goal(self.config.world_frame))

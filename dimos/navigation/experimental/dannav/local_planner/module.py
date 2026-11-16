@@ -44,7 +44,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
@@ -100,12 +99,11 @@ class _ReplanGate:
     def on_odom(self, odom: PoseStamped) -> None:
         self._robot_xy = np.array([odom.position.x, odom.position.y], dtype=float)
 
-    def on_goal(self, goal: PointStamped) -> None:
+    def on_goal(self, goal: PoseStamped) -> None:
         """Arm or disarm the fresh-click commit.
 
-        A finite ``PointStamped`` arms it and stores the goal xy; a NaN point is
-        the cancel from ``MovementManager._cancel_goal`` and disarms it (and
-        drops the committed path). ``DanLocalPlanner`` does not touch
+        A finite goal arms it and stores the goal xy. A NaN goal is the cancel from
+        ``MovementManager._cancel_goal`` and disarms it, dropping the committed path. ``DanLocalPlanner`` does not touch
         ``stop_movement``.
         """
         if math.isnan(goal.x) or math.isnan(goal.y):
@@ -216,7 +214,7 @@ class DanLocalPlanner(Module):
 
     planner_path: In[Path]  # from MLSPlannerNative.path (remapped)
     odom: In[PoseStamped]  # from GO2Connection.odom
-    goal: In[PointStamped]  # from MovementManager.goal; the click/cancel signal
+    goal: In[PoseStamped]  # from MovementManager.goal, the click or cancel signal
 
     path: Out[Path]  # to DanHolonomicTC.path
 
@@ -236,7 +234,7 @@ class DanLocalPlanner(Module):
     def _on_odom(self, msg: PoseStamped) -> None:
         self._gate.on_odom(msg)
 
-    def _on_goal(self, msg: PointStamped) -> None:
+    def _on_goal(self, msg: PoseStamped) -> None:
         self._gate.on_goal(msg)
 
     def _on_planner_path(self, msg: Path) -> None:

@@ -479,8 +479,8 @@ impl Worker {
                     ) {
                         continue;
                     }
-                    // A carrot that jumped or a heading that changed is a different task;
-                    // the held route is the old one's.
+                    // A carrot that jumped or a heading that changed is a different task.
+                    // The held route is the old one's.
                     if planned.is_some_and(|(_, was, had)| {
                         had != heading
                             || (was.0 - goal.0).hypot(was.1 - goal.1) > self.config.reset_carrot_m

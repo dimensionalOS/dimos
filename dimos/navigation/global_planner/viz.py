@@ -76,7 +76,7 @@ def goal_point(xyz: tuple[float, float, float]) -> Archetype:
 
 
 def render_goal(msg: PoseStamped) -> Archetype | None:
-    """The active goal. NaN is the movement manager's placeholder for none."""
+    """The active goal, or nothing for a ``cancel_goal``."""
     if any(math.isnan(v) for v in (msg.x, msg.y, msg.z)):
         return None
     return goal_point((msg.x, msg.y, msg.z))

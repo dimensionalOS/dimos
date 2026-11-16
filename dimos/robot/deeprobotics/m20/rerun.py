@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
-from dimos.navigation.global_planner.viz import render_path
+from dimos.navigation.global_planner.viz import render_goal, render_path
 from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
@@ -73,6 +73,7 @@ def m20_nav_overrides() -> dict[str, VisualOverride]:
         "world/lidar": None,
         "world/slam_body_points": None,
         "world/planner_path": render_path,
+        "world/goal": render_goal,
         **motion_visual_override(embodiment=M20),
         **planner_visual_override(
             PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, wall_clearance_m=WALL_CLEARANCE_M
