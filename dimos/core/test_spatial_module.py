@@ -25,6 +25,7 @@ from dimos.protocol.tf.tf import TF
 class OdomConfig(SpatialModuleConfig):
     tf_frames_local: dict[str, str] = {"body": "base_link"}
     tf_frames_global: dict[str, str] = {"world": "world"}
+    tf_edges: list[tuple[str, str]] = [("world", "body")]
 
 
 class Odom(SpatialModule, Module):
@@ -65,3 +66,15 @@ def test_frames_are_configurable() -> None:
     finally:
         module._tf = None
         module.stop()
+
+
+def test_undeclared_edge_is_refused(odom: Odom) -> None:
+    with pytest.raises(ValueError, match="undeclared tf edges"):
+        odom.tf_publish(Transform(frame_id="base_link", child_frame_id="world", ts=1.0))
+
+
+def test_edges_must_use_declared_roles() -> None:
+    with pytest.raises(ValueError, match=r"undeclared tf roles \['lidar'\]"):
+        OdomConfig(tf_edges=[("body", "lidar")])
+    with pytest.raises(ValueError, match=r"in both"):
+        OdomConfig(tf_frames_local={"world": "x"})

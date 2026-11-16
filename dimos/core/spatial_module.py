@@ -16,7 +16,7 @@
 
 from typing import TypeAlias
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.core.module import ModuleBase, ModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -31,10 +31,30 @@ class SpatialModuleConfig(ModuleConfig):
     # Role -> frame id, e.g. {"body": "base_link"}. Code reads frames from here, never from literals.
     tf_frames_local: dict[str, TransformFrameLocal] = Field(default_factory=dict)
     tf_frames_global: dict[str, TransformFrameGlobal] = Field(default_factory=dict)
+    # (parent role, child role) for every edge this module publishes; tf_publish refuses any other.
+    tf_edges: list[tuple[str, str]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_roles(self) -> "SpatialModuleConfig":
+        shared = sorted(self.tf_frames_local.keys() & self.tf_frames_global.keys())
+        if shared:
+            raise ValueError(f"tf roles {shared} are in both tf_frames_local and tf_frames_global")
+        roles = self.tf_frames_local.keys() | self.tf_frames_global.keys()
+        unknown = sorted({role for edge in self.tf_edges for role in edge} - roles)
+        if unknown:
+            raise ValueError(
+                f"tf_edges use undeclared tf roles {unknown} (declared: {sorted(roles)})"
+            )
+        return self
+
+    @property
+    def tf_edge_frames(self) -> set[tuple[str, str]]:
+        frames = {**self.tf_frames_global, **self.tf_frames_local}
+        return {(frames[parent], frames[child]) for parent, child in self.tf_edges}
 
 
 class SpatialModule(ModuleBase):
-    """Publishes and looks up only the tf frames it declares in ``tf_frames_local``/``tf_frames_global``."""
+    """Looks up only the tf frames it declares, and publishes only the edges in ``tf_edges``."""
 
     config: SpatialModuleConfig
 
@@ -52,6 +72,13 @@ class SpatialModule(ModuleBase):
 
     def tf_publish(self, *transforms: Transform) -> None:
         self._require_declared(*(f for t in transforms for f in (t.frame_id, t.child_frame_id)))
+        undeclared = sorted(
+            {(t.frame_id, t.child_frame_id) for t in transforms} - self.config.tf_edge_frames
+        )
+        if undeclared:
+            raise ValueError(
+                f"{type(self).__name__} publishes undeclared tf edges {undeclared}; add them to tf_edges"
+            )
         self.tfbuffer.publish(*transforms)
 
     def tf_get(
