@@ -16,18 +16,18 @@ from collections.abc import Iterator
 
 import pytest
 
-from dimos.core.spatial_module import SpatialModule, SpatialModuleConfig
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.protocol.tf.tf import TF
 
 
-class OdomConfig(SpatialModuleConfig):
+class OdomConfig(TfModuleConfig):
     tf_frames_local: dict[str, str] = {"body": "base_link"}
     tf_frames_global: dict[str, str] = {"world": "world"}
     tf_edges: list[tuple[str, str]] = [("world", "body")]
 
 
-class Odom(SpatialModule):
+class Odom(TfModule):
     config: OdomConfig
 
 

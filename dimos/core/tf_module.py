@@ -27,7 +27,7 @@ TransformFrameLocal: TypeAlias = str
 TransformFrameGlobal: TypeAlias = str
 
 
-class SpatialModuleConfig(ModuleConfig):
+class TfModuleConfig(ModuleConfig):
     # Role -> frame id, e.g. {"body": "base_link"}. Code reads frames from here, never from literals.
     tf_frames_local: dict[str, TransformFrameLocal] = Field(default_factory=dict)
     tf_frames_global: dict[str, TransformFrameGlobal] = Field(default_factory=dict)
@@ -35,7 +35,7 @@ class SpatialModuleConfig(ModuleConfig):
     tf_edges: list[tuple[str, str]] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _check_roles(self) -> "SpatialModuleConfig":
+    def _check_roles(self) -> "TfModuleConfig":
         shared = sorted(self.tf_frames_local.keys() & self.tf_frames_global.keys())
         if shared:
             raise ValueError(f"tf roles {shared} are in both tf_frames_local and tf_frames_global")
@@ -53,10 +53,10 @@ class SpatialModuleConfig(ModuleConfig):
         return {(frames[parent], frames[child]) for parent, child in self.tf_edges}
 
 
-class SpatialModule(Module):
+class TfModule(Module):
     """Looks up only the tf frames it declares, and publishes only the edges in ``tf_edges``."""
 
-    config: SpatialModuleConfig
+    config: TfModuleConfig
 
     @property
     def tf_frames(self) -> set[str]:
