@@ -28,7 +28,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.spec import position_goal
 
 
 class _GoalTransport(Transport[PoseStamped]):
@@ -74,9 +73,10 @@ def test_the_planner_exposes_navigation_as_plain_rpcs(rig: _Rig) -> None:
 
 
 def test_go_to_takes_a_pose_stamped() -> None:
-    (param,) = extract_rpc_info(MLSPlannerNative.go_to).params
+    pose, face_heading = extract_rpc_info(MLSPlannerNative.go_to).params
 
-    assert (param.name, param.annotation) == ("pose", PoseStamped)
+    assert (pose.name, pose.annotation) == ("pose", PoseStamped)
+    assert face_heading.name == "face_heading"
 
 
 def test_go_to_sends_the_pose_position_under_a_new_stamp_and_returns_it(rig: _Rig) -> None:
@@ -91,20 +91,22 @@ def test_go_to_sends_the_pose_position_under_a_new_stamp_and_returns_it(rig: _Ri
     assert [stamp.sec, stamp.nsec] == goal.ros_timestamp()
 
 
-def test_go_to_sends_the_pose_heading(rig: _Rig) -> None:
+def test_go_to_sends_the_pose_heading_when_asked(rig: _Rig) -> None:
     facing = Quaternion.from_euler(Vector3(0.0, 0.0, math.radians(90.0)))
 
-    rig.module.go_to(PoseStamped(position=(4.0, 2.0, 0.0), orientation=facing))
+    rig.module.go_to(PoseStamped(position=(4.0, 2.0, 0.0), orientation=facing), face_heading=True)
 
     (goal,) = rig.sent
     assert goal.yaw == pytest.approx(math.radians(90.0))
 
 
-def test_go_to_a_position_goal_sends_no_heading(rig: _Rig) -> None:
-    rig.module.go_to(position_goal(4.0, 2.0, 0.0, "odom"))
+def test_go_to_sends_no_heading_by_default(rig: _Rig) -> None:
+    facing = Quaternion.from_euler(Vector3(0.0, 0.0, math.radians(90.0)))
 
-    (goal,) = rig.sent
-    assert goal.orientation.is_zero()
+    rig.module.go_to(PoseStamped(position=(4.0, 2.0, 0.0), orientation=facing))
+    rig.module.go_to(PoseStamped(position=(4.0, 2.0, 0.0)))
+
+    assert [goal.orientation.is_zero() for goal in rig.sent] == [True, True]
 
 
 def test_a_second_go_to_replaces_the_one_under_way(rig: _Rig) -> None:

@@ -106,17 +106,16 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         super().stop()
 
     @rpc
-    def go_to(self, pose: PoseStamped) -> Time:
+    def go_to(self, pose: PoseStamped, face_heading: bool = False) -> Time:
         """Start driving to a pose and return the goal's stamp at once.
 
-        Replaces any goal under way. The orientation is the heading to face there, and a
-        `position_goal` has none. An empty frame is the world frame. `nav_status` reports
-        carry the stamp in `goal_id.stamp`, and a report with a status other than PENDING
-        or ACTIVE says the goal is over.
+        Replaces any goal under way. The robot ends facing whichever way it arrives, unless
+        `face_heading` is set, when it turns to the pose's orientation there. An empty frame
+        is the world frame. `nav_status` reports carry the stamp in `goal_id.stamp`, and a
+        report with a status other than PENDING or ACTIVE says the goal is over.
         """
-        goal = PoseStamped(
-            frame_id=pose.frame_id, position=pose.position, orientation=pose.orientation
-        )
+        orientation = pose.orientation if face_heading else spec.NO_HEADING
+        goal = PoseStamped(frame_id=pose.frame_id, position=pose.position, orientation=orientation)
         self.goal.transport.publish(goal)
         return Time(*goal.ros_timestamp())
 

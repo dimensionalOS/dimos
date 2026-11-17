@@ -65,9 +65,9 @@ uv run dimos shell
 ...in the shell:
 
 ```python
-from dimos.navigation.spec import position_goal
-app.MLSPlannerNative.go_to(position_goal(<x>, <y>, <z>, "world"))
-app.MLSPlannerNative.go_to(position_goal(<x2>, <y2>, <z2>, "world"))
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+app.MLSPlannerNative.go_to(PoseStamped(position=(<x>, <y>, <z>), frame_id="world"))
+app.MLSPlannerNative.go_to(PoseStamped(position=(<x2>, <y2>, <z2>), frame_id="world"))
 app.MLSPlannerNative.stop_navigation()
 ```
 
