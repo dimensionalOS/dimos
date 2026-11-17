@@ -111,10 +111,11 @@ class XArm7KittingConfig(ModuleConfig):
     # The loading slot between the dual OpenYAM's resting arms: back wall toward the xArm7.
     loading_slot: BinPose = BinPose(x=0.314, y=0.505, yaw_deg=90.0)
     # Done slots, back wall toward the arm, in the order they are filled: the middle one first.
-    # The one nearest the wall puts the held wall 0.36 m from the base, where the arm folds hard
-    # with a full bin hanging from it, so it is filled last.
+    # The one nearest the wall puts the held wall 0.35 m from the base, where the arm folds hard
+    # with a full bin hanging from it, so it is filled last. 26 mm between neighbours: a bin set
+    # down 8 mm from another caught its rim and tipped over.
     done_slots: list[BinPose] = Field(
-        default_factory=lambda: [BinPose(x=x, y=-0.457, yaw_deg=-90.0) for x in (0.22, 0.38, 0.06)]
+        default_factory=lambda: [BinPose(x=x, y=-0.457, yaw_deg=-90.0) for x in (0.22, 0.40, 0.04)]
     )
     # Indexes of done slots already holding a bin when the module starts.
     done_taken: list[int] = Field(default_factory=list)
