@@ -53,7 +53,7 @@ _TELEOP_ANGULAR_SPEED = 0.6
 _RECORDING_DIR = default_recording_dir()
 
 
-unitree_go2_mid360_record = (
+_recording_stack = (
     autoconnect(
         MovementManager.blueprint(),
         GO2Connection.blueprint(publish_tf=False).remappings(
@@ -86,16 +86,20 @@ unitree_go2_mid360_record = (
     .global_config(n_workers=12, robot_model="unitree_go2")
 )
 
-if _RECORD_PCAP:
-    unitree_go2_mid360_record = autoconnect(
-        unitree_go2_mid360_record,
-        Mid360PcapRecorder.blueprint(pcap_path=str(_RECORDING_DIR / "mid360.pcap")),
-    ).solidify()
+unitree_go2_mid360_record = autoconnect(
+    _recording_stack,
+    *(
+        [Mid360PcapRecorder.blueprint(pcap_path=str(_RECORDING_DIR / "mid360.pcap"))]
+        if _RECORD_PCAP
+        else []
+    ),
+)
 
 
 if __name__ == "__main__":
-    parsed_config = BlueprintConfigParser(unitree_go2_mid360_record).parse(
+    blueprint = unitree_go2_mid360_record.solidify()
+    parsed_config = BlueprintConfigParser(blueprint).parse(
         overrides={"go2connection": {"obstacle_avoidance": False}}
     )
-    coordinator = ModuleCoordinator.build(unitree_go2_mid360_record, parsed_config)
+    coordinator = ModuleCoordinator.build(blueprint, parsed_config)
     coordinator.loop()

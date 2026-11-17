@@ -40,5 +40,5 @@ if __name__ == "__main__":
             WebcamModule.blueprint(),
             Grayscale.blueprint(),
             RerunBridgeModule.blueprint(),
-        ).solidify()
+        )
     ).loop()

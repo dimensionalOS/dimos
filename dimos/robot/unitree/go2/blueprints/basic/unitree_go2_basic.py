@@ -189,7 +189,7 @@ _with_vis = autoconnect(
         viewer_backend=global_config.viewer,
         rerun_config=rerun_config,
     ),
-).solidify()
+)
 
 
 unitree_go2_basic = (

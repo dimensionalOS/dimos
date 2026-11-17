@@ -58,7 +58,7 @@ unitree_go2_cockpit = autoconnect(
             shares=[2, 1],
         ),
     ),
-).solidify()
+)
 ```
 
 `Row` splits the space horizontally, `Col` vertically. Both take panels or nested splits, plus an optional `shares` list with one number per child (equal shares when omitted). The tree above renders like this:

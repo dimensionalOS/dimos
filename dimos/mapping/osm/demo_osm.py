@@ -24,4 +24,4 @@ demo_osm = autoconnect(
     OsmSkill.blueprint(),
     McpServer.blueprint(),
     Agent.blueprint(),
-).solidify()
+)

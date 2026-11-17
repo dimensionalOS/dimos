@@ -96,7 +96,7 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
             "MANIPULATIONLOCALIZE__SEGMENTER": "yolo",
         },
     ).configure_launch(proc)
-    parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
+    parsed = BlueprintConfigParser(xarm_perception_sim.solidify()).parse(environ=proc.extra_env)
     perception = parsed.module_kwargs("manipulationlocalize")
     assert perception["detector"] == "yoloe"
     assert perception["segmenter"] == "yolo"
@@ -106,7 +106,7 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
 
     mounted = ManipulationModuleConfig(**parsed.module_kwargs("manipulationmodule"))
     assert mounted.model.base_pose.position.z == pytest.approx(0.912)
-    defaults = BlueprintConfigParser(xarm_perception_sim).parse(environ={})
+    defaults = BlueprintConfigParser(xarm_perception_sim.solidify()).parse(environ={})
     default = ManipulationModuleConfig(**defaults.module_kwargs("manipulationmodule"))
     assert default.model.base_pose.position.z == pytest.approx(0.12)
     assert mounted.model.joint_names == default.model.joint_names
@@ -130,7 +130,7 @@ def test_raw_arm_blueprint_configures_its_bridge():
         blueprint=["xarm-sim", "mcp-server"], raw_bridge=True, raw_guide=RAW_ARM_README
     )
     assert env.provides_raw_robot
-    parsed = BlueprintConfigParser(xarm_sim).parse(
+    parsed = BlueprintConfigParser(xarm_sim.solidify()).parse(
         environ={"RAWROBOTBRIDGE__ENDPOINT": "tcp/127.0.0.1:12345"}
     )
     bridge = parsed.module_kwargs("rawrobotbridge")

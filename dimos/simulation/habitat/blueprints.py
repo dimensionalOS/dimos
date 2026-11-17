@@ -110,9 +110,9 @@ def _rerun_config(extra: dict[str, Any] | None = None) -> dict[str, Any]:
 habitat_teleop = (
     autoconnect(
         HabitatConnection.blueprint(publish_scan=False),
-        vis_module(global_config.viewer, rerun_config=_rerun_config()).remappings(
-            [(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]
-        ),
+        vis_module(global_config.viewer, rerun_config=_rerun_config())
+        .solidify()
+        .remappings([(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]),
     )
     .solidify()
     .global_config(transport="zenoh")
@@ -127,9 +127,9 @@ habitat_voxel = (
         VoxelGridMapper.blueprint(voxel_size=voxel_size, frame_id=WORLD_FRAME).remappings(
             [(VoxelGridMapper, "lidar", SCAN_TOPIC)]
         ),
-        vis_module(global_config.viewer, rerun_config=_rerun_config()).remappings(
-            [(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]
-        ),
+        vis_module(global_config.viewer, rerun_config=_rerun_config())
+        .solidify()
+        .remappings([(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]),
     )
     .solidify()
     .global_config(transport="zenoh")
@@ -205,7 +205,9 @@ habitat_nav = (
                     ),
                 }
             ),
-        ).remappings([(RerunWebSocketServer, "tele_cmd_vel", "tele_cmd_vel")]),
+        )
+        .solidify()
+        .remappings([(RerunWebSocketServer, "tele_cmd_vel", "tele_cmd_vel")]),
     )
     .solidify()
     .global_config(transport="zenoh")

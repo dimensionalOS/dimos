@@ -221,7 +221,7 @@ def _camera_fps() -> float:
     """The frame rate (frames per second) the collection stack's sim camera is set to."""
     sim = next(
         atom
-        for atom in hybrid_teleop_sim_collect.active_blueprints
+        for atom in hybrid_teleop_sim_collect.solidify().active_blueprints
         if issubclass(atom.module, MujocoSimModule)
     )
     return float(module_config_cls(sim)(**sim.kwargs).fps)

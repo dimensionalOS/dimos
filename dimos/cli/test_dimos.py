@@ -38,6 +38,7 @@ import dimos.core.run_registry as run_registry
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
+from dimos.robot.get_all_blueprints import get_by_name_or_exit
 from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.effectors.high_level.webrtc import G1HighLevelWebRtc
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -508,6 +509,40 @@ def test_run_requires_a_selection_when_no_default_exists(
     assert "Choice 'Required' is required" in result.output
     assert "--choice Required=<option>" in result.output
     assert stubbed_run == {}
+
+
+def test_run_resolves_nested_choices_loaded_from_the_registry(stubbed_run, monkeypatch) -> None:
+    inner = autoconnect(
+        ChoiceAtom(
+            name="PointClearing",
+            choices={
+                "raycasting": RunModuleA.blueprint(),
+                "column_carving": RunModuleB.blueprint(),
+            },
+        )
+    )
+    exported = autoconnect(inner)
+    monkeypatch.setattr(sys.modules[__name__], "registered_choices", exported, raising=False)
+    monkeypatch.setitem(
+        get_all_blueprints.all_blueprints, "mapping", f"{__name__}:registered_choices"
+    )
+    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", get_by_name_or_exit)
+    monkeypatch.setenv("TOPIC_METADATA", "false")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "mapping",
+            "--choice",
+            "PointClearing=column_carving",
+            "--runmoduleb.lookahead=2.5",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert [atom.module for atom in stubbed_run["blueprint"].blueprints] == [RunModuleB]
+    assert stubbed_run["parsed_config"].module_kwargs("runmoduleb")["lookahead"] == 2.5
 
 
 @pytest.mark.parametrize("run_options", [[], ["--daemon"]])

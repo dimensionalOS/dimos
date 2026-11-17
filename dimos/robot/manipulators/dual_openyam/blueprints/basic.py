@@ -81,4 +81,4 @@ dual_openyam_planner_coordinator = autoconnect(
         },
     ),
     dual_openyam_control(),
-).solidify()
+)

@@ -264,7 +264,7 @@ def _manipulation() -> Blueprint:
 # the leaders too when no serial port is given.
 dual_openyam_leader_teleop = autoconnect(
     dual_openyam_leaders(), dual_openyam_leader_control(), _manipulation()
-).solidify()
+)
 
 # Leaders without trigger servos; Joy-Cons drive the jaws and pause following.
 dual_openyam_joycon_leader_teleop = autoconnect(
@@ -272,4 +272,4 @@ dual_openyam_joycon_leader_teleop = autoconnect(
     JoyconConnectionModule.blueprint(),
     dual_openyam_leader_control(),
     _manipulation(),
-).solidify()
+)

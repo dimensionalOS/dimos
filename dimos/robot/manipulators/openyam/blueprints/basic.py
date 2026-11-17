@@ -76,4 +76,4 @@ coordinator_openyam = openyam_control().remappings([])
 openyam_planner_coordinator = autoconnect(
     planner(model=_openyam, gripper_tasks={"manipulator": "arm_gripper"}),
     openyam_control(),
-).solidify()
+)

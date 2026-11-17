@@ -163,7 +163,7 @@ def test_quest_teleop_module_accepts_blueprint_config() -> None:
     "blueprint",
     [
         coordinator_openyam,
-        openyam_planner_coordinator,
+        openyam_planner_coordinator.solidify(),
     ],
 )
 def test_openyam_basic_trajectory_accepts_all_deployed_joints(blueprint: Blueprint) -> None:
@@ -185,8 +185,8 @@ def test_openyam_basic_trajectory_accepts_all_deployed_joints(blueprint: Bluepri
 @pytest.mark.parametrize(
     "blueprint",
     [
-        keyboard_teleop_openyam,
-        keyboard_teleop_openyam_planner,
+        keyboard_teleop_openyam.solidify(),
+        keyboard_teleop_openyam_planner.solidify(),
     ],
 )
 def test_openyam_teleop_blueprints_expose_arm_and_gripper_control(
@@ -204,8 +204,8 @@ def test_openyam_teleop_blueprints_expose_arm_and_gripper_control(
 @pytest.mark.parametrize(
     "blueprint",
     [
-        keyboard_teleop_openyam,
-        keyboard_teleop_openyam_planner,
+        keyboard_teleop_openyam.solidify(),
+        keyboard_teleop_openyam_planner.solidify(),
         teleop_webxr_openyam,
     ],
 )
@@ -221,7 +221,7 @@ def test_openyam_task_bindings_have_coordinator_inputs(blueprint: Blueprint) -> 
 
 
 def test_keyboard_teleop_gripper_control_is_independent() -> None:
-    tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam.solidify())["tasks"]
     gripper = next(task for task in tasks if task.name == "arm_gripper")
 
     assert gripper.joint_names == [_GRIPPER_JOINT]
@@ -229,7 +229,7 @@ def test_keyboard_teleop_gripper_control_is_independent() -> None:
 
 
 def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
-    tasks = _coordinator_kwargs(keyboard_teleop_openyam_planner)["tasks"]
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam_planner.solidify())["tasks"]
     trajectory = next(task for task in tasks if task.type == "trajectory")
     eef_twist = next(task for task in tasks if task.type == "eef_twist")
 
@@ -238,7 +238,7 @@ def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
 
 
 def test_keyboard_teleop_openyam_gripper_opens_toward_joint7_lower_end() -> None:
-    tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam.solidify())["tasks"]
     gripper = next(task for task in tasks if task.name == "arm_gripper")
 
     assert gripper.joint_names == [_GRIPPER_JOINT]

@@ -43,7 +43,7 @@ go2_nav_viewer_mesh = (
 # robot's by HOST__CONNECT=tcp/<robot-ip>:7447, or by scouting where the LAN carries multicast.
 go2_nav_hosted = (
     autoconnect(
-        _go2_nav_stack.hosted(tags={"go2": True}),
+        _go2_nav_stack.solidify().hosted(tags={"go2": True}),
         MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND).hosted(
             tags={"gpu": True}, prefer=Tag.gpu_mem
         ),

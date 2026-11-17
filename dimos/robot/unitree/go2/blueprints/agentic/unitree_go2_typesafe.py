@@ -29,4 +29,4 @@ unitree_go2_typesafe = autoconnect(
         camera_info=GO2Connection.camera_info_static, publish_detection_images=False
     ).remappings([(Detection2DModule, "detections", "detections_2d")]),
     TypeSafeNavigationAgent.blueprint(),
-).solidify()
+)

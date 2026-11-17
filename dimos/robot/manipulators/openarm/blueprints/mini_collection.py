@@ -110,7 +110,7 @@ openarm_mini_collection = autoconnect(
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
     teleop_openarm_mini,
     _cameras(),
-).solidify()
+)
 
 # Robot side of the split deployment; the operator runs teleop-openarm-mini-leader.
 openarm_mini_follower_collection = autoconnect(
@@ -118,4 +118,4 @@ openarm_mini_follower_collection = autoconnect(
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
     teleop_openarm_mini_follower,
     _cameras(),
-).solidify()
+)

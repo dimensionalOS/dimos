@@ -40,7 +40,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
 from dimos.simulation.go2_sim.world import SENSOR_FRAME_ID, SimGo2World
 
 BLUEPRINTS = [
-    unitree_go2_mid360_record,
+    unitree_go2_mid360_record.solidify(),
     go2_sim_nav,
 ]
 

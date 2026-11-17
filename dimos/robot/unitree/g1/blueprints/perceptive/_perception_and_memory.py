@@ -22,4 +22,4 @@ from dimos.perception.experimental.spatial_perception import SpatialMemory
 _perception_and_memory = autoconnect(
     SpatialMemory.blueprint(),
     ObjectTracking.blueprint(frame_id="camera_link"),
-).solidify()
+)

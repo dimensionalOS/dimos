@@ -299,7 +299,7 @@ if global_config.simulation == "mujoco":
             robot_rotation_diameter=_G1_NAV_ROTATION_DIAMETER,
         ),
         MovementManager.blueprint(),
-    ).solidify()
+    )
     _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
@@ -348,7 +348,7 @@ else:
             robot_rotation_diameter=_G1_NAV_ROTATION_DIAMETER,
         ),
         MovementManager.blueprint(),
-    ).solidify()
+    )
     _nav_remappings = []
 
 

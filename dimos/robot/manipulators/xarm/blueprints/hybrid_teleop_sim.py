@@ -259,4 +259,4 @@ hybrid_teleop_sim_collect = autoconnect(
     ),
     EpisodeMonitorModule.blueprint(task="Teleoperate the xArm (sim)"),
     hybrid_teleop_sim,
-).solidify()
+)

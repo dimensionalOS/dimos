@@ -406,7 +406,7 @@ my_mcp_blueprint = autoconnect(
     McpServer.blueprint(),
     Agent.blueprint(),
     # my_skill_containers,
-).solidify()
+)
 ```
 
 #### `dimos mcp list-tools`

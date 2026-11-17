@@ -112,7 +112,7 @@ def test_collection_exposes_inherited_viser_without_changing_teleop(tmp_path, mo
     parser = BlueprintConfigParser(dual_openyam_quest_collection)
     collection = parser.parse(args, environ={}).module_kwargs("manipulationmodule")
     teleop = (
-        BlueprintConfigParser(teleop_webxr_dual_openyam)
+        BlueprintConfigParser(teleop_webxr_dual_openyam.solidify())
         .parse(can_ports, environ={})
         .module_kwargs("manipulationmodule")
     )
@@ -128,7 +128,7 @@ def test_collection_exposes_inherited_viser_without_changing_teleop(tmp_path, mo
     ]
     [teleop_module] = [
         atom
-        for atom in teleop_webxr_dual_openyam.active_blueprints
+        for atom in teleop_webxr_dual_openyam.solidify().active_blueprints
         if atom.module is ManipulationModule
     ]
     # Check inheritance without resolving the copied lazy model paths.

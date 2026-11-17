@@ -24,4 +24,4 @@ demo_google_maps_skill = autoconnect(
     GoogleMapsSkillContainer.blueprint(),
     McpServer.blueprint(),
     Agent.blueprint(),
-).solidify()
+)

@@ -22,4 +22,4 @@ from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1 import unitree_g1
 unitree_g1_agentic = autoconnect(
     unitree_g1,
     _agentic_skills,
-).solidify()
+)

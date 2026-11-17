@@ -26,9 +26,9 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
     "blueprint",
     [
         teleop_webxr_openyam,
-        teleop_webxr_dual_openyam,
+        teleop_webxr_dual_openyam.solidify(),
         teleop_webxr_openarm,
-        keyboard_teleop_openyam_planner,
+        keyboard_teleop_openyam_planner.solidify(),
     ],
 )
 def test_manual_arm_and_gripper_control_outrank_trajectories(blueprint):

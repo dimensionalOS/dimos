@@ -57,7 +57,7 @@ unitree_go2 = (
 unitree_go2_map = autoconnect(
     unitree_go2,
     PGOVoxelMapper.blueprint(emit_every=5, save_map=True, map_file="map_go2"),
-).solidify()
+)
 
 
 class Go2MemoryConfig(RecorderConfig):

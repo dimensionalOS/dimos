@@ -21,7 +21,7 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -61,7 +61,7 @@ dual_xarm6_planner_coordinator = autoconnect(
         hardware=[_mock_left_xarm6_hw, _mock_right_xarm6_hw],
         tasks=[trajectory_task(_mock_left_xarm6_hw, _mock_right_xarm6_hw)],
     ),
-).solidify()
+)
 
 
 def _gripper_task() -> TaskConfig:
@@ -88,7 +88,7 @@ XARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def xarm_coordinator(arm: XArmType) -> Blueprint:
+def xarm_coordinator(arm: XArmType) -> MetaBlueprint:
     """Run planned joint trajectories on an xArm and open and close its xArm
     Gripper, through ``XArmConnection``.
 
@@ -128,10 +128,10 @@ def xarm_coordinator(arm: XArmType) -> Blueprint:
             ],
         ),
         XArmConnection.blueprint(arm=arm, gripper="xarm"),
-    ).solidify()
+    )
 
 
-def _planner_coordinator(arm: XArmType) -> Blueprint:
+def _planner_coordinator(arm: XArmType) -> MetaBlueprint:
     """Plan and run motions of an xArm with the xArm Gripper. Wire it up with
     ``.remappings(XARM_REMAPS)``; see ``xarm_coordinator``."""
     dof, robot_type = XARM_ARMS[arm]
@@ -141,12 +141,12 @@ def _planner_coordinator(arm: XArmType) -> Blueprint:
             gripper_tasks={"manipulator": "arm_gripper"},
         ),
         xarm_coordinator(arm),
-    ).solidify()
+    )
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-xarm7_planner_coordinator = _planner_coordinator("xarm7").remappings(XARM_REMAPS)
-xarm6_planner_coordinator = _planner_coordinator("xarm6").remappings(XARM_REMAPS)
+xarm7_planner_coordinator = _planner_coordinator("xarm7").solidify().remappings(XARM_REMAPS)
+xarm6_planner_coordinator = _planner_coordinator("xarm6").solidify().remappings(XARM_REMAPS)
 
 _coordinator_xarm7_hw = xarm7_hardware("arm")
 
@@ -156,7 +156,7 @@ coordinator_xarm7 = autoconnect(
         tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
     *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
-).solidify()
+)
 
 _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
 
@@ -166,7 +166,7 @@ coordinator_xarm6 = autoconnect(
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, 6),
-).solidify()
+)
 
 _coordinator_lite6_hw = lite6_hardware("arm", gripper=True)
 
@@ -189,7 +189,7 @@ lite6_planner_coordinator = autoconnect(
         hardware=[_lite6_hw],
         tasks=[trajectory_task(_lite6_hw), _gripper_task()],
     ),
-).solidify()
+)
 
 _xarm7_left = xarm7_hardware(
     "left_arm", canonical_joint_names=[f"left_arm/joint{i}" for i in range(1, 8)]

@@ -21,7 +21,7 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
@@ -95,7 +95,7 @@ keyboard_teleop_xarm6 = autoconnect(
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, 6),
-).solidify()
+)
 
 keyboard_teleop_xarm7 = autoconnect(
     KeyboardTeleopModule.blueprint(),
@@ -128,7 +128,7 @@ keyboard_teleop_xarm7 = autoconnect(
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(XARM7_SIM_PATH, 7),
-).solidify()
+)
 
 _lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
 
@@ -162,7 +162,7 @@ keyboard_teleop_lite6 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
-).solidify()
+)
 
 _xarm6_control_hw = make_xarm_hardware(
     "arm",
@@ -277,7 +277,7 @@ coordinator_teleop_xarm7 = autoconnect(
     # Serves the URDF and its meshes to viewers; the planner already puts the links on tf.
     UrdfManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
     *mujoco_if_sim(XARM7_SIM_PATH, 7),
-).solidify()
+)
 
 coordinator_teleop_xarm6 = autoconnect(
     TeleopControlCoordinator.blueprint(
@@ -318,7 +318,7 @@ coordinator_teleop_xarm6 = autoconnect(
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, 6),
-).solidify()
+)
 
 
 class XArmTwistCoordinator(ArmTwistCoordinator):
@@ -339,7 +339,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def _teleop(arm: XArmType) -> Blueprint:
+def _teleop(arm: XArmType) -> MetaBlueprint:
     """Jog an xArm's end and open and close its xArm Gripper from the Desktop
     Manipulation app, through ``XArmConnection``. ``UrdfManager`` serves the
     arm's URDF and puts its joints on tf, so the app can draw it.
@@ -391,9 +391,9 @@ def _teleop(arm: XArmType) -> Blueprint:
         ),
         XArmConnection.blueprint(arm=arm, gripper="xarm", **declaration.model_dump()),
         UrdfManager.blueprint(model=model),
-    ).solidify()
+    )
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-xarm7_teleop = _teleop("xarm7").remappings(_ARM_REMAPS)
-xarm6_teleop = _teleop("xarm6").remappings(_ARM_REMAPS)
+xarm7_teleop = _teleop("xarm7").solidify().remappings(_ARM_REMAPS)
+xarm6_teleop = _teleop("xarm6").solidify().remappings(_ARM_REMAPS)

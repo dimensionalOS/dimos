@@ -21,7 +21,7 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -89,7 +89,7 @@ keyboard_teleop_piper = autoconnect(
         model=_piper_model,
         visualization={"backend": "viser"},
     ),
-).solidify()
+)
 
 _piper_mock_cartesian_hw = make_piper_hardware(
     "arm",
@@ -143,7 +143,7 @@ coordinator_teleop_piper = autoconnect(
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),
-).solidify()
+)
 
 _piper_cartesian_hw = make_piper_hardware(
     "arm",
@@ -181,7 +181,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def _teleop() -> Blueprint:
+def _teleop() -> MetaBlueprint:
     """Jog a Piper's end and open and close its gripper from the Desktop
     Manipulation app, through ``PiperConnection``. ``UrdfManager`` serves the
     Piper's URDF and puts its joints on tf, so the app can draw it.
@@ -231,8 +231,8 @@ def _teleop() -> Blueprint:
         ),
         PiperConnection.blueprint(gripper=True),
         UrdfManager.blueprint(model=model),
-    ).solidify()
+    )
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-piper_teleop = _teleop().remappings(_ARM_REMAPS)
+piper_teleop = _teleop().solidify().remappings(_ARM_REMAPS)

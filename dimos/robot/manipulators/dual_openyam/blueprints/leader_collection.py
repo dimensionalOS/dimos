@@ -96,4 +96,4 @@ learning_collect_leader_dual_openyam = autoconnect(
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
     dual_openyam_leader_teleop,
     *[dual_openyam_collection_camera(name) for name in DUAL_OPENYAM_CAMERAS],
-).solidify()
+)

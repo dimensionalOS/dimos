@@ -30,6 +30,8 @@ from dimos.core._test_future_annotations_helper import (
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
     Blueprint,
+    ChoiceAtom,
+    ChoiceResolutionError,
     DisabledModuleProxy,
     autoconnect,
 )
@@ -649,7 +651,17 @@ def test_module_ref_remap_ambiguous() -> None:
 
 def test_load_blueprint_basic(dynamic_coordinator) -> None:
     """load_blueprint deploys, wires and starts modules the same way build() does."""
-    bp = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint()).solidify()
+    bp = autoconnect(
+        ModuleA.blueprint(),
+        ChoiceAtom(
+            name="Consumers",
+            default="enabled",
+            choices={
+                "enabled": autoconnect(ModuleB.blueprint(), ModuleC.blueprint()),
+                "disabled": autoconnect(),
+            },
+        ),
+    )
     dynamic_coordinator.load_blueprint(bp)
 
     assert dynamic_coordinator.get_instance(ModuleA) is not None
@@ -776,6 +788,36 @@ def dynamic_coordinator():
     mc.start()
     yield mc
     mc.stop()
+
+
+@pytest.fixture
+def default_choice_coordinator():
+    blueprint = autoconnect(
+        ModuleA.blueprint().global_config(n_workers=1, viewer="none"),
+        ChoiceAtom(
+            name="Consumer",
+            default="with_rpc",
+            choices={"with_rpc": ModuleB.blueprint(), "without_rpc": ModuleC.blueprint()},
+        ),
+    )
+    coordinator = ModuleCoordinator.build(blueprint)
+    yield coordinator
+    coordinator.stop()
+
+
+def test_build_resolves_metablueprint_defaults(default_choice_coordinator) -> None:
+    assert set(default_choice_coordinator.list_module_names()) == {"ModuleA", "ModuleB"}
+    assert default_choice_coordinator.get_instance(ModuleB).what_is_as_name() == "A, Module A"
+
+
+def test_build_rejects_missing_choices_before_starting(mocker) -> None:
+    start = mocker.patch.object(ModuleCoordinator, "start")
+    blueprint = autoconnect(ChoiceAtom(name="Required", choices={"a": ModuleA.blueprint()}))
+
+    with pytest.raises(ChoiceResolutionError, match="Required.*required"):
+        ModuleCoordinator.build(blueprint)
+
+    start.assert_not_called()
 
 
 def test_optional_module_ref_with_provider(build_coordinator) -> None:

@@ -33,7 +33,7 @@ from dimos.core.coordination.blueprint_config.fields import (
     validate_module_config,
 )
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
-from dimos.core.coordination.blueprints import autoconnect, transport_config_name
+from dimos.core.coordination.blueprints import MetaBlueprint, transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
@@ -216,7 +216,7 @@ class ModuleCoordinator(Resource):
         # Avoid circular import.
         from dimos.robot.get_all_blueprints import get_by_name
 
-        self.load_blueprint(autoconnect(get_by_name(name)).solidify())
+        self.load_blueprint(get_by_name(name))
 
     def list_module_names(self) -> list[str]:
         with self._modules_lock:
@@ -429,19 +429,21 @@ class ModuleCoordinator(Resource):
     @classmethod
     def build(
         cls,
-        blueprint: Blueprint,
+        blueprint: Blueprint | MetaBlueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
         *,
         remote_module_refs: Mapping[tuple[str, str], tuple[type[ModuleBase] | frozenset[str], str]]
         | None = None,
     ) -> ModuleCoordinator:
-        """Build a blueprint from its pinned values or an exact parsed config.
+        """Resolve an unresolved composition, then build its concrete blueprint.
 
         With ``parsed_config`` this resets the process-global ``global_config``
         singleton to the full parsed resolution (schema defaults plus all
         sources); :meth:`load_blueprint` instead applies only explicitly-set
         fields.
         """
+        if isinstance(blueprint, MetaBlueprint):
+            blueprint = blueprint.solidify()
         check_module_dependencies(blueprint, parsed_config)
         logger.info("Building the blueprint")
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
@@ -517,7 +519,7 @@ class ModuleCoordinator(Resource):
 
     def load_blueprint(
         self,
-        blueprint: Blueprint,
+        blueprint: Blueprint | MetaBlueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
         """Load a blueprint into an already-running coordinator.
@@ -530,6 +532,8 @@ class ModuleCoordinator(Resource):
         if not self._started:
             raise RuntimeError("ModuleCoordinator not started; call start() first")
 
+        if isinstance(blueprint, MetaBlueprint):
+            blueprint = blueprint.solidify()
         with self._modules_lock:
             self._load_blueprint(blueprint, parsed_config)
 

@@ -20,4 +20,4 @@ from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitr
 unitree_go2_temporal_memory = autoconnect(
     unitree_go2_agentic,
     TemporalMemory.blueprint(),
-).solidify()
+)

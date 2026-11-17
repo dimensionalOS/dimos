@@ -18,7 +18,7 @@ import sys
 
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, MetaBlueprint, autoconnect
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import get_by_name, get_by_name_or_exit
 
@@ -41,6 +41,20 @@ def test_resolve_string_blueprint_or_exit():
 def test_resolve_string_module_or_exit():
     bp = get_by_name_or_exit("webcam-module")
     assert bp is not None
+
+
+@pytest.mark.parametrize("lookup", [get_by_name, get_by_name_or_exit])
+def test_exported_composition_stays_unresolved(lookup) -> None:
+    blueprint = lookup("demo-capabilities")
+
+    assert isinstance(blueprint, MetaBlueprint)
+    assert {atom.module.__name__ for atom in blueprint.solidify().blueprints} == {
+        "DemoSensors",
+        "DemoRobotActions",
+        "DemoMonitoring",
+        "McpServer",
+        "Agent",
+    }
 
 
 def test_resolve_unknown_name():

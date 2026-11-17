@@ -24,4 +24,4 @@ demo_gps_nav = autoconnect(
     GpsNavSkillContainer.blueprint(),
     McpServer.blueprint(),
     Agent.blueprint(),
-).solidify()
+)

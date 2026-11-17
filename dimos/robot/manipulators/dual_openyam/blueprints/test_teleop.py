@@ -26,7 +26,7 @@ def test_visualization_configuration_preserves_teleop_composition(mocker):
     download = mocker.patch(
         "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
     )
-    base = teleop_webxr_dual_openyam
+    base = teleop_webxr_dual_openyam.solidify()
     configured = build_dual_openyam_webxr(visualization=ViserVisualizationConfig(host="0.0.0.0"))
 
     assert configured.remapping_map == base.remapping_map
