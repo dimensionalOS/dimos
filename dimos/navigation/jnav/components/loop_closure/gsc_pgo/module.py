@@ -170,6 +170,8 @@ class PGOConfig(NativeModuleConfig):
     extension_cloud_spacing: float = 0.25
     # extension score = median cloud ratio x exp(this (1 - min(d, 5)^2)) per step, d = step disagreement (0 = median)
     compounding_agreement_sensitivity: float = 1.5
+    # an extension cloud's agreement counts only from a place new at both ends (the look-alike grouping's same-place test)
+    closure_agreement_independent_places: bool = True
     # adopt a solve only while heat <= threshold; adopting adds its largest move's yank above floor; heat halves every
     # half_life_s of data time (standing still included)
     graph_change_heat_enabled: bool = True

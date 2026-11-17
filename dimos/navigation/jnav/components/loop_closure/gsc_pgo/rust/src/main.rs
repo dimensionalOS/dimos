@@ -94,6 +94,7 @@ config! {
     decisive_pressure_rate: f64,
     extension_cloud_spacing: f64,
     compounding_agreement_sensitivity: f64,
+    closure_agreement_independent_places: bool,
     graph_change_heat_enabled: bool,
     graph_change_heat_threshold: f64,
     graph_change_heat_floor: f64,

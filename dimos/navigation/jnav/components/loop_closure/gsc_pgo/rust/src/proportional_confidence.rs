@@ -225,6 +225,7 @@ impl ClosureSearch {
         voxel_downsample(&cloud, resolution)
     }
     /// Fit one more source cloud per round on a growing target; median ratio x agreement vs `UncertaintyRange` decides.
+    /// `same_place(a, b)`: keyframes a and b could be one place (the look-alike grouping's notion).
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(crate) fn extended_icp(
         &self,
@@ -234,6 +235,7 @@ impl ClosureSearch {
         first_ratio: f64,
         diag: &mut ClosureCandidateDiag,
         required: &mut dyn FnMut(f64, &mut ClosureCandidateDiag) -> f64,
+        same_place: &mut dyn FnMut(usize, usize) -> bool,
         // runs a cloud's computation through the ICP cache; the encoded alignment starts at the given index
         memo: &dyn Fn(&str, usize, &mut dyn FnMut() -> Vec<f64>) -> Vec<f64>,
     ) -> Option<IcpResult> {
@@ -290,7 +292,9 @@ impl ClosureSearch {
         // consecutive alignments' agreement at the source compounds into `multiplier`
         let source_position = positions[cur_idx];
         let mut previous = (first.rotation, first.translation);
-        let mut multiplier = 1.0;
+        let mut multiplier: f64 = 1.0;
+        // (source, target) keyframes of the places whose agreement counted: a cloud at one of them can't vouch again
+        let mut agreeing_places = vec![(cur_idx, target_idx)];
         let mut found: Option<Option<IcpResult>> = None;
         diag.extension_clouds_planned = clouds.len();
         for (step, &j) in clouds.iter().enumerate() {
@@ -411,11 +415,33 @@ impl ClosureSearch {
             } else {
                 5.0
             };
-            multiplier *=
-                (self.config.compounding_agreement_sensitivity * (1.0 - apart.powi(2))).exp();
+            let agreement = self.config.compounding_agreement_sensitivity * (1.0 - apart.powi(2));
+            // agreement vouches only from a new place at both ends (the target end: the target keyframe nearest where it landed);
+            // a neighbouring cloud sees the same scene and fits the same way, right or wrong. Disagreement always counts
+            let landed = mat3::add(&mat3::mat_vec(&icp.rotation, &positions[j]), &icp.translation);
+            let target_place = target_ids
+                .iter()
+                .copied()
+                .min_by(|&a, &b| {
+                    mat3::norm(&mat3::sub(&positions[a], &landed))
+                        .total_cmp(&mat3::norm(&mat3::sub(&positions[b], &landed)))
+                        .then(a.cmp(&b))
+                })
+                .unwrap_or(target_idx);
+            let new_place = !self.config.closure_agreement_independent_places
+                || agreeing_places
+                    .iter()
+                    .all(|&(s, t)| !same_place(s, j) && !same_place(t, target_place));
+            if agreement < 0.0 || new_place {
+                multiplier *= agreement.exp();
+                if agreement > 0.0 {
+                    agreeing_places.push((j, target_place));
+                }
+            }
             previous = (icp.rotation, icp.translation);
             diag.cloud_agreement.push(apart);
             diag.agreement_multiplier = multiplier;
+            diag.agreement_places = agreeing_places.len() - 1;
             diag.extension_clouds_used = step;
             diag.cost_extension_rounds_s.push(
                 round_started.elapsed().as_secs_f64()

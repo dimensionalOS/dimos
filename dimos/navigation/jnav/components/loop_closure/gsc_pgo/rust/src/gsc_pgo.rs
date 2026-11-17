@@ -201,6 +201,8 @@ pub struct ClosureCandidateDiag {
     pub extension_rounds_source_points: Vec<usize>,
     pub extension_rounds_target_points: Vec<usize>,
     pub agreement_multiplier: f64,
+    /// Extension clouds whose agreement counted (new places at both ends, `closure_agreement_independent_places`).
+    pub agreement_places: usize,
     /// `connection_fit::likelihood_ratio` (mean log ratio, yank units) of the single and last extended alignment, and its width; NaN unscored.
     pub likelihood_ratio: f64,
     pub extended_likelihood_ratio: f64,
@@ -292,6 +294,7 @@ impl ClosureCandidateDiag {
             extension_rounds_source_points: Vec::new(),
             extension_rounds_target_points: Vec::new(),
             agreement_multiplier: 1.0,
+            agreement_places: 0,
             likelihood_ratio: f64::NAN,
             extended_likelihood_ratio: f64::NAN,
             likelihood_width: f64::NAN,
@@ -571,6 +574,9 @@ pub struct Config {
     pub extension_cloud_spacing: f64,
     /// Yank gate scores an extension by median cloud ratio x exp(s (1 - min(d, 5)^2)) per step (d: disagreement, inlier distances); 0 = median.
     pub compounding_agreement_sensitivity: f64,
+    /// An extension cloud's agreement counts only from a place (`loop_overlap::could_be_same_place`, the look-alike grouping)
+    /// new at both ends, source and target: neighbouring clouds see one scene and agree right or wrong. false = every cloud's.
+    pub closure_agreement_independent_places: bool,
     /// Graph change heat (recent map moves): a solve is adopted only at heat <= threshold, adding its curbed yank above floor;
     /// it halves every half_life_s of data time, standing still included.
     pub graph_change_heat_enabled: bool,
@@ -797,6 +803,7 @@ impl Default for Config {
             decisive_pressure_rate: 1.0,
             extension_cloud_spacing: 0.25,
             compounding_agreement_sensitivity: 1.5,
+            closure_agreement_independent_places: true,
             graph_change_heat_enabled: true,
             graph_change_heat_threshold: 30.0,
             graph_change_heat_floor: 20.0,
@@ -1211,8 +1218,33 @@ impl PendingExtension {
             |tag: &str, at: usize, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
                 search.memo_alignment(&key_suffix, tag, at, compute)
             };
+        // the odometry error estimate sums, shared by the look-alike count and the agreement's same-place test
+        let error_estimate_sums = std::cell::RefCell::new(error_estimate_sums.take());
         let mut required = |evidence: f64, diag: &mut ClosureCandidateDiag| -> f64 {
-            search.bar_with_places(evidence, diag, &mut look_alikes, &mut error_estimate_sums, base)
+            search.bar_with_places(
+                evidence,
+                diag,
+                &mut look_alikes,
+                &mut error_estimate_sums.borrow_mut(),
+                base,
+            )
+        };
+        let same_place_cutoff =
+            crate::loop_overlap::chi2_inverse_3dof(search.config.closure_gnc_inlier_probability);
+        let learned = diag.learned_odometry_error_estimate;
+        let mut same_place = |a: usize, b: usize| -> bool {
+            let mut sums = error_estimate_sums.borrow_mut();
+            let sums = sums.get_or_insert_with(|| {
+                crate::loop_overlap::odometry_error_estimate_sums(&search.key_poses, &search.config, learned)
+            });
+            crate::loop_overlap::could_be_same_place(
+                &search.key_poses,
+                sums,
+                a,
+                b,
+                search.config.closure_search_radius,
+                same_place_cutoff,
+            )
         };
         let t0 = std::time::Instant::now();
         let extended = search.extended_icp(
@@ -1222,6 +1254,7 @@ impl PendingExtension {
             ratio,
             &mut diag,
             &mut required,
+            &mut same_place,
             &memo_alignment,
         );
         timing.extended_icp_s += t0.elapsed().as_secs_f64() - search.debug_io_s.take();
