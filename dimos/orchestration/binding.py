@@ -14,7 +14,7 @@
 
 """The checks of a definition against the running blueprint."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass, replace
 from inspect import Parameter
 from typing import Literal
@@ -39,6 +39,38 @@ class Deployed:
     """By `Module.rpc`."""
     streams: Mapping[str, type]
     """Message types by `Module.stream`."""
+
+
+def resolve(
+    definition: OrchestratorDefinition, namespace: str, modules: Collection[str]
+) -> OrchestratorDefinition:
+    """Name every module as it is deployed. A name means the nearest module, from the namespace
+    outward, and its case does not matter.
+    """
+    deployed = {name.lower(): name for name in modules}
+
+    def full(target: str) -> str:
+        module, dot, name = target.partition(".")
+        level = namespace
+        while True:
+            found = deployed.get(f"{level}/{module}".lower() if level else module.lower())
+            if found is not None or not level:
+                return f"{found or module}{dot}{name}"
+            level = level.rpartition("/")[0]
+
+    activities = tuple(
+        activity.model_copy(
+            update={
+                "start": full(activity.start),
+                "cancel": full(activity.cancel) if activity.cancel is not None else None,
+            }
+        )
+        for activity in definition.activities
+    )
+    signals = tuple(
+        signal.model_copy(update={"stream": full(signal.stream)}) for signal in definition.signals
+    )
+    return definition.model_copy(update={"activities": activities, "signals": signals})
 
 
 def bind(definition: OrchestratorDefinition, deployed: Deployed) -> CheckedDefinition:
