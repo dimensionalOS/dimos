@@ -167,7 +167,7 @@ the consumer does not import.
 | -------- | -------------- | ----------------------- | ----------------------------------------- |
 | cards/   | `ToolCard`     | `cardFor` in choose.ts  | `BashCard`, `PiToolCard`                  |
 | views/   | `ViewPanel<K>` | `Gallery` in gallery.ts | `ImagePanel`, `SpatialPanel`, `ClipPanel` |
-| menu/    | `MenuTab`   | `TABS` in view.ts       | Ten tabs, one per key from 1 to 0         |
+| menu/    | `MenuTab`      | `TABS` in view.ts       | Conversations, Agent modules, Jobs        |
 
 `ToolCard` is a `Component` for one tool call. It has the `call`, `output(text)` for the output so far, `end(result)`
 for the `ToolResult`, `setExpanded(expanded)` for `/expand`, and `dispose()`, which stops timers.
