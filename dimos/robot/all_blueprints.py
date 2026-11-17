@@ -224,6 +224,8 @@ all_blueprints = {
     "xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm6_planner_coordinator",
     "xarm6-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm6_teleop",
     "xarm6-worldbelief": "dimos.experimental.world_belief.xarm6_blueprint:xarm6_worldbelief",
+    "xarm7-kitting": "dimos.robot.manipulators.xarm.blueprints.kitting:xarm7_kitting",
+    "xarm7-kitting-sim": "dimos.robot.manipulators.xarm.blueprints.kitting:xarm7_kitting_sim",
     "xarm7-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm7_planner_coordinator_agent",
     "xarm7-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm7_teleop",
@@ -437,5 +439,6 @@ all_modules = {
     "x-arm-connection": "dimos.robot.manipulators.xarm.connection.XArmConnection",
     "x-arm-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic.XArmCoordinator",
     "x-arm-twist-coordinator": "dimos.robot.manipulators.xarm.blueprints.teleop.XArmTwistCoordinator",
+    "x-arm7-kitting-module": "dimos.robot.manipulators.xarm.kitting.XArm7KittingModule",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }
