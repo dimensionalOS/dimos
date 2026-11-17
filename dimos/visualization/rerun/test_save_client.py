@@ -23,6 +23,7 @@ import pytest
 import rerun as rr
 
 from dimos.constants import WORKER_SHUTDOWN_TIMEOUT
+from dimos.utils.testing.waiting import wait_until
 from dimos.visualization.rerun import bridge
 
 
@@ -63,10 +64,8 @@ def save_client(monkeypatch, mocker, tmp_path, request):
         assert client is not None
         module._save_client = client
         path = tmp_path / "test-run" / "rerun.rrd"
-        deadline = time.monotonic() + 5
-        while not path.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert path.read_text() == "ready"
+        # The client creates the file before it writes to it.
+        wait_until(lambda: path.exists() and path.read_text() == "ready", timeout=5, interval=0.01)
         yield module, client, path, recording
     finally:
         signal.signal(signal.SIGINT, previous)

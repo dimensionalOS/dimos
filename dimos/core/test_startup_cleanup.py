@@ -64,7 +64,8 @@ coordinator.start_rpc_service.side_effect = RuntimeError("RPC startup failed")
 def build(*args, **kwargs):
     with patch("dimos.visualization.rerun.init.find_executable", return_value=viewer):
         assert spawn_viewer(f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy", "10%")
-    wait_until(lambda: Path(pid_file).exists(), timeout=5)
+    # The viewer creates the file before it writes its PID to it.
+    wait_until(lambda: Path(pid_file).exists() and Path(pid_file).read_text(), timeout=5)
     if failure_stage == "build":
         raise TimeoutError("Module startup failed")
     return coordinator
