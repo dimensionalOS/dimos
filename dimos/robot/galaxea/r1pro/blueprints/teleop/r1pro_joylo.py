@@ -63,6 +63,7 @@ from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.module import SimColorCameraModule, SimDepthCameraModule
 from dimos.sim2.sensors.camera.render_module import CameraRenderModule
+from dimos.sim2.sensors.camera.renderers.filament import FilamentColorRenderer
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
 from dimos.sim2.sensors.tf import SimTfModule
@@ -155,15 +156,14 @@ def _camera_blueprint() -> Blueprint:
             instance_name=_VIDEO_RENDERER,
             scene_manager=UsdManager,
             cameras=tuple(f"{stream}_camera" for stream in _VIDEO_CAMERAS),
-            renderer=MujocoRenderer,
+            renderer=FilamentColorRenderer,
         ),
         *(_depth_camera(camera, sensor) for camera, sensor in _DEPTH_CAMERAS.items()),
         CameraRenderModule.blueprint(
             scene_manager=UsdManager,
             cameras=tuple(f"{camera}_depth_camera" for camera in _DEPTH_CAMERAS),
-            # MuJoCo draws any scene and keeps the camera rate on a laptop. Unreal
-            # (sim.office.office_renderer) draws the office with its materials, at
-            # a cost that wants a larger machine.
+            # Keep metric depth on the calibrated classic path. Color uses
+            # Filament's persistent scene and batched camera rendering above.
             renderer=MujocoRenderer,
         ),
     ).transports(_camera_transports)

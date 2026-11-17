@@ -42,8 +42,8 @@ class MujocoRenderer:
         self._camera_ids: dict[str, int] = {}
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
 
-    def load(self, scene: UsdModel, cameras: tuple[CameraConfig, ...]) -> None:
-        if self._renderers:
+    def _load_geometry(self, scene: UsdModel, cameras: tuple[CameraConfig, ...]) -> None:
+        if self._cameras:
             raise RuntimeError("close the existing camera scene before loading another")
         if not cameras or len({c.frame_id for c in cameras}) != len(cameras):
             raise ValueError("cameras require distinct, nonempty frame IDs")
@@ -82,6 +82,9 @@ class MujocoRenderer:
             c.frame_id: self.geometry.model.camera(f"sim2_view_{i}").id
             for i, c in enumerate(cameras)
         }
+
+    def load(self, scene: UsdModel, cameras: tuple[CameraConfig, ...]) -> None:
+        self._load_geometry(scene, cameras)
         try:
             for c in cameras:
                 size = c.width, c.height
@@ -102,15 +105,7 @@ class MujocoRenderer:
             raise ValueError("render requests require distinct configured camera IDs")
         if not camera_ids:
             return {}
-        self.geometry.set_poses(sample)
-        for name in camera_ids:
-            body = self.geometry.model.body(name).id
-            camera = self._camera_ids[name]
-            self.geometry.model.cam_pos[camera] = self.geometry.data.xpos[body]
-            self.geometry.model.cam_quat[camera] = Rotation.from_matrix(
-                self.geometry.data.xmat[body].reshape(3, 3) @ np.diag([1, -1, -1])
-            ).as_quat(scalar_first=True)
-        mujoco.mj_camlight(self.geometry.model, self.geometry.data)
+        self._set_cameras(sample, camera_ids)
         images = {}
         for name in camera_ids:
             c = self._cameras[name]
@@ -130,10 +125,22 @@ class MujocoRenderer:
             images[name] = rgb, depth
         return images
 
+    def _set_cameras(self, sample: WorldState, camera_ids: tuple[str, ...]) -> None:
+        self.geometry.set_poses(sample)
+        for name in camera_ids:
+            body = self.geometry.model.body(name).id
+            camera = self._camera_ids[name]
+            self.geometry.model.cam_pos[camera] = self.geometry.data.xpos[body]
+            self.geometry.model.cam_quat[camera] = Rotation.from_matrix(
+                self.geometry.data.xmat[body].reshape(3, 3) @ np.diag([1, -1, -1])
+            ).as_quat(scalar_first=True)
+        mujoco.mj_camlight(self.geometry.model, self.geometry.data)
+
     def close(self) -> None:
         for renderer in self._renderers.values():
             renderer.close()
         self._renderers.clear()
+        self._cameras.clear()
 
 
 def _load_lights(spec: mujoco.MjSpec, scene: UsdModel) -> None:
