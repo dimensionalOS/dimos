@@ -52,6 +52,11 @@ fn error(pgo: &GscPgo, range: std::ops::Range<usize>) -> f64 {
 
 /// Drive the loop, close it newest -> 0, then hold still; returns the graph each scan's `update` left.
 fn run(fast_path: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
+    run_closures(fast_path, drift, 1)
+}
+
+/// `run` with `closures` closures, newest -> 0, newest - 2 -> 0, ...
+fn run_closures(fast_path: bool, drift: f64, closures: usize) -> (GscPgo, Vec<(bool, f64)>) {
     let mut config = Config {
         mode: Mode::Deterministic,
         solver_fast_path_enabled: fast_path,
@@ -60,8 +65,6 @@ fn run(fast_path: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
         // keyframes without clouds
         auto_aggregate_cloud_size: 0,
         drop_reseen_points: false,
-        // the whole 40-keyframe loop free, so the window's problem is GNC's own
-        solver_fast_path_taper_fraction: 0.0,
         ..Config::default()
     };
     // GNC held 30 scans (with or without its iterations), the fast path one
@@ -76,9 +79,12 @@ fn run(fast_path: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
     }
     assert_eq!(pgo.key_poses().len(), KEYFRAMES);
     // the true pose of the newest keyframe in keyframe 0's frame
-    let ((r0, p0), (r1, p1)) = (poses(0, drift).0, poses(KEYFRAMES - 1, drift).0);
+    let (r0, p0) = poses(0, drift).0;
     let back = mat3::transpose(&r0);
-    pgo.commit_closure(KEYFRAMES - 1, 0, mat3::mat_mul(&back, &r1), mat3::mat_vec(&back, &mat3::sub(&p1, &p0)), 0.01);
+    for c in 0..closures {
+        let (r1, p1) = poses(KEYFRAMES - 1 - 2 * c, drift).0;
+        pgo.commit_closure(KEYFRAMES - 1 - 2 * c, 0, mat3::mat_mul(&back, &r1), mat3::mat_vec(&back, &mat3::sub(&p1, &p0)), 0.01);
+    }
     let mut trace = Vec::new();
     for s in KEYFRAMES..KEYFRAMES + 60 {
         scan(&mut pgo, s, poses(KEYFRAMES - 1, drift).1);
@@ -97,8 +103,9 @@ fn largest_difference(a: &GscPgo, b: &GscPgo) -> f64 {
 
 #[test]
 fn the_fast_path_corrects_a_small_loop_before_gnc_and_gnc_supersedes_it() {
-    let (without, slow) = run(false, 0.1);
-    let (with, fast) = run(true, 0.1);
+    // two closures that agree (one alone is no evidence to the fast path)
+    let (without, slow) = run_closures(false, 0.1, 2);
+    let (with, fast) = run_closures(true, 0.1, 2);
     let drifted = slow[0].1;
     assert!(drifted > 0.1, "the odometry drifted {drifted:.3} m");
     // GNC lands at the same scan either way; before it, only the fast path has corrected the loop
@@ -121,7 +128,8 @@ fn the_fast_path_corrects_a_small_loop_before_gnc_and_gnc_supersedes_it() {
 
 #[test]
 fn the_fast_path_leaves_a_closure_gnc_would_weigh_to_gnc() {
-    // the drift is far past the odometry error estimate: the closure is over GNC's cutoff (GNC rejects it)
+    // the drift is far past the odometry error estimate: GNC rejects the closure; the fast path leaves a lone closure to
+    // GNC whatever the odometry (a rigid motion fits any one closure, so it is no evidence)
     let (without, slow) = run(false, 0.5);
     let (with, fast) = run(true, 0.5);
     let record = &with.fast_path_records()[0];

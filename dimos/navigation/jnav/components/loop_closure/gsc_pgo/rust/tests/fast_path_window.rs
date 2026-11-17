@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The fast path's window on a loop 3000 keyframes long whose odometry drifted over its last `DRIFTING` steps: only the
-//! keyframes nearest the robot move, so the closure's span does not matter; its correction is published before GNC lands,
-//! bent into the window (its farther half tapering to held) while the rest of the loop stays exactly where it was; a wrong
-//! closure is left to GNC; GNC's solve supersedes either way.
+//! The fast path on a loop 3000 keyframes long whose odometry drifted over its last `DRIFTING` steps: the closure moves
+//! only the robot's own recent trail (as one block, bent in from where it last agreed with the map), so the loop's span
+//! does not matter; it is published before GNC lands, the rest of the loop stays exactly where it was, keyframes made
+//! after it ride it; a wrong closure is left to GNC (and dropped from a job it shares with a right one); GNC's solve
+//! supersedes either way.
 
 use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config, GscPgo, Mode, PoseWithTime};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
@@ -98,6 +99,9 @@ fn run_with_wrong(
     let ((r0, p0), (r1, p1)) = (truth(0), truth(KEYFRAMES - 1));
     let back = mat3::transpose(&r0);
     pgo.commit_closure(KEYFRAMES - 1, 0, mat3::mat_mul(&mat3::mat_mul(&back, &r1), &mat3::rot_z(closure_turn)), mat3::mat_vec(&back, &mat3::sub(&p1, &p0)), 0.01);
+    // a second closure that agrees with the truth: the fast path needs two to agree
+    let (rs, ps) = truth(KEYFRAMES - 3);
+    pgo.commit_closure(KEYFRAMES - 3, 0, mat3::mat_mul(&back, &rs), mat3::mat_vec(&back, &mat3::sub(&ps, &p0)), 0.01);
     if wrong_too {
         let ((ra, pa), (rb, pb)) = (truth(1), truth(KEYFRAMES - 2));
         let back = mat3::transpose(&ra);
@@ -139,8 +143,8 @@ fn the_window_publishes_a_small_change_on_a_3000_keyframe_loop_before_gnc() {
     assert!(before_gnc >= 10, "GNC landed after {before_gnc} scans");
     let record = &with.fast_path_records()[0];
     assert_eq!(record.outcome, "adopted", "{record:?}");
-    assert_eq!(record.closures, vec![0]);
-    // the window is the keyframes nearest the robot (both ends of the loop), not its 3000-keyframe span
+    assert_eq!(record.closures, vec![0, 1]);
+    // the trail is the robot's own recent keyframes, not the loop's 3000-keyframe span
     assert!(record.free < KEYFRAMES / 4, "{} keyframes freed", record.free);
     let corrected = fast[before_gnc - 1].1;
     assert!(corrected < 0.5 * drifted, "window: {corrected:.3} m from the truth, the odometry {drifted:.3} m");
@@ -152,9 +156,9 @@ fn the_window_publishes_a_small_change_on_a_3000_keyframe_loop_before_gnc() {
 }
 
 #[test]
-fn the_correction_bends_inside_the_window_without_a_kink() {
-    // ~1 m apart at the closure: the robot's own run bends back onto the loop's start, without a kink where the window
-    // meets the 2500-keyframe held stretch
+fn the_correction_bends_the_trail_without_a_kink() {
+    // ~1 m apart at the closure: the robot's own trail moves back onto the loop's start, without a kink where it meets
+    // the held loop behind it
     let (drift, turn) = (2.5e-4, 0.0);
     let (_, slow) = run(false, drift, turn);
     let (with, fast) = run(true, drift, turn);
@@ -172,30 +176,42 @@ fn the_correction_bends_inside_the_window_without_a_kink() {
 }
 
 #[test]
-fn keyframes_outside_the_window_do_not_move_and_its_farther_half_tapers() {
+fn only_the_robots_trail_moves_and_newer_keyframes_ride_it() {
     let drift = 2.5e-4;
     let (_, slow) = run(false, drift, 0.0);
-    let (with, _, before) = run_with(true, drift, 0.0, true);
+    let (mut with, _, before) = run_with(true, drift, 0.0, true);
     let published: Vec<Vec3> = (0..KEYFRAMES).map(|k| with.key_poses().position(k)).collect();
     let record = &with.fast_path_records()[0];
     assert_eq!(record.outcome, "adopted", "{record:?}");
-    // the window: the `free` keyframes the map before the publish puts nearest the newest
-    let mut rank: Vec<usize> = (1..KEYFRAMES).collect();
-    let distance = |k: usize| mat3::norm(&mat3::sub(&before[k], &before[KEYFRAMES - 1]));
-    rank.sort_by(|&a, &b| distance(a).total_cmp(&distance(b)).then(a.cmp(&b)));
+    // the trail: the newest `free` keyframes; nothing before it moves at all
+    let first = KEYFRAMES - record.free;
     let moved = |k: usize| mat3::norm(&mat3::sub(&published[k], &before[k]));
-    for &k in &rank[record.free..] {
-        assert_eq!(moved(k), 0.0, "keyframe {k} outside the window moved");
+    for k in 0..first {
+        assert_eq!(moved(k), 0.0, "keyframe {k} off the trail moved");
     }
-    // the nearer half moves freely; the outermost tenth of the window barely
-    let half = record.free / 2;
-    let free_move = rank[..half].iter().map(|&k| moved(k)).fold(0.0, f64::max);
-    let edge_move = rank[record.free - record.free / 10..record.free].iter().map(|&k| moved(k)).fold(0.0, f64::max);
-    assert!(free_move > 0.3, "the free half moved {free_move:.3} m");
-    assert!(edge_move < 0.1 * free_move, "the window's edge moved {edge_move:.3} m, its free half {free_move:.3} m");
-    // and the loop is still closed: the newest keyframe nearer the truth than the odometry left it
+    assert!(moved(KEYFRAMES - 1) > 0.3, "the newest moved {:.3} m", moved(KEYFRAMES - 1));
+    // the loop is closed: the newest keyframe nearer the truth than the odometry left it
     let newest = mat3::norm(&mat3::sub(&published[KEYFRAMES - 1], &truth(KEYFRAMES - 1).1));
     assert!(newest < 0.5 * slow[0].1, "window: {newest:.3} m from the truth, the odometry {:.3} m", slow[0].1);
+    // keyframes made after the publish ride the shift: each lands one odometry step on from the shifted newest
+    let shift = mat3::sub(&published[KEYFRAMES - 1], &before[KEYFRAMES - 1]);
+    let step = mat3::norm(&mat3::sub(&before[KEYFRAMES - 1], &before[KEYFRAMES - 2]));
+    let (rotation, position) = with.key_poses().global(KEYFRAMES - 1);
+    let raw_newest = with.key_poses().fixed(KEYFRAMES - 1).translation_local;
+    let raw_rotation = with.key_poses().fixed(KEYFRAMES - 1).rotation_local;
+    let heading = mat3::mat_mul(&rotation, &mat3::transpose(&raw_rotation));
+    for j in 1..=3 {
+        let raw: Vec3 = mat3::add(&raw_newest, &mat3::mat_vec(&raw_rotation, &[step * j as f64, 0.0, 0.0]));
+        scan(&mut with, KEYFRAMES + 100 + j, (raw_rotation, raw));
+        with.wait_for_due_solve();
+    }
+    let n = with.key_poses().len();
+    assert!(n > KEYFRAMES, "no new keyframe was made");
+    for k in KEYFRAMES..n {
+        let expected = mat3::add(&position, &mat3::mat_vec(&heading, &mat3::sub(&with.key_poses().fixed(k).translation_local, &raw_newest)));
+        let off = mat3::norm(&mat3::sub(&with.key_poses().position(k), &expected));
+        assert!(off < 1e-6, "keyframe {k} is {off:.4} m off the shifted trail (shift {:.3} m)", mat3::norm(&shift));
+    }
 }
 
 /// `run` with the window, stopped once the first job landed: the published positions then, before GNC.
@@ -229,7 +245,7 @@ fn the_window_drops_a_disagreeing_closure_and_publishes_the_agreeing_one() {
     let (with, _, _) = run_with_wrong(true, drift, turn, true, true);
     let record = &with.fast_path_records()[0];
     assert_eq!(record.outcome, "adopted", "{record:?}");
-    assert_eq!(record.closures, vec![0], "{record:?}");
+    assert_eq!(record.closures, vec![0, 1], "{record:?}");
     assert!(with.closure_latency()[0].fast_path.is_some());
-    assert!(with.closure_latency()[1].fast_path.is_none(), "the wrong closure was published");
+    assert!(with.closure_latency()[2].fast_path.is_none(), "the wrong closure was published");
 }

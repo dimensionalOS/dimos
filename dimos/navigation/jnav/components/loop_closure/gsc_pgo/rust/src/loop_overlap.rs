@@ -123,29 +123,6 @@ pub(crate) fn odometry_covariance(sums: &[Sums], j: usize, to: usize, newest: &V
     add_mat(&between[0], &swing)
 }
 
-/// Keyframe `j`'s position covariance seen from keyframe `reference` (j < reference), as `OverlapModel::relative`: the newest
-/// solve's where it covers both (`solved`: its tip and covariances), plus odometry since and the tip's heading swing; the
-/// odometry chain alone otherwise.
-pub(crate) fn relative_covariance(
-    key_poses: &KeyFrames,
-    sums: &[Sums],
-    solved: Option<(usize, &[Mat3])>,
-    j: usize,
-    reference: usize,
-) -> Mat3 {
-    let newest = key_poses.position(reference);
-    match solved {
-        Some((tip, covariance)) if tip <= reference && j <= tip && j < covariance.len() => {
-            let since_solve = odometry_covariance(sums, tip, reference, &newest);
-            let tip_lever = skew(&mat3::sub(&newest, &key_poses.position(tip)));
-            let heading = sub_mat(&sums[tip][1], &sums[j][1]);
-            let swing = mat3::mat_mul(&mat3::mat_mul(&tip_lever, &heading), &mat3::transpose(&tip_lever));
-            add_mat(&add_mat(&covariance[j], &since_solve), &swing)
-        }
-        _ => odometry_covariance(sums, j, reference, &newest),
-    }
-}
-
 /// Squared Mahalanobis distance a 3-D Gaussian stays under with probability `p` (inverse chi-square, 3 dof).
 pub(crate) fn chi2_inverse_3dof(p: f64) -> f64 {
     chi2_inverse(p, |x| {

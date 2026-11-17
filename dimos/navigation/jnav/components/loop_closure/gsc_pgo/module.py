@@ -182,14 +182,14 @@ class PGOConfig(NativeModuleConfig):
     # when GNC keeps none of the closures the last adopted solve kept, those verdicts re-solved from the accepted graph
     # compete with GNC's, and the lower truncated least-squares cost wins
     solve_incumbent_challenge: bool = True
-    # solver fast path: unjudged closures are published at once by a least squares over the keyframes nearest the robot (as
-    # many as budget_scans affords), the rest held; GNC's graph is untouched and its next solve replaces the correction
+    # solver fast path: closures GNC has not judged that agree move the robot's recent trail (the newest keyframes still
+    # among the nearest budget_scans affords) as one block, published at once; nothing else moves; GNC's graph is untouched
+    # and its next solve replaces the correction
     solver_fast_path_enabled: bool = False
     solver_fast_path_budget_scans: float = 1.0
-    # its Levenberg-Marquardt pass stops after this many steps
-    solver_fast_path_max_lm_steps: int = 10
-    # the farther part of its window (by rank) is pulled to the published map, ever harder out to the window's edge
-    solver_fast_path_taper_fraction: float = 0.5
+    # its block shift publishes only if no trail step changes length by more than this fraction of itself (0.2-0.3 publish
+    # alike on huge_fastlio's saved window jobs; see gsc_pgo.rs)
+    solver_fast_path_max_stretch: float = 0.2
     # closure search pipeline: SC buffer (most similar first) -> fast-match workers -> verification buffer -> workers
     fast_match_workers: int = 2
     sc_buffer_size: int = 4

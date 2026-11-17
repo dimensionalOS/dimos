@@ -585,10 +585,11 @@ pub struct Config {
     pub solver_fast_path_enabled: bool,
     /// The scans a fast path job may take to land (1: before the next scan); with its cost model it sets the window's size.
     pub solver_fast_path_budget_scans: f64,
-    /// Its Levenberg-Marquardt pass stops after this many steps.
-    pub solver_fast_path_max_lm_steps: usize,
-    /// The farther part of its window (by rank) pulled to the published map, ever harder out to the window's edge.
-    pub solver_fast_path_taper_fraction: f64,
+    /// Its block shift is published only if no trail step changes length by more than this fraction of itself: closures may
+    /// move the robot's recent trail onto the map, not stretch it. On huge_fastlio's 299 saved window jobs (crop to 3200 s)
+    /// every bound from 0.2 to 0.3 publishes the same (all 10 closures at 44:51-44:59 by 45:25, none of the 50-52 min
+    /// whole-loop ones); 0.1 publishes 6 of the 10, 0.5 starts publishing the 50-52 min ones with 0.3 m kinks.
+    pub solver_fast_path_max_stretch: f64,
     /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
     /// When GNC keeps none of the closures the newest adopted solve kept, those verdicts re-solved from the accepted graph
@@ -807,8 +808,7 @@ impl Default for Config {
             solve_incumbent_challenge: true,
             solver_fast_path_enabled: false,
             solver_fast_path_budget_scans: 1.0,
-            solver_fast_path_max_lm_steps: 10,
-            solver_fast_path_taper_fraction: 0.5,
+            solver_fast_path_max_stretch: 0.2,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,

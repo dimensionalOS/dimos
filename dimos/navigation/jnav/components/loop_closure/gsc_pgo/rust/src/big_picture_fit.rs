@@ -35,7 +35,6 @@ pub use crate::world_positions::{solve_with_priors, PositionPrior};
 
 /// Relative pose `from` -> `to` in `from`'s frame (R_to = R_from rotation, p_to = p_from + R_from translation).
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "native", derive(serde::Serialize, serde::Deserialize))]
 pub struct Edge {
     pub from: usize,
     pub to: usize,
@@ -229,67 +228,6 @@ pub fn solve(
         &[],
         config,
     )
-}
-
-/// The solver fast path's window solve (`fast_path`): its poses, whether LM reached a minimum, and each closure's whitened
-/// squared residual over GNC's cutoff at GNC's scaled variances (under 1 everywhere: GNC would keep every closure as is).
-pub struct FastSolve {
-    pub rotations: Vec<Mat3>,
-    pub positions: Vec<Vec3>,
-    pub converged: bool,
-    pub over_cutoff: Vec<f64>,
-}
-
-/// GNC's two stages without GNC's iterations: least squares with every closure in at GNC's scaled variances, read against
-/// GNC's cutoff (GNC would weigh none past it), then, if all pass, the same closures at their own variances (what GNC's
-/// solve then settles on), each pass at most `steps` LM steps.
-pub(crate) fn solve_fast_path(
-    rotations: &[Mat3],
-    positions: &[Vec3],
-    free: &[bool],
-    odometry: &[Edge],
-    closures: &[Edge],
-    config: &SolveConfig,
-    steps: usize,
-) -> FastSolve {
-    let planar_edges;
-    let (odometry, closures) = if config.planar {
-        planar_edges = (in_plane(odometry), in_plane(closures));
-        (&planar_edges.0[..], &planar_edges.1[..])
-    } else {
-        (odometry, closures)
-    };
-    let mut state = State {
-        rotation: rotations.to_vec(),
-        position: positions.to_vec(),
-        landmark: Vec::new(),
-        landmark_rotation: Vec::new(),
-    };
-    let pattern = Pattern::new(free, odometry.iter().chain(closures), &[], &[], &[], config.planar);
-    let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
-    let scaled: Vec<Edge> = closures
-        .iter()
-        .map(|e| Edge {
-            variances: e.variances.map(|v| v * config.gnc_variance_scale),
-            ..*e
-        })
-        .collect();
-    let all = vec![1.0; closures.len()];
-    let mut converged = levenberg_marquardt_steps(
-        &mut state, &pattern, odometry, &scaled, &all, &[], &[], &[], &[], 1e-5, steps, false,
-    );
-    let over_cutoff: Vec<f64> = scaled.iter().map(|e| whitened_squared(e, &state) / threshold).collect();
-    if over_cutoff.iter().all(|&r| r <= 1.0) {
-        converged &= levenberg_marquardt_steps(
-            &mut state, &pattern, odometry, closures, &all, &[], &[], &[], &[], 1e-5, steps, false,
-        );
-    }
-    FastSolve {
-        rotations: state.rotation,
-        positions: state.position,
-        converged,
-        over_cutoff,
-    }
 }
 
 /// A position prior in the solve frame: `keyframe`'s sensor at `lever` (body frame) should be at `position`.
@@ -1307,7 +1245,7 @@ impl State {
 }
 
 /// [rotation error (axis-angle), translation error] of an edge between two poses.
-pub fn edge_residual(e: &Edge, from: (&Mat3, &Vec3), to: (&Mat3, &Vec3)) -> [f64; 6] {
+pub(crate) fn edge_residual(e: &Edge, from: (&Mat3, &Vec3), to: (&Mat3, &Vec3)) -> [f64; 6] {
     let predicted = mat3::mat_mul(from.0, &e.rotation);
     let rotation = log(&mat3::mat_mul(&mat3::transpose(&predicted), to.0));
     let local = mat3::mat_vec(&mat3::transpose(from.0), &mat3::sub(to.1, from.1));
@@ -1825,7 +1763,7 @@ fn normal_equations(
 }
 
 /// The chi-square value a 6-DoF residual stays under with probability `p` (CDF 1 - e^{-x/2}(1 + x/2 + x²/8)).
-fn chi2_inverse_6dof(p: f64) -> f64 {
+pub(crate) fn chi2_inverse_6dof(p: f64) -> f64 {
     crate::loop_overlap::chi2_inverse(p, |x| {
         let half = x / 2.0;
         1.0 - (-half).exp() * (1.0 + half + half * half / 2.0)

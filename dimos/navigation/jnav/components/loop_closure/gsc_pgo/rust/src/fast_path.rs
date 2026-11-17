@@ -14,45 +14,39 @@
 
 
 //! Solver fast path (`solver_fast_path_enabled`): the closures GNC has not judged yet, published before the GNC solve that
-//! judges them lands. One idea: the published map is GNC's graph plus a least squares over the keyframes nearest the robot,
-//! everything else held exactly where the published map has it.
+//! judges them lands. One idea: closures that agree move the robot's own recent trail as one block onto the map they
+//! close against; every other keyframe stays exactly where the published map has it. No odometry weight is used, so a
+//! wrong odometry error estimate cannot make it publish more or less.
 //!
-//! - Window: the keyframes the published map puts nearest the newest one, as many as `solver_fast_path_budget_scans`
-//!   affords at `fast_path_scans_per_free_keyframe` (keyframe 0 held, as GNC holds it), ranked newest first: the robot's
-//!   own recent trail is the free part, so closures that agree can move it as a block onto the older passes.
-//! - Taper: the newer `1 - solver_fast_path_taper_fraction` of the window is free; each older one is pulled to its
-//!   published pose (position and rotation) with the covariance the closure search judges a closure's yank by between it
-//!   and the robot (the newest GNC solve's, plus odometry since), times (1 - t) / t at taper depth t: free where the taper
-//!   starts, as loose as the map's own uncertainty halfway, fixed at the window's edge.
-//! - Graph: the window, its odometry, the held keyframes its odometry and closures reach (fixed).
-//! - Closures: the kept ones, the ones the published map already holds, and every one GNC has not judged yet (a closure
-//!   an earlier job refused rides along again: agreeing evidence that arrives later can carry it) with an end in the window.
-//!   A job runs when a closure no job has refused yet arrives.
-//! - Gate (GNC's own rule, in the window): solve; while a closure is past GNC's cutoff at its scaled variance, drop the
-//!   worst unjudged one and solve again. What is left is published; the dropped ones wait for GNC or a later job.
-//! - Publish: the window at the solve, newer keyframes riding the newest one; no other keyframe moves.
+//! - Trail: the newest keyframe and the ones before it, back while they stay among the keyframes the published map puts
+//!   nearest the newest (as many as `solver_fast_path_budget_scans` affords at `fast_path_scans_per_free_keyframe`).
+//! - Closures: each with one end on the trail and the other off it: the published or GNC-kept ones (the newest trail
+//!   keyframe one ties is the anchor, where the trail already agrees with the map; else the trail's oldest keyframe) and
+//!   every one GNC has not judged (one an earlier job dropped rides along again). A job runs when a closure no job has
+//!   dropped arrives.
+//! - Shift: the one rigid motion (a turn about the vertical and a translation) that best takes the unjudged closures'
+//!   trail ends to where their closures put them, bent in along the trail from the anchor to the oldest such end and in
+//!   full beyond it.
+//! - Gate (GNC's own rule): while a closure is past GNC's cutoff at its scaled variance, drop the unjudged one furthest past
+//!   it and fit again; at least two unjudged closures must agree (a rigid motion fits any one exactly, so one alone is no
+//!   evidence: it waits for GNC); and no trail step may change length by more than `solver_fast_path_max_stretch` of itself.
+//! - Publish: the trail shifted, newer keyframes riding the newest one; no other keyframe moves.
 //!
 //! A logical-execution-time job (one worker, one job out), held to its estimate in deterministic mode. GNC never reads
 //! what it publishes; an adopted GNC solve drops it, and the next job reapplies the closures GNC has not judged.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::adoption_schedule::JobSlot;
-use crate::big_picture_fit::{closure_edges, odometry_edges_ending, solve_fast_path, Edge, FastSolve, SolveConfig};
+use crate::big_picture_fit::chi2_inverse_6dof;
 use crate::closure_search_schedule::{hold_scans, SearchPool};
 use crate::gsc_pgo::{Config, GscPgo};
 use crate::mat3::{self, Mat3, Vec3};
-use crate::store::{KeyFrames, SolvedPoses};
+use crate::store::SolvedPoses;
 
-/// What the worker returns: the window's poses, each kept closure's residual over GNC's cutoff, the closures it dropped
-/// (positions in the job's closure list), and seconds.
+/// What the worker returns: the block shift and seconds.
 struct FastPathResult {
-    rotations: Vec<Mat3>,
-    positions: Vec<Vec3>,
-    over_cutoff: Vec<f64>,
-    dropped: Vec<usize>,
-    converged: bool,
+    shift: BlockShift,
     seconds: f64,
 }
 
@@ -65,7 +59,8 @@ pub struct FastPathJob {
     estimate_raw_scans: f64,
     /// GNC solves adopted at dispatch: its result is stale once another has been.
     adopted_solves: u64,
-    /// The window (the result's order), the keyframes then, and the window's closures with which of them are new.
+    /// The trail (the result's order), the keyframes then, and the closures between the trail and the rest of the map with
+    /// which of them GNC has not judged.
     free: Vec<usize>,
     keyframes: usize,
     closures: Vec<usize>,
@@ -81,16 +76,18 @@ pub struct FastPathRecord {
     pub scan: usize,
     pub time: f64,
     pub dispatch_scan: usize,
-    /// "adopted", "stale" (a GNC solve landed first) or "over_cutoff" (a closure in the window past GNC's cutoff).
+    /// "adopted", "stale" (a GNC solve landed first), "over_cutoff" (no unjudged closure agrees within GNC's cutoff) or
+    /// "stretched" (the shift would stretch a trail step past `solver_fast_path_max_stretch`).
     pub outcome: &'static str,
-    /// The new closures it applied, and over_cutoff the one it refused.
+    /// The unjudged closures it applied, and the first one it dropped.
     pub closures: Vec<usize>,
     pub refused: Option<usize>,
     pub free: usize,
     pub seconds: f64,
-    /// The largest closure residual over GNC's cutoff, whether LM converged, and adopted the largest keyframe move (m).
+    /// The largest closure residual over GNC's cutoff, the largest trail step stretch (of its length), and adopted the
+    /// largest keyframe move (m).
     pub worst_over_cutoff: f64,
-    pub converged: bool,
+    pub stretch: f64,
     pub max_move_m: f64,
 }
 
@@ -181,18 +178,24 @@ impl GscPgo {
         if n < 2 || !(judged..self.committed_closures.len()).any(|i| pending(&i)) {
             return;
         }
-        let free = self.fast_path_window();
-        let mut is_free = vec![false; n];
-        for &k in &free {
-            is_free[k] = true;
+        // the trail: the newest keyframe back while it stays in the window
+        let mut in_window = vec![false; n];
+        for k in self.fast_path_window() {
+            in_window[k] = true;
         }
-        let touches = |i: usize| {
-            let c = self.committed_closures.fixed(i);
-            c.source_id.max(c.target_id) < n && (is_free[c.source_id] || is_free[c.target_id])
-        };
-        // kept, already published, and pending closures with an end in the window
+        in_window[n - 1] = true;
+        let mut first = n - 1;
+        while first > 1 && in_window[first - 1] {
+            first -= 1;
+        }
+        let free: Vec<usize> = (first..n).collect();
+        let on_trail = |k: usize| k >= first && k < n;
+        // published, kept and unjudged closures with one end on the trail
         let (closures, new): (Vec<usize>, Vec<bool>) = (0..self.committed_closures.len())
-            .filter(|&i| touches(i))
+            .filter(|&i| {
+                let c = self.committed_closures.fixed(i);
+                c.source_id.max(c.target_id) < n && on_trail(c.source_id) != on_trail(c.target_id)
+            })
             .filter_map(|i| {
                 if i < judged {
                     (self.committed_closures.weight(i) > 0.5).then_some((i, false))
@@ -204,38 +207,41 @@ impl GscPgo {
         if !new.iter().any(|&new| new) {
             return;
         }
-        let selected: Vec<_> = closures.iter().map(|&i| self.committed_closures.get(i)).collect();
-        let published = self.key_poses().clone();
-        let noise = self.odometry_error_estimate();
-        let covariance = self.solved_relative_covariance.clone();
-        // one solve per unjudged closure it may drop, at most
-        let solves = new.iter().filter(|&&new| new).count() as f64;
-        let estimate_raw_scans = self.config.deterministic_config.fast_path_scans_per_free_keyframe * free.len() as f64 * solves;
+        let published = self.key_poses();
+        let ends: Vec<TrailClosure> = closures
+            .iter()
+            .zip(&new)
+            .map(|(&i, &new)| {
+                let c = self.committed_closures.get(i);
+                let variance = c.score.max(1e-6);
+                if on_trail(c.source_id) {
+                    // source = target * closure
+                    let (r, p) = published.global(c.target_id);
+                    let rotation = mat3::mat_mul(&r, &c.rotation_offset);
+                    let position = mat3::add(&p, &mat3::mat_vec(&r, &c.translation_offset));
+                    TrailClosure { keyframe: c.source_id, rotation, position, variance, new }
+                } else {
+                    // target = source * closure^-1
+                    let (r, p) = published.global(c.source_id);
+                    let rotation = mat3::mat_mul(&r, &mat3::transpose(&c.rotation_offset));
+                    let position = mat3::sub(&p, &mat3::mat_vec(&rotation, &c.translation_offset));
+                    TrailClosure { keyframe: c.target_id, rotation, position, variance, new }
+                }
+            })
+            .collect();
+        let (rotations, positions): (Vec<Mat3>, Vec<Vec3>) = free.iter().map(|&k| published.global(k)).unzip();
+        let estimate_raw_scans = self.config.deterministic_config.fast_path_scans_per_free_keyframe * free.len() as f64;
         let config = self.config.clone();
-        let window = free.clone();
-        let dump = (self.scans_seen, self.newest_scan_time(), closures.clone(), new.clone());
-        let new_mask = new.clone();
+        let trail = free.clone();
         let slot = Arc::new(JobSlot::<FastPathResult>::default());
         let finish = slot.clone();
         self.fast_path_pool
             .get_or_insert_with(|| SearchPool::new(1, "gsc-fast-path"))
             .send(Box::new(move || {
                 let started = std::time::Instant::now();
-                let mut graph = window_graph(&published, &config, noise, covariance, &window, selected);
-                let (fast, dropped) = solve_window_dropping(&mut graph, &new_mask, &config);
-                #[cfg(feature = "native")]
-                dump_window(&dump, &published, &graph, &fast);
-                #[cfg(not(feature = "native"))]
-                let _ = dump;
-                let count = window.len();
-                *finish.done.lock().expect("fast path slot") = Some(FastPathResult {
-                    rotations: fast.rotations[..count].to_vec(),
-                    positions: fast.positions[..count].to_vec(),
-                    over_cutoff: fast.over_cutoff,
-                    dropped,
-                    converged: fast.converged,
-                    seconds: started.elapsed().as_secs_f64(),
-                });
+                let shift = block_shift(&trail, &rotations, &positions, &ends, &config);
+                *finish.done.lock().expect("fast path slot") =
+                    Some(FastPathResult { shift, seconds: started.elapsed().as_secs_f64() });
                 finish.changed.notify_all();
             }));
         self.fast_path_job = Some(FastPathJob {
@@ -285,11 +291,12 @@ impl GscPgo {
             self.fast_path_overshoots += 1;
         }
         self.record_job_ratio("fast_path", result.seconds, job.estimate_raw_scans);
+        let shift = &result.shift;
         let applied: Vec<usize> = (0..job.closures.len())
-            .filter(|p| job.new[*p] && !result.dropped.contains(p))
+            .filter(|p| job.new[*p] && !shift.dropped.contains(p))
             .map(|p| job.closures[p])
             .collect();
-        let worst = result.over_cutoff.iter().copied().fold(0.0, f64::max);
+        let worst = shift.over_cutoff.iter().copied().fold(0.0, f64::max);
         let mut record = FastPathRecord {
             scan: self.scans_seen,
             time: self.newest_scan_time(),
@@ -300,23 +307,25 @@ impl GscPgo {
             free: job.free.len(),
             seconds: result.seconds,
             worst_over_cutoff: worst,
-            converged: result.converged,
+            stretch: shift.stretch,
             max_move_m: 0.0,
         };
         let adopted = if self.adopted_solves != job.adopted_solves {
             // GNC replaced the graph it corrected: its closures are still pending, the next job redoes them
             record.outcome = "stale";
             false
-        } else if worst > 1.0 || applied.is_empty() {
-            // nothing unjudged agrees with the window: the dropped ones wait for GNC or a later job
-            for &p in &result.dropped {
-                self.fast_path_refused.insert(job.closures[p]);
+        } else if worst > 1.0 || applied.is_empty() || !shift.within_stretch {
+            // nothing unjudged agrees, or agreeing would stretch the trail: they wait for GNC or a later job
+            for (p, &new) in job.new.iter().enumerate() {
+                if new {
+                    self.fast_path_refused.insert(job.closures[p]);
+                }
             }
-            record.outcome = "over_cutoff";
-            record.refused = result.dropped.first().map(|&p| job.closures[p]);
+            record.outcome = if worst > 1.0 || applied.is_empty() { "over_cutoff" } else { "stretched" };
+            record.refused = shift.dropped.first().map(|&p| job.closures[p]);
             false
         } else {
-            for &p in &result.dropped {
+            for &p in &shift.dropped {
                 self.fast_path_refused.insert(job.closures[p]);
             }
             record.max_move_m = self.publish_fast_path(&job, &result);
@@ -337,7 +346,7 @@ impl GscPgo {
         let (mut rotations, mut positions): (Vec<Mat3>, Vec<Vec3>) = (0..n).map(|k| published.global(k)).unzip();
         let before_positions = positions.clone();
         for (i, &k) in job.free.iter().enumerate() {
-            (rotations[k], positions[k]) = (result.rotations[i], result.positions[i]);
+            (rotations[k], positions[k]) = (result.shift.rotations[i], result.shift.positions[i]);
         }
         let moved = (0..n)
             .map(|k| mat3::norm(&mat3::sub(&positions[k], &before_positions[k])))
@@ -354,189 +363,132 @@ impl GscPgo {
     }
 }
 
-/// GNC's scaled closure variances and cutoff, no evidence, no seeds.
-fn solve_config(config: &Config) -> SolveConfig {
-    SolveConfig {
-        gnc_variance_scale: config.closure_gnc_var_scale,
-        gnc_inlier_probability: config.closure_gnc_inlier_probability,
-        huber_k: config.closure_robust_huber_k,
-        evidence_core: false,
-        learned_evidence: false,
-        seed_closure_weights: Vec::new(),
-        incumbent_closure_weights: Vec::new(),
-        seed_start: Vec::new(),
-        planar: config.planar_pose_graph,
-        landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
-        landmark_warm_start_xy_variance_ladder: config.landmark_warm_start_xy_variance_ladder,
-    }
+/// A closure between the trail and the rest of the map: its trail keyframe, where the closure puts that keyframe (from its
+/// other end's published pose), its variance, and whether GNC has yet to judge it.
+#[derive(Clone, Debug)]
+pub struct TrailClosure {
+    pub keyframe: usize,
+    pub rotation: Mat3,
+    pub position: Vec3,
+    pub variance: f64,
+    pub new: bool,
 }
 
-/// The window's problem: nodes (the window nearest first, then the held keyframes it reaches), poses, edges, and per
-/// window keyframe the variances of its pull to its published pose before the taper scales them.
-#[derive(Clone)]
-#[cfg_attr(feature = "native", derive(serde::Serialize, serde::Deserialize))]
-pub struct WindowGraph {
-    pub keyframes: Vec<usize>,
+/// A block shift: the trail's new poses, each closure it kept with its residual over GNC's cutoff, the unjudged closures it
+/// dropped (positions in the closure list), the largest trail step stretch, and whether that is within
+/// `solver_fast_path_max_stretch`.
+#[derive(Clone, Debug)]
+pub struct BlockShift {
     pub rotations: Vec<Mat3>,
     pub positions: Vec<Vec3>,
-    pub odometry: Vec<Edge>,
-    pub closures: Vec<Edge>,
-    pub pull: Vec<[f64; 6]>,
+    pub over_cutoff: Vec<f64>,
+    pub dropped: Vec<usize>,
+    pub stretch: f64,
+    pub within_stretch: bool,
 }
 
-/// The window, its odometry steps and the held keyframes they and its closures reach; each window keyframe's pull is the
-/// closure search's position covariance between it and the robot and its odometry's rotation variance since, on its axes.
-fn window_graph(
-    published: &KeyFrames,
-    config: &Config,
-    noise: [f64; 4],
-    covariance: Option<(usize, Arc<Vec<Mat3>>)>,
-    window: &[usize],
-    selected: Vec<crate::gsc_pgo::CommittedClosure>,
-) -> WindowGraph {
-    let n = published.len();
-    let mut node = window.to_vec();
-    let mut slot: HashMap<usize, usize> = window.iter().enumerate().map(|(i, &k)| (k, i)).collect();
-    let mut index_of = |k: usize, node: &mut Vec<usize>| -> usize {
-        *slot.entry(k).or_insert_with(|| {
-            node.push(k);
-            node.len() - 1
-        })
+/// The heading of a rotation about the vertical.
+fn yaw(r: &Mat3) -> f64 {
+    r[1][0].atan2(r[0][0])
+}
+
+/// Shift `trail` (consecutive keyframes ending at the newest, at `rotations` / `positions`) by the rigid motion its unjudged
+/// closures agree on (module docs), dropping by GNC's rule the unjudged closure furthest past the cutoff until the rest fit.
+pub fn block_shift(trail: &[usize], rotations: &[Mat3], positions: &[Vec3], closures: &[TrailClosure], config: &Config) -> BlockShift {
+    let at = |k: usize| k - trail[0];
+    let cutoff = chi2_inverse_6dof(config.closure_gnc_inlier_probability);
+    let anchor = closures.iter().filter(|c| !c.new).map(|c| c.keyframe).max().unwrap_or(trail[0]);
+    // unjudged closures at or behind the anchor say nothing about the trail past it
+    let mut dropped: Vec<usize> = (0..closures.len()).filter(|&p| closures[p].new && closures[p].keyframe <= anchor).collect();
+    let mut kept: Vec<usize> = (0..closures.len()).filter(|p| !dropped.contains(p)).collect();
+    let mut path = vec![0.0; trail.len()];
+    for i in 1..trail.len() {
+        path[i] = path[i - 1] + mat3::norm(&mat3::sub(&positions[i], &positions[i - 1]));
+    }
+    let refuse = |dropped: Vec<usize>, over: Vec<f64>| BlockShift {
+        rotations: rotations.to_vec(),
+        positions: positions.to_vec(),
+        over_cutoff: over,
+        dropped,
+        stretch: 0.0,
+        within_stretch: false,
     };
-    let mut closures = closure_edges(selected.into_iter());
-    for e in &mut closures {
-        e.from = index_of(e.from, &mut node);
-        e.to = index_of(e.to, &mut node);
-    }
-    let mut in_window = vec![false; n];
-    for &k in window {
-        in_window[k] = true;
-    }
-    // each window keyframe's step in, and its step out when the next keyframe is held
-    let mut odometry = Vec::new();
-    for &k in window {
-        for b in [k, k + 1] {
-            if b == k + 1 && (b >= n || in_window[b]) {
-                continue;
-            }
-            let mut edge = odometry_edges_ending(published, config, noise, b..b + 1).remove(0);
-            (edge.from, edge.to) = (index_of(b - 1, &mut node), index_of(b, &mut node));
-            odometry.push(edge);
-        }
-    }
-    let sums = crate::loop_overlap::odometry_error_estimate_sums(published, config, noise);
-    let solved = covariance.as_ref().map(|(tip, covariance)| (*tip, covariance.as_slice()));
-    let newest = n - 1;
-    let pull = window
-        .iter()
-        .map(|&k| {
-            let (r, _) = published.global(k);
-            let local = |world: &Mat3| mat3::mat_mul(&mat3::mat_mul(&mat3::transpose(&r), world), &r);
-            let position = local(&crate::loop_overlap::relative_covariance(published, &sums, solved, k, newest));
-            let rotation = local(&mat3::sub_mat(&sums[newest][1], &sums[k][1]));
-            [rotation[0][0], rotation[1][1], rotation[2][2], position[0][0], position[1][1], position[2][2]]
-        })
-        .collect();
-    let (rotations, positions): (Vec<Mat3>, Vec<Vec3>) = node.iter().map(|&k| published.global(k)).unzip();
-    WindowGraph {
-        keyframes: node,
-        rotations,
-        positions,
-        odometry,
-        closures,
-        pull,
-    }
-}
-
-/// A window's full problem: its graph's nodes and odometry, plus for each taper keyframe (the nearer
-/// `1 - solver_fast_path_taper_fraction` are free) a fixed copy at its published pose and an edge from it carrying its pull
-/// times (1 - t) / t at taper depth t in (0, 1); the held keyframes fixed.
-pub fn window_problem(graph: &WindowGraph, config: &Config) -> (Vec<Mat3>, Vec<Vec3>, Vec<bool>, Vec<Edge>) {
-    let count = graph.pull.len();
-    let fraction = config.solver_fast_path_taper_fraction.clamp(0.0, 1.0);
-    let free_count = count - (fraction * count as f64).round() as usize;
-    let (mut rotations, mut positions) = (graph.rotations.clone(), graph.positions.clone());
-    let mut free: Vec<bool> = (0..rotations.len()).map(|i| i < count).collect();
-    let mut odometry = graph.odometry.clone();
-    for r in free_count..count {
-        let t = (r - free_count + 1) as f64 / (count - free_count + 1) as f64;
-        odometry.push(Edge {
-            from: rotations.len(),
-            to: r,
-            rotation: mat3::identity(),
-            translation: [0.0; 3],
-            variances: graph.pull[r].map(|v| v.max(f64::MIN_POSITIVE) * (1.0 - t) / t),
-        });
-        rotations.push(graph.rotations[r]);
-        positions.push(graph.positions[r]);
-        free.push(false);
-    }
-    (rotations, positions, free, odometry)
-}
-
-/// GNC's rule in the window: solve; while a closure is past GNC's cutoff, drop the unjudged one (`new`) furthest past it and
-/// solve again. Returns the last solve and the dropped closures (positions in `new`); every unjudged one dropped = refused.
-pub fn solve_window_dropping(graph: &mut WindowGraph, new: &[bool], config: &Config) -> (FastSolve, Vec<usize>) {
-    let mut kept: Vec<usize> = (0..graph.closures.len()).collect();
-    let all = graph.closures.clone();
-    let mut dropped = Vec::new();
     loop {
-        graph.closures = kept.iter().map(|&p| all[p]).collect();
-        let fast = solve_window(graph, config);
+        // a rigid motion fits any one closure exactly: only two or more can agree (or not)
+        let news: Vec<usize> = kept.iter().copied().filter(|&p| closures[p].new).collect();
+        if news.len() < 2 {
+            dropped.extend(news);
+            return refuse(dropped, vec![f64::INFINITY]);
+        }
+        let first = news.iter().map(|&p| closures[p].keyframe).min().expect("a new closure");
+        let span = (path[at(first)] - path[at(anchor)]).max(1e-6);
+        // the motion's turn and translation: from the unjudged closures' trail ends to where their closures put them
+        let count = news.len() as f64;
+        let mean = |f: &dyn Fn(usize) -> Vec3| -> Vec3 {
+            let sum = news.iter().fold([0.0; 3], |s, &p| mat3::add(&s, &f(p)));
+            mat3::scale(&sum, 1.0 / count)
+        };
+        let pc = mean(&|p| positions[at(closures[p].keyframe)]);
+        let qc = mean(&|p| closures[p].position);
+        let (mut h00, mut h01, mut h10, mut h11) = (0.0, 0.0, 0.0, 0.0);
+        for &p in &news {
+            let a = mat3::sub(&positions[at(closures[p].keyframe)], &pc);
+            let b = mat3::sub(&closures[p].position, &qc);
+            (h00, h01, h10, h11) = (h00 + a[0] * b[0], h01 + a[0] * b[1], h10 + a[1] * b[0], h11 + a[1] * b[1]);
+        }
+        let turn = (h01 - h10).atan2(h00 + h11);
+        let slide = mat3::sub(&qc, &pc);
+        // bent in from the anchor to the oldest unjudged end, in full beyond: turned about the ends' centroid, slid
+        let moved = |i: usize| -> (Mat3, Vec3) {
+            let w = if trail[i] <= anchor { 0.0 } else { ((path[i] - path[at(anchor)]) / span).min(1.0) };
+            let r = mat3::rot_z(w * turn);
+            let p = mat3::add(&mat3::add(&mat3::mat_vec(&r, &mat3::sub(&positions[i], &pc)), &pc), &mat3::scale(&slide, w));
+            (mat3::mat_mul(&r, &rotations[i]), p)
+        };
+        let over: Vec<f64> = kept
+            .iter()
+            .map(|&p| {
+                let c = &closures[p];
+                let (r, x) = moved(at(c.keyframe));
+                let d = mat3::sub(&x, &c.position);
+                let turned = yaw(&mat3::mat_mul(&mat3::transpose(&c.rotation), &r));
+                (mat3::norm(&d).powi(2) + turned * turned) / (c.variance * config.closure_gnc_var_scale) / cutoff
+            })
+            .collect();
+        if over.iter().all(|&o| o <= 1.0) {
+            let (shifted_rotations, shifted): (Vec<Mat3>, Vec<Vec3>) = (0..trail.len()).map(moved).unzip();
+            let stretch = (1..trail.len())
+                .map(|i| {
+                    let before = path[i] - path[i - 1];
+                    let after = mat3::norm(&mat3::sub(&shifted[i], &shifted[i - 1]));
+                    (after - before).abs() / before.max(1e-3)
+                })
+                .fold(0.0, f64::max);
+            return BlockShift {
+                rotations: shifted_rotations,
+                positions: shifted,
+                over_cutoff: over,
+                dropped,
+                stretch,
+                within_stretch: stretch <= config.solver_fast_path_max_stretch,
+            };
+        }
         let worst = kept
             .iter()
-            .zip(&fast.over_cutoff)
-            .filter(|(&p, &over)| new[p] && over > 1.0)
+            .zip(&over)
+            .filter(|(&p, &o)| closures[p].new && o > 1.0)
             .max_by(|a, b| a.1.total_cmp(b.1))
             .map(|(&p, _)| p);
-        let past = fast.over_cutoff.iter().any(|&over| over > 1.0);
         match worst {
-            Some(p) if past && kept.iter().filter(|&&q| new[q]).count() > 1 => {
+            Some(p) if news.len() > 2 => {
                 dropped.push(p);
                 kept.retain(|&q| q != p);
             }
+            // an already published or kept closure no longer fits, or the last unjudged one does not
             _ => {
-                if past {
-                    dropped.extend(kept.iter().copied().filter(|&q| new[q]));
-                }
-                graph.closures = all;
-                return (fast, dropped);
+                dropped.extend(news);
+                return refuse(dropped, over);
             }
         }
     }
-}
-
-/// Solve a window's problem (`window_problem`).
-pub fn solve_window(graph: &WindowGraph, config: &Config) -> FastSolve {
-    let (rotations, positions, free, odometry) = window_problem(graph, config);
-    solve_fast_path(
-        &rotations,
-        &positions,
-        &free,
-        &odometry,
-        &graph.closures,
-        &solve_config(config),
-        config.solver_fast_path_max_lm_steps,
-    )
-}
-
-/// `GSC_WINDOW_DUMP=<dir>`: each window job's problem, the published map it started from and its solve, one JSON file per
-/// job (`examples/window_redo` solves it again); unset costs nothing.
-#[cfg(feature = "native")]
-fn dump_window(
-    (scan, time, closures, new): &(usize, f64, Vec<usize>, Vec<bool>),
-    published: &KeyFrames,
-    graph: &WindowGraph,
-    fast: &FastSolve,
-) {
-    let Some(dir) = std::env::var_os("GSC_WINDOW_DUMP") else {
-        return;
-    };
-    let count = graph.pull.len();
-    let value = serde_json::json!({
-        "scan": scan, "time": time, "closures": closures, "new": new, "graph": graph,
-        "published_positions": (0..published.len()).map(|k| published.position(k)).collect::<Vec<_>>(),
-        "solved_positions": &fast.positions[..count], "over_cutoff": fast.over_cutoff, "converged": fast.converged,
-    });
-    let _ = std::fs::write(std::path::Path::new(&dir).join(format!("window_{scan:07}.json")), value.to_string());
 }
