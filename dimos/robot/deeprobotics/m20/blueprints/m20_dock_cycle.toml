@@ -65,7 +65,7 @@ name = "OnDock"
 
 # The robot sits square on the dock, so its pose there gives the dock's axis.
 [[node.transition]]
-trigger = "odom"
+on = "odom"
 goto = "Undocking"
 
 [node.transition.set]
@@ -81,7 +81,7 @@ activity = "undock"
 # The predock spot is the undock spot moved onto the dock's axis.
 # Positions A and B are one and two steps farther back along the axis, and all three sit on the floor.
 [[node.transition]]
-trigger = "succeeded"
+if = "succeeded"
 goto = "GoingToA"
 
 [node.transition.set]
@@ -96,15 +96,15 @@ args = { pose = "spot.position_a" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "GoingToB"
 
 [[node.transition]]
-trigger = "gave_up"
+if = "gave_up"
 goto = "failed"
 
 [[node.transition]]
-trigger = "failed"
+if = "failed"
 goto = "GoingToARetry"
 
 [[node]]
@@ -121,15 +121,15 @@ args = { pose = "spot.position_b" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "Pausing"
 
 [[node.transition]]
-trigger = "gave_up"
+if = "gave_up"
 goto = "failed"
 
 [[node.transition]]
-trigger = "failed"
+if = "failed"
 goto = "GoingToBRetry"
 
 [[node]]
@@ -153,15 +153,15 @@ args = { pose = "spot.position_a" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "Returning"
 
 [[node.transition]]
-trigger = "gave_up"
+if = "gave_up"
 goto = "failed"
 
 [[node.transition]]
-trigger = "failed"
+if = "failed"
 goto = "BackToARetry"
 
 [[node]]
@@ -178,15 +178,15 @@ args = { pose = "spot.predock" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "Settling"
 
 [[node.transition]]
-trigger = "gave_up"
+if = "gave_up"
 goto = "failed"
 
 [[node.transition]]
-trigger = "failed"
+if = "failed"
 goto = "ReturnRetry"
 
 [[node]]
@@ -208,19 +208,18 @@ name = "Docking"
 activity = "dock"
 
 [[node.transition]]
-trigger = "succeeded"
+if = "succeeded"
 goto = "Resting"
 set = { "cycle.count" = "cycle.count + 1" }
 
 # The robot drifts while standing, so a dock that fails approaches again from position A.
 [[node.transition]]
-trigger = "failed"
-if = "dock.tries + 1 < dock_attempts"
+if = "failed && dock.tries + 1 < dock_attempts"
 goto = "BackToA"
 set = { "dock.tries" = "dock.tries + 1" }
 
 [[node.transition]]
-trigger = "failed"
+if = "failed"
 goto = "failed"
 
 [[node]]
