@@ -142,8 +142,8 @@ def install_signal_handlers(
 ) -> None:
     """Install SIGTERM/SIGINT handlers that request shutdown through the main loop.
 
-    When `sigint` is False, only SIGTERM is wired. This is useful for foreground
-    mode where the default SIGINT behavior (`KeyboardInterrupt`) is preserved.
+    When `sigint` is False, only SIGTERM is wired, preserving the caller's
+    existing SIGINT handler. CLI runs handle both signals in all modes.
 
     The watchdog sweeps strays after exit. Sweeping here would kill and reap
     multiprocessing's resource tracker before its owning interpreter cleans up.
