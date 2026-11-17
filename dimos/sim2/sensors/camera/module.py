@@ -16,6 +16,7 @@
 
 from typing import Any, cast
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -23,6 +24,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.sim2.sensors.camera.config import CameraConfig, camera_usd
 
@@ -32,15 +34,26 @@ class CameraModuleConfig(ModuleConfig):
     renderer_name: str = "CameraRenderModule"
 
 
-class SimCameraModule(Module):
+class CompressedCameraModuleConfig(CameraModuleConfig):
+    # The quality CompressedImage.from_image uses, so a simulated camera and a
+    # hardware driver that encodes with the default send comparable bytes.
+    jpeg_quality: int = Field(default=75, ge=1, le=100)
+
+
+class _SimCameraDevice(Module):
+    """What the rendering worker needs of a camera device, whatever it publishes."""
+
     config: CameraModuleConfig
-    color_image: Out[Image]
-    depth_image: Out[Image]
     camera_info: Out[CameraInfo]
 
     @rpc
     def get_usd(self) -> list[str]:
         return ["", camera_usd(self.config.sensor)]
+
+    @rpc
+    def jpeg_quality(self) -> int | None:
+        """JPEG quality of the color output; None when color leaves as raw pixels."""
+        return None
 
     @rpc
     def camera_config(self, renderer_name: str) -> CameraConfig:
@@ -66,3 +79,41 @@ class SimCameraModule(Module):
     @rpc
     def statistics(self) -> dict[str, Any]:
         return cast("dict[str, Any]", self._renderer.camera_statistics(self.config.sensor.frame_id))
+
+
+class SimCameraModule(_SimCameraDevice):
+    """RGB-D camera whose color leaves as raw pixels."""
+
+    color_image: Out[Image]
+    depth_image: Out[Image]
+
+
+class _JpegColorDevice(_SimCameraDevice):
+    """A device whose color leaves as JPEG, as from a driver that publishes encoder bytes.
+
+    Recorders keep the bytes as they are and browsers decode them directly, with
+    no transcoding in between.
+    """
+
+    config: CompressedCameraModuleConfig
+    color_image: Out[CompressedImage]
+
+    @rpc
+    def jpeg_quality(self) -> int | None:
+        return self.config.jpeg_quality
+
+
+class SimCompressedCameraModule(_JpegColorDevice):
+    """RGB-D camera with JPEG color. Depth stays raw: JPEG cannot carry metric depth."""
+
+    depth_image: Out[Image]
+
+
+class SimColorCameraModule(_JpegColorDevice):
+    """Video camera: JPEG color and no depth. Its sensor is a ``CameraConfig(depth=False)``."""
+
+
+class SimDepthCameraModule(_SimCameraDevice):
+    """Depth camera: metric depth and no color. Its sensor is a ``CameraConfig(color=False)``."""
+
+    depth_image: Out[Image]

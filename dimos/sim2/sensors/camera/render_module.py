@@ -26,11 +26,12 @@ from dimos.core.core import rpc
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Transport
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.camera.config import CameraConfig, CameraRenderer
-from dimos.sim2.sensors.camera.module import SimCameraModule
+from dimos.sim2.sensors.camera.module import _SimCameraDevice
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
 from dimos.sim2.sensors.sampling import Acquisition
 
@@ -51,9 +52,12 @@ class CameraRenderModule(_PoseSensorModule):
         self._sampling: dict[str, Acquisition] = {}
         self._counts: dict[str, int] = {}
         self._publication_rates: dict[str, PublicationRate] = {}
+        # Color is Image or CompressedImage, as the device declares it. A device has
+        # an output for each image its sensor has.
         self._outputs: dict[
-            str, tuple[Transport[Image], Transport[Image], Transport[CameraInfo]]
+            str, tuple[Transport[Any] | None, Transport[Image] | None, Transport[CameraInfo]]
         ] = {}
+        self._jpeg_quality: dict[str, int | None] = {}
 
     @rpc
     def build(self) -> None:
@@ -63,28 +67,38 @@ class CameraRenderModule(_PoseSensorModule):
             raise ValueError("renderer requires a nonempty list of unique camera module names")
         name = self.config.rpc_name or self.config.instance_name or type(self).__name__
         for device_name in self.config.cameras:
-            device = RPCClient.remote(SimCameraModule, device_name, rpc=self.rpc)
+            device = RPCClient.remote(_SimCameraDevice, device_name, rpc=self.rpc)
             try:
                 camera: CameraConfig = device.camera_config(name)
+                jpeg_quality: int | None = device.jpeg_quality()
                 outputs = {port.name: port.transport for port in device.get_stream_descriptors()}
             finally:
                 device.stop_rpc_client()
             if camera.frame_id in self._cameras:
                 raise ValueError(f"duplicate camera frame: {camera.frame_id}")
             self._cameras[camera.frame_id] = camera
+            self._jpeg_quality[camera.frame_id] = jpeg_quality
             self._sampling[camera.frame_id] = Acquisition(camera.hz)
             self._counts[camera.frame_id] = 0
+            for port, has in (("color_image", camera.color), ("depth_image", camera.depth)):
+                if has != (port in outputs):
+                    raise ValueError(
+                        f"camera {device_name}: a device publishes {port} exactly when "
+                        f"its sensor has that image"
+                    )
+            ports = ("color_image", "depth_image", "camera_info")
             self._publication_rates[camera.frame_id] = PublicationRate(
-                self, f"{device_name}: color_image, depth_image, camera_info", camera.hz
+                self, f"{device_name}: " + ", ".join(p for p in ports if p in outputs), camera.hz
             )
             transports = (
-                outputs["color_image"].build(),
-                outputs["depth_image"].build(),
+                outputs["color_image"].build() if camera.color else None,
+                outputs["depth_image"].build() if camera.depth else None,
                 outputs["camera_info"].build(),
             )
             self._outputs[camera.frame_id] = transports
             for transport in transports:
-                self.register_disposable(Disposable(transport.stop))
+                if transport is not None:
+                    self.register_disposable(Disposable(transport.stop))
 
     def open_sensor(self, scene: UsdModel) -> None:
         self.renderer = self.config.renderer()
@@ -117,16 +131,28 @@ class CameraRenderModule(_PoseSensorModule):
         for name in due:
             c = self._cameras[name]
             rgb, depth = images[name]
+            color_image, depth_image, camera_info = self._outputs[name]
             if (
-                rgb.shape != (c.height, c.width, 3)
-                or rgb.dtype != np.uint8
-                or depth.shape != (c.height, c.width)
-                or depth.dtype != np.float32
+                color_image is not None
+                and (rgb.shape != (c.height, c.width, 3) or rgb.dtype != np.uint8)
+            ) or (
+                depth_image is not None
+                and (depth.shape != (c.height, c.width) or depth.dtype != np.float32)
             ):
                 raise ValueError(f"renderer returned invalid image dimensions or dtypes for {name}")
-            color_image, depth_image, camera_info = self._outputs[name]
-            color_image.publish(Image.from_numpy(rgb, ImageFormat.RGB, c.frame_id, stamp))
-            depth_image.publish(Image.from_numpy(depth, ImageFormat.DEPTH, c.frame_id, stamp))
+            if color_image is not None:
+                color = Image.from_numpy(rgb, ImageFormat.RGB, c.frame_id, stamp)
+                quality = self._jpeg_quality[name]
+                color_image.publish(
+                    color if quality is None else CompressedImage.from_image(color, quality=quality)
+                )
+            if depth_image is not None:
+                depth = np.where(
+                    np.isfinite(depth) & (depth >= c.min_depth_m) & (depth <= c.max_depth_m),
+                    depth,
+                    0,
+                ).astype(np.float32)
+                depth_image.publish(Image.from_numpy(depth, ImageFormat.DEPTH, c.frame_id, stamp))
             camera_info.publish(
                 CameraInfo(
                     width=c.width,
@@ -145,6 +171,10 @@ class CameraRenderModule(_PoseSensorModule):
     def camera_statistics(self, frame_id: str) -> dict[str, Any]:
         with self._stats_lock:
             return {**self._stats, "acquisitions": self._counts[frame_id]}
+
+    def interrupt_sensor(self) -> None:
+        if hasattr(self, "renderer") and (cancel := getattr(self.renderer, "cancel", None)):
+            cancel()
 
     def close_sensor(self) -> None:
         self.renderer.close()
