@@ -52,6 +52,30 @@ dimos agent --conversation 3
 
 In the terminal, `/help` lists the commands, such as `/model` to change the conversation's model and `/logout` to remove a credential, and the keys below.
 
+## Use agent profiles
+
+Profiles contain six fields: name, description, role, blueprints, available skills, and always-loaded skills. Open `/menu` and select **Profiles** to create or edit one, preview it, start a conversation, resume its latest conversation, or set the default.
+
+Startup opens a conversation directly. New conversations use the saved default, or **General agent** when no default is set. To select a saved profile for one new conversation, use its name:
+
+```sh skip
+dimos agent --profile "Piper snack sorter"
+```
+
+Create that profile first in the menu, or ask the agent to save your setup as a profile. Both use the same catalog, and saved profiles appear immediately. The form shows all six fields, with a multiline role editor. Choose blueprints and skills from searchable checklists. A skill can be available on demand or always loaded.
+
+Up and Down move between form fields. Within the role text, the arrows move between lines, including wrapped lines. At the first or last line, they move to the previous or next field. Tab and Shift+Tab also move between controls.
+
+In a checklist, type to filter, use the arrows to move, and press Enter or Space to toggle a choice. Escape returns to the form with your selections. You can also Tab to **Done** and press Enter. Use **Create profile** or **Save changes** in the form to save the profile.
+
+To delete a custom profile, open it under **Profiles**, choose **Delete profile**, and confirm. Existing conversations keep their saved profile. Deleting the default makes **General agent** the default for new conversations.
+
+The chat header and conversation listings identify the loaded profile. A CLI override leaves the saved default unchanged. `--profile` cannot be combined with `--conversation`: resuming preserves the conversation's setup. Forks and summaries preserve it too. Profile edits and default changes affect future conversations.
+
+Always-loaded skills supply their full instructions before the first response. Available skills supply a name and description; the agent reads their instructions with its `profile` tool when needed. Profile skill instructions are captured when the conversation starts and survive later skill-file edits. Skill names come from `SKILL.md` frontmatter in the bundled or user skill directories.
+
+Profiles record the expected blueprints. Start them with the existing `dimos run` commands. Loading, browsing, saving, or setting a default profile does not start DimOS. The preview shows the profile's definition. Disconnected conversations can still help with planning and setup. All conversations share the robot runtime, and module notices continue to reach the conversation that owns the module.
+
 ## The terminal
 
 The chat shows the conversation's inputs, answers and tool calls. A message sent while the agent is busy shows as `queued` under the chat, in order, until the agent takes it. With an empty editor, Up brings every queued message of yours back into the editor; Enter queues the edited text again. When the agent reaches the next boundary it takes all queued messages in one turn.
@@ -78,7 +102,9 @@ A long-running tool call that allows it, such as `bash`, shows `Ctrl+B or /backg
 
 While calls run in the background, one line under the editor shows the newest with its command, how long it has run and its newest output line, and how many more there are. With an empty editor, Down opens the list there and selects a call. Enter shows its output full screen as it grows, `x` stops it, and Esc returns to the editor. A stopped call's output so far comes back as a notice. The agent can also start a call in the background itself, with the call's `run_in_background` argument, and list, read and stop these calls with its `background` tool.
 
-`/menu` opens the main menu full screen. Its Jobs tab shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time; `r` runs the selected job now and `d` deletes it.
+`/menu` opens four sections: Profiles, Conversations, Agent modules, and Jobs. Left and Right switch sections from a list. Up and Down select entries, and typing filters the list. Enter opens a profile definition and its vertical action menu, module actions, or job actions. Use Up and Down to choose an action and Enter to run it. Enter on a conversation resumes it immediately. Job actions include a scrolling history view. Escape returns one level and restores the list selection and search; from a list it returns to chat. The Profiles list always starts with **+ Create profile**, including when the search has no matches. Wide terminals also show a read-only profile preview beside the list.
+
+Jobs shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time. Use its focused actions to inspect runs, run a job now, or delete it.
 
 | Key | What it does |
 |---|---|
@@ -120,8 +146,8 @@ loginctl enable-linger "$USER"
 
 | Command | What it does |
 |---|---|
-| `dimos agent [--conversation ID] [--view] [--cwd DIR]` | Opens a terminal. Without `--conversation`, it starts a new conversation. It starts the gateway if none runs. |
-| `dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT` | Sends `PROMPT` to a new conversation, or to conversation `ID`, and prints the answer. With `--json`, it prints the new transcript items and then the outcome as JSON lines. |
+| `dimos agent [--profile NAME \| --conversation ID] [--view] [--cwd DIR]` | Opens a terminal. Without `--conversation`, it starts a new conversation using the selected or default profile. It starts the gateway if none runs. |
+| `dimos agent run [--profile NAME \| --conversation ID] [--cwd DIR] [--json] PROMPT` | Sends `PROMPT` to a new conversation, or to conversation `ID`, and prints the answer. With `--json`, it prints the new transcript items and then the outcome as JSON lines. |
 | `dimos agent conversations` | Lists the conversations, newest first. |
 | `dimos agent gateway` | Runs the gateway in the foreground. The service runs this command. |
 | `dimos agent status` | Shows whether the gateway runs. A socket file that nothing answers is reported as stale. |

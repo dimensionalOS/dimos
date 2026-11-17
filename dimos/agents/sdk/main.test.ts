@@ -88,6 +88,7 @@ function serveGateway(afterSend: (request: UserRequestId | null) => void = () =>
 
   host.serve(GatewayContract, (_input, _principal, self) => ({
     variant: "viewer",
+    profiles: cell(self, "profiles", { profiles: [], defaultProfile: null }),
     link: cell(self, "link", LINK),
     load: cell<LoadStatus>(self, "load", { state: "idle" }),
     runs: cell(self, "runs", []),

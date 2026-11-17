@@ -37,7 +37,7 @@ import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { LoginPanel } from "#dimos/agents/frontends/tui/dialogs.ts";
 import { MessageSelection } from "#dimos/agents/frontends/tui/conversation/selection.ts";
 import { PromptEditor } from "#dimos/agents/frontends/tui/conversation/input.ts";
-import { MenuView } from "#dimos/agents/frontends/tui/menu/view.ts";
+import { MenuView, newMenuMemory } from "#dimos/agents/frontends/tui/menu/view.ts";
 import { SIDEBAR_COLUMNS, Sidebar } from "#dimos/agents/frontends/tui/sidebar/sidebar.ts";
 import { StatusLine, accent, amber, levelColor, muted } from "#dimos/agents/frontends/tui/style.ts";
 import { RemoteFrames } from "#dimos/agents/sdk/streams/remote.ts";
@@ -74,6 +74,7 @@ type TerminalOptions = {
   readonly socketPath: string;
   /** Show this conversation; null starts a new one in `cwd`. */
   readonly conversation: ConversationId | null;
+  readonly profile?: string | null;
   readonly role: Role;
   readonly cwd: string | null;
   /** `~/.cache/dimos/agent/render/`, shared with the gateway, for `/inspect` and `/image`. */
@@ -303,8 +304,11 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
 
   const conversationText = (): string => {
     if (showing === null) return "";
-    if (showing.conversation.variant === "owner") return `#${showing.id}`;
-    return `#${showing.id} VIEW`;
+    const profile = clean(
+      ui.gateway.conversations.value.find((row) => row.id === showing?.id)?.profile?.name ?? "General agent",
+    );
+    if (showing.conversation.variant === "owner") return `#${showing.id} · ${profile}`;
+    return `#${showing.id} · ${profile} VIEW`;
   };
   const linkText = (): string => {
     const gateway = ui.gateway;
@@ -488,7 +492,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     };
     tui.setLayoutRoot(
       new VStack([
-        new StatusLine(() => [accent(`⠿ dimos agent / ${title}`), muted("Esc returns to chat")]),
+        new StatusLine(() => [accent(`⠿ dimos agent / ${title}`), muted("Esc back")]),
         { component: new ScrollView(focused, { primary: true, follow }), basis: 0, grow: 1 },
       ]),
     );
@@ -520,7 +524,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
 
   /** Counts switchTo calls: one that a newer call overtook while it waited gives up, and releases what it got. */
   let switches = 0;
-  const switchTo = async (conversation: ConversationId | null, role: Role): Promise<void> => {
+  const switchTo = async (conversation: ConversationId | null, role: Role, profile?: string | null): Promise<void> => {
     const switching = ++switches;
     let id = conversation;
     if (id === null) {
@@ -531,6 +535,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
           {
             request: newActionRequest(),
             cwd: options.cwd,
+            profile,
           },
           (args) => owner(ui.gateway).createConversation(args),
         ),
@@ -719,6 +724,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   };
 
   let menuView = null as MenuView | null;
+  const menuMemory = newMenuMemory();
   const app: TerminalApp = {
     ui,
     tui,
@@ -737,9 +743,14 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     openMenu: () => {
       closeSwitcher();
       const view = new MenuView({
-        inventory,
         ui,
+        tui,
         current: showing?.id ?? null,
+        memory: menuMemory,
+        create: (profile) => {
+          closeFullScreen?.();
+          void switchTo(null, "owner", profile).catch(note);
+        },
         attach: (conversation) => {
           closeFullScreen?.();
           void switchTo(conversation, "owner").catch(note);
@@ -852,6 +863,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       } else resolveExit(0);
       return { consume: true };
     }
+    if (closeFullScreen !== null) return undefined;
     if (overlay !== null) return undefined;
     if (matchesKey(data, "ctrl+t")) {
       if (isKeyRelease(data) || isKeyRepeat(data)) return { consume: true };
@@ -960,7 +972,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       }),
     );
     configureFrames();
-    await switchTo(options.conversation, options.role);
+    await switchTo(options.conversation, options.role, options.profile);
     tui.setLayoutRoot(layout);
     syncLogin();
     tui.setFocus(focusOf(mode));

@@ -9,7 +9,7 @@ export const conversationsTab: MenuTab = {
     return switcherRows(gateway.conversations.value, context.current, context.now).map((row) => ({
       text: switcherLine(row),
       level: row.level,
-      keys: [],
+      actions: [],
       open: () => {
         context.attach(row.id);
         return null;

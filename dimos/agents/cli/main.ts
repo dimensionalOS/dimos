@@ -13,8 +13,8 @@ import { runTui } from "#dimos/agents/cli/commands/tui.ts";
 import { runVersion } from "#dimos/agents/cli/commands/version.ts";
 import { ensureGateway } from "#dimos/agents/cli/process.ts";
 
-const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]              open a terminal (a new conversation without --conversation)
-dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT   submit one input and print the answer, as JSON lines with --json
+const USAGE = `dimos agent [--profile NAME | --conversation ID] [--view] [--cwd DIR] open a terminal (a new conversation without --conversation)
+dimos agent run [--profile NAME | --conversation ID] [--cwd DIR] [--json] PROMPT submit one input and print the answer, as JSON lines with --json
 dimos agent conversations                                         list conversations, newest first
 dimos agent gateway [--daemon]                                    run the gateway, in the background with --daemon
 dimos agent status [--json]                                       the gateway, DimOS, conversations, modules, jobs, streams
@@ -47,6 +47,7 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
     allowPositionals: true,
     options: {
       conversation: { type: "string" },
+      profile: { type: "string" },
       view: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
       daemon: { type: "boolean", default: false },
@@ -60,11 +61,18 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
     return 0;
   }
   const paths = agentPaths(env);
+  if (values.profile !== undefined && values.conversation !== undefined) {
+    process.stderr.write(
+      "--profile starts a new conversation; --conversation preserves its existing profile. Use one at a time.\n",
+    );
+    return 2;
+  }
   const context: CommandContext = {
     paths,
     env,
     cwd: values.cwd === undefined ? null : resolve(values.cwd),
     conversation: conversationId(values.conversation),
+    profile: values.profile ?? null,
     view: values.view,
     json: values.json,
     daemon: values.daemon,

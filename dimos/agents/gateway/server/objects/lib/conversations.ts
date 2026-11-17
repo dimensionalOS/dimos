@@ -1,7 +1,6 @@
 import type {
   AgentState,
   CommitPublication,
-  CommonDocDefinition,
   ConversationId,
   ConversationRecord,
   Cursor,
@@ -9,7 +8,6 @@ import type {
   EntryRecord,
   Harness,
   InboxState,
-  JsonObject,
   LiveState,
   Tx,
   UsageState,
@@ -22,12 +20,14 @@ import type { Cell, Ctx, Self } from "@earendil-works/chord";
 import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import { GatewayState } from "#dimos/agents/shared/protocol/gateway/contract.ts";
-import { commitEvents } from "#dimos/agents/gateway/server/objects/lib/commits.ts";
+import { commitEvents, valueOf } from "#dimos/agents/gateway/server/objects/lib/commits.ts";
 import { AgentDoc, InboxDoc, LiveDoc, UsageDoc } from "@earendil-works/pi-durable";
 import { DimosInputEntry } from "#dimos/agents/harness/inputs/source.ts";
 import { SEEN_DOC_KIND } from "#dimos/agents/harness/conversations.ts";
 import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 import { inputOf } from "#dimos/agents/shared/protocol/conversation/queue.ts";
+import { BoundProfileDoc, boundProfile } from "#dimos/agents/harness/profiles.ts";
+import { profileIdentity } from "#dimos/agents/shared/protocol/profiles.ts";
 
 const EMPTY_TITLE = "(empty)";
 
@@ -135,11 +135,6 @@ function withEntry(row: ConversationRow, entry: EntryRecord, seen: Seen, now: Ep
   return next;
 }
 
-/** A conversation document's value as its token types it. */
-function valueOf<T extends JsonObject>(value: JsonObject, _token: { readonly definition: CommonDocDefinition<T> }): T {
-  return value as T;
-}
-
 /**
  * One publication applied to the rows. A row that did not change keeps its object, so the cell's diff is empty for the
  * `pi.live` partials that arrive every 100 ms and change nothing a row shows. Records come first, whatever the
@@ -155,7 +150,9 @@ export function foldPublication(
   let added = false;
   for (const change of publication.changes) {
     if (change.type !== "conversation" || byId.has(change.value.id)) continue;
-    byId.set(change.value.id, freshRow(change.value, now));
+    const source =
+      change.value.parent === undefined ? undefined : byId.get(change.value.parent.conversationId)?.profile;
+    byId.set(change.value.id, { ...freshRow(change.value, now), ...(source === undefined ? {} : { profile: source }) });
     added = true;
   }
   for (const change of publication.changes) {
@@ -172,6 +169,8 @@ export function foldPublication(
     else if (kind === InboxDoc.definition.kind) byId.set(row.id, withInbox(row, valueOf(change.value, InboxDoc), now));
     else if (kind === UsageDoc.definition.kind) byId.set(row.id, withUsage(row, valueOf(change.value, UsageDoc), now));
     else if (kind === AgentDoc.definition.kind) byId.set(row.id, withAgent(row, valueOf(change.value, AgentDoc)));
+    else if (kind === BoundProfileDoc.definition.kind)
+      byId.set(row.id, { ...row, profile: profileIdentity(valueOf(change.value, BoundProfileDoc).profile) });
   }
   const next = [...byId.values()];
   if (!added && next.every((row, index) => row === rows[index])) return rows;
@@ -231,13 +230,19 @@ async function seedOf(tx: Tx, record: ConversationRecord, seen: Seen): Promise<S
 
 async function rowOf(harness: Harness, seed: Seed, now: EpochMs, context: Context): Promise<ConversationRow> {
   const id = seed.record.id;
-  const [live, inbox, usage, agent] = await Promise.all([
+  const [live, inbox, usage, agent, bound] = await Promise.all([
     harness.snapshot(LiveDoc, id, context),
     harness.snapshot(InboxDoc, id, context),
     harness.snapshot(UsageDoc, id, context),
     harness.snapshot(AgentDoc, id, context),
+    boundProfile(harness, id, context),
   ]);
-  let row: ConversationRow = { ...freshRow(seed.record, now), title: seed.title, unread: seed.notices.length };
+  let row: ConversationRow = {
+    ...freshRow(seed.record, now),
+    title: seed.title,
+    unread: seed.notices.length,
+    profile: profileIdentity(bound.profile),
+  };
   if (live !== undefined) row = withLive(row, live, now);
   if (inbox !== undefined) row = withInbox(row, inbox, now);
   if (usage !== undefined) row = withUsage(row, usage, now);

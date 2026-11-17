@@ -39,6 +39,7 @@ function renderOf(result: ToolResult): RenderDetails | null {
     case "edit":
     case "write":
     case "job":
+    case "profile":
     case "background":
     case null:
       return null;

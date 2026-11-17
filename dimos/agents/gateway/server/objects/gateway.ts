@@ -2,6 +2,8 @@ import type { Handlers } from "#dimos/agents/gateway/server/objects/lib/bind.ts"
 import type { LoginState } from "#dimos/agents/shared/protocol/auth.ts";
 import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
 import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
+import { ProfileError } from "#dimos/agents/harness/profiles.ts";
 import { GATEWAY_ACTIONS } from "#dimos/agents/shared/protocol/actions/gateway.ts";
 import { GatewayContract, GatewayState } from "#dimos/agents/shared/protocol/gateway/contract.ts";
 import { GatewayStore } from "#dimos/agents/gateway/server/objects/store.ts";
@@ -14,6 +16,15 @@ import { fromJobChange, fromModuleOutcome } from "#dimos/agents/gateway/server/o
 import { grantOf } from "#dimos/agents/gateway/auth/principal.ts";
 
 const SHARED = Object.keys(GatewayState) as (keyof typeof GatewayState)[];
+
+async function profileResult<T>(run: () => Promise<T>): Promise<Outcome<T>> {
+  try {
+    return done(await run());
+  } catch (error) {
+    if (!(error instanceof ProfileError)) throw error;
+    return refused({ code: "invalid", field: "profile", problem: error.message });
+  }
+}
 
 /**
  * The gateway object of one principal: the store's members as its own, its own login flow, and, for owners, the
@@ -35,8 +46,22 @@ export const serveGateway: ServeObject = (host, deps) =>
       const { agent } = deps;
       const standing = (): Standing => ({ role: "owner", link: store.link.value, conversation: null });
       const handlers: Handlers<typeof GATEWAY_ACTIONS> = {
-        createConversation: async ({ request, cwd }, call) =>
-          done({ conversation: await agent.conversations.start(cwd, request, call.context) }),
+        profileOptions: async () => done(await agent.profiles.choices()),
+        saveProfile: ({ profile }, call) => profileResult(() => agent.profiles.save(profile, call.context)),
+        deleteProfile: ({ profile }, call) =>
+          profileResult(async () => {
+            await agent.profiles.delete(profile, call.context);
+            return null;
+          }),
+        setDefaultProfile: ({ profile }, call) =>
+          profileResult(async () => {
+            await agent.profiles.setDefault(profile, call.context);
+            return null;
+          }),
+        createConversation: ({ request, cwd, profile }, call) =>
+          profileResult(async () => ({
+            conversation: await agent.conversations.start(cwd, request, call.context, profile),
+          })),
         login: ({ provider, method }) => deps.logins.start(principal, provider, method),
         answerLogin: ({ dialog, value }) => deps.logins.answer(principal, dialog, value),
         logout: ({ provider }) => deps.catalog.logout(provider),

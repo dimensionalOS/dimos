@@ -3,6 +3,8 @@ import type { ConversationId, EntryId, Harness, ModelRef } from "@earendil-works
 import type { Facts } from "#dimos/agents/shared/protocol/runtime/context.ts";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
+import type { Profiles } from "#dimos/agents/harness/profiles.ts";
+import { bindProfile } from "#dimos/agents/harness/profiles.ts";
 import { defineDoc } from "@earendil-works/pi-durable";
 import { writeBaseline } from "#dimos/agents/harness/context/baseline.ts";
 
@@ -14,6 +16,7 @@ export type ConversationDefaults = {
 };
 
 type ConversationsOptions = {
+  readonly profiles: Profiles;
   readonly harness: Harness;
   readonly runtime: RuntimeClient;
   /** The gateway's own facts, its jobs and the running systems, which the baseline records beside the snapshot. */
@@ -60,12 +63,13 @@ export class Conversations {
    * baseline in one commit, recorded under `request`; a repeated request returns the conversation it made, and one in
    * flight is joined.
    */
-  start(cwd: string | null, request: string, context: Context): Promise<ConversationId> {
+  start(cwd: string | null, request: string, context: Context, profile?: string | null): Promise<ConversationId> {
     const flying = this.inFlight.get(request);
     if (flying !== undefined) return flying;
     const made = (async () => {
       const done = await this.created(request, context);
       if (done !== null) return done;
+      const bound = await this.options.profiles.resolve(profile, context);
       const [system, gateway] = await Promise.all([this.snapshot(), this.options.gatewayFacts(context)]);
       const { model, thinkingLevel, workspace } = this.options.defaults();
       const conversation = await this.options.harness.createConversation(
@@ -73,6 +77,7 @@ export class Conversations {
           ownership: { kind: "ownerless" },
           agent: { model, thinkingLevel, cwd: cwd ?? workspace },
           init: async (tx, id) => {
+            await bindProfile(tx, id, bound);
             await writeBaseline(tx, id, { ...system, ...gateway });
             const doc = await tx.doc(CreatedDoc);
             doc.created[request] = id;

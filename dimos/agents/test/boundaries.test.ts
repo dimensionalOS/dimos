@@ -14,12 +14,16 @@ const TERMINAL_RUNTIME = [/^frontends\//, /^sdk\//, /^shared\/(protocol|view-mod
 
 const TERMINAL_PACKAGES = [
   /^@earendil-works\/chord$/,
-  /^@earendil-works\/pi-tui$/,
+  /^@earendil-works\/pi-tui(?:\/dist\/components\/editor\.js)?$/,
   /^@earendil-works\/pi-coding-agent(\/|$)/,
   /^node:/,
 ];
 
-const BROWSER_PACKAGES = [/^typebox$/, /^@earendil-works\/chord$/, /^@earendil-works\/pi-ai\/providers\/model-schema$/];
+const BROWSER_PACKAGES = [
+  /^typebox(?:\/value)?$/,
+  /^@earendil-works\/chord$/,
+  /^@earendil-works\/pi-ai\/providers\/model-schema$/,
+];
 
 const UI_INTERNALS = [
   /^shared\/protocol\/schema\.ts$/,
