@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, cast
@@ -605,6 +606,17 @@ class MujocoEngine(SimulationEngine):
     def _sim_loop(self) -> None:
         logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
+        headless = self._headless
+        if (
+            not headless
+            and sys.platform == "darwin"
+            and not isinstance(viewer._MJPYTHON, viewer._MjPythonBase)  # type: ignore[attr-defined]
+        ):
+            logger.warning(
+                "MuJoCo passive viewer requires mjpython on macOS; "
+                "running simulation without a MuJoCo window"
+            )
+            headless = True
 
         # Camera renderers: created once in the sim thread
         cam_renderers = self._init_cameras()
@@ -644,7 +656,7 @@ class MujocoEngine(SimulationEngine):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        if self._headless:
+        if headless:
             while not self._stop_event.is_set():
                 _step_once(sync_viewer=False)
         else:

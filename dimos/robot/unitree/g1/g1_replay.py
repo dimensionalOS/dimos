@@ -25,8 +25,8 @@ from reactivex import timer
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.memory.cli.dataset import resolve_dataset
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.cli.dataset import open_store, resolve_dataset
+from dimos.memory.store.base import Store
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -59,7 +59,7 @@ class G1ReplayConfig(ModuleConfig):
 
 
 class G1Replay(Module):
-    """Replays a ``G1Recorder`` SQLite recording onto the live G1 stream names."""
+    """Replays a G1 recording (SQLite or MCAP) onto the live G1 stream names."""
 
     config: G1ReplayConfig
     dedicated_worker = True
@@ -72,13 +72,13 @@ class G1Replay(Module):
     pointlio_lidar: Out[PointCloud2]
     tf: Out[TFMessage]
 
-    _store: SqliteStore | None = None
+    _store: Store | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         path = resolve_dataset(self.config.dataset)
-        store = SqliteStore(path=str(path), must_exist=True)
+        store = open_store(path)
         store.start()
         self._store = store
         replay = store.replay(

@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
+from dimos.utils.executable import find_executable
+
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
@@ -701,7 +703,7 @@ def main(
     if no_gui:
         print(f"open with: rerun {out}")
     else:
-        subprocess.Popen(["rerun", str(out)])
+        subprocess.Popen([find_executable("rerun") or "rerun", str(out)])
 
     if export_cloud and pgo_map is not None:
         from dimos.mapping.relocalization.module import map_cloud_stream, named_map_frame

@@ -20,7 +20,7 @@ from threading import Event, Lock, Thread
 import time
 from typing import Any, Protocol
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from reactivex import defer, empty, operators as ops
 from reactivex.abc import SchedulerBase
 from reactivex.disposable import Disposable
@@ -32,8 +32,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.cli.dataset import open_dataset
+from dimos.memory.replay import Replay, ReplayStream
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -43,7 +43,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.unitree.config import connection_type
+from dimos.robot.unitree.config import connection_type, require_robot_ip
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.simulation.dimsim.config import DimSimConfig
@@ -53,11 +53,16 @@ from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
+    from typing_extensions import Self, TypeVar
 else:
-    from typing import TypeVar
+    from typing import Self, TypeVar
 
 logger = setup_logger()
+
+_ROBOT_IP_GUIDANCE = (
+    "Set ROBOT_IP or --robot-ip (or --go2connection.ip), "
+    "or run without a robot using --replay or --simulation."
+)
 
 
 class Go2Mode(str, Enum):
@@ -66,7 +71,7 @@ class Go2Mode(str, Enum):
 
 
 class ConnectionConfig(ModuleConfig):
-    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
     camera: bool = True
@@ -85,6 +90,16 @@ class ConnectionConfig(ModuleConfig):
     # Turn off where another module owns the base_link edge. The odom port
     # keeps publishing either way.
     publish_tf: bool = True
+
+    @model_validator(mode="after")
+    def validate_connection(self) -> Self:
+        self.validate_ip()
+        return self
+
+    def validate_ip(self) -> None:
+        mode = connection_type(replay=self.g.replay, simulation=self.g.simulation).lower()
+        if mode == "webrtc":
+            require_robot_ip(self.ip, _ROBOT_IP_GUIDANCE)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -160,7 +175,7 @@ def make_connection(
 
         return DimSimConnection(cfg.dimsim, transport=cfg.g.transport)
     elif mode == "webrtc":
-        assert ip is not None, "IP address must be provided"
+        ip = require_robot_ip(ip, _ROBOT_IP_GUIDANCE)
         return UnitreeWebRTCConnection(
             ip,
             aes_128_key=aes_128_key,
@@ -198,9 +213,7 @@ class ReplayConnection(CompositeResource):
     def replay(self) -> Replay:
         # One shared store + Replay so lidar/odom/video advance against the
         # same wall-clock anchor on subscribe.
-        store = self.register_disposable(
-            SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
-        )
+        store = self.register_disposable(open_dataset(self.dataset))
         store.start()
         return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
 
@@ -320,9 +333,16 @@ class ReplayConnection(CompositeResource):
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
-        stream: ReplayStream[PoseStamped] = self.replay.stream(
-            self._stream_name("go2_odom", "odom")
-        )
+        name = self._stream_name("go2_odom", "odom")
+        kind = self.replay.store.stream(name).data_type
+        if kind is None or not issubclass(kind, PoseStamped):
+            # A legacy Go2 DDS recording stores nav_msgs.Odometry. Replayed as is,
+            # it kills the odom subscriber and leaves lidar and video without TF.
+            raise TypeError(
+                f"Go2 replay needs PoseStamped odometry, but stream {name!r} in dataset "
+                f"{self.dataset!r} holds {kind.__name__ if kind else None}"
+            )
+        stream: ReplayStream[PoseStamped] = self.replay.stream(name)
         return self._tracked(stream.observable())
 
     @simple_mcache

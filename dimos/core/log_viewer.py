@@ -23,6 +23,7 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
+from dimos.constants import LOG_DIR
 from dimos.core.run_registry import get_most_recent, list_runs
 
 if TYPE_CHECKING:
@@ -35,20 +36,19 @@ _RESET = "\033[0m"
 
 def resolve_log_path(run_id: str = "") -> Path | None:
     """Find the log file: specific run → alive run → most recent."""
+    # A run leaves the registry when it exits, but its log stays in LOG_DIR.
     if run_id:
         for entry in list_runs(alive_only=False):
             if entry.run_id == run_id:
                 return _log_path_if_exists(entry.log_dir)
-        return None
+        return _log_path_if_exists(LOG_DIR / run_id)
 
     # Prefer alive run, fall back to most recent stopped run.
     alive = get_most_recent(alive_only=True)
     if alive is not None:
         return _log_path_if_exists(alive.log_dir)
-    recent = get_most_recent(alive_only=False)
-    if recent is not None:
-        return _log_path_if_exists(recent.log_dir)
-    return None
+    # Timestamped run IDs sort by start time, matching the registry's ordering.
+    return max(LOG_DIR.glob("*/main.jsonl"), key=lambda p: p.parent.name, default=None)
 
 
 def format_line(raw: str, *, json_output: bool = False) -> str:
@@ -93,14 +93,24 @@ def read_log(path: Path, count: int | None = 50) -> list[str]:
     return list(tail)
 
 
-def follow_log(path: Path, stop: Callable[[], bool] | None = None) -> Iterator[str]:
-    """Yield new lines as they appear (``tail -f`` style).
+def follow_log(
+    path: Path, stop: Callable[[], bool] | None = None, *, count: int | None = 50
+) -> Iterator[str]:
+    """Yield the last *count* lines, then new lines (``None`` = all history).
 
     *stop* is an optional callable; when it returns ``True`` the
     generator exits cleanly.
     """
     with open(path) as f:
-        f.seek(0, 2)
+        history: deque[str] = deque(maxlen=count)
+        for line in f:
+            if stop is not None and stop():
+                return
+            history.append(line)
+        for line in history:
+            if stop is not None and stop():
+                return
+            yield line
         while stop is None or not stop():
             line = f.readline()
             if line:
@@ -109,6 +119,6 @@ def follow_log(path: Path, stop: Callable[[], bool] | None = None) -> Iterator[s
                 time.sleep(0.1)
 
 
-def _log_path_if_exists(log_dir: str) -> Path | None:
+def _log_path_if_exists(log_dir: str | Path) -> Path | None:
     path = Path(log_dir) / "main.jsonl"
     return path if path.exists() else None

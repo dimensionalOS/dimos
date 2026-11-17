@@ -192,8 +192,9 @@ def r1pro_control(
             joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
             TaskConfig(
                 name="vel_chassis",
-                type="velocity",
+                type="twist_velocity",
                 joint_names=_chassis_joints,
+                params={"axes": ["linear.x", "linear.y", "angular.z"]},
                 priority=10,
             ),
         ]

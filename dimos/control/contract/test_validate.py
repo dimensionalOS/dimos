@@ -32,9 +32,9 @@ ARM = {
 }
 #: A base whose speed limits clamp; it cannot move sideways.
 CHASSIS = {
-    "chassis/base/vx": Limits(-1.5, 1.5, clamp=True),
-    "chassis/base/vy": Limits(0.0, 0.0, clamp=True),
-    "chassis/base/wz": Limits(-2.0, 2.0, clamp=True),
+    "chassis/base_x/velocity": Limits(-1.5, 1.5, clamp=True),
+    "chassis/base_y/velocity": Limits(0.0, 0.0, clamp=True),
+    "chassis/base_yaw/velocity": Limits(-2.0, 2.0, clamp=True),
 }
 
 
@@ -85,17 +85,28 @@ def test_a_non_finite_value_is_refused(value: float) -> None:
 def test_a_clamping_limit_pulls_the_value_back_and_says_so() -> None:
     """A stick pushed too far drives the base at its top speed."""
     result = validate_command(
-        {"chassis/base/vx": 9.0, "chassis/base/wz": -9.0, "chassis/base/vy": 0.0}, CHASSIS
+        {
+            "chassis/base_x/velocity": 9.0,
+            "chassis/base_yaw/velocity": -9.0,
+            "chassis/base_y/velocity": 0.0,
+        },
+        CHASSIS,
     )
     assert result == CommandBatch(
-        values={"chassis/base/vx": 1.5, "chassis/base/wz": -2.0, "chassis/base/vy": 0.0},
-        clamped=("chassis/base/vx", "chassis/base/wz"),
+        values={
+            "chassis/base_x/velocity": 1.5,
+            "chassis/base_yaw/velocity": -2.0,
+            "chassis/base_y/velocity": 0.0,
+        },
+        clamped=("chassis/base_x/velocity", "chassis/base_yaw/velocity"),
     )
 
 
 def test_a_zero_range_clamps_to_a_standstill() -> None:
-    result = validate_command({"chassis/base/vy": 0.5}, CHASSIS)
-    assert result == CommandBatch(values={"chassis/base/vy": 0.0}, clamped=("chassis/base/vy",))
+    result = validate_command({"chassis/base_y/velocity": 0.5}, CHASSIS)
+    assert result == CommandBatch(
+        values={"chassis/base_y/velocity": 0.0}, clamped=("chassis/base_y/velocity",)
+    )
 
 
 def test_one_refused_value_refuses_the_whole_command() -> None:

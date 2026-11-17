@@ -472,6 +472,46 @@ class TestStatusCommand:
 class TestStopCommand:
     """Tests for `dimos stop` CLI command."""
 
+    @pytest.fixture
+    def clock(self, mocker):
+        clock = mocker.Mock(spec=time)
+        clock.monotonic.return_value = 0.0
+
+        def sleep(seconds):
+            clock.monotonic.return_value += seconds
+
+        clock.sleep.side_effect = sleep
+        mocker.patch.object(run_registry, "time", clock)
+        return clock
+
+    @pytest.mark.parametrize("cleanup_seconds", [0.0, 6.5, 22.0])
+    def test_stop_waits_for_cleanup(self, tmp_registry, mocker, clock, cleanup_seconds):
+        entry = _make_entry(pid=12345)
+        entry.save()
+        kill = mocker.patch.object(run_registry.os, "kill")
+        mocker.patch.object(
+            run_registry,
+            "is_pid_alive",
+            side_effect=lambda pid: clock.monotonic() < cleanup_seconds,
+        )
+
+        assert stop_entry(entry) == ("Stopped with SIGTERM", True)
+
+        kill.assert_called_once_with(entry.pid, signal.SIGTERM)
+        assert not entry.registry_path.exists()
+
+    def test_force_stop_skips_cleanup_wait(self, tmp_registry, mocker, clock):
+        entry = _make_entry(pid=12345)
+        entry.save()
+        kill = mocker.patch.object(run_registry.os, "kill")
+        mocker.patch.object(run_registry, "is_pid_alive", return_value=True)
+
+        assert stop_entry(entry, force=True) == ("Stopped with SIGKILL", True)
+
+        kill.assert_called_once_with(entry.pid, signal.SIGKILL)
+        clock.sleep.assert_not_called()
+        assert not entry.registry_path.exists()
+
     def test_stop_recognizes_exited_child_without_reaping_it(self, tmp_registry, mocker):
         with subprocess.Popen([sys.executable, "-c", "raise SystemExit(23)"]) as child:
             wait_until(
@@ -588,44 +628,24 @@ class TestStopCommand:
         stop_entry(entry, force=False)
         assert not entry.registry_path.exists()
 
-    def test_stop_escalates_to_sigkill_after_timeout(self, tmp_path, monkeypatch):
-        """If SIGTERM doesn't kill within 5s, escalates to SIGKILL."""
-        reg_dir = tmp_path / "runs"
-        monkeypatch.setattr(run_registry, "REGISTRY_DIR", reg_dir)
-
+    def test_stop_escalates_to_sigkill_after_timeout(self, tmp_registry, mocker, clock):
+        """A stuck process is killed after the graceful shutdown budget."""
+        entry = _make_entry(pid=12345)
+        entry.save()
         signals_sent = []
 
-        def mock_kill(pid, sig):
-            signals_sent.append(sig)
-            # Don't raise — process "survives"
+        def kill(pid, sig):
+            signals_sent.append((pid, sig, clock.monotonic()))
 
-        monkeypatch.setattr(os, "kill", mock_kill)
+        mocker.patch.object(run_registry.os, "kill", side_effect=kill)
+        mocker.patch.object(run_registry, "is_pid_alive", return_value=True)
 
-        # Make is_pid_alive always return True (process won't die)
-        monkeypatch.setattr(run_registry, "is_pid_alive", lambda pid: True)
+        assert stop_entry(entry) == ("Escalated to SIGKILL after SIGTERM timeout", True)
 
-        # Speed up the wait loop
-        monkeypatch.setattr("time.sleep", lambda x: None)
-
-        entry = RunEntry(
-            run_id="20260306-120000-stubborn",
-            pid=12345,
-            blueprint="stubborn",
-            started_at="2026-03-06T12:00:00Z",
-            log_dir=str(tmp_path / "logs"),
-            cli_args=["stubborn"],
-            config_overrides={},
-        )
-        entry.save()
-
-        from dimos.core.run_registry import stop_entry
-
-        stop_entry(entry, force=False)
-
-        import signal
-
-        assert signal.SIGTERM in signals_sent
-        assert signal.SIGKILL in signals_sent
+        assert signals_sent == [
+            (entry.pid, signal.SIGTERM, 0.0),
+            (entry.pid, signal.SIGKILL, pytest.approx(30.0)),
+        ]
         assert not entry.registry_path.exists()
 
     def test_get_most_recent_returns_latest(self, tmp_path, monkeypatch):

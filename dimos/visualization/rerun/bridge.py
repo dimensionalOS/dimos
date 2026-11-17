@@ -21,7 +21,6 @@ from dataclasses import field
 import functools
 from operator import attrgetter
 import os
-import shutil
 import signal
 import socket
 import subprocess
@@ -61,6 +60,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTop
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
+from dimos.utils.executable import find_executable
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import (
@@ -807,9 +807,9 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     its visualization sit together. Running it as a client keeps the server, and
     any live viewer on it, exactly as they are.
     """
-    cli = shutil.which("rerun")
+    cli = find_executable("rerun")
     if cli is None:
-        logger.warning("rerun_save: no `rerun` CLI on PATH, the stream is not saved")
+        logger.warning("rerun_save: no `rerun` CLI found, the stream is not saved")
         return None
     run_id = os.environ.get(DIMOS_RUN_ID_ENV) or time.strftime("%Y%m%d-%H%M%S")
     path = RECORDINGS_DIR / run_id / "rerun.rrd"

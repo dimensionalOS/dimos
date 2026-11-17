@@ -19,7 +19,7 @@ part::
 
     arm/joint1/position         where the arm's first joint is
     g1/left_hip_pitch/kp        how stiffly that hip is held
-    go2/base/vx                 how fast the dog is driving forwards
+    r1pro/base_forward/velocity  measured/commanded BODY forward speed
 
 The first two parts together, e.g. ``arm/joint1``, name the part itself. That
 is what something asks to take control of. The third part picks one number
@@ -53,30 +53,6 @@ class Interface(str, Enum):  # TODO(PY311): switch to enum.StrEnum
     EFFORT = "effort"
     KP = "kp"
     KD = "kd"
-
-    # A base: how fast it moves, measured from the base itself, then where it
-    # has got to.
-    #
-    # A ground base declares the planar subset (vx, vy, wz over x, y, yaw); a
-    # drone or a free-flyer declares all six. Both are the same vocabulary, so
-    # a task that reads vz does not need to know which kind of base it is
-    # talking to.
-    #
-    # The pose terms (x, y, z, roll, pitch, yaw) are state-only today: a base
-    # is commanded as a twist, and nothing in the stack commands a pose
-    # directly. They are named here so odometry has one spelling, not two.
-    VX = "vx"
-    VY = "vy"
-    VZ = "vz"
-    WX = "wx"
-    WY = "wy"
-    WZ = "wz"
-    X = "x"
-    Y = "y"
-    Z = "z"
-    ROLL = "roll"
-    PITCH = "pitch"
-    YAW = "yaw"
 
     # An IMU: orientation quaternion, angular rate, linear acceleration.
     QX = "qx"

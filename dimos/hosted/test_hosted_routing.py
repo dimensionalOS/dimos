@@ -46,6 +46,7 @@ from dimos.core.stream import In, Out
 from dimos.hosted.config import HostConfig
 from dimos.hosted.daemon import HostDaemon
 from dimos.hosted.deploy import deployed, wait_for_hosts
+from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
 from dimos.hosted.machine import code_revision
 from dimos.msgs.std_msgs.String import String
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -268,14 +269,15 @@ def test_a_module_ref_calls_its_provider_on_another_host(
         assert result.read_text() == "42"
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="scouts multicast on Linux loopback")
 def test_hosts_scout_each_other_and_answer_probes(
     tmp_path: Path, unused_udp_port_factory: Callable[[], int]
 ) -> None:
-    from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
-
     group = f"224.0.0.224:{unused_udp_port_factory()}"
-    config = HostConfig(autodiscovery=True, scout_addr=group, scout_interface="lo")
+    config = HostConfig(
+        autodiscovery=True,
+        scout_addr=group,
+        scout_interface="lo0" if sys.platform == "darwin" else "lo",
+    )
     daemons = [
         HostDaemon(
             config.model_copy(update={"name": name, "listen": f"tcp/127.0.0.1:{_free_port()}"}),

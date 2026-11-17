@@ -523,7 +523,7 @@ struct TfRoute {
 }
 
 impl Route for TfRoute {
-    fn try_dispatch(&self, data: &[u8]) {
+    fn dispatch(&self, data: &[u8]) {
         let msg = match lcm_msgs::tf2_msgs::TFMessage::decode(data) {
             Ok(msg) => msg,
             Err(e) => {
@@ -846,7 +846,7 @@ mod tests {
         let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(30)).await;
-            route.try_dispatch(&stamped_message("a", "b", 5.0, 1.0));
+            route.dispatch(&stamped_message("a", "b", 5.0, 1.0));
         });
         let t = tf
             .lookup("a", "b")
@@ -903,10 +903,10 @@ mod tests {
     fn a_zero_rotation_on_the_wire_is_dropped_rather_than_stored_as_nan() {
         let (tx, _rx) = mpsc::channel(4);
         let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
-        route.try_dispatch(&rotated_message("a", "b", 5.0, 1.0, (0.0, 0.0, 0.0, 0.0)));
+        route.dispatch(&rotated_message("a", "b", 5.0, 1.0, (0.0, 0.0, 0.0, 0.0)));
         assert!(tf.get_latest("a", "b").is_none());
 
-        route.try_dispatch(&stamped_message("a", "b", 6.0, 1.0));
+        route.dispatch(&stamped_message("a", "b", 6.0, 1.0));
         let t = tf.get_latest("a", "b").expect("valid rotation is accepted");
         assert!(t.rotation().coords.iter().all(|c| c.is_finite()));
     }
@@ -1054,7 +1054,7 @@ mod tests {
                 },
             }],
         };
-        route.try_dispatch(&msg.encode());
+        route.dispatch(&msg.encode());
 
         let t = tf.get_latest("base_link", "mid360_link").unwrap();
         assert!((t.translation().x - 0.1).abs() < 1e-9);
@@ -1096,7 +1096,7 @@ mod tests {
 
         let (tx, _rx2) = mpsc::channel(8);
         let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
-        route.try_dispatch(&bytes);
+        route.dispatch(&bytes);
 
         let t = tf_in.get_latest("a", "b").unwrap();
         assert!((t.translation().x - 0.5).abs() < 1e-9);
@@ -1188,7 +1188,7 @@ mod tests {
     fn dispatch_of_undecodable_bytes_leaves_the_graph_empty() {
         let (tx, _rx) = mpsc::channel(8);
         let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
-        route.try_dispatch(b"garbage");
+        route.dispatch(b"garbage");
         assert!(tf.get_latest("a", "b").is_none());
     }
 

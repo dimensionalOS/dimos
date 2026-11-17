@@ -15,8 +15,9 @@
 """The Python API guide an eval agent gets as DIMOS.md.
 
 In an eval, dimOS is already running when the agent starts, so the guide covers
-connecting to it. When the API changes, update this guide and docs/usage/python-api.md
-together.
+connecting to it. Every case gets it; a case's own inputs add what is specific to it.
+When the API changes, update this guide and the matching docs together:
+docs/usage/python-api.md and docs/capabilities/manipulation/python_api.md.
 """
 
 PYTHON_API_GUIDE = """\
@@ -52,50 +53,26 @@ Call skills by name, with keyword arguments. Which skills exist depends on the r
 image = app.skills.observe()
 ```
 
-Modules also have `@rpc` methods. Reach a module by its class name and call them, for
-example on an arm:
-
-```python
-state = app.ManipulationModule.get_state()
-```
+Modules also have `@rpc` methods. Reach a module by its class name, as
+`app.<ClassName>`, and call them like functions.
 
 ## Finding modules and RPCs
 
 ```python
-app.list_modules()                       # every running module instance
-module = app.get_module("ManipulationModule")  # by instance or class name
-app.list_rpcs()                          # every RPC; app.list_rpcs(module) for one module
-app.describe(module)                     # its RPCs, arguments and docs
-app.describe("ManipulationModule.move_linear")
-help(module.move_linear)                 # signature and docstring
+app.list_modules()                     # every running module instance
+module = app.get_module("<ClassName>")  # by instance or class name
+app.list_rpcs()                        # every RPC; app.list_rpcs(module) for one module
+app.describe(module)                   # its RPCs, arguments and docs
+app.describe("<ClassName>.<rpc>")      # one RPC
 ```
 
 A class name works when only one instance has that class; otherwise the error lists
 the exact instance names. Each call reads the live system, so modules loaded later
 show up too.
 
-To find the module that offers a typed capability, pass a Spec Protocol. Exactly one
-module must match: no match raises `LookupError`, more than one raises `ValueError`.
-
-```python
-from dimos.manipulation.manipulation_spec import ManipulationSpec
-
-motion = app.find_module_by_spec(ManipulationSpec)
-```
-
-## Robot arms
-
-For arm motion, use the `Arm` SDK. It picks the arm's planning group and blocks until
-each move finishes, raising `MotionError` when one fails:
-
-```python
-from dimos.manipulation.sdk import Arm
-
-arm = Arm.from_app(app)
-print(arm.info)        # joint names and capabilities
-print(arm.pose())      # the tool pose in the world frame
-help(arm)              # every method
-```
+To find the module that offers a typed capability, pass a Spec Protocol to
+`app.find_module_by_spec`. Exactly one module must match: no match raises
+`LookupError`, more than one raises `ValueError`.
 
 ## Streams
 
@@ -117,4 +94,40 @@ unsubscribe()
 ```
 
 The client must have the stream's message types installed.
+
+## Robot arms
+
+For arm motion, use the `Arm` SDK. It picks the arm's planning group and blocks until
+each move finishes, raising `MotionError` when one fails:
+
+```python
+from dimos.manipulation.sdk import Arm
+
+arm = Arm.from_app(app)
+print(arm.info)        # joint names and capabilities
+print(arm.pose())      # the tool pose in the world frame
+help(arm)              # every method
+```
+
+The planner's own RPCs, and the module behind the arm's typed spec:
+
+```python
+from dimos.manipulation.manipulation_spec import ManipulationSpec
+
+state = app.ManipulationModule.get_state()
+motion = app.find_module_by_spec(ManipulationSpec)
+```
+
+## Mobile robots
+
+Mobile robots take goals through skills; `print(app.skills)` shows which this robot
+has. On the Go2, `move_to` blocks until the robot arrives or gives up;
+`app.describe("UnitreeSkillContainer.move_to")` explains its world and relative
+coordinates. On Habitat, `go_to` returns at once, so poll the pose until the robot
+stops, and `stop_navigation()` cancels the goal:
+
+```python
+app.skills.go_to(x=4.0, y=1.5)
+pose = app.peek_stream("odometry", 2.0)  # repeat until x, y stop changing
+```
 """
