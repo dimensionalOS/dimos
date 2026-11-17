@@ -225,10 +225,11 @@ _xarm7_teleop_model = make_xarm7_model_config(
     home_joints=XARM7_TELEOP_READY_JOINTS,
 )
 
-
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
 # The dedicated gripper task consumes normalized trigger commands independently.
+
+
 coordinator_teleop_xarm7 = autoconnect(
     TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",

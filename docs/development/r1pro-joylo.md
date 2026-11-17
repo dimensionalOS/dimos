@@ -761,7 +761,8 @@ Run `dimos run r1pro-openarm-joylo-sim2 --daemon` with a new
 serial ports and calibration root when the leaders are attached. X enables
 following; Home pauses. Camera startup is asynchronous: inspect
 `CameraRenderModule.statistics()` (the three depth cameras) and
-`video_render.statistics()` (the four color cameras) for one loaded scene and an
+`video_render.statistics()` (the four color cameras). Both workers use the shared
+MuJoCo Filament renderer, including metric depth; verify a loaded scene and an
 empty `error`; each camera module's `statistics()` reports its own frame counter,
 for example `head_left_color_camera` and `wrist_left_depth_camera`.
 

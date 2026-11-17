@@ -40,7 +40,7 @@ def build_scene(
         import_module("mujoco._usd")
     except ImportError as exc:
         raise ImportError(
-            "Sim2 requires MuJoCo's USD importer: install dimos[sim] on Python 3.11+"
+            "Sim2 requires MuJoCo's USD importer: install dimos[sim] on Python 3.11-3.13 (use uv sync --python 3.12 --extra sim)"
         ) from exc
     root = str(scene.source_path.parent) if scene.source_path else ""
     usd = resolve_usd_assets(scene.usd, root)
