@@ -20,6 +20,8 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::f64::consts::PI;
 
+use crate::geom::progress_index;
+
 /// Fine distance-field pitch: half the map's voxel.
 const FINE: f64 = 0.04; // VOXEL / 2
 const PAD: f64 = 1.5;
@@ -1803,16 +1805,7 @@ fn trim_to_pose(states: &[[f64; 3]], pose: (f64, f64, f64)) -> Vec<[f64; 3]> {
     if states.is_empty() {
         return vec![[pose.0, pose.1, pose.2]];
     }
-    let mut best = 0usize;
-    let mut bd = f64::INFINITY;
-    for (i, s) in states.iter().enumerate() {
-        let d = (s[0] - pose.0).hypot(s[1] - pose.1);
-        if d < bd {
-            bd = d;
-            best = i;
-        }
-    }
-    states[best..].to_vec()
+    states[progress_index(states, pose.0, pose.1, pose.2)..].to_vec()
 }
 
 /// The published route, trimmed to here and carried to the goal, or None when

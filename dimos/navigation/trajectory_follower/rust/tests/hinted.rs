@@ -141,6 +141,59 @@ fn a_terminal_fan_turns_in_place_at_the_goal() {
     );
 }
 
+/// A straight leg along +x to `(1, 0)`, a turn in place there of `turn` rad in 0.05 rad
+/// steps, then a leg on along the heading it ends on.
+fn dense_turn(turn: f64) -> Vec<[f64; 3]> {
+    let mut p: Vec<[f64; 3]> = (0..=10).map(|k| [k as f64 * 0.1, 0.0, 0.0]).collect();
+    let n = (turn.abs() / 0.05).round() as usize;
+    p.extend((1..=n).map(|k| [1.0, 0.0, turn * k as f64 / n as f64]));
+    let (s, c) = turn.sin_cos();
+    p.extend((1..=10).map(|k| [1.0 + 0.1 * k as f64 * c, 0.1 * k as f64 * s, turn]));
+    p
+}
+
+#[test]
+fn a_turn_in_place_is_made_on_its_spot_before_the_carrot_moves_on() {
+    let p = dense_turn(1.5);
+    // Short of the spot: walk to it, still facing the way in.
+    let (vx, _, wz) = update((0.8, 0.0, 0.0), &p, None, None, &cfg());
+    assert!(vx > 0.1 && wz.abs() < 1e-9, "vx={vx} wz={wz}");
+    // On the spot and not yet turned: turn, and hold the spot.
+    let (vx, vy, wz) = update((1.0, 0.0, 0.3), &p, None, None, &cfg());
+    assert!(wz > 0.3, "wz={wz}");
+    assert!(
+        vx.hypot(vy) < 1e-9,
+        "holds the spot: speed={}",
+        vx.hypot(vy)
+    );
+    // Turned: walk on.
+    let (vx, vy, _) = update((1.0, 0.0, 1.45), &p, None, None, &cfg());
+    assert!(vx.hypot(vy) > 0.1, "speed={}", vx.hypot(vy));
+}
+
+#[test]
+fn a_turn_in_place_is_made_the_way_the_path_turns() {
+    // Just under half a turn clockwise. From 0.15 rad the short way to its end is the other way.
+    let p = dense_turn(-3.1);
+    let (_, _, wz) = update((1.0, 0.0, 0.15), &p, None, None, &cfg());
+    assert!(wz < -0.3, "wz={wz}");
+}
+
+/// Out along `y = 0.05` facing +x, a turn in place at its end, and back along `y = 0` facing -x.
+fn out_and_back() -> Vec<[f64; 3]> {
+    let mut p: Vec<[f64; 3]> = (0..=8).map(|k| [k as f64 * 0.1, 0.05, 0.0]).collect();
+    p.extend((1..=10).map(|k| [0.8, 0.05, PI * k as f64 / 10.0]));
+    p.extend((1..=8).map(|k| [0.8 - k as f64 * 0.1, 0.0, PI]));
+    p
+}
+
+#[test]
+fn a_spot_the_path_passes_twice_is_matched_by_heading() {
+    // On the way back's line, facing the way out: walk out, not turn for the way back.
+    let (vx, _, wz) = update((0.3, 0.0, 0.0), &out_and_back(), None, None, &cfg());
+    assert!(vx > 0.1 && wz.abs() < 1e-9, "vx={vx} wz={wz}");
+}
+
 #[test]
 fn fan_done_resumes_translation() {
     let (vx, vy, _) = update((0.0, 0.0, 1.45), &fan(), None, None, &cfg());
