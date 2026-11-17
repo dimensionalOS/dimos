@@ -127,7 +127,6 @@ unitree_go2_holonomic_controller = (
         # Twist only while a key is held, so it coexists with the follower.
         KeyboardTeleop.blueprint(publish_only_when_active=True),
     )
-    .solidify()
     .remappings(
         [
             (GO2Connection, "cmd_vel", "go2_cmd_vel"),

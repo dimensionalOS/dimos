@@ -117,7 +117,7 @@ replay = autoconnect(
     mid360_for_pointlio(pcap="recordings/run1.pcap"),
     PointLio.blueprint(),
     vis_module("rerun"),
-).solidify().global_config(n_workers=3)
+).global_config(n_workers=3)
 ModuleCoordinator.build(replay).loop()
 ```
 

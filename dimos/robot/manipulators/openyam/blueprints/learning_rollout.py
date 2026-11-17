@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.policy.lerobot.module import (
@@ -52,21 +52,17 @@ OPENYAM_ROLLOUT_JOINTS = [*_MODEL.joint_names, OPENYAM_GRIPPER_JOINT]
 def _rollout_control(
     tasks: list[TaskConfig],
     coordinator: type[ControlCoordinator] = DamiaoCoordinator,
-) -> Blueprint:
+) -> MetaBlueprint:
     """A trajectory coordinator named ControlCoordinator over the connection."""
-    return (
-        autoconnect(
-            coordinator.blueprint(
-                instance_name="ControlCoordinator",
-                connections=[arm_declaration(OpenYamConnection)],
-                tasks=list(tasks),
-                zero_stiffness_joints=[],
-            ),
-            arm_connection(OpenYamConnection),
-        )
-        .solidify()
-        .remappings(arm_remaps(OpenYamConnection, coordinator))
-    )
+    return autoconnect(
+        coordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(OpenYamConnection)],
+            tasks=list(tasks),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenYamConnection),
+    ).remappings(arm_remaps(OpenYamConnection, coordinator))
 
 
 def build_openyam_rollout(
@@ -76,7 +72,7 @@ def build_openyam_rollout(
     camera_device: int | str = 0,
     device: str | None = None,
     quest_control: bool = False,
-) -> Blueprint:
+) -> MetaBlueprint:
     """Build an OpenYAM rollout; Quest control is an optional takeover layer."""
     policy = LeRobotPolicyModule.blueprint(
         instance_name="policy",
@@ -102,33 +98,29 @@ def build_openyam_rollout(
     )
 
     if quest_control:
-        blueprint = (
-            autoconnect(
-                policy,
-                ArmTeleopModule.blueprint(),
-                _rollout_control(openyam_quest_tasks(), DamiaoTeleopCoordinator),
-                camera,
-                ManipulationModule.blueprint(
-                    gripper_tasks={"manipulator": "arm_gripper"},
-                    model=OPENYAM_QUEST_MODEL,
-                    kinematics=OPENYAM_QUEST_KINEMATICS,
-                    visualization={"backend": "viser"},
-                ),
-            )
-            .solidify()
-            .remappings(
-                [
-                    (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-                    (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-                ]
-            )
+        blueprint = autoconnect(
+            policy,
+            ArmTeleopModule.blueprint(),
+            _rollout_control(openyam_quest_tasks(), DamiaoTeleopCoordinator),
+            camera,
+            ManipulationModule.blueprint(
+                gripper_tasks={"manipulator": "arm_gripper"},
+                model=OPENYAM_QUEST_MODEL,
+                kinematics=OPENYAM_QUEST_KINEMATICS,
+                visualization={"backend": "viser"},
+            ),
+        ).remappings(
+            [
+                (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+                (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+            ]
         )
     else:
         blueprint = autoconnect(
             policy,
             _rollout_control([joint_trajectory_task(OPENYAM_ROLLOUT_JOINTS)]),
             camera,
-        ).solidify()
+        )
 
     return blueprint
 

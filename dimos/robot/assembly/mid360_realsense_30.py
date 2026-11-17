@@ -113,30 +113,26 @@ class Mid360RealsenseRecorder(PointlioRecorder):
     realsense_depth_camera_info: In[CameraInfo]
 
 
-mid360_realsense_record = (
-    autoconnect(
-        RealSenseCamera.blueprint().remappings(
-            [
-                (RealSenseCamera, "depth_image", "realsense_depth_image"),
-                (RealSenseCamera, "pointcloud", "realsense_pointcloud"),
-                (RealSenseCamera, "camera_info", "realsense_camera_info"),
-                (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
-            ]
-        ),
-        mid360_for_pointlio(),
-        PointLio.blueprint(frame_id="world").remappings(
-            [
-                (PointLio, "lidar", "pointlio_lidar"),
-                (PointLio, "odometry", "pointlio_odometry"),
-            ]
-        ),
-        Mid360RealsenseRecorder.blueprint(),
-        # Continuously republishes the rig's mount frames onto tf (no latched static tf).
-        Mid360RealsenseStaticTf.blueprint(),
-    )
-    .solidify()
-    .global_config(n_workers=8)
-)
+mid360_realsense_record = autoconnect(
+    RealSenseCamera.blueprint().remappings(
+        [
+            (RealSenseCamera, "depth_image", "realsense_depth_image"),
+            (RealSenseCamera, "pointcloud", "realsense_pointcloud"),
+            (RealSenseCamera, "camera_info", "realsense_camera_info"),
+            (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
+        ]
+    ),
+    mid360_for_pointlio(),
+    PointLio.blueprint(frame_id="world").remappings(
+        [
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
+        ]
+    ),
+    Mid360RealsenseRecorder.blueprint(),
+    # Continuously republishes the rig's mount frames onto tf (no latched static tf).
+    Mid360RealsenseStaticTf.blueprint(),
+).global_config(n_workers=8)
 
 # Same rig, also capturing a raw .pcap of the Mid-360 UDP stream.
 mid360_realsense_record_with_pcap = autoconnect(

@@ -145,25 +145,17 @@ def _teleop(
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
 # From the Desktop Manipulation app.
-a1z_teleop = (
-    _teleop(A1ZTwistCoordinator, _eef_twist_task(), "right_gripper_command")
-    .solidify()
-    .remappings(_remaps(A1ZTwistCoordinator))
+a1z_teleop = _teleop(A1ZTwistCoordinator, _eef_twist_task(), "right_gripper_command").remappings(
+    _remaps(A1ZTwistCoordinator)
 )
 # From the keyboard, in a pygame window.
-a1z_keyboard_teleop = (
-    _teleop(
-        A1ZKeyboardCoordinator,
-        _eef_twist_task(),
-        "gripper_command",
-        KeyboardTeleopModule.blueprint(),
-    )
-    .solidify()
-    .remappings(_remaps(A1ZKeyboardCoordinator))
-)
+a1z_keyboard_teleop = _teleop(
+    A1ZKeyboardCoordinator,
+    _eef_twist_task(),
+    "gripper_command",
+    KeyboardTeleopModule.blueprint(),
+).remappings(_remaps(A1ZKeyboardCoordinator))
 # From a VR headset's left controller; teleop_webxr_a1z adds the WebXR module.
-coordinator_teleop_a1z = (
-    _teleop(A1ZWebXRCoordinator, _webxr_task(), "left_gripper_command")
-    .solidify()
-    .remappings(_remaps(A1ZWebXRCoordinator))
-)
+coordinator_teleop_a1z = _teleop(
+    A1ZWebXRCoordinator, _webxr_task(), "left_gripper_command"
+).remappings(_remaps(A1ZWebXRCoordinator))

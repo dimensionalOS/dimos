@@ -69,7 +69,6 @@ teleop_hosted_go2_transport = (
         ReplanningAStarPlanner.blueprint(),
         MovementManager.blueprint(),
     )
-    .solidify()
     .remappings(
         [
             (GO2Connection, "color_image", "cam1"),
@@ -116,7 +115,6 @@ teleop_hosted_go2_multicam = (
         ReplanningAStarPlanner.blueprint(),
         MovementManager.blueprint(),
     )
-    .solidify()
     .remappings(
         [
             (GO2Connection, "color_image", "cam1"),
@@ -171,7 +169,6 @@ teleop_hosted_xarm6 = (
         FrontCamera.blueprint(frame_id="front", enable_depth=False, enable_pointcloud=False),
         WristCamera.blueprint(frame_id="wrist", enable_depth=False, enable_pointcloud=False),
     )
-    .solidify()
     .remappings(
         [
             (FrontCamera, "color_image", "cam1"),
@@ -204,7 +201,6 @@ teleop_hosted_xarm7 = (
         FrontCamera.blueprint(frame_id="front", enable_depth=False, enable_pointcloud=False),
         WristCamera.blueprint(frame_id="wrist", enable_depth=False, enable_pointcloud=False),
     )
-    .solidify()
     .remappings(
         [
             (FrontCamera, "color_image", "cam1"),

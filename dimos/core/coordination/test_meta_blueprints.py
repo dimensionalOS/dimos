@@ -26,6 +26,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
+from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 
 class VisModule(Module):
@@ -185,6 +186,111 @@ def test_selected_branch_preserves_concrete_blueprint_behavior() -> None:
     )
 
     assert mapping.solidify() == autoconnect(base, selected).solidify()
+
+
+@pytest.mark.parametrize(
+    ("choices", "selected"),
+    [({}, RaytracerModule), ({"PointClearing": "column_carving"}, VoxelMapper)],
+)
+def test_fluent_operations_run_after_selecting_modules(clearing, choices, selected, mocker) -> None:
+    requirement = mocker.Mock(return_value=None)
+    configurator = mocker.create_autospec(SystemConfigurator, instance=True)
+    mapping = (
+        autoconnect(VisModule.blueprint(), clearing)
+        .disabled_modules(VisModule)
+        .transports({("points", int): LCMTransport.spec("/points", int)})
+        .remappings([(selected, "points", "cleared")])
+        .namespace("robot")
+        .hosted(host="edge")
+        .global_config(n_workers=2)
+        .requirements(requirement)
+        .configurators(configurator)
+    )
+
+    resolved = mapping.solidify(choices=choices)
+
+    assert [atom.module for atom in resolved.active_blueprints] == [selected]
+    assert resolved.remapping_map[(f"robot/{selected.name}", "points")] == "robot/cleared"
+    assert set(resolved.transport_map) == {("robot/points", int)}
+    assert resolved.hosted_placements[0].module_names == (
+        "robot/vismodule",
+        f"robot/{selected.name}",
+    )
+    assert resolved.hosted_placements[0].host == "edge"
+    assert resolved.global_config_overrides == {"n_workers": 2}
+    assert resolved.requirement_checks == (requirement,)
+    assert resolved.configurator_checks == (configurator,)
+    requirement.assert_not_called()
+    configurator.check.assert_not_called()
+
+
+def test_operations_keep_their_fragment_scope_and_call_order(clearing) -> None:
+    inner = autoconnect(clearing).global_config(n_workers=2)
+    hosted = inner.hosted(host="edge").namespace("mapper")
+    mapping = autoconnect(VisModule.blueprint(), hosted).global_config(n_workers=3)
+    override = mapping.global_config(n_workers=4)
+
+    resolved = override.solidify(choices={"PointClearing": "column_carving"})
+
+    assert [atom.name for atom in resolved.blueprints] == ["vismodule", "mapper/voxelmapper"]
+    assert resolved.hosted_placements[0].module_names == ("mapper/voxelmapper",)
+    assert resolved.global_config_overrides == {"n_workers": 4}
+    assert mapping.solidify().global_config_overrides == {"n_workers": 3}
+    assert inner.solidify() == RaytracerModule.blueprint().global_config(n_workers=2)
+
+
+def test_required_choices_can_be_configured_before_selection() -> None:
+    mapping = (
+        autoconnect(ChoiceAtom(name="Required", choices={"voxel": VoxelMapper.blueprint()}))
+        .global_config(n_workers=4)
+        .hosted(host="edge")
+    )
+
+    with pytest.raises(ChoiceResolutionError, match="Required.*required"):
+        mapping.solidify()
+
+    assert mapping.solidify(choices={"Required": "voxel"}) == (
+        VoxelMapper.blueprint().global_config(n_workers=4).hosted(host="edge")
+    )
+
+
+def test_unselected_operations_are_not_validated() -> None:
+    mapping = autoconnect(
+        ChoiceAtom(
+            name="Clearing",
+            choices={"on": autoconnect(VoxelMapper.blueprint()), "off": autoconnect().hosted()},
+            default="on",
+        )
+    )
+
+    assert mapping.solidify() == VoxelMapper.blueprint()
+    with pytest.raises(ValueError, match="hosted.*at least one module"):
+        mapping.solidify(choices={"Clearing": "off"})
+
+
+def test_deferred_arguments_are_snapshotted_and_reusable(clearing) -> None:
+    transports = {("points", int): LCMTransport.spec("/points", int)}
+    remappings = [(VisModule, "points", "cleared")]
+    tags = {"gpu": True}
+    minimum = {"gpu_mem": 4.0}
+    mapping = (
+        autoconnect(VisModule.blueprint(), clearing)
+        .transports(transports)
+        .remappings(remappings)
+        .namespace("robot", expose=iter(["cleared"]))
+        .hosted(tags=tags, minimum=minimum)
+    )
+    first = mapping.solidify()
+    transports.clear()
+    remappings.clear()
+    tags.clear()
+    minimum.clear()
+
+    assert mapping.solidify() == first
+    selected = mapping.solidify(choices={"PointClearing": "column_carving"})
+    assert selected.remapping_map[("robot/vismodule", "points")] == "cleared"
+    assert selected.hosted_placements[0].tags == {"gpu": True}
+    assert selected.hosted_placements[0].minimum == {"gpu_mem": 4.0}
 
 
 @pytest.mark.parametrize(

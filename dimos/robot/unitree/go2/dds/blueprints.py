@@ -89,30 +89,20 @@ _go2_nav_stack = autoconnect(
 )
 
 # Headless: go2-dds-mid360-viewer on another machine is the screen.
-go2_nav = (
-    _go2_nav_stack.solidify()
-    .global_config(
-        transport="zenoh",
-        zenoh_connect=HOST_ROUTER,
-        n_workers=11,
-        robot_model="unitree_go2",
-    )
-    .requirements(host_router)
-)
+go2_nav = _go2_nav_stack.global_config(
+    transport="zenoh",
+    zenoh_connect=HOST_ROUTER,
+    n_workers=11,
+    robot_model="unitree_go2",
+).requirements(host_router)
 
 # go2-nav plus the head L1's deskewed scans on l1_lidar, in Point-LIO's odom. The later
 # GO2DDS atom wins and spins the L1 up. go2-nav's remappings still apply.
-go2_nav_l1 = (
-    autoconnect(
-        go2_nav,
-        GO2DDS.blueprint(
-            **JETSON, lidar_raw_on=True, tf_root="mid360_link", obstacle_avoidance=False
-        ),
-        GO2L1Lidar.blueprint(),
-    )
-    .solidify()
-    .global_config(n_workers=12)
-)
+go2_nav_l1 = autoconnect(
+    go2_nav,
+    GO2DDS.blueprint(**JETSON, lidar_raw_on=True, tf_root="mid360_link", obstacle_avoidance=False),
+    GO2L1Lidar.blueprint(),
+).global_config(n_workers=12)
 
 # h264 lands here off `video`; jpeg is redirected onto it, whichever the robot serves
 CAMERA_ENTITY = "world/video"
@@ -241,6 +231,4 @@ VIEWER_GLOBAL_CONFIG = {
     "robot_model": "unitree_go2",
 }
 
-go2_nav_viewer = (
-    autoconnect(nav_viewer()).solidify().global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)
-)
+go2_nav_viewer = autoconnect(nav_viewer()).global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)

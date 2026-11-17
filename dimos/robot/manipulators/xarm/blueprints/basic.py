@@ -145,8 +145,8 @@ def _planner_coordinator(arm: XArmType) -> MetaBlueprint:
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-xarm7_planner_coordinator = _planner_coordinator("xarm7").solidify().remappings(XARM_REMAPS)
-xarm6_planner_coordinator = _planner_coordinator("xarm6").solidify().remappings(XARM_REMAPS)
+xarm7_planner_coordinator = _planner_coordinator("xarm7").remappings(XARM_REMAPS)
+xarm6_planner_coordinator = _planner_coordinator("xarm6").remappings(XARM_REMAPS)
 
 _coordinator_xarm7_hw = xarm7_hardware("arm")
 

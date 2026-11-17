@@ -90,7 +90,7 @@ if __name__ == "__main__":
             position_kp=1.0,
             max_linear_velocity=0.15,  # m/s
         ),
-    ).solidify())
+    ))
     try:
         controller = coordinator.get_instance(CartesianMotionController)
 
@@ -245,7 +245,7 @@ class ArmDriverSpec(Spec, Protocol):
 
 2. Use with controller:
    ```python
-   blueprint = autoconnect(MyArmDriver.blueprint(), CartesianMotionController.blueprint()).solidify()
+   blueprint = autoconnect(MyArmDriver.blueprint(), CartesianMotionController.blueprint())
    ```
 
 **That's it! No changes to the controller needed.**

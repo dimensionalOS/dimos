@@ -521,7 +521,7 @@ def test_run_resolves_nested_choices_loaded_from_the_registry(stubbed_run, monke
             },
         )
     )
-    exported = autoconnect(inner)
+    exported = autoconnect(inner.global_config(n_workers=2)).global_config(n_workers=4)
     monkeypatch.setattr(sys.modules[__name__], "registered_choices", exported, raising=False)
     monkeypatch.setitem(
         get_all_blueprints.all_blueprints, "mapping", f"{__name__}:registered_choices"
@@ -543,6 +543,7 @@ def test_run_resolves_nested_choices_loaded_from_the_registry(stubbed_run, monke
     assert result.exit_code == 0, result.output + repr(result.exception)
     assert [atom.module for atom in stubbed_run["blueprint"].blueprints] == [RunModuleB]
     assert stubbed_run["parsed_config"].module_kwargs("runmoduleb")["lookahead"] == 2.5
+    assert stubbed_run["blueprint"].global_config_overrides == {"n_workers": 4}
 
 
 @pytest.mark.parametrize("run_options", [[], ["--daemon"]])

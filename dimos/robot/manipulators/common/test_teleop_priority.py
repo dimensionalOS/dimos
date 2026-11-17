@@ -25,9 +25,9 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 @pytest.mark.parametrize(
     "blueprint",
     [
-        teleop_webxr_openyam,
+        teleop_webxr_openyam.solidify(),
         teleop_webxr_dual_openyam.solidify(),
-        teleop_webxr_openarm,
+        teleop_webxr_openarm.solidify(),
         keyboard_teleop_openyam_planner.solidify(),
     ],
 )

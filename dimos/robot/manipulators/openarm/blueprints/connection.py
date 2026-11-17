@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
@@ -35,37 +35,33 @@ _GRIPPERS = [
 ]
 
 
-def openarm_connection_control_blueprint() -> Blueprint:
+def openarm_connection_control_blueprint() -> MetaBlueprint:
     """Trajectories and the grippers, with the robot model served to clients."""
-    return (
-        autoconnect(
-            DamiaoCoordinator.blueprint(
-                instance_name="ControlCoordinator",
-                connections=[arm_declaration(OpenArmConnection)],
-                tasks=[
-                    joint_trajectory_task(
-                        [*_MODEL.joint_names, *(joint for _, joint, _, _ in _GRIPPERS)]
-                    ),
-                    *[
-                        TaskConfig(
-                            name=name,
-                            type="gripper",
-                            joint_names=[joint],
-                            priority=20,
-                            params={"open_at": open_at},
-                            stream_bind={"gripper_command": stream},
-                        )
-                        for name, joint, stream, open_at in _GRIPPERS
-                    ],
+    return autoconnect(
+        DamiaoCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(OpenArmConnection)],
+            tasks=[
+                joint_trajectory_task(
+                    [*_MODEL.joint_names, *(joint for _, joint, _, _ in _GRIPPERS)]
+                ),
+                *[
+                    TaskConfig(
+                        name=name,
+                        type="gripper",
+                        joint_names=[joint],
+                        priority=20,
+                        params={"open_at": open_at},
+                        stream_bind={"gripper_command": stream},
+                    )
+                    for name, joint, stream, open_at in _GRIPPERS
                 ],
-                zero_stiffness_joints=[],
-            ),
-            arm_connection(OpenArmConnection),
-            UrdfManager.blueprint(model=_MODEL.model),
-        )
-        .solidify()
-        .remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
-    )
+            ],
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenArmConnection),
+        UrdfManager.blueprint(model=_MODEL.model),
+    ).remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
 
 
 openarm_connection_control = openarm_connection_control_blueprint().remappings([])

@@ -35,15 +35,11 @@ MID360_MAX_RANGE_METERS = 15.0
 sensor origin, so the far returns cost the most and carve the least reliable space."""
 
 
-alfred_nav = (
-    autoconnect(
-        _alfred_lidar_hardware,
-        mid360_for_pointlio(lidar_ip=ALFRED_HARDWARE.mid360_ip),
-        PointLio.blueprint(blind=LIO_BLIND_M),
-        _alfred_nav(map_cloud_topic="lidar", map_max_range=MID360_MAX_RANGE_METERS),
-        LocalMapRelocalization.blueprint(world_frame="odom", relocalize=MID360_NAV),
-        vis_module(global_config.viewer, rerun_config=_alfred_rerun_config()),
-    )
-    .solidify()
-    .global_config(n_workers=12, robot_model="alfred")
-)
+alfred_nav = autoconnect(
+    _alfred_lidar_hardware,
+    mid360_for_pointlio(lidar_ip=ALFRED_HARDWARE.mid360_ip),
+    PointLio.blueprint(blind=LIO_BLIND_M),
+    _alfred_nav(map_cloud_topic="lidar", map_max_range=MID360_MAX_RANGE_METERS),
+    LocalMapRelocalization.blueprint(world_frame="odom", relocalize=MID360_NAV),
+    vis_module(global_config.viewer, rerun_config=_alfred_rerun_config()),
+).global_config(n_workers=12, robot_model="alfred")

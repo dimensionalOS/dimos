@@ -29,7 +29,6 @@ unitree_go2_detection = (
             camera_info=GO2Connection.camera_info_static,
         ),
     )
-    .solidify()
     .remappings(
         [
             (Detection3DModule, "pointcloud", "global_map"),

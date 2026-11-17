@@ -83,9 +83,14 @@ expanded_blueprint = autoconnect(
 )
 ```
 
-Call `.solidify()` to produce a concrete `Blueprint` before applying operations
-such as `.transports()`, `.remappings()`, `.namespace()`, or `.hosted()`, or passing
-it to `BlueprintConfigParser`:
+Methods such as `.global_config()`, `.transports()`, `.remappings()`,
+`.namespace()`, and `.hosted()` work on both types. A `MetaBlueprint` records
+these operations and applies them, in order, after resolving choices. Each
+operation applies only to the fragment where it was declared. Validation that
+needs concrete modules also runs at that point.
+
+Call `.solidify()` when you need to inspect the concrete modules or pass the
+blueprint to `BlueprintConfigParser`:
 
 ```python session=blueprint-ex1
 concrete_blueprint = expanded_blueprint.solidify()
@@ -129,7 +134,7 @@ mapping = autoconnect(
             "column_carving": VoxelMapper.blueprint(),
         },
     ),
-)
+).global_config(n_workers=4)
 
 default_mapping = mapping.solidify()
 voxel_mapping = mapping.solidify(choices={"PointClearing": "column_carving"})
@@ -207,7 +212,7 @@ blueprint = autoconnect(
     module1(arg1=1),
     module2(),
     module1(arg1=2),  # This one is used, the first is discarded
-).solidify()
+)
 ```
 
 This is so you can "inherit" from one blueprint but override something you need to change.
@@ -236,7 +241,7 @@ class ModuleB(Module):
 module_a = partial(Blueprint.create, ModuleA)
 module_b = partial(Blueprint.create, ModuleB)
 
-autoconnect(module_a(), module_b()).solidify()
+autoconnect(module_a(), module_b())
 ```
 
 Connections are linked based on `(property_name, object_type)`. In this case `('image', Image)` will be connected between the two modules, but `begin_explore` will not be linked to `start_explore`.
@@ -261,12 +266,12 @@ from dimos.core.transport_factory import make_transport
 base_blueprint = autoconnect(
     module1(arg1=1),
     module2(),
-).solidify()
+)
 expanded_blueprint = autoconnect(
     base_blueprint,
     module4(),
     module5(),
-).solidify()
+)
 base_blueprint = base_blueprint.transports({
     ("image", Image): make_transport("go2/color_image", Image),
     ("start_explore", bool): make_transport("start_explore", bool),
@@ -298,7 +303,7 @@ blueprint = (
     autoconnect(
         ConnectionModule.blueprint(),
         ProcessingModule.blueprint(),
-    ).solidify()
+    )
     .remappings([
         (ConnectionModule, 'color_image', 'rgb_image'),
     ])
@@ -434,7 +439,8 @@ resolves configuration sources, and returns an immutable
 ```python session=blueprint-ex1
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 
-parser = BlueprintConfigParser(base_blueprint)
+concrete_blueprint = base_blueprint.solidify()
+parser = BlueprintConfigParser(concrete_blueprint)
 parsed = parser.parse(["--module1.arg1=5"])
 ```
 
@@ -466,11 +472,11 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 config_path = Path.home() / "base-blueprint-config.json"
 cli_args = ["--module1.arg1=5"]
-parsed = BlueprintConfigParser(base_blueprint).parse(
+parsed = BlueprintConfigParser(concrete_blueprint).parse(
     cli_args,
     config_path=config_path,
 )
-coordinator = ModuleCoordinator.build(base_blueprint, parsed)
+coordinator = ModuleCoordinator.build(concrete_blueprint, parsed)
 ```
 
 Note that `build()` resets the process-global `global_config` to the full parsed

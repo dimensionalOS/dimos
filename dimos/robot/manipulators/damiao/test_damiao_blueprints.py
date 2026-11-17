@@ -72,26 +72,26 @@ from dimos.robot.manipulators.openyam.config import OPENYAM
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
 CASES = [
-    ("coordinator-makermods-metal", coordinator_makermods_metal),
+    ("coordinator-makermods-metal", coordinator_makermods_metal.solidify()),
     ("makermods-metal-planner-coordinator", makermods_metal_planner_coordinator.solidify()),
     (
         "dual-makermods-metal-planner-coordinator",
         dual_makermods_metal_planner_coordinator.solidify(),
     ),
-    ("coordinator-openyam", coordinator_openyam),
+    ("coordinator-openyam", coordinator_openyam.solidify()),
     ("openyam-planner-coordinator", openyam_planner_coordinator.solidify()),
     ("keyboard-teleop-openyam", keyboard_teleop_openyam.solidify()),
     ("keyboard-teleop-openyam-planner", keyboard_teleop_openyam_planner.solidify()),
-    ("teleop-webxr-openyam", teleop_webxr_openyam),
-    ("coordinator-dual-openyam", coordinator_dual_openyam),
+    ("teleop-webxr-openyam", teleop_webxr_openyam.solidify()),
+    ("coordinator-dual-openyam", coordinator_dual_openyam.solidify()),
     ("dual-openyam-planner-coordinator", dual_openyam_planner_coordinator.solidify()),
     ("teleop-webxr-dual-openyam", teleop_webxr_dual_openyam.solidify()),
-    ("coordinator-openarm", coordinator_openarm),
+    ("coordinator-openarm", coordinator_openarm.solidify()),
     ("openarm-planner-coordinator", openarm_planner_coordinator.solidify()),
-    ("teleop-webxr-openarm", teleop_webxr_openarm),
-    ("openyam-connection-control", openyam_connection_control),
-    ("openarm-connection-control", openarm_connection_control),
-    ("makermods-metal-connection-control", makermods_metal_connection_control),
+    ("teleop-webxr-openarm", teleop_webxr_openarm.solidify()),
+    ("openyam-connection-control", openyam_connection_control.solidify()),
+    ("openarm-connection-control", openarm_connection_control.solidify()),
+    ("makermods-metal-connection-control", makermods_metal_connection_control.solidify()),
 ]
 
 
@@ -134,7 +134,7 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
     clock = mocker.patch("dimos.control.tick_loop.time.perf_counter", return_value=100.0)
     atom = next(
         atom
-        for atom in makermods_metal_connection_control.blueprints
+        for atom in makermods_metal_connection_control.solidify().blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
     coordinator = atom.module(publish_joint_state=False, **atom.kwargs)
@@ -164,7 +164,7 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
 @pytest.mark.self_hosted
 def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     mocker.patch.object(global_config, "simulation", "mujoco")
-    blueprint = dual_openyam_control()
+    blueprint = dual_openyam_control().solidify()
     assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
     [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
     assert mock.kwargs["source"] == "arm"
@@ -181,7 +181,7 @@ def test_simulation_composes_an_independent_dual_arm_mock(mocker):
 
 
 def test_blueprint_composition_is_coordinator_connection_and_remaps():
-    blueprint = openyam_control()
+    blueprint = openyam_control().solidify()
     [connection] = [
         atom for atom in blueprint.blueprints if issubclass(atom.module, DamiaoConnection)
     ]
@@ -210,7 +210,7 @@ def test_blueprint_composition_is_coordinator_connection_and_remaps():
 
 
 def test_teaching_blueprint_declares_zero_stiffness_only_when_teaching():
-    blueprint = openyam_teach_collection
+    blueprint = openyam_teach_collection.solidify()
     [coordinator] = [
         atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
     ]

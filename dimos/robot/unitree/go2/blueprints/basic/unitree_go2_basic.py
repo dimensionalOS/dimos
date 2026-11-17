@@ -196,9 +196,7 @@ unitree_go2_basic = (
     autoconnect(
         _with_vis,
         GO2Connection.blueprint(),
-    )
-    .solidify()
-    .global_config(n_workers=4, robot_model="unitree_go2")
+    ).global_config(n_workers=4, robot_model="unitree_go2")
     # we temporarily disabled sensor timestamps
     # and are derriving all timestmaps upon reception
     # this is because image webrtc stream doesn't have timestamps,

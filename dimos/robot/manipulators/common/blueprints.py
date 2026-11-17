@@ -23,7 +23,7 @@ from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -195,7 +195,7 @@ def manipulation_mapping(
     self_filter_model: RobotModel,
     voxel_size: float,
     world_frame: str = "world",
-) -> Blueprint:
+) -> MetaBlueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
     Three modules in a row: a self filter drops the robot's own returns, a
@@ -212,34 +212,30 @@ def manipulation_mapping(
             the map.
         world_frame: Fixed frame the map is built and published in.
     """
-    return (
-        autoconnect(
-            UrdfManagerPointClearing.blueprint(
-                # ManipulationModule already publishes the arm's frames.
-                publish_joint_tf=False,
-                model=self_filter_model,
-                state_tolerance_s=0.1,
-                # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms
-                # tolerance cannot bracket a ~92ms publish period and drops most
-                # clouds. One full period admits them all, and the arm holds still
-                # while scanning, so a transform a period old describes the same pose.
-                tf_tolerance_s=0.1,
-                tf_forward_tolerance_s=0.1,
-            ),
-            # Tabletop reach, not a room-scale lidar sweep.
-            RayTracingVoxelMap.blueprint(
-                voxel_size=voxel_size,
-                world_frame=world_frame,
-                max_range=2.0,
-            ),
-            PointCloudBoxFilter.blueprint(),
-        )
-        .solidify()
-        .remappings(
-            [
-                (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),
-                (PointCloudBoxFilter, "cloud", "global_map"),
-                (PointCloudBoxFilter, "filtered_cloud", "voxel_map"),
-            ]
-        )
+    return autoconnect(
+        UrdfManagerPointClearing.blueprint(
+            # ManipulationModule already publishes the arm's frames.
+            publish_joint_tf=False,
+            model=self_filter_model,
+            state_tolerance_s=0.1,
+            # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms
+            # tolerance cannot bracket a ~92ms publish period and drops most
+            # clouds. One full period admits them all, and the arm holds still
+            # while scanning, so a transform a period old describes the same pose.
+            tf_tolerance_s=0.1,
+            tf_forward_tolerance_s=0.1,
+        ),
+        # Tabletop reach, not a room-scale lidar sweep.
+        RayTracingVoxelMap.blueprint(
+            voxel_size=voxel_size,
+            world_frame=world_frame,
+            max_range=2.0,
+        ),
+        PointCloudBoxFilter.blueprint(),
+    ).remappings(
+        [
+            (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),
+            (PointCloudBoxFilter, "cloud", "global_map"),
+            (PointCloudBoxFilter, "filtered_cloud", "voxel_map"),
+        ]
     )

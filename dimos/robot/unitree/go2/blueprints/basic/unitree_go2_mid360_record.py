@@ -53,47 +53,40 @@ _TELEOP_ANGULAR_SPEED = 0.6
 _RECORDING_DIR = default_recording_dir()
 
 
-_recording_stack = (
-    autoconnect(
-        MovementManager.blueprint(),
-        GO2Connection.blueprint(publish_tf=False).remappings(
-            [
-                (GO2Connection, "lidar", "go2_lidar"),
-                (GO2Connection, "odom", "go2_odom"),
-            ]
-        ),
-        mid360_for_pointlio(),
-        PointLio.blueprint(frame_id="world").remappings(
-            [
-                (PointLio, "lidar", "pointlio_lidar"),
-                (PointLio, "odometry", "pointlio_odometry"),
-            ]
-        ),
-        Go2Mid360Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
-        # Continuously republishes the rig's mount frames onto tf (no latched static tf).
-        Go2Mid360StaticTf.blueprint(),
-        # Pygame keyboard teleop (WASD drive + Q/E strafe). Its cmd_vel feeds
-        # MovementManager's tele_cmd_vel.
-        KeyboardTeleop.blueprint(
-            linear_speed=_TELEOP_LINEAR_SPEED, angular_speed=_TELEOP_ANGULAR_SPEED
-        ).remappings(
-            [
-                (KeyboardTeleop, "cmd_vel", "tele_cmd_vel"),
-            ]
-        ),
-    )
-    .solidify()
-    .global_config(n_workers=12, robot_model="unitree_go2")
-)
-
 unitree_go2_mid360_record = autoconnect(
-    _recording_stack,
-    *(
-        [Mid360PcapRecorder.blueprint(pcap_path=str(_RECORDING_DIR / "mid360.pcap"))]
-        if _RECORD_PCAP
-        else []
+    MovementManager.blueprint(),
+    GO2Connection.blueprint(publish_tf=False).remappings(
+        [
+            (GO2Connection, "lidar", "go2_lidar"),
+            (GO2Connection, "odom", "go2_odom"),
+        ]
     ),
-)
+    mid360_for_pointlio(),
+    PointLio.blueprint(frame_id="world").remappings(
+        [
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
+        ]
+    ),
+    Go2Mid360Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
+    # Continuously republishes the rig's mount frames onto tf (no latched static tf).
+    Go2Mid360StaticTf.blueprint(),
+    # Pygame keyboard teleop (WASD drive + Q/E strafe). Its cmd_vel feeds
+    # MovementManager's tele_cmd_vel.
+    KeyboardTeleop.blueprint(
+        linear_speed=_TELEOP_LINEAR_SPEED, angular_speed=_TELEOP_ANGULAR_SPEED
+    ).remappings(
+        [
+            (KeyboardTeleop, "cmd_vel", "tele_cmd_vel"),
+        ]
+    ),
+).global_config(n_workers=12, robot_model="unitree_go2")
+
+if _RECORD_PCAP:
+    unitree_go2_mid360_record = autoconnect(
+        unitree_go2_mid360_record,
+        Mid360PcapRecorder.blueprint(pcap_path=str(_RECORDING_DIR / "mid360.pcap")),
+    )
 
 
 if __name__ == "__main__":

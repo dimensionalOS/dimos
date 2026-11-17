@@ -50,16 +50,12 @@ _manipulation_tasks = [
     ),
 ]
 
-r1pro_manipulation = (
-    autoconnect(
-        r1pro_visualization(),
-        r1pro_control(tasks=_manipulation_tasks),
-        ManipulationModule.blueprint(
-            model=make_r1pro_model_config(),
-            planning_timeout=10.0,
-            visualization=ViserVisualizationConfig(host=global_config.listen_host),
-        ),
-    )
-    .solidify()
-    .global_config(n_workers=6)
-)
+r1pro_manipulation = autoconnect(
+    r1pro_visualization(),
+    r1pro_control(tasks=_manipulation_tasks),
+    ManipulationModule.blueprint(
+        model=make_r1pro_model_config(),
+        planning_timeout=10.0,
+        visualization=ViserVisualizationConfig(host=global_config.listen_host),
+    ),
+).global_config(n_workers=6)

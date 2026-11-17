@@ -111,7 +111,7 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
 
 
 def test_real_control_keeps_planar_joints_out_of_hardware() -> None:
-    blueprint = r1pro_control()
+    blueprint = r1pro_control().solidify()
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
     coordinator_atom = next(
         atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)

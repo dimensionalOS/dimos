@@ -565,13 +565,10 @@ _coordinator = _G1GrootCoordinator.blueprint(
 
 _unitree_g1_groot_wbc_core = (
     autoconnect(_backend, _coordinator)
-    .solidify()
     .remappings([(_G1GrootCoordinator, "twist_command", "cmd_vel")])
     .global_config(robot_model="unitree_g1", n_workers=_n_workers)
 )
 
-unitree_g1_groot_wbc = (
-    autoconnect(_unitree_g1_groot_wbc_core, _nav_stack, _viewer())
-    .solidify()
-    .remappings(cast("Any", _nav_remappings))
+unitree_g1_groot_wbc = autoconnect(_unitree_g1_groot_wbc_core, _nav_stack, _viewer()).remappings(
+    cast("Any", _nav_remappings)
 )

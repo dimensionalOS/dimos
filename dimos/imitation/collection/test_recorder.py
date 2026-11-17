@@ -377,7 +377,7 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     try:
-        blueprint = get_by_name("vendor-robot.collect")
+        blueprint = autoconnect(get_by_name("vendor-robot.collect")).solidify()
         parsed = BlueprintConfigParser(blueprint).parse(
             ["--recording", str(tmp_path / "session")], environ={}
         )

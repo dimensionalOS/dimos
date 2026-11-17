@@ -14,7 +14,7 @@
 
 """OpenArm Mini leader-follower collection for the bimanual OpenArm."""
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -74,32 +74,26 @@ _profile = CollectionProfile(
 )
 
 
-def _cameras() -> Blueprint:
-    return (
-        autoconnect(
-            *(
-                WebcamModule.blueprint(
-                    instance_name=name,
-                    hardware=WebcamConfig(
-                        camera_index=index, fps=30, frame_id_prefix=f"{name}_image"
-                    ),
-                    frame_id=f"{name}_camera_link",
-                )
-                for index, name in enumerate(_CAMERAS)
+def _cameras() -> MetaBlueprint:
+    return autoconnect(
+        *(
+            WebcamModule.blueprint(
+                instance_name=name,
+                hardware=WebcamConfig(camera_index=index, fps=30, frame_id_prefix=f"{name}_image"),
+                frame_id=f"{name}_camera_link",
             )
+            for index, name in enumerate(_CAMERAS)
         )
-        .solidify()
-        .remappings(
-            [
-                remapping
-                for name in _CAMERAS
-                for remapping in (
-                    (name, "color_image", f"{name}_image"),
-                    (name, "camera_info", f"{name}_camera_info"),
-                    (name, "tf", f"{name}_tf"),
-                )
-            ]
-        )
+    ).remappings(
+        [
+            remapping
+            for name in _CAMERAS
+            for remapping in (
+                (name, "color_image", f"{name}_image"),
+                (name, "camera_info", f"{name}_camera_info"),
+                (name, "tf", f"{name}_tf"),
+            )
+        ]
     )
 
 

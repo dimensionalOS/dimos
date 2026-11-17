@@ -395,5 +395,5 @@ def _teleop(arm: XArmType) -> MetaBlueprint:
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-xarm7_teleop = _teleop("xarm7").solidify().remappings(_ARM_REMAPS)
-xarm6_teleop = _teleop("xarm6").solidify().remappings(_ARM_REMAPS)
+xarm7_teleop = _teleop("xarm7").remappings(_ARM_REMAPS)
+xarm6_teleop = _teleop("xarm6").remappings(_ARM_REMAPS)

@@ -40,12 +40,8 @@ _nav_rerun_config: dict[str, Any] = {
 }
 
 # The nav MovementManager dedupes onto the sim's. One worker per module.
-go2_sim_nav = (
-    autoconnect(
-        go2_sim,
-        _go2_nav,
-        vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-    )
-    .solidify()
-    .global_config(n_workers=9)
-)
+go2_sim_nav = autoconnect(
+    go2_sim,
+    _go2_nav,
+    vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
+).global_config(n_workers=9)

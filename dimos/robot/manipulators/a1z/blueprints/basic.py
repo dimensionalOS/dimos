@@ -78,14 +78,8 @@ def a1z_coordinator() -> MetaBlueprint:
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-coordinator_a1z = a1z_coordinator().solidify().remappings(A1Z_REMAPS)
-a1z_planner_coordinator = (
-    autoconnect(
-        planner(
-            model=make_a1z_model_config(robot="arm"), gripper_tasks={"manipulator": "arm_gripper"}
-        ),
-        a1z_coordinator(),
-    )
-    .solidify()
-    .remappings(A1Z_REMAPS)
-)
+coordinator_a1z = a1z_coordinator().remappings(A1Z_REMAPS)
+a1z_planner_coordinator = autoconnect(
+    planner(model=make_a1z_model_config(robot="arm"), gripper_tasks={"manipulator": "arm_gripper"}),
+    a1z_coordinator(),
+).remappings(A1Z_REMAPS)

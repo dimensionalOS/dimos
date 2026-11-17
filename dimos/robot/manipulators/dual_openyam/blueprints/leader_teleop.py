@@ -28,7 +28,7 @@ from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
@@ -215,41 +215,37 @@ def dual_openyam_leaders(
     ).remappings([(connection, "joint_state", "leader_joint_command")])
 
 
-def dual_openyam_leader_control() -> Blueprint:
+def dual_openyam_leader_control() -> MetaBlueprint:
     """The trajectory task fed by the leader port, plus a jaw per side, over the two-bus connection."""
-    return (
-        autoconnect(
-            DualOpenYamLeaderCoordinator.blueprint(
-                instance_name="ControlCoordinator",
-                connections=[arm_declaration(DualOpenYamConnection)],
-                tasks=[
-                    # The trajectory task follows the leader's targets instead of joint_command.
-                    replace(
-                        joint_trajectory_task(
-                            DUAL_OPENYAM_LEADER_JOINTS,
-                            velocity_limits=dual_openyam_leader_velocity_limits(),
-                        ),
-                        stream_bind={"joint_command": "leader_joint_command"},
+    return autoconnect(
+        DualOpenYamLeaderCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(DualOpenYamConnection)],
+            tasks=[
+                # The trajectory task follows the leader's targets instead of joint_command.
+                replace(
+                    joint_trajectory_task(
+                        DUAL_OPENYAM_LEADER_JOINTS,
+                        velocity_limits=dual_openyam_leader_velocity_limits(),
                     ),
-                    *[
-                        TaskConfig(
-                            name=f"{side}_arm_gripper",
-                            type="gripper",
-                            joint_names=[f"arm/{_JAWS[side].joint}"],
-                            priority=20,
-                            params={"open_at": _JAWS[side].open_at},
-                            stream_bind={"gripper_command": f"{side}_gripper_command"},
-                        )
-                        for side in DUAL_OPENYAM_SIDES
-                    ],
+                    stream_bind={"joint_command": "leader_joint_command"},
+                ),
+                *[
+                    TaskConfig(
+                        name=f"{side}_arm_gripper",
+                        type="gripper",
+                        joint_names=[f"arm/{_JAWS[side].joint}"],
+                        priority=20,
+                        params={"open_at": _JAWS[side].open_at},
+                        stream_bind={"gripper_command": f"{side}_gripper_command"},
+                    )
+                    for side in DUAL_OPENYAM_SIDES
                 ],
-                zero_stiffness_joints=[],
-            ),
-            arm_connection(DualOpenYamConnection),
-        )
-        .solidify()
-        .remappings(arm_remaps(DualOpenYamConnection, DualOpenYamLeaderCoordinator))
-    )
+            ],
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(DualOpenYamConnection),
+    ).remappings(arm_remaps(DualOpenYamConnection, DualOpenYamLeaderCoordinator))
 
 
 def _manipulation() -> Blueprint:

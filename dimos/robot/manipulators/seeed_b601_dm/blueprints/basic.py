@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_connection,
@@ -48,24 +48,20 @@ def _tasks() -> list[TaskConfig]:
     ]
 
 
-def seeed_b601_dm_control_blueprint() -> Blueprint:
+def seeed_b601_dm_control_blueprint() -> MetaBlueprint:
     """Trajectories and gripper control over the direct connection."""
-    return (
-        autoconnect(
-            SeeedB601DMCoordinator.blueprint(
-                instance_name="ControlCoordinator",
-                connections=[arm_declaration(B601DMConnection)],
-                tasks=_tasks(),
-                zero_stiffness_joints=[],
-            ),
-            arm_connection(B601DMConnection),
-        )
-        .solidify()
-        .remappings(arm_remaps(B601DMConnection, SeeedB601DMCoordinator))
-    )
+    return autoconnect(
+        SeeedB601DMCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(B601DMConnection)],
+            tasks=_tasks(),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(B601DMConnection),
+    ).remappings(arm_remaps(B601DMConnection, SeeedB601DMCoordinator))
 
 
-def seeed_b601_dm_control() -> Blueprint:
+def seeed_b601_dm_control() -> MetaBlueprint:
     """Trajectories and gripper control over the direct connection."""
     return seeed_b601_dm_control_blueprint().remappings([])
 

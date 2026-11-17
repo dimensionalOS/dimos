@@ -165,7 +165,7 @@ nav = autoconnect(
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
     MovementManager.blueprint(),
-).solidify().global_config(n_workers=10, robot_model="unitree_go2")
+).global_config(n_workers=10, robot_model="unitree_go2")
 
 ros = nav.transports(
     {

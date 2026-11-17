@@ -109,19 +109,15 @@ def _view() -> Any:
     )
 
 
-relocalize_mid360 = (
-    autoconnect(
-        RecordingPlayer.blueprint(),
-        RayTracingVoxelMap.blueprint(
-            voxel_size=0.1, world_frame=WORLD, global_emit_every=5
-        ).remappings([(RayTracingVoxelMap, "loaded_map", "loaded_map_unused")]),
-        # Scans are recorded in the sensor frame, so match the mapper's registered local map.
-        LocalMapRelocalization.blueprint(world_frame=WORLD),
-        vis_module(
-            "rerun",
-            {"visual_override": {"world/loaded_map": _fine_points}, "blueprint": _view},
-        ),
-    )
-    .solidify()
-    .global_config(n_workers=5, robot_model="relocalize_mid360")
-)
+relocalize_mid360 = autoconnect(
+    RecordingPlayer.blueprint(),
+    RayTracingVoxelMap.blueprint(voxel_size=0.1, world_frame=WORLD, global_emit_every=5).remappings(
+        [(RayTracingVoxelMap, "loaded_map", "loaded_map_unused")]
+    ),
+    # Scans are recorded in the sensor frame, so match the mapper's registered local map.
+    LocalMapRelocalization.blueprint(world_frame=WORLD),
+    vis_module(
+        "rerun",
+        {"visual_override": {"world/loaded_map": _fine_points}, "blueprint": _view},
+    ),
+).global_config(n_workers=5, robot_model="relocalize_mid360")

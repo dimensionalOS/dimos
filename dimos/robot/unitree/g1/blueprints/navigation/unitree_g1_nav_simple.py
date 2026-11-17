@@ -34,25 +34,21 @@ g1_rotation_diameter = 0.8
 voxel_resolution = 0.05
 g1_safe_radius_margin = 0.6
 
-unitree_g1_nav_simple = (
-    autoconnect(
-        _unitree_g1_onboard,
-        RayTracingVoxelMap.blueprint(voxel_size=voxel_resolution),
-        CostMapper.blueprint(
-            config=HeightCostConfig(
-                resolution=voxel_resolution,
-                can_pass_under=g1_overhead_clearance,
-                can_climb=g1_max_step_height,
-            ),
-            initial_safe_radius_meters=G1.width_clearance + g1_safe_radius_margin,
+unitree_g1_nav_simple = autoconnect(
+    _unitree_g1_onboard,
+    RayTracingVoxelMap.blueprint(voxel_size=voxel_resolution),
+    CostMapper.blueprint(
+        config=HeightCostConfig(
+            resolution=voxel_resolution,
+            can_pass_under=g1_overhead_clearance,
+            can_climb=g1_max_step_height,
         ),
-        ReplanningAStarPlanner.blueprint(
-            robot_width=G1.width_clearance,
-            robot_rotation_diameter=g1_rotation_diameter,
-        ),
-        MovementManager.blueprint(),
-        unitree_g1_vis,
-    )
-    .solidify()
-    .global_config(n_workers=10, robot_model="unitree_g1")
-)
+        initial_safe_radius_meters=G1.width_clearance + g1_safe_radius_margin,
+    ),
+    ReplanningAStarPlanner.blueprint(
+        robot_width=G1.width_clearance,
+        robot_rotation_diameter=g1_rotation_diameter,
+    ),
+    MovementManager.blueprint(),
+    unitree_g1_vis,
+).global_config(n_workers=10, robot_model="unitree_g1")

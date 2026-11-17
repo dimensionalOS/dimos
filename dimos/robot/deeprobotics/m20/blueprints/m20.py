@@ -43,7 +43,7 @@ m20 = (
         M20Connection.blueprint().remappings([(M20Connection, "odometry", "slam_odom")]),
         UrdfManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
-        m20_nav_stack().solidify().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
+        m20_nav_stack().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
         LocalMapRelocalization.blueprint(
             world_frame=WORLD_FRAME,
             map_frame="premap",
@@ -54,7 +54,6 @@ m20 = (
             min_local_points=8_000,
         ),
     )
-    .solidify()
     .global_config(
         n_workers=5,
         transport="zenoh",
