@@ -100,6 +100,7 @@ config! {
     graph_change_heat_decay: f64,
     solve_seed_from_accepted: bool,
     solve_seed_gnc_verdicts: bool,
+    solve_incumbent_challenge: bool,
     solver_fast_path_enabled: bool,
     solver_fast_path_budget_scans: f64,
     solver_fast_path_max_lm_steps: usize,

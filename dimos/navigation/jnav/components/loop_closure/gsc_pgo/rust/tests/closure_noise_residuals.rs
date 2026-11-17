@@ -110,6 +110,7 @@ fn helmert(with_closures: bool) -> (f64, f64, f64, f64) {
         evidence_core: false,
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
+        incumbent_closure_weights: Vec::new(),
         seed_start: Vec::new(),
         planar: false,
         landmark_warm_start_xy_variance_scale: 0.0,

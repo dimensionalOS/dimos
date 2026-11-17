@@ -178,6 +178,9 @@ class PGOConfig(NativeModuleConfig):
     # seed a solve from the accepted graph (when it fits) and optionally from the last adopted GNC verdicts
     solve_seed_from_accepted: bool = True
     solve_seed_gnc_verdicts: bool = False
+    # when GNC keeps none of the closures the last adopted solve kept, those verdicts re-solved from the accepted graph
+    # compete with GNC's, and the lower truncated least-squares cost wins
+    solve_incumbent_challenge: bool = True
     # solver fast path: unjudged closures are published at once by a least squares over the keyframes nearest the robot (as
     # many as budget_scans affords), the rest held; GNC's graph is untouched and its next solve replaces the correction
     solver_fast_path_enabled: bool = False

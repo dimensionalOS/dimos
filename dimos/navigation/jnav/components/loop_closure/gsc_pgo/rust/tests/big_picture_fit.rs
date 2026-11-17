@@ -14,7 +14,7 @@
 
 //! The pose graph on a drifted square: a true closure closes it, a false one is voted out.
 
-use dimos_gsc_pgo::big_picture_fit::{consistent_closures, solve, Edge, SolveConfig};
+use dimos_gsc_pgo::big_picture_fit::{consistent_closures, solve, Edge, Solution, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
 const SIDE: usize = 40;
@@ -84,6 +84,7 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             evidence_core: false,
             learned_evidence: true,
             seed_closure_weights: Vec::new(),
+            incumbent_closure_weights: Vec::new(),
             seed_start: Vec::new(),
             planar: false,
             landmark_warm_start_xy_variance_scale: 0.0,
@@ -145,6 +146,7 @@ fn relative_covariance_of_a_chain_is_its_odometry_error_estimate() {
         evidence_core: false,
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
+        incumbent_closure_weights: Vec::new(),
         seed_start: Vec::new(),
         planar: false,
         landmark_warm_start_xy_variance_scale: 0.0,
@@ -252,6 +254,7 @@ fn look_alike_square() -> (Vec<f64>, f64, f64) {
             evidence_core: false,
             learned_evidence: true,
             seed_closure_weights: Vec::new(),
+            incumbent_closure_weights: Vec::new(),
             seed_start: Vec::new(),
             planar: false,
             landmark_warm_start_xy_variance_scale: 0.0,
@@ -342,6 +345,7 @@ fn closures_agree_around_a_drifting_cycle() {
         evidence_core: false,
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
+        incumbent_closure_weights: Vec::new(),
         seed_start: Vec::new(),
         planar: false,
         landmark_warm_start_xy_variance_scale: 0.0,
@@ -370,4 +374,94 @@ fn closures_agree_around_a_drifting_cycle() {
         consistent_closures(&closures, &tight, &config),
         vec![false, false, false]
     );
+}
+
+/// A square over-turning `yaw_bias` per keyframe, closed by `loop_closures` agreeing closures (keyframe i to its mirror
+/// near the end), plus `false_count` false closures between random keyframes, each off by up to 2.5 m: (odometry poses,
+/// odometry edges, closures, true poses).
+fn collapsing_loop(yaw_bias: f64, loop_closures: usize, false_count: usize) -> (Poses, Vec<Edge>, Vec<Edge>, Poses) {
+    let (truth, odometry) = square(yaw_bias);
+    let last = truth.len() - 1;
+    let odometry_edges: Vec<Edge> = (1..=last)
+        .map(|k| between(&odometry, k - 1, k, [1e-8, 1e-8, 1e-5, 1e-4, 1e-4, 1e-6]))
+        .collect();
+    let mut closures: Vec<Edge> = (0..loop_closures).map(|i| between(&truth, i, last - i, [1e-3; 6])).collect();
+    let mut state: u64 = 12345;
+    let mut uniform = || {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    while closures.len() < loop_closures + false_count {
+        let (a, b) = ((uniform() * last as f64) as usize, (uniform() * last as f64) as usize);
+        let mut false_closure = between(&truth, a.min(b), a.max(b), [1e-3; 6]);
+        false_closure.translation = [5.0 * (uniform() - 0.5), 5.0 * (uniform() - 0.5), 0.0];
+        if a.abs_diff(b) >= 10 {
+            closures.push(false_closure);
+        }
+    }
+    (odometry, odometry_edges, closures, truth)
+}
+
+fn collapse_config(incumbent: Vec<f64>, seed_start: Poses) -> SolveConfig {
+    SolveConfig {
+        gnc_variance_scale: 10.0,
+        gnc_inlier_probability: 0.95,
+        huber_k: 1.345,
+        evidence_core: false,
+        learned_evidence: false,
+        seed_closure_weights: Vec::new(),
+        incumbent_closure_weights: incumbent,
+        seed_start,
+        planar: false,
+        landmark_warm_start_xy_variance_scale: 0.0,
+        landmark_warm_start_xy_variance_ladder: 0.0,
+    }
+}
+
+/// Solve from the odometry with the accepted graph = truth and the incumbent keeping the first `kept` closures.
+fn solve_collapsing(odometry: &Poses, odometry_edges: &[Edge], closures: &[Edge], truth: &Poses, kept: usize) -> Solution {
+    let (rotations, positions): (Vec<Mat3>, Vec<Vec3>) = odometry.iter().copied().unzip();
+    let free: Vec<bool> = (0..odometry.len()).map(|k| k > 0).collect();
+    let mut incumbent = vec![1.0; kept];
+    if kept > 0 {
+        incumbent.resize(closures.len(), f64::NAN);
+    }
+    solve(&rotations, &positions, &free, odometry_edges, closures, &collapse_config(incumbent, truth.clone()))
+}
+
+#[test]
+fn gnc_from_the_odometry_collapses_a_loop_the_incumbent_keeps() {
+    // 300 false closures (none fits the accepted graph, so GNC starts from the odometry) make GNC drop the loop too
+    let (odometry, odometry_edges, closures, truth) = collapsing_loop(0.002, 6, 300);
+    let alone = solve_collapsing(&odometry, &odometry_edges, &closures, &truth, 0);
+    assert!(alone.closure_weights.iter().all(|&w| w == 0.0), "GNC alone should collapse the loop");
+    // the incumbent kept the 6 on the accepted graph: its re-solve has the lower truncated cost and wins
+    let challenged = solve_collapsing(&odometry, &odometry_edges, &closures, &truth, 6);
+    assert_eq!(challenged.closure_weights[..6], [1.0; 6]);
+    assert!(challenged.closure_weights[6..].iter().all(|&w| w == 0.0));
+    let closed_end = mat3::norm(&challenged.positions[odometry.len() - 1]);
+    assert!(closed_end < 0.05, "the kept loop should close the end onto the start: {closed_end}");
+}
+
+#[test]
+fn an_incumbent_loop_the_odometry_cannot_bend_to_loses_to_gnc() {
+    // a drift the stated odometry error estimate calls too unlikely to close: rejecting the loop is GNC's right answer
+    let (odometry, odometry_edges, closures, truth) = collapsing_loop(0.004, 4, 1);
+    let challenged = solve_collapsing(&odometry, &odometry_edges, &closures, &truth, 4);
+    assert!(challenged.closure_weights.iter().all(|&w| w == 0.0));
+}
+
+#[test]
+fn an_incumbent_false_closure_loses_to_gnc() {
+    let (odometry, odometry_edges, closures, _) = collapsing_loop(0.0005, 1, 0);
+    let (rotations, positions): (Vec<Mat3>, Vec<Vec3>) = odometry.iter().copied().unzip();
+    let free: Vec<bool> = (0..odometry.len()).map(|k| k > 0).collect();
+    // a false closure the incumbent kept: a far corner claimed to be the start, on a graph bent to fit it
+    let mut false_closure = between(&odometry, 0, 2 * SIDE, [1e-3; 6]);
+    false_closure.translation = [0.0, 0.5, 0.0];
+    let edges = vec![false_closure, closures[0]];
+    let bent = solve(&rotations, &positions, &free, &odometry_edges, &edges[..1], &collapse_config(Vec::new(), Vec::new()));
+    let bent_start: Poses = bent.rotations.iter().copied().zip(bent.positions.iter().copied()).collect();
+    let challenged = solve(&rotations, &positions, &free, &odometry_edges, &edges, &collapse_config(vec![1.0, f64::NAN], bent_start));
+    assert_eq!(challenged.closure_weights, vec![0.0, 1.0], "the true closure in, the false one out");
 }

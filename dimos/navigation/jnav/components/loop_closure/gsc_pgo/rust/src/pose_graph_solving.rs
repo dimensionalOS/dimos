@@ -489,6 +489,11 @@ impl GscPgo {
             } else {
                 Vec::new()
             },
+            incumbent_closure_weights: if config.solve_incumbent_challenge {
+                closure_index.iter().map(|&i| self.committed_closures.weight(i)).collect()
+            } else {
+                Vec::new()
+            },
             planar: config.planar_pose_graph,
             landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
             landmark_warm_start_xy_variance_ladder: config.landmark_warm_start_xy_variance_ladder,
@@ -889,7 +894,7 @@ impl GscPgo {
             .count();
         let trace = solution.trace.as_ref();
         format!(
-            "\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"estimate_scans\":{},\"estimate_raw_scans\":{},\"estimate_curve\":\"{}\",\"estimate_data_s\":{},\"dispatch_scan\":{},\"finished_scan\":{},\"adopted_scan\":{},\"overshoot\":{},\"closures\":{},\"closures_new\":{},\"closures_hash\":\"{:016x}\",\"kept\":{kept},\"converged\":{},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}]",
+            "\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"estimate_scans\":{},\"estimate_raw_scans\":{},\"estimate_curve\":\"{}\",\"estimate_data_s\":{},\"dispatch_scan\":{},\"finished_scan\":{},\"adopted_scan\":{},\"overshoot\":{},\"closures\":{},\"closures_new\":{},\"closures_hash\":\"{:016x}\",\"kept\":{kept},\"converged\":{},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}],\"challenge_cost\":[{}]",
             n,
             json_number(dispatched.keyframe_time),
             json_number(dispatched.wall_time),
@@ -914,6 +919,7 @@ impl GscPgo {
             trace.map_or("", |t| t.gnc_stop),
             trace.map_or([f64::NAN; 3], |t| t.initial_cost).map(json_number).join(","),
             trace.map_or([f64::NAN; 3], |t| t.final_cost).map(json_number).join(","),
+            trace.map_or([f64::NAN; 2], |t| t.challenge_cost).map(json_number).join(","),
         )
     }
 }

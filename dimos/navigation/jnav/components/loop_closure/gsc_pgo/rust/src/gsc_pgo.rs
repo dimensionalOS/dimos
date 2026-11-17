@@ -588,6 +588,9 @@ pub struct Config {
     pub solver_fast_path_max_lm_steps: usize,
     /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
+    /// When GNC keeps none of the closures the newest adopted solve kept, those verdicts re-solved from the accepted graph
+    /// compete, and the lower truncated least-squares cost wins (GNC from the odometry can collapse a loop to all-out).
+    pub solve_incumbent_challenge: bool,
     /// Search pipeline (`closure_search_schedule`): candidate buffer -> fast-match workers; uncertain matches -> verification buffer -> workers.
     pub fast_match_workers: usize,
     pub sc_buffer_size: usize,
@@ -794,6 +797,7 @@ impl Default for Config {
             graph_change_heat_decay: 0.995,
             solve_seed_from_accepted: true,
             solve_seed_gnc_verdicts: false,
+            solve_incumbent_challenge: true,
             solver_fast_path_enabled: false,
             solver_fast_path_budget_scans: 1.0,
             solver_fast_path_max_lm_steps: 10,
