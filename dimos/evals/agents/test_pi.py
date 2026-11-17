@@ -29,11 +29,11 @@ from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import request_path, response_path
 from dimos.evals.agents import pi
+from dimos.evals.agents.agent_adapter import AgentAdapter
 from dimos.evals.agents.blind import Blind
 from dimos.evals.agents.lib.pi_config import Provider, RunPaths, RuntimeConfig
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.pi import PiAdapter, recording_file
 from dimos.evals.cli import load_agent
 from dimos.evals.guide import PYTHON_API_GUIDE
@@ -65,7 +65,7 @@ def test_invalid_tool_policy_rejected_before_startup() -> None:
         with pytest.raises(ValueError):
             PiAdapter(allowed_tools=names)
     with pytest.raises(ValueError, match="does not support allowed_tools"):
-        McpClientAdapter(allowed_tools=())
+        AgentAdapter(allowed_tools=())
     with pytest.raises(ValueError, match="has no tools"):
         Blind(allowed_tools=("bash",))
     assert Blind(allowed_tools=()).available_tools(()) == ()
