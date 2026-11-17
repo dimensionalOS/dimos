@@ -56,25 +56,21 @@ BROKEN: list[tuple[Edits, str]] = [
     (
         {
             "Patrolling": {"outcomes": ("done",)},
-            "Navigating": {"transitions": (Transition(goto="done", if_="arrived"),)},
+            "Navigating": {"transitions": (Transition(goto="done", on="succeeded"),)},
         },
         "node `Patrolling` can be ended with `done`",
     ),
     (
-        {"Navigating": {"transitions": (Transition(goto="NextWaypoint", if_="estop"),)}},
-        "its transition on `estop` is never taken, since `Patrolling` has one",
+        {"Navigating": {"transitions": (Transition(goto="NextWaypoint", if_="estop_button"),)}},
+        "its transition on `estop_button` is never taken, since `Patrolling` has one",
     ),
     (
         {"Estopped": {"transitions": (Transition(goto="Patrolling", on="estop"),)}},
-        "`on` names `estop`, which is not a signal",
+        "`on` names `estop`, which is not an outcome or a stream",
     ),
     (
-        {"Estopped": {"transitions": (Transition(goto="Estopped", if_="estop_cleared"),)}},
-        "a transition with only an `if` points back at its own node",
-    ),
-    (
-        {"Navigating": {"transitions": (Transition(goto="NextWaypoint", after=5, if_="failed"),)}},
-        "`failed` is never true in a transition with an `on` or an `after`",
+        {"Estopped": {"transitions": (Transition(goto="Estopped", if_="!estop_button"),)}},
+        "a transition with no `on` or `after` points back at its own node",
     ),
     (
         {"Estopped": {"requires": (Check(expect=["true"], fallback="Patrolling"),)}},
@@ -111,9 +107,9 @@ def test_patrol_has_no_problems(patrol: OrchestratorDefinition) -> None:
 
 
 def test_shapes_are_checked_when_given(patrol: OrchestratorDefinition) -> None:
-    (problem,) = check(patrol, {"nav_status": {"status": 0}, "nav.goal": ""}).problems
-    assert "event `arrived`: `when`" in problem
-    assert "cannot be the operand of a select" in problem
+    (problem,) = check(patrol, {"nav_goal_id": "", "nav.goal": 0}).problems
+    assert "node `Navigating`: `if`" in problem
+    assert "'_==_' applied to '(string, int)'" in problem
 
 
 @pytest.mark.parametrize(("edits", "problem"), BROKEN)

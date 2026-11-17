@@ -67,10 +67,13 @@ def to_plain(value: object, path: str = "") -> Plain:
 
 
 def field_to_plain(message: object, field: str, path: str = "") -> Plain:
-    """Plain data from one LCM field of a message. The other fields are not converted."""
-    if isinstance(message, DimosMsg):
-        message = _generated(message)
-    return to_plain(getattr(message, field), f"{path}.{field}".lstrip("."))
+    """Plain data from one LCM field of a message, by its path. Nothing else is converted."""
+    value = message
+    for part in field.split("."):
+        if isinstance(value, DimosMsg):
+            value = _generated(value)
+        value = getattr(value, part)
+    return to_plain(value, f"{path}.{field}".lstrip("."))
 
 
 def _generated(message: DimosMsg) -> _Generated:

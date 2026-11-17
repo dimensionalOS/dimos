@@ -30,7 +30,7 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind, resolve
-from dimos.orchestration.engine import Call, SendCancel, SendStart, SignalItem
+from dimos.orchestration.engine import Call, SendCancel, SendStart, StreamItem
 from dimos.orchestration.loader import load_and_check
 from dimos.orchestration.orchestrator import Orchestrator
 from dimos.utils.testing.waiting import wait_until
@@ -41,13 +41,15 @@ root = "Job"
 [constants]
 SUCCEEDED = 3
 
-[[signal]]
+[[stream_value]]
 name = "status"
 stream = "FakeBase.status"
+field = "status"
 
-[[event]]
-name = "arrived"
-when = "status.status == SUCCEEDED && status.goal_id.id == job.goal"
+[[stream_value]]
+name = "reached"
+stream = "FakeBase.status"
+field = "goal_id.id"
 
 [[activity]]
 name = "go"
@@ -70,7 +72,7 @@ args = { name = "'lobby'" }
 result = "job.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "status == SUCCEEDED && reached == job.goal"
 goto = "Arrived"
 
 [[node]]
@@ -119,16 +121,21 @@ UNBOUND: list[tuple[str, str, str]] = [
         "node `Going`: `args` entry `name`: `5` gives INT, and STRING is needed",
     ),
     (
-        'stream = "FakeBase.status"',
-        'stream = "FakeBase.state"',
-        "signal `status`: `stream` names `FakeBase.state`, and `FakeBase` has no stream `state`",
+        'stream = "FakeBase.status"\nfield = "status"',
+        'stream = "FakeBase.state"\nfield = "status"',
+        "stream value `status`: `stream` names `FakeBase.state`, and `FakeBase` has no stream `state`",
     ),
     (
-        'stream = "FakeBase.status"',
-        'stream = "FakeBase.status"\nfield = "nope"',
-        "signal `status`: `field` names `nope`, which is not a field of `GoalStatus`",
+        'field = "goal_id.id"',
+        'field = "goal_id.idd"',
+        "stream value `reached`: `field` names `goal_id.idd`, which is not a field of `GoalStatus`",
     ),
-    ("status.goal_id.id ==", "status.goal_id.idd ==", "event `arrived`: `when`"),
+    ("reached == job.goal", "reached == 5", "node `Going`: `if`"),
+    (
+        "after = 60.0",
+        'on = "FakeBase.nope"',
+        "node `Arrived`: `on` names `FakeBase.nope`, and `FakeBase` has no stream `nope`",
+    ),
     (
         'activity = "mark"',
         'activity = "mark"\nresult = "job.goal"',
@@ -270,6 +277,14 @@ def test_the_orchestrator_drives_a_module_in_a_namespace(
     assert sorted(calls[1:]) == ["halt", "mark"]
 
 
+def test_an_on_waits_for_a_message_on_its_stream(tmp_path: Path, build: Build) -> None:
+    arrived = 'if = "status == SUCCEEDED && reached == job.goal"'
+    assert JOB.count(arrived) == 1
+    job = _written(tmp_path, JOB.replace(arrived, f'on = "FakeBase.status"\n{arrived}'))
+    calls = _calls_with(build(_blueprint(job)), {"halt", "mark"})
+    assert calls[0] == "go_to lobby"
+
+
 def test_a_fault_cancels_every_activity_once(tmp_path: Path, build: Build) -> None:
     job = _written(tmp_path, JOB.replace('start = "FakeBase.go_to"', 'start = "FakeBase.boom"'))
     calls = _calls_with(build(_blueprint(job)), {"halt"})
@@ -329,7 +344,7 @@ def test_an_engine_error_cancels_every_activity(
     orchestrator, sent = bound
     assert orchestrator._checked is not None
     mocker.patch.object(engine, "step", side_effect=RuntimeError("broken"))
-    orchestrator._add(SignalItem("status"))
+    orchestrator._add(StreamItem("FakeBase.status"))
     orchestrator._run(orchestrator._checked)
     assert [call.args[0] for call in sent.call.call_args_list] == ["FakeBase/go_to"]
     assert [call.args[0] for call in sent.call_nowait.call_args_list] == ["FakeBase/halt"]

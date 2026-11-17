@@ -36,15 +36,12 @@ class _Struct(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
 
-class Signal(_Struct):
+class StreamValue(_Struct):
+    """A blackboard key that holds one field of the latest message on a stream."""
+
     name: str
     stream: str
-    field: str | None = None
-
-
-class Event(_Struct):
-    name: str
-    when: str
+    field: str
 
 
 class Activity(_Struct):
@@ -121,8 +118,7 @@ class OrchestratorDefinition(_Struct):
 
     root: str
     constants: dict[str, JsonValue] = {}
-    signals: tuple[Signal, ...] = ()
-    events: tuple[Event, ...] = ()
+    stream_values: tuple[StreamValue, ...] = ()
     vars: dict[str, JsonValue] = {}
     activities: tuple[Activity, ...] = ()
     resources: tuple[str, ...] = ()

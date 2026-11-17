@@ -35,7 +35,7 @@ from dimos.orchestration.engine import (
     ReturnItem,
     SendCancel,
     SendStart,
-    SignalItem,
+    StreamItem,
     TransitionRecord,
 )
 from dimos.orchestration.loader import load_and_check
@@ -99,13 +99,18 @@ def test_a_low_battery_sends_the_patrol_to_the_charger_and_back() -> None:
             runtime, effects = engine.step(checked, runtime, queue.popleft(), 0.0)
             perform(effects)
 
-    def reached() -> SignalItem:
+    def reached() -> StreamItem:
         status = GoalStatus(goal_id=GoalID(stamp=Time(len(calls), 0)), status=GoalStatus.SUCCEEDED)
-        return SignalItem("nav_status", to_plain(status))
+        values = {
+            "nav_state": field_to_plain(status, "status"),
+            "nav_stamp": field_to_plain(status, "goal_id.stamp"),
+        }
+        return StreamItem("MLSPlannerNative.nav_status", values)
 
-    def battery(level: float) -> SignalItem:
+    def battery(level: float) -> StreamItem:
         state = BatteryState(percentage=level)
-        return SignalItem("battery_level", field_to_plain(state, "percentage"))
+        level_read = {"battery_level": field_to_plain(state, "percentage")}
+        return StreamItem("FakeBattery.battery", level_read)
 
     perform(effects)
     run(battery(0.15))
@@ -124,9 +129,9 @@ def test_a_low_battery_sends_the_patrol_to_the_charger_and_back() -> None:
     ]
     assert records == [
         ("NextWaypoint", "if patrol.index < size(route)", "Navigating"),
-        ("Patrolling", "if battery_low", "Charging"),
-        ("ReturnToCharger", "if arrived", "OnCharger"),
-        ("OnCharger", "if charged", "done"),
-        ("Charging", "if done", "Patrolling"),
+        ("Patrolling", "if battery_level < low_battery", "Charging"),
+        ("ReturnToCharger", "if nav_state == SUCCEEDED && nav_stamp == nav.goal", "OnCharger"),
+        ("OnCharger", "if battery_level >= full_battery", "done"),
+        ("Charging", "on done", "Patrolling"),
         ("NextWaypoint", "if patrol.index < size(route)", "Navigating"),
     ]
