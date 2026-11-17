@@ -154,31 +154,24 @@ pub fn solve(
     )
 }
 
-/// The solver fast path's local solve (`fast_path`): poses, whether LM reached a minimum, and the GNC cutoff check.
+/// The solver fast path's window solve (`fast_path`): its poses, whether LM reached a minimum, and each closure's whitened
+/// squared residual over GNC's cutoff at GNC's scaled variances (under 1 everywhere: GNC would keep every closure as is).
 pub(crate) struct FastSolve {
     pub(crate) rotations: Vec<Mat3>,
     pub(crate) positions: Vec<Vec3>,
-    /// Whether every Levenberg-Marquardt pass reached a minimum within its steps.
     pub(crate) converged: bool,
-    /// The largest whitened squared residual of a `new` closure at GNC's start (all in, variances x `gnc_variance_scale`),
-    /// over GNC's cutoff; under 1, GNC would not even run on this window and would keep every closure.
-    pub(crate) worst_over_cutoff: f64,
-    /// How much the new closures raise the window's whitened cost at GNC's start, over that cutoff.
-    pub(crate) cost_rise_over_cutoff: f64,
+    pub(crate) over_cutoff: Vec<f64>,
 }
 
-/// GNC's start without GNC: least squares with every closure in at GNC's scaled variances, the `new` closures' residuals
-/// read against GNC's cutoff, then (if under it) `solve_core`'s polish (own variances, Huber passes). No covariances. Each
-/// Levenberg-Marquardt pass stops after `steps` steps, bounding the cost (every step lowers the cost, so a pass cut short
-/// is still nearer the minimum than its start).
-#[allow(clippy::too_many_arguments)]
+/// GNC's two stages without GNC's iterations: least squares with every closure in at GNC's scaled variances, read against
+/// GNC's cutoff (GNC would weigh none past it), then, if all pass, the same closures at their own variances (what GNC's
+/// solve then settles on), each pass at most `steps` LM steps.
 pub(crate) fn solve_fast_path(
     rotations: &[Mat3],
     positions: &[Vec3],
     free: &[bool],
     odometry: &[Edge],
     closures: &[Edge],
-    new: &[bool],
     config: &SolveConfig,
     steps: usize,
 ) -> FastSolve {
@@ -204,41 +197,21 @@ pub(crate) fn solve_fast_path(
             ..*e
         })
         .collect();
-    let old: Vec<f64> = new.iter().map(|&n| if n { 0.0 } else { 1.0 }).collect();
-    let before = cost(&state, odometry, &scaled, &old, &[], &[], &[], &[]);
     let all = vec![1.0; closures.len()];
     let mut converged = levenberg_marquardt_steps(
         &mut state, &pattern, odometry, &scaled, &all, &[], &[], &[], &[], 1e-5, steps, false,
     );
-    let after = cost(&state, odometry, &scaled, &all, &[], &[], &[], &[]);
-    let worst = scaled
-        .iter()
-        .zip(new)
-        .filter(|(_, &n)| n)
-        .map(|(e, _)| whitened_squared(e, &state))
-        .fold(0.0, f64::max);
-    // over the cutoff the fast path declines: no polish
-    let polish = if worst <= threshold { 3 } else { 0 };
-    let mut huber = all;
-    for _ in 0..polish {
+    let over_cutoff: Vec<f64> = scaled.iter().map(|e| whitened_squared(e, &state) / threshold).collect();
+    if over_cutoff.iter().all(|&r| r <= 1.0) {
         converged &= levenberg_marquardt_steps(
-            &mut state, &pattern, odometry, closures, &huber, &[], &[], &[], &[], 1e-5, steps, false,
+            &mut state, &pattern, odometry, closures, &all, &[], &[], &[], &[], 1e-5, steps, false,
         );
-        for (h, e) in huber.iter_mut().zip(closures) {
-            let r = whitened_squared(e, &state).sqrt();
-            *h = if config.huber_k > 0.0 && r > config.huber_k {
-                config.huber_k / r
-            } else {
-                1.0
-            };
-        }
     }
     FastSolve {
         rotations: state.rotation,
         positions: state.position,
         converged,
-        worst_over_cutoff: worst / threshold,
-        cost_rise_over_cutoff: (after - before) / threshold,
+        over_cutoff,
     }
 }
 
@@ -1742,7 +1715,7 @@ fn chi2_inverse_6dof(p: f64) -> f64 {
 }
 
 /// Rotation by axis-angle `w` (Rodrigues).
-fn exp(w: Vec3) -> Mat3 {
+pub(crate) fn exp(w: Vec3) -> Mat3 {
     let angle = mat3::norm(&w);
     let k = mat3::skew(&w);
     let (a, b) = if angle < 1e-9 {

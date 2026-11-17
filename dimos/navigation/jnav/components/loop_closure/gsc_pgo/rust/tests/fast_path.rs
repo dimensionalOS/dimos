@@ -52,15 +52,9 @@ fn error(pgo: &GscPgo, range: std::ops::Range<usize>) -> f64 {
 
 /// Drive the loop, close it newest -> 0, then hold still; returns the graph each scan's `update` left.
 fn run(fast_path: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
-    run_feeding(fast_path, false, drift)
-}
-
-/// `run`, with the fast path's correction also fed to the graph GNC and the search read (`feeds_graph`).
-fn run_feeding(fast_path: bool, feeds_graph: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
     let mut config = Config {
         mode: Mode::Deterministic,
         solver_fast_path_enabled: fast_path,
-        solver_fast_path_feeds_graph: feeds_graph,
         odometry_error_estimate_from_lidar_range: false,
         graph_change_heat_enabled: false,
         // keyframes without clouds
@@ -70,7 +64,6 @@ fn run_feeding(fast_path: bool, feeds_graph: bool, drift: f64) -> (GscPgo, Vec<(
     };
     // GNC held 30 scans, the fast path one
     config.deterministic_config.solve_scans_scale = 30.0 / (KEYFRAMES as f64).powf(config.deterministic_config.solve_keyframe_power) / 2f64.powf(config.deterministic_config.solve_closure_power);
-    config.deterministic_config.fast_path_scans_fixed_overhead = 0.5;
     let mut pgo = GscPgo::new(config);
     pgo.set_wait_for_due_jobs(true);
     for k in 0..KEYFRAMES {
@@ -110,21 +103,16 @@ fn the_fast_path_corrects_a_small_loop_before_gnc_and_gnc_supersedes_it() {
     assert_eq!(fast.iter().take_while(|(unjudged, _)| *unjudged).count(), before_gnc);
     assert_eq!(slow[before_gnc - 1].1, drifted, "no correction before GNC without the fast path");
     let corrected = fast[before_gnc - 1].1;
-    assert!(corrected < drifted, "fast path: {corrected:.3} m from the truth, the odometry {drifted:.3} m");
+    // the fast path lands where GNC then puts the loop (the same closure at the same variances, without GNC's iterations)
+    let gnc = slow.last().unwrap().1;
+    assert!(corrected - gnc < 0.1 * (drifted - gnc), "fast path {corrected:.3} m from the truth, GNC {gnc:.3} m, the odometry {drifted:.3} m");
     let latency = &with.closure_latency()[0];
     assert!(latency.fast_path.unwrap().0 + 10 <= latency.gnc.unwrap().0, "{latency:?}");
     assert_eq!(with.committed_closures().weight(0), 1.0, "GNC kept the closure");
-    // the fast path's window lands nearly where GNC then puts it (the same loop, without GNC's iterations)
     let record = &with.fast_path_records()[0];
     assert_eq!(record.outcome, "adopted");
-    let mean = |a: &[Vec3], b: &[Vec3]| {
-        a.iter().zip(b).map(|(a, b)| mat3::norm(&mat3::sub(a, b))).sum::<f64>() / a.len() as f64
-    };
-    let (before, after) = (mean(&record.before, &record.gnc), mean(&record.after, &record.gnc));
-    assert!(after < 0.1 * before, "from GNC's answer: {before:.3} m before the fast path, {after:.3} m after");
-    // superseded: the final graph is GNC's, as without the fast path
-    let largest = largest_difference(&with, &without);
-    assert!(largest < 1e-3, "final graphs differ by {largest:.2e} m");
+    // superseded and published only: the final graph is GNC's, bit for bit the one without the fast path
+    assert_eq!(largest_difference(&with, &without), 0.0);
 }
 
 #[test]
@@ -138,19 +126,4 @@ fn the_fast_path_leaves_a_closure_gnc_would_weigh_to_gnc() {
     assert_eq!(with.committed_closures().weight(0), 0.0, "GNC rejected the closure");
     assert!(fast.iter().all(|&(_, error)| (error - slow[0].1).abs() < 1e-6), "the loop was never bent");
     assert!(largest_difference(&with, &without) < 1e-6);
-}
-
-#[test]
-fn a_published_only_fast_path_leaves_the_graph_gnc_solves_on_untouched() {
-    let (without, slow) = run(false, 0.1);
-    let (with, fast) = run(true, 0.1);
-    let (fed, fed_trace) = run_feeding(true, true, 0.1);
-    let before_gnc = slow.iter().take_while(|(unjudged, _)| *unjudged).count();
-    // published the same correction as when fed back, before GNC lands
-    assert_eq!(fast[before_gnc - 1].1, fed_trace[before_gnc - 1].1);
-    assert!(fast[before_gnc - 1].1 < slow[before_gnc - 1].1);
-    // GNC solved from the graph the fast path never touched: bit for bit the graph without the fast path
-    assert_eq!(largest_difference(&with, &without), 0.0);
-    // fed back, GNC started from the fast path's poses and landed slightly elsewhere
-    assert!(largest_difference(&fed, &without) < 1e-3);
 }

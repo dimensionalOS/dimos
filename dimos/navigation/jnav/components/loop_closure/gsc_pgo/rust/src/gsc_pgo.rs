@@ -470,10 +470,8 @@ pub struct DeterministicConfig {
     pub pressure_scans_fixed_overhead: f64,
     pub pressure_scans_per_keyframe: f64,
     pub pressure_scans_per_closure: f64,
-    /// The solver fast path (`fast_path`): fixed, per keyframe it frees, and per keyframe of the graph (its copy and heat cost).
-    pub fast_path_scans_fixed_overhead: f64,
-    pub fast_path_scans_per_window_keyframe: f64,
-    pub fast_path_scans_per_keyframe: f64,
+    /// The solver fast path (`fast_path`): per keyframe its window frees.
+    pub fast_path_scans_per_free_keyframe: f64,
 }
 
 impl Default for DeterministicConfig {
@@ -501,10 +499,9 @@ impl Default for DeterministicConfig {
             pressure_scans_fixed_overhead: 0.0007777038336858567,
             pressure_scans_per_keyframe: 8.708997476399469e-06,
             pressure_scans_per_closure: 1.2578234731596874e-05,
-            // fast path: a loaded Mac's fast-mode p99 (gir1_pointlio, 1000-keyframe window) x4, the Jetson's slowdown on solve-like jobs
-            fast_path_scans_fixed_overhead: 0.42,
-            fast_path_scans_per_window_keyframe: 1.7e-3,
-            fast_path_scans_per_keyframe: 8.4e-5,
+            // fast path: a quiet Mac's fast-mode p99 (huge_fastlio + huge_l1, 1459 window jobs: 8.52e-4 per free keyframe, no
+            // fixed or per-graph-keyframe cost) x the Jetson / Mac ratio of the solve's own fits (9.10e-5 / 3.74e-5 = 2.43)
+            fast_path_scans_per_free_keyframe: 2.07e-3,
         }
     }
 }
@@ -577,15 +574,14 @@ pub struct Config {
     pub graph_change_heat_decay: f64,
     /// Seed a solve from the accepted graph when it already fits every closure GNC would weigh; otherwise from the odometry.
     pub solve_seed_from_accepted: bool,
-    /// Solver fast path (`fast_path`): a new closure whose older end is within `solver_fast_path_max_keyframes` of the newest
-    /// keyframe is applied at once by a local least squares (no GNC) over those keyframes; the GNC solve covering it supersedes.
+    /// Solver fast path (`fast_path`): closures GNC has not judged yet are published at once by a least squares over the
+    /// keyframes nearest the robot (as many as `solver_fast_path_budget_scans` affords), the rest held; GNC's graph is untouched
+    /// and its next adopted solve replaces the correction.
     pub solver_fast_path_enabled: bool,
-    pub solver_fast_path_max_keyframes: usize,
-    /// Each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate.
+    /// The scans a fast path job may take to land (1: before the next scan); with its cost model it sets the window's size.
+    pub solver_fast_path_budget_scans: f64,
+    /// Its Levenberg-Marquardt pass stops after this many steps.
     pub solver_fast_path_max_lm_steps: usize,
-    /// Its correction also becomes the graph closure search and GNC read (true), or is only published until GNC lands (false):
-    /// fed back, its approximate poses re-seed GNC and move the search, which cost gir2_l1 and gir1_l1 loops.
-    pub solver_fast_path_feeds_graph: bool,
     /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
     /// Search pipeline (`closure_search_schedule`): candidate buffer -> fast-match workers; uncertain matches -> verification buffer -> workers.
@@ -724,9 +720,7 @@ impl Config {
             ("solve_scans_scale", self.deterministic_config.solve_scans_scale),
             ("solve_closure_free_scans_scale", self.deterministic_config.solve_closure_free_scans_scale),
             ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
-            ("fast_path_scans_fixed_overhead", self.deterministic_config.fast_path_scans_fixed_overhead),
-            ("fast_path_scans_per_window_keyframe", self.deterministic_config.fast_path_scans_per_window_keyframe),
-            ("fast_path_scans_per_keyframe", self.deterministic_config.fast_path_scans_per_keyframe),
+            ("fast_path_scans_per_free_keyframe", self.deterministic_config.fast_path_scans_per_free_keyframe),
         ];
         for (name, count) in [
             ("fast_match_workers", self.fast_match_workers),
@@ -796,9 +790,8 @@ impl Default for Config {
             solve_seed_from_accepted: true,
             solve_seed_gnc_verdicts: false,
             solver_fast_path_enabled: false,
-            solver_fast_path_max_keyframes: 1000,
+            solver_fast_path_budget_scans: 1.0,
             solver_fast_path_max_lm_steps: 10,
-            solver_fast_path_feeds_graph: false,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,
@@ -995,13 +988,15 @@ pub struct GscPgo {
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Called when a background solve finishes (`notify_when_solved`).
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
-    /// Solver fast path (`fast_path`): the job out, its worker, the committed closures the graph reflects, and its records.
+    /// Solver fast path (`fast_path`): the job out, its worker, the unjudged closures the published map holds and those it
+    /// refused (left to GNC), and its records.
     pub(crate) fast_path_job: Option<crate::fast_path::FastPathJob>,
     pub(crate) fast_path_pool: Option<crate::closure_search_schedule::SearchPool>,
-    pub(crate) fast_path_reflected: usize,
+    pub(crate) fast_path_accepted: std::collections::BTreeSet<usize>,
+    pub(crate) fast_path_refused: std::collections::BTreeSet<usize>,
     pub(crate) fast_path_overshoots: usize,
     pub(crate) fast_path_records: Vec<crate::fast_path::FastPathRecord>,
-    /// Published-only fast path correction (`solver_fast_path_feeds_graph` off): its poses and ride, and the graph with them.
+    /// The fast path's published correction: its poses and ride, and the graph with them.
     pub(crate) fast_path_overlay: Option<(Arc<crate::store::SolvedPoses>, Mat3, Vec3)>,
     pub(crate) fast_path_published: Option<KeyFrames>,
     /// Per committed closure, when it was committed, first reflected by the fast path, and judged by an adopted GNC solve.
