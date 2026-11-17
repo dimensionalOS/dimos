@@ -665,10 +665,13 @@ fn solve_from(
         (state, huber, error)
     };
     // LM cannot undo a large bend GNC's looser rounds put in (stiff translations on long levers leave its steps no
-    // descent), so the verdicts are also solved from the solve's start, and the lower cost wins (all out: the odometry)
-    let (state, huber, error) = {
+    // descent), so after GNC iterated the verdicts are also solved from the solve's start, and the lower cost wins (all
+    // out: the odometry); without GNC's rounds there is no such bend
+    let (state, huber, error) = if gnc_iterations > 0 {
         let (from_gnc, from_start) = (polish(state), polish(start_state));
         if from_start.2 < from_gnc.2 { from_start } else { from_gnc }
+    } else {
+        polish(state)
     };
     let relative_position_covariance = relative_position_covariances(
         &state,

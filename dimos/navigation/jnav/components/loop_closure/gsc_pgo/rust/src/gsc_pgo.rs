@@ -490,10 +490,11 @@ impl Default for DeterministicConfig {
             verification_scans_per_round: 0.7489339387672495,
             verification_scans_per_round_point: 6.563647896724165e-05,
             // 99th-percentile log-space fits (recordings weighed the same) of Mac solves of at least one scan, scaled by R1's
-            // Jetson/Mac solve ratio 2.434: GNC on 2034 from 63 runs no other load overlapped (Mac 2.202e-4), without GNC on the
-            // 0.0.6 candidate's 237 (Mac 4.502e-9); keyframes alone under-cover big solves (huge_l1's cost 3x huge_fastlio's there)
-            solve_gnc_scans_scale: 5.359070340135255e-4,
-            solve_gnc_keyframe_power: 1.7902760318551216,
+            // Jetson/Mac solve ratio 2.434: GNC on 8b1db21c04's (its final solve from the start too) 216 from 14 runs no other
+            // load overlapped (Mac 7.469e-5), without GNC on the 0.0.6 candidate's 237 (Mac 4.502e-9); keyframes alone
+            // under-cover big solves (huge_l1's cost is a few times huge_fastlio's there)
+            solve_gnc_scans_scale: 1.818047389278379e-4,
+            solve_gnc_keyframe_power: 1.9577744827110386,
             solve_without_gnc_scans_scale: 1.0956986513453806e-8,
             solve_without_gnc_keyframe_power: 2.8920067349091245,
             // the battery's Mac solve-cost fit at zero closures (17 maps: 3.585e-5 n^1.651 scans), times the margin the
