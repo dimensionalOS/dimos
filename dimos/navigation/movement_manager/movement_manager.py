@@ -35,7 +35,7 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.navigation.spec import cancel_goal, position_goal
+from dimos.navigation.spec import NO_HEADING, cancel_goal
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -97,19 +97,25 @@ class MovementManager(Module):
 
         logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
         self.way_point.publish(msg)
-        self.goal.publish(position_goal(msg.x, msg.y, msg.z, msg.frame_id, msg.ts))
+        self.goal.publish(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=[msg.x, msg.y, msg.z],
+                orientation=NO_HEADING,
+            )
+        )
 
     def _cancel_goal(self) -> None:
         self.stop_movement.publish(Bool(data=True))
         # NOTE: this NaN goal is more of a safety fallback.
         # It can be REALLY bad if a robot is supposed to stop moving but wont
         # we should probably think a more robust/strict requirement on planners
-        frame = "map"
         cancel = PointStamped(
-            ts=time.time(), frame_id=frame, x=float("nan"), y=float("nan"), z=float("nan")
+            ts=time.time(), frame_id="map", x=float("nan"), y=float("nan"), z=float("nan")
         )
         self.way_point.publish(cancel)
-        self.goal.publish(cancel_goal(frame))
+        self.goal.publish(cancel_goal(frame_id="map"))
         logger.debug("Navigation cancelled — waiting for new goal")
 
     def _on_nav(self, msg: Twist) -> None:

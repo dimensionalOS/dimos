@@ -25,7 +25,7 @@ from dimos.navigation.experimental.dannav.local_planner.module import (
     DanLocalPlannerConfig,
     _ReplanGate,
 )
-from dimos.navigation.spec import position_goal
+from dimos.navigation.spec import NO_HEADING
 
 
 def _path_from_points(points: list[tuple[float, float]]) -> Path:
@@ -48,7 +48,7 @@ def _odom(x: float, y: float, *, ts: float = 1.0) -> PoseStamped:
 
 
 def _point(x: float, y: float) -> PoseStamped:
-    return position_goal(x, y, 0.0, "world")
+    return PoseStamped(frame_id="world", position=[x, y, 0.0], orientation=NO_HEADING)
 
 
 def _gate(**config: Any) -> _ReplanGate:

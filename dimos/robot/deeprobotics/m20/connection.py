@@ -688,7 +688,7 @@ class M20Connection(Module):
             return self._fresh_charge_status() is not None
 
     def _cancel_nav_goal(self) -> None:
-        self.goal.publish(cancel_goal(WORLD_FRAME))
+        self.goal.publish(cancel_goal(frame_id=WORLD_FRAME))
 
     def _on_basic_server_report(self) -> None:
         with self._state_condition:

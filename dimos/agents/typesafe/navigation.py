@@ -58,7 +58,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.navigation.spec import position_goal
+from dimos.navigation.spec import NO_HEADING
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import LatestReader, getter_streaming
@@ -296,7 +296,9 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             prev = self._goal_xy
             self._goal_xy = (x, y)
         if prev is None or abs(prev[0] - x) > 0.1 or abs(prev[1] - y) > 0.1:
-            self.goal.publish(position_goal(x, y, 0.0, frame_id="world"))
+            self.goal.publish(
+                PoseStamped(frame_id="world", position=[x, y, 0.0], orientation=NO_HEADING)
+            )
 
     def _set_target(self, target: Vec3, *, immediate: bool = False, gen: int | None = None) -> None:
         now = time.monotonic()

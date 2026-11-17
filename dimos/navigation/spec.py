@@ -27,8 +27,8 @@ whose native only reads it.
 A ``goal`` is a ``PoseStamped`` with three meanings. A non-finite position cancels
 the goal under way. An all-zero quaternion is a position with no heading. Any other
 quaternion is a position and the heading to face there. The default orientation is
-the identity, which here means "face +x", so a position-only goal is built with
-``position_goal``.
+the identity, which here means "face +x", so a position-only goal sets
+``orientation=NO_HEADING``.
 """
 
 import math
@@ -44,16 +44,11 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 NO_HEADING = (0.0, 0.0, 0.0, 0.0)
 
 
-def position_goal(
-    x: float, y: float, z: float, frame_id: str, ts: float | None = None
-) -> PoseStamped:
-    """A goal with no heading."""
-    return PoseStamped(ts=ts, frame_id=frame_id, position=[x, y, z], orientation=NO_HEADING)
-
-
 def cancel_goal(frame_id: str) -> PoseStamped:
     """The goal that cancels the one under way."""
-    return position_goal(math.nan, math.nan, math.nan, frame_id)
+    return PoseStamped(
+        frame_id=frame_id, position=[math.nan, math.nan, math.nan], orientation=NO_HEADING
+    )
 
 
 class GlobalPlanner(Protocol):

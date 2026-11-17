@@ -122,4 +122,4 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     @rpc
     def stop_navigation(self) -> None:
         """Cancel the current goal, whoever sent it, and return at once."""
-        self.goal.transport.publish(spec.cancel_goal(self.config.world_frame))
+        self.goal.transport.publish(spec.cancel_goal(frame_id=self.config.world_frame))

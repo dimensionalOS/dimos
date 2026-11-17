@@ -280,7 +280,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.navigation.spec import position_goal
+from dimos.navigation.spec import NO_HEADING
 
 class MovementManager(Module):
     clicked_point: In[PointStamped]
@@ -296,7 +296,14 @@ class MovementManager(Module):
         self._teleop_active = False
 
     async def handle_clicked_point(self, msg: PointStamped) -> None:
-        self.goal.publish(position_goal(msg.x, msg.y, msg.z, msg.frame_id, msg.ts))
+        self.goal.publish(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=[msg.x, msg.y, msg.z],
+                orientation=NO_HEADING,
+            )
+        )
 
     async def handle_nav_cmd_vel(self, msg: Twist) -> None:
         if not self._teleop_active:
