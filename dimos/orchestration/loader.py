@@ -31,7 +31,7 @@ from dimos.orchestration.checks import check
 from dimos.orchestration.definition import OrchestratorDefinition
 
 # The file's tables are singular, and the fields they fill are plural.
-_FILE_TABLES = {"signal": "signals", "event": "events", "activity": "activities", "node": "nodes"}
+_FILE_TABLES = {"stream_value": "stream_values", "activity": "activities", "node": "nodes"}
 _NODE_TABLES = {"transition": "transitions"}
 _ITEM_NAMES = {
     **{field: table for table, field in (_FILE_TABLES | _NODE_TABLES).items()},

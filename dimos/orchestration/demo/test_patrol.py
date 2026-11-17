@@ -17,7 +17,7 @@ import heapq
 import itertools
 from pathlib import Path
 
-from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
+from dimos_lcm.actionlib_msgs import GoalStatus
 import pytest
 
 from dimos.core.introspection.module.info import extract_rpc_info
@@ -40,22 +40,21 @@ from dimos.orchestration.engine import (
     SendCancel,
     SendStart,
     SetTimer,
-    SignalItem,
+    StreamItem,
     TimerItem,
     TransitionRecord,
 )
 from dimos.orchestration.loader import load_and_check
-from dimos.orchestration.plain import to_plain
 
 PATROL = Path(__file__).parent / "patrol.toml"
 FAKES = (FakeBase, FakeBattery, FakeEstop)
 
 # One waypoint, from reaching it to setting off for the next.
 VISIT = [
-    ("Navigating", "if arrived", "Scanning"),
-    ("Sweeping", "if succeeded", "done"),
+    ("Navigating", "if nav_state == SUCCEEDED && nav_goal_id == nav.goal", "Scanning"),
+    ("Sweeping", "on succeeded", "done"),
     ("Dwelling", "after", "done"),
-    ("Scanning", "if done", "NextWaypoint"),
+    ("Scanning", "on done", "NextWaypoint"),
 ]
 NEXT = ("NextWaypoint", "if patrol.index < size(route)", "Navigating")
 
@@ -103,9 +102,9 @@ def test_the_patrol_file_runs_one_loop_of_its_route() -> None:
                         later(now + 0.01, ReturnItem(call, raised=True))
                         continue
                     goal = f"goal-{len(goals)}"
-                    reached = GoalStatus(goal_id=GoalID(id=goal), status=GoalStatus.SUCCEEDED)
                     later(now + 0.01, ReturnItem(call, goal))
-                    later(now + base.arrive_s, SignalItem("nav_status", to_plain(reached)))
+                    arrived = {"nav_state": GoalStatus.SUCCEEDED, "nav_goal_id": goal}
+                    later(now + base.arrive_s, StreamItem("FakeBase.status", arrived))
                 case SendStart(call) if call.rpc == "FakeBase.spin":
                     later(now + float(str(call.args["turns"])) * base.spin_s, ReturnItem(call))
                 case SendStart(call) | SendCancel(call):
@@ -113,7 +112,7 @@ def test_the_patrol_file_runs_one_loop_of_its_route() -> None:
                 case FaultReport():
                     pytest.fail(f"the patrol faulted: {effect}")
 
-    later(0.1, SignalItem("estop_button", False))
+    later(0.1, StreamItem("FakeEstop.pressed", {"estop_button": False}))
     runtime, effects = engine.start(checked, 0.0)
     perform(effects, 0.0)
     wanted = ["lobby", "lab", "lab", "kitchen", "lobby"]
@@ -126,11 +125,11 @@ def test_the_patrol_file_runs_one_loop_of_its_route() -> None:
     assert goals == wanted
     assert records == [
         ("Operating", "requires", "Estopped"),
-        ("Estopped", "if estop_cleared", "Operating"),
+        ("Estopped", "if !estop_button", "Operating"),
         NEXT,
         *VISIT,
         NEXT,
-        ("Navigating", "if failed && patrol.tries < max_tries", "Navigating"),
+        ("Navigating", "on failed", "Navigating"),
         *VISIT,
         NEXT,
         *VISIT,

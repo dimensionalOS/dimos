@@ -14,39 +14,25 @@ SUCCEEDED = 3
 "patrol.index" = 0
 "patrol.tries" = 0
 
-[[signal]]
+[[stream_value]]
 name = "estop_button"
 stream = "FakeEstop.pressed"
 field = "data"
 
-[[signal]]
+[[stream_value]]
 name = "battery_pct"
 stream = "FakeBattery.percent"
 field = "data"
 
-[[signal]]
-name = "nav_status"
+[[stream_value]]
+name = "nav_state"
 stream = "FakeBase.status"
+field = "status"
 
-[[event]]
-name = "estop"
-when = "estop_button"
-
-[[event]]
-name = "estop_cleared"
-when = "!estop_button"
-
-[[event]]
-name = "battery_low"
-when = "battery_pct < low_battery"
-
-[[event]]
-name = "charged"
-when = "battery_pct >= full_battery"
-
-[[event]]
-name = "arrived"
-when = "nav_status.status == SUCCEEDED && nav_status.goal_id.id == nav.goal"
+[[stream_value]]
+name = "nav_goal_id"
+stream = "FakeBase.status"
+field = "goal_id.id"
 
 [[activity]]
 name = "motors"
@@ -86,7 +72,7 @@ expect = ["!estop_button"]
 fallback = "Estopped"
 
 [[node.transition]]
-if = "estop"
+if = "estop_button"
 mode = "immediate"
 goto = "Estopped"
 
@@ -94,7 +80,7 @@ goto = "Estopped"
 name = "Estopped"
 
 [[node.transition]]
-if = "estop_cleared"
+if = "!estop_button"
 goto = "Operating"
 
 [[node]]
@@ -103,7 +89,7 @@ children = ["NextWaypoint", "Navigating", "Scanning"]
 initial = "NextWaypoint"
 
 [[node.transition]]
-if = "battery_low"
+if = "battery_pct < low_battery"
 goto = "Charging"
 
 [[node]]
@@ -124,17 +110,18 @@ args = { name = "route[patrol.index]" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_goal_id == nav.goal"
 goto = "Scanning"
 set = { "patrol.tries" = 0 }
 
 [[node.transition]]
-if = "failed && patrol.tries < max_tries"
+on = "failed"
+if = "patrol.tries < max_tries"
 goto = "Navigating"
 set = { "patrol.tries" = "patrol.tries + 1" }
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "NextWaypoint"
 set = { "patrol.index" = "patrol.index + 1", "patrol.tries" = 0 }
 
@@ -144,7 +131,7 @@ parallel = ["Sweeping", "Dwelling"]
 outcomes = ["done"]
 
 [[node.transition]]
-if = "done"
+on = "done"
 goto = "NextWaypoint"
 set = { "patrol.index" = "patrol.index + 1" }
 
@@ -154,7 +141,7 @@ activity = "spin"
 args = { turns = 1.0 }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "done"
 
 [[node]]
@@ -171,7 +158,7 @@ initial = "ReturnToDock"
 outcomes = ["done"]
 
 [[node.transition]]
-if = "done"
+on = "done"
 goto = "Patrolling"
 
 [[node]]
@@ -181,7 +168,7 @@ args = { name = "dock_location" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_goal_id == nav.goal"
 goto = "OnCharger"
 
 [[node]]
@@ -189,5 +176,5 @@ name = "OnCharger"
 activity = "charge"
 
 [[node.transition]]
-if = "charged"
+if = "battery_pct >= full_battery"
 goto = "done"
