@@ -180,4 +180,4 @@ teleop_webxr_dual = (
 # PICO 4 Ultra WebXR API test: require body tracking; DEBUG logs show joint poses.
 demo_pico_body_tracking = autoconnect(
     WebXRTeleopModule.blueprint(body_tracking_mode="required"),
-).solidify()
+)

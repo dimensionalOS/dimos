@@ -24,4 +24,4 @@ from dimos.core.demos.stress_test_module import StressTestModule
 demo_mcp_stress_test = autoconnect(
     StressTestModule.blueprint(),
     McpServer.blueprint(),
-).solidify()
+)

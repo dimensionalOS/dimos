@@ -133,5 +133,5 @@ def build_openyam_rollout(
     return blueprint
 
 
-openyam_lerobot_rollout = autoconnect(build_openyam_rollout()).solidify()
-openyam_lerobot_quest_rollout = autoconnect(build_openyam_rollout(quest_control=True)).solidify()
+openyam_lerobot_rollout = autoconnect(build_openyam_rollout())
+openyam_lerobot_quest_rollout = autoconnect(build_openyam_rollout(quest_control=True))

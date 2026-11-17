@@ -22,4 +22,4 @@ unitree_go2_vlm_stream_test = autoconnect(
     unitree_go2_basic,
     VLMAgent.blueprint(),
     VlmStreamTester.blueprint(),
-).solidify()
+)

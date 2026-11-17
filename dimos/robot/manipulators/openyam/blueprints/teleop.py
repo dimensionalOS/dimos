@@ -92,7 +92,7 @@ keyboard_teleop_openyam = autoconnect(
         gripper_tasks={"manipulator": "arm_gripper"},
         visualization={"backend": "viser"},
     ),
-).solidify()
+)
 
 OPENYAM_WEBXR_TASK_NAME = "teleop_openyam"
 OPENYAM_QUEST_MODEL = _openyam_model
@@ -159,4 +159,4 @@ keyboard_teleop_openyam_planner = autoconnect(
     KeyboardTeleopModule.blueprint(),
     planner(model=_openyam_model, gripper_tasks={"manipulator": "arm_gripper"}),
     _twist_control([_eef_twist_task(priority=20), _gripper_task(), _trajectory_task(priority=10)]),
-).solidify()
+)

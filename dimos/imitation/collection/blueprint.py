@@ -149,7 +149,7 @@ learning_collect_webxr_xarm7 = autoconnect(
         task="Teleoperate the xArm",
         headset_view=True,
     )
-).solidify()
+)
 learning_collect_webxr_piper = autoconnect(
     *_collection_components("piper", teleop_webxr_piper, task="Teleoperate the Piper")
-).solidify()
+)

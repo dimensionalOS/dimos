@@ -85,7 +85,7 @@ unitree_go2_agentic = autoconnect(
     McpServer.blueprint(), # HTTP MCP server — exposes all @skill methods on port 9990
     Agent.blueprint(), # LLM agent — fetches tools from McpServer
     _common_agentic,       # skill containers
-).solidify()
+)
 ```
 
 Reference: `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic.py`
@@ -186,7 +186,7 @@ Compose modules with `autoconnect()`, which returns a `MetaBlueprint`. Call
 ```python
 from dimos.core.coordination.blueprints import autoconnect
 
-my_blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint()).solidify()
+my_blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
 ```
 
 To run a blueprint directly from Python:

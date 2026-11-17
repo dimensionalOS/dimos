@@ -31,7 +31,7 @@ registration -- is the same stack either way.
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -136,7 +136,7 @@ def _sensing(simulated: bool) -> tuple[Blueprint, ...]:
     )
 
 
-def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
+def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlueprint, ...]:
     """Everything in the grasping stack but the grasp provider.
 
     Exactly one provider may be composed in: PickAndPlaceModule resolves its
@@ -151,6 +151,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
             its wrist.
     """
     dof, robot_type = XARM_ARMS[arm]
+    control: Blueprint | MetaBlueprint
     if simulated and arm != "xarm7":
         raise ValueError(f"only the xArm7 has a simulated grasping scene, not the {arm}")
     if simulated:

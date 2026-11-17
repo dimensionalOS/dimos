@@ -50,7 +50,10 @@ def _remappings(
 
 def test_sim_composes_the_navigation_the_robot_runs() -> None:
     sim, robot = _atoms(m20_sim_nav), _atoms(m20)
-    sim_stack, robot_stack = _atoms(m20_nav_stack(SIM_M20)), _atoms(m20_nav_stack())
+    sim_stack, robot_stack = (
+        _atoms(m20_nav_stack(SIM_M20).solidify()),
+        _atoms(m20_nav_stack().solidify()),
+    )
     for name in robot_stack:
         assert (robot[name].module, robot[name].kwargs) == (
             robot_stack[name].module,

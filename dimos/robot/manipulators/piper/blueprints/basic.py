@@ -35,4 +35,4 @@ coordinator_piper = autoconnect(
         tasks=[joint_trajectory_task(_piper_hw.joints)],
     ),
     *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_model.joint_names)),
-).solidify()
+)

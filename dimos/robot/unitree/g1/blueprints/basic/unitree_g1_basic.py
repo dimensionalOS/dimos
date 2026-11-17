@@ -24,4 +24,4 @@ from dimos.robot.unitree.g1.connection import G1Connection
 unitree_g1_basic = autoconnect(
     unitree_g1_primitive_no_nav,
     G1Connection.blueprint(),
-).solidify()
+)

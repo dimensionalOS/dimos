@@ -60,4 +60,4 @@ replay = autoconnect(
         rerun_config={"blueprint": _layout, **recorded_rerun_config(_DATASET)},
     ),
     Replay.blueprint(dataset=_DATASET),
-).solidify()
+)

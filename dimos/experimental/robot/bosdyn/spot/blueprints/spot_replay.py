@@ -58,4 +58,4 @@ spot_replay = autoconnect(
         static=spot_body_static_overrides(),
     ),
     RerunWebSocketServer.blueprint(),
-).solidify()
+)

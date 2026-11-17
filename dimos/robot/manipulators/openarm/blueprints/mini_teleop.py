@@ -26,7 +26,7 @@ from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.hardware.controllers.joycon.joycon_module import JoyconConnectionModule
@@ -176,11 +176,9 @@ def _leader(connection: type[OpenArmMiniConnection] = OpenArmMiniConnection) -> 
     ).remappings([(connection, "joint_state", "leader_joint_command")])
 
 
-def _joycon_leader() -> Blueprint:
+def _joycon_leader() -> MetaBlueprint:
     """Leaders without triggers, and a Joy-Con on each for its jaw, episodes and pause."""
-    return autoconnect(
-        _leader(OpenArmMiniArmConnection), JoyconConnectionModule.blueprint()
-    ).solidify()
+    return autoconnect(_leader(OpenArmMiniArmConnection), JoyconConnectionModule.blueprint())
 
 
 def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:
@@ -222,7 +220,7 @@ def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprin
     )
 
 
-teleop_openarm_mini = autoconnect(_leader(), _follower()).solidify()
+teleop_openarm_mini = autoconnect(_leader(), _follower())
 
 # Split deployment: leaders on an operator machine, follower on the robot.
 # The robot stack owns the Coordinator name, so the leader half does not claim it.
@@ -232,10 +230,10 @@ teleop_openarm_mini_leader = _leader().global_config(
 
 # Joy-Cons in place of the trigger servos: ZL / ZR close the jaws, B / Y run
 # episodes, plus pauses and resumes following.
-teleop_openarm_mini_joycon = autoconnect(_joycon_leader(), _follower()).solidify()
+teleop_openarm_mini_joycon = autoconnect(_joycon_leader(), _follower())
 
-teleop_openarm_mini_joycon_leader = _joycon_leader().global_config(
-    zenoh_mode="client", serve_coordinator_rpc=False
+teleop_openarm_mini_joycon_leader = (
+    _joycon_leader().solidify().global_config(zenoh_mode="client", serve_coordinator_rpc=False)
 )
 
 teleop_openarm_mini_follower = _follower(ViserVisualizationConfig(host="0.0.0.0")).global_config(

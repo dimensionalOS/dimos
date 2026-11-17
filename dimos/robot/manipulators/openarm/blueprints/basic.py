@@ -62,4 +62,4 @@ coordinator_openarm = openarm_control().remappings([])
 openarm_planner_coordinator = autoconnect(
     planner(model=_MODEL),
     openarm_control(),
-).solidify()
+)

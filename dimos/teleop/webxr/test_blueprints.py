@@ -113,10 +113,15 @@ def test_mixed_arm_blueprint_keeps_two_independent_one_binding_tasks() -> None:
 
 
 def test_pico_body_tracking_demo_uses_single_required_webxr_module() -> None:
-    modules = {atom.module for atom in demo_pico_body_tracking.blueprints}
+    modules = {atom.module for atom in demo_pico_body_tracking.solidify().blueprints}
     webxr = next(
-        atom for atom in demo_pico_body_tracking.blueprints if atom.module is WebXRTeleopModule
+        atom
+        for atom in demo_pico_body_tracking.solidify().blueprints
+        if atom.module is WebXRTeleopModule
     )
     assert modules == {WebXRTeleopModule}
     assert webxr.kwargs["body_tracking_mode"] == "required"
-    assert ("body_tracking", BodyTrackingSnapshot) not in demo_pico_body_tracking.transport_map
+    assert (
+        "body_tracking",
+        BodyTrackingSnapshot,
+    ) not in demo_pico_body_tracking.solidify().transport_map

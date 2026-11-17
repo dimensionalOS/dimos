@@ -303,7 +303,7 @@ if __name__ == "__main__":
         autoconnect(
             RobotConnection.blueprint(),
             Listener.blueprint(),
-        ).solidify()
+        )
     ).loop()
 ```
 

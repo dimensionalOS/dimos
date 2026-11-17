@@ -152,7 +152,7 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
 
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
-    for blueprint in (teleop_webxr_openarm, openarm_planner_coordinator):
+    for blueprint in (teleop_webxr_openarm, openarm_planner_coordinator.solidify()):
         parsed = BlueprintConfigParser(blueprint).parse(
             ["--left-can-port", "can1", "--right-can-port", "can0"],
             environ={},

@@ -28,4 +28,4 @@ unitree_g1_basic_sim = autoconnect(
     G1SimConnection.blueprint(),
     ReplanningAStarPlanner.blueprint(),
     MovementManager.blueprint(),
-).solidify()
+)

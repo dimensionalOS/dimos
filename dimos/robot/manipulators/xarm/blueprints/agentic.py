@@ -33,7 +33,7 @@ xarm7_planner_coordinator_agent = autoconnect(
     ManipulationSkills.blueprint(),
     McpServer.blueprint(),
     Agent.blueprint(system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
-).solidify()
+)
 
 # The stack already carries a detector and a segmenter; adding the agent on top
 # packs them into one worker, where the detector's lazy transformers import fails
@@ -62,4 +62,4 @@ xarm_perception_sim_agent = autoconnect(
     xarm_perception_sim,
     McpServer.blueprint(),
     Agent.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
-).solidify()
+)

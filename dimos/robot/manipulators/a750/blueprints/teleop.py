@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -47,7 +47,7 @@ A750_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def _keyboard_teleop() -> Blueprint:
+def _keyboard_teleop() -> MetaBlueprint:
     """Jog an A-750's end from this computer's keyboard, and plan its motions,
     through ``A750Connection``.
 
@@ -87,8 +87,8 @@ def _keyboard_teleop() -> Blueprint:
             visualization={"backend": "viser"},
         ),
         A750Connection.blueprint(),
-    ).solidify()
+    )
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-keyboard_teleop_a750 = _keyboard_teleop().remappings(A750_REMAPS)
+keyboard_teleop_a750 = _keyboard_teleop().solidify().remappings(A750_REMAPS)

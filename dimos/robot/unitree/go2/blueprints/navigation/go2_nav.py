@@ -76,7 +76,7 @@ _go2_nav = autoconnect(
     LocalPlannerNative.blueprint(embodiment=GO2, body_dilate_m=BODY_DILATE_M),
     TrajectoryFollowerNative.blueprint(embodiment=GO2),
     MovementManager.blueprint(),
-).solidify()
+)
 
 
 def go2_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:

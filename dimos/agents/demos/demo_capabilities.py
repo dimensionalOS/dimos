@@ -316,4 +316,4 @@ demo_capabilities = autoconnect(
     DemoMonitoring.blueprint(),
     McpServer.blueprint(),
     Agent.blueprint(system_prompt=DEMO_CAPABILITIES_PROMPT),
-).solidify()
+)

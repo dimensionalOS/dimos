@@ -31,7 +31,7 @@ from typing import Any
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import TransportSpec
 from dimos.core.transport import ZenohTransport
@@ -143,12 +143,12 @@ rerun_config = {
 }
 
 
-def r1pro_visualization() -> Blueprint:
+def r1pro_visualization() -> Blueprint | MetaBlueprint:
     if global_config.viewer == "rerun":
         return autoconnect(
             RerunBridgeModule.blueprint(**rerun_config),
             RerunWebSocketServer.blueprint(),
-        ).solidify()
+        )
     if global_config.viewer == "none":
         return Blueprint(blueprints=())
     raise ValueError(f"Unsupported viewer: {global_config.viewer}")

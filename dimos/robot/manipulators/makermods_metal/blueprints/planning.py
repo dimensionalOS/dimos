@@ -29,4 +29,4 @@ makermods_metal_planner_coordinator = autoconnect(
         visualization={"backend": "viser"},
         default_speed_scale=0.2,
     ),
-).solidify()
+)

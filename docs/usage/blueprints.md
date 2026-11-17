@@ -85,7 +85,7 @@ expanded_blueprint = autoconnect(
 
 Call `.solidify()` to produce a concrete `Blueprint` before applying operations
 such as `.transports()`, `.remappings()`, `.namespace()`, or `.hosted()`, or passing
-it to `BlueprintConfigParser` or `ModuleCoordinator.build()`:
+it to `BlueprintConfigParser`:
 
 ```python session=blueprint-ex1
 concrete_blueprint = expanded_blueprint.solidify()
@@ -94,6 +94,10 @@ concrete_blueprint = expanded_blueprint.solidify()
 Both types are frozen data classes. Solidification leaves the composition intact,
 so it can be resolved repeatedly with different choices. A `MetaBlueprint` also
 offers `.build(choices=...)`, which solidifies and calls `ModuleCoordinator.build()`.
+`ModuleCoordinator.build()` and `.load_blueprint()` also accept a `MetaBlueprint`
+and resolve its default choices at runtime. Keep exported compositions unresolved
+so the CLI can pass `--choice` selections before building. Calling `.solidify()`
+while defining an exported composition fixes its choices at import time.
 As with other coordinator builds, call it under an `if __name__ == "__main__":`
 guard when running a script.
 
@@ -348,7 +352,7 @@ fleet = autoconnect(
         Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
         for i, ip in enumerate(robot_ips)
     ],
-).solidify()
+)
 ```
 
 Inside a namespace everything is prefixed:

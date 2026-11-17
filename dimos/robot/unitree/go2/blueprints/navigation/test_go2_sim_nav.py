@@ -52,7 +52,7 @@ def _remappings(
 
 def test_sim_composes_the_navigation_the_robot_runs() -> None:
     sim, robot = _atoms(go2_sim_nav), _atoms(go2_nav)
-    for name in _atoms(_go2_nav):
+    for name in _atoms(_go2_nav.solidify()):
         assert (sim[name].module, sim[name].kwargs) == (robot[name].module, robot[name].kwargs)
         assert _remappings(go2_sim_nav, name) == _remappings(go2_nav, name)
 

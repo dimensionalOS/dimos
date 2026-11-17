@@ -130,4 +130,4 @@ def build_dual_openyam_webxr(
     )
 
 
-teleop_webxr_dual_openyam = autoconnect(build_dual_openyam_webxr()).solidify()
+teleop_webxr_dual_openyam = autoconnect(build_dual_openyam_webxr())

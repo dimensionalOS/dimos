@@ -80,6 +80,6 @@ seeed_b601_dm_planner_coordinator = autoconnect(
         },
     ),
     seeed_b601_dm_control_blueprint(),
-).solidify()
+)
 
 coordinator_seeed_b601_dm = seeed_b601_dm_control_blueprint().remappings([])

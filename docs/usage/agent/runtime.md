@@ -31,7 +31,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 if __name__ == "__main__":
     ModuleCoordinator.build(
-        autoconnect(HarnessRuntime.blueprint(), mcp_server_blueprint()).solidify()
+        autoconnect(HarnessRuntime.blueprint(), mcp_server_blueprint())
     ).loop()
 ```
 

@@ -142,4 +142,4 @@ mid360_realsense_record = (
 mid360_realsense_record_with_pcap = autoconnect(
     mid360_realsense_record,
     Mid360PcapRecorder.blueprint(),
-).solidify()
+)

@@ -70,7 +70,7 @@ blueprint = autoconnect(
         global_config.viewer,
         rerun_config=rerun_config,
     ),
-).solidify()
+)
 ```
 
 ## Adding wheel odometry
