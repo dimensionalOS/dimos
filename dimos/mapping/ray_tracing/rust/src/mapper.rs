@@ -18,6 +18,7 @@ use ahash::AHashSet;
 use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
+use crate::premap::{live_holds, Premap};
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_flags,
     emit_points_ungated, emit_points_ungated_flags, global_normal_fits, global_normals,
@@ -48,6 +49,8 @@ pub struct Mapper {
     last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
+    /// Loaded maps kept apart from `map` (`separate_premaps`), each in its own frame.
+    premaps: Vec<Premap>,
 }
 
 impl Mapper {
@@ -63,6 +66,7 @@ impl Mapper {
             last_registered: Vec::new(),
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
+            premaps: Vec::new(),
         }
     }
 
@@ -116,6 +120,24 @@ impl Mapper {
             .len()
     }
 
+    /// Keep a premap apart from the live map. False, and dropped, when one of its frame is already
+    /// held: reloading it would bring back what live rays cleared.
+    pub fn add_premap(&mut self, premap: Premap) -> bool {
+        if self.has_premap(&premap.frame_id) {
+            return false;
+        }
+        self.premaps.push(premap);
+        true
+    }
+
+    pub fn has_premap(&self, frame_id: &str) -> bool {
+        self.premaps.iter().any(|p| p.frame_id == frame_id)
+    }
+
+    pub fn premaps_mut(&mut self) -> &mut [Premap] {
+        &mut self.premaps
+    }
+
     /// The last frame's sensor origin in the world frame.
     pub fn last_origin(&self) -> Point {
         self.last_origin
@@ -124,6 +146,10 @@ impl Mapper {
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
         let pool = Arc::clone(&self.pool);
         self.live = pool.install(|| update_map(&mut self.map, origin, &points, &self.config));
+        let config = &self.config;
+        for premap in &mut self.premaps {
+            pool.install(|| premap.clear(&points, origin, config));
+        }
 
         // The batch only feeds the local region bounds, so skip it when the
         // local cadence is disabled.
@@ -203,10 +229,15 @@ impl Mapper {
             .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
     }
 
-    /// `global_points` as flat (x, y, z, flags) quads.
+    /// `global_points` as flat (x, y, z, flags) quads, plus every placed premap's uncleared voxels.
     pub fn global_points_flags(&self) -> Vec<f32> {
+        let voxel_size = self.config.voxel_size;
         self.pool.install(|| {
-            emit_points_ungated_flags(&self.map, self.config.voxel_size, &self.live.coarse)
+            let mut out = emit_points_ungated_flags(&self.map, voxel_size, &self.live.coarse);
+            for premap in &self.premaps {
+                out.extend(premap.global_points(voxel_size));
+            }
+            out
         })
     }
 
@@ -223,15 +254,22 @@ impl Mapper {
         })
     }
 
-    /// `local_points` as flat (x, y, z, flags) quads.
-    pub fn local_points_flags(&self, bounds: &LocalBounds) -> Vec<f32> {
+    /// `local_points` as flat (x, y, z, flags) quads, plus the placed premaps' uncleared voxels in
+    /// `cylinder` that the live map does not already hold, flagged premap.
+    pub fn local_points_flags(&self, cylinder: &Cylinder) -> Vec<f32> {
+        let voxel_size = self.config.voxel_size;
         self.pool.install(|| {
-            emit_points_flags(
+            let mut out = emit_points_flags(
                 &self.map,
-                self.config.voxel_size,
-                Some(bounds),
+                voxel_size,
+                Some(&cylinder.bounds()),
                 &self.live.coarse,
-            )
+            );
+            let skip = live_holds(&self.map, &self.live.coarse, voxel_size);
+            for premap in &self.premaps {
+                out.extend(premap.local_points(cylinder, voxel_size, &skip));
+            }
+            out
         })
     }
 
@@ -326,6 +364,8 @@ mod tests {
             viz_cell_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
+            separate_premaps: false,
+            premap_regions_shift_m: 0.0,
         }
     }
 

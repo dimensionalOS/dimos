@@ -84,7 +84,7 @@ _go2_nav_stack = autoconnect(
     GO2DDS.blueprint(**_MID360_KWARGS, obstacle_avoidance=False).remappings(_MID360_REMAPPINGS),
     mid360_for_pointlio(),
     _go2_nav,
-    LocalMapRelocalization.blueprint(world_frame="odom", relocalize=MID360_NAV),
+    LocalMapRelocalization.blueprint(live_frame="odom", relocalize=MID360_NAV),
     PointLio.blueprint(),
 )
 

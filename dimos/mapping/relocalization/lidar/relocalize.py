@@ -152,10 +152,11 @@ class LidarRelocalizer:
         fine = normals(cloud.voxel_down_sample(cfg.voxel_fine), cfg.voxel_fine)
         return _Prepared(coarse=coarse, fpfh=fpfh, fine=fine)
 
-    def align(self, local_map: PointCloud) -> RegistrationResult:
+    def align(self, local_map: PointCloud, initial: np.ndarray | None = None) -> RegistrationResult:
         """Best registration of ``local_map`` against the prior map, however poor.
 
-        ``.transformation`` places the live cloud in the map (map <- live).
+        ``.transformation`` places the live cloud in the map (map <- live). With an
+        ``initial`` placement (map <- live, 4x4) only ICP runs from it, no global search.
         """
         import open3d as o3d  # type: ignore[import-untyped]
 
@@ -197,6 +198,8 @@ class LidarRelocalizer:
                 coarse_T = result.transformation
             return result
 
+        if initial is not None:
+            return refine(initial)
         scored = [
             refine(np.asarray(hypothesis().transformation))
             for _ in range(max(cfg.ransac_restarts, 1))
@@ -209,9 +212,19 @@ class LidarRelocalizer:
         """The ``world_frame -> map_frame`` transform, or ``None`` when nothing was good enough."""
         return self.attempt(local_map, world_frame, map_frame).fix
 
-    def attempt(self, local_map: PointCloud, world_frame: str, map_frame: str) -> RelocAttempt:
-        """The fix if accepted, ready to publish, with the registration it was scored on."""
-        result = self.align(local_map)
+    def attempt(
+        self,
+        local_map: PointCloud,
+        world_frame: str,
+        map_frame: str,
+        near: Transform | None = None,
+    ) -> RelocAttempt:
+        """The fix if accepted, ready to publish, with the registration it was scored on.
+
+        With ``near`` (a ``world_frame -> map_frame`` fix) it is refined from there instead of searched for.
+        """
+        initial = None if near is None else np.asarray(near.inverse().to_matrix())
+        result = self.align(local_map, initial)
         logger.info(f"align: fitness={result.fitness:.3f} rmse={result.inlier_rmse:.3f}")
         if result.fitness < self.config.fitness_threshold:
             return RelocAttempt(None, result)

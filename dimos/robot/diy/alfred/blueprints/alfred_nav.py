@@ -40,6 +40,6 @@ alfred_nav = autoconnect(
     mid360_for_pointlio(lidar_ip=ALFRED_HARDWARE.mid360_ip),
     PointLio.blueprint(blind=LIO_BLIND_M),
     _alfred_nav(map_cloud_topic="lidar", map_max_range=MID360_MAX_RANGE_METERS),
-    LocalMapRelocalization.blueprint(world_frame="odom", relocalize=MID360_NAV),
+    LocalMapRelocalization.blueprint(live_frame="odom", relocalize=MID360_NAV),
     vis_module(global_config.viewer, rerun_config=_alfred_rerun_config()),
 ).global_config(n_workers=12, robot_model="alfred")

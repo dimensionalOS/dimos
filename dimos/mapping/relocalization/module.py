@@ -162,8 +162,8 @@ class Config(ModuleConfig):
     map_file: str | None = None
     # Cloud to load, overriding the recording's own `map/<name>/cloud`
     cloud_stream: str | None = None
-    # Live fixed frame
-    world_frame: str = "world"
+    # The live map's frame (SLAM/odometry), which fixes are published from: live_frame -> map_frame
+    live_frame: str = "world"
     # Frame for the loaded premap; None: the frame its stream names
     map_frame: str | None = None
     # Seconds between tf republishes of the accepted fix (tf is not latched)
@@ -224,7 +224,7 @@ class PremapModule(Module):
         return self.config.map_frame or self._map_frame or DEFAULT_MAP_FRAME
 
     def _identity(self) -> Transform:
-        return Transform(frame_id=self.config.world_frame, child_frame_id=self.map_frame)
+        return Transform(frame_id=self.config.live_frame, child_frame_id=self.map_frame)
 
     def _resolve_map(self, map_file: str) -> None:
         from dimos.memory.cli.dataset import open_store
@@ -250,10 +250,14 @@ class PremapModule(Module):
         self.premap = premap
 
         self.register_disposable(
-            fix_stream(self.fixes, self.config.republish_loaded_map).subscribe(
+            fix_stream(self.loaded_map_fixes(), self.config.republish_loaded_map).subscribe(
                 lambda _: self.loaded_map.publish(premap)
             )
         )
+
+    def loaded_map_fixes(self) -> Observable[Transform]:
+        """The fixes that (re)start ``loaded_map`` publishing."""
+        return self.fixes
 
     def publish_tf(self) -> None:
         if self.fix is None:
@@ -270,8 +274,8 @@ class PremapModule(Module):
         return not (self._placed and self.config.relocalize_once)
 
     def submit(self, tf: Transform, source: str = "") -> None:
-        """Publish a ``world_frame -> map`` fix the implementation already decided to believe."""
-        world, map_frame = self.config.world_frame, self.map_frame
+        """Publish a ``live_frame -> map`` fix the implementation already decided to believe."""
+        world, map_frame = self.config.live_frame, self.map_frame
         assert (tf.frame_id, tf.child_frame_id) == (world, map_frame), (
             f"relocalize {source}: expected {world!r} -> {map_frame!r}, "
             f"got {tf.frame_id!r} -> {tf.child_frame_id!r}"
@@ -331,7 +335,7 @@ class PremapModule(Module):
 
     def frame_to(self, frame: str, child: str) -> Transform | None:
         """``frame -> child``, preferring our own fix over tf for world/map."""
-        world, map_frame = self.config.world_frame, self.map_frame
+        world, map_frame = self.config.live_frame, self.map_frame
         if self.fix is not None and (frame, child) == (world, map_frame):
             return self.fix
         if self.fix is not None and (frame, child) == (map_frame, world):

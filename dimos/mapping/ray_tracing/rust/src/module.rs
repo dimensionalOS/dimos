@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::mapper::{register, Mapper, Pose};
+use crate::premap::Premap;
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     non_premap_voxels, partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder,
@@ -42,6 +43,8 @@ enum Job {
     /// A loaded map placed in the world and split into tiles, or None when
     /// it could not be placed.
     SeedPrepared(Option<SeedPartition>),
+    /// A loaded map read into a premap of its own (`separate_premaps`), or None when unusable.
+    PremapLoaded(Option<Box<Premap>>),
 }
 
 /// Messages the handlers can queue ahead of the worker before they wait.
@@ -264,6 +267,10 @@ struct State {
     last_frame_stamp: Time,
     seed: SeedState,
     viz: RegionSweep,
+    /// Premap regions, as world cylinders, waiting to go out on seed_map.
+    premap_regions: VecDeque<Cylinder>,
+    /// Header seq of the last seed region published.
+    seed_seq: i32,
 }
 
 fn warn_if_seed_starved(seed: &SeedState) {
@@ -326,9 +333,12 @@ impl Worker {
             last_frame_stamp: Time::default(),
             seed: SeedState::Idle,
             viz: RegionSweep::default(),
+            premap_regions: VecDeque::new(),
+            seed_seq: 0,
         };
         loop {
-            let loading = matches!(state.seed, SeedState::Loading(_));
+            let loading =
+                matches!(state.seed, SeedState::Loading(_)) || !state.premap_regions.is_empty();
             match next_turn(&mut self.jobs, loading).await {
                 Turn::Job(job) => self.handle(&mut state, job).await,
                 Turn::SeedTile => {
@@ -346,7 +356,18 @@ impl Worker {
                 self.ingest_frame(state, msg, received).await;
                 warn_if_seed_starved(&state.seed);
             }
+            Job::LoadedMap(msg) if self.config.separate_premaps => self.load_premap(state, msg),
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg).await,
+            Job::PremapLoaded(premap) => {
+                let Some(premap) = premap else {
+                    return;
+                };
+                let frame_id = premap.frame_id.clone();
+                let voxels = premap.healthy_count();
+                if state.mapper.add_premap(*premap) {
+                    info!(frame_id = %frame_id, voxels, "Premap loaded.");
+                }
+            }
             Job::SeedPrepared(partition) => {
                 if let Some(part) = &partition {
                     let mapper = &mut state.mapper;
@@ -413,6 +434,12 @@ impl Worker {
             return;
         }
 
+        for premap in state.mapper.premaps_mut() {
+            let placement = self
+                .tf
+                .get_latest(&self.config.world_frame, &premap.frame_id);
+            premap.place(placement.as_ref().map(tf_to_pose));
+        }
         let mapper = &mut state.mapper;
         let emit_fine = self.config.emit_fine;
         let process_start = Instant::now();
@@ -422,7 +449,7 @@ impl Worker {
                 let region = mapper.local_due().then(|| mapper.take_local_bounds());
                 let cylinder = region.map(|c| c.bounds());
                 let global_points = mapper.global_due().then(|| mapper.global_points_flags());
-                let local_points = cylinder.as_ref().map(|cyl| mapper.local_points_flags(cyl));
+                let local_points = region.as_ref().map(|c| mapper.local_points_flags(c));
                 let fine_points = emit_fine
                     .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
                     .flatten();
@@ -459,6 +486,12 @@ impl Worker {
 
         if state.mapper.viz_due() {
             self.publish_map_regions(state, &stamp).await;
+        }
+        let shift_m = self.config.premap_regions_shift_m;
+        for premap in state.mapper.premaps_mut() {
+            state
+                .premap_regions
+                .extend(premap.take_regions_due(shift_m));
         }
         debug_throttled!(
             Duration::from_secs(5),
@@ -528,10 +561,57 @@ impl Worker {
         });
     }
 
+    /// Read a loaded map into a premap of its own off the worker, in the cloud's own frame, so it
+    /// needs no transform yet.
+    fn load_premap(&self, state: &State, msg: PointCloud2) {
+        let frame_id = msg.header.frame_id.clone();
+        if state.mapper.has_premap(&frame_id) {
+            return;
+        }
+        let sender = self.job_sender.clone();
+        let config = self.config.clone();
+        tokio::spawn(async move {
+            let premap = tokio::task::spawn_blocking(move || match extract_xyz_flags(&msg) {
+                Ok((points, _)) if !points.is_empty() => {
+                    Some(Box::new(Premap::load(frame_id, &points, &config)))
+                }
+                Ok(_) => None,
+                Err(e) => {
+                    warn!(error = %e, "Failed to get loaded map points, dropped a cloud.");
+                    None
+                }
+            })
+            .await
+            .unwrap_or(None);
+            if let Some(sender) = sender.upgrade() {
+                let _ = sender.send(Job::PremapLoaded(premap)).await;
+            }
+        });
+    }
+
+    /// Publish the next waiting premap region, as live and premaps now hold it.
+    async fn premap_region_step(&self, state: &mut State) {
+        let Some(cylinder) = state.premap_regions.pop_front() else {
+            return;
+        };
+        state.seed_seq += 1;
+        let points = tokio::task::block_in_place(|| state.mapper.local_points_flags(&cylinder));
+        let (bounds_msg, cloud) = seed_region_messages(
+            &cylinder,
+            &points,
+            true,
+            state.seed_seq,
+            &self.config.world_frame,
+            &state.last_frame_stamp,
+        );
+        publish_bounds(&self.seed_bounds, &bounds_msg).await;
+        publish_cloud(&self.seed_map, &cloud).await;
+    }
+
     /// Apply one seed tile, handing its region on if that completed one.
     async fn seed_step(&self, state: &mut State) {
         let SeedState::Loading(load) = &mut state.seed else {
-            return;
+            return self.premap_region_step(state).await;
         };
         let completed = load.step(&mut state.mapper);
         debug_throttled!(
@@ -576,25 +656,32 @@ impl Worker {
         stamp: &Time,
     ) {
         let points = tokio::task::block_in_place(|| mapper.local_points(&cylinder.bounds()));
-        let (bounds_msg, cloud) =
-            seed_region_messages(cylinder, &points, seq, &self.config.world_frame, stamp);
+        let (bounds_msg, cloud) = seed_region_messages(
+            cylinder,
+            &points,
+            false,
+            seq,
+            &self.config.world_frame,
+            stamp,
+        );
         publish_bounds(&self.seed_bounds, &bounds_msg).await;
         publish_cloud(&self.seed_map, &cloud).await;
     }
 }
 
 /// One seeded region as its bounds and cloud messages, both stamped alike
-/// with the region number in their header seq.
+/// with the region number in their header seq. `flags` as for `points_to_cloud`.
 fn seed_region_messages(
     cylinder: &Cylinder,
     points: &[f32],
+    flags: bool,
     seq: i32,
     frame_id: &str,
     stamp: &Time,
 ) -> (PoseStamped, PointCloud2) {
     let mut bounds = bounds_to_pose(cylinder, frame_id, stamp.clone());
     bounds.header.seq = seq;
-    let mut cloud = points_to_cloud(points, false, frame_id, stamp.clone());
+    let mut cloud = points_to_cloud(points, flags, frame_id, stamp.clone());
     cloud.header.seq = seq;
     (bounds, cloud)
 }
@@ -919,6 +1006,8 @@ mod tests {
             viz_cell_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
+            separate_premaps: false,
+            premap_regions_shift_m: 0.0,
         }
     }
 
@@ -1026,10 +1115,10 @@ mod tests {
         for tile in part.tiles() {
             mapper.seed_tile(tile, &part.non_premap);
         }
-        let everywhere = LocalBounds {
-            origin_x: 0.0,
-            origin_y: 0.0,
-            r_xy_max_sq: f32::MAX,
+        let everywhere = Cylinder {
+            cx: 0.0,
+            cy: 0.0,
+            radius: f32::MAX.sqrt(),
             z_min: f32::MIN,
             z_max: f32::MAX,
         };
@@ -1204,8 +1293,14 @@ mod tests {
         let stamp = Time { sec: 7, nsec: 9 };
         for (index, region) in part.regions.iter().enumerate() {
             let seq = index as i32 + 1;
-            let (bounds, cloud) =
-                seed_region_messages(&region.cylinder, &[1.5, 1.5, 0.5], seq, "odom", &stamp);
+            let (bounds, cloud) = seed_region_messages(
+                &region.cylinder,
+                &[1.5, 1.5, 0.5],
+                false,
+                seq,
+                "odom",
+                &stamp,
+            );
             assert_eq!((bounds.header.seq, cloud.header.seq), (seq, seq));
             assert_eq!(bounds.header.stamp, stamp);
             assert_eq!(cloud.header.stamp, stamp);

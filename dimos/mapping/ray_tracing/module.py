@@ -90,6 +90,13 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     viz_emit_every: int = 0
     # Unchanged cells published per viz tick, round robin.
     viz_sweep_cells: int = 32
+    # Keep each loaded map as its own premap in its own frame (one per frame_id), cleared by live
+    # rays through the latest world_frame -> premap tf, instead of seeding it into the live map.
+    # local_map and global_map then carry both, the premap's points flagged premap.
+    separate_premaps: bool = False
+    # With separate_premaps: republish a premap's regions on seed_map once its placement has moved
+    # this far (m) since they last went out; 0 sends them only at its first placement.
+    premap_regions_shift_m: float = 0.5
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -99,7 +106,8 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
 
     lidar: In[PointCloud2]
     # An externally loaded map cloud, placed by the latest tf world_frame ->
-    # cloud frame_id. Only the first cloud seeds the map.
+    # cloud frame_id. Only the first cloud seeds the map, or with separate_premaps
+    # the first cloud of each frame_id.
     loaded_map: In[PointCloud2]
     tf: In[TFMessage]
     global_map: Out[PointCloud2]

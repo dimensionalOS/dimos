@@ -115,7 +115,7 @@ relocalize_mid360 = autoconnect(
         [(RayTracingVoxelMap, "loaded_map", "loaded_map_unused")]
     ),
     # Scans are recorded in the sensor frame, so match the mapper's registered local map.
-    LocalMapRelocalization.blueprint(world_frame=WORLD),
+    LocalMapRelocalization.blueprint(live_frame=WORLD),
     vis_module(
         "rerun",
         {"visual_override": {"world/loaded_map": _fine_points}, "blueprint": _view},

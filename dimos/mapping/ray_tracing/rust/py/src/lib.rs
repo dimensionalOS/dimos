@@ -166,6 +166,8 @@ impl VoxelRayMapper {
             viz_cell_m: region_m,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
+            separate_premaps: false,
+            premap_regions_shift_m: 0.0,
         };
         config
             .validate()
