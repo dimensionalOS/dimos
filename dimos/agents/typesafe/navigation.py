@@ -296,7 +296,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             prev = self._goal_xy
             self._goal_xy = (x, y)
         if prev is None or abs(prev[0] - x) > 0.1 or abs(prev[1] - y) > 0.1:
-            self.goal.publish(position_goal(x, y, 0.0, "world"))
+            self.goal.publish(position_goal(x, y, 0.0, frame_id="world"))
 
     def _set_target(self, target: Vec3, *, immediate: bool = False, gen: int | None = None) -> None:
         now = time.monotonic()
