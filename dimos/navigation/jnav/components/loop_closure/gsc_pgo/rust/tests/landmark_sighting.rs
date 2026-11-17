@@ -85,6 +85,7 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         evidence_core: false,
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
+        incumbent_closure_weights: Vec::new(),
         seed_start: Vec::new(),
         planar: false,
         landmark_warm_start_xy_variance_scale: dimos_gsc_pgo::gsc_pgo::Config::default()
@@ -186,6 +187,7 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
         evidence_core: false,
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
+        incumbent_closure_weights: Vec::new(),
         seed_start: Vec::new(),
         planar: false,
         landmark_warm_start_xy_variance_scale: dimos_gsc_pgo::gsc_pgo::Config::default()
@@ -346,6 +348,7 @@ fn drifted_loop_tag_spread() -> (f64, f64) {
             evidence_core: false,
             learned_evidence: false,
             seed_closure_weights: Vec::new(),
+            incumbent_closure_weights: Vec::new(),
             seed_start: Vec::new(),
             planar: false,
             landmark_warm_start_xy_variance_scale: scale,

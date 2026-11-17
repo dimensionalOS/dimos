@@ -454,11 +454,12 @@ pub struct DeterministicConfig {
     pub verification_scans_fixed_overhead: f64,
     pub verification_scans_per_round: f64,
     pub verification_scans_per_round_point: f64,
-    /// Solve: scale * keyframes^keyframe_power * (1 + closures)^closure_power * (1 + rejected by newest adopted solve)^rejected_power.
-    pub solve_scans_scale: f64,
-    pub solve_keyframe_power: f64,
-    pub solve_closure_power: f64,
-    pub solve_rejected_power: f64,
+    /// Solve with closures: scale * keyframes^keyframe_power, one curve where GNC will iterate and one where it will not (the
+    /// start fits every closure), told apart at dispatch by the solve's own check (`big_picture_fit::gnc_will_run`).
+    pub solve_gnc_scans_scale: f64,
+    pub solve_gnc_keyframe_power: f64,
+    pub solve_without_gnc_scans_scale: f64,
+    pub solve_without_gnc_keyframe_power: f64,
     /// A solve with no closures (only landmark sightings or world positions): closure_free_scale * keyframes^closure_free_power.
     pub solve_closure_free_scans_scale: f64,
     pub solve_closure_free_keyframe_power: f64,
@@ -485,12 +486,15 @@ impl Default for DeterministicConfig {
             verification_scans_fixed_overhead: 5.036066465159226,
             verification_scans_per_round: 0.7489339387672495,
             verification_scans_per_round_point: 6.563647896724165e-05,
-            solve_scans_scale: 9.097483642429608e-05,
-            solve_keyframe_power: 2.017,
-            solve_closure_power: -0.215,
-            solve_rejected_power: 0.558,
+            // 99th-percentile log-space fits (recordings weighed the same) of Mac solves of at least one scan, scaled by R1's
+            // Jetson/Mac solve ratio 2.434: GNC on 2034 from 63 runs no other load overlapped (Mac 2.202e-4), without GNC on the
+            // 0.0.6 candidate's 237 (Mac 4.502e-9); keyframes alone under-cover big solves (huge_l1's cost 3x huge_fastlio's there)
+            solve_gnc_scans_scale: 5.359070340135255e-4,
+            solve_gnc_keyframe_power: 1.7902760318551216,
+            solve_without_gnc_scans_scale: 1.0956986513453806e-8,
+            solve_without_gnc_keyframe_power: 2.8920067349091245,
             // the battery's Mac solve-cost fit at zero closures (17 maps: 3.585e-5 n^1.651 scans), times the margin the
-            // closure model above keeps over those measured solves (its 1st percentile, 18.4x); the closure model, fit where
+            // earlier one-curve closure model (9.10e-5 n^2.017 ...) kept over those measured solves (its 1st percentile, 18.4x); that model, fit where
             // every solve has closures, overstates a closure-free one (huge_fastlio tags-only: 105 s modeled, 1.4 s on the Mac)
             solve_closure_free_scans_scale: 6.606e-4,
             solve_closure_free_keyframe_power: 1.651,
@@ -586,6 +590,9 @@ pub struct Config {
     pub solver_fast_path_taper_fraction: f64,
     /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
+    /// When GNC keeps none of the closures the newest adopted solve kept, those verdicts re-solved from the accepted graph
+    /// compete, and the lower truncated least-squares cost wins (GNC from the odometry can collapse a loop to all-out).
+    pub solve_incumbent_challenge: bool,
     /// Search pipeline (`closure_search_schedule`): candidate buffer -> fast-match workers; uncertain matches -> verification buffer -> workers.
     pub fast_match_workers: usize,
     pub sc_buffer_size: usize,
@@ -719,7 +726,8 @@ impl Config {
             ("pressure_scans_fixed_overhead", self.deterministic_config.pressure_scans_fixed_overhead),
             ("pressure_scans_per_keyframe", self.deterministic_config.pressure_scans_per_keyframe),
             ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
-            ("solve_scans_scale", self.deterministic_config.solve_scans_scale),
+            ("solve_gnc_scans_scale", self.deterministic_config.solve_gnc_scans_scale),
+            ("solve_without_gnc_scans_scale", self.deterministic_config.solve_without_gnc_scans_scale),
             ("solve_closure_free_scans_scale", self.deterministic_config.solve_closure_free_scans_scale),
             ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
             ("fast_path_scans_per_free_keyframe", self.deterministic_config.fast_path_scans_per_free_keyframe),
@@ -791,6 +799,7 @@ impl Default for Config {
             graph_change_heat_decay: 0.995,
             solve_seed_from_accepted: true,
             solve_seed_gnc_verdicts: false,
+            solve_incumbent_challenge: true,
             solver_fast_path_enabled: false,
             solver_fast_path_budget_scans: 1.0,
             solver_fast_path_max_lm_steps: 10,

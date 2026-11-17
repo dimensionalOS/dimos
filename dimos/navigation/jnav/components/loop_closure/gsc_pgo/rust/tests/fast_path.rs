@@ -64,8 +64,10 @@ fn run(fast_path: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
         solver_fast_path_taper_fraction: 0.0,
         ..Config::default()
     };
-    // GNC held 30 scans, the fast path one
-    config.deterministic_config.solve_scans_scale = 30.0 / (KEYFRAMES as f64).powf(config.deterministic_config.solve_keyframe_power) / 2f64.powf(config.deterministic_config.solve_closure_power);
+    // GNC held 30 scans (with or without its iterations), the fast path one
+    let dc = &mut config.deterministic_config;
+    dc.solve_gnc_scans_scale = 30.0 / (KEYFRAMES as f64).powf(dc.solve_gnc_keyframe_power);
+    dc.solve_without_gnc_scans_scale = 30.0 / (KEYFRAMES as f64).powf(dc.solve_without_gnc_keyframe_power);
     let mut pgo = GscPgo::new(config);
     pgo.set_wait_for_due_jobs(true);
     for k in 0..KEYFRAMES {

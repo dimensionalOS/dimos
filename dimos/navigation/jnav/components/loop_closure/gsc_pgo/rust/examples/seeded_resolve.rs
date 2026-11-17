@@ -142,6 +142,7 @@ fn main() {
                 evidence_core: false,
                 learned_evidence: false,
                 seed_closure_weights,
+                incumbent_closure_weights: Vec::new(),
                 seed_start,
                 planar: config.planar_pose_graph,
                 landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,

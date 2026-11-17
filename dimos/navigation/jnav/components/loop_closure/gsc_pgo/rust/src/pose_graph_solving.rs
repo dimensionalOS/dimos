@@ -51,6 +51,8 @@ pub(crate) struct SolveSchedule {
     estimate_scans: usize,
     /// The estimate before rounding up (scans).
     estimate_raw_scans: f64,
+    /// The estimate's curve: "closure_free", "gnc" or "without_gnc" (`DeterministicConfig`'s solve fields).
+    estimate_curve: &'static str,
     finished_scan: Option<usize>,
     dispatch_time: f64,
     pub(crate) due_time: Option<f64>,
@@ -146,25 +148,18 @@ impl GscPgo {
             }
         }
     }
-    /// Upper bound on a solve's cost in scans (raw, held) from its node count and closures (committed indices) and rejected count.
-    fn solve_estimate_scans(&self, keyframes: usize, closure_index: &[usize]) -> (f64, usize) {
-        let config = &self.config;
-        let closures = closure_index.len() as f64;
-        // a closure no solve has judged yet has a NaN weight, so it is not counted
-        let rejected = closure_index
-            .iter()
-            .filter(|&&i| self.committed_closures.weight(i) <= 0.5)
-            .count() as f64;
-        let d = &config.deterministic_config;
-        let estimate_raw_scans = if closure_index.is_empty() {
-            d.solve_closure_free_scans_scale * (keyframes as f64).powf(d.solve_closure_free_keyframe_power)
+    /// Upper bound on a solve's cost in scans (raw, held, its curve) from its node count, whether it has closures and whether GNC will run.
+    fn solve_estimate_scans(&self, keyframes: usize, has_closures: bool, gnc: bool) -> (f64, usize, &'static str) {
+        let d = &self.config.deterministic_config;
+        let (scale, power, curve) = if !has_closures {
+            (d.solve_closure_free_scans_scale, d.solve_closure_free_keyframe_power, "closure_free")
+        } else if gnc {
+            (d.solve_gnc_scans_scale, d.solve_gnc_keyframe_power, "gnc")
         } else {
-            d.solve_scans_scale
-                * (keyframes as f64).powf(d.solve_keyframe_power)
-                * (1.0 + closures).powf(d.solve_closure_power)
-                * (1.0 + rejected).powf(d.solve_rejected_power)
+            (d.solve_without_gnc_scans_scale, d.solve_without_gnc_keyframe_power, "without_gnc")
         };
-        (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans))
+        let estimate_raw_scans = scale * (keyframes as f64).powf(power);
+        (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans), curve)
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
     pub fn solve_started(&self) -> Option<(usize, usize)> {
@@ -494,11 +489,21 @@ impl GscPgo {
             } else {
                 Vec::new()
             },
+            incumbent_closure_weights: if config.solve_incumbent_challenge {
+                closure_index.iter().map(|&i| self.committed_closures.weight(i)).collect()
+            } else {
+                Vec::new()
+            },
             planar: config.planar_pose_graph,
             landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
             landmark_warm_start_xy_variance_ladder: config.landmark_warm_start_xy_variance_ladder,
         };
-        let (estimate_raw_scans, estimate_scans) = self.solve_estimate_scans(m, &closure_index);
+        // exact for a closure-only solve (the solve's own start check); priors or sightings add stages it cannot see, so GNC is assumed
+        let gnc = !priors.is_empty()
+            || !sightings.is_empty()
+            || crate::big_picture_fit::gnc_will_run(&rotations, &positions, &closures, &solve_config);
+        let (estimate_raw_scans, estimate_scans, estimate_curve) =
+            self.solve_estimate_scans(m, !closure_index.is_empty(), gnc);
         // a simplified solve's nodes expand back to every keyframe (and its closures to every committed one) on its thread
         let expansion = simplified.then(|| crate::graph_simplify::Expansion {
             placements: self.simplify.placements.clone(),
@@ -566,6 +571,7 @@ impl GscPgo {
                 dispatch_scan: self.scans_seen,
                 estimate_scans,
                 estimate_raw_scans,
+                estimate_curve,
                 finished_scan: None,
                 dispatch_time: self.scan_time,
                 due_time: None,
@@ -604,7 +610,8 @@ impl GscPgo {
             );
         }
         self.timing.solve_s += seconds;
-        self.record_job_ratio("solve", seconds, solving.schedule.estimate_raw_scans);
+        let kind = if solving.schedule.estimate_curve == "without_gnc" { "solve_without_gnc" } else { "solve" };
+        self.record_job_ratio(kind, seconds, solving.schedule.estimate_raw_scans);
         let dispatched_over = solving.keyframes;
         self.solve_records.push((
             dispatched_over,
@@ -887,7 +894,7 @@ impl GscPgo {
             .count();
         let trace = solution.trace.as_ref();
         format!(
-            "\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"estimate_scans\":{},\"estimate_data_s\":{},\"dispatch_scan\":{},\"finished_scan\":{},\"adopted_scan\":{},\"overshoot\":{},\"closures\":{},\"closures_new\":{},\"closures_hash\":\"{:016x}\",\"kept\":{kept},\"converged\":{},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}]",
+            "\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"estimate_scans\":{},\"estimate_raw_scans\":{},\"estimate_curve\":\"{}\",\"estimate_data_s\":{},\"dispatch_scan\":{},\"finished_scan\":{},\"adopted_scan\":{},\"overshoot\":{},\"closures\":{},\"closures_new\":{},\"closures_hash\":\"{:016x}\",\"kept\":{kept},\"converged\":{},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}],\"challenge_cost\":[{}]",
             n,
             json_number(dispatched.keyframe_time),
             json_number(dispatched.wall_time),
@@ -896,6 +903,8 @@ impl GscPgo {
             json_number(wall_time()),
             json_number(seconds),
             schedule.estimate_scans,
+            json_number(schedule.estimate_raw_scans),
+            schedule.estimate_curve,
             json_number(schedule.due_time.map_or(f64::NAN, |due| due - schedule.dispatch_time)),
             schedule.dispatch_scan,
             schedule.finished_scan.map_or("null".into(), |scan| scan.to_string()),
@@ -910,6 +919,7 @@ impl GscPgo {
             trace.map_or("", |t| t.gnc_stop),
             trace.map_or([f64::NAN; 3], |t| t.initial_cost).map(json_number).join(","),
             trace.map_or([f64::NAN; 3], |t| t.final_cost).map(json_number).join(","),
+            trace.map_or([f64::NAN; 2], |t| t.challenge_cost).map(json_number).join(","),
         )
     }
 }

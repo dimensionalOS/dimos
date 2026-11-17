@@ -66,10 +66,10 @@ class PGOConfig(NativeModuleConfig):
             "verification_scans_fixed_overhead": 5.036066465159226,
             "verification_scans_per_round": 0.7489339387672495,
             "verification_scans_per_round_point": 6.563647896724165e-05,
-            "solve_scans_scale": 9.097483642429608e-05,
-            "solve_keyframe_power": 2.017,
-            "solve_closure_power": -0.215,
-            "solve_rejected_power": 0.558,
+            "solve_gnc_scans_scale": 5.359070340135255e-4,
+            "solve_gnc_keyframe_power": 1.7902760318551216,
+            "solve_without_gnc_scans_scale": 1.0956986513453806e-8,
+            "solve_without_gnc_keyframe_power": 2.8920067349091245,
             "solve_closure_free_scans_scale": 6.606e-4,
             "solve_closure_free_keyframe_power": 1.651,
             "debounce_scans_per_keyframe": 6.093487031356368e-06,
@@ -178,6 +178,9 @@ class PGOConfig(NativeModuleConfig):
     # seed a solve from the accepted graph (when it fits) and optionally from the last adopted GNC verdicts
     solve_seed_from_accepted: bool = True
     solve_seed_gnc_verdicts: bool = False
+    # when GNC keeps none of the closures the last adopted solve kept, those verdicts re-solved from the accepted graph
+    # compete with GNC's, and the lower truncated least-squares cost wins
+    solve_incumbent_challenge: bool = True
     # solver fast path: unjudged closures are published at once by a least squares over the keyframes nearest the robot (as
     # many as budget_scans affords), the rest held; GNC's graph is untouched and its next solve replaces the correction
     solver_fast_path_enabled: bool = False

@@ -58,6 +58,9 @@ pub struct SolveConfig {
     pub learned_evidence: bool,
     /// Per closure, the verdict (1 kept, 0 out, NaN unjudged) GNC starts from; empty = all in (`solve_seed_gnc_verdicts`).
     pub seed_closure_weights: Vec<f64>,
+    /// Per closure, the newest adopted solve's verdict (1 kept, 0 out, NaN unjudged); empty = none. When GNC keeps none
+    /// of the closures it kept, those verdicts re-solved from `seed_start` compete with GNC's (`solve_incumbent_challenge`).
+    pub incumbent_closure_weights: Vec<f64>,
     /// Per keyframe, the accepted graph as an alternate start used where it fits (`solve_seed_from_accepted`); empty = none.
     pub seed_start: Vec<(Mat3, Vec3)>,
     /// `planar_pose_graph`: every keyframe's roll, pitch and z are held, and edges and priors weigh only x, y and yaw; GNC's
@@ -84,6 +87,76 @@ fn in_plane(edges: &[Edge]) -> Vec<Edge> {
             e
         })
         .collect()
+}
+
+/// GNC's view of a solve's closures (in-plane when planar): each at its scaled variances, which start out, and the cutoff.
+struct GncClosures {
+    scaled: Vec<Edge>,
+    seeded_out: Vec<bool>,
+    threshold: f64,
+}
+
+impl GncClosures {
+    fn new(closures: &[Edge], config: &SolveConfig) -> GncClosures {
+        GncClosures {
+            // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
+            seeded_out: (0..closures.len())
+                .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
+                .collect(),
+            threshold: chi2_inverse_6dof(config.gnc_inlier_probability),
+            scaled: closures
+                .iter()
+                .map(|e| Edge {
+                    variances: e.variances.map(|v| v * config.gnc_variance_scale),
+                    ..*e
+                })
+                .collect(),
+        }
+    }
+    /// The worst whitened squared residual at `state` over the closures that start in (GNC iterates past the cutoff).
+    fn worst(&self, state: &State) -> f64 {
+        self.scaled
+            .iter()
+            .zip(&self.seeded_out)
+            .filter(|&(_, &out)| !out)
+            .fold(0.0, |worst: f64, (e, _)| worst.max(whitened_squared(e, state)))
+    }
+    /// Whether `config.seed_start` (one pose per keyframe of `keyframes`) fits every closure that starts in.
+    fn seed_fits(&self, config: &SolveConfig, keyframes: usize) -> bool {
+        config.seed_start.len() == keyframes && {
+            let (rotation, position) = config.seed_start.iter().copied().unzip();
+            let probe = State {
+                rotation,
+                position,
+                landmark: Vec::new(),
+                landmark_rotation: Vec::new(),
+            };
+            self.scaled
+                .iter()
+                .zip(&self.seeded_out)
+                .all(|(e, &out)| out || whitened_squared(e, &probe) <= self.threshold)
+        }
+    }
+}
+
+/// Whether `solve` (no position priors or landmark sightings) will run GNC's iterations: a closure that starts in is past
+/// GNC's cutoff where the solve starts (the accepted-graph seed when it fits them all, which by then none is past, else here).
+pub(crate) fn gnc_will_run(rotations: &[Mat3], positions: &[Vec3], closures: &[Edge], config: &SolveConfig) -> bool {
+    let planar_closures;
+    let closures = if config.planar {
+        planar_closures = in_plane(closures);
+        &planar_closures[..]
+    } else {
+        closures
+    };
+    let gnc = GncClosures::new(closures, config);
+    !gnc.seed_fits(config, rotations.len())
+        && gnc.worst(&State {
+            rotation: rotations.to_vec(),
+            position: positions.to_vec(),
+            landmark: Vec::new(),
+            landmark_rotation: Vec::new(),
+        }) > gnc.threshold
 }
 
 pub struct Solution {
@@ -118,8 +191,11 @@ pub struct SolveTrace {
     pub gnc_iterations: usize,
     /// The mu of GNC's last iteration (NaN when nothing exceeded its cutoff, so GNC never ran).
     pub gnc_mu: f64,
-    /// "under_cutoff" (GNC never ran), "converged" (weights settled at 0/1), "cost_change" or "max_iterations".
+    /// "under_cutoff" (GNC never ran), "converged" (weights settled at 0/1), "cost_change", "max_iterations", or
+    /// "incumbent" (the incumbent's verdicts beat GNC's).
     pub gnc_stop: &'static str,
+    /// Truncated least-squares cost of GNC's solution and of the incumbent's verdicts re-solved (NaN when not challenged).
+    pub challenge_cost: [f64; 2],
     /// Per closure, GNC's final weight before rounding at 0.5.
     pub gnc_weights: Vec<f64>,
     /// Whitened cost [odometry, closures, priors+sightings] at the start (all closures in) and solution (kept, Huber).
@@ -318,32 +394,10 @@ fn solve_from(
     } else {
         (odometry, closures)
     };
-    // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
-    let seeded_out: Vec<bool> = (0..closures.len())
-        .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
-        .collect();
-    let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
-    let scaled: Vec<Edge> = closures
-        .iter()
-        .map(|e| Edge {
-            variances: e.variances.map(|v| v * config.gnc_variance_scale),
-            ..*e
-        })
-        .collect();
+    // `gnc_will_run` reads the same start and cutoff at dispatch, so the two must stay in step
+    let gnc = GncClosures::new(closures, config);
     // use the seed only where it already fits what GNC would weigh; otherwise start from the odometry
-    let seeded = config.seed_start.len() == rotations.len() && unary.is_empty() && sightings.is_empty() && {
-        let (rotation, position) = config.seed_start.iter().copied().unzip();
-        let probe = State {
-            rotation,
-            position,
-            landmark: Vec::new(),
-            landmark_rotation: Vec::new(),
-        };
-        scaled
-            .iter()
-            .zip(&seeded_out)
-            .all(|(e, &out)| out || whitened_squared(e, &probe) <= threshold)
-    };
+    let seeded = unary.is_empty() && sightings.is_empty() && gnc.seed_fits(config, rotations.len());
     let seed: (Vec<Mat3>, Vec<Vec3>) = if seeded {
         config.seed_start.iter().copied().unzip()
     } else {
@@ -398,15 +452,12 @@ fn solve_from(
         &landmark_dims,
         config.planar,
     );
+    // GNC's starting mu from the start's residuals (as GTSAM's GncOptimizer): worse start, gentler tightening
+    let worst = gnc.worst(&state);
+    let GncClosures { scaled, seeded_out, threshold } = gnc;
     // GNC with truncated least squares (Yang et al. 2020): start convex, tighten until each closure is in or out
     let residual =
         |state: &State| -> Vec<f64> { scaled.iter().map(|e| whitened_squared(e, state)).collect() };
-    // GNC's starting mu from the start's residuals (as GTSAM's GncOptimizer): worse start, gentler tightening
-    let worst = residual(&state)
-        .into_iter()
-        .zip(&seeded_out)
-        .filter(|&(_, &out)| !out)
-        .fold(0.0, |worst: f64, (r, _)| worst.max(r));
     let mut weights: Vec<f64> = seeded_out.iter().map(|&out| if out { 0.0 } else { 1.0 }).collect();
     // position priors: GNC-weighted the same way, against the 3-DoF cutoff
     let unary_threshold = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
@@ -567,6 +618,61 @@ fn solve_from(
             );
         }
     }
+    // GNC from a far start can collapse to the odometry, rejecting a loop that only holds when its closures pull
+    // together; the incumbent's verdicts from the accepted graph compete, and the lower truncated cost (GNC's own
+    // objective) wins
+    let incumbent_kept: Vec<bool> = (0..closures.len())
+        .map(|i| config.incumbent_closure_weights.get(i).is_some_and(|&w| w > 0.5))
+        .collect();
+    let challenged = config.seed_start.len() == rotations.len()
+        && unary.is_empty()
+        && sightings.is_empty()
+        && incumbent_kept.iter().any(|&k| k)
+        && incumbent_kept.iter().zip(&weights).all(|(&k, &w)| !k || w < 0.5);
+    let mut challenge_cost = [f64::NAN; 2];
+    if challenged {
+        let (rotation, position) = config.seed_start.iter().copied().unzip();
+        let mut incumbent = State {
+            rotation,
+            position,
+            ..state.clone()
+        };
+        let mut incumbent_weights: Vec<f64> =
+            incumbent_kept.iter().map(|&k| if k { 1.0 } else { 0.0 }).collect();
+        // alternate the truncated cost's two minimizations: poses given verdicts, then each verdict given the poses
+        let mut incumbent_converged = false;
+        for _ in 0..100 {
+            incumbent_converged = levenberg_marquardt(
+                &mut incumbent,
+                &pattern,
+                odometry,
+                &scaled,
+                &incumbent_weights,
+                unary,
+                &unary_weights,
+                sightings,
+                &sighting_weights,
+                1e-5,
+            );
+            let verdicts: Vec<f64> = residual(&incumbent)
+                .into_iter()
+                .map(|r| if r <= threshold { 1.0 } else { 0.0 })
+                .collect();
+            if verdicts == incumbent_weights {
+                break;
+            }
+            incumbent_weights = verdicts;
+        }
+        let truncated = |state: &State| {
+            cost(state, odometry, &[], &[], &[], &[], &[], &[])
+                + residual(state).into_iter().map(|r| r.min(threshold)).sum::<f64>()
+        };
+        challenge_cost = [truncated(&state), truncated(&incumbent)];
+        if incumbent_converged && challenge_cost[1] < challenge_cost[0] {
+            (state, weights, converged) = (incumbent, incumbent_weights, incumbent_converged);
+            gnc_stop = "incumbent";
+        }
+    }
     let kept: Vec<f64> = weights
         .iter()
         .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
@@ -694,6 +800,7 @@ fn solve_from(
         gnc_iterations,
         gnc_mu,
         gnc_stop,
+        challenge_cost,
         gnc_weights,
         initial_cost,
         final_cost: cost_parts(
