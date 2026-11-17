@@ -131,6 +131,8 @@ class XArm7KittingConfig(ModuleConfig):
     settle_s: float = 1.0
     # A planned move may swing no joint further than this; a longer plan is split at its midpoint.
     max_joint_travel_rad: float = 1.2
+    # The same for moves with nothing in the hand, which may be longer.
+    max_free_joint_travel_rad: float = 2.0
     # The first lift, after which the grip is checked again with the bin's weight on it.
     test_lift_m: float = 0.02
     # Released this far above where the bin was gripped.
@@ -301,8 +303,15 @@ class XArm7KittingModule(Module):
 
             arm.open_gripper()
             self._next(steps, "approach")
-            arm.move_pose(
-                [*pick_xy, grip_z + cfg.approach_m], orientation=pick_q, speed_scale=cfg.speed_scale
+            # Face the bin first: the planner's IK starts from the present joints, so this keeps
+            # the arm on its natural elbow-up branch instead of reaching over from behind.
+            self._face(arm, pick_xy, cfg.speed_scale)
+            self._planned(
+                arm,
+                [*pick_xy, grip_z + cfg.approach_m],
+                pick_q,
+                cfg.speed_scale,
+                limit=cfg.max_free_joint_travel_rad,
             )
             self._next(steps, "descend")
             self._vertical(arm, [*pick_xy, grip_z], pick_q, cfg.speed_scale)
@@ -366,11 +375,30 @@ class XArm7KittingModule(Module):
             logger.warning("Straight move failed, planning it instead", reason=str(error)[:160])
             self._planned(arm, xyz, q, speed)
 
+    def _face(self, arm: Arm, xy: tuple[float, float], speed: float) -> None:
+        """Turn the base alone until the arm faces ``xy``; skipped if the planner refuses it."""
+        now = arm.pose().position
+        turn = _wrap(math.atan2(xy[1], xy[0]) - math.atan2(now.y, now.x))
+        joints = arm.joints()
+        joints[0] += turn
+        try:
+            arm.move_joints(joints, speed_scale=speed)
+        except MotionError as error:
+            logger.warning("Could not face the bin first", reason=str(error)[:160])
+
     def _planned(
-        self, arm: Arm, xyz: list[float], q: list[float], speed: float, depth: int = 0
+        self,
+        arm: Arm,
+        xyz: list[float],
+        q: list[float],
+        speed: float,
+        depth: int = 0,
+        limit: float | None = None,
     ) -> None:
         """A planned move to ``xyz``, ``q`` that swings no joint more than
         ``max_joint_travel_rad``; a plan that would goes through the midpoint instead."""
+        if limit is None:
+            limit = self.config.max_joint_travel_rad
         target = PoseStamped(frame_id="world", position=Vector3(*xyz), orientation=Quaternion(*q))
         # Plans differ from one call to the next: keep the one that swings the joints least.
         plan, travel = None, math.inf
@@ -383,17 +411,19 @@ class XArm7KittingModule(Module):
             attempt_travel = joint_travel(attempt.plan.path, arm.info.joint_names)
             if attempt_travel < travel:
                 plan, travel = attempt, attempt_travel
-            if travel <= self.config.max_joint_travel_rad:
+            if travel <= limit:
                 break
         if plan is None:
             raise RuntimeError("the planner returned no plan")
         if not plan.succeeded or plan.plan is None:
             raise MotionError("move_pose", plan)
-        if travel > self.config.max_joint_travel_rad:
+        if travel > limit:
             if depth >= MAX_SPLITS:
                 raise RuntimeError(f"every plan there swings a joint {travel:.2f} rad")
             logger.warning(
-                "Plan swings too far, going through the midpoint", travel=round(travel, 2)
+                "Plan swings too far, going through the midpoint",
+                travel=round(travel, 2),
+                per_joint=joint_travels(plan.plan.path, arm.info.joint_names),
             )
             now = arm.pose()
             here = (now.position.x, now.position.y)
@@ -406,8 +436,10 @@ class XArm7KittingModule(Module):
                 _wrap(math.atan2(xyz[1], xyz[0]) - math.atan2(here[1], here[0])),
                 2,
             )
-            self._planned(arm, [*mid_xy, (now.position.z + xyz[2]) / 2], mid_q, speed, depth + 1)
-            self._planned(arm, xyz, q, speed, depth + 1)
+            self._planned(
+                arm, [*mid_xy, (now.position.z + xyz[2]) / 2], mid_q, speed, depth + 1, limit
+            )
+            self._planned(arm, xyz, q, speed, depth + 1, limit)
             return
         result = self._manipulation.execute(
             blocking=True, timeout=EXECUTE_TIMEOUT_S, plan_id=plan.plan.plan_id
@@ -497,17 +529,22 @@ def carry_waypoints(
     return points
 
 
-def joint_travel(path: Sequence[JointState], joints: Sequence[str]) -> float:
-    """The most any of ``joints`` moves from the path's first point, rad."""
+def joint_travels(path: Sequence[JointState], joints: Sequence[str]) -> dict[str, float]:
+    """How far each of ``joints`` moves from the path's first point at most, rad."""
     if not path:
-        return 0.0
+        return {}
     first = dict(zip(path[0].name, path[0].position, strict=True))
-    most = 0.0
+    most = {name: 0.0 for name in joints if name in first}
     for point in path[1:]:
         for name, value in zip(point.name, point.position, strict=True):
-            if name in joints and name in first:
-                most = max(most, abs(value - first[name]))
+            if name in most:
+                most[name] = max(most[name], round(abs(value - first[name]), 3))
     return most
+
+
+def joint_travel(path: Sequence[JointState], joints: Sequence[str]) -> float:
+    """The most any of ``joints`` moves from the path's first point, rad."""
+    return max(joint_travels(path, joints).values(), default=0.0)
 
 
 def tool_yaw(xyzw: Sequence[float]) -> float:
