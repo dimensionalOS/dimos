@@ -18,7 +18,7 @@ import pytest
 from dimos.orchestration.definition import Node, OrchestratorDefinition, Transition
 
 REJECTED: list[tuple[type[BaseModel], dict[str, JsonValue], str]] = [
-    (Transition, {"goto": "A", "trigger": "estop", "after": 5}, "at most one of `trigger`"),
+    (Transition, {"goto": "A", "on": "estop", "after": 5}, "at most one of `on`"),
     (Node, {"name": "A", "children": ["B"], "parallel": ["C"]}, "at most one of `children`"),
 ]
 

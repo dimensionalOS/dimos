@@ -191,8 +191,8 @@ class Orchestrator(Module):
                 case ClearTimer(timer):
                     if timer in self._timers:
                         self._timers.remove(timer)
-                case TransitionRecord(node, trigger, goto):
-                    logger.info("Orchestrator transition", node=node, trigger=trigger, goto=goto)
+                case TransitionRecord(node, cause, goto):
+                    logger.info("Orchestrator transition", node=node, cause=cause, goto=goto)
                 case FaultReport(rule, node, event, blackboard):
                     # The logger keeps the keyword event for its own message.
                     logger.error(

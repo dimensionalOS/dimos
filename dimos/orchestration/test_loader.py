@@ -68,7 +68,7 @@ children = ["NextWaypoint", "Navigating"]
 initial = "NextWaypoint"
 
 [[node.transition]]
-trigger = "estop"
+if = "estop"
 mode = "immediate"
 goto = "Estopped"
 
@@ -90,7 +90,7 @@ args = { name = "route[patrol.index]" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "NextWaypoint"
 set = { "patrol.index" = "patrol.index + 1" }
 
@@ -98,7 +98,7 @@ set = { "patrol.index" = "patrol.index + 1" }
 name = "Estopped"
 
 [[node.transition]]
-trigger = "estop_cleared"
+if = "estop_cleared"
 goto = "Patrolling"
 """
 
@@ -113,9 +113,9 @@ BROKEN: list[tuple[str, str, str]] = [
         "node `Estopped`: `wind_down` is not a field",
     ),
     (
-        'trigger = "estop_cleared"',
-        'trigger = "estop_cleared"\nafter = 5',
-        "node `Estopped`: transition 1: a transition has at most one of `trigger` and `after`",
+        'if = "estop_cleared"',
+        'on = "estop_button"\nafter = 5',
+        "node `Estopped`: transition 1: a transition has at most one of `on` and `after`",
     ),
     (
         'mode = "immediate"',

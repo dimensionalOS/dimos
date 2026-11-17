@@ -70,7 +70,7 @@ args = { name = "'lobby'" }
 result = "job.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "Arrived"
 
 [[node]]

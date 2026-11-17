@@ -69,14 +69,19 @@ class Transition(_Struct):
     if_: str | None = Field(default=None, validation_alias="if")
     mode: Literal["graceful", "immediate"] = "graceful"
     set: dict[str, Source] = {}
-    trigger: str | None = None
+    on: str | None = None
     after: Source | None = None
 
     @model_validator(mode="after")
     def _at_most_one_cause(self) -> "Transition":
-        if self.trigger is not None and self.after is not None:
-            raise ValueError("a transition has at most one of `trigger` and `after`")
+        if self.on is not None and self.after is not None:
+            raise ValueError("a transition has at most one of `on` and `after`")
         return self
+
+    @property
+    def is_condition(self) -> bool:
+        """Whether it has no `on` or `after`, so it is taken as soon as its `if` is true."""
+        return self.on is None and self.after is None
 
 
 class Node(_Struct):
@@ -107,7 +112,8 @@ class Node(_Struct):
 
     @property
     def is_switch(self) -> bool:
-        return any(t.trigger is None and t.after is None for t in self.transitions)
+        """Whether a transition has no `on`, `after` or `if`, so the node is left on entry."""
+        return any(t.is_condition and t.if_ is None for t in self.transitions)
 
 
 class OrchestratorDefinition(_Struct):

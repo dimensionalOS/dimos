@@ -52,12 +52,12 @@ FAKES = (FakeBase, FakeBattery, FakeEstop)
 
 # One waypoint, from reaching it to setting off for the next.
 VISIT = [
-    ("Navigating", "arrived", "Scanning"),
-    ("Sweeping", "succeeded", "done"),
+    ("Navigating", "if arrived", "Scanning"),
+    ("Sweeping", "if succeeded", "done"),
     ("Dwelling", "after", "done"),
-    ("Scanning", "done", "NextWaypoint"),
-    ("NextWaypoint", None, "Navigating"),
+    ("Scanning", "if done", "NextWaypoint"),
 ]
+NEXT = ("NextWaypoint", "if patrol.index < size(route)", "Navigating")
 
 
 def _deployed() -> Deployed:
@@ -93,8 +93,8 @@ def test_the_patrol_file_runs_one_loop_of_its_route() -> None:
     def perform(effects: Sequence[Effect], now: float) -> None:
         for effect in effects:
             match effect:
-                case TransitionRecord(node, trigger, goto):
-                    records.append((node, trigger, goto))
+                case TransitionRecord(node, cause, goto):
+                    records.append((node, cause, goto))
                 case SetTimer(timer):
                     later(timer.due, TimerItem(timer))
                 case SendStart(call) if call.rpc == "FakeBase.go_to":
@@ -126,10 +126,13 @@ def test_the_patrol_file_runs_one_loop_of_its_route() -> None:
     assert goals == wanted
     assert records == [
         ("Operating", "requires", "Estopped"),
-        ("Estopped", "estop_cleared", "Operating"),
+        ("Estopped", "if estop_cleared", "Operating"),
+        NEXT,
+        *VISIT,
+        NEXT,
+        ("Navigating", "if failed && patrol.tries < max_tries", "Navigating"),
+        *VISIT,
+        NEXT,
+        *VISIT,
         ("NextWaypoint", None, "Navigating"),
-        *VISIT,
-        ("Navigating", "failed", "Navigating"),
-        *VISIT,
-        *VISIT,
     ]

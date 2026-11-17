@@ -86,7 +86,7 @@ expect = ["!estop_button"]
 fallback = "Estopped"
 
 [[node.transition]]
-trigger = "estop"
+if = "estop"
 mode = "immediate"
 goto = "Estopped"
 
@@ -94,7 +94,7 @@ goto = "Estopped"
 name = "Estopped"
 
 [[node.transition]]
-trigger = "estop_cleared"
+if = "estop_cleared"
 goto = "Operating"
 
 [[node]]
@@ -103,7 +103,7 @@ children = ["NextWaypoint", "Navigating", "Scanning"]
 initial = "NextWaypoint"
 
 [[node.transition]]
-trigger = "battery_low"
+if = "battery_low"
 goto = "Charging"
 
 [[node]]
@@ -124,18 +124,17 @@ args = { name = "route[patrol.index]" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "Scanning"
 set = { "patrol.tries" = 0 }
 
 [[node.transition]]
-trigger = "failed"
-if = "patrol.tries < max_tries"
+if = "failed && patrol.tries < max_tries"
 goto = "Navigating"
 set = { "patrol.tries" = "patrol.tries + 1" }
 
 [[node.transition]]
-trigger = "failed"
+if = "failed"
 goto = "NextWaypoint"
 set = { "patrol.index" = "patrol.index + 1", "patrol.tries" = 0 }
 
@@ -145,7 +144,7 @@ parallel = ["Sweeping", "Dwelling"]
 outcomes = ["done"]
 
 [[node.transition]]
-trigger = "done"
+if = "done"
 goto = "NextWaypoint"
 set = { "patrol.index" = "patrol.index + 1" }
 
@@ -155,7 +154,7 @@ activity = "spin"
 args = { turns = 1.0 }
 
 [[node.transition]]
-trigger = "succeeded"
+if = "succeeded"
 goto = "done"
 
 [[node]]
@@ -172,7 +171,7 @@ initial = "ReturnToDock"
 outcomes = ["done"]
 
 [[node.transition]]
-trigger = "done"
+if = "done"
 goto = "Patrolling"
 
 [[node]]
@@ -182,7 +181,7 @@ args = { name = "dock_location" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "OnCharger"
 
 [[node]]
@@ -190,5 +189,5 @@ name = "OnCharger"
 activity = "charge"
 
 [[node.transition]]
-trigger = "charged"
+if = "charged"
 goto = "done"
