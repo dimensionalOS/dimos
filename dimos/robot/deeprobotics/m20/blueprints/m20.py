@@ -27,7 +27,7 @@ from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
-from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
+from dimos.robot.deeprobotics.m20.blueprints._nav import VOXEL_SIZE_M, m20_nav_stack
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
@@ -51,6 +51,8 @@ m20 = (
             new_map=True,
             tf_interval=1.0,
             min_local_points=8_000,
+            # one kept point per ray tracer voxel
+            live_voxel_m=VOXEL_SIZE_M,
         ),
     )
     .global_config(
