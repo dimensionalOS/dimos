@@ -23,6 +23,8 @@ from pathlib import Path
 import threading
 import time
 
+from pydantic import JsonValue
+
 from dimos.core.core import rpc
 from dimos.core.introspection.module.info import RpcInfo, StreamDescriptor
 from dimos.core.module import Module, ModuleConfig
@@ -53,6 +55,7 @@ from dimos.orchestration.engine import (
     TransitionRecord,
 )
 from dimos.orchestration.expressions import Plain
+from dimos.orchestration.journal import EditItem, Journal, Json, definition_to_plain
 from dimos.orchestration.loader import LoadError, load_and_check
 from dimos.orchestration.plain import field_to_plain, from_plain, to_plain
 from dimos.utils.logging_config import setup_logger
@@ -114,6 +117,8 @@ class OrchestratorConfig(ModuleConfig):
     file: Path
     cancel_deadline_s: float = DEFAULT_LIMITS.cancel_deadline_s
     transition_cap: int = DEFAULT_LIMITS.transition_cap
+    # How many engine steps `journal` keeps for tools that watch or rewind the orchestrator.
+    journal_size: int = 10000
 
 
 class Orchestrator(Module):
@@ -138,6 +143,7 @@ class Orchestrator(Module):
         self._unsubscribes: list[Callable[[], None]] = []
         self._unreadable: set[str] = set()
         self._published = 0
+        self._journal = Journal(self.config.journal_size)
 
     @rpc
     def start(self) -> None:
@@ -183,6 +189,49 @@ class Orchestrator(Module):
         self._cancel_all()
         super().stop()
 
+    @rpc
+    def definition(self) -> Json:
+        """The orchestrator file as plain JSON, with its path and its text."""
+        definition = self._definition
+        if definition is None:
+            raise RuntimeError("the orchestrator has not loaded its file")
+        return {
+            "file": str(self.config.file),
+            "source": self.config.file.read_text(),
+            "definition": definition_to_plain(definition),
+        }
+
+    @rpc
+    def state(self) -> Json:
+        """The blackboard, active nodes, calls under way, timers and outcomes, as of step `seq`."""
+        with self._wake:
+            running = self._running
+        return {**self._journal.snapshot(), "running": running}
+
+    @rpc
+    def journal(self, after: int = 0, limit: int = 500) -> Json:
+        """Up to `limit` engine steps after step `after`: what came in, what changed, what was sent.
+
+        `oldest` is the first step still kept, so a reader that asked for an older one missed some.
+        """
+        return self._journal.since(after, limit)
+
+    @rpc
+    def set_value(self, key: str, value: JsonValue) -> None:
+        """Write a var or a stream value on the blackboard, as if its stream had published it.
+
+        The engine handles it in turn with everything else, so its transitions fire as usual.
+        """
+        definition = self._definition
+        if definition is None or self._checked is None:
+            raise RuntimeError("the orchestrator is not running")
+        if key in definition.constants:
+            raise ValueError(f"`{key}` is a constant and cannot be set")
+        settable = {*definition.vars, *(value.name for value in definition.stream_values)}
+        if key not in settable:
+            raise ValueError(f"`{key}` is not a var or stream value (they are: {sorted(settable)})")
+        self._add(EditItem.of(key, value))
+
     def _describe(
         self, definition: OrchestratorDefinition, modules: list[RPCClient]
     ) -> tuple[Deployed, dict[str, StreamDescriptor]]:
@@ -207,11 +256,13 @@ class Orchestrator(Module):
         try:
             now = time.monotonic()
             runtime, effects = engine.start(checked, now, limits)
+            self._journal.record(None, runtime, effects)
             self._perform(effects)
             self._publish(checked, runtime, now, "startup", effects)
             while (item := self._next()) is not None:
                 before, now = runtime, time.monotonic()
                 runtime, effects = engine.step(checked, runtime, item, now, limits)
+                self._journal.record(item, runtime, effects)
                 self._perform(effects)
                 # A step that only wrote stream values is not published.
                 if effects or runtime.calls != before.calls or runtime.timers != before.timers:

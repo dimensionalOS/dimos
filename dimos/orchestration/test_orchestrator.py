@@ -489,3 +489,70 @@ def test_the_state_stream_has_each_fault(
     assert heard[-1]["handled"] == handled
     assert heard[-1]["fault"] == fault
     assert heard[-1]["active"] == []
+
+
+def _journal_until(orchestrator: Orchestrator, wanted: Callable[[list[dict]], bool]) -> list[dict]:
+    """Every journal entry, read once `wanted` holds for them."""
+    entries: list[dict] = []
+
+    def read() -> bool:
+        entries[:] = orchestrator.journal(0, 10000)["entries"]
+        return wanted(entries)
+
+    wait_until(read, timeout=10.0, interval=0.05, message="the journal never showed it")
+    return entries
+
+
+def _transitions(entries: list[dict]) -> list[tuple[str, str]]:
+    return [
+        (effect["node"], effect["goto"])
+        for entry in entries
+        for effect in entry["effects"]
+        if effect["kind"] == "transition"
+    ]
+
+
+def test_the_journal_and_state_follow_the_engine(tmp_path: Path, build: Build) -> None:
+    coordinator = build(_blueprint(_written(tmp_path, JOB)))
+    orchestrator = coordinator.get_instance(Orchestrator)
+    entries = _journal_until(
+        orchestrator, lambda found: ("Going", "Arrived") in _transitions(found)
+    )
+    assert entries[0]["item"] == {"kind": "startup"}
+    assert entries[0]["active"] == ["Going", "Job"]
+    assert [entry["seq"] for entry in entries] == list(range(1, len(entries) + 1))
+    returned = next(entry for entry in entries if entry["item"]["kind"] == "return")
+    assert returned["changed"]["job.goal"] == "lobby"
+    state = orchestrator.state()
+    assert state["running"] and state["started"] and not state["faulted"]
+    assert state["active"] == ["Arrived", "Job"]
+    assert state["blackboard"]["job.goal"] == "lobby"
+    assert orchestrator.journal(state["seq"], 10)["entries"] == []
+
+
+def test_the_definition_reads_as_the_file_does(tmp_path: Path, build: Build) -> None:
+    orchestrator = build(_blueprint(_written(tmp_path, JOB))).get_instance(Orchestrator)
+    found = orchestrator.definition()
+    assert found["source"] == JOB
+    going = next(node for node in found["definition"]["nodes"] if node["name"] == "Going")
+    assert going["transitions"][0]["if"] == "status == SUCCEEDED && reached == job.goal"
+
+
+def test_a_set_value_is_handled_like_a_stream_value(tmp_path: Path, build: Build) -> None:
+    # No status FakeBase publishes ever matches, so only the injected one can take Going to Arrived.
+    job = JOB.replace("SUCCEEDED = 3", "SUCCEEDED = 99")
+    orchestrator = build(_blueprint(_written(tmp_path, job))).get_instance(Orchestrator)
+    _journal_until(orchestrator, lambda found: any("job.goal" in e["changed"] for e in found))
+    orchestrator.set_value("status", 99)
+    entries = _journal_until(
+        orchestrator, lambda found: ("Going", "Arrived") in _transitions(found)
+    )
+    edit = next(entry for entry in entries if entry["item"]["kind"] == "edit")
+    assert edit["item"]["key"] == "status"
+
+
+@pytest.mark.parametrize("key", ["SUCCEEDED", "done", "nope"])
+def test_only_vars_and_stream_values_can_be_set(tmp_path: Path, build: Build, key: str) -> None:
+    orchestrator = build(_blueprint(_written(tmp_path, JOB))).get_instance(Orchestrator)
+    with pytest.raises(Exception, match=f"`{key}`"):
+        orchestrator.set_value(key, 1)
