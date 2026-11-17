@@ -83,13 +83,18 @@ def kitting():  # type: ignore[no-untyped-def]
     module = XArm7KittingModule()
     moves: list[tuple[BinPose, BinPose, list[BinPose]]] = []
     flags: list[bool] = []
+    offsets: list[float] = []
 
-    def move_bin(source: BinPose, target: BinPose, others: list[BinPose]) -> dict[str, bool]:
+    def move_bin(
+        source: BinPose, target: BinPose, others: list[BinPose], offset_m: float
+    ) -> dict[str, bool]:
         moves.append((source, target, others))
+        offsets.append(offset_m)
         return {"ok": True}
 
     module._move_bin = move_bin  # type: ignore[method-assign]
     module.empty_bin_ready.publish = lambda msg: flags.append(msg.data)  # type: ignore[method-assign]
+    module.offsets = offsets  # type: ignore[attr-defined]
     yield module, moves, flags
     module.stop()
 
@@ -121,3 +126,12 @@ def test_no_unload_when_every_done_slot_is_taken(kitting) -> None:  # type: igno
     module.set_done_taken([0, 1, 2])
     assert not module._unload()["ok"]
     assert moves == []
+
+
+def test_a_full_bin_is_held_beside_its_parts_and_an_empty_one_at_the_middle(kitting) -> None:  # type: ignore[no-untyped-def]
+    module, _, _ = kitting
+    module._unload()
+    module._load(BinPose(x=0.33, y=-0.14, yaw_deg=25.0))
+    assert module.offsets == [module.config.grip_offset_m, module.config.empty_grip_offset_m]
+    assert module.config.grip_offset_m > 0.04  # clear of parts on the centre line
+    assert module.config.empty_grip_offset_m == 0.0

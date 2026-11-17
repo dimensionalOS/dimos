@@ -122,6 +122,9 @@ class XArm7KittingConfig(ModuleConfig):
     # The grip: along the back wall from its centre (beside the parts), and the tool point
     # below the rim. The pads sit 11 to 48 mm above the tool point.
     grip_offset_m: float = 0.055
+    # An empty bin has nothing to keep clear of: held at the wall's centre, the fingers are
+    # furthest from the corners (at 55 mm the inner knuckle caught the side wall).
+    empty_grip_offset_m: float = 0.0
     grip_depth_m: float = 0.070
     approach_m: float = 0.10
     # Tool point height while carrying: the bin's bottom clears every bin on the bench.
@@ -254,7 +257,7 @@ class XArm7KittingModule(Module):
         slot = free[0]
         target = self.config.done_slots[slot]
         others = [self.config.done_slots[i] for i in sorted(self._done_taken)]
-        result = self._move_bin(self.config.loading_slot, target, others)
+        result = self._move_bin(self.config.loading_slot, target, others, self.config.grip_offset_m)
         if result["ok"]:
             self._done_taken.add(slot)
             self._loading_full = False
@@ -266,14 +269,18 @@ class XArm7KittingModule(Module):
         if self._loading_full:
             return {"ok": False, "reason": "the loading slot holds a bin; unload it first"}
         others = [self.config.done_slots[i] for i in sorted(self._done_taken)]
-        result = self._move_bin(empty, self.config.loading_slot, others)
+        result = self._move_bin(
+            empty, self.config.loading_slot, others, self.config.empty_grip_offset_m
+        )
         if result["ok"]:
             self._loading_full = True
             self.empty_bin_ready.publish(Bool(True))
             logger.info("EMPTY_BIN_IN_KITTING_AREA")
         return result
 
-    def _move_bin(self, source: BinPose, target: BinPose, others: list[BinPose]) -> dict[str, Any]:
+    def _move_bin(
+        self, source: BinPose, target: BinPose, others: list[BinPose], offset_m: float
+    ) -> dict[str, Any]:
         added: list[str] = []
         steps: list[str] = []
         try:
@@ -281,8 +288,8 @@ class XArm7KittingModule(Module):
             added = self._add_obstacles(others)
             cfg = self.config
             grip_z = cfg.table_top_z + BIN_HEIGHT_M - cfg.grip_depth_m
-            pick_xy, pick_yaw = grip_point(source, cfg.grip_offset_m)
-            place_xy, _ = grip_point(target, cfg.grip_offset_m)
+            pick_xy, pick_yaw = grip_point(source, offset_m)
+            place_xy, _ = grip_point(target, offset_m)
             # Carry by turning the base: the bin rides an arc, its back wall still toward the
             # arm. Then the rest of the bin's turn, the shorter way.
             turn = _wrap(math.atan2(place_xy[1], place_xy[0]) - math.atan2(pick_xy[1], pick_xy[0]))
