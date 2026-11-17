@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 import json
 import os
@@ -24,6 +26,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import FrameType
 
 import cv2
 import numpy as np
@@ -265,6 +268,40 @@ def test_keeping_failures_drops_the_recordings_of_successes_and_rescores_the_sam
     assert rescored["stay_put-s1-cccccc"] == rows["stay_put-s1-cccccc"]
 
 
+@contextmanager
+def _interrupt_main_thread_when(ready: threading.Event) -> Iterator[None]:
+    """SIGINT the main thread once `ready` is set, again every 50 ms until it has raised.
+
+    One signal can be lost: landing between the main thread's last check for pending signals
+    and the sem_wait() of a blocking lock acquire, it is only raised once that acquire returns,
+    which inside run() means after the episode cap rather than now.
+    """
+    raised = threading.Event()
+    main_thread = threading.main_thread().ident or 0
+
+    def raise_once(_signum: int, _frame: FrameType | None) -> None:
+        if not raised.is_set():
+            raised.set()
+            raise KeyboardInterrupt
+
+    def keep_sending() -> None:
+        ready.wait()
+        while not raised.is_set():
+            signal.pthread_kill(main_thread, signal.SIGINT)
+            raised.wait(0.05)
+
+    previous = signal.signal(signal.SIGINT, raise_once)
+    sender = threading.Thread(target=keep_sending)
+    sender.start()
+    try:
+        yield
+    finally:
+        raised.set()
+        ready.set()
+        sender.join()
+        signal.signal(signal.SIGINT, previous)
+
+
 def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path: Path) -> None:
     cases = [
         _case("mined-s1-aaaaaa", "mined", "dev", {}),
@@ -273,12 +310,11 @@ def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path:
     ]
     Manifest("test", Rules(), 0, cases).save(tmp_path / "suite.json")
     (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
-    interrupted: list[bool] = []
+    both_hang = threading.Event()
 
     def interrupt_once_both_hang(progress: Progress) -> None:
-        if len(progress.running) == 2 and not interrupted:
-            interrupted.append(True)
-            signal.pthread_kill(threading.main_thread().ident or 0, signal.SIGINT)
+        if len(progress.running) == 2:
+            both_hang.set()
 
     config = RunConfig(
         suite=tmp_path / "suite.json",
@@ -288,7 +324,7 @@ def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path:
         overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
         command=(sys.executable, str(tmp_path / "fake.py")),
     )
-    with pytest.raises(KeyboardInterrupt):
+    with _interrupt_main_thread_when(both_hang), pytest.raises(KeyboardInterrupt):
         run(config, interrupt_once_both_hang)
     results = tmp_path / "run" / RESULTS_FILE
     written = results.read_text()
