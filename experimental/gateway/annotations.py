@@ -38,6 +38,16 @@ def load(path: Path = SOURCE_FILE) -> dict[str, Any]:
     return section if "types" in section else source
 
 
+def load_abilities(path: Path = SOURCE_FILE) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """The abilities' labels by id (`abilities:`) and each module's abilities (`modules:`); none in an older checkout."""
+    source: dict[str, Any] = yaml.safe_load(path.read_text())
+    modules = {
+        str(name): list(module.get("abilities", []))
+        for name, module in (source.get("modules") or {}).items()
+    }
+    return source.get("abilities") or {}, modules
+
+
 def owner_of(doc: dict[str, Any], path: str) -> str | None:
     owners = [
         (len(directory), str(robot_id))

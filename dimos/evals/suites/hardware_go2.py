@@ -33,7 +33,7 @@ SUITE: Suite = [
         id="go2_walk_and_turn",
         inputs=TASK,
         environment=HardwareEnvironment(
-            blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
+            blueprint=["unitree-go2", "unitree-skill-container"],
             task=TASK,
         ),
         grade=human(TASK),

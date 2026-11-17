@@ -18,6 +18,7 @@ from pathlib import Path
 import queue
 import threading
 import time
+from typing import Any
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -70,6 +71,16 @@ class PGOVoxelMapperConfig(ModuleConfig):
     reloc_recheck_s: float = 30.0
 
 
+def _pgo_config(cfg: PGOVoxelMapperConfig) -> PGOConfig:
+    """The PGO settings, loop closure left on unless switched off or in simulation.
+
+    Simulators publish ground-truth odometry, so there is no drift for a loop to correct.
+    """
+    if cfg.pgo.loop_closure is not None:
+        return cfg.pgo
+    return cfg.pgo.model_copy(update={"loop_closure": not cfg.g.simulation})
+
+
 class PGOVoxelMapper(Module):
     """Global voxel map that stays loop-closed, anchored at the robot, optionally on a premap."""
 
@@ -96,6 +107,16 @@ class PGOVoxelMapper(Module):
     _matcher: PremapMatcher | None = None
     _reloc_thread: threading.Thread | None = None
     _map_path: Path | None = None
+    _backed_up: bool = False
+    _writer: threading.Thread | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # fix, its fitness, and the current attachment's fitness on the same window
+        self._fixes: queue.Queue[tuple[Transform, float, float | None]] = queue.Queue()
+        self._stopping = threading.Event()
+        # held while a frame is processed, so stop never disposes the map under one
+        self._frame_lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
@@ -115,20 +136,13 @@ class PGOVoxelMapper(Module):
                 )
         elif cfg.save_map:
             raise ValueError("PGOVoxelMapper: save_map needs a map_file to save to")
-        self._backed_up = False
-        self._writer: threading.Thread | None = None
         self._map = PGOMap(
             voxel_size=cfg.voxel_size,
             frame_id=cfg.frame_id,
             rebuild_cooldown_s=cfg.rebuild_cooldown_s,
-            pgo=cfg.pgo,
+            pgo=_pgo_config(cfg),
             premap=premap,
         )
-        # fix, its fitness, and the current attachment's fitness on the same window
-        self._fixes: queue.Queue[tuple[Transform, float, float | None]] = queue.Queue()
-        self._stopping = threading.Event()
-        # held while a frame is processed, so stop never disposes the map under one
-        self._frame_lock = threading.Lock()
         if premap is not None:
             self._matcher = PremapMatcher(
                 premap.cloud(cfg.voxel_size),

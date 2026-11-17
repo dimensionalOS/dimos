@@ -28,7 +28,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
-pytestmark = [pytest.mark.skipif_aarch64, pytest.mark.skipif_macos]
+pytestmark = [pytest.mark.skipif_aarch64]
 
 T0 = 1_700_000_000.0
 

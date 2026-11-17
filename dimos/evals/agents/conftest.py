@@ -224,6 +224,8 @@ class NativeHarness:
         )
 
     def run(self, agent: PiAdapter) -> Trajectory:
+        # Includes cold CLI/gateway startup: macOS can spend over 10s before
+        # the first request reaches the local provider.
         result = agent.run(
             "Inspect selected observations.", self.environment, self.root, timeout_s=30
         )

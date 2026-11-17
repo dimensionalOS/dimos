@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 import inspect
 import threading
 import time
@@ -35,8 +36,12 @@ SAMPLE_S: float = _default(StatsMonitor, "interval")
 
 
 class ProcessStats:
-    def __init__(self, transport_factory: Any = None) -> None:
+    def __init__(
+        self, transport_factory: Any = None, on_sample: Callable[[], None] | None = None
+    ) -> None:
         self._factory = transport_factory
+        # called after each sample lands, so a listener re-reads the snapshot instead of polling it
+        self.on_sample = on_sample
         self._lock = threading.Lock()
         self._transport: Any = None
         self._latest: dict[str, Any] | None = None
@@ -50,6 +55,8 @@ class ProcessStats:
             for key, cpu in cpu_samples(message).items():
                 history = round(constants.CPU_HISTORY_S / SAMPLE_S)
                 self._cpu.setdefault(key, deque(maxlen=history)).append(cpu)
+        if self.on_sample is not None:
+            self.on_sample()
 
     def _ensure_subscribed(self) -> None:
         if self._transport is not None:

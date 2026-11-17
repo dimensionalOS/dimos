@@ -12,62 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic OpenArm coordinator blueprints."""
+"""OpenArm trajectory and planner compositions."""
 
-from __future__ import annotations
-
-from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
-from dimos.robot.manipulators.openarm.config import (
-    OPENARM_ARM_JOINTS,
-    openarm_bimanual_model_config,
-    openarm_hardware,
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
+    arm_connection,
+    arm_declaration,
+    arm_remaps,
 )
+from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
+
+_MODEL = openarm_bimanual_model_config(robot="arm")
 
 
 def _trajectory_task() -> TaskConfig:
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
-        joint_names=list(OPENARM_ARM_JOINTS),
+        joint_names=list(_MODEL.joint_names),
         priority=10,
         params={"start_position_tolerance": 0.05},
     )
 
 
-class _OpenArmCoordinatorConfig(ControlCoordinatorConfig):
-    """OpenArm deployment configuration requiring an explicit bus pair."""
+def openarm_control(tasks: list[TaskConfig] | None = None) -> Blueprint:
+    """A coordinator named ControlCoordinator over the OpenArm connection."""
+    return autoconnect(
+        DamiaoCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(OpenArmConnection)],
+            tasks=list(tasks if tasks is not None else [_trajectory_task()]),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenArmConnection),
+    ).remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
 
-    left_can_port: str | None = None
-    right_can_port: str | None = None
 
-
-class _OpenArmCoordinator(ControlCoordinator):
-    """Select mock or explicitly addressed dual-CAN OpenArm hardware."""
-
-    config: _OpenArmCoordinatorConfig
-
-    def _setup_from_config(self) -> None:
-        self.config.hardware = [
-            openarm_hardware(
-                left_can_port=self.config.left_can_port,
-                right_can_port=self.config.right_can_port,
-            )
-        ]
-        super()._setup_from_config()
-
+coordinator_openarm = openarm_control().remappings([])
 
 openarm_planner_coordinator = autoconnect(
-    planner(model=openarm_bimanual_model_config()),
-    _OpenArmCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        tasks=[_trajectory_task()],
-    ),
-)
-
-coordinator_openarm = _OpenArmCoordinator.blueprint(
-    instance_name="ControlCoordinator",
-    tasks=[_trajectory_task()],
+    planner(model=_MODEL),
+    openarm_control(),
 )

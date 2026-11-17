@@ -30,7 +30,6 @@ Standalone — not wired into the dimos CLI:
 from __future__ import annotations
 
 from collections.abc import Callable
-import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any, cast
 
@@ -47,6 +46,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.robot.unitree.go2.dds.extrinsics import LIDAR_TO_BASE
 from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
 from dimos.robot.unitree.go2.dds.store import Go2McapStore
+from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -319,11 +319,11 @@ def main(
     rr.rerun_shutdown()
     print(f"wrote {out}")
     if not no_gui:
-        exe = shutil.which("rerun")
+        exe = find_executable("rerun")
         if exe:
             subprocess.Popen([exe, out])
         else:
-            print(f"  rerun viewer not on PATH; open manually:\n    rerun {out}")
+            print(f"  rerun viewer not found; open manually:\n    rerun {out}")
 
 
 if __name__ == "__main__":

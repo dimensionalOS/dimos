@@ -25,7 +25,8 @@ import rerun as rr
 
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs
+from dimos.visualization.rerun import bridge
+from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs, _start_save_client
 from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
 from dimos.visualization.rerun.init import _VIEWER_RUST_LOG, spawn_viewer
 
@@ -49,8 +50,19 @@ class TestViewerBinaryInstallation:
 
 
 class TestViewerLaunch:
-    def test_custom_viewer_connects_without_sdk_version_check(self, mocker, monkeypatch):
+    @pytest.mark.parametrize("beside_interpreter", [True, False])
+    def test_custom_viewer_connects_without_sdk_version_check(
+        self, mocker, monkeypatch, tmp_path, beside_interpreter
+    ):
         monkeypatch.delenv("RUST_LOG", raising=False)
+        monkeypatch.setenv("PATH", "")
+        # The viewer beside the interpreter is launched, whatever PATH holds.
+        # With none there, the bare name is left to PATH.
+        viewer = tmp_path / "dimos-viewer"
+        if beside_interpreter:
+            viewer.touch()
+            viewer.chmod(0o755)
+        monkeypatch.setattr("sys.executable", str(tmp_path / "python"))
         reaped = threading.Event()
         process = mocker.Mock(spec=subprocess.Popen)
         process.wait.side_effect = reaped.set
@@ -63,7 +75,7 @@ class TestViewerLaunch:
 
         launch.assert_called_once_with(
             [
-                "dimos-viewer",
+                str(viewer) if beside_interpreter else "dimos-viewer",
                 "--connect",
                 server_uri,
                 "--ws-url",
@@ -81,14 +93,23 @@ class TestViewerLaunch:
         assert "RUST_LOG" not in os.environ
 
     @pytest.mark.parametrize("error", [FileNotFoundError, PermissionError])
-    def test_custom_viewer_launch_failure_uses_stock_rerun(self, mocker, error):
+    def test_custom_viewer_launch_failure_uses_stock_rerun(
+        self, mocker, monkeypatch, tmp_path, error
+    ):
+        rerun = tmp_path / "rerun"
+        rerun.touch()
+        rerun.chmod(0o755)
+        monkeypatch.setattr("sys.executable", str(tmp_path / "python"))
+        monkeypatch.setenv("PATH", "")
         mocker.patch.object(subprocess, "Popen", side_effect=error)
         sdk_spawn = mocker.patch.object(rr, "spawn")
         server_uri = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
 
         assert spawn_viewer(server_uri, "25%")
 
-        sdk_spawn.assert_called_once_with(connect=True, memory_limit="25%")
+        sdk_spawn.assert_called_once_with(
+            connect=True, memory_limit="25%", executable_path=str(rerun)
+        )
 
     def test_unavailable_viewers_allow_headless_operation(self, mocker):
         mocker.patch.object(subprocess, "Popen", side_effect=FileNotFoundError)
@@ -96,6 +117,39 @@ class TestViewerLaunch:
         server_uri = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
 
         assert not spawn_viewer(server_uri, "25%")
+
+
+def test_save_client_launches_without_venv_on_path(mocker, monkeypatch, tmp_path):
+    rerun = tmp_path / "rerun"
+    rerun.touch()
+    rerun.chmod(0o755)
+    monkeypatch.setattr("sys.executable", str(tmp_path / "python"))
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("DIMOS_RUN_ID", "test-run")
+    monkeypatch.setattr(bridge, "RECORDINGS_DIR", tmp_path / "recordings")
+    launch = mocker.patch.object(subprocess, "Popen")
+    server_uri = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
+
+    assert _start_save_client(server_uri) is launch.return_value
+
+    output = tmp_path / "recordings" / "test-run" / "rerun.rrd"
+    launch.assert_called_once_with(
+        [str(rerun), "--save", str(output), "--bind", "127.0.0.1", "--port", "auto", server_uri],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert output.parent.is_dir()
+
+
+def test_save_client_without_rerun_skips_recording(mocker, monkeypatch, tmp_path):
+    monkeypatch.setattr("sys.executable", str(tmp_path / "python"))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    launch = mocker.patch.object(subprocess, "Popen")
+
+    assert _start_save_client(f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy") is None
+
+    launch.assert_not_called()
 
 
 class ExplicitPubSubOverride:

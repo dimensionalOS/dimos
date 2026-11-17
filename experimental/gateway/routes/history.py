@@ -40,7 +40,7 @@ async def read_log(
         raise ApiError(
             404, "no run has a log yet" if run_id == "latest" else f"no log for run {run_id}"
         )
-    return await asyncio.to_thread(
+    page = await asyncio.to_thread(
         logs.read,
         file,
         run_id,
@@ -49,6 +49,9 @@ async def read_log(
         query or None,
         level or None,
     )
+    # events.watch_logs watches these roots only
+    watched = [root.resolve() for root in logs.logs_dirs(state.dimos_dir)]
+    return {**page, "watched": file.resolve().parent.parent in watched}
 
 
 @router.get("", response_model=responses.History)

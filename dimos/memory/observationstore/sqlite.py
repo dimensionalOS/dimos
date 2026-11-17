@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from itertools import chain
 import json
 import re
 import sqlite3
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
+import warnings
 
 from pydantic import Field, model_validator
 
@@ -37,7 +39,7 @@ from dimos.memory.type.observation import _UNLOADED, Observation, PoseTuple
 from dimos.memory.utils.sqlite import conn_lock, open_disposable_sqlite_connection
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
     from dimos.memory.type.filter import Filter, StreamQuery
 
@@ -178,7 +180,9 @@ def _compile_query(
     return (sql, params, python_filters)
 
 
-def _locked_rows(lock: threading.RLock, cur: sqlite3.Cursor) -> Iterator[tuple[Any, ...]]:
+def _locked_rows(
+    lock: threading.RLock, cur: sqlite3.Cursor
+) -> Generator[tuple[Any, ...], None, None]:
     """Yield rows lazily, holding ``lock`` only while fetching ``cur.arraysize`` rows."""
 
     def fetch_page() -> list[tuple[Any, ...]]:
@@ -395,6 +399,23 @@ class SqliteObservationStore(ObservationStore[T]):
         with self._lock:
             self._conn.rollback()
 
+    def warn_if_unposed(self, q: StreamQuery) -> None:
+        if not any(isinstance(f, NearFilter) for f in q.filters):
+            return
+        with self._lock:
+            unposed = self._conn.execute(
+                f'SELECT EXISTS(SELECT 1 FROM "{self._name}") '
+                f'AND NOT EXISTS(SELECT 1 FROM "{self._name}_rtree")'
+            ).fetchone()[0]
+        if unposed:
+            # No stacklevel reaches the caller: the depth differs per query path.
+            warnings.warn(
+                f"Stream {self._name!r} has no attached poses, so near() cannot return results. "
+                f"Run dimos map pose-fill <recording.db> --target {self._name} "
+                "--pose-source <pose stream> to write a posed copy.",
+                stacklevel=1,
+            )
+
     @property
     def _pending_python_filters(self) -> list[Any]:
         return getattr(self._tls, "python_filters", [])
@@ -416,9 +437,13 @@ class SqliteObservationStore(ObservationStore[T]):
             cur = self._conn.execute(sql, params)
             # Joined rows carry blob bytes, so fetch them one at a time.
             cur.arraysize = 1 if join else self._page_size
-        it: Iterator[Observation[T]] = (
-            self._row_to_obs(r, has_blob=join) for r in _locked_rows(self._lock, cur)
-        )
+
+        def observations() -> Iterator[Observation[T]]:
+            # Decode failures can retain this frame through their traceback.
+            # Close the cursor now, before a replay error handler stops the store.
+            with closing(_locked_rows(self._lock, cur)) as rows:
+                for row in rows:
+                    yield self._row_to_obs(row, has_blob=join)
 
         # Don't apply python post-filters here — Backend._attach_loaders must
         # run first so that obs.data works for PredicateFilter etc.
@@ -426,7 +451,7 @@ class SqliteObservationStore(ObservationStore[T]):
         self._tls.python_filters = python_filters
         self._tls.query = q
 
-        return it
+        return observations()
 
     def count(self, q: StreamQuery) -> int:
         if q.search_vec:

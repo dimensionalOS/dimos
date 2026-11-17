@@ -38,6 +38,7 @@ class SharedConfig:
     zenoh_namespace: str | None
     zenoh_connect: str | None
     zenoh_gossip: bool | None
+    topics_enabled: bool | None
 
 
 def _app_env() -> dict[str, Any]:
@@ -82,4 +83,5 @@ def shared_config() -> SharedConfig:
         zenoh_namespace=pick("zenohNamespace", "zenoh", "namespace"),
         zenoh_connect=pick("zenohConnect", "zenoh", "connect"),
         zenoh_gossip=pick(None, "zenoh", "gossip"),
+        topics_enabled=pick(None, "topics", "enabled"),
     )

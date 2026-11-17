@@ -50,11 +50,18 @@ class TestSudoRun:
                 mock_run.assert_called_once_with(["echo", "hello"], check=True)
 
     def test_runs_with_sudo_when_not_root(self) -> None:
-        with patch("os.geteuid", return_value=1000):
+        with patch("os.geteuid", return_value=1000), patch("sys.stdin.isatty", return_value=True):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
                 prompt.sudo_run("echo", "hello", check=True)
                 mock_run.assert_called_once_with(["sudo", "echo", "hello"], check=True)
+
+    def test_sudo_never_prompts_without_a_tty(self) -> None:
+        with patch("os.geteuid", return_value=1000), patch("sys.stdin.isatty", return_value=False):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                prompt.sudo_run("echo", "hello", check=True)
+                mock_run.assert_called_once_with(["sudo", "-n", "echo", "hello"], check=True)
 
 
 class TestReadSysctlInt:
@@ -90,7 +97,7 @@ class TestReadSysctlInt:
 
 class TestWriteSysctlInt:
     def test_calls_sudo_run_with_correct_args(self) -> None:
-        with patch("os.geteuid", return_value=1000):
+        with patch("os.geteuid", return_value=1000), patch("sys.stdin.isatty", return_value=True):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
                 _write_sysctl_int("net.core.rmem_max", 67108864)
