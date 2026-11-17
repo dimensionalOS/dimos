@@ -63,7 +63,7 @@ class Check(_Struct):
 
 class Transition(_Struct):
     goto: str
-    if_: str | None = Field(default=None, validation_alias="if")
+    if_: str | None = Field(default=None, alias="if")
     mode: Literal["graceful", "immediate"] = "graceful"
     set: dict[str, Source] = {}
     on: str | None = None
