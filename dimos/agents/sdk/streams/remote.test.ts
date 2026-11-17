@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -105,6 +106,7 @@ test("topic samples decode into images, clouds and typed bounded values", async 
 });
 
 test("real topic provider discovery, reads, cancellation and preview lifecycle", { timeout: 90_000 }, async (t) => {
+  if (!existsSync(PYTHON)) return t.skip("relay test Python is unavailable");
   const relay = await topicFixture(t);
   const session = await openRelay(relay.endpoint);
   const frames = new RemoteFrames();
