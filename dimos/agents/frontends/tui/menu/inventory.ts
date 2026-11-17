@@ -53,7 +53,7 @@ export const environmentTab: MenuTab = {
       plain(`Python         ${env.python}`),
       plain(`Transport      ${env.transport}${env.robot_ip === null ? "" : ` · robot_ip ${env.robot_ip}`}`),
       plain(`Zenoh          ${or(env.zenoh_connect)}${env.zenoh_scouting ? " · scouting" : ""}`),
-      plain(`Relay          ${env.relay === null ? "-" : `${env.relay.url} · ${env.relay.robot}`}`),
+      plain(`Relay          ${env.relay === null ? "-" : `${env.relay.url} · ${env.relay.source}`}`),
       plain(`API guide      ${or(env.python_api_guide)}`),
       plain(
         `System         ${inventory.runtime.modules.length} modules · ${inventory.runtime.streams.length} streams · ${inventory.agent_modules.length} agent modules`,

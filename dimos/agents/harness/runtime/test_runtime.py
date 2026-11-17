@@ -36,10 +36,10 @@ import pytest
 import requests
 
 from dimos.agents.annotation import skill
-from dimos.agents.harness.runtime import load as runtime_load
+from dimos.agents.harness.runtime import harness_runtime as runtime_module, load as runtime_load
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.agents.harness.runtime.agent_module_manager import AgentModuleManager, _Record
-from dimos.agents.harness.runtime.inventory import environment, relay_endpoint
+from dimos.agents.harness.runtime.inventory import environment
 from dimos.agents.harness.runtime.load import mcp_server_blueprint
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import STATE_DIR
@@ -47,9 +47,10 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
-from dimos.core.introspection.module.info import ModuleInfo, RpcInfo
+from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.module import Module
-from dimos.core.stream import Out
+from dimos.core.stream import Out, TransportSpec
+from dimos.core.transport import ZenohTransport
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.agent_msgs.AgentStep import AgentStep
@@ -89,6 +90,7 @@ class HarnessProbe(Module):
     """Publishes a moving position at 20 Hz and a small image at 2 Hz."""
 
     position: Out[Vector3]
+    remapped: Out[Vector3]
     color_image: Out[Image]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -115,7 +117,9 @@ class HarnessProbe(Module):
         frame = Image.from_numpy(np.zeros((48, 64, 3), dtype=np.uint8))
         while not self._stopping.wait(0.05):
             step += 1
-            self.position.publish(Vector3(math.cos(step / 20), math.sin(step / 20), 0.0))
+            value = Vector3(math.cos(step / 20), math.sin(step / 20), 0.0)
+            self.position.publish(value)
+            self.remapped.publish(value)
             if step % 10 == 0:
                 self.color_image.publish(frame)
 
@@ -184,7 +188,16 @@ def serve_system() -> None:
         patch.setattr(global_config, "record_topics", "*")
         patch.setattr(tap, "RECORDINGS_DIR", STATE_DIR / "recordings")
         coordinator = ModuleCoordinator.build(
-            autoconnect(HarnessProbe.blueprint(), mcp_server_blueprint())
+            autoconnect(
+                HarnessProbe.blueprint().transports(
+                    {
+                        ("remapped", Vector3): TransportSpec(
+                            ZenohTransport, kwargs={"topic": "harness-test/custom/position"}
+                        )
+                    }
+                ),
+                mcp_server_blueprint(),
+            )
         )
         with tap.recording(coordinator):
             coordinator.loop()
@@ -217,16 +230,17 @@ def _try(check: Callable[[], Any]) -> Any:
 def _env(state_home: Path, port: int) -> dict[str, str]:
     return {
         **os.environ,
-        "DIMOS_TRANSPORT": "lcm",
+        "DIMOS_TRANSPORT": "zenoh",
+        "ZENOH_MODE": "peer",
+        "ZENOH_SCOUT_ADDR": f"224.0.0.231:{port}",
+        "ZENOH_CONNECT": "",
+        "ROBOT_IP": "",
+        "ROBOT_IPS": "",
         "XDG_STATE_HOME": str(state_home),
         "DIMOS_RUN_LOG_DIR": str(state_home / "dimos" / "logs" / "test"),
         "MCPSERVER__PORT": str(port),
         "MCPSERVER__HOST": "127.0.0.1",
         "N_WORKERS": "1",
-        "RELAYBRIDGEMODULE__LOCAL_PORT": "0",
-        "RELAYBRIDGEMODULE__WEB_BUILD": "false",
-        "RELAYBRIDGEMODULE__OPEN_BROWSER": "false",
-        "RELAYBRIDGEMODULE__RTC": "false",
     }
 
 
@@ -375,7 +389,7 @@ def mcp_url(system: subprocess.Popen[bytes], port: int) -> str:
 @pytest.fixture(scope="module")
 def runtime(mcp_url: str, state_home: Path, port: int) -> Iterator[Client]:
     loaded, stdout = _load(state_home, port)
-    assert loaded == {"loaded": ["RelayBridgeModule", "HarnessRuntime"], "already": ["McpServer"]}
+    assert loaded == {"loaded": ["TopicMetadataModule", "HarnessRuntime"], "already": ["McpServer"]}
     assert stdout.count("\n") == 1
     client = Client(mcp_url)
     _until(
@@ -396,7 +410,10 @@ def _running(runtime: Client, instance: str) -> list[dict[str, Any]]:
 
 def test_load_again_reports_both_as_already(runtime: Client, state_home: Path, port: int) -> None:
     loaded, _ = _load(state_home, port)
-    assert loaded == {"loaded": [], "already": ["RelayBridgeModule", "HarnessRuntime", "McpServer"]}
+    assert loaded == {
+        "loaded": [],
+        "already": ["TopicMetadataModule", "HarnessRuntime", "McpServer"],
+    }
 
 
 def test_inventory_follows_a_module_loaded_at_runtime(
@@ -414,11 +431,11 @@ def test_inventory_follows_a_module_loaded_at_runtime(
     )
     assert stream["channel"]
     assert inventory["environment"]["python_api_guide"].endswith("python-api.md")
-    assert inventory["environment"]["transport"] == "lcm"
+    assert inventory["environment"]["transport"] == "zenoh"
     relay = inventory["environment"]["relay"]
-    assert set(relay) == {"url", "robot"}
+    assert set(relay) == {"url", "source"}
     assert requests.get(f"{relay['url']}/api/info", timeout=5).ok
-    assert relay["robot"]
+    assert relay["source"]
 
     _python(
         "from dimos.porcelain.dimos import Dimos\n"
@@ -449,7 +466,7 @@ def test_compact_inventory_lists_facts_and_drills_down(runtime: Client) -> None:
     assert keyed["rpc:HarnessProbe.echo"]["line"] == (
         "HarnessProbe.echo(text: str) -> str — Return the given text."
     )
-    assert keyed["env:dimos"]["line"].endswith("· transport lcm")
+    assert keyed["env:dimos"]["line"].endswith("· transport zenoh")
 
     detail = runtime.call_raw("inventory", {"module": "HarnessProbe"}, {})
     module_text = detail["content"][0]["text"]
@@ -497,7 +514,8 @@ import threading
 
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.core.core import rpc
-from dimos.core.stream import Out
+from dimos.core.stream import Out, TransportSpec
+from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
@@ -850,7 +868,7 @@ def test_live_notices_resume_across_a_harness_reload(
     )
     assert "inventory" not in {tool["name"] for tool in runtime.rpc("tools/list")["tools"]}
     loaded, _ = _load(state_home, port)
-    assert loaded == {"loaded": ["HarnessRuntime"], "already": ["RelayBridgeModule", "McpServer"]}
+    assert loaded == {"loaded": ["HarnessRuntime"], "already": ["TopicMetadataModule", "McpServer"]}
     (listed,) = runtime.call("agent_module", op="list")["agent_modules"]
     assert (listed["state"], listed["revision"]) == ("running", 1)
     later = _until(
@@ -862,30 +880,52 @@ def test_live_notices_resume_across_a_harness_reload(
     runtime.call("agent_module", op="delete", name="auto")
 
 
-def test_load_preserves_an_authored_bridge_and_discovers_its_endpoint(mocker):
+def test_load_leaves_existing_metadata_and_runtime_running(mocker):
     app = mocker.Mock()
     app.list_modules.return_value = [
-        ModuleInfo("cockpit", class_name="CustomBridge", rpcs=[RpcInfo("relay_endpoint")]),
-        ModuleInfo("HarnessRuntime", class_name="HarnessRuntime"),
-        ModuleInfo("McpServer", class_name="McpServer"),
+        ModuleInfo(name, class_name=name)
+        for name in ("TopicMetadataModule", "HarnessRuntime", "McpServer")
     ]
-    endpoint = {"url": "http://relay.example:8080", "robot": "custom"}
-    app.get_module.return_value.relay_endpoint.return_value = endpoint
     mocker.patch.object(runtime_load.Dimos, "connect", return_value=app)
     mocker.patch.object(runtime_load, "mcp_server_url", return_value="http://localhost:9990/mcp")
     app.find_module_by_spec.return_value.mcp_url.return_value = "http://localhost:9990/mcp"
 
-    result = runtime_load.load()
-
-    assert result.to_json() == {
+    assert runtime_load.load().to_json() == {
         "loaded": [],
-        "already": ["CustomBridge", "HarnessRuntime", "McpServer"],
+        "already": ["TopicMetadataModule", "HarnessRuntime", "McpServer"],
     }
     app.run.assert_not_called()
-    app.unload.assert_not_called()
     app.stop.assert_called_once_with()
-    assert relay_endpoint(app) == endpoint
-    app.get_module.assert_called_once_with("cockpit")
-    app.list_modules.return_value = []
-    assert relay_endpoint(app) is None
     assert environment().to_json()["relay"] is None
+
+
+@pytest.mark.parametrize("external, fails", [(False, False), (True, False), (False, True)])
+async def test_topic_provider_lifecycle(mocker, monkeypatch, external, fails):
+    monkeypatch.setattr(global_config, "relay_url", "http://external.example" if external else None)
+    relay = mocker.patch.object(runtime_module, "RelayProcess").return_value
+    relay.start.return_value.open_url = "http://owned.example"
+    configs = []
+
+    async def provide(config, stop):
+        configs.append(config)
+        await stop.wait()
+        if fails:
+            raise RuntimeError("registration failed")
+
+    mocker.patch.object(runtime_module, "serve", side_effect=provide)
+    runtime = runtime_module.HarnessRuntime()
+    lifecycle = runtime.main()
+    try:
+        await anext(lifecycle)
+        expected = "http://external.example" if external else "http://owned.example"
+        assert runtime._relay_endpoint == {"url": expected, "source": "harness"}
+        assert configs[0].relay_url == expected
+        assert (configs[0].read, configs[0].write) == (True, False)
+    finally:
+        if fails:
+            with pytest.raises(RuntimeError, match="registration failed"):
+                await lifecycle.aclose()
+        else:
+            await lifecycle.aclose()
+    assert runtime._relay_endpoint is None
+    assert relay.stop.call_count == (0 if external else 1)

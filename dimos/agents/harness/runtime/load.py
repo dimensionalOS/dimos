@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Load the agent's relay bridge, HarnessRuntime and McpServer into the running system."""
+"""Load the agent's topic metadata, HarnessRuntime and McpServer into the running system."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from dimos.agents.mcp.spec import McpServerSpec
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.porcelain.dimos import Dimos
-from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
+from dimos.web.relay_bridge.topic_descriptors import TopicMetadataModule
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ def _reaches(dialed: str, served: str) -> bool:
 
 
 def load() -> LoadResult:
-    """Ensure the relay bridge, HarnessRuntime and McpServer are running.
+    """Ensure topic metadata, HarnessRuntime and McpServer are running.
 
     Raises when the running system's McpServer serves an endpoint that `dimos agent` does
     not dial.
@@ -102,26 +102,12 @@ def load() -> LoadResult:
                 )
         loaded: list[str] = []
         already: list[str] = []
-        bridge = next(
-            (info for info in modules if any(rpc.name == "relay_endpoint" for rpc in info.rpcs)),
-            None,
-        )
-        for cls in (RelayBridgeModule, HarnessRuntime, McpServer):
-            if cls is RelayBridgeModule and bridge is not None:
-                already.append(bridge.class_name or bridge.name)
-                continue
+        for cls in (TopicMetadataModule, HarnessRuntime, McpServer):
             if cls.__name__ in running:
                 already.append(cls.__name__)
                 continue
             try:
-                if cls is RelayBridgeModule:
-                    app.run(
-                        _configured_blueprint(
-                            cls.blueprint(rtc=False, open_browser=False, web_build=False)
-                        )
-                    )
-                else:
-                    app.run(mcp_server_blueprint() if cls is McpServer else cls)
+                app.run(_configured_blueprint(cls.blueprint()))
             except BaseException:
                 # A module whose start() failed stays deployed; unloaded, the next load retries it.
                 if cls.__name__ in {info.class_name for info in app.list_modules()}:

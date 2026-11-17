@@ -59,11 +59,12 @@ class MemoryFrames implements FrameSource {
 function ref(module: string, name: string, type: string): StreamRef {
   return {
     source: { module: module as ModuleInstance, name, direction: "out", type: type as MsgType },
-    encoding:
+    encoding: "application/x-lcm",
+    profile:
       new Map([
-        ["Image", "jpeg.v1"],
-        ["PointCloud2", "voxels.zlib.v1"],
-        ["OccupancyGrid", "costmap.zlib.v1"],
+        ["Image", "image.jpeg.balanced.v1"],
+        ["PointCloud2", "cloud.q16.balanced.v1"],
+        ["OccupancyGrid", "raw"],
       ]).get(type) ?? "json.v1",
     channel: `${module}.${name}` as Channel,
   };

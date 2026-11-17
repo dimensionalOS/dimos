@@ -33,7 +33,7 @@ function cardOf(ref: StreamRef, rates: RateTable, now: EpochMs): StreamCard {
     title: ref.source?.name ?? ref.channel,
     direction: ref.source?.direction ?? null,
     type: ref.source?.type ?? ref.encoding,
-    picture: pictureOf(ref.encoding),
+    picture: pictureOf(ref.profile ?? ref.encoding, ref.source?.type),
     rate: rate ?? null,
     level: rateLevel(rate, now),
   };
