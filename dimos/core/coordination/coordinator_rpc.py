@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -22,8 +23,6 @@ from dimos.core.transport_factory import rpc_backend
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from dimos.protocol.rpc.spec import RPCInspectable, RPCSpec
 
 logger = setup_logger()
