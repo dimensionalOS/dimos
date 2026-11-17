@@ -22,6 +22,7 @@ empty bins lie is given, not detected. All poses are in the arm's base frame ("w
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import math
 import threading
 import time
@@ -38,11 +39,17 @@ from dimos.manipulation.grasp_verification import (
     await_gripper_settle,
     grasp_failure,
 )
-from dimos.manipulation.manipulation_spec import ManipulationSpec, PlanningGroupInfo
+from dimos.manipulation.manipulation_spec import (
+    ExecutionStatus,
+    ManipulationSpec,
+    PlanningGroupInfo,
+)
 from dimos.manipulation.sdk import Arm, MotionError
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
@@ -56,6 +63,9 @@ BIN_WIDTH_M = 6 * IN
 BIN_HEIGHT_M = 5 * IN
 BIN_WALL_M = 0.003
 _OBSTACLE_PREFIX = "kitting/"
+EXECUTE_TIMEOUT_S = 120.0
+# How many times a long planned move may be split at its midpoint.
+MAX_SPLITS = 2
 
 
 class BinPose(BaseModel):
@@ -117,6 +127,10 @@ class XArm7KittingConfig(ModuleConfig):
     # so a hanging bin stops swinging.
     carry_steps: int = Field(default=3, ge=1)
     settle_s: float = 1.0
+    # A planned move may swing no joint further than this; a longer plan is split at its midpoint.
+    max_joint_travel_rad: float = 1.2
+    # The first lift, after which the grip is checked again with the bin's weight on it.
+    test_lift_m: float = 0.02
     # Released this far above where the bin was gripped.
     release_gap_m: float = 0.008
     speed_scale: float = Field(default=0.3, gt=0.0, le=1.0)
@@ -289,16 +303,20 @@ class XArm7KittingModule(Module):
                 self._vertical(arm, [*pick_xy, grip_z + cfg.approach_m], pick_q, cfg.speed_scale)
                 return {"ok": False, "step": "grip", "reason": failure, "steps": steps}
             self._next(steps, "lift")
+            # A short lift first: a bin that is not held stays on the table, not mid-air.
+            self._vertical(arm, [*pick_xy, grip_z + cfg.test_lift_m], pick_q, cfg.carry_speed_scale)
+            time.sleep(cfg.settle_s)
+            self._check_holding(arm, "after the short lift")
             self._vertical(arm, [*pick_xy, cfg.carry_z_m], pick_q, cfg.carry_speed_scale)
             time.sleep(cfg.settle_s)
+            self._check_holding(arm, "after the lift")
             self._next(steps, "carry")
             for waypoint, q in carry_waypoints(
                 pick_xy, place_xy, pick_yaw, bin_turn, turn, cfg.carry_steps
             ):
-                arm.move_pose(
-                    [*waypoint, cfg.carry_z_m], orientation=q, speed_scale=cfg.carry_speed_scale
-                )
+                self._planned(arm, [*waypoint, cfg.carry_z_m], q, cfg.carry_speed_scale)
                 time.sleep(cfg.settle_s)
+                self._check_holding(arm, "while carrying")
             self._next(steps, "lower")
             self._vertical(
                 arm, [*place_xy, grip_z + cfg.release_gap_m], place_q, cfg.carry_speed_scale
@@ -335,7 +353,51 @@ class XArm7KittingModule(Module):
             arm.move_linear(xyz[0] - now.x, xyz[1] - now.y, xyz[2] - now.z, speed_scale=speed)
         except MotionError as error:
             logger.warning("Straight move failed, planning it instead", reason=str(error)[:160])
-            arm.move_pose(xyz, orientation=q, speed_scale=speed)
+            self._planned(arm, xyz, q, speed)
+
+    def _planned(
+        self, arm: Arm, xyz: list[float], q: list[float], speed: float, depth: int = 0
+    ) -> None:
+        """A planned move to ``xyz``, ``q`` that swings no joint more than
+        ``max_joint_travel_rad``; a plan that would goes through the midpoint instead."""
+        target = PoseStamped(frame_id="world", position=Vector3(*xyz), orientation=Quaternion(*q))
+        plan = self._manipulation.plan_to_poses({arm.info.id: target}, speed_scale=speed)
+        if not plan.succeeded or plan.plan is None:
+            raise MotionError("move_pose", plan)
+        travel = joint_travel(plan.plan.path, arm.info.joint_names)
+        if travel > self.config.max_joint_travel_rad:
+            if depth >= MAX_SPLITS:
+                raise RuntimeError(f"every plan there swings a joint {travel:.2f} rad")
+            logger.warning(
+                "Plan swings too far, going through the midpoint", travel=round(travel, 2)
+            )
+            now = arm.pose()
+            here = (now.position.x, now.position.y)
+            here_yaw = tool_yaw(now.orientation.to_tuple())
+            (mid_xy, mid_q), _ = carry_waypoints(
+                here,
+                (xyz[0], xyz[1]),
+                here_yaw,
+                _wrap(tool_yaw(q) - here_yaw),
+                _wrap(math.atan2(xyz[1], xyz[0]) - math.atan2(here[1], here[0])),
+                2,
+            )
+            self._planned(arm, [*mid_xy, (now.position.z + xyz[2]) / 2], mid_q, speed, depth + 1)
+            self._planned(arm, xyz, q, speed, depth + 1)
+            return
+        result = self._manipulation.execute(
+            blocking=True, timeout=EXECUTE_TIMEOUT_S, plan_id=plan.plan.plan_id
+        )
+        if result.status is not ExecutionStatus.COMPLETED:
+            raise MotionError("move_pose", result)
+
+    def _check_holding(self, arm: Arm, when: str) -> None:
+        """Raise if the jaws have closed past the wall: the bin slipped out."""
+        reading = arm.state().gripper_position
+        if reading is not None and reading <= self.config.empty_reading:
+            raise RuntimeError(
+                f"the bin slipped out of the gripper {when} (readback {reading:.3f})"
+            )
 
     def _next(self, steps: list[str], step: str) -> None:
         if self._abort.is_set():
@@ -411,7 +473,20 @@ def carry_waypoints(
     return points
 
 
-def tool_yaw(xyzw: tuple[float, float, float, float]) -> float:
+def joint_travel(path: Sequence[JointState], joints: Sequence[str]) -> float:
+    """The most any of ``joints`` moves from the path's first point, rad."""
+    if not path:
+        return 0.0
+    first = dict(zip(path[0].name, path[0].position, strict=True))
+    most = 0.0
+    for point in path[1:]:
+        for name, value in zip(point.name, point.position, strict=True):
+            if name in joints and name in first:
+                most = max(most, abs(value - first[name]))
+    return most
+
+
+def tool_yaw(xyzw: Sequence[float]) -> float:
     """The wall-normal yaw (rad) a tool orientation closes its fingers along."""
     m = Rotation.from_quat(xyzw).as_matrix()
     return math.atan2(m[1, 0], m[0, 0]) - math.pi / 2
@@ -439,7 +514,7 @@ def _wrap(angle: float) -> float:
     return (angle + math.pi) % (2 * math.pi) - math.pi
 
 
-def _pick_group(groups: Any, wanted: str | None) -> PlanningGroupInfo:
+def _pick_group(groups: Sequence[PlanningGroupInfo], wanted: str | None) -> PlanningGroupInfo:
     matches = [g for g in groups if (g.id == wanted if wanted else g.tip_frame is not None)]
     if len(matches) != 1:
         raise ValueError(

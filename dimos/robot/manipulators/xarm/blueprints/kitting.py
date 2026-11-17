@@ -26,10 +26,11 @@ import math
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.xarm.blueprints.basic import XARM_REMAPS, xarm_coordinator
-from dimos.robot.manipulators.xarm.config import make_xarm_model_config, make_xarm7_sim_hardware
+from dimos.robot.manipulators.xarm.config import make_xarm7_sim_hardware, make_xarm_model_config
 from dimos.robot.manipulators.xarm.kitting import XArm7KittingModule
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
@@ -48,14 +49,20 @@ XARM7_KITTING_BODIES = [
 ]
 
 
-def _model(robot: str | None):  # type: ignore[no-untyped-def]
-    return make_xarm_model_config(
+# A full bin hangs from one wall: gentle starts and stops keep it from swinging in the fingers.
+XARM7_KITTING_ACCELERATION = 0.6  # rad/s^2, every joint; the model's default is 2.0
+
+
+def _model(robot: str | None) -> RobotModelConfig:
+    config = make_xarm_model_config(
         7,
         robot=robot,
         base_pose=PoseStamped(frame_id="world"),
         tf_extra_links=["link7", "link_tcp"],
         home_joints=XARM7_KITTING_HOME,
     )
+    gentle = config.model.with_default_joint_acceleration_limit(XARM7_KITTING_ACCELERATION)
+    return config.model_copy(update={"model": gentle})
 
 
 xarm7_kitting = autoconnect(
@@ -93,5 +100,6 @@ xarm7_kitting_sim = autoconnect(
         reset_joint_positions=XARM7_KITTING_HOME,
         tracked_bodies=XARM7_KITTING_BODIES,
     ),
-    XArm7KittingModule.blueprint(),
+    # the twin's wall is only 0.8 mm thicker than its closed fingers, so a hold reads about 0.01
+    XArm7KittingModule.blueprint(empty_reading=0.005),
 )
