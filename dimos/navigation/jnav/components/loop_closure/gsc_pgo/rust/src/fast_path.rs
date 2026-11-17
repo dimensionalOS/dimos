@@ -208,6 +208,7 @@ impl GscPgo {
         let estimate_raw_scans = self.config.deterministic_config.fast_path_scans_per_free_keyframe * free.len() as f64;
         let config = self.config.clone();
         let window = free.clone();
+        let dump = (self.scans_seen, self.newest_scan_time(), closures.clone(), new.clone());
         let slot = Arc::new(JobSlot::<FastPathResult>::default());
         let finish = slot.clone();
         self.fast_path_pool
@@ -216,6 +217,10 @@ impl GscPgo {
                 let started = std::time::Instant::now();
                 let graph = window_graph(&published, &config, noise, covariance, &window, selected);
                 let fast = solve_window(&graph, &config);
+                #[cfg(feature = "native")]
+                dump_window(&dump, &published, &graph, &fast);
+                #[cfg(not(feature = "native"))]
+                let _ = dump;
                 let count = window.len();
                 *finish.done.lock().expect("fast path slot") = Some(FastPathResult {
                     rotations: fast.rotations[..count].to_vec(),
@@ -468,4 +473,25 @@ pub fn solve_window(graph: &WindowGraph, config: &Config) -> FastSolve {
         &solve_config(config),
         config.solver_fast_path_max_lm_steps,
     )
+}
+
+/// `GSC_WINDOW_DUMP=<dir>`: each window job's problem, the published map it started from and its solve, one JSON file per
+/// job (`examples/window_redo` solves it again); unset costs nothing.
+#[cfg(feature = "native")]
+fn dump_window(
+    (scan, time, closures, new): &(usize, f64, Vec<usize>, Vec<bool>),
+    published: &KeyFrames,
+    graph: &WindowGraph,
+    fast: &FastSolve,
+) {
+    let Some(dir) = std::env::var_os("GSC_WINDOW_DUMP") else {
+        return;
+    };
+    let count = graph.pull.len();
+    let value = serde_json::json!({
+        "scan": scan, "time": time, "closures": closures, "new": new, "graph": graph,
+        "published_positions": (0..published.len()).map(|k| published.position(k)).collect::<Vec<_>>(),
+        "solved_positions": &fast.positions[..count], "over_cutoff": fast.over_cutoff, "converged": fast.converged,
+    });
+    let _ = std::fs::write(std::path::Path::new(&dir).join(format!("window_{scan:07}.json")), value.to_string());
 }

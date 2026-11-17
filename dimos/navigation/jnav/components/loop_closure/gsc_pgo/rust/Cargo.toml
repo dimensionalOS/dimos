@@ -42,6 +42,10 @@ validator = { version = "0.21", features = ["derive"], optional = true }
 
 # the offline replays of a pgo-eval run read its JSON
 [[example]]
+name = "window_redo"
+required-features = ["native"]
+
+[[example]]
 name = "relearn"
 required-features = ["native"]
 
