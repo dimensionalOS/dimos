@@ -1102,6 +1102,28 @@ fn pull_back_facing(
     })
 }
 
+/// Where a heading goal is planned to: the pull-back along `approach`, or the kept route's end
+/// when that is nearer the goal and the standing body still clears it facing `yaw`.
+fn heading_spot(
+    cl: &mut Clear,
+    fps: &Fps,
+    approach: &[[f64; 2]],
+    yaw: f64,
+    incumbent: Option<&[[f64; 3]]>,
+) -> Option<(f64, f64)> {
+    let fresh = pull_back_facing(cl, fps, approach, yaw)?;
+    let goal = *approach.last()?;
+    let off = |x: f64, y: f64| (x - goal[0]).hypot(y - goal[1]);
+    let margin = cl.margin;
+    let held = incumbent
+        .and_then(|inc| inc.last())
+        .filter(|e| {
+            rem_2pi(e[2] - yaw).abs() < EXACT_EPS && off(e[0], e[1]) < off(fresh.0, fresh.1)
+        })
+        .filter(|e| pose_clear(cl.w, fps.stand(), e[0], e[1], yaw) > margin);
+    Some(held.map_or(fresh, |e| (e[0], e[1])))
+}
+
 /// The last point of `approach` that `fits`, walking back from its end in half-cell steps.
 fn last_along(approach: &[[f64; 2]], mut fits: impl FnMut(f64, f64) -> bool) -> Option<(f64, f64)> {
     let end = *approach.last()?;
@@ -1966,8 +1988,8 @@ pub fn plan_explored(
     let (fresh, held) = {
         let (gx, gy) = lattice_axes(&w);
         let mut cl = Clear::new(&mut w, &fps, margin, gx, gy, emb.governor());
-        let exact =
-            goal_yaw.and_then(|yaw| Some((pull_back_facing(&mut cl, &fps, approach, yaw)?, yaw)));
+        let exact = goal_yaw
+            .and_then(|yaw| Some((heading_spot(&mut cl, &fps, approach, yaw, incumbent)?, yaw)));
         let with_heading = exact.and_then(|(goal, yaw)| {
             let fresh = se2_search_in(&mut cl, &fps, pose, goal, Some(yaw), emb, margin);
             let held = incumbent
@@ -2592,6 +2614,43 @@ mod tests {
             rem_2pi(end[2] - PI).abs() < 1e-9,
             "faces the heading, ends at {end:?}"
         );
+    }
+
+    #[test]
+    fn a_heading_spot_moves_no_further_from_the_goal_once_held() {
+        let pts = wall_x(2.0, None);
+        let plan_from =
+            |pose: (f64, f64, f64), approach: &[[f64; 2]], held: Option<&[[f64; 3]]>| {
+                let (states, honored) = plan_explored(
+                    &pts,
+                    &Terrain::default(),
+                    pose,
+                    approach,
+                    Some(PI),
+                    &Emb::fixture(),
+                    0.1,
+                    held,
+                    COMMIT_MARGIN,
+                )
+                .expect("pulled back, not refused");
+                assert!(honored, "the reversed body fits short of the wall");
+                states
+            };
+        let goal = [1.85, 0.0];
+        let off = |s: &[[f64; 3]]| {
+            let end = end_xy(s);
+            (end[0] - goal[0]).hypot(end[1] - goal[1])
+        };
+        let straight = plan_from((0.0, 0.0, 0.0), &[[0.0, 0.0], goal], None);
+        // Approached on the slant, the pull-back lands further from the goal.
+        let slant = [[1.0, -0.8], goal];
+        let fresh = plan_from((1.0, -0.8, 0.0), &slant, None);
+        assert!(
+            off(&fresh) > off(&straight) + 0.02,
+            "{fresh:?} vs {straight:?}"
+        );
+        let kept = plan_from((1.0, -0.8, 0.0), &slant, Some(&straight));
+        assert_near(end_xy(&kept), end_xy(&straight));
     }
 
     #[test]
