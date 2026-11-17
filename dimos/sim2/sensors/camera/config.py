@@ -37,8 +37,17 @@ class CameraConfig:
     fy: float = 188.36
     cx: float = 160
     cy: float = 120
+    min_depth_m: float = 0.0
+    max_depth_m: float = math.inf
+    # What the camera has. A missing image is neither rendered nor published.
+    color: bool = True
+    depth: bool = True
 
     def __post_init__(self) -> None:
+        if not 0 <= self.min_depth_m < self.max_depth_m:
+            raise ValueError("invalid camera depth range")
+        if not (self.color or self.depth):
+            raise ValueError("a camera has color, depth or both")
         if min(self.width, self.height, self.fx, self.fy, self.hz) <= 0 or not all(
             map(math.isfinite, (self.fx, self.fy, self.cx, self.cy, self.hz))
         ):
@@ -52,6 +61,7 @@ class CameraRenderer(Protocol):
     A render call applies one complete acquisition to every requested camera.
     Results are keyed by camera frame ID: RGB uint8 (H, W, 3), optical-axis
     depth float32 (H, W) in metres. Arrays must survive subsequent render calls.
+    An image a camera does not have is not read: a renderer may leave it empty.
     Unsupported projections must fail at load, never silently change intrinsics.
     """
 

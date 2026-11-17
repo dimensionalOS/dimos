@@ -12,171 +12,149 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native camera objects are private to this renderer, never physics config."""
+"""MuJoCo 4 RGB-D rendering through a bounded process and shared pixel buffer."""
 
-import math
+from dataclasses import replace
+import mmap
+from multiprocessing.connection import Connection
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+from typing import Any
 
 from dimos_lcm.sim_msgs import WorldState
-import mujoco
 import numpy as np
 from numpy.typing import NDArray
-from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
-from dimos.sim2.geometry.mujoco import build_scene
-from dimos.sim2.geometry.query import MujocoGeometry
 from dimos.sim2.sensors.camera.config import CameraConfig
+
+_NO_COLOR: NDArray[np.uint8] = np.empty((0, 0, 3), dtype=np.uint8)
+_NO_DEPTH: NDArray[np.float32] = np.empty((0, 0), dtype=np.float32)
+
+
+def _shared_views(
+    memory: mmap.mmap, cameras: tuple[CameraConfig, ...]
+) -> dict[str, tuple[NDArray[np.uint8], NDArray[np.float32]]]:
+    images = {}
+    offset = 0
+    for camera in cameras:
+        color, depth = _NO_COLOR, _NO_DEPTH
+        if camera.color:
+            color = np.ndarray((camera.height, camera.width, 3), np.uint8, memory, offset)
+            offset += color.nbytes
+        if camera.depth:
+            offset = (offset + 3) // 4 * 4
+            depth = np.ndarray((camera.height, camera.width), np.float32, memory, offset)
+            offset += depth.nbytes
+        images[camera.frame_id] = color, depth
+    return images
 
 
 class MujocoRenderer:
+    """MuJoCo Filament RGB-D, with shared pixels and one capture in flight.
+
+    Color-only, depth-only and RGB-D devices share retained scene resources.
+    Depth is float32 optical-axis distance in metres, with zero for no return.
+
+    Cocoa's offscreen swapchain needs the process main thread. A native renderer
+    on a sensor thread deadlocks while the DimOS worker's main thread handles RPC.
+    Keep that requirement inside this adapter; physics and other sensors keep
+    their existing workers and the camera module keeps its latest-pose mailbox.
+    """
+
     def __init__(self) -> None:
-        self._cameras: dict[str, CameraConfig] = {}
-        self._camera_ids: dict[str, int] = {}
-        self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
+        self._process: subprocess.Popen[bytes] | None = None
+        self._connection: Connection | None = None
+        self._memory: mmap.mmap | None = None
+        self._images: dict[str, tuple[NDArray[np.uint8], NDArray[np.float32]]] = {}
+        self._cancelled = threading.Event()
+
+    def _receive(self, timeout: float) -> Any:
+        if self._connection is None or not self._connection.poll(timeout):
+            self.cancel()
+            raise TimeoutError("Filament renderer did not answer within its deadline")
+        ok, result = self._connection.recv()
+        if not ok:
+            raise RuntimeError(f"Filament renderer: {result}")
+        return result
 
     def load(self, scene: UsdModel, cameras: tuple[CameraConfig, ...]) -> None:
-        if self._renderers:
+        if self._process is not None:
             raise RuntimeError("close the existing camera scene before loading another")
-        if not cameras or len({c.frame_id for c in cameras}) != len(cameras):
+        if (
+            not cameras
+            or len({c.frame_id for c in cameras}) != len(cameras)
+            or any(not c.frame_id for c in cameras)
+        ):
             raise ValueError("cameras require distinct, nonempty frame IDs")
-        for camera in cameras:
-            if not camera.frame_id or not (
-                math.isclose(camera.fx, camera.fy)
-                and camera.cx == camera.width / 2
-                and camera.cy == camera.height / 2
-            ):
-                raise ValueError(
-                    "this renderer currently supports centered square-pixel pinhole cameras"
-                )
-        spec = build_scene(scene, kinematic=True)
-        _load_lights(spec, scene)
-        for i, camera in enumerate(cameras):
-            spec.worldbody.add_camera(
-                name=f"sim2_view_{i}",
-                fovy=math.degrees(2 * math.atan(camera.height / (2 * camera.fy))),
-            )
-        spec.visual.global_.offwidth = max(c.width for c in cameras)
-        spec.visual.global_.offheight = max(c.height for c in cameras)
-        self.geometry = MujocoGeometry(spec.compile(), scene.revision)
-        self.geometry.select_surfaces()
-        if not {c.frame_id for c in cameras} <= set(self.geometry.body_ids):
-            raise ValueError("camera frames must exist in the composed USD scene")
-        # MuJoCo scales clipping by the scene extent; keep a 1 cm near plane.
-        self.geometry.model.vis.map.znear = 0.01 / self.geometry.model.stat.extent
-        self._cameras = {c.frame_id: c for c in cameras}
-        self._camera_ids = {
-            c.frame_id: self.geometry.model.camera(f"sim2_view_{i}").id
-            for i, c in enumerate(cameras)
-        }
+        self._cancelled.clear()
+        parent, child = socket.socketpair()
+        self._connection = Connection(parent.detach())
+        size = sum(c.width * c.height * (3 * c.color + 4 * c.depth) + 3 for c in cameras)
         try:
-            for c in cameras:
-                size = c.width, c.height
-                if size not in self._renderers:
-                    # Classic Renderer fixes its viewport at construction. Different
-                    # resolutions share the model/data, equal resolutions also share GL.
-                    self._renderers[size] = mujoco.Renderer(
-                        self.geometry.model, height=c.height, width=c.width
-                    )
-        except Exception:
+            # Inherited file descriptors need no named SHM resource tracker and
+            # disappear even if either process crashes. Pixels never enter the pipe.
+            with tempfile.TemporaryFile() as pixels:
+                pixels.truncate(size)
+                self._memory = mmap.mmap(pixels.fileno(), size)
+                self._images = _shared_views(self._memory, cameras)
+                self._process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        f"{__package__}.mujoco_native",
+                        str(child.fileno()),
+                        str(pixels.fileno()),
+                    ],
+                    pass_fds=(child.fileno(), pixels.fileno()),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                )
+            child.close()
+            # Copy just the description fields, not cached USD objects.
+            self._connection.send((replace(scene), cameras))
+            self._receive(60.0)
+        except BaseException:
+            child.close()
             self.close()
             raise
 
     def render(
         self, sample: WorldState, camera_ids: tuple[str, ...]
     ) -> dict[str, tuple[NDArray[np.uint8], NDArray[np.float32]]]:
-        if len(set(camera_ids)) != len(camera_ids) or not set(camera_ids) <= self._cameras.keys():
+        if len(set(camera_ids)) != len(camera_ids) or not set(camera_ids) <= self._images.keys():
             raise ValueError("render requests require distinct configured camera IDs")
+        if self._cancelled.is_set() or self._connection is None:
+            raise RuntimeError("Filament renderer is closed")
         if not camera_ids:
             return {}
-        self.geometry.set_poses(sample)
-        for name in camera_ids:
-            body = self.geometry.model.body(name).id
-            camera = self._camera_ids[name]
-            self.geometry.model.cam_pos[camera] = self.geometry.data.xpos[body]
-            self.geometry.model.cam_quat[camera] = Rotation.from_matrix(
-                self.geometry.data.xmat[body].reshape(3, 3) @ np.diag([1, -1, -1])
-            ).as_quat(scalar_first=True)
-        mujoco.mj_camlight(self.geometry.model, self.geometry.data)
-        images = {}
-        for name in camera_ids:
-            c = self._cameras[name]
-            renderer = self._renderers[c.width, c.height]
-            renderer.update_scene(self.geometry.data, camera=self._camera_ids[name])
-            # Classic OpenGL only guarantees eight fixed-function lights; more
-            # triggers software rendering on macOS despite MuJoCo 4's higher limit.
-            renderer.scene.nlight = min(renderer.scene.nlight, 8)  # type: ignore[attr-defined]
-            renderer.disable_depth_rendering()
-            rgb = renderer.render()
-            renderer.enable_depth_rendering()
-            depth = renderer.render()
-            renderer.disable_depth_rendering()
-            images[name] = rgb, depth
-        return images
+        self._connection.send((sample.lcm_encode(), camera_ids))
+        self._receive(5.0)
+        return {
+            name: (self._images[name][0].copy(), self._images[name][1].copy())
+            for name in camera_ids
+        }
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
 
     def close(self) -> None:
-        for renderer in self._renderers.values():
-            renderer.close()
-        self._renderers.clear()
-
-
-def _load_lights(spec: mujoco.MjSpec, scene: UsdModel) -> None:
-    """Import USD point/directional lights omitted by MuJoCo 4.0's USD decoder.
-
-    This adapter uses the classic renderer's RGB light strengths; it is not a
-    photometric renderer. Light transforms remain attached to their rigid body.
-    """
-    pxr = load_pxr()
-    # USD is optional during blueprint discovery; load it only for a camera scene.
-    # load_pxr() must register MuJoCo's schemas before the first pxr import.
-    from pxr import Gf, UsdGeom, UsdLux, UsdPhysics
-
-    root = scene.source_path.parent if scene.source_path else None
-    stage = pxr.Usd.Stage.Open(layer_from(pxr, scene.usd, "camera lights", root))
-    transforms = UsdGeom.XformCache()
-    for prim in stage.Traverse():
-        if not prim.HasAPI(UsdLux.LightAPI):
-            continue
-        if not (prim.IsA(UsdLux.DistantLight) or prim.IsA(UsdLux.SphereLight)):
-            raise ValueError(
-                f"MuJoCo camera cannot render USD light {prim.GetPath()}: {prim.GetTypeName()}"
-            )
-        if UsdGeom.Imageable(prim).ComputeVisibility() == UsdGeom.Tokens.invisible:
-            continue
-        light = UsdLux.LightAPI(prim)
-        transform = transforms.GetLocalToWorldTransform(prim)
-        parent = prim.GetParent()
-        while parent and not parent.HasAPI(UsdPhysics.RigidBodyAPI):
-            parent = parent.GetParent()
-        body = spec.worldbody
-        if parent:
-            name = str(parent.GetDisplayName() or parent.GetName())
-            body = spec.body(name)
-            transform = transform * transforms.GetLocalToWorldTransform(parent).GetInverse()
-        color = np.asarray(light.GetColorAttr().Get(), dtype=float)
-        if light.GetEnableColorTemperatureAttr().Get():
-            color *= UsdLux.BlackbodyTemperatureAsRgb(light.GetColorTemperatureAttr().Get())
-        strength = float(light.GetIntensityAttr().Get()) * 2 ** float(light.GetExposureAttr().Get())
-        directional = prim.IsA(UsdLux.DistantLight)
-        shaping = UsdLux.ShapingAPI(prim)
-        cone = shaping.GetShapingConeAngleAttr().Get() if shaping else None
-        shadow = UsdLux.ShadowAPI(prim)
-        casts_shadow = shadow.GetShadowEnableAttr().Get() if shadow else True
-        kind = (
-            mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
-            if directional
-            else mujoco.mjtLightType.mjLIGHT_SPOT
-            if cone is not None
-            else mujoco.mjtLightType.mjLIGHT_POINT  # type: ignore[attr-defined]  # MuJoCo 4.0
-        )
-        body.add_light(
-            name=str(prim.GetPath()),
-            type=kind,
-            pos=tuple(transform.ExtractTranslation()),
-            dir=tuple(transform.TransformDir(Gf.Vec3d(0, 0, -1))),
-            diffuse=color * strength * float(light.GetDiffuseAttr().Get()),
-            specular=color * strength * float(light.GetSpecularAttr().Get()),
-            cutoff=float(cone) if cone is not None else 90,
-            attenuation=(1, 0, 1) if not directional else (1, 0, 0),
-            castshadow=bool(casts_shadow),
-        )
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+        if self._process is not None:
+            try:
+                self._process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=1.0)
+            self._process = None
+        self._images.clear()
+        if self._memory is not None:
+            self._memory.close()
+            self._memory = None
