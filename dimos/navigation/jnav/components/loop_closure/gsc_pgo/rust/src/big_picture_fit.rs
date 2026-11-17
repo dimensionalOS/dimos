@@ -1307,7 +1307,7 @@ impl State {
 }
 
 /// [rotation error (axis-angle), translation error] of an edge between two poses.
-pub(crate) fn edge_residual(e: &Edge, from: (&Mat3, &Vec3), to: (&Mat3, &Vec3)) -> [f64; 6] {
+pub fn edge_residual(e: &Edge, from: (&Mat3, &Vec3), to: (&Mat3, &Vec3)) -> [f64; 6] {
     let predicted = mat3::mat_mul(from.0, &e.rotation);
     let rotation = log(&mat3::mat_mul(&mat3::transpose(&predicted), to.0));
     let local = mat3::mat_vec(&mat3::transpose(from.0), &mat3::sub(to.1, from.1));
