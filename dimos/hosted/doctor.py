@@ -30,10 +30,15 @@ from dimos.hosted.discovery import probe
 
 
 @dataclass(frozen=True, slots=True)
+class Skipped:
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class Check:
     description: str
-    # None when fine, else what is wrong.
-    check: Callable[[], str | None]
+    # None when fine, a reason when skipped, else what is wrong.
+    check: Callable[[], str | Skipped | None]
     fix: Callable[[], None] | None = None
     # A failing warning is reported but does not fail the doctor run.
     warning: bool = False
@@ -47,6 +52,7 @@ class Result:
     # None: not attempted; otherwise what the fix did.
     fix_note: str | None = None
     warning: bool = False
+    skip_reason: str | None = None
 
 
 def _config() -> str | None:
@@ -100,13 +106,15 @@ def _unit_installed() -> str | None:
     return None if machine.installed() and machine.enabled() else "not installed"
 
 
-def _unit_current() -> str | None:
-    return None if not machine.installed() or machine.unit_current() else "stale unit file"
-
-
-def _linger() -> str | None:
+def _unit_current() -> str | Skipped | None:
     if not machine.installed():
-        return None
+        return Skipped("unit not installed")
+    return None if machine.unit_current() else "stale unit file"
+
+
+def _linger() -> str | Skipped | None:
+    if not machine.installed():
+        return Skipped("unit not installed")
     user = getpass.getuser()
     out = subprocess.run(
         ["loginctl", "show-user", user, "-p", "Linger"], capture_output=True, text=True
@@ -121,11 +129,13 @@ def _running() -> str | None:
     return None if probe(local.client_endpoint) is not None else "the local Host does not answer"
 
 
-def _running_revision() -> str | None:
+def _running_revision() -> str | Skipped | None:
     local = machine.local_host()
-    found = probe(local.client_endpoint) if local else None
-    if local is None or found is None:
-        return None
+    if local is None:
+        return Skipped("no local Host")
+    found = probe(local.client_endpoint)
+    if found is None:
+        return Skipped("the local Host does not answer")
     mine = [h for h in found.hosts if h.host_id == local.host_id]
     revision = machine.code_revision()
     if mine and mine[0].revision == revision:
@@ -135,7 +145,7 @@ def _running_revision() -> str | None:
     )
 
 
-def _wait(check: Callable[[], str | None], timeout: float = 30.0) -> None:
+def _wait(check: Callable[[], str | Skipped | None], timeout: float = 30.0) -> None:
     deadline = time.monotonic() + timeout
     while check() is not None and time.monotonic() < deadline:
         time.sleep(1.0)
@@ -177,7 +187,7 @@ CHECKS: tuple[Check, ...] = (
 )
 
 
-def _run_check(check: Check) -> str | None:
+def _run_check(check: Check) -> str | Skipped | None:
     try:
         return check.check()
     except Exception as exc:
@@ -190,7 +200,7 @@ def run(checks: Iterable[Check] = CHECKS, fix: bool = False) -> list[Result]:
     for check in checks:
         error = _run_check(check)
         note = None
-        if error is not None and fix:
+        if isinstance(error, str) and fix:
             if check.fix is None:
                 note = "no automatic fix"
             else:
@@ -200,5 +210,14 @@ def run(checks: Iterable[Check] = CHECKS, fix: bool = False) -> list[Result]:
                 except Exception as exc:
                     note = f"fix failed: {type(exc).__name__}: {exc}"
                 error = _run_check(check)
-        results.append(Result(check.description, error is None, error, note, check.warning))
+        results.append(
+            Result(
+                description=check.description,
+                ok=error is None,
+                error=error if isinstance(error, str) else None,
+                fix_note=note,
+                warning=check.warning,
+                skip_reason=error.reason if isinstance(error, Skipped) else None,
+            )
+        )
     return results

@@ -95,7 +95,7 @@ class GlobalConfig(BaseSettings):
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
-    dtop: bool = False
+    dtop: bool = Field(default=False, description="Publish live resource stats for dtop.")
     listen_host: str = "127.0.0.1"
     local_relay: bool = False
     topic_metadata: bool = False

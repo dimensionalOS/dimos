@@ -34,6 +34,7 @@ from dimos.imitation.dataprep.formats.lerobot.protocol import (
     REQUEST_ADAPTER,
     BuildRequest,
     BuildResult,
+    ErrorResult,
     InspectRequest,
     InspectResult,
 )
@@ -190,13 +191,17 @@ def main(argv: list[str] | None = None) -> None:
     request = REQUEST_ADAPTER.validate_json(sys.stdin.read())
     protocol_stdout = sys.stdout
     result: BuildResult | InspectResult
-    with redirect_stdout(sys.stderr):
-        if isinstance(request, BuildRequest):
-            result = BuildResult(path=run_dataprep(request.config, writer=write))
-        elif isinstance(request, InspectRequest):
-            result = InspectResult(info=inspect_dataset(request.path))
-        else:
-            raise TypeError(f"unsupported request {type(request).__name__}")
+    try:
+        with redirect_stdout(sys.stderr):
+            if isinstance(request, BuildRequest):
+                result = BuildResult(path=run_dataprep(request.config, writer=write))
+            elif isinstance(request, InspectRequest):
+                result = InspectResult(info=inspect_dataset(request.path))
+            else:
+                raise TypeError(f"unsupported request {type(request).__name__}")
+    except (OSError, RuntimeError, ValueError) as error:
+        protocol_stdout.write(ErrorResult(error=str(error)).model_dump_json())
+        raise SystemExit(1) from error
     protocol_stdout.write(result.model_dump_json())
 
 

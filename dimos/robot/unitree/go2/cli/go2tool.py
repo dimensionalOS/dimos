@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 
 import typer
 
@@ -48,8 +49,6 @@ def discover(
 
     typer.echo(_HEADER)
 
-    import signal
-
     async def run() -> None:
         from dimos.robot.unitree.go2.cli.ble import discover_ble
         from dimos.robot.unitree.go2.cli.landiscovery import discover_lan
@@ -72,30 +71,64 @@ def discover(
                 seen_lan.add(d.serial)
                 typer.echo(_format_row("LAN", "-", d.ip, d.mac or "-", d.serial))
 
-        tasks: list[asyncio.Task[None]] = []
+        tasks: dict[str, asyncio.Task[None]] = {}
         if do_ble:
-            tasks.append(asyncio.create_task(_consume_ble()))
+            tasks["BLE"] = asyncio.create_task(_consume_ble())
         if do_lan:
-            tasks.append(asyncio.create_task(_consume_lan()))
+            tasks["LAN"] = asyncio.create_task(_consume_lan())
 
         # Cancel on SIGINT or SIGTERM so the BleakScanner's __aexit__ runs and
         # calls StopDiscovery; otherwise BlueZ retains the scan session.
         loop = asyncio.get_running_loop()
+        interrupted = False
+        stopping = False
 
         def _stop() -> None:
-            for t in tasks:
-                t.cancel()
+            # Cancel once. A second cancel would interrupt a scanner's cleanup.
+            nonlocal stopping
+            if stopping:
+                return
+            stopping = True
+            for task in tasks.values():
+                task.cancel()
+
+        def _interrupt() -> None:
+            nonlocal interrupted
+            interrupted = True
+            _stop()
 
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, _stop)
+            loop.add_signal_handler(sig, _interrupt)
 
-        if timeout > 0:
-            loop.call_later(timeout, _stop)
+        timer = loop.call_later(timeout, _stop) if timeout > 0 else None
+        try:
+            # Give healthy transports the full scan window even if a peer fails.
+            # Unbounded scans must still exit on failure instead of waiting forever.
+            return_when = asyncio.ALL_COMPLETED if timeout > 0 else asyncio.FIRST_EXCEPTION
+            await asyncio.wait(tasks.values(), return_when=return_when)
+        finally:
+            if timer is not None:
+                timer.cancel()
+            _stop()
+            results = await asyncio.gather(*tasks.values(), return_exceptions=True)
 
-        await asyncio.gather(*tasks, return_exceptions=True)
+        failed = False
+        for source, result in zip(tasks, results, strict=True):
+            if isinstance(result, Exception):
+                detail = str(result) or type(result).__name__
+                typer.echo(f"{source} scan failed: {detail}", err=True)
+                failed = True
+        if failed:
+            raise typer.Exit(1)
+
+        if interrupted:
+            typer.echo("\nStopped.")
+        elif not seen_ble and not seen_lan:
+            typer.echo("\nNo robots found.")
+        else:
+            typer.echo("\nScan complete.")
 
     asyncio.run(run())
-    typer.echo("\nStopped.")
 
 
 @app.command("connect-wifi")

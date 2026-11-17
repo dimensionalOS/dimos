@@ -36,6 +36,12 @@ Request: TypeAlias = Annotated[BuildRequest | InspectRequest, Field(discriminato
 REQUEST_ADAPTER: TypeAdapter[Request] = TypeAdapter(Request)
 
 
+class ErrorResult(BaseModel):
+    """An expected request failure, separate from installer and runtime logs."""
+
+    error: str
+
+
 class BuildResult(BaseModel):
     command: Literal["build"] = "build"
     path: Path

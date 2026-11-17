@@ -30,11 +30,16 @@ import warnings
 # Use setdefault so an explicit OPENCV_OPENCL_RUNTIME from the environment still wins.
 os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "disabled")
 
+from click import ClickException
 import numpy as np
 import typer
 import yaml
 
 _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg"})
+
+
+class CalibrationAbortedError(RuntimeError):
+    """The user quit capture before accepting the requested number of frames."""
 
 
 class CalibrationResultDict(TypedDict):
@@ -162,6 +167,7 @@ def load_frames_from_folder(path: str) -> list[np.ndarray]:
 
 
 _CAMERACALIBRATE_WINDOW = "dimos cameracalibrate"
+_ESCAPE_KEY = 27
 _MAX_CONSECUTIVE_WEBCAM_READ_FAILURES = 30
 _OPENCV_CALIBRATION_RUNTIME_CONFIGURED = False
 
@@ -354,7 +360,7 @@ def _interactive_capture(
     *,
     no_display: bool,
 ) -> _WebcamCapture:
-    """Interactive chessboard preview + SPACE-accept / q-quit loop.
+    """Interactive chessboard preview + SPACE-accept / q-or-Escape-quit loop.
 
     ``next_frame()`` returns the latest BGR (or grayscale) frame, or ``None`` to
     skip the iteration without calling ``imshow``/``waitKey``. The caller owns
@@ -373,6 +379,8 @@ def _interactive_capture(
     locked_exact_probe = False
     pattern_candidates = _pattern_candidates(cols, rows)
     pattern_candidate_index = 0
+
+    typer.echo("Capture controls: SPACE accepts a detected chessboard; q or Esc quits.")
 
     try:
         while len(accepted) < target_count:
@@ -440,14 +448,10 @@ def _interactive_capture(
             if key == ord(" ") and detection is not None:
                 accepted.append(np.asarray(frame).copy())
                 accepted_corners.append(np.asarray(detection.corners, dtype=np.float32).copy())
-            elif key == ord("q"):
-                break
-
-        if len(accepted) < target_count:
-            raise RuntimeError(
-                f"Capture ended with {len(accepted)} of {target_count} frames "
-                f"(quit early, missing detections on SPACE, or read failures)."
-            )
+            elif key in (ord("q"), _ESCAPE_KEY):
+                raise CalibrationAbortedError(
+                    f"Calibration aborted, {len(accepted)} of {target_count} frames accepted."
+                )
 
         return _WebcamCapture(accepted, accepted_corners, locked_pattern)
 
@@ -472,7 +476,7 @@ def _capture_frames_from_webcam(
 
     Shows a live preview (unless ``no_display`` is True, for headless runs and CI).
     When a chessboard is detected, press SPACE to accept the current frame. Press
-    ``q`` to quit early (raises if fewer than ``target_count`` frames were accepted).
+    ``q`` or Escape to quit early (raises ``CalibrationAbortedError``).
 
     ``no_display`` mirrors the CLI ``--no-display`` flag: no ``cv2.imshow`` or window
     teardown; ``cv2.waitKey`` is still used so automated tests can inject key codes.
@@ -1019,8 +1023,13 @@ def calibrate(
             no_display=no_display,
             distortion_model=distortion_model,
         )
-    except (ValueError, RuntimeError) as exc:
+    except CalibrationAbortedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(130) from exc
+    except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    except RuntimeError as exc:
+        raise ClickException(str(exc)) from exc
 
     typer.echo(f"RMS: {float(result['rms']):.6f} px ({int(result['n_used'])} frame(s) used)")
     typer.echo(
