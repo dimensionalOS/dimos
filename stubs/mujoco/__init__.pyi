@@ -6,6 +6,9 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+# MuJoCo 4's native Filament extension, like the other large pybind APIs below.
+mjrf: Any
+
 # --- model / data -----------------------------------------------------
 
 class MjModel:
@@ -53,11 +56,25 @@ class MjvOption:
     def __init__(self) -> None: ...
 
 class MjvCamera:
+    type: int
+    fixedcamid: int
     lookat: NDArray[np.float64]
     distance: float
     azimuth: float
     elevation: float
     def __init__(self) -> None: ...
+
+class MjvGLCamera:
+    pos: NDArray[np.float32]
+    forward: NDArray[np.float32]
+    up: NDArray[np.float32]
+    frustum_bottom: float
+    frustum_top: float
+    frustum_near: float
+    frustum_far: float
+    frustum_width: float
+    frustum_center: float
+    orthographic: int
 
 class MjvScene:
     flags: NDArray[np.uint8]
@@ -85,6 +102,7 @@ class Renderer:
 # --- top-level functions ----------------------------------------------
 
 def mj_forward(model: MjModel, data: MjData) -> None: ...
+def mjv_camera2GLCamera(model: MjModel, data: MjData, camera: MjvCamera) -> MjvGLCamera: ...
 def mjv_initGeom(
     geom: Any,
     type: int,
@@ -131,6 +149,7 @@ class mjtObj:
     mjOBJ_TENDON: int
 
 class mjtCamera:
+    mjCAMERA_FIXED: int
     mjCAMERA_FREE: int
     mjCAMERA_TRACKING: int
 

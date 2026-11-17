@@ -123,9 +123,13 @@ class _PoseSensorModule(Module, ABC):
         with self._stats_lock:
             return dict(self._stats)
 
+    def interrupt_sensor(self) -> None:
+        """Wake an optional blocking native acquisition before joining its worker."""
+
     @rpc
     def stop(self) -> None:
         self._done.set()
+        self.interrupt_sensor()
         if self._thread is not None:
             self._thread.join(timeout=5)
             if self._thread.is_alive():
