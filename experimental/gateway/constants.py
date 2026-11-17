@@ -30,7 +30,7 @@ JOB_FAILURE_TAIL_LINES = 15
 
 # introspection: a cold import of a heavy blueprint's dependencies (torch, open3d) can take minutes
 INTROSPECT_TIMEOUT_S = 180.0
-# introspection: an answer is reused ten minutes; a blueprint added or removed clears them all
+# introspection: an answer is reused ten minutes, or until a rescan, a changed checkout or a changed blueprint list
 INTROSPECT_CACHE_S = 600.0
 
 # watchers: a run that crashed leaves its registry file behind, so no file event says it ended; this finds it
