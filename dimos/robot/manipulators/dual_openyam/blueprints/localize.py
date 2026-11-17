@@ -43,7 +43,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME,
     DUAL_OPENYAM_HEURISTIC_AIM,
     DUAL_OPENYAM_OVERHEAD_CAMERA_TRANSFORM,
-    DUAL_OPENYAM_TABLE_TOP_Z,
+    DUAL_OPENYAM_TABLE_BOXES,
     dual_openyam_tcp_model_config,
 )
 
@@ -88,11 +88,8 @@ dual_openyam_localize = autoconnect(
         },
         static_transforms=[DUAL_OPENYAM_OVERHEAD_CAMERA_TRANSFORM],
         world_frame="world",
-        # The table as a box the planner will not route through; it starts 10 cm out
-        # so the arm bases, which sit on it, stay clear.
-        floor_z=DUAL_OPENYAM_TABLE_TOP_Z,
-        floor_center_xy=(0.40, 0.0),
-        floor_size_xy=(0.60, 1.20),
+        # The table as a box between the heights the two arms touched it at.
+        table_boxes=DUAL_OPENYAM_TABLE_BOXES,
     ),
     dual_openyam_control(),
     ManipulationSkills.blueprint(),

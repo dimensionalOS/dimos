@@ -57,10 +57,12 @@ DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_A
 DUAL_OPENYAM_KP = [120.0, 240.0, 240.0, 80.0, 80.0, 80.0]
 DUAL_OPENYAM_KD = [5.0, 5.0, 5.0, 1.5, 1.5, 1.5]
 
-# Table top in the world frame, metres: the left fingertip centre came within about
-# 1 mm of it at -0.038 commanded at (0.25, 0.20) (2026-11-16, joints read -0.034), and
-# the overhead camera's depth puts it at -0.031 to -0.036, flat to 0.4 degrees.
-DUAL_OPENYAM_TABLE_TOP_Z = -0.038
+# The table under both arms, starting 10 cm out so the bases stay clear:
+# (top_z, center_x, center_y, size_x, size_y), metres. Closed fingertips touched it at
+# (0.25, +-0.20) on 2026-11-16 at -0.039 (left) and -0.044 (right) commanded; the top
+# sits between them, about 3 mm off for each arm. The overhead depth sees the table
+# about 2 mm lower on the right; the rest is the two arms' calibrations differing.
+DUAL_OPENYAM_TABLE_BOXES = ((-0.042, 0.40, 0.0, 0.60, 1.20),)
 # Home with each arm's fingers pointing down, its fingertip centre over its own half of
 # the table at (0.25, +-0.20, 0.15); solved by IK on the tcp model, left arm first. A
 # position-only move_to_pose keeps the gripper's angle, so from here it stays fingers-down.
