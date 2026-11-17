@@ -23,6 +23,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_hardware
 from dimos.robot.diy.alfred.blueprints.vis_nav import vis_nav
 
-alfred_mls_nav = autoconnect(_alfred_hardware, vis_nav()).global_config(
-    n_workers=11, robot_model="alfred"
+alfred_mls_nav = (
+    autoconnect(_alfred_hardware, vis_nav())
+    .solidify()
+    .global_config(n_workers=11, robot_model="alfred")
 )

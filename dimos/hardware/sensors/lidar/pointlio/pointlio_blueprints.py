@@ -38,45 +38,61 @@ def mid360_for_pointlio(**kwargs: Any) -> Blueprint:
     )
 
 
-mid360_pointlio = autoconnect(
-    mid360_for_pointlio(),
-    PointLio.blueprint(),
-    vis_module("rerun"),
-).global_config(n_workers=3, robot_model="mid360_pointlio")
+mid360_pointlio = (
+    autoconnect(
+        mid360_for_pointlio(),
+        PointLio.blueprint(),
+        vis_module("rerun"),
+    )
+    .solidify()
+    .global_config(n_workers=3, robot_model="mid360_pointlio")
+)
 
-mid360_pointlio_voxels = autoconnect(
-    mid360_for_pointlio(),
-    PointLio.blueprint(),
-    VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=False),
-    vis_module(
-        "rerun",
-        rerun_config={
-            "visual_override": {
-                "world/lidar": None,
-                "world/lidar_raw": None,
+mid360_pointlio_voxels = (
+    autoconnect(
+        mid360_for_pointlio(),
+        PointLio.blueprint(),
+        VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=False),
+        vis_module(
+            "rerun",
+            rerun_config={
+                "visual_override": {
+                    "world/lidar": None,
+                    "world/lidar_raw": None,
+                },
             },
-        },
-    ),
-).global_config(n_workers=4, robot_model="mid360_pointlio_voxels")
+        ),
+    )
+    .solidify()
+    .global_config(n_workers=4, robot_model="mid360_pointlio_voxels")
+)
 
-mid360_pointlio_ray_trace = autoconnect(
-    mid360_for_pointlio(),
-    PointLio.blueprint(),
-    RayTracingVoxelMap.blueprint(voxel_size=voxel_size),
-    vis_module(
-        "rerun",
-        rerun_config={
-            "visual_override": {
-                "world/lidar": None,
-                "world/lidar_raw": None,
+mid360_pointlio_ray_trace = (
+    autoconnect(
+        mid360_for_pointlio(),
+        PointLio.blueprint(),
+        RayTracingVoxelMap.blueprint(voxel_size=voxel_size),
+        vis_module(
+            "rerun",
+            rerun_config={
+                "visual_override": {
+                    "world/lidar": None,
+                    "world/lidar_raw": None,
+                },
             },
-        },
-    ),
-).global_config(n_workers=4, robot_model="mid360_pointlio_ray_trace")
+        ),
+    )
+    .solidify()
+    .global_config(n_workers=4, robot_model="mid360_pointlio_ray_trace")
+)
 
 # Replays the capture named by DIMOS_MID360_PCAP (required) at capture speed.
-mid360_pointlio_replay = autoconnect(
-    mid360_for_pointlio(pcap=os.environ.get("DIMOS_MID360_PCAP", "")),
-    PointLio.blueprint(),
-    vis_module("rerun"),
-).global_config(n_workers=3, robot_model="mid360_pointlio_replay")
+mid360_pointlio_replay = (
+    autoconnect(
+        mid360_for_pointlio(pcap=os.environ.get("DIMOS_MID360_PCAP", "")),
+        PointLio.blueprint(),
+        vis_module("rerun"),
+    )
+    .solidify()
+    .global_config(n_workers=3, robot_model="mid360_pointlio_replay")
+)

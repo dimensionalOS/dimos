@@ -89,7 +89,7 @@ keyboard_teleop_piper = autoconnect(
         model=_piper_model,
         visualization={"backend": "viser"},
     ),
-)
+).solidify()
 
 _piper_mock_cartesian_hw = make_piper_hardware(
     "arm",
@@ -143,7 +143,7 @@ coordinator_teleop_piper = autoconnect(
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),
-)
+).solidify()
 
 _piper_cartesian_hw = make_piper_hardware(
     "arm",
@@ -231,7 +231,7 @@ def _teleop() -> Blueprint:
         ),
         PiperConnection.blueprint(gripper=True),
         UrdfManager.blueprint(model=model),
-    )
+    ).solidify()
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.

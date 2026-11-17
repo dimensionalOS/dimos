@@ -32,26 +32,30 @@ _MODEL = make_metal_model_config(robot="arm")
 
 def makermods_metal_connection_control_blueprint() -> Blueprint:
     """Trajectories and the gripper, with the robot model served to clients."""
-    return autoconnect(
-        DamiaoCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(MetalConnection)],
-            tasks=[
-                joint_trajectory_task([*_MODEL.joint_names, "arm/joint7"]),
-                # joint7 is open at its lower end.
-                TaskConfig(
-                    name="arm_gripper",
-                    type="gripper",
-                    joint_names=["arm/joint7"],
-                    priority=20,
-                    params={"open_at": "lower"},
-                ),
-            ],
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(MetalConnection),
-        UrdfManager.blueprint(model=_MODEL.model),
-    ).remappings(arm_remaps(MetalConnection, DamiaoCoordinator))
+    return (
+        autoconnect(
+            DamiaoCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(MetalConnection)],
+                tasks=[
+                    joint_trajectory_task([*_MODEL.joint_names, "arm/joint7"]),
+                    # joint7 is open at its lower end.
+                    TaskConfig(
+                        name="arm_gripper",
+                        type="gripper",
+                        joint_names=["arm/joint7"],
+                        priority=20,
+                        params={"open_at": "lower"},
+                    ),
+                ],
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(MetalConnection),
+            UrdfManager.blueprint(model=_MODEL.model),
+        )
+        .solidify()
+        .remappings(arm_remaps(MetalConnection, DamiaoCoordinator))
+    )
 
 
 makermods_metal_connection_control = makermods_metal_connection_control_blueprint().remappings([])

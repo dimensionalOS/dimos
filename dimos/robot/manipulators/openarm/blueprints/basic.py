@@ -42,15 +42,19 @@ def _trajectory_task() -> TaskConfig:
 
 def openarm_control(tasks: list[TaskConfig] | None = None) -> Blueprint:
     """A coordinator named ControlCoordinator over the OpenArm connection."""
-    return autoconnect(
-        DamiaoCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(OpenArmConnection)],
-            tasks=list(tasks if tasks is not None else [_trajectory_task()]),
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(OpenArmConnection),
-    ).remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
+    return (
+        autoconnect(
+            DamiaoCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(OpenArmConnection)],
+                tasks=list(tasks if tasks is not None else [_trajectory_task()]),
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(OpenArmConnection),
+        )
+        .solidify()
+        .remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
+    )
 
 
 coordinator_openarm = openarm_control().remappings([])
@@ -58,4 +62,4 @@ coordinator_openarm = openarm_control().remappings([])
 openarm_planner_coordinator = autoconnect(
     planner(model=_MODEL),
     openarm_control(),
-)
+).solidify()

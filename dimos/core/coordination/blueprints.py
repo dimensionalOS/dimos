@@ -32,6 +32,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.module import ModuleBase, is_module_type
@@ -443,7 +444,94 @@ def transport_config_name(cls: type) -> str:
     return cls.__name__.removesuffix("Config").lower()
 
 
-def autoconnect(*blueprints: Blueprint) -> Blueprint:
+class ChoiceResolutionError(ValueError):
+    """A blueprint choice is missing, invalid, or ambiguous."""
+
+
+@dataclass(frozen=True)
+class ChoiceAtom:
+    """Select one blueprint fragment by name when a MetaBlueprint is solidified."""
+
+    name: str
+    choices: "Mapping[str, Blueprint | MetaBlueprint]"
+    default: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name or "=" in self.name:
+            raise ChoiceResolutionError("Choice names must be nonempty and cannot contain '='")
+        if not self.choices or any(not option for option in self.choices):
+            raise ChoiceResolutionError(f"Choice {self.name!r} must have nonempty option names")
+        if self.default is not None and self.default not in self.choices:
+            raise ChoiceResolutionError(
+                f"Invalid default {self.default!r} for choice {self.name!r}. "
+                f"Available options: {', '.join(self.choices)}"
+            )
+        object.__setattr__(self, "choices", MappingProxyType(dict(self.choices)))
+
+
+@dataclass(frozen=True)
+class MetaBlueprint:
+    """An unresolved composition; concrete blueprint operations require solidify()."""
+
+    blueprints: "tuple[Blueprint | MetaBlueprint | ChoiceAtom, ...]"
+
+    def solidify(self, *, choices: Mapping[str, str] | None = None) -> Blueprint:
+        """Resolve selected alternatives and compose a concrete Blueprint.
+
+        Only selected alternatives are traversed. Distinct active ChoiceAtoms
+        must have unique names; a shared ChoiceAtom may be reused. Overrides
+        must name active choices, so misspellings and unused selections fail.
+
+        Raises:
+            ChoiceResolutionError: A required choice is missing, an option is
+                invalid, a name is ambiguous, or an override is unused.
+        """
+        selections = dict(choices or {})
+        active_choices: dict[str, ChoiceAtom] = {}
+
+        def resolve(part: Blueprint | MetaBlueprint | ChoiceAtom) -> Blueprint:
+            if isinstance(part, Blueprint):
+                return part
+            if isinstance(part, MetaBlueprint):
+                return _merge_blueprints(*(resolve(child) for child in part.blueprints))
+
+            previous = active_choices.get(part.name)
+            if previous is not None and previous is not part:
+                raise ChoiceResolutionError(f"Duplicate choice name: {part.name!r}")
+            active_choices[part.name] = part
+            option = selections.get(part.name, part.default)
+            available = f"Available options: {', '.join(part.choices)}"
+            if option is None:
+                raise ChoiceResolutionError(
+                    f"Choice {part.name!r} is required. {available}. "
+                    f"Select it with --choice {part.name}=<option>"
+                )
+            if option not in part.choices:
+                raise ChoiceResolutionError(
+                    f"Invalid option {option!r} for choice {part.name!r}. {available}"
+                )
+            return resolve(part.choices[option])
+
+        blueprint = resolve(self)
+        unused = selections.keys() - active_choices.keys()
+        if unused:
+            raise ChoiceResolutionError(f"Unknown or inactive choices: {', '.join(sorted(unused))}")
+        return blueprint
+
+    def build(self, *, choices: Mapping[str, str] | None = None) -> "ModuleCoordinator":
+        """Solidify choices and build the resulting blueprint with a coordinator."""
+        # The coordinator imports blueprint definitions, so defer this circular import.
+        from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
+        return ModuleCoordinator.build(self.solidify(choices=choices))
+
+
+def autoconnect(*blueprints: Blueprint | MetaBlueprint | ChoiceAtom) -> MetaBlueprint:
+    """Compose fragments without resolving choices until solidify() or build()."""
+    return MetaBlueprint(blueprints=blueprints)
+
+
+def _merge_blueprints(*blueprints: Blueprint) -> Blueprint:
     all_atoms = [atom for blueprint in blueprints for atom in blueprint.blueprints]
     all_blueprints = tuple(_eliminate_duplicates(all_atoms))
     all_transports = dict(  # type: ignore[var-annotated]

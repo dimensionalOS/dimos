@@ -35,33 +35,37 @@ from dimos.robot.diy.alfred.config import ALFRED_HARDWARE
 
 MID360_IMU_FRAME = "mid360_imu_link"
 
-alfred_mls_nav_lidar = autoconnect(
-    alfred_mls_nav,
-    Mid360.blueprint(
-        lidar_ip=ALFRED_HARDWARE.mid360_ip,
-        frame_id="mid360_link",
-        imu_frame_id=MID360_IMU_FRAME,
-    ),
-    # Same modules as alfred_mls_nav's vis_nav, so this replaces it: both IMUs fused, and
-    # free space carved from the lidar instead of the depth cloud.
-    vis_nav(
-        imus=[
-            # Gyro yaw halved final drift on drive_2026-08-18_23-05-04.db, 2.66 m out to 1.33 m
-            # against a 0.59 m floor on the lidar reference's own heading. Datasheet-class
-            # figures for the part, not an Allan variance of this particular camera.
-            ImuConfig(frame_id="camera_front_imu_optical_frame", **IMU_BMI055),
-            # The Mid-360's built-in IMU, an order of magnitude quieter than the D455's BMI055, which is
-            # the point of the pairing: the filter keeps a bias pair per IMU, so the good gyro keeps its
-            # say instead of being averaged into the cheap one.
-            ImuConfig(
-                frame_id=MID360_IMU_FRAME,
-                gyro_noise_density=7.9e-5,
-                gyro_random_walk=2e-6,
-                accel_noise_density=9.8e-4,
-                accel_random_walk=1e-4,
-            ),
-        ],
-        map_cloud_topic="lidar",
-        map_max_range=MID360_MAX_RANGE_METERS,
-    ),
-).global_config(n_workers=12, robot_model="alfred")
+alfred_mls_nav_lidar = (
+    autoconnect(
+        alfred_mls_nav,
+        Mid360.blueprint(
+            lidar_ip=ALFRED_HARDWARE.mid360_ip,
+            frame_id="mid360_link",
+            imu_frame_id=MID360_IMU_FRAME,
+        ),
+        # Same modules as alfred_mls_nav's vis_nav, so this replaces it: both IMUs fused, and
+        # free space carved from the lidar instead of the depth cloud.
+        vis_nav(
+            imus=[
+                # Gyro yaw halved final drift on drive_2026-08-18_23-05-04.db, 2.66 m out to 1.33 m
+                # against a 0.59 m floor on the lidar reference's own heading. Datasheet-class
+                # figures for the part, not an Allan variance of this particular camera.
+                ImuConfig(frame_id="camera_front_imu_optical_frame", **IMU_BMI055),
+                # The Mid-360's built-in IMU, an order of magnitude quieter than the D455's BMI055, which is
+                # the point of the pairing: the filter keeps a bias pair per IMU, so the good gyro keeps its
+                # say instead of being averaged into the cheap one.
+                ImuConfig(
+                    frame_id=MID360_IMU_FRAME,
+                    gyro_noise_density=7.9e-5,
+                    gyro_random_walk=2e-6,
+                    accel_noise_density=9.8e-4,
+                    accel_random_walk=1e-4,
+                ),
+            ],
+            map_cloud_topic="lidar",
+            map_max_range=MID360_MAX_RANGE_METERS,
+        ),
+    )
+    .solidify()
+    .global_config(n_workers=12, robot_model="alfred")
+)

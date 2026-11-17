@@ -50,15 +50,19 @@ def _tasks() -> list[TaskConfig]:
 
 def seeed_b601_dm_control_blueprint() -> Blueprint:
     """Trajectories and gripper control over the direct connection."""
-    return autoconnect(
-        SeeedB601DMCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(B601DMConnection)],
-            tasks=_tasks(),
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(B601DMConnection),
-    ).remappings(arm_remaps(B601DMConnection, SeeedB601DMCoordinator))
+    return (
+        autoconnect(
+            SeeedB601DMCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(B601DMConnection)],
+                tasks=_tasks(),
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(B601DMConnection),
+        )
+        .solidify()
+        .remappings(arm_remaps(B601DMConnection, SeeedB601DMCoordinator))
+    )
 
 
 def seeed_b601_dm_control() -> Blueprint:
@@ -76,6 +80,6 @@ seeed_b601_dm_planner_coordinator = autoconnect(
         },
     ),
     seeed_b601_dm_control_blueprint(),
-)
+).solidify()
 
 coordinator_seeed_b601_dm = seeed_b601_dm_control_blueprint().remappings([])

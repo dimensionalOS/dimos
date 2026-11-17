@@ -34,26 +34,30 @@ _GRIPPER_JOINTS = [OPENYAM_GRIPPER_JOINT]
 
 def openyam_connection_control_blueprint() -> Blueprint:
     """Trajectories and the gripper, with the robot model served to clients."""
-    return autoconnect(
-        OpenYamCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(OpenYamConnection)],
-            tasks=[
-                joint_trajectory_task([*_MODEL.joint_names, *_GRIPPER_JOINTS]),
-                # joint7 is open at its lower end.
-                TaskConfig(
-                    name="arm_gripper",
-                    type="gripper",
-                    joint_names=_GRIPPER_JOINTS,
-                    priority=20,
-                    params={"open_at": "lower"},
-                ),
-            ],
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(OpenYamConnection),
-        UrdfManager.blueprint(model=_MODEL.model),
-    ).remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
+    return (
+        autoconnect(
+            OpenYamCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(OpenYamConnection)],
+                tasks=[
+                    joint_trajectory_task([*_MODEL.joint_names, *_GRIPPER_JOINTS]),
+                    # joint7 is open at its lower end.
+                    TaskConfig(
+                        name="arm_gripper",
+                        type="gripper",
+                        joint_names=_GRIPPER_JOINTS,
+                        priority=20,
+                        params={"open_at": "lower"},
+                    ),
+                ],
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(OpenYamConnection),
+            UrdfManager.blueprint(model=_MODEL.model),
+        )
+        .solidify()
+        .remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
+    )
 
 
 openyam_connection_control = openyam_connection_control_blueprint().remappings([])

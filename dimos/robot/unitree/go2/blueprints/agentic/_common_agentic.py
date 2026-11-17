@@ -29,4 +29,4 @@ _common_agentic = autoconnect(
     UnitreeSkillContainer.blueprint(),
     WebInput.blueprint(),
     SpeakSkill.blueprint(),
-)
+).solidify()

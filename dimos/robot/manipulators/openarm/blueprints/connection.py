@@ -37,31 +37,35 @@ _GRIPPERS = [
 
 def openarm_connection_control_blueprint() -> Blueprint:
     """Trajectories and the grippers, with the robot model served to clients."""
-    return autoconnect(
-        DamiaoCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(OpenArmConnection)],
-            tasks=[
-                joint_trajectory_task(
-                    [*_MODEL.joint_names, *(joint for _, joint, _, _ in _GRIPPERS)]
-                ),
-                *[
-                    TaskConfig(
-                        name=name,
-                        type="gripper",
-                        joint_names=[joint],
-                        priority=20,
-                        params={"open_at": open_at},
-                        stream_bind={"gripper_command": stream},
-                    )
-                    for name, joint, stream, open_at in _GRIPPERS
+    return (
+        autoconnect(
+            DamiaoCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(OpenArmConnection)],
+                tasks=[
+                    joint_trajectory_task(
+                        [*_MODEL.joint_names, *(joint for _, joint, _, _ in _GRIPPERS)]
+                    ),
+                    *[
+                        TaskConfig(
+                            name=name,
+                            type="gripper",
+                            joint_names=[joint],
+                            priority=20,
+                            params={"open_at": open_at},
+                            stream_bind={"gripper_command": stream},
+                        )
+                        for name, joint, stream, open_at in _GRIPPERS
+                    ],
                 ],
-            ],
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(OpenArmConnection),
-        UrdfManager.blueprint(model=_MODEL.model),
-    ).remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(OpenArmConnection),
+            UrdfManager.blueprint(model=_MODEL.model),
+        )
+        .solidify()
+        .remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
+    )
 
 
 openarm_connection_control = openarm_connection_control_blueprint().remappings([])

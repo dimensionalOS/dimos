@@ -30,6 +30,7 @@ unitree_go2_fleet = (
         _with_vis,
         Go2FleetConnection.blueprint(),
     )
+    .solidify()
     .global_config(n_workers=4, robot_model="unitree_go2")
     .configurators(ClockSyncConfigurator())
 )

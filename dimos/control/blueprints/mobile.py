@@ -93,21 +93,25 @@ coordinator_flowbase = ControlCoordinator.blueprint(
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
 # FlowBase + WASD pygame keyboard teleop in a single blueprint
-coordinator_flowbase_keyboard_teleop = autoconnect(
-    ControlCoordinator.blueprint(
-        hardware=[_flowbase_twist_base()],
-        tasks=[
-            TaskConfig(
-                name="vel_base",
-                type="twist_velocity",
-                joint_names=_base_joints,
-                params={"axes": ["linear.x", "linear.y", "angular.z"]},
-                priority=10,
-            ),
-        ],
-    ),
-    KeyboardTeleop.blueprint(),
-).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+coordinator_flowbase_keyboard_teleop = (
+    autoconnect(
+        ControlCoordinator.blueprint(
+            hardware=[_flowbase_twist_base()],
+            tasks=[
+                TaskConfig(
+                    name="vel_base",
+                    type="twist_velocity",
+                    joint_names=_base_joints,
+                    params={"axes": ["linear.x", "linear.y", "angular.z"]},
+                    priority=10,
+                ),
+            ],
+        ),
+        KeyboardTeleop.blueprint(),
+    )
+    .solidify()
+    .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+)
 
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
 _mock_arm_hw = HardwareComponent(

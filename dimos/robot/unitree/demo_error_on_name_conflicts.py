@@ -50,4 +50,4 @@ class ModuleB(Module):
         super().stop()
 
 
-demo_error_on_name_conflicts = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+demo_error_on_name_conflicts = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify()

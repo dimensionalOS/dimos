@@ -140,7 +140,7 @@ def _teleop(
         ),
         A1ZConnection.blueprint(),
         UrdfManager.blueprint(model=model),
-    )
+    ).solidify()
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.

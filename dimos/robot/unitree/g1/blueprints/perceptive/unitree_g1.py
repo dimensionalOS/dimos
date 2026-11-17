@@ -21,7 +21,11 @@ from dimos.robot.unitree.g1.blueprints.perceptive._perception_and_memory import 
     _perception_and_memory,
 )
 
-unitree_g1 = autoconnect(
-    unitree_g1_basic,
-    _perception_and_memory,
-).global_config(n_workers=8)
+unitree_g1 = (
+    autoconnect(
+        unitree_g1_basic,
+        _perception_and_memory,
+    )
+    .solidify()
+    .global_config(n_workers=8)
+)

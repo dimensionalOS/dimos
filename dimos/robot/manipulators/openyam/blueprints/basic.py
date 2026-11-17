@@ -57,19 +57,23 @@ def openyam_control(*, teach: bool = False) -> Blueprint:
         teach: Run with zero stiffness and teaching damping, gravity
             compensated, and the jaw passive so an operator can guide it.
     """
-    return autoconnect(
-        OpenYamCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(OpenYamConnection)],
-            tasks=[_trajectory_task(), _gripper_task()],
-            zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=teach),
-        ),
-        arm_connection(OpenYamConnection, teach=teach),
-    ).remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
+    return (
+        autoconnect(
+            OpenYamCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(OpenYamConnection)],
+                tasks=[_trajectory_task(), _gripper_task()],
+                zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=teach),
+            ),
+            arm_connection(OpenYamConnection, teach=teach),
+        )
+        .solidify()
+        .remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
+    )
 
 
 coordinator_openyam = openyam_control().remappings([])
 openyam_planner_coordinator = autoconnect(
     planner(model=_openyam, gripper_tasks={"manipulator": "arm_gripper"}),
     openyam_control(),
-)
+).solidify()

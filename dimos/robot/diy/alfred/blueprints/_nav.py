@@ -129,4 +129,4 @@ def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
         LocalPlannerNative.blueprint(embodiment=ALFRED, step_speed=0.2),
         TrajectoryFollowerNative.blueprint(embodiment=ALFRED),
         MovementManager.blueprint(),
-    )
+    ).solidify()

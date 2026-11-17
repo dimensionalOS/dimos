@@ -122,36 +122,40 @@ class G1ManipulationModule(ManipulationModule):
     """Plan arm motion against the live full-body G1 collision model."""
 
 
-unitree_g1_teleop = autoconnect(
-    _unitree_g1_groot_wbc_core,
-    VideoArmTeleopModule.blueprint(),
-    G1ManipulationModule.blueprint(
-        instance_name="G1Manipulation",
-        model=g1_manipulation_model_config(),
-        visualization=ViserVisualizationConfig(host="0.0.0.0"),
-    ),
-    *_camera_if_real(),
-    EpisodeMonitorModule.blueprint(task="Teleoperate the G1"),
-    G1CollectionRecorder.blueprint(
-        db_path=_session_db(),
-        stream_codecs={"status": "json"},
-        record_tf=False,
-        # Collection observations/actions are synchronized by timestamp,
-        # not localized in the world frame. Declaring them poseless also
-        # avoids attempting a world-to-camera lookup when nav localization
-        # is disabled for an upper-body-only session.
-        poseless_streams=[
-            "color_image",
-            "status",
-            "left_cartesian_command",
-            "right_cartesian_command",
-            "coordinator_joint_state",
-        ],
-    ),
-).remappings(
-    [
-        (VideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-        (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
-    ]
+unitree_g1_teleop = (
+    autoconnect(
+        _unitree_g1_groot_wbc_core,
+        VideoArmTeleopModule.blueprint(),
+        G1ManipulationModule.blueprint(
+            instance_name="G1Manipulation",
+            model=g1_manipulation_model_config(),
+            visualization=ViserVisualizationConfig(host="0.0.0.0"),
+        ),
+        *_camera_if_real(),
+        EpisodeMonitorModule.blueprint(task="Teleoperate the G1"),
+        G1CollectionRecorder.blueprint(
+            db_path=_session_db(),
+            stream_codecs={"status": "json"},
+            record_tf=False,
+            # Collection observations/actions are synchronized by timestamp,
+            # not localized in the world frame. Declaring them poseless also
+            # avoids attempting a world-to-camera lookup when nav localization
+            # is disabled for an upper-body-only session.
+            poseless_streams=[
+                "color_image",
+                "status",
+                "left_cartesian_command",
+                "right_cartesian_command",
+                "coordinator_joint_state",
+            ],
+        ),
+    )
+    .solidify()
+    .remappings(
+        [
+            (VideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+            (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
+        ]
+    )
 )

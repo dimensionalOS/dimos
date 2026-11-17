@@ -112,4 +112,4 @@ class WebcamModule(Module, perception.Camera):
 demo_camera = autoconnect(
     WebcamModule.blueprint(),
     vis_module(viewer_backend=global_config.viewer),
-)
+).solidify()

@@ -54,6 +54,7 @@ m20 = (
             min_local_points=8_000,
         ),
     )
+    .solidify()
     .global_config(
         n_workers=5,
         transport="zenoh",

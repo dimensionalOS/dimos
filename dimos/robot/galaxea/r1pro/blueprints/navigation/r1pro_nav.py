@@ -38,20 +38,24 @@ _r1pro_overhead_clearance = 1.9  # torso-up height + margin (m)
 _r1pro_max_step_height = 0.03  # wheeled base: essentially flat floors only (m)
 _voxel_resolution = 0.05
 
-r1pro_nav = autoconnect(
-    r1pro_coordinator,
-    RayTracingVoxelMap.blueprint(voxel_size=_voxel_resolution),
-    CostMapper.blueprint(
-        config=HeightCostConfig(
-            resolution=_voxel_resolution,
-            can_pass_under=_r1pro_overhead_clearance,
-            can_climb=_r1pro_max_step_height,
+r1pro_nav = (
+    autoconnect(
+        r1pro_coordinator,
+        RayTracingVoxelMap.blueprint(voxel_size=_voxel_resolution),
+        CostMapper.blueprint(
+            config=HeightCostConfig(
+                resolution=_voxel_resolution,
+                can_pass_under=_r1pro_overhead_clearance,
+                can_climb=_r1pro_max_step_height,
+            ),
+            initial_safe_radius_meters=_r1pro_width + 0.4,
         ),
-        initial_safe_radius_meters=_r1pro_width + 0.4,
-    ),
-    ReplanningAStarPlanner.blueprint(
-        robot_width=_r1pro_width,
-        robot_rotation_diameter=_r1pro_rotation_diameter,
-    ),
-    MovementManager.blueprint(),
-).global_config(n_workers=8)
+        ReplanningAStarPlanner.blueprint(
+            robot_width=_r1pro_width,
+            robot_rotation_diameter=_r1pro_rotation_diameter,
+        ),
+        MovementManager.blueprint(),
+    )
+    .solidify()
+    .global_config(n_workers=8)
+)

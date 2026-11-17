@@ -327,6 +327,7 @@ def _build_blueprint(
             PointLio.blueprint(**pointlio_kwargs),
             PointlioRecorder.blueprint(db_path=str(db_path)),
         )
+        .solidify()
         .remappings(
             [
                 (PointlioRecorder, _ODOM_STREAM, "odometry"),

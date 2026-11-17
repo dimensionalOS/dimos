@@ -69,7 +69,7 @@ xarm_perception_sim = autoconnect(
         ],
     ),
     RerunBridgeModule.blueprint(),
-)
+).solidify()
 
 # Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without dimOS.
 xarm_sim = autoconnect(
@@ -105,4 +105,4 @@ xarm_sim = autoconnect(
         gripper_joint="arm/gripper",
         gripper_range=(0.0, 0.85),
     ),
-)
+).solidify()

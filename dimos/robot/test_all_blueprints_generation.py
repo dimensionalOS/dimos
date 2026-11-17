@@ -37,6 +37,7 @@ IGNORED_FILES: set[str] = {
 # override needed) is still discovered as a runnable blueprint.
 BLUEPRINT_METHODS = {
     "blueprint",
+    "solidify",
     "transports",
     "global_config",
     "remappings",

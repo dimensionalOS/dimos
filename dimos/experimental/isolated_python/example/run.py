@@ -20,7 +20,7 @@ from dimos.experimental.isolated_python.example.support import Offset
 
 def run_example() -> None:
     coordinator = ModuleCoordinator.build(
-        autoconnect(ExampleExternal.blueprint(initial_multiplier=3), Offset.blueprint())
+        autoconnect(ExampleExternal.blueprint(initial_multiplier=3), Offset.blueprint()).solidify()
     )
     try:
         external = coordinator.get_instance(ExampleExternal)

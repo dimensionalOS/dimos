@@ -64,12 +64,12 @@ def vis_module(
                     **rerun_config,
                 ),
                 RerunWebSocketServer.blueprint(),
-            )
+            ).solidify()
         case "none":
-            bundle = autoconnect()
+            bundle = autoconnect().solidify()
         case _:
             valid = ", ".join(get_args(ViewerBackend))
             raise ValueError(f"Unknown viewer_backend {viewer_backend!r}. Expected one of: {valid}")
     if websocket_vis:
-        bundle = autoconnect(bundle, WebsocketVisModule.blueprint())
+        bundle = autoconnect(bundle, WebsocketVisModule.blueprint()).solidify()
     return bundle

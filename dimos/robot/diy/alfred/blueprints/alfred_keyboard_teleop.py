@@ -29,14 +29,18 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_hardware
 from dimos.robot.diy.alfred.config import ALFRED_HARDWARE
 
-alfred_keyboard_teleop = autoconnect(
-    _alfred_hardware,
-    mid360_for_pointlio(lidar_ip=ALFRED_HARDWARE.mid360_ip),
-    PointLio.blueprint().remappings(
-        [
-            (PointLio, "lidar", "pointlio_lidar"),
-            (PointLio, "odometry", "pointlio_odometry"),
-        ]
-    ),
-    MovementManager.blueprint(),
-).global_config(n_workers=8, robot_model="alfred")
+alfred_keyboard_teleop = (
+    autoconnect(
+        _alfred_hardware,
+        mid360_for_pointlio(lidar_ip=ALFRED_HARDWARE.mid360_ip),
+        PointLio.blueprint().remappings(
+            [
+                (PointLio, "lidar", "pointlio_lidar"),
+                (PointLio, "odometry", "pointlio_odometry"),
+            ]
+        ),
+        MovementManager.blueprint(),
+    )
+    .solidify()
+    .global_config(n_workers=8, robot_model="alfred")
+)

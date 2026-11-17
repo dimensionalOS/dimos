@@ -66,4 +66,4 @@ def m20_nav_stack(embodiment: Embodiment = M20) -> Blueprint:
         LocalPlannerNative.blueprint(embodiment=embodiment, world_frame=WORLD_FRAME),
         TrajectoryFollowerNative.blueprint(embodiment=embodiment),
         MovementManager.blueprint(),
-    )
+    ).solidify()

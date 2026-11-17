@@ -27,4 +27,4 @@ unitree_g1_full = autoconnect(
     vis_module(viewer_backend=global_config.viewer),
     _agentic_skills,
     KeyboardTeleop.blueprint(),
-)
+).solidify()

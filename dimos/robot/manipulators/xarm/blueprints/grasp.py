@@ -225,11 +225,19 @@ _XARM7_REMAPS: list[tuple[type[ModuleBase], str, str]] = [] if SIMULATED else XA
 # Hardware only: there is no simulated xArm6 grasping scene.
 _XARM6_MODULES = _grasp_modules("xarm6", simulated=False)
 
-xarm_grasp = autoconnect(
-    *_XARM7_MODULES, HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM)
-).remappings(_XARM7_REMAPS)
-xarm_grasp_graspgenx = autoconnect(*_XARM7_MODULES, _graspgenx()).remappings(_XARM7_REMAPS)
-xarm6_grasp = autoconnect(
-    *_XARM6_MODULES, HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM)
-).remappings(XARM_REMAPS)
-xarm6_grasp_graspgenx = autoconnect(*_XARM6_MODULES, _graspgenx()).remappings(XARM_REMAPS)
+xarm_grasp = (
+    autoconnect(*_XARM7_MODULES, HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM))
+    .solidify()
+    .remappings(_XARM7_REMAPS)
+)
+xarm_grasp_graspgenx = (
+    autoconnect(*_XARM7_MODULES, _graspgenx()).solidify().remappings(_XARM7_REMAPS)
+)
+xarm6_grasp = (
+    autoconnect(*_XARM6_MODULES, HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM))
+    .solidify()
+    .remappings(XARM_REMAPS)
+)
+xarm6_grasp_graspgenx = (
+    autoconnect(*_XARM6_MODULES, _graspgenx()).solidify().remappings(XARM_REMAPS)
+)

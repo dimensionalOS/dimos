@@ -64,29 +64,33 @@ class DualMetalManipulationModule(ManipulationModule):
 
 def dual_metal_control() -> Blueprint:
     """Trajectories and both jaws over the two-bus connection."""
-    return autoconnect(
-        DamiaoCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(DualMetalConnection)],
-            tasks=[
-                joint_trajectory_task([f"arm/{name}" for name in ALL_ARM_JOINTS]),
-                # Each side's joint7 is open at its lower end.
-                *[
-                    TaskConfig(
-                        name=f"{side}_arm_gripper",
-                        type="gripper",
-                        joint_names=[f"arm/{FINGER_JOINTS[side][0]}"],
-                        priority=20,
-                        params={"open_at": "lower"},
-                        stream_bind={"gripper_command": f"{side}_gripper_command"},
-                    )
-                    for side in SIDES
+    return (
+        autoconnect(
+            DamiaoCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(DualMetalConnection)],
+                tasks=[
+                    joint_trajectory_task([f"arm/{name}" for name in ALL_ARM_JOINTS]),
+                    # Each side's joint7 is open at its lower end.
+                    *[
+                        TaskConfig(
+                            name=f"{side}_arm_gripper",
+                            type="gripper",
+                            joint_names=[f"arm/{FINGER_JOINTS[side][0]}"],
+                            priority=20,
+                            params={"open_at": "lower"},
+                            stream_bind={"gripper_command": f"{side}_gripper_command"},
+                        )
+                        for side in SIDES
+                    ],
                 ],
-            ],
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(DualMetalConnection),
-    ).remappings(arm_remaps(DualMetalConnection, DamiaoCoordinator))
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(DualMetalConnection),
+        )
+        .solidify()
+        .remappings(arm_remaps(DualMetalConnection, DamiaoCoordinator))
+    )
 
 
 dual_makermods_metal_planner_coordinator = autoconnect(
@@ -97,4 +101,4 @@ dual_makermods_metal_planner_coordinator = autoconnect(
         visualization={"backend": "viser"},
         default_speed_scale=0.2,
     ),
-)
+).solidify()

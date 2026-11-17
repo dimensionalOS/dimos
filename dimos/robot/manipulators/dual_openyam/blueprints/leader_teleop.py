@@ -217,35 +217,39 @@ def dual_openyam_leaders(
 
 def dual_openyam_leader_control() -> Blueprint:
     """The trajectory task fed by the leader port, plus a jaw per side, over the two-bus connection."""
-    return autoconnect(
-        DualOpenYamLeaderCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(DualOpenYamConnection)],
-            tasks=[
-                # The trajectory task follows the leader's targets instead of joint_command.
-                replace(
-                    joint_trajectory_task(
-                        DUAL_OPENYAM_LEADER_JOINTS,
-                        velocity_limits=dual_openyam_leader_velocity_limits(),
+    return (
+        autoconnect(
+            DualOpenYamLeaderCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(DualOpenYamConnection)],
+                tasks=[
+                    # The trajectory task follows the leader's targets instead of joint_command.
+                    replace(
+                        joint_trajectory_task(
+                            DUAL_OPENYAM_LEADER_JOINTS,
+                            velocity_limits=dual_openyam_leader_velocity_limits(),
+                        ),
+                        stream_bind={"joint_command": "leader_joint_command"},
                     ),
-                    stream_bind={"joint_command": "leader_joint_command"},
-                ),
-                *[
-                    TaskConfig(
-                        name=f"{side}_arm_gripper",
-                        type="gripper",
-                        joint_names=[f"arm/{_JAWS[side].joint}"],
-                        priority=20,
-                        params={"open_at": _JAWS[side].open_at},
-                        stream_bind={"gripper_command": f"{side}_gripper_command"},
-                    )
-                    for side in DUAL_OPENYAM_SIDES
+                    *[
+                        TaskConfig(
+                            name=f"{side}_arm_gripper",
+                            type="gripper",
+                            joint_names=[f"arm/{_JAWS[side].joint}"],
+                            priority=20,
+                            params={"open_at": _JAWS[side].open_at},
+                            stream_bind={"gripper_command": f"{side}_gripper_command"},
+                        )
+                        for side in DUAL_OPENYAM_SIDES
+                    ],
                 ],
-            ],
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(DualOpenYamConnection),
-    ).remappings(arm_remaps(DualOpenYamConnection, DualOpenYamLeaderCoordinator))
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(DualOpenYamConnection),
+        )
+        .solidify()
+        .remappings(arm_remaps(DualOpenYamConnection, DualOpenYamLeaderCoordinator))
+    )
 
 
 def _manipulation() -> Blueprint:
@@ -260,7 +264,7 @@ def _manipulation() -> Blueprint:
 # the leaders too when no serial port is given.
 dual_openyam_leader_teleop = autoconnect(
     dual_openyam_leaders(), dual_openyam_leader_control(), _manipulation()
-)
+).solidify()
 
 # Leaders without trigger servos; Joy-Cons drive the jaws and pause following.
 dual_openyam_joycon_leader_teleop = autoconnect(
@@ -268,4 +272,4 @@ dual_openyam_joycon_leader_teleop = autoconnect(
     JoyconConnectionModule.blueprint(),
     dual_openyam_leader_control(),
     _manipulation(),
-)
+).solidify()

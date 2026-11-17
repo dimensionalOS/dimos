@@ -308,7 +308,7 @@ go2_web = autoconnect(
             Channel("health", Health, max_hz=1.0),
         ]
     ),
-)
+).solidify()
 ```
 
 How the pieces connect:

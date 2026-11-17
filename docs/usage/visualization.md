@@ -103,7 +103,7 @@ from dimos.visualization.vis_module import vis_module
 camera_demo = autoconnect(
     WebcamModule.blueprint(),
     vis_module(viewer_backend=global_config.viewer),
-)
+).solidify()
 
 ```
 

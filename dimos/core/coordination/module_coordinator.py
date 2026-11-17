@@ -33,7 +33,7 @@ from dimos.core.coordination.blueprint_config.fields import (
     validate_module_config,
 )
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
-from dimos.core.coordination.blueprints import transport_config_name
+from dimos.core.coordination.blueprints import autoconnect, transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
@@ -216,7 +216,7 @@ class ModuleCoordinator(Resource):
         # Avoid circular import.
         from dimos.robot.get_all_blueprints import get_by_name
 
-        self.load_blueprint(get_by_name(name))
+        self.load_blueprint(autoconnect(get_by_name(name)).solidify())
 
     def list_module_names(self) -> list[str]:
         with self._modules_lock:

@@ -117,7 +117,11 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     ).parse_args()
 
-    bp = autoconnect(
-        TfProducer.blueprint(), TfBroadcasterModule.blueprint(), TfListenerModule.blueprint()
-    ).global_config(viewer="none")
+    bp = (
+        autoconnect(
+            TfProducer.blueprint(), TfBroadcasterModule.blueprint(), TfListenerModule.blueprint()
+        )
+        .solidify()
+        .global_config(viewer="none")
+    )
     ModuleCoordinator.build(bp).loop()

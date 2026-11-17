@@ -68,7 +68,7 @@ Start one or more robot blueprints. Built-in dimOS blueprints use bare names suc
 such as `my-robot-stack.go2`.
 
 ```bash
-dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--<config-field> <value> ...]
+dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--choice NAME=OPTION]... [--<config-field> <value> ...]
 ```
 
 | Option | Description |
@@ -76,6 +76,7 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module>]... [--<c
 | `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | A module to exclude, by its registry name such as `speak-skill`; repeat the flag for each module |
+| `--choice` | Select a named blueprint alternative with `NAME=OPTION`; repeat for multiple choices. Choices without defaults are required. See [Choices](/docs/usage/blueprints.md#choices). |
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--pgovoxelmapper.voxel-size=1` |
 | `--local-relay` | Start a relay on this machine and open the cockpit in the browser (see [Web](/docs/web/index.md)) |
 | `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL. `--relay-ca` adds a private CA and `--relay-key` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
@@ -407,7 +408,7 @@ my_mcp_blueprint = autoconnect(
     McpServer.blueprint(),
     Agent.blueprint(),
     # my_skill_containers,
-)
+).solidify()
 ```
 
 #### `dimos mcp list-tools`

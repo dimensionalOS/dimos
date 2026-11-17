@@ -145,7 +145,7 @@ def vis_nav(
         ),
         _alfred_nav(map_cloud_topic=map_cloud_topic, map_max_range=map_max_range),
         _d455_viewer(),
-    )
+    ).solidify()
 
 
 def _d455_viewer() -> Blueprint:

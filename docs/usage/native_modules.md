@@ -143,7 +143,7 @@ class PointCloudConsumer(Module):
 blueprint = autoconnect(
     MyLidar.blueprint(host_ip="192.168.1.10"),
     PointCloudConsumer.blueprint(),
-)
+).solidify()
 
 # Workers import this script again, so build under the __main__ guard
 if __name__ == "__main__":
@@ -156,7 +156,7 @@ if __name__ == "__main__":
 blueprint = autoconnect(
     MyLidar.blueprint(),
     PointCloudConsumer.blueprint(),
-).transports({
+).solidify().transports({
     ("pointcloud", PointCloud2): LCMTransport("/my/custom/lidar", PointCloud2),
 })
 ```
@@ -276,7 +276,7 @@ from dimos.hardware.sensors.lidar.livox.module import Mid360
 autoconnect(
     Mid360.blueprint(host_ip="192.168.1.5"),
     SomeConsumer.blueprint(),
-)
+).solidify()
 ```
 
 ## Native sources in pip installations

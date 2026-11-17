@@ -66,7 +66,9 @@ def test_restart_stops_old_instance_once_before_replacement_build(
     coordinator.start()
     try:
         coordinator.load_blueprint(
-            autoconnect(RecordedTeardown.blueprint(record=str(record)), Companion.blueprint())
+            autoconnect(
+                RecordedTeardown.blueprint(record=str(record)), Companion.blueprint()
+            ).solidify()
         )
         old_proxy = coordinator.get_instance(RecordedTeardown)
         stop_rpc = mocker.spy(old_proxy, "stop")

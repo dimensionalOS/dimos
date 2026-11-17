@@ -65,28 +65,32 @@ _nav_rerun_config = {
     },
 }
 
-unitree_go2_hol_path_controller = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-    GO2Connection.blueprint(obstacle_avoidance=False, motion_mode="mcf", velocity_api=True),
-    VoxelGridMapper.blueprint(
-        voxel_size=voxel_size,
-        frame_id="world",
-        emit_every=1,
-    ),
-    MLSPlannerNative.blueprint(
-        world_frame="world",
-        voxel_size=voxel_size,
-        robot_height=go2_lidar_height,
-        start_z_offset_m=go2_lidar_height,
-        wall_clearance_m=wall_clearance_m,
-        wall_buffer_m=0.75,
-        wall_buffer_weight=100.0,
-        step_threshold_m=0.16,
-        step_penalty_weight=1.0,
-        viz_publish_hz=planner_viz_hz,
-    ).remappings([(MLSPlannerNative, "path", "planner_path")]),
-    # Setting resample_spacing_m to > 0.0 will smooth out jagged paths retunned my MLSP
-    DanLocalPlanner.blueprint(resample_spacing_m=0.1),
-    DanHolonomicTC.blueprint(run_profile="walk"),
-    MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2")
+unitree_go2_hol_path_controller = (
+    autoconnect(
+        vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
+        GO2Connection.blueprint(obstacle_avoidance=False, motion_mode="mcf", velocity_api=True),
+        VoxelGridMapper.blueprint(
+            voxel_size=voxel_size,
+            frame_id="world",
+            emit_every=1,
+        ),
+        MLSPlannerNative.blueprint(
+            world_frame="world",
+            voxel_size=voxel_size,
+            robot_height=go2_lidar_height,
+            start_z_offset_m=go2_lidar_height,
+            wall_clearance_m=wall_clearance_m,
+            wall_buffer_m=0.75,
+            wall_buffer_weight=100.0,
+            step_threshold_m=0.16,
+            step_penalty_weight=1.0,
+            viz_publish_hz=planner_viz_hz,
+        ).remappings([(MLSPlannerNative, "path", "planner_path")]),
+        # Setting resample_spacing_m to > 0.0 will smooth out jagged paths retunned my MLSP
+        DanLocalPlanner.blueprint(resample_spacing_m=0.1),
+        DanHolonomicTC.blueprint(run_profile="walk"),
+        MovementManager.blueprint(),
+    )
+    .solidify()
+    .global_config(n_workers=10, robot_model="unitree_go2")
+)

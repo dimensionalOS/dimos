@@ -67,6 +67,7 @@ unitree_g1_coordinator = (
             ],
         ),
     )
+    .solidify()
     # No remappings: Module stream names (motor_states/imu/motor_command) don't
     # collide with ControlCoordinator's (joint_state/joint_command/...).
     .transports(

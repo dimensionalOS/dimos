@@ -87,7 +87,7 @@ def _keyboard_teleop() -> Blueprint:
             visualization={"backend": "viser"},
         ),
         A750Connection.blueprint(),
-    )
+    ).solidify()
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.

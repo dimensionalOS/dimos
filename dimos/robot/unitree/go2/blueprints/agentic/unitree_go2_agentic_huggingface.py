@@ -24,4 +24,4 @@ unitree_go2_agentic_huggingface = autoconnect(
     McpServer.blueprint(),
     Agent.blueprint(model="huggingface:Qwen/Qwen2.5-1.5B-Instruct"),
     _common_agentic,
-)
+).solidify()

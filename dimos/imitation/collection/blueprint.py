@@ -98,7 +98,7 @@ def _collection_components(
     button_map: dict[EpisodeCommand, str] = (
         {"toggle": "B", "discard": "A"} if headset_view else {"toggle": "B", "discard": "Y"}
     )
-    producers = autoconnect(teleop, *real_camera, *bench)
+    producers = autoconnect(teleop, *real_camera, *bench).solidify()
     coordinator = next(
         atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
     )
@@ -149,7 +149,7 @@ learning_collect_webxr_xarm7 = autoconnect(
         task="Teleoperate the xArm",
         headset_view=True,
     )
-)
+).solidify()
 learning_collect_webxr_piper = autoconnect(
     *_collection_components("piper", teleop_webxr_piper, task="Teleoperate the Piper")
-)
+).solidify()

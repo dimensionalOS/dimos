@@ -66,7 +66,7 @@ class PongModule(NativeModule):
 
 
 def blueprint() -> Blueprint:
-    return autoconnect(PingModule.blueprint(), PongModule.blueprint())
+    return autoconnect(PingModule.blueprint(), PongModule.blueprint()).solidify()
 
 
 if __name__ == "__main__":

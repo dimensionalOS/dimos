@@ -39,21 +39,25 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_g
 from dimos.robot.unitree.go2.connection import GO2Connection
 
 # Live loop closure, on the premap graph given as `--map-file` when there is one.
-unitree_go2 = autoconnect(
-    unitree_go2_basic,
-    PGOVoxelMapper.blueprint(emit_every=5),
-    CostMapper.blueprint(),
-    ReplanningAStarPlanner.blueprint(),
-    WavefrontFrontierExplorer.blueprint(),
-    PatrollingModule.blueprint(),
-    MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2")
+unitree_go2 = (
+    autoconnect(
+        unitree_go2_basic,
+        PGOVoxelMapper.blueprint(emit_every=5),
+        CostMapper.blueprint(),
+        ReplanningAStarPlanner.blueprint(),
+        WavefrontFrontierExplorer.blueprint(),
+        PatrollingModule.blueprint(),
+        MovementManager.blueprint(),
+    )
+    .solidify()
+    .global_config(n_workers=10, robot_model="unitree_go2")
+)
 
 # Persistent map: map_go2 (or `--map-file`) loaded, joined, saved as it changes, created if missing.
 unitree_go2_map = autoconnect(
     unitree_go2,
     PGOVoxelMapper.blueprint(emit_every=5, save_map=True, map_file="map_go2"),
-)
+).solidify()
 
 
 class Go2MemoryConfig(RecorderConfig):
@@ -91,6 +95,7 @@ unitree_go2_markers = (
         ),
         MarkerTfModule.blueprint(),
     )
+    .solidify()
     .transports(
         {
             ("detections", MarkerDetectionStreamModule): LCMTransport(
@@ -102,7 +107,11 @@ unitree_go2_markers = (
     .global_config(n_workers=12, robot_model="unitree_go2")
 )
 
-unitree_go2_memory = autoconnect(
-    unitree_go2,
-    Go2Memory.blueprint(),
-).global_config(n_workers=13)
+unitree_go2_memory = (
+    autoconnect(
+        unitree_go2,
+        Go2Memory.blueprint(),
+    )
+    .solidify()
+    .global_config(n_workers=13)
+)

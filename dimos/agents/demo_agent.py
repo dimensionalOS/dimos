@@ -20,7 +20,7 @@ from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.hardware.sensors.camera.zed import compat as zed
 
-demo_agent = autoconnect(McpServer.blueprint(), Agent.blueprint())
+demo_agent = autoconnect(McpServer.blueprint(), Agent.blueprint()).solidify()
 
 
 demo_agent_camera = autoconnect(
@@ -34,4 +34,4 @@ demo_agent_camera = autoconnect(
             camera_info=zed.CameraInfo.SingleWebcam,
         ),
     ),
-)
+).solidify()

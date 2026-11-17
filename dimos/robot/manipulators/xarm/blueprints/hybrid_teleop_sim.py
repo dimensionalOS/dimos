@@ -189,62 +189,66 @@ _collection_profile = CollectionProfile(
     actions={"action": _arm_state.model_copy(deep=True)},
 )
 
-hybrid_teleop_sim = autoconnect(
-    ManipulationModule.blueprint(
-        gripper_tasks={"manipulator": "arm_gripper"},
-        model=_xarm7_sim_model,
-        planning_timeout=10.0,
-        visualization={"backend": "viser"},
-    ),
-    ManipulationSkills.blueprint(),
-    TeleopSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
-    GraspGenXModule.blueprint(
-        gripper=XARM_GRIPPER_SWEEP_VOLUME,
-        grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
-        # Return every sample: the pick's contact check chooses among them.
-        max_candidates=500,
-    ),
-    HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
-    # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
-    # world-frame points at 5 Hz, renamed for the Desktop page's scene view.
-    MujocoSimModule.blueprint(
-        **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
-        width=_CAMERA_WIDTH,
-        height=_CAMERA_HEIGHT,
-        fps=_CAMERA_FPS,
-        enable_pointcloud=True,
-        enable_mujoco_lidar=True,
-        mujoco_lidar_raycast_width=80,
-        mujoco_lidar_raycast_height=60,
-        mujoco_lidar_voxel_size=0.01,
-    ).remappings([(MujocoSimModule, "pointcloud", "scene_pointcloud")]),
-    ManipulationLocalize.blueprint(world_frame="world"),
-    coordinator(
-        hardware=[_xarm7_sim_hw],
-        tasks=[
-            trajectory_task(_xarm7_sim_hw),
-            eef_twist_task(
-                _xarm7_sim_hw,
-                robot_model=_xarm7_sim_model,
-                target_frame="link_tcp",
-                priority=20,
-            ),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
-            operator_hold_task(),
-        ],
-        cls=HybridTeleopCoordinator,
-        instance_name="ControlCoordinator",
-    ),
-    # Serves the URDF and its meshes; the planner already puts the links on tf.
-    UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
-    RerunBridgeModule.blueprint(),
-).remappings([(PickAndPlaceModule, "_grasp_generator", GraspGenXModule)])
+hybrid_teleop_sim = (
+    autoconnect(
+        ManipulationModule.blueprint(
+            gripper_tasks={"manipulator": "arm_gripper"},
+            model=_xarm7_sim_model,
+            planning_timeout=10.0,
+            visualization={"backend": "viser"},
+        ),
+        ManipulationSkills.blueprint(),
+        TeleopSkills.blueprint(),
+        PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
+        GraspGenXModule.blueprint(
+            gripper=XARM_GRIPPER_SWEEP_VOLUME,
+            grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+            # Return every sample: the pick's contact check chooses among them.
+            max_candidates=500,
+        ),
+        HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
+        # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
+        # world-frame points at 5 Hz, renamed for the Desktop page's scene view.
+        MujocoSimModule.blueprint(
+            **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
+            width=_CAMERA_WIDTH,
+            height=_CAMERA_HEIGHT,
+            fps=_CAMERA_FPS,
+            enable_pointcloud=True,
+            enable_mujoco_lidar=True,
+            mujoco_lidar_raycast_width=80,
+            mujoco_lidar_raycast_height=60,
+            mujoco_lidar_voxel_size=0.01,
+        ).remappings([(MujocoSimModule, "pointcloud", "scene_pointcloud")]),
+        ManipulationLocalize.blueprint(world_frame="world"),
+        coordinator(
+            hardware=[_xarm7_sim_hw],
+            tasks=[
+                trajectory_task(_xarm7_sim_hw),
+                eef_twist_task(
+                    _xarm7_sim_hw,
+                    robot_model=_xarm7_sim_model,
+                    target_frame="link_tcp",
+                    priority=20,
+                ),
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                ),
+                operator_hold_task(),
+            ],
+            cls=HybridTeleopCoordinator,
+            instance_name="ControlCoordinator",
+        ),
+        # Serves the URDF and its meshes; the planner already puts the links on tf.
+        UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
+        RerunBridgeModule.blueprint(),
+    )
+    .solidify()
+    .remappings([(PickAndPlaceModule, "_grasp_generator", GraspGenXModule)])
+)
 
 hybrid_teleop_sim_collect = autoconnect(
     # First, so the recorder and the episode monitor stop after what they record.
@@ -255,4 +259,4 @@ hybrid_teleop_sim_collect = autoconnect(
     ),
     EpisodeMonitorModule.blueprint(task="Teleoperate the xArm (sim)"),
     hybrid_teleop_sim,
-)
+).solidify()
