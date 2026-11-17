@@ -105,7 +105,13 @@ class HeuristicGraspModule(GraspGeneratorModule):
             max_angle_deg: Half-angle of the cone around approach, degrees.
             limit: How many grasps to return, best first.
 
-        Returns ``grasps`` (each with position, orientation, rpy, score and angle_deg),
+        Each grasp's ``position`` and orientation (``orientation`` or ``rpy``) are
+        where the closed fingertips' centre goes, not a point above it. Move to
+        ``pre_grasp`` with that orientation, then straight in along ``approach`` to
+        ``position``, close, and back out the same way.
+
+        Returns ``grasps`` (each with position, orientation, rpy, approach, pre_grasp,
+        score and angle_deg),
         ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
         made, which says how far off approach is when ``grasps`` is empty.
         """
