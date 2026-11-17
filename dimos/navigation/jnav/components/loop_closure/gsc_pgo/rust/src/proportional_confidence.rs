@@ -315,8 +315,9 @@ impl ClosureSearch {
             let added: Vec<usize> = near.into_iter().map(|(_, k)| k).take(submap_size).collect();
             target.add(self, &added);
             target_ids.extend(added);
-            // report this round's estimated cost to the deterministic schedule before its ICP starts
-            if let Some(progress) = &self.progress {
+            // report this round's estimated cost to the deterministic schedule before its ICP starts (a recording's rounds past
+            // the verdict are cache-only: they neither cost schedule time nor touch the diag, so a recording matches a plain run)
+            if let (Some(progress), None) = (&self.progress, &found) {
                 let source_points = self.key_poses.body_cloud(j).as_ref().map_or(0, |body| {
                     self.keyframe_clouds
                         .get(j, body)
@@ -377,6 +378,9 @@ impl ClosureSearch {
                 });
                 v
             });
+            if found.is_some() {
+                continue;
+            }
             let icp = crate::icp_cache::decode_icp(&round[1..16]);
             // a cloud that did not fit, or fit > closure_search_radius from the single fit's placement, adds no evidence
             let moved = mat3::norm(&mat3::sub(
