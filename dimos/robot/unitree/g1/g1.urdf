@@ -570,7 +570,9 @@
   <!-- mid360 -->
   <link name="mid360_link"></link>
   <joint name="mid360_joint" type="fixed">
-    <origin xyz="0.0002835 0.00003 0.41618" rpy="0 0.04014257279586953 0"/>
+    <!-- Native Livox axes: the device is upside down. This includes the roll
+         formerly applied separately by g1_tf_publisher.torso_to_mid360(). -->
+    <origin xyz="0.0002835 0.00003 0.41618" rpy="3.141592653589793 0.04014257279586953 0"/>
     <parent link="torso_link"/>
     <child link="mid360_link"/>
   </joint>
