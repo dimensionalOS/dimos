@@ -172,3 +172,24 @@ def test_a_shared_blueprint_check_runs_once() -> None:
     )
     coordinator.stop()
     assert calls == [2]
+
+
+class OtherCheck(Module):
+    @staticmethod
+    def blueprint_checks(atoms: list[BlueprintAtom]) -> None:
+        calls.append(-len(atoms))
+
+
+class BothChecks(OtherCheck, CountedCheck):
+    pass
+
+
+def test_every_base_keeps_its_blueprint_check() -> None:
+    calls.clear()
+    blueprint = BothChecks.blueprint()
+    coordinator = ModuleCoordinator.build(
+        blueprint,
+        BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),
+    )
+    coordinator.stop()
+    assert sorted(calls) == [-1, 1]

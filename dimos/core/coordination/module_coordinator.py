@@ -1071,12 +1071,13 @@ def _deploy_all_modules(
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
     atoms = [*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()]
-    # Distinct functions, so modules sharing one (e.g. every TfModule subclass) run it once.
+    # Every base's own check (so mixins each keep theirs), and each distinct function once.
     checkers = list(
         dict.fromkeys(
-            atom.module.blueprint_checks
+            base.blueprint_checks
             for atom in atoms
-            if hasattr(atom.module, "blueprint_checks")
+            for base in atom.module.__mro__
+            if "blueprint_checks" in vars(base)
         )
     )
     for checker in checkers:
