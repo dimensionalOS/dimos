@@ -19,7 +19,7 @@ use crate::mapper::{register, Mapper, Pose};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     non_premap_voxels, partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder,
-    SeedPartition, SeedRegion, VoxelKey, FLAG_NAMES, PREMAP_FLAG,
+    SeedPartition, SeedRegion, VoxelFlags, VoxelKey,
 };
 use ahash::AHashSet;
 use dimos_module::pointcloud::{extract_xyz, ExtractError};
@@ -657,7 +657,10 @@ fn prepare_seed(
     register(&mut points, pose);
     let mut part = partition_seed(&points, voxel_size, origin, region_m);
     if let Some(flags) = flags {
-        let premap: Vec<bool> = flags.iter().map(|f| f & PREMAP_FLAG != 0).collect();
+        let premap: Vec<bool> = flags
+            .iter()
+            .map(|&f| VoxelFlags::from_bits(f).is_premap())
+            .collect();
         part.non_premap = non_premap_voxels(&points, &premap, voxel_size);
     }
     Some(part)
@@ -668,7 +671,7 @@ fn prepare_seed(
 const FLAGS_FIELD_PREFIX: &str = "flags:";
 
 fn flags_field_name() -> String {
-    format!("{FLAGS_FIELD_PREFIX}{}", FLAG_NAMES.join(","))
+    format!("{FLAGS_FIELD_PREFIX}{}", VoxelFlags::NAMES.join(","))
 }
 
 /// For each bit a flags field's name lists, the `Voxel::flags` bit of the same
@@ -678,7 +681,7 @@ fn flag_remap(field_name: &str) -> Vec<u32> {
         .split(',')
         .take(32)
         .map(|name| {
-            FLAG_NAMES
+            VoxelFlags::NAMES
                 .iter()
                 .position(|known| *known == name.trim())
                 .map_or(0, |bit| 1 << bit)
@@ -983,7 +986,7 @@ mod tests {
     /// global and local maps hand each voxel's premap bit back out on it.
     #[test]
     fn flags_field_round_trips_through_seed_and_maps() {
-        let premap = f32::from_bits(PREMAP_FLAG);
+        let premap = f32::from_bits(VoxelFlags::PREMAP);
         let none = f32::from_bits(0);
         let quads = [
             1.5,
@@ -1004,7 +1007,7 @@ mod tests {
         assert_eq!(points, vec![(1.5, 0.5, 0.5), (2.5, 0.5, 0.5)]);
         assert_eq!(
             flags,
-            Some(vec![PREMAP_FLAG, 0]),
+            Some(vec![VoxelFlags::PREMAP, 0]),
             "the NaN point drops with its flags"
         );
 
@@ -1041,7 +1044,7 @@ mod tests {
             flagged.sort_by(|a, b| a.0 .0.total_cmp(&b.0 .0));
             assert_eq!(
                 flagged,
-                vec![((1.5, 0.5, 0.5), PREMAP_FLAG), ((2.5, 0.5, 0.5), 0)],
+                vec![((1.5, 0.5, 0.5), VoxelFlags::PREMAP), ((2.5, 0.5, 0.5), 0)],
                 "{name} map"
             );
         }
@@ -1065,7 +1068,7 @@ mod tests {
         let mut cloud = points_to_cloud(&quads, true, "map", Time::default());
         cloud.fields.last_mut().unwrap().name = "flags:other,premap".into();
         let (_, flags) = extract_xyz_flags(&cloud).expect("flags cloud must decode");
-        assert_eq!(flags, Some(vec![PREMAP_FLAG, 0]));
+        assert_eq!(flags, Some(vec![VoxelFlags::PREMAP, 0]));
     }
 
     /// A loaded cloud without the field is all premap.

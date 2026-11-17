@@ -1811,7 +1811,12 @@ fn non_premap_seed_points_land_non_premap() {
     flags.sort_by_key(|f| f.0);
     assert_eq!(
         flags,
-        vec![(1, PREMAP_FLAG), (2, 0), (3, 0), (4, PREMAP_FLAG)]
+        vec![
+            (1, VoxelFlags::PREMAP),
+            (2, 0),
+            (3, 0),
+            (4, VoxelFlags::PREMAP)
+        ]
     );
 }
 

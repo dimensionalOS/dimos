@@ -448,16 +448,40 @@ pub struct Voxel {
     normal: NormalFit,
     /// The map frame this voxel was last hit (or seeded) in.
     stamp: u32,
-    /// Per-voxel bits, named in order by `FLAG_NAMES`.
-    flags: u32,
+    flags: VoxelFlags,
 }
 
-/// Set in `Voxel::flags` while only premap points put the voxel there: a
-/// live hit or non-premap seed point clears it.
-pub const PREMAP_FLAG: u32 = 1 << 0;
+/// Per-voxel bits, named in order by `NAMES`; all their masking lives here.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct VoxelFlags(u32);
 
-/// The name of each `Voxel::flags` bit, lowest first.
-pub const FLAG_NAMES: &[&str] = &["premap"];
+impl VoxelFlags {
+    /// Set while only premap points put the voxel there: a live hit or
+    /// non-premap seed point clears it.
+    pub const PREMAP: u32 = 1 << 0;
+    /// The name of each bit, lowest first.
+    pub const NAMES: &'static [&'static str] = &["premap"];
+
+    pub fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    pub fn bits(self) -> u32 {
+        self.0
+    }
+
+    pub fn is_premap(self) -> bool {
+        self.0 & Self::PREMAP != 0
+    }
+
+    fn set_premap(&mut self, premap: bool) {
+        self.0 = if premap {
+            self.0 | Self::PREMAP
+        } else {
+            self.0 & !Self::PREMAP
+        };
+    }
+}
 
 impl Default for Voxel {
     fn default() -> Self {
@@ -470,7 +494,7 @@ impl Default for Voxel {
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
             stamp: 0,
-            flags: 0,
+            flags: VoxelFlags::default(),
         }
     }
 }
@@ -485,19 +509,15 @@ impl Voxel {
 
     /// Only premap points put it here: a live hit or non-premap seed point clears it.
     pub fn is_premap(&self) -> bool {
-        self.flags & PREMAP_FLAG != 0
+        self.flags.is_premap()
     }
 
-    pub fn flags(&self) -> u32 {
+    pub fn flags(&self) -> VoxelFlags {
         self.flags
     }
 
     fn set_premap(&mut self, premap: bool) {
-        self.flags = if premap {
-            self.flags | PREMAP_FLAG
-        } else {
-            self.flags & !PREMAP_FLAG
-        };
+        self.flags.set_premap(premap);
     }
 
     /// The map frame this voxel was last hit (or seeded) in.
@@ -915,7 +935,7 @@ fn emit_points_impl(
             if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
                 part.extend_from_slice(&[x, y, z]);
                 if with_flags {
-                    part.push(f32::from_bits(hv.voxel.flags()));
+                    part.push(f32::from_bits(hv.voxel.flags().bits()));
                 }
             }
         },
