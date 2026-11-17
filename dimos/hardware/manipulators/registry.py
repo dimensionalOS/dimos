@@ -20,7 +20,7 @@ Adapter subpackages declare factories in ``_registry.py`` manifests
 Usage:
     from dimos.hardware.manipulators.registry import adapter_registry
 
-    adapter = adapter_registry.create("xarm", ip="192.168.1.185", dof=6)
+    adapter = adapter_registry.create("xarm", address="192.168.1.185", dof=6)
     print(adapter_registry.available())  # ["mock", "piper", ..., "xarm"]
 """
 

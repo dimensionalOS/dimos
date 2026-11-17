@@ -148,7 +148,7 @@ the selected backend converts that path to a validated timed trajectory:
 ```bash
 # Stock xArm compatibility test: independent trapezoids on RoboPlanWorld
 dimos run xarm7-planner-coordinator \
-  --trajectory-parametrization.backend=simple_trapezoid
+  --trajectory-parametrization='{"backend": "simple_trapezoid"}'
 
 # Omitting trajectory_parametrization selects TOPP-RA for RoboPlanWorld
 dimos run xarm7-planner-coordinator
@@ -156,7 +156,7 @@ dimos run xarm7-planner-coordinator
 # Equivalent explicit TOPP-RA selection
 dimos run xarm7-planner-coordinator \
   --world-backend=roboplan \
-  --trajectory-parametrization.backend=roboplan_toppra
+  --trajectory-parametrization='{"backend": "roboplan_toppra"}'
 
 # DrakeWorld selects simple_trapezoid when no parametrizer is specified
 dimos run xarm7-planner-coordinator \
@@ -224,8 +224,8 @@ bounded_config = RoboPlanCartesianPathConfig(
     max_angular_speed=0.5,
     max_linear_acceleration=0.5,
     max_angular_acceleration=2.5,
-    max_position_error=0.005,
-    max_orientation_error=0.01,
+    position_tolerance=0.005,
+    orientation_tolerance=0.01,
 )
 ```
 
@@ -361,8 +361,8 @@ explicitly with the nested host override:
 
 ```bash
 uv run dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.visualization.backend=viser \
-  -o manipulationmodule.visualization.host=0.0.0.0
+  --manipulationmodule.visualization.backend viser \
+  --manipulationmodule.visualization.host 0.0.0.0
 ```
 
 Blueprint example:

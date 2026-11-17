@@ -26,7 +26,13 @@ mem_app.command("summary")(_summary_main)
 
 @mem_app.command()
 def rerun(
-    path: str = typer.Argument(..., help="Store: bare name (cwd, data/, LFS), .db or .mcap path"),
+    path: str = typer.Argument(
+        ...,
+        help=(
+            "Store .db/.mcap: path, cwd/data/LFS name, recording folder, or downloaded name. "
+            "Upload ID prefixes match only the first 8 characters stored in download filenames."
+        ),
+    ),
     out: str = typer.Option(None, "--out", help="Output .rrd (default: alongside the source)"),
     seconds: float = typer.Option(None, "--seconds", help="Only the first N seconds"),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't open the viewer"),
@@ -35,11 +41,11 @@ def rerun(
     ),
 ) -> None:
     """Render a memory store into rerun (writes a .rrd, then opens the viewer)."""
-    from dimos.memory.cli.dataset import open_dataset
+    from dimos.memory.cli.dataset import AmbiguousDatasetError, open_dataset
     from dimos.memory.cli.render import render_store
 
     try:
         store = open_dataset(path)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, AmbiguousDatasetError) as exc:
         raise typer.BadParameter(str(exc), param_hint="PATH") from exc
     render_store(store, out=out, seconds=seconds, no_gui=no_gui, root=root)

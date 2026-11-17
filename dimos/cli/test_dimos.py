@@ -37,6 +37,10 @@ import dimos.core.run_registry as run_registry
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
+from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.robot.unitree.g1.effectors.high_level.webrtc import G1HighLevelWebRtc
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.fleet_connection import Go2FleetConnection
 import dimos.utils.cache as cache_utils
 import dimos.utils.logging_config as logging_config
 
@@ -133,6 +137,17 @@ def test_mcp_malformed_argument_rejected_before_adapter(monkeypatch: pytest.Monk
     result = CliRunner().invoke(main, ["mcp", "call", "inspect", "--arg", "invalid"])
     assert result.exit_code == 2, result.output + repr(result.exception)
     assert "expected KEY=VALUE" in result.output
+
+
+def test_global_help_explains_dtop() -> None:
+    result = CliRunner().invoke(main, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    output_plain = " ".join(output_plain.replace("│", "").split())
+    assert "--dtop" in output_plain
+    assert "Publish live resource stats for dtop" in output_plain
+    assert "Override dtop in GlobalConfig" not in output_plain
 
 
 def test_global_config_flag_applies_before_subcommand():
@@ -417,6 +432,38 @@ def test_run_leaves_hosted_dependency_checks_to_the_host(
 
 
 @pytest.mark.parametrize(
+    ("module", "options", "message"),
+    [
+        (GO2Connection, [], "No robot IP specified"),
+        (GO2Connection, ["--robot-ip", ""], "No robot IP specified"),
+        (GO2Connection, ["--go2connection.ip", " "], "No robot IP specified"),
+        (Go2FleetConnection, [], "No robot IPs specified"),
+        (Go2FleetConnection, ["--go2fleetconnection.ips", "[]"], "No robot IPs specified"),
+        (G1Connection, [], "No robot IP specified"),
+        (G1HighLevelWebRtc, [], "No robot IP specified"),
+    ],
+)
+def test_run_rejects_missing_robot_addresses_before_build(
+    stubbed_run, monkeypatch, tmp_path, module, options, message
+) -> None:
+    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", lambda _: module.blueprint())
+    monkeypatch.setenv("ROBOT_IP", "null")
+    monkeypatch.setenv("ROBOT_IPS", "null")
+    monkeypatch.setenv("REPLAY", "false")
+    monkeypatch.setenv("SIMULATION", "")
+
+    result = CliRunner().invoke(
+        main, ["run", "robot", "--config", str(tmp_path / "absent.json"), *options]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "Invalid blueprint configuration" in result.output
+    assert message in result.output
+    assert "blueprint" not in stubbed_run
+    assert "entry" not in stubbed_run
+
+
+@pytest.mark.parametrize(
     ("exec_handoff", "expected_run_id"),
     [(True, "launcher-run"), (False, "test-alpha")],
 )
@@ -629,6 +676,7 @@ def test_run_help_lists_dynamic_flags_without_starting(
     assert "--map-file" in output_plain
     assert "--runmodulea.daemon" in output_plain
     assert output_plain.count("--daemon") == 1
+    assert "Publish live resource stats for dtop" in output_plain
     assert "parsed_config" not in stubbed_run
     assert "entry" not in stubbed_run
 

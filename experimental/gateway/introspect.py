@@ -388,12 +388,40 @@ def json_safe(kind: Any, value: Any) -> bool:
 
 # here, not in launches.py: this file runs in a served checkout's python, where launches.py's dimos imports may not exist
 def is_secret_name(path: str) -> bool:
-    name = path.rsplit(".", 1)[-1].lower()
-    return (
+    return any(
         name == "key"
         or name.endswith("_key")
         or any(word in name for word in ("secret", "token", "password", "passwd"))
+        for name in path.lower().replace("-", "_").split(".")
     )
+
+
+def secret_annotation(kind: Any, ancestors: frozenset[Any] = frozenset()) -> bool:
+    """Whether a nested configuration type declares any secret field."""
+    # Introspection runs against the served checkout's dependencies.
+    from pydantic import BaseModel
+
+    if isinstance(kind, type) and issubclass(kind, BaseModel):
+        if kind in ancestors:
+            return False
+        return any(
+            is_secret_name(name) or secret_annotation(field.annotation, ancestors | {kind})
+            for name, field in kind.model_fields.items()
+        )
+    return any(secret_annotation(arg, ancestors) for arg in typing.get_args(kind))
+
+
+def secret_value(value: Any) -> bool:
+    """Whether a structured default or blueprint value contains secret keys."""
+    from pydantic import BaseModel
+
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    if isinstance(value, dict):
+        return any(is_secret_name(str(key)) or secret_value(item) for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(secret_value(item) for item in value)
+    return False
 
 
 def field_args(
@@ -412,7 +440,12 @@ def field_args(
             "default": jsonable(default),
             "description": field.description,
             "required": required,
-            "secret": is_secret_name(name),
+            "secret": (
+                is_secret_name(name)
+                or secret_annotation(kind)
+                or secret_value(default)
+                or secret_value((values or {}).get(name))
+            ),
             "base": name in base,
         }
         options = choices(kind)
@@ -439,6 +472,26 @@ def parser_schema(blueprint: Any) -> Any:
 def settable(schema: Any, root: str) -> set[str]:
     """The fields `dimos run` takes a flag for under `root` (a module's name, or "g")."""
     return {target.path[0] for target in schema.targets if target.root == root}
+
+
+def target_paths(schema: Any) -> dict[str, list[str]]:
+    """Parser leaf paths by module name or `g`, preserving atomic collection fields."""
+    paths: dict[str, list[str]] = {}
+    for target in schema.targets:
+        if target.section != "transport":
+            paths.setdefault(target.root, []).append(".".join(target.path))
+    return paths
+
+
+def targets(name: str, global_values: dict[str, Any] | None = None) -> dict[str, Any]:
+    from dimos.core.global_config import global_config
+    from dimos.robot.get_all_blueprints import get_by_name
+
+    # Match pre-command CLI flags before imports choose simulation/replay modules.
+    global_config.update(
+        **{key: value for key, value in (global_values or {}).items() if value is not None}
+    )
+    return target_paths(parser_schema(get_by_name(name)))
 
 
 def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
@@ -667,6 +720,7 @@ def main(argv: list[str]) -> None:
         "blueprint": blueprint_detail,
         "source": lambda name: {"name": name, **blueprint_source(name)},
         "config": config,
+        "targets": targets,
         "module": module,
         "module_config": module_config,
         "list": blueprint_list,
@@ -675,7 +729,9 @@ def main(argv: list[str]) -> None:
     }
     try:
         command = commands[argv[0]]
-        result = command(*argv[1:], request) if argv[0] == "scan" else command(*argv[1:])
+        result = (
+            command(*argv[1:], request) if argv[0] in {"scan", "targets"} else command(*argv[1:])
+        )
     except Exception as error:
         result = {"error": f"{type(error).__name__}: {error}"}
     emit(result)

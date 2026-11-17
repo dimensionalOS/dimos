@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any
 
 from dimos.experimental.isolated_python.module import (
@@ -28,6 +29,7 @@ from dimos.imitation.dataprep.formats.lerobot.protocol import (
     RESULT_ADAPTER,
     BuildRequest,
     BuildResult,
+    ErrorResult,
     InspectRequest,
     InspectResult,
     Request,
@@ -44,6 +46,24 @@ def lerobot_project() -> Path:
     return get_project_root() / LeRobotPolicyModule.project_dir
 
 
+def _failure_detail(output: str) -> str:
+    """Keep the error and its continuation lines, without preceding install logs."""
+    traceback_header = "Traceback (most recent call last):\n"
+    if traceback_header in output:
+        lines = output.rsplit(traceback_header, 1)[-1].splitlines()
+        for index, line in enumerate(lines):
+            # Python indents stack frames; the exception starts at column zero.
+            if line and not line[0].isspace():
+                return " ".join("\n".join(lines[index:]).split())
+
+    lines = output.strip().splitlines()
+    for index, line in enumerate(lines):
+        # uv errors can wrap across lines and end with a multi-line hint.
+        if line.lstrip().startswith(("error:", "\u00d7 ")):
+            return " ".join("\n".join(lines[index:]).split())
+    return lines[-1].strip() if lines else "no diagnostic output"
+
+
 def _run(request: Request) -> Result:
     """Run one typed request under the locked LeRobot dependency stack."""
     project = lerobot_project()
@@ -56,6 +76,12 @@ def _run(request: Request) -> Result:
     env = isolated_python_environment(project)
     try:
         with cache_usage_guard():
+            print(
+                "Preparing LeRobot environment and running dataprep "
+                "(first use may download several GB and take minutes)...",
+                file=sys.stderr,
+                flush=True,
+            )
             result = subprocess.run(
                 command,
                 cwd=project,
@@ -69,8 +95,14 @@ def _run(request: Request) -> Result:
             "uv is required for LeRobot dataprep; install uv and ensure it is on PATH"
         ) from error
     if result.returncode:
-        output = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(f"LeRobot dataprep exited with status {result.returncode}: {output}")
+        try:
+            failure = ErrorResult.model_validate_json(result.stdout.rstrip().rsplit("\n", 1)[-1])
+            detail = " ".join(failure.error.split())
+        except ValueError:
+            # Installer failures and unexpected exceptions have no protocol result.
+            output = result.stderr.strip() or result.stdout.strip()
+            detail = _failure_detail(output)
+        raise RuntimeError(f"LeRobot dataprep exited with status {result.returncode}: {detail}")
     try:
         return RESULT_ADAPTER.validate_json(result.stdout.rstrip().rsplit("\n", 1)[-1])
     except ValueError as error:

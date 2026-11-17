@@ -196,7 +196,7 @@ OPENARM_MINI_JOINT_LIMITS: dict[str, tuple[tuple[float, float], ...]] = {
 OPENARM_MINI_TRIGGER_TRAVEL_RADIANS = 1.0
 
 
-def _mini_bus(side: str) -> FeetechBus:
+def _mini_bus(side: str, *, trigger: bool = True) -> FeetechBus:
     # Leader servos joint_1 to joint_7 (IDs 1 to 7) drive the arm joints in
     # order; the gripper trigger is at ID 8.
     return FeetechBus(
@@ -208,9 +208,13 @@ def _mini_bus(side: str) -> FeetechBus:
                 start=1,
             )
         ),
-        trigger=FeetechTrigger("gripper", OPENARM_MINI_TRIGGER_TRAVEL_RADIANS),
+        trigger=FeetechTrigger("gripper", OPENARM_MINI_TRIGGER_TRAVEL_RADIANS) if trigger else None,
     )
 
 
 #: The two OpenArm Mini leader arms, one Feetech bus each.
 OPENARM_MINI_LEADERS = FeetechRobot(buses=tuple(_mini_bus(side) for side in OPENARM_SIDES))
+#: The same leaders with the trigger servo removed, e.g. for a Joy-Con in its place.
+OPENARM_MINI_ARM_LEADERS = FeetechRobot(
+    buses=tuple(_mini_bus(side, trigger=False) for side in OPENARM_SIDES)
+)

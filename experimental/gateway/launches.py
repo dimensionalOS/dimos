@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -36,12 +37,13 @@ from pydantic import ValidationError
 from dimos.constants import LOG_DIR
 from dimos.core.coordination.process_lifecycle import is_pid_alive
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
-from experimental.gateway import constants, shared_config, store
+from experimental.gateway import constants, introspect, shared_config, store
 from experimental.gateway.errors import ApiError, StatusError
 from experimental.gateway.introspect import is_secret_name
 from experimental.gateway.names import check_name
 
 ModuleValues = dict[str, dict[str, Any]]
+ConfigTargets = dict[str, list[str]]
 
 HIDDEN = "•••"
 STRUCTURED = ("global", "modules", "secrets")
@@ -77,8 +79,12 @@ class LaunchConfig:
     # POST /active/exec: exactly these args (a relaunch keeps it that way)
     exact: bool = False
 
-    def secret_paths(self) -> list[str]:
-        return secret_paths(self.global_, self.modules, self.secrets)
+    def normalized(self) -> LaunchConfig:
+        """Normalize global overrides without changing raw exec requests or adding defaults."""
+        return self if self.exact else replace(self, global_=normalize_global(self.global_))
+
+    def secret_paths(self, targets: ConfigTargets | None = None) -> list[str]:
+        return secret_paths(self.global_, self.modules, self.secrets, targets)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -137,16 +143,80 @@ def parse(raw: Any) -> LaunchConfig:
 
 
 def secret_paths(
-    global_: dict[str, Any], modules: ModuleValues, listed: list[str] | tuple[str, ...] = ()
+    global_: dict[str, Any],
+    modules: ModuleValues,
+    listed: list[str] | tuple[str, ...] = (),
+    targets: ConfigTargets | None = None,
 ) -> list[str]:
-    paths = [key for key in sorted(global_) if is_secret_name(key) or key in listed]
+    paths: list[str] = []
+    explicit = [_secret_path(path, targets) for path in listed]
+
+    def visit(value: Any, path: str, name: str) -> None:
+        comparable = _secret_path(path, targets)
+        if is_secret_name(name) or any(_within(comparable, parent) for parent in explicit):
+            paths.append(path)
+        elif isinstance(value, dict):
+            for key, child in sorted(value.items()):
+                visit(child, f"{path}.{key}" if path else key, key)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, f"{path}.{index}", "")
+        elif any(_within(secret, comparable) for secret in explicit):
+            # An encoded collection cannot be redacted by leaf; protect the whole value.
+            paths.append(path)
+
+    visit(global_, "", "")
     for module, fields in sorted(modules.items()):
-        paths += [
-            f"{module}.{name}"
-            for name in sorted(fields)
-            if is_secret_name(name) or f"{module}.{name}" in listed
-        ]
+        visit(fields, module, "")
     return paths
+
+
+def _within(path: str, parent: str) -> bool:
+    return path == parent or path.startswith(parent + ".")
+
+
+def _contains_secret(path: str, paths: list[str]) -> bool:
+    return any(_within(path, secret) or _within(secret, path) for secret in paths)
+
+
+def _option_name(name: str) -> str:
+    return name.lower().replace("-", "_")
+
+
+def _module_targets(module: str, targets: ConfigTargets | None) -> list[str] | None:
+    if targets is None:
+        return None
+    return next(
+        (
+            paths
+            for name, paths in targets.items()
+            if _option_name(name.replace("/", "_")) == _option_name(module.replace("/", "_"))
+        ),
+        [],
+    )
+
+
+def _secret_path(path: str, targets: ConfigTargets | None) -> str:
+    """Match schema aliases without normalizing case or punctuation in dictionary keys."""
+    if targets is None:
+        return path
+    root, dot, field = path.partition(".")
+    leaves = _module_targets(root, targets)
+    prefix = ""
+    if leaves:
+        prefix = _option_name(root.replace("/", "_")) + dot
+    else:
+        field, leaves = path, targets.get("g", [])
+    parts = field.split(".")
+    boundary = min(
+        (
+            len(leaf.split("."))
+            for leaf in leaves
+            if _within(_option_name(field), _option_name(leaf))
+        ),
+        default=len(parts),
+    )
+    return prefix + ".".join([*map(_option_name, parts[:boundary]), *parts[boundary:]])
 
 
 def as_text(value: Any) -> str:
@@ -154,34 +224,50 @@ def as_text(value: Any) -> str:
 
 
 def module_env(modules: ModuleValues) -> dict[str, str]:
-    """dimos's env names for module settings: MODULE__FIELD."""
+    """dimos's env names for module settings: MODULE__FIELD (a dotted field: MODULE__A__B)."""
     return {
-        f"{module.replace('/', '_')}__{name}".upper(): as_text(value)
+        f"{module.replace('/', '_')}__{name.replace('.', '__')}".upper(): as_text(value)
         for module, fields in modules.items()
         for name, value in fields.items()
         if value is not None
     }
 
 
-def secret_env(global_: dict[str, Any], modules: ModuleValues, paths: list[str]) -> dict[str, str]:
+def secret_env(
+    global_: dict[str, Any],
+    modules: ModuleValues,
+    paths: list[str],
+    targets: ConfigTargets | None = None,
+) -> dict[str, str]:
     env = {
-        key.upper(): as_text(value)
+        (key.upper() if "." not in key else "G__" + key.replace(".", "__").upper()): as_text(value)
         for key, value in global_.items()
-        if key in paths and value is not None
+        if _contains_secret(key, paths) and value is not None
     }
     secret = {
-        module: {name: value for name, value in fields.items() if f"{module}.{name}" in paths}
+        module: {
+            name: value
+            for name, value in configured_fields(fields, _module_targets(module, targets)).items()
+            if _contains_secret(f"{module}.{name}", paths)
+        }
         for module, fields in modules.items()
     }
     return {**env, **module_env(secret)}
 
 
 def without_secrets(
-    global_: dict[str, Any], modules: ModuleValues, paths: list[str]
+    global_: dict[str, Any],
+    modules: ModuleValues,
+    paths: list[str],
+    targets: ConfigTargets | None = None,
 ) -> tuple[dict[str, Any], ModuleValues]:
-    flat = {key: value for key, value in global_.items() if key not in paths}
+    flat = {key: value for key, value in global_.items() if not _contains_secret(key, paths)}
     nested = {
-        module: {name: value for name, value in fields.items() if f"{module}.{name}" not in paths}
+        module: {
+            name: value
+            for name, value in configured_fields(fields, _module_targets(module, targets)).items()
+            if not _contains_secret(f"{module}.{name}", paths)
+        }
         for module, fields in modules.items()
     }
     return flat, {module: fields for module, fields in nested.items() if fields}
@@ -190,18 +276,18 @@ def without_secrets(
 def redact(
     global_: dict[str, Any], modules: ModuleValues, paths: list[str]
 ) -> tuple[dict[str, Any], ModuleValues]:
-    flat = {
-        key: HIDDEN if key in paths and value is not None else value
-        for key, value in global_.items()
-    }
-    nested = {
-        module: {
-            name: HIDDEN if f"{module}.{name}" in paths and value is not None else value
-            for name, value in fields.items()
-        }
-        for module, fields in modules.items()
-    }
-    return flat, nested
+    def visit(value: Any, path: str) -> Any:
+        if value is not None and any(_within(path, secret) for secret in paths):
+            return HIDDEN
+        if isinstance(value, dict):
+            return {
+                key: visit(child, f"{path}.{key}" if path else key) for key, child in value.items()
+            }
+        if isinstance(value, list):
+            return [visit(child, f"{path}.{index}") for index, child in enumerate(value)]
+        return value
+
+    return visit(global_, ""), {module: visit(fields, module) for module, fields in modules.items()}
 
 
 def flag_fields() -> set[str]:
@@ -211,14 +297,15 @@ def flag_fields() -> set[str]:
     return set(inspect.signature(callback).parameters) - {"ctx"}
 
 
-def check_global(values: dict[str, Any]) -> None:
+def normalize_global(values: dict[str, Any]) -> dict[str, Any]:
+    """Return typed overrides, preserving the request's keys and omitted (null) values."""
     from dimos.core.global_config import GlobalConfig
 
     unknown = sorted(set(values) - flag_fields())
     if unknown:
         raise LaunchConfigError(f"not a dimos GlobalConfig flag: {', '.join(unknown)}")
     try:
-        GlobalConfig.model_validate(
+        validated = GlobalConfig.model_validate(
             {key: value for key, value in values.items() if value is not None}
         )
     except ValidationError as error:
@@ -226,6 +313,10 @@ def check_global(values: dict[str, Any]) -> None:
             f"{'.'.join(map(str, problem['loc']))}: {problem['msg']}" for problem in error.errors()
         )
         raise LaunchConfigError(f"bad GlobalConfig value: {problems}") from error
+    # as GlobalConfig types them (a "true" is True, 3.0 is 3): the flags are spelled from these
+    return {
+        key: getattr(validated, key) if value is not None else None for key, value in values.items()
+    }
 
 
 def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[str]:
@@ -241,25 +332,66 @@ def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[s
     return flags
 
 
-def nested(fields: dict[str, Any]) -> dict[str, Any]:
-    """`addresses.arm` and `addresses.base` become one `addresses` object."""
+def configured_fields(fields: dict[str, Any], targets: list[str] | None = None) -> dict[str, Any]:
+    """Normalize dotted/object input at parser leaves, preserving collection data keys.
+
+    Model fields become leaf options; dictionaries and lists stay atomic. Without a
+    schema, conservatively treat each top-level field as one atomic value.
+    """
     out: dict[str, Any] = {}
-    for name, value in sorted(fields.items()):
-        if value is None:
-            continue
-        head, dot, rest = name.partition(".")
-        if dot:
-            out.setdefault(head, {})[rest] = value
+    leaves = sorted(
+        set(targets) if targets is not None else {name.split(".")[0] for name in fields},
+        key=lambda path: (path.count("."), path),
+    )
+
+    def merge(destination: dict[str, Any], name: str, value: Any) -> None:
+        if isinstance(value, dict):
+            current = destination.setdefault(name, {})
+            if not isinstance(current, dict):
+                raise LaunchConfigError(f"conflicting object and scalar for {name}")
+            for key, child in value.items():
+                merge(current, key, child)
+        elif name in destination and destination[name] != value:
+            raise LaunchConfigError(f"conflicting values for {name}")
         else:
-            out[name] = value
+            destination[name] = value
+
+    def visit(values: dict[str, Any], prefix: str = "") -> None:
+        for name, value in sorted(values.items()):
+            if value is None:
+                continue
+            path = f"{prefix}.{name}" if prefix else name
+            target = next(
+                (leaf for leaf in leaves if _within(_option_name(path), _option_name(leaf))),
+                None,
+            )
+            if target is not None:
+                # Retain the submitted spelling for secret matching; only schema
+                # lookup uses CLI aliases, never keys inside collection values.
+                leaf = ".".join(path.split(".")[: len(target.split("."))])
+                if any(_option_name(key) == _option_name(leaf) and key != leaf for key in out):
+                    raise LaunchConfigError(f"conflicting spellings for {leaf}")
+                suffix = path[len(leaf) :].removeprefix(".")
+                if suffix:
+                    for part in reversed(suffix.split(".")):
+                        value = {part: value}
+                merge(out, leaf, value)
+            elif any(
+                _within(_option_name(leaf), _option_name(path)) for leaf in leaves
+            ) and isinstance(value, dict):
+                visit(value, path)
+            else:
+                raise LaunchConfigError(f"not a settable module config field: {path}")
+
+    visit(fields)
     return out
 
 
-def module_flags(modules: ModuleValues) -> list[str]:
+def module_flags(modules: ModuleValues, targets: ConfigTargets | None = None) -> list[str]:
     flags = []
     for module, fields in sorted(modules.items()):
         root = module.replace("/", "_").replace("_", "-")
-        for name, value in nested(fields).items():
+        for name, value in configured_fields(fields, _module_targets(module, targets)).items():
             flags.append(f"--{root}.{name.replace('_', '-')}={as_text(value)}")
     return flags
 
@@ -493,12 +625,16 @@ def active() -> dict[str, Any]:
     }
 
 
-def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
-    global_, modules = without_secrets(launch.global_, launch.modules, launch.secret_paths())
+def run_args(
+    blueprint: str, launch: LaunchConfig, targets: ConfigTargets | None = None
+) -> list[str]:
+    global_, modules = without_secrets(
+        launch.global_, launch.modules, launch.secret_paths(targets), targets
+    )
     if launch.args:
         flags = global_flags(global_, explicit_bools=True)
-        return ["run", blueprint, *flags, *module_flags(modules), *launch.args]
-    return [*global_flags(global_), "run", blueprint, *module_flags(modules)]
+        return ["run", blueprint, *flags, *module_flags(modules, targets), *launch.args]
+    return [*global_flags(global_), "run", blueprint, *module_flags(modules, targets)]
 
 
 def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) -> int:
@@ -560,16 +696,29 @@ def check_idle() -> None:
 
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
     check_name(blueprint)
+    return _start(dimos_dir, blueprint, launch.normalized())
+
+
+def _start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
+    """Spawn a prepared launch; relaunch also prepares before stopping the current process."""
     with _lock:
         check_idle()
         program = store.dimos_bin(dimos_dir)
         if not program.exists():
             raise RunError(f"no dimos at {dimos_dir} (no {program})")
-        paths = launch.secret_paths()
-        secret_vars = secret_env(launch.global_, launch.modules, paths)
+        targets = None
+        if launch.modules:
+            try:
+                targets = asyncio.run(
+                    introspect.run_child(dimos_dir, ["targets", blueprint], stdin=launch.global_)
+                )
+            except introspect.IntrospectError as error:
+                raise LaunchConfigError(f"could not read launch config fields: {error}") from error
+        paths = launch.secret_paths(targets)
+        secret_vars = secret_env(launch.global_, launch.modules, paths, targets)
         shown_env = [f"{name}={HIDDEN}" for name in secret_vars]
         shown_launch_args = shown_args(launch.args)
-        shown_run = run_args(blueprint, replace(launch, args=shown_launch_args))
+        shown_run = run_args(blueprint, replace(launch, args=shown_launch_args), targets)
         venv = store.venv_dir(dimos_dir)
         env = {
             **os.environ,
@@ -581,7 +730,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             **secret_vars,
         }
         pid = _spawn(
-            [str(program), *run_args(blueprint, launch)],
+            [str(program), *run_args(blueprint, launch, targets)],
             [*shown_env, "dimos", *shown_run],
             str(dimos_dir),
             env,
@@ -646,6 +795,9 @@ def stop() -> str:
             launch = current_launch()
             if launch is None or launch["phase"] != "starting":
                 raise ApiError(409, "nothing running")
+            assert record is not None
+            # asked for, so its exit is a stop: without this the dead launch reads as failed
+            _save({**record, "stopping": True})
             message = kill_starting(launch)
             _wait_reaped(int(launch["pid"]))
             return message
@@ -676,6 +828,7 @@ def relaunch(dimos_dir: Path, check_known: Callable[[str], None]) -> dict[str, A
         # A copied process may belong to another checkout, outside this catalog.
         if "copy" not in request:
             check_known(blueprint)
+        config = None if "copy" in request else LaunchConfig.from_json(request).normalized()
         if entry is not None or (
             (launch := current_launch()) is not None and launch["phase"] == "starting"
         ):
@@ -683,4 +836,5 @@ def relaunch(dimos_dir: Path, check_known: Callable[[str], None]) -> dict[str, A
             stop()
         if "copy" in request:
             return start_copy(blueprint, request["copy"])
-        return start(dimos_dir, blueprint, LaunchConfig.from_json(request))
+        assert config is not None
+        return _start(dimos_dir, blueprint, config)
