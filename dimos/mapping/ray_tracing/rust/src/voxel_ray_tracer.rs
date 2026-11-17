@@ -110,6 +110,9 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
+    /// Publish the median radius of the last this many local regions; 1 publishes each as it is.
+    #[validate(range(min = 1))]
+    pub region_radius_window: u32,
     /// Fixed frame clouds are registered and published in.
     #[validate(length(min = 1))]
     pub world_frame: String,

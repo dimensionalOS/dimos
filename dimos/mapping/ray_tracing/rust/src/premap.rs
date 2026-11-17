@@ -265,6 +265,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_window: 1,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             max_cloud_age_s: 0.0,

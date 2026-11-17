@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use ahash::AHashSet;
@@ -46,6 +47,8 @@ pub struct Mapper {
     live: FrameHits,
     batch_points: Vec<Point>,
     batch_origins: Vec<Point>,
+    /// The latest local regions' raw radii, which the published one is the median of.
+    recent_radii: VecDeque<f32>,
     last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
@@ -63,6 +66,7 @@ impl Mapper {
             live: FrameHits::default(),
             batch_points: Vec::new(),
             batch_origins: Vec::new(),
+            recent_radii: VecDeque::new(),
             last_registered: Vec::new(),
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
@@ -211,16 +215,31 @@ impl Mapper {
             }
         } else {
             let margin = self.config.shadow_depth + self.config.voxel_size;
-            batch_local_bounds(
+            let mut bounds = batch_local_bounds(
                 &self.batch_points,
                 &self.batch_origins,
                 self.config.region_percentile,
                 margin,
-            )
+            );
+            bounds.radius = self.smoothed_radius(bounds.radius);
+            bounds
         };
         self.batch_points.clear();
         self.batch_origins.clear();
         bounds
+    }
+
+    /// The median of the last `region_radius_window` radii, `radius` among them, so one frame that
+    /// sees far (or near) does not swing the region.
+    fn smoothed_radius(&mut self, radius: f32) -> f32 {
+        let window = self.config.region_radius_window.max(1) as usize;
+        self.recent_radii.push_back(radius);
+        while self.recent_radii.len() > window {
+            self.recent_radii.pop_front();
+        }
+        let mut sorted: Vec<f32> = self.recent_radii.iter().copied().collect();
+        sorted.sort_by(f32::total_cmp);
+        sorted[sorted.len() / 2]
     }
 
     /// All healthy voxel centers plus this frame's live voxels, flat triples.
@@ -308,6 +327,7 @@ impl Mapper {
         self.live = FrameHits::default();
         self.batch_points.clear();
         self.batch_origins.clear();
+        self.recent_radii.clear();
         self.last_registered.clear();
         self.last_origin = (0.0, 0.0, 0.0);
         self.frame_count = 0;
@@ -355,6 +375,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_window: 1,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             max_cloud_age_s: 0.0,
@@ -422,6 +443,25 @@ mod tests {
         let c = mapper.take_local_bounds();
         assert_eq!((c.cx, c.cy, c.radius), (1.0, 2.0, 0.0));
         assert_eq!((c.z_min, c.z_max), (3.0, 3.0));
+    }
+
+    #[test]
+    fn the_region_radius_is_the_median_of_the_window() {
+        let mut mapper = Mapper::new(Config {
+            region_radius_window: 3,
+            ..config()
+        });
+        let pose = Pose {
+            position: (0.0, 0.0, 0.0),
+            orientation: IDENTITY,
+        };
+        let mut radii = Vec::new();
+        for reach in [5.5, 5.5, 20.5, 5.5, 20.5, 20.5] {
+            mapper.add_frame(vec![(reach, 0.5, 0.5)], pose);
+            radii.push(mapper.take_local_bounds().radius.round());
+        }
+        // One far frame does not swing it; a run of them does.
+        assert_eq!(radii, vec![9.0, 9.0, 9.0, 9.0, 24.0, 24.0]);
     }
 
     #[test]
