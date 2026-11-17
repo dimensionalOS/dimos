@@ -25,11 +25,12 @@
 //!   every one GNC has not judged (one an earlier job dropped rides along again). A job runs when a closure no job has
 //!   dropped arrives.
 //! - Shift: the one rigid motion (a turn about the vertical and a translation) that best takes the unjudged closures'
-//!   trail ends to where their closures put them, bent in along the trail from the anchor to the oldest such end and in
-//!   full beyond it.
+//!   trail ends past the anchor to where their closures put them, bent in along the trail from the anchor to the oldest such
+//!   end and in full beyond it; with fewer than two such ends the trail stays where it is and the closures only have to fit.
 //! - Gate (GNC's own rule): while a closure is past GNC's cutoff at its scaled variance, drop the unjudged one furthest past
-//!   it and fit again; at least two unjudged closures must agree (a rigid motion fits any one exactly, so one alone is no
-//!   evidence: it waits for GNC); and no trail step may change length by more than `solver_fast_path_max_stretch` of itself.
+//!   it and fit again; at least two closures must agree, published or kept ones counting (a rigid motion fits any one
+//!   exactly, so one alone is no evidence: it waits for GNC); and no trail step may change length by more than
+//!   `solver_fast_path_max_stretch` of itself.
 //! - Publish: the trail shifted, newer keyframes riding the newest one; no other keyframe moves.
 //!
 //! A logical-execution-time job (one worker, one job out), held to its estimate in deterministic mode. GNC never reads
@@ -403,9 +404,9 @@ pub fn block_shift(trail: &[usize], rotations: &[Mat3], positions: &[Vec3], clos
     let at = |k: usize| k - trail[0];
     let cutoff = chi2_inverse_6dof(config.closure_gnc_inlier_probability);
     let anchor = closures.iter().filter(|c| !c.new).map(|c| c.keyframe).max().unwrap_or(trail[0]);
-    // unjudged closures at or behind the anchor say nothing about the trail past it
-    let mut dropped: Vec<usize> = (0..closures.len()).filter(|&p| closures[p].new && closures[p].keyframe <= anchor).collect();
-    let mut kept: Vec<usize> = (0..closures.len()).filter(|p| !dropped.contains(p)).collect();
+    let mut dropped: Vec<usize> = Vec::new();
+    let mut kept: Vec<usize> = (0..closures.len()).collect();
+    let judged = closures.iter().filter(|c| !c.new).count();
     let mut path = vec![0.0; trail.len()];
     for i in 1..trail.len() {
         path[i] = path[i - 1] + mat3::norm(&mat3::sub(&positions[i], &positions[i - 1]));
@@ -419,24 +420,27 @@ pub fn block_shift(trail: &[usize], rotations: &[Mat3], positions: &[Vec3], clos
         within_stretch: false,
     };
     loop {
-        // a rigid motion fits any one closure exactly: only two or more can agree (or not)
+        // agreement: two or more closures (a rigid motion fits any one exactly); ones already published or kept count
         let news: Vec<usize> = kept.iter().copied().filter(|&p| closures[p].new).collect();
-        if news.len() < 2 {
+        if news.is_empty() || news.len() + judged < 2 {
             dropped.extend(news);
             return refuse(dropped, vec![f64::INFINITY]);
         }
-        let first = news.iter().map(|&p| closures[p].keyframe).min().expect("a new closure");
+        // the unjudged ends past the anchor move the trail; two or more fit its motion, fewer leave it where it is
+        // (ends at or behind the anchor, already in place, only have to fit)
+        let past: Vec<usize> = news.iter().copied().filter(|&p| closures[p].keyframe > anchor).collect();
+        let fitting = if past.len() >= 2 { past } else { Vec::new() };
+        let first = fitting.iter().map(|&p| closures[p].keyframe).min().unwrap_or(anchor);
         let span = (path[at(first)] - path[at(anchor)]).max(1e-6);
-        // the motion's turn and translation: from the unjudged closures' trail ends to where their closures put them
-        let count = news.len() as f64;
+        let count = fitting.len().max(1) as f64;
         let mean = |f: &dyn Fn(usize) -> Vec3| -> Vec3 {
-            let sum = news.iter().fold([0.0; 3], |s, &p| mat3::add(&s, &f(p)));
+            let sum = fitting.iter().fold([0.0; 3], |s, &p| mat3::add(&s, &f(p)));
             mat3::scale(&sum, 1.0 / count)
         };
         let pc = mean(&|p| positions[at(closures[p].keyframe)]);
         let qc = mean(&|p| closures[p].position);
         let (mut h00, mut h01, mut h10, mut h11) = (0.0, 0.0, 0.0, 0.0);
-        for &p in &news {
+        for &p in &fitting {
             let a = mat3::sub(&positions[at(closures[p].keyframe)], &pc);
             let b = mat3::sub(&closures[p].position, &qc);
             (h00, h01, h10, h11) = (h00 + a[0] * b[0], h01 + a[0] * b[1], h10 + a[1] * b[0], h11 + a[1] * b[1]);
@@ -485,7 +489,7 @@ pub fn block_shift(trail: &[usize], rotations: &[Mat3], positions: &[Vec3], clos
             .max_by(|a, b| a.1.total_cmp(b.1))
             .map(|(&p, _)| p);
         match worst {
-            Some(p) if news.len() > 2 => {
+            Some(p) if news.len() > 1 => {
                 dropped.push(p);
                 kept.retain(|&q| q != p);
             }
