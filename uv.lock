@@ -743,6 +743,23 @@ wheels = [
 ]
 
 [[package]]
+name = "booster-robotics-sdk-python"
+version = "1.6.3"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/0a/88e5c6a83e31fb8b7986032f7c19831ab597ca057bd4792b3f7d64bde665/booster_robotics_sdk_python-1.6.3-cp310-cp310-manylinux_2_34_aarch64.whl", hash = "sha256:b9fe4b96054dc7c4df5f3332e230e9014b47cb1db20c7d4bb11acd8d3af59bb6", size = 7070889, upload-time = "2026-09-16T09:18:31.884Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/73/a20a126a6c219135ca7653b0d88623596cb4556ee2012b6936455cc3479a/booster_robotics_sdk_python-1.6.3-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:f1eb8c4388876ba9460429f37627172c25966739547760fd0802e55677cc70d6", size = 7750355, upload-time = "2026-09-16T09:18:33.803Z" },
+    { url = "https://files.pythonhosted.org/packages/95/01/6a6fb22ba4f20b65fbe29f87f69b3589e4e269a86cb9d84d77601bcde9f1/booster_robotics_sdk_python-1.6.3-cp311-cp311-manylinux_2_34_aarch64.whl", hash = "sha256:cb3651a5eec82cd272c5a50c57ed83c762cdc57bb14d3bf705c6a0137f237bc3", size = 7070709, upload-time = "2026-09-16T09:18:35.77Z" },
+    { url = "https://files.pythonhosted.org/packages/99/d6/e3ee424f4c9cbcba96fcfc4e1ff8db527322255bcdbf5b97fca222fb4eea/booster_robotics_sdk_python-1.6.3-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:b82e4ce7c6dbffc08d5646342983ec161f85d47620bf381c33efc05a995976a5", size = 7752434, upload-time = "2026-09-16T09:18:37.9Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/6b/06e9a4be91097d91cea6f78eb5397765f2e33a2055d9237634074307aa53/booster_robotics_sdk_python-1.6.3-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:d540482c23ddc5bb215076be3170955d78ed06494c6d116a4984bf58ed06b3e7", size = 7085427, upload-time = "2026-09-16T09:18:39.819Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/66/f3a92eca4057b673def81ec2749fadb015c57536114909fb2db5ce1f50e5/booster_robotics_sdk_python-1.6.3-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:144d50f13ddbe31de56f508df615d070352eebb2ca439be8f6f3723d98067ebe", size = 7765680, upload-time = "2026-09-16T09:18:42.014Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/e0/9aef72e26cf52dbe84f352b15b07bb4bbd4a5eec1368315bb1e897ce2450/booster_robotics_sdk_python-1.6.3-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:7ac268e04ca8cc9ef4a02f0e493af333518e0b0c1724e8eb088a5718dbe90d5b", size = 7085189, upload-time = "2026-09-16T09:18:43.868Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/35/0f229bfd8841bc790bd11abcd1c57152a2992305d1e79c5245518dfe6d19/booster_robotics_sdk_python-1.6.3-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:013c4550c1db4d0b167f31fa046bc29c947ba21034fdb493cdde34ef918e7fc0", size = 7766696, upload-time = "2026-09-16T09:18:45.729Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/14/2f4b4c0d704e795ed09d448370ec87caea1a909506f80ca17d2297608058/booster_robotics_sdk_python-1.6.3-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:5946d6801bd0022bb288300e05d055d7753c3523f86f65f18b1addffec948184", size = 7087676, upload-time = "2026-09-16T09:18:47.542Z" },
+    { url = "https://files.pythonhosted.org/packages/38/bc/bf8cbbbea1603257b586a04251288bad554d6b8fc1c9a001f5ecf4951eb1/booster_robotics_sdk_python-1.6.3-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:002995e830c0ff3538ee1c3e80db4d45ec19a69a840df01bb0a829d95a5c78b3", size = 7767487, upload-time = "2026-09-16T09:18:49.578Z" },
+]
+
+[[package]]
 name = "bosdyn-api"
 version = "5.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2745,6 +2762,11 @@ base = [
     { name = "watchfiles" },
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
+booster = [
+    { name = "booster-robotics-sdk-python", marker = "sys_platform == 'linux'" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+]
 control = [
     { name = "can-motor-control" },
     { name = "piper-sdk" },
@@ -3238,6 +3260,7 @@ requires-dist = [
     { name = "av", marker = "extra == 'web'", specifier = ">=16.1" },
     { name = "av", marker = "extra == 'webrtc'", specifier = ">=16.1" },
     { name = "bleak", specifier = ">=3.0.2" },
+    { name = "booster-robotics-sdk-python", marker = "sys_platform == 'linux' and extra == 'booster'", specifier = "==1.6.3" },
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-client", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
@@ -3362,6 +3385,8 @@ requires-dist = [
     { name = "tokenizers", marker = "extra == 'perception'", specifier = ">=0.21" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "toolz", specifier = ">=1.1.0" },
+    { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'booster') or (sys_platform == 'win32' and extra == 'booster')", specifier = ">=2.9,<2.12", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'booster') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'booster')", specifier = ">=2.9,<2.12" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
     { name = "trimesh", marker = "extra == 'apriltag'", specifier = ">=4.0.0" },
     { name = "trimesh", marker = "extra == 'planning'" },
@@ -3385,7 +3410,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'planning'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "booster", "control", "planning", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]

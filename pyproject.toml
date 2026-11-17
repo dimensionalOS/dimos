@@ -288,6 +288,11 @@ unitree-dds = [
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
+booster = [
+    "torch>=2.9,<2.12",
+    "booster-robotics-sdk-python==1.6.3; sys_platform == 'linux'",
+]
+
 # Coordinators, arm hardware adapters, and keyboard/Cartesian control.
 control = [
     "piper-sdk",
