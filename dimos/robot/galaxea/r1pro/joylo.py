@@ -236,6 +236,7 @@ class JoyloController:
         # The arms follow the leader arms, or the operator's hands as a headset sees them.
         self.arm_source: ArmSource = "leader"
         self.hands: list[HandPose | None] = [None, None]
+        self.hand_targets_in_base = [False, False]
         self.hand_receipts = [-math.inf, -math.inf]
         self.held_hands: list[HandPose | None] = [None, None]
         self.head: Head | None = None
@@ -494,10 +495,12 @@ class JoyloController:
         if not self.active or None in self.hands or self.anchor is None:
             return HandsOutput(False, None)
         targets = []
-        for held, hand in zip(self.held_hands, self.hands, strict=True):
+        for held, hand, in_base in zip(
+            self.held_hands, self.hands, self.hand_targets_in_base, strict=True
+        ):
             pose = held if held is not None else hand
             assert pose is not None
-            targets.append(self.gripper_target(pose))
+            targets.append(pose if in_base else self.gripper_target(pose))
         return HandsOutput(True, (targets[0], targets[1]))
 
     @cached_property

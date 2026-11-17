@@ -37,6 +37,7 @@ class MujocoBackend:
         self, scene: UsdModel, dt_ns: int, gravity_world: tuple[float, float, float] = (0, 0, -9.81)
     ) -> None:
         self.model = compile_scene(scene, dt_ns, gravity_world=gravity_world)
+        self.model.opt.noslip_iterations = 2
         self.data = mujoco.MjData(self.model)
         root = scene.source_path.parent if scene.source_path else None
         self._initial = {n: values[2] for n, values in usd_drives(scene.usd, root).items()}

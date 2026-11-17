@@ -21,14 +21,24 @@ import pytest
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro._connection_test_fakes import LocalTransport
+from dimos.robot.galaxea.r1pro.config import R1PRO_DESCRIPTION_SOURCE
 from dimos.robot.galaxea.r1pro.motion import motion_groups
 from dimos.robot.galaxea.r1pro.webxr import R1ProWebXR, R1ProWebXRJoystick
 
 
 @pytest.mark.asyncio
 async def test_headset_forwards_existing_jpeg_bytes(mocker):
-    module = R1ProWebXR()
+    module = R1ProWebXR(
+        model=RobotModel.from_file(R1PRO_DESCRIPTION_SOURCE / "R1Pro" / "urdf_r1pro_2025.urdf"),
+        body_frame="torso_link4",
+        target_frames={},
+        shoulder_frames={},
+        wrist_frames={},
+        neutral_joints={},
+        reach_joints={},
+    )
     forward = mocker.patch("dimos.robot.galaxea.r1pro.webxr.push_jpeg_bytes")
     encoded = b"\xff\xd8existing-compressed-frame\xff\xd9"
     try:

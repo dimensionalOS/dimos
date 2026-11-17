@@ -209,6 +209,94 @@ Twist linear x/y and angular z. Do not publish directly
 to Galaxea or bypass the existing command watchdogs. This change supplies the data
 and shared motion backend, not a trained R1 policy or automatic policy execution.
 
+## Headset arm calibration
+
+`CalibratedArmTeleopModule` owns shoulder-relative retargeting for tracked hands
+and controller grips, before the shared arm IK and motion limiter. Spatial Desktop
+discovers the RPC capability; the frontend has no robot or headset-specific math.
+The robot adapter derives the shoulder reference, usable wrist reach, neutral tool
+orientation and rigid wrist-to-gripper offset from the same model used by IK.
+R1 shoulder axes are offset: the virtual shoulder is the point on J1's axis
+nearest J2's origin, rather than the inboard origin of link1.
+
+For each arm, in the operator's gravity-aligned frame:
+
+```text
+scale = robot_wrist_reach / captured_shoulder_to_hand_reach
+robot_wrist = robot_shoulder + scale * (human_hand - human_shoulder)
+robot_tool_orientation = hand_orientation * neutral_hand_orientation^-1 * neutral_tool_orientation
+robot_tool_position = robot_wrist - robot_tool_orientation * tool_to_wrist_offset
+```
+
+There is one positive scale per arm, with no fitted translation-axis rotation.
+Neutral calibrates grip orientation, not a preset robot hand height. The frame
+follows live headset position and gravity-aligned heading: rotating/translating
+the operator's head and hands together preserves both mapped hand positions and
+orientations, without commanding robot base or torso rotation. Head-only turns
+also change this reference; head/wrist input cannot observe chest heading.
+Looking vertically retains the last observable heading. Grip presses do not
+rebase targets. The measured robot body carries
+the mapped targets, so lowering or tilting the torso does not make arm IK fight
+that motion. Torso motion remains an explicit control, never an IK variable.
+
+In **Control > Headset > Arm Calibration**, enter an operator profile name and
+capture **shoulders**, **neutral**, **left reach**, then **right reach**. Mark each
+shoulder using that side's tracked wrist or controller grip center. For neutral,
+bend the elbows with grips level and pointing forward. Reach forward comfortably
+at shoulder height. Each capture waits three seconds and requires stable recent
+head and hand tracking; keep the head facing forward. Reach orientation need not
+match neutral. Review the arm lengths, gain and target markers, then save.
+**Use Profile** activates the saved mapping; normal fresh engagement is still
+required. Turning or moving the operator does not require recalibration. A WebXR
+reference-space reset stops input and requires activation again. Clients stamp
+head and hand messages from the same XR frame with the same acquisition time;
+the backend pairs those timestamps across delivery order and drops unpaired
+old frames. Recordings/status declare `operator_reference: live_head_yaw`.
+
+A shoulder-centered outer wrist sphere bounds excessive reach without rotating
+the request. This is not a complete collision-free or orientation-feasible
+workspace. The UI shows saturation, requested/mapped targets, measured grippers
+and their position discrepancy. Shared IK enforces joint constraints. Its fixed
+shoulder/elbow preference is projected into the hand-task Jacobian nullspace,
+including locked body coordinates. This stops the posture objective competing
+directly with hand tracking. A slow posture gain limits transient drift after
+joint-rate clamping. Full wrist reach is derived with a 0.35 rad elbow bend
+(56.5 cm on this R1 model), leaving a small buffer around straight-arm singularity.
+The projection preserves hand tasks differentially; finite steps and active
+constraints still require measured tracking checks.
+Head-and-wrist tracking does not observe the human elbow; matching a particular
+human elbow requires additional body tracking. Self/environment collision
+avoidance and physical headset comfort are not established by these tests.
+
+The version-2 RPCs are `get_arm_calibration`, `begin_arm_calibration`,
+`capture_arm_calibration`, `save_arm_calibration`, `activate_arm_calibration`,
+`cancel_arm_calibration`, and `delete_arm_calibration`. Sessions are explicit.
+Profiles include operator, input kind, WebXR input conventions, version and robot
+geometry fingerprint, saved atomically under `STATE_DIR/teleop/arm-calibration`.
+Version-1 profiles are preserved but cannot drive the new shoulder mapping.
+Recalibration is transactional: invalid/canceled drafts do not replace saved
+profiles. A new shoulder capture invalidates all dependent captures; a new neutral
+invalidates both reaches. Reviewing a saved profile never activates it.
+
+Capture/review holds coordinator outputs. Save does not enable motion. Tracking
+space resets stop frontend input and require reactivation. Missing head, hand or
+body feedback suppresses mapped output. Both simulation and hardware recordings
+include accepted original `webxr_pose_observed`, `webxr_head_observed` and
+`webxr_joy_observed` and headset Joy-Con `webxr_gamepad_observed` messages with their acquisition timestamps, final
+`left_cartesian_command`/`right_cartesian_command` and
+`hand_left_pose`/`hand_right_pose`, `arm_retarget_state` (10 Hz requested/bounded/
+actual poses and saturation) and `arm_calibration_state` (profile and geometry).
+These are diagnostics; the training actions remain dispatched joint commands.
+Training takes still require explicit episode start/end and quality validation.
+
+Design references: [Open-TeleVision](https://arxiv.org/html/2407.01512v1) separates
+position retargeting, orientation and redundant joint posture;
+[DROID](https://github.com/droid-dataset/droid/blob/main/droid/controllers/oculus_controller.py)
+uses clutch-relative pose origins; and
+[Unitree XR teleoperation](https://github.com/unitreerobotics/xr_teleoperate/blob/main/teleop/robot_control/robot_arm_ik.py)
+uses bounded, regularized IK. Our shoulder capture and isotropic mapping serve
+this stack's absolute body-mirroring requirement rather than DROID's clutch mode.
+
 ## Validation
 
 Tests cover shared limits, task completion, feedback loss, estop, accepted-command

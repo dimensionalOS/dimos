@@ -139,7 +139,20 @@ def test_hardware_run_records_robot_streams_with_robot_side_producers():
         topic = blueprint.remapping_map.get((recorder.name, port.name), port.name)
         publishers = _publishers(blueprint, topic, port.type)
         assert len(publishers) == 1, (port.name, publishers)
-        assert publishers[0] in robot.module_names
+        # Operator calibration metadata crosses the link; state, actions and
+        # camera evidence stay beside the robot-side recorder.
+        if port.name in {
+            "arm_calibration_state",
+            "arm_retarget_state",
+            "webxr_pose_observed",
+            "webxr_head_observed",
+            "webxr_joy_observed",
+            "left_cartesian_command",
+            "right_cartesian_command",
+        }:
+            assert publishers == ["r1prowebxr"]
+        else:
+            assert publishers[0] in robot.module_names
     schema = recorder.kwargs["recording_schema"]
     assert {feature.stream for feature in schema.action.values()} == {
         "coordinator_joint_command",

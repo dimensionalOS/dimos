@@ -387,6 +387,31 @@ def test_shared_stack_handover_clears_intent_and_requires_released_webxr_clutche
     wait_until(lambda: chain.base_state()["vx"] == pytest.approx(0.1), timeout=2)
 
 
+def test_calibration_hold_blocks_all_tasks_and_release_requires_fresh_clutch(shared_chain):
+    chain = shared_chain
+    coordinator = chain.coordinator
+    coordinator.select_teleop_source("webxr")
+    chain.release()
+    wait_until(lambda: coordinator.get_teleop_source()["webxr_ready"], timeout=2)
+    chain.hold()
+    wait_until(lambda: chain.task.is_active(), timeout=2)
+    coordinator.hold_for_arm_calibration(True)
+    coordinator.set_estop(True)
+    coordinator.set_estop(False)
+    chain.hold()
+    coordinator._dispatch("webxr_twist_command", Twist(linear=[0.3, 0, 0]))
+    assert not chain.task.is_active()
+    assert not coordinator._tasks["vel_chassis"].is_active()
+    assert not coordinator.get_teleop_source()["webxr_ready"]
+    coordinator.hold_for_arm_calibration(False)
+    chain.hold()
+    assert not chain.task.is_active()
+    chain.release()
+    wait_until(lambda: coordinator.get_teleop_source()["webxr_ready"], timeout=2)
+    chain.hold()
+    wait_until(lambda: chain.task.is_active(), timeout=2)
+
+
 def test_shared_stack_webxr_ik_uses_2025_model_and_records_limited_actions(shared_chain):
     chain = shared_chain
     coordinator = chain.coordinator

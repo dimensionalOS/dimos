@@ -254,6 +254,7 @@ all_modules = {
     "b-box-navigation-module": "dimos.agents.skills.visual_servoing.bbox_navigation.BBoxNavigationModule",
     "b601-dm-connection": "dimos.robot.manipulators.seeed_b601_dm.connection.B601DMConnection",
     "benchmarker": "dimos.control.benchmarking.benchmark.Benchmarker",
+    "calibrated-arm-teleop-module": "dimos.teleop.webxr.calibrated_arm.CalibratedArmTeleopModule",
     "camera-mux-module": "dimos.teleop.hosted.camera_mux.CameraMuxModule",
     "camera-render-module": "dimos.sim2.sensors.camera.render_module.CameraRenderModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",

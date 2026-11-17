@@ -16,15 +16,20 @@
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo_inputs import _webxr_blueprint
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import R1PRO_VR_TARGET_FRAMES
 from dimos.robot.galaxea.r1pro.config import R1PRO_HOME_POSE
 from dimos.robot.galaxea.r1pro.joylo import TORSO, UPPER
 from dimos.robot.galaxea.r1pro.teleop_coordinator import shared_teleop_tasks
 from dimos.robot.galaxea.r1pro.teleop_ik import R1ProPinkPoseTargetSolver
+from dimos.teleop.webxr.arm_calibration import ArmAnchors, CalibrationPose, map_arm
+from dimos.teleop.webxr.calibrated_arm import CalibratedArmTeleopModule
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
 
@@ -125,3 +130,72 @@ def test_elbow_soft_stop_overtravel_recovers_with_a_legal_command():
     command = solver.step(targets, measured, 0.01)
     recovered = dict(zip(command.name, command.position, strict=True))[elbow]
     assert lower <= recovered < lower + 0.02
+
+
+@pytest.fixture
+def calibrated_r1(mocker, tmp_path):
+    blueprint = _webxr_blueprint().active_blueprints[0]
+    module = CalibratedArmTeleopModule(**blueprint.kwargs, calibration_directory=tmp_path)
+    mocker.patch.object(ArmTeleopModule, "start")
+    mocker.patch.object(module.robot_feedback, "subscribe", return_value=lambda: None)
+    module.start()
+    yield module
+    module.dispose()
+
+
+def test_repeated_calibrated_reach_and_return_keeps_elbows_bent_and_torso_fixed(calibrated_r1):
+    module = calibrated_r1
+    task = next(t for t in shared_teleop_tasks(dict.fromkeys(UPPER, 1.0)) if t.type == "teleop_ik")
+    params = {k: v for k, v in task.params.items() if k not in ("bindings", "solver_type")}
+    frames = tuple(module.config.target_frames.values())
+    solver = R1ProPinkPoseTargetSolver(
+        PoseTargetIKTaskConfig(joint_names=tuple(task.joint_names), target_frames=frames, **params)
+    )
+    positions = {n: R1PRO_HOME_POSE[n.split("/")[-1]] for n in UPPER}
+    body = module._fk(module._body_chain, positions)
+    initial_torso = [positions[n] for n in TORSO]
+    neutral_biceps = []
+    for x, z in ((0.3, -0.2), (0.75, 0), (0.4, -0.35), (0.3, -0.2)) * 3:
+        targets = {}
+        for side, y in (("left", 0.2), ("right", -0.2)):
+            human = ArmAnchors(
+                shoulder=(0, y, -0.2),
+                neutral=CalibrationPose(position=(0.3, y, -0.4), orientation=(0, 0, 0, 1)),
+                reach=CalibrationPose(position=(0.75, y, -0.2), orientation=(0, 0, 0, 1)),
+            )
+            mapped = map_arm(
+                CalibrationPose(position=(x, y, z - 0.2), orientation=(0, 0, 0, 1)),
+                human,
+                module._calibration.geometry[side],
+            )
+            targets[module.config.target_frames[side]] = PoseStamped(
+                position=(body[:3, :3] @ mapped.position + body[:3, 3]).tolist(),
+                orientation=(
+                    Rotation.from_matrix(body[:3, :3]) * Rotation.from_quat(mapped.orientation)
+                )
+                .as_quat()
+                .tolist(),
+            )
+        for _ in range(400):
+            command = solver.step(
+                targets, JointState(name=list(positions), position=list(positions.values())), 0.01
+            )
+            assert not set(command.name) & set(TORSO)
+            positions.update(zip(command.name, command.position, strict=True))
+            for side in ("left", "right"):
+                assert positions[f"r1pro/{side}_arm_joint4"] < 0.0
+        actual = solver.frame_poses(
+            JointState(name=list(positions), position=list(positions.values())), frames
+        )
+        for frame in frames:
+            assert (
+                np.linalg.norm(
+                    np.subtract(actual[frame].position.to_list(), targets[frame].position.to_list())
+                )
+                < 0.01
+            )
+        assert [positions[n] for n in TORSO] == initial_torso
+        if x == 0.3:
+            biceps = [positions[f"r1pro/{s}_arm_joint3"] for s in ("left", "right")]
+            neutral_biceps.append(biceps)
+    assert np.max(np.abs(np.diff(neutral_biceps, axis=0))) < np.deg2rad(3)

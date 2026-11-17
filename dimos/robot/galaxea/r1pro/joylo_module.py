@@ -76,6 +76,7 @@ class R1ProJoylo(Module):
     # A gamepad the headset's page reads, in the W3C standard layout: the Joy-Con
     # pair when it is paired to the headset and not to this host.
     webxr_gamepad: In[Joy]
+    webxr_gamepad_observed: Out[Joy]
     leader_joint_command: Out[JointState]
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
@@ -364,6 +365,7 @@ class R1ProJoylo(Module):
             if c is None or c.arm_source != "hands" or not self._newer(side, sample.ts):
                 return
             p, q = sample.position, sample.orientation
+            c.hand_targets_in_base[("left", "right").index(side)] = sample.frame_id == BASE_FRAME
             c.set_hand(side, ((p.x, p.y, p.z), (q.x, q.y, q.z, q.w)), time.monotonic())
 
     async def handle_webxr_head(self, sample: PoseStamped) -> None:
@@ -401,6 +403,7 @@ class R1ProJoylo(Module):
             if self._controller is None or not self._newer("gamepad", sample.ts):
                 return
             now = time.monotonic()
+            self.webxr_gamepad_observed.publish(sample)
             self._headset_pad = joycon_readings(sample) or (None, None)
             self._headset_pad_receipt = now
             self._set_joycons(now)

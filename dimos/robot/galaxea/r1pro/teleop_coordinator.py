@@ -136,6 +136,25 @@ class R1ProTeleopCoordinator(R1ProJoyloCoordinator):
         self._webxr_buttons = Buttons()
         self._leader_ready = False
         self._selected_at = time.time()
+        self._calibration_hold = False
+
+    def _set_tasks_estop(self, estopped: bool) -> None:
+        super()._set_tasks_estop(estopped or getattr(self, "_calibration_hold", False))
+
+    @rpc
+    def hold_for_arm_calibration(self, held: bool) -> None:
+        """Hold all task outputs while calibrating, then require fresh engagement."""
+        with self._input_lock, self._estop_lock:
+            self._leader.pause()
+            self._calibration_hold = held
+            self._webxr_ready = self._leader_ready = False
+            self._selected_at = time.time()
+            self._set_tasks_estop(True)
+            with self._hardware_lock:
+                for connection in self._connections.values():
+                    connection.drop_holds()
+                self._motion_limiter.reset()
+            self._set_tasks_estop(self._estopped)
 
     def _setup_from_config(self) -> None:
         super()._setup_from_config()
@@ -206,6 +225,8 @@ class R1ProTeleopCoordinator(R1ProJoyloCoordinator):
 
     def _dispatch(self, stream: str, msg: Any) -> None:
         with self._input_lock:
+            if self._calibration_hold:
+                return
             source = self._teleop_source
             if stream in _LEADER_PORTS | _WEBXR_PORTS | _HANDS_PORTS:
                 if isinstance(msg, (JointState, PoseStamped)) and msg.ts < self._selected_at:

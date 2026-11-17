@@ -22,8 +22,10 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import CollectionModule
 from dimos.imitation.dataprep.schema import FeatureSpec, QualityConfig, RecordingSchema, SyncConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.galaxea.r1pro.config import R1PRO_BODY_AXES
 from dimos.robot.galaxea.r1pro.joylo import JAWS, UPPER
@@ -96,6 +98,20 @@ def collection_profile(cameras: Sequence[str] = tuple(CAMERAS)) -> CollectionPro
             "position_units": ["rad"] * len(UPPER) + ["m"] * len(JAWS),
             "body_velocity_units": ["m/s", "m/s", "rad/s"],
             "motion_settings_stream": "motion_settings",
+            "arm_calibration_stream": "arm_calibration_state",
+            "retarget_diagnostics_stream": "arm_retarget_state",
+            "operator_input_streams": [
+                "webxr_pose_observed",
+                "webxr_head_observed",
+                "webxr_joy_observed",
+                "webxr_gamepad_observed",
+            ],
+            "mapped_hand_streams": [
+                "hand_left_pose",
+                "hand_right_pose",
+                "left_cartesian_command",
+                "right_cartesian_command",
+            ],
             "cameras": list(cameras),
         },
     )
@@ -126,7 +142,20 @@ def r1pro_collection(
     return autoconnect(
         CollectionModule.blueprint(
             instance_name="recorder",
-            input_types={**profile.input_types(), "motion_settings": String},
+            input_types={
+                **profile.input_types(),
+                "motion_settings": String,
+                "arm_calibration_state": String,
+                "arm_retarget_state": String,
+                "webxr_pose_observed": PoseStamped,
+                "webxr_head_observed": PoseStamped,
+                "webxr_joy_observed": Joy,
+                "webxr_gamepad_observed": Joy,
+                "left_cartesian_command": PoseStamped,
+                "right_cartesian_command": PoseStamped,
+                "hand_left_pose": PoseStamped,
+                "hand_right_pose": PoseStamped,
+            },
             recording_schema=collection_schema(profile),
             **({"recording": recording} if recording else {}),
         ),

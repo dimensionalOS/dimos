@@ -23,10 +23,11 @@ from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.std_msgs.String import String
 from dimos.teleop.joystick import JoystickTeleopMapper
-from dimos.teleop.webxr.extensions import ArmTeleopModule, push_jpeg_bytes
+from dimos.teleop.webxr.calibrated_arm import CalibratedArmTeleopModule
+from dimos.teleop.webxr.extensions import push_jpeg_bytes
 
 
-class R1ProWebXR(ArmTeleopModule):
+class R1ProWebXR(CalibratedArmTeleopModule):
     """Headset control plus the same compressed head RGB used by Desktop/recording."""
 
     color_image: In[CompressedImage]

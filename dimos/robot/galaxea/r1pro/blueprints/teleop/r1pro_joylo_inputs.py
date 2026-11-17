@@ -20,7 +20,10 @@ tasks, the stream names and the transports are the same here for both, so a
 frontend or a recorder meets one contract.
 """
 
+import math
 from typing import Any
+
+import numpy as np
 
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.motion_limits import MotionGroup
@@ -35,6 +38,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_CONTROL, QOS_LATEST_WINS, Topic
+from dimos.robot.galaxea.r1pro.joylo import UPPER
 from dimos.robot.galaxea.r1pro.joylo_coordinator import R1ProJoyloCoordinator, joylo_tasks
 from dimos.robot.galaxea.r1pro.joylo_module import R1ProJoylo
 from dimos.robot.galaxea.r1pro.leader import R1ProLeaderConnection
@@ -95,13 +99,50 @@ def _operator_blueprint(left_only: bool = False, *, require_leaders: bool = True
 
 def _webxr_blueprint() -> Blueprint:
     """CC's headset page, on the coordinator's WebXR ports; it runs beside the operator."""
-    return R1ProWebXR.blueprint(body_tracking_mode="optional", input_timeout_s=0.3).remappings(
-        [
-            (R1ProWebXR, "left_controller_output", "left_cartesian_command"),
-            (R1ProWebXR, "right_controller_output", "right_cartesian_command"),
-            (R1ProWebXR, "left_gripper_command", "webxr_left_gripper"),
-            (R1ProWebXR, "right_gripper_command", "webxr_right_gripper"),
-        ]
+    task = next(t for t in shared_teleop_tasks(dict.fromkeys(UPPER, 1.0)) if t.type == "teleop_ik")
+    model = task.params["robot_model"].model
+    joints = {joint.name: joint for joint in model.load().joints}
+    # Virtual shoulder at the closest point on J1's axis to J2's origin.
+    # J1/J2 axes are offset in the R1, so link1's origin is too far inboard.
+    shoulder_offsets = {}
+    for side in ("left", "right"):
+        axis = np.asarray(joints[f"r1pro/{side}_arm_joint1"].axis)
+        origin = np.asarray(joints[f"r1pro/{side}_arm_joint2"].origin_xyz)
+        shoulder_offsets[side] = tuple(axis * float(axis @ origin) / float(axis @ axis))
+    neutral, reach = dict.fromkeys(UPPER, 0.0), dict.fromkeys(UPPER, 0.0)
+    # These poses derive grip orientation and wrist reach from the model.
+    # Neutral position is never a capture target. Keep a small bend at full reach.
+    for side in ("left", "right"):
+        for index, n, r in (
+            (1, -math.pi / 4, -math.pi / 2),
+            (4, -math.pi / 2, -0.35),
+            (6, math.pi / 4, 0.35),
+        ):
+            neutral[f"r1pro/{side}_arm_joint{index}"] = n
+            reach[f"r1pro/{side}_arm_joint{index}"] = r
+    return (
+        R1ProWebXR.blueprint(
+            body_tracking_mode="optional",
+            input_timeout_s=0.3,
+            model=model,
+            shoulder_offsets=shoulder_offsets,
+            body_frame="torso_link4",
+            body_tf_frame="r1pro/torso_link4",
+            target_frames={side: f"{side}_gripper_link" for side in ("left", "right")},
+            shoulder_frames={side: f"{side}_arm_link1" for side in ("left", "right")},
+            wrist_frames={side: f"{side}_arm_link7" for side in ("left", "right")},
+            neutral_joints=neutral,
+            reach_joints=reach,
+        )
+        .remappings(
+            [
+                (R1ProWebXR, "left_controller_output", "left_cartesian_command"),
+                (R1ProWebXR, "right_controller_output", "right_cartesian_command"),
+                (R1ProWebXR, "left_gripper_command", "webxr_left_gripper"),
+                (R1ProWebXR, "right_gripper_command", "webxr_right_gripper"),
+            ]
+        )
+        .transports(_transports)
     )
 
 
