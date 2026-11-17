@@ -71,7 +71,7 @@ children = ["NextWaypoint", "Navigating", "Retrying", "Pausing"]
 initial = "NextWaypoint"
 
 [[node.transition]]
-trigger = "battery_low"
+if = "battery_low"
 goto = "Charging"
 
 [[node]]
@@ -92,17 +92,17 @@ args = { pose = "route[patrol.index]" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "Pausing"
 set = { "patrol.index" = "patrol.index + 1" }
 
 [[node.transition]]
-trigger = "gave_up"
+if = "gave_up"
 goto = "NextWaypoint"
 set = { "patrol.index" = "patrol.index + 1" }
 
 [[node.transition]]
-trigger = "failed"
+if = "failed"
 goto = "Retrying"
 
 [[node]]
@@ -126,7 +126,7 @@ initial = "ReturnToCharger"
 outcomes = ["done"]
 
 [[node.transition]]
-trigger = "done"
+if = "done"
 goto = "Patrolling"
 
 [[node]]
@@ -136,15 +136,15 @@ args = { pose = "charger" }
 result = "nav.goal"
 
 [[node.transition]]
-trigger = "arrived"
+if = "arrived"
 goto = "OnCharger"
 
 [[node.transition]]
-trigger = "gave_up"
+if = "gave_up"
 goto = "ReturnRetry"
 
 [[node.transition]]
-trigger = "failed"
+if = "failed"
 goto = "ReturnRetry"
 
 [[node]]
@@ -159,5 +159,5 @@ name = "OnCharger"
 activity = "charge"
 
 [[node.transition]]
-trigger = "charged"
+if = "charged"
 goto = "done"

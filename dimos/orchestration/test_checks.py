@@ -39,7 +39,14 @@ BROKEN: list[tuple[Edits, str]] = [
         "activity `go_to` has `uses`, and no `cancel`",
     ),
     (
-        {"NextWaypoint": {"transitions": (Transition(goto="Navigating", if_="true"),)}},
+        {
+            "NextWaypoint": {
+                "transitions": (
+                    Transition(goto="Navigating"),
+                    Transition(goto="Navigating", if_="true"),
+                )
+            }
+        },
         "is a switch node, and its last transition has an `if`",
     ),
     (
@@ -49,13 +56,25 @@ BROKEN: list[tuple[Edits, str]] = [
     (
         {
             "Patrolling": {"outcomes": ("done",)},
-            "Navigating": {"transitions": (Transition(goto="done", trigger="arrived"),)},
+            "Navigating": {"transitions": (Transition(goto="done", if_="arrived"),)},
         },
         "node `Patrolling` can be ended with `done`",
     ),
     (
-        {"Navigating": {"transitions": (Transition(goto="NextWaypoint", trigger="estop"),)}},
+        {"Navigating": {"transitions": (Transition(goto="NextWaypoint", if_="estop"),)}},
         "its transition on `estop` is never taken, since `Patrolling` has one",
+    ),
+    (
+        {"Estopped": {"transitions": (Transition(goto="Patrolling", on="estop"),)}},
+        "`on` names `estop`, which is not a signal",
+    ),
+    (
+        {"Estopped": {"transitions": (Transition(goto="Estopped", if_="estop_cleared"),)}},
+        "a transition with only an `if` points back at its own node",
+    ),
+    (
+        {"Navigating": {"transitions": (Transition(goto="NextWaypoint", after=5, if_="failed"),)}},
+        "`failed` is never true in a transition with an `on` or an `after`",
     ),
     (
         {"Estopped": {"requires": (Check(expect=["true"], fallback="Patrolling"),)}},

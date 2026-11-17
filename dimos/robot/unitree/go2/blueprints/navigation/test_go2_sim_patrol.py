@@ -77,8 +77,8 @@ def test_a_low_battery_sends_the_patrol_to_the_charger_and_back() -> None:
     def perform(effects: Sequence[Effect]) -> None:
         for effect in effects:
             match effect:
-                case TransitionRecord(node, trigger, goto):
-                    records.append((node, trigger, goto))
+                case TransitionRecord(node, cause, goto):
+                    records.append((node, cause, goto))
                 case SendStart(call) if call.rpc == "MLSPlannerNative.go_to":
                     position = call.args["pose"]["pose"]["position"]
                     calls.append(f"go_to({position['x']}, {position['y']})")
@@ -123,10 +123,10 @@ def test_a_low_battery_sends_the_patrol_to_the_charger_and_back() -> None:
         "go_to(4.0, 4.0)",
     ]
     assert records == [
-        ("NextWaypoint", None, "Navigating"),
-        ("Patrolling", "battery_low", "Charging"),
-        ("ReturnToCharger", "arrived", "OnCharger"),
-        ("OnCharger", "charged", "done"),
-        ("Charging", "done", "Patrolling"),
-        ("NextWaypoint", None, "Navigating"),
+        ("NextWaypoint", "if patrol.index < size(route)", "Navigating"),
+        ("Patrolling", "if battery_low", "Charging"),
+        ("ReturnToCharger", "if arrived", "OnCharger"),
+        ("OnCharger", "if charged", "done"),
+        ("Charging", "if done", "Patrolling"),
+        ("NextWaypoint", "if patrol.index < size(route)", "Navigating"),
     ]
