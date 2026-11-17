@@ -17,6 +17,7 @@ from contextlib import ExitStack
 
 from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.sim_msgs import WorldState
+from mujoco import mjrf
 import numpy as np
 import pytest
 
@@ -25,6 +26,7 @@ from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
+from dimos.sim2.sensors.camera.renderers.mujoco_native import _NativeMujocoRenderer
 
 # Requires an offscreen OpenGL context on the graphics-capable runner.
 pytestmark = pytest.mark.self_hosted
@@ -121,6 +123,51 @@ def test_different_resolutions_keep_intrinsics_and_share_the_model(poses, make_r
     assert images["left/camera"][1].shape == (120, 160)
     assert images["right/camera"][0].shape == (240, 320, 3)
     assert images["right/camera"][1].shape == (240, 320)
+
+
+def test_mixed_images_and_due_subsets_keep_native_swapchain_extent(world, poses, monkeypatch):
+    render = mjrf.Context.render
+    extents = []
+
+    def capture_extent(context, views, reads):
+        extents.append(
+            (
+                max(v.viewport.left + v.viewport.width for v in views),
+                max(v.viewport.bottom + v.viewport.height for v in views),
+            )
+        )
+        return render(context, views, reads)
+
+    monkeypatch.setattr(mjrf.Context, "render", capture_extent)
+    renderer = _NativeMujocoRenderer()
+    try:
+        renderer.load(
+            world,
+            (
+                CameraConfig(
+                    "left/camera", width=160, height=120, fx=94.18, fy=94.18, cx=80, cy=60
+                ),
+                CameraConfig("right/camera", depth=False),
+            ),
+        )
+        sample = poses()
+        reference = {
+            name: (rgb.copy(), depth.copy())
+            for name, (rgb, depth) in renderer.render(
+                sample, ("left/camera", "right/camera")
+            ).items()
+        }
+        for name in ("left/camera", "right/camera", "left/camera"):
+            rgb, depth = renderer.render(sample, (name,))[name]
+            assert rgb.std() > 5
+            # Moving a tile changes dithering and edge rasterization slightly.
+            color_error = np.max(np.abs(rgb.astype(float) - reference[name][0]), axis=-1)
+            assert np.mean(color_error <= 5) > 0.999
+            np.testing.assert_allclose(depth, reference[name][1], atol=2e-5)
+        # RGB + depth except the RGB-only camera; every submission has one extent.
+        assert extents == [(480, 240)] * 7
+    finally:
+        renderer.close()
 
 
 def test_any_pinhole_calibration_renders_where_its_camera_info_says(poses, make_renderer):

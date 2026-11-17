@@ -77,7 +77,7 @@ class _NativeMujocoRenderer:
         self._resources: Any = None
         self._lights: Any = None
         self._renderables: Any = None
-        self._rects: dict[str, dict[str, tuple[int, int, int, int]]] = {}
+        self._rects: dict[str, tuple[int, int, int, int]] = {}
         self._atlases: dict[str, Any] = {}
 
     def _load_geometry(self, scene: UsdModel, cameras: tuple[CameraConfig, ...]) -> None:
@@ -143,24 +143,24 @@ class _NativeMujocoRenderer:
             self._lights = mjrf.ModelLights(native_scene, self._resources)
             self._renderables = mjrf.ModelRenderables(native_scene, self._resources)
             self._renderables.set_options(mujoco.MjvOption())
+            columns = math.ceil(math.sqrt(len(cameras)))
+            width = height = 0
+            for start in range(0, len(cameras), columns):
+                row = cameras[start : start + columns]
+                x = 0
+                for c in row:
+                    self._rects[c.frame_id] = (x, height, c.width, c.height)
+                    x += c.width
+                width = max(width, x)
+                height += max(c.height for c in row)
+            # MuJoCo 4 recreates its offscreen swapchain when the submitted
+            # viewport extents change. Share one atlas size across RGB and depth.
             for kind, dtype, pixel_format in (
                 ("color", np.uint8, mjrf.PixelFormat.PIXEL_FORMAT_RGB8),
                 ("depth", np.float32, mjrf.PixelFormat.PIXEL_FORMAT_R32F),
             ):
-                selected = tuple(c for c in cameras if getattr(c, kind))
-                if not selected:
+                if not any(getattr(c, kind) for c in cameras):
                     continue
-                rects = self._rects[kind] = {}
-                columns = math.ceil(math.sqrt(len(selected)))
-                width = height = 0
-                for start in range(0, len(selected), columns):
-                    row = selected[start : start + columns]
-                    x = 0
-                    for c in row:
-                        rects[c.frame_id] = (x, height, c.width, c.height)
-                        x += c.width
-                    width = max(width, x)
-                    height += max(c.height for c in row)
                 shape = (height, width, 3) if kind == "color" else (height, width)
                 atlas = self._atlases[kind] = np.zeros(shape, dtype=dtype)
                 config = mjrf.RenderTargetConfig(
@@ -186,17 +186,24 @@ class _NativeMujocoRenderer:
         self._renderables.update(data)
         result = {name: (_NO_COLOR, _NO_DEPTH) for name in camera_ids}
         for kind, atlas in self._atlases.items():
+            rects = {
+                name: self._rects[name] for name in camera_ids if getattr(self._cameras[name], kind)
+            }
+            if not rects:
+                continue
+            # Anchor each due subset at the atlas's upper-right corner. In
+            # OpenGL coordinates this keeps the maximum viewport X/Y constant,
+            # even when cameras with different rates or image types are absent.
+            dx = atlas.shape[1] - max(x + w for x, y, w, h in rects.values())
+            dy = -min(y for x, y, w, h in rects.values())
+            rects = {name: (x + dx, y + dy, w, h) for name, (x, y, w, h) in rects.items()}
             views = []
             cameras = {}
-            for name in camera_ids:
-                config = self._cameras[name]
-                if not getattr(config, kind):
-                    continue
+            for name, (x, y, w, h) in rects.items():
                 camera = mujoco.MjvCamera()
                 camera.type = mujoco.mjtCamera.mjCAMERA_FIXED
                 camera.fixedcamid = self._camera_ids[name]
                 cameras[name] = gl_camera = mujoco.mjv_camera2GLCamera(model, data, camera)
-                x, y, w, h = self._rects[kind][name]
                 request = mjrf.RenderRequest()
                 request.scene = self._scene
                 request.target = self._targets[kind]
@@ -212,14 +219,12 @@ class _NativeMujocoRenderer:
                 if kind == "depth":
                     request.draw_mode = mjrf.DrawMode.DRAW_MODE_DEPTH
                 views.append(request)
-            if not views:
-                continue
             # The MuJoCo 4.0 OpenGL backend permits one readback per submission.
             # Batch all views of a channel into one atlas; share geometry across both.
             frame = self._context.render(views, [self._reads[kind]])
             self._context.wait_for_frame(frame)
             for name, gl_camera in cameras.items():
-                x, y, w, h = self._rects[kind][name]
+                x, y, w, h = rects[name]
                 pixels = atlas[y : y + h, x : x + w]
                 rgb, depth = result[name]
                 if kind == "color":
