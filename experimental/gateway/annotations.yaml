@@ -1193,6 +1193,10 @@ robots:
       manufacturer: null
       dirs: []
       blueprints:
+        sim2-basic:
+          title: Sim2 sensor example
+          description: A small physical scene with independent camera, lidar, IMU and joint encoders.
+          recommended_config: []
         demo-agent:
           title: Agent demo
           description: 'An AI agent with no robot: try MCP skills and the chat.'
