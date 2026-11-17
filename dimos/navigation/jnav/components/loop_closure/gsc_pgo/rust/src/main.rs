@@ -97,7 +97,7 @@ config! {
     graph_change_heat_enabled: bool,
     graph_change_heat_threshold: f64,
     graph_change_heat_floor: f64,
-    graph_change_heat_decay: f64,
+    graph_change_heat_half_life_s: f64,
     solve_seed_from_accepted: bool,
     solve_seed_gnc_verdicts: bool,
     solve_incumbent_challenge: bool,

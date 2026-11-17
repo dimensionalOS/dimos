@@ -68,7 +68,7 @@ impl GscPgo {
     pub(crate) fn offer_debounce(&mut self, finished: FinishedSolve) {
         if self.debounce_job.is_some() {
             if let Some(older) = self.debounce_waiting.replace(finished) {
-                let heat = self.heat_at(self.key_poses.len());
+                let heat = self.heat_now();
                 self.log_heat_event("superseded", &older, heat);
             }
             return;
@@ -109,7 +109,7 @@ impl GscPgo {
     pub(crate) fn offer_merge(&mut self, finished: FinishedSolve, heat: Option<(f64, f64, f64)>) {
         if self.merge_job.is_some() {
             if let Some((older, _)) = self.merge_waiting.replace((finished, heat)) {
-                let now = self.heat_at(self.key_poses.len());
+                let now = self.heat_now();
                 self.log_heat_event("superseded", &older, now);
             }
             return;

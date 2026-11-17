@@ -571,11 +571,12 @@ pub struct Config {
     pub extension_cloud_spacing: f64,
     /// Yank gate scores an extension by median cloud ratio x exp(s (1 - min(d, 5)^2)) per step (d: disagreement, inlier distances); 0 = median.
     pub compounding_agreement_sensitivity: f64,
-    /// Graph change heat: a solve is adopted only at heat <= threshold, adding its curbed yank above floor; decays by decay per keyframe.
+    /// Graph change heat (recent map moves): a solve is adopted only at heat <= threshold, adding its curbed yank above floor;
+    /// it halves every half_life_s of data time, standing still included.
     pub graph_change_heat_enabled: bool,
     pub graph_change_heat_threshold: f64,
     pub graph_change_heat_floor: f64,
-    pub graph_change_heat_decay: f64,
+    pub graph_change_heat_half_life_s: f64,
     /// Seed a solve from the accepted graph when it already fits every closure GNC would weigh; otherwise from the odometry.
     pub solve_seed_from_accepted: bool,
     /// Solver fast path (`fast_path`): closures GNC has not judged yet are published at once by a least squares over the
@@ -742,6 +743,9 @@ impl Config {
                 return Err(format!("{name} must be >= 1"));
             }
         }
+        if !(self.graph_change_heat_half_life_s > 0.0) {
+            return Err(format!("graph_change_heat_half_life_s must be > 0 (got {})", self.graph_change_heat_half_life_s));
+        }
         if !(self.overshoot_warning_interval_s >= 0.0) {
             return Err("overshoot_warning_interval_s must be >= 0".into());
         }
@@ -796,7 +800,8 @@ impl Default for Config {
             graph_change_heat_enabled: true,
             graph_change_heat_threshold: 30.0,
             graph_change_heat_floor: 20.0,
-            graph_change_heat_decay: 0.995,
+            // the per-keyframe 0.995 it had (half-life 138 keyframes) at the battery's median 1.33 keyframes per data-second
+            graph_change_heat_half_life_s: 104.0,
             solve_seed_from_accepted: true,
             solve_seed_gnc_verdicts: false,
             solve_incumbent_challenge: true,
@@ -907,9 +912,9 @@ pub struct GscPgo {
     pub(crate) graph_error: f64,
     /// Per finished solve: dispatched keyframes, newest keyframe time, seconds on its thread.
     pub(crate) solve_records: Vec<(usize, f64, f64)>,
-    /// Graph change heat, the keyframe count it was last raised at, and the solve waiting for it to cool.
+    /// Graph change heat, the data time it was last raised at, and the solve waiting for it to cool.
     pub(crate) heat: f64,
-    pub(crate) heat_keyframes: usize,
+    pub(crate) heat_time: f64,
     pub(crate) pending_solve: Option<(crate::pose_graph_solving::FinishedSolve, f64)>,
     /// Debounce and merge (`adoption_schedule`): jobs out, solves waiting, workers, and whether they run inline (end of data).
     pub(crate) debounce_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Debounced>>,
@@ -2026,6 +2031,8 @@ impl GscPgo {
                 self.search_scan_times.push_back(pose.second);
             }
         }
+        // a solve waiting on the graph change heat is adopted at the first scan the heat has cooled by
+        self.release_pending_solve();
         // the running solve's estimate ends at this scan: its data time, to judge an overshoot by
         if let Some(solving) = &mut self.solving {
             if solving.schedule.due_time.is_none() && self.scans_seen >= solving.schedule.due_scan()
@@ -2537,9 +2544,6 @@ impl GscPgo {
     }
     /// Add a keyframe at `pose`, placed by the current correction.
     fn insert_keyframe(&mut self, pose: &PoseWithTime, cloud: Option<Arc<PointCloud>>) {
-        // a solve waiting on the graph change heat is adopted at the last keyframe count's end once the heat is under
-        let keyframes = self.key_poses.len();
-        self.release_pending_solve(keyframes);
         self.graph_version += 1;
         // stored voxelized at submap_resolution, as every use voxelizes it (a dense scan would otherwise be kept whole)
         let stored = match &cloud {

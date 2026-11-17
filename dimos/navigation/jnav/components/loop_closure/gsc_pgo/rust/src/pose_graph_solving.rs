@@ -365,9 +365,8 @@ impl GscPgo {
             moved |= self.settle();
         }
         // the final graph is the solver's last output, whatever the graph change heat
-        let keyframes = self.key_poses.len();
-        let heat = self.heat_at(keyframes);
-        moved |= self.adopt_pending_solve(keyframes, heat);
+        let heat = self.heat_now();
+        moved |= self.adopt_pending_solve(heat);
         moved
     }
     /// Adopt solves until every closure, position and sighting has been through one.
@@ -957,32 +956,29 @@ fn heat_fields(arrived_keyframes: usize, heat: Option<(f64, f64, f64)>) -> Strin
 }
 
 impl GscPgo {
-    /// The graph change heat decayed to keyframe count `keyframes` (`graph_change_heat_decay` per keyframe).
-    pub(crate) fn heat_at(&self, keyframes: usize) -> f64 {
-        self.heat
-            * self
-                .config
-                .graph_change_heat_decay
-                .powi(keyframes.saturating_sub(self.heat_keyframes) as i32)
+    /// The graph change heat now, halved per `graph_change_heat_half_life_s` of data time since it was last raised.
+    pub(crate) fn heat_now(&self) -> f64 {
+        let elapsed = (self.newest_scan_time() - self.heat_time).max(0.0);
+        self.heat * 0.5f64.powf(elapsed / self.config.graph_change_heat_half_life_s)
     }
     /// Adopt the waiting solve if the heat at `keyframes` is <= `graph_change_heat_threshold`, adding its cost.
-    pub(crate) fn release_pending_solve(&mut self, keyframes: usize) -> bool {
+    pub(crate) fn release_pending_solve(&mut self) -> bool {
         if self.pending_solve.is_none() {
             return false;
         }
-        let heat = self.heat_at(keyframes);
+        let heat = self.heat_now();
         if heat > self.config.graph_change_heat_threshold {
             return false;
         }
-        self.adopt_pending_solve(keyframes, heat)
+        self.adopt_pending_solve(heat)
     }
     /// Adopt the waiting solve whatever the heat (`finish`); its cost joins the heat and it goes to the merge.
-    pub(crate) fn adopt_pending_solve(&mut self, keyframes: usize, heat: f64) -> bool {
+    pub(crate) fn adopt_pending_solve(&mut self, heat: f64) -> bool {
         let Some((waiting, cost)) = self.pending_solve.take() else {
             return false;
         };
         self.heat = heat + cost;
-        self.heat_keyframes = keyframes;
+        self.heat_time = self.newest_scan_time();
         let heat = Some((heat, cost, self.heat));
         if self.adoption_inline {
             return self.adopt_solution(waiting, heat, None);
@@ -992,13 +988,12 @@ impl GscPgo {
     }
     /// A debounced solve and its heat cost: adopted now if the heat allows, else held as the newest waiting one.
     pub(crate) fn debounced(&mut self, finished: FinishedSolve, cost: f64, inline: bool) -> bool {
-        let arrived = self.key_poses.len();
-        let heat = self.heat_at(arrived);
+        let heat = self.heat_now();
         if let Some((older, _)) = self.pending_solve.replace((finished, cost)) {
             self.log_heat_event("superseded", &older, heat);
         }
         if heat <= self.config.graph_change_heat_threshold {
-            return self.adopt_pending_solve(arrived, heat) && inline;
+            return self.adopt_pending_solve(heat) && inline;
         }
         if let Some((waiting, _)) = &self.pending_solve {
             self.log_heat_event("held", waiting, heat);

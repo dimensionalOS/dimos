@@ -170,11 +170,12 @@ class PGOConfig(NativeModuleConfig):
     extension_cloud_spacing: float = 0.25
     # extension score = median cloud ratio x exp(this (1 - min(d, 5)^2)) per step, d = step disagreement (0 = median)
     compounding_agreement_sensitivity: float = 1.5
-    # adopt a solve only while heat <= threshold; adopting adds its largest move's yank above floor; decay per keyframe
+    # adopt a solve only while heat <= threshold; adopting adds its largest move's yank above floor; heat halves every
+    # half_life_s of data time (standing still included)
     graph_change_heat_enabled: bool = True
     graph_change_heat_threshold: float = 30.0
     graph_change_heat_floor: float = 20.0
-    graph_change_heat_decay: float = 0.995
+    graph_change_heat_half_life_s: float = 104.0
     # seed a solve from the accepted graph (when it fits) and optionally from the last adopted GNC verdicts
     solve_seed_from_accepted: bool = True
     solve_seed_gnc_verdicts: bool = False
