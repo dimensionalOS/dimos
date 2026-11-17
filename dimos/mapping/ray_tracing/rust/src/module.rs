@@ -390,12 +390,8 @@ impl Worker {
                 .await
         };
         let Some(tf_pose) = found else {
-            warn!(
-                stamp,
-                world_frame = %self.config.world_frame,
-                cloud_frame = %msg.header.frame_id,
-                "No transform within tolerance of the cloud stamp, dropped a cloud.",
-            );
+            // The TF client diagnoses the miss, including stamp and tolerance,
+            // with startup grace and throttling. Do not warn twice for one miss.
             return;
         };
         let points = match extract_xyz(&msg) {
