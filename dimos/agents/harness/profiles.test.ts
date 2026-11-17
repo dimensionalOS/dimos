@@ -20,7 +20,6 @@ import { dirname, join } from "node:path";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { openNodeSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { profileTool } from "#dimos/agents/harness/tools/profile.ts";
-import { loadSkills } from "#dimos/agents/harness/skills/catalog.ts";
 import { scriptedModel } from "#dimos/agents/test/scripted-model.ts";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
@@ -38,7 +37,7 @@ const SNACKS: ProfileDraft = {
 async function open(path: string, skillRoots: string[]) {
   const model = scriptedModel();
   const registry = createRegistry();
-  registry.install(profileExtension({ generalSkills: await loadSkills(skillRoots, () => {}), baseSkills: [] }));
+  registry.install(await profileExtension(skillRoots, () => {}));
   const harness = await Harness.open(
     await SqliteStorage.open(await openNodeSqliteDatabase(path)),
     { models: model.models, registry },
@@ -147,20 +146,31 @@ test("defaults persist, explicit overrides do not change them, and old conversat
 test("always-loaded and available skill bodies are frozen across file edits, forks and a context summary", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "dimos-profile-skills-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const skill = async (name: string, text: string) => {
-    await mkdir(join(dir, name), { recursive: true });
+  const bundled = join(dir, "bundled");
+  const userRoot = join(dir, "user");
+  const skill = async (name: string, text: string, root = userRoot, disabled = false) => {
+    await mkdir(join(root, name), { recursive: true });
     await writeFile(
-      join(dir, name, "SKILL.md"),
-      `---\nname: ${name}\ndescription: ${name} description\n---\n${text}\n`,
+      join(root, name, "SKILL.md"),
+      `---\nname: ${name}\ndescription: ${name} description\ndisable-model-invocation: ${disabled}\n---\n${text}\n`,
     );
   };
   await skill("sorting", "ALWAYS_ORIGINAL_INSTRUCTIONS");
   await skill("presentation", "AVAILABLE_ORIGINAL_INSTRUCTIONS");
   await skill("unselected", "UNSELECTED_INSTRUCTIONS");
-  const h = await open(join(dir, "agent.sqlite"), [dir]);
+  await skill("overridden", "Bundled instructions", bundled);
+  await skill("disabled", "Bundled instructions", bundled);
+  await skill("overridden", "User instructions");
+  await skill("disabled", "Disabled by user", userRoot, true);
+  const h = await open(join(dir, "agent.sqlite"), [bundled, userRoot]);
   t.after(() => h.harness.close(context));
   const options = await h.profiles.choices();
-  assert.deepEqual(options.skills.map((skill) => skill.name).sort(), ["presentation", "sorting", "unselected"]);
+  assert.deepEqual(options.skills.map((skill) => skill.name).sort(), [
+    "overridden",
+    "presentation",
+    "sorting",
+    "unselected",
+  ]);
   assert.ok(options.blueprintsError);
   await skill("newly-added", "New instructions.");
   assert.ok((await h.profiles.choices()).skills.some((skill) => skill.name === "newly-added"));
@@ -175,6 +185,10 @@ test("always-loaded and available skill bodies are frozen across file edits, for
     (request) => {
       const prompt = JSON.stringify(request.messages);
       assert.match(prompt, /ALWAYS_ORIGINAL_INSTRUCTIONS/);
+      assert.ok(prompt.includes(`Skill directory: ${join(userRoot, "sorting")}`));
+      assert.ok(prompt.includes(join(userRoot, "overridden", "SKILL.md")));
+      assert.ok(!prompt.includes(join(bundled, "overridden")));
+      assert.doesNotMatch(prompt, /- disabled:/);
       assert.match(prompt, /presentation description/);
       assert.doesNotMatch(prompt, /AVAILABLE_ORIGINAL_INSTRUCTIONS|ALWAYS_CHANGED|AVAILABLE_CHANGED|unselected/);
       return fauxAssistantMessage([fauxToolCall("profile", { op: "read_skill", name: "presentation" })], {
@@ -182,7 +196,9 @@ test("always-loaded and available skill bodies are frozen across file edits, for
       });
     },
     (request) => {
-      assert.match(JSON.stringify(request.messages), /AVAILABLE_ORIGINAL_INSTRUCTIONS/);
+      const prompt = JSON.stringify(request.messages);
+      assert.match(prompt, /AVAILABLE_ORIGINAL_INSTRUCTIONS/);
+      assert.ok(prompt.includes(`Skill directory: ${join(userRoot, "presentation")}`));
       return fauxAssistantMessage("Ready to sort.");
     },
   ]);

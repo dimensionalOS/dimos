@@ -1,7 +1,7 @@
 import type { AgentTool } from "#dimos/agents/harness/tools/base.ts";
 import type { Profiles } from "#dimos/agents/harness/profiles.ts";
 import { ProfileDraftSchema, findProfile } from "#dimos/agents/shared/protocol/profiles.ts";
-import { ProfileError, boundProfile, profileCatalog } from "#dimos/agents/harness/profiles.ts";
+import { ProfileError, boundProfile, profileCatalog, skillInstructions } from "#dimos/agents/harness/profiles.ts";
 import { Type } from "typebox";
 import { agentTool } from "#dimos/agents/harness/tools/lib/tool.ts";
 import { defineTool } from "@earendil-works/pi-durable";
@@ -38,7 +38,7 @@ export function profileTool(profiles: Profiles): AgentTool<"profile"> {
             const skill = bound.skills.find((skill) => skill.name === args.name);
             if (skill === undefined)
               throw new ProfileError(`No profile skill ${args.name ?? ""} in this conversation.`);
-            return { output: [{ type: "text", text: skill.instructions }], details: {} };
+            return { output: [{ type: "text", text: skillInstructions(skill) }], details: {} };
           }
         }
         return { output: [{ type: "text", text: JSON.stringify(result) }], details: {} };

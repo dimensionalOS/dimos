@@ -2,12 +2,12 @@ import type { Context } from "@earendil-works/chord/context";
 import type { ConversationId, DocumentReader, Harness, Tx } from "@earendil-works/pi-durable";
 import type { Profile, ProfileCatalog, ProfileDraft, ProfileOptions } from "#dimos/agents/shared/protocol/profiles.ts";
 import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
-import type { SkillInfo } from "#dimos/agents/harness/skills/catalog.ts";
 import { GENERAL_PROFILE, findProfile, parseProfileDraft } from "#dimos/agents/shared/protocol/profiles.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { defineDoc, defineExtension, section } from "@earendil-works/pi-durable";
 import { loadSkills } from "#dimos/agents/harness/skills/catalog.ts";
+import { dirname } from "node:path";
 import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -28,7 +28,13 @@ export const ProfilesDoc = defineDoc<{ profiles: Profile[]; defaultProfile: stri
   initial: () => ({ profiles: [], defaultProfile: null }),
 });
 
-type BoundSkill = { name: string; description: string; instructions: string; mode: "always" | "available" };
+type BoundSkill = {
+  name: string;
+  description: string;
+  instructions: string;
+  mode: "always" | "available";
+  path?: string; // Snapshots created before source paths were recorded omit this field.
+};
 export type BoundProfile = { profile: Profile; skills: BoundSkill[] };
 
 export const BoundProfileDoc = defineDoc<BoundProfile>({
@@ -147,6 +153,7 @@ export class Profiles {
       skills.push({
         name,
         description: skill.description,
+        path: skill.path,
         instructions,
         mode: always.has(name) ? "always" : "available",
       });
@@ -179,16 +186,22 @@ export class Profiles {
   }
 }
 
-export function profileExtension(options: {
-  readonly generalSkills: readonly SkillInfo[];
-  readonly baseSkills: readonly SkillInfo[];
-}) {
+export function skillInstructions(skill: BoundSkill): string {
+  return skill.path === undefined
+    ? skill.instructions
+    : `Skill directory: ${dirname(skill.path)}\n\n${skill.instructions}`;
+}
+
+export async function profileExtension(skillRoots: readonly string[], report: (error: unknown) => void) {
+  const generalSkills = await loadSkills(skillRoots, report);
+  const bundled = await loadSkills(skillRoots.slice(0, 1), report);
+  const baseSkills = generalSkills.filter((skill) => bundled.some((entry) => entry.name === skill.name));
   return defineExtension({
     name: "dimos-profile",
     sections: [
       section("skills", async (input, context) => {
         const bound = await boundProfile(input.read, input.conversationId, context);
-        const skills = (bound.profile.id === GENERAL_PROFILE.id ? options.generalSkills : options.baseSkills).filter(
+        const skills = (bound.profile.id === GENERAL_PROFILE.id ? generalSkills : baseSkills).filter(
           (skill) => !bound.skills.some((selected) => selected.name === skill.name),
         );
         return skills.length === 0
@@ -207,7 +220,7 @@ export function profileExtension(options: {
           "Use the profile tool to save a reusable profile only when asked. Profile edits and defaults affect future conversations.",
           ...skills.map((skill) =>
             skill.mode === "always"
-              ? `Always-loaded skill ${skill.name}:\n${skill.instructions}`
+              ? `Always-loaded skill ${skill.name}:\n${skillInstructions(skill)}`
               : `Available skill ${skill.name}: ${skill.description}. Read its frozen instructions with profile op=read_skill name=${JSON.stringify(skill.name)} when relevant.`,
           ),
         ]
