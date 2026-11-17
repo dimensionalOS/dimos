@@ -249,3 +249,87 @@ fn the_window_drops_a_disagreeing_closure_and_publishes_the_agreeing_one() {
     assert!(with.closure_latency()[0].fast_path.is_some());
     assert!(with.closure_latency()[2].fast_path.is_none(), "the wrong closure was published");
 }
+
+#[test]
+fn a_gnc_solve_that_never_saw_the_published_closures_does_not_drop_their_shift() {
+    // a GNC solve starts on an older closure that moves the drifted trail (it closes keyframe KEYFRAMES - 60 onto the
+    // loop's start); the trail's newest closures arrive while it runs and the fast path publishes them; when that stale
+    // solve is adopted, the published map (which holds evidence the solve never saw) stays published until a solve that
+    // judged those closures lands: the robot does not jump back to the stale solve's place
+    let drift = 2.5e-4;
+    let mut config = Config {
+        mode: Mode::Deterministic,
+        solver_fast_path_enabled: true,
+        odometry_error_estimate_from_lidar_range: false,
+        graph_change_heat_enabled: false,
+        auto_aggregate_cloud_size: 0,
+        drop_reseen_points: false,
+        ..Config::default()
+    };
+    let dc = &mut config.deterministic_config;
+    dc.solve_gnc_scans_scale = 30.0 / (KEYFRAMES as f64).powf(dc.solve_gnc_keyframe_power);
+    dc.solve_without_gnc_scans_scale = 30.0 / (KEYFRAMES as f64).powf(dc.solve_without_gnc_keyframe_power);
+    let mut pgo = GscPgo::new(config);
+    pgo.set_wait_for_due_jobs(true);
+    let odometry: Vec<(Mat3, Vec3)> = {
+        let ((r0, p0), (_, p1)) = (truth(0), truth(1));
+        let local = mat3::mat_vec(&mat3::transpose(&r0), &mat3::sub(&p1, &p0));
+        let step = std::f64::consts::TAU / KEYFRAMES as f64;
+        let (mut rotation, mut position) = truth(0);
+        let mut out = Vec::with_capacity(KEYFRAMES);
+        for k in 0..KEYFRAMES {
+            out.push((rotation, position));
+            position = mat3::add(&position, &mat3::mat_vec(&rotation, &local));
+            let extra = if k + 1 >= KEYFRAMES - DRIFTING { drift } else { 0.0 };
+            rotation = mat3::mat_mul(&rotation, &mat3::rot_z(step + extra));
+        }
+        out
+    };
+    for (k, &pose) in odometry.iter().enumerate() {
+        scan(&mut pgo, k, pose);
+        pgo.update();
+    }
+    let closure = |pgo: &mut GscPgo, from: usize, to: usize| {
+        let ((ra, pa), (rb, pb)) = (truth(to), truth(from));
+        let back = mat3::transpose(&ra);
+        pgo.commit_closure(from, to, mat3::mat_mul(&back, &rb), mat3::mat_vec(&back, &mat3::sub(&pb, &pa)), 0.01);
+    };
+    // an older closure within the drifted stretch starts a GNC solve (held 30 scans); it moves the trail itself
+    closure(&mut pgo, KEYFRAMES - 60, 0);
+    scan(&mut pgo, KEYFRAMES, odometry[KEYFRAMES - 1]);
+    pgo.wait_for_due_solve();
+    // the trail's two agreeing closures arrive while it runs
+    closure(&mut pgo, KEYFRAMES - 1, 0);
+    closure(&mut pgo, KEYFRAMES - 3, 0);
+    let newest = |pgo: &GscPgo| mat3::norm(&mat3::sub(&pgo.key_poses().position(KEYFRAMES - 1), &truth(KEYFRAMES - 1).1));
+    let drifted = newest(&pgo);
+    let mut published_at = None;
+    let mut trace = Vec::new();
+    let mut published_newest = Vec::new();
+    for s in KEYFRAMES + 1..KEYFRAMES + 80 {
+        scan(&mut pgo, s, odometry[KEYFRAMES - 1]);
+        pgo.wait_for_due_solve();
+        if published_at.is_none() && pgo.closure_latency()[1].fast_path.is_some() {
+            published_at = Some(s);
+        }
+        trace.push((s, pgo.committed_closures().weight(0).is_nan(), pgo.committed_closures().weight(1).is_nan(), newest(&pgo)));
+        published_newest.push((s, pgo.key_poses().position(KEYFRAMES - 1)));
+    }
+    let published_at = published_at.expect("the fast path published the trail's closures");
+    // the stale solve: the scan it judged closure 0 on, before closures 1 and 2 were judged
+    let stale = trace.iter().find(|t| !t.1).expect("the first solve landed").0;
+    assert!(published_at < stale, "published at {published_at}, the stale solve landed at {stale}");
+    let corrected = trace.iter().find(|t| t.0 == stale - 1).unwrap().3;
+    assert!(corrected < 0.5 * drifted, "published {corrected:.3} m from the truth, drifted {drifted:.3} m");
+    // from the stale solve until the next one judges the trail's closures, the newest keyframe stays where the fast path
+    // published it, exactly
+    let before = published_newest.iter().find(|p| p.0 == stale - 1).unwrap().1;
+    for &(s, _, unjudged, error) in trace.iter().filter(|t| t.0 >= stale && t.2) {
+        assert!(error < 0.5 * drifted, "scan {s}: {error:.3} m from the truth (drifted {drifted:.3} m) after the stale solve");
+        let at = published_newest.iter().find(|p| p.0 == s).unwrap().1;
+        assert_eq!(at, before, "scan {s}: the published newest keyframe moved");
+        let _ = unjudged;
+    }
+    // and the stale solve did move the trail in GNC's own graph
+    assert!(trace.iter().any(|t| t.0 >= stale && t.2), "the stale solve's span was observed");
+}

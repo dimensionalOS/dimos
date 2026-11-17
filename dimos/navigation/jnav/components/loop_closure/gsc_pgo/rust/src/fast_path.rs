@@ -141,11 +141,17 @@ impl GscPgo {
         moved
     }
     /// An adopted GNC solve replaced every pose: the published correction is dropped and the closures it held that GNC
-    /// left unjudged are pending again; stamp latencies.
+    /// left unjudged are pending again; stamp latencies. A solve dispatched before closures the fast path has published
+    /// (it judged none of them) does not replace the published map: that map holds more evidence than the solve saw, so it
+    /// stays published, newer keyframes riding it, until a solve that judged those closures lands. GNC's graph is the
+    /// solve's either way.
     pub(crate) fn fast_path_superseded(&mut self, kept: &[f64]) {
-        self.fast_path_overlay = None;
-        self.fast_path_published = None;
-        self.fast_path_accepted.clear();
+        let unseen = self.fast_path_accepted.iter().any(|&i| i >= kept.len());
+        if !unseen {
+            self.fast_path_overlay = None;
+            self.fast_path_published = None;
+            self.fast_path_accepted.clear();
+        }
         let now = (self.scans_seen, self.newest_scan_time());
         for (latency, &weight) in self.closure_latency.iter_mut().zip(kept) {
             if latency.gnc.is_none() {
