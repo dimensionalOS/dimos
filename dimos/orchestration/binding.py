@@ -20,8 +20,8 @@ from inspect import Parameter
 from typing import Literal
 
 from dimos.core.introspection.module.info import RpcInfo
-from dimos.orchestration.checks import CheckedDefinition, check
-from dimos.orchestration.definition import OrchestratorDefinition
+from dimos.orchestration.checks import RESERVED, CheckedDefinition, check
+from dimos.orchestration.definition import OrchestratorDefinition, StreamValue, Transition
 from dimos.orchestration.expressions import UNKNOWN, Shape
 from dimos.orchestration.plain import shape_of
 
@@ -58,6 +58,11 @@ def resolve(
                 return f"{found or module}{dot}{name}"
             level = level.rpartition("/")[0]
 
+    def moved(transition: Transition) -> Transition:
+        if transition.on is None or transition.on in RESERVED:
+            return transition
+        return transition.model_copy(update={"on": full(transition.on)})
+
     activities = tuple(
         activity.model_copy(
             update={
@@ -67,10 +72,29 @@ def resolve(
         )
         for activity in definition.activities
     )
-    signals = tuple(
-        signal.model_copy(update={"stream": full(signal.stream)}) for signal in definition.signals
+    values = tuple(
+        value.model_copy(update={"stream": full(value.stream)})
+        for value in definition.stream_values
     )
-    return definition.model_copy(update={"activities": activities, "signals": signals})
+    nodes = tuple(
+        node.model_copy(update={"transitions": tuple(moved(t) for t in node.transitions)})
+        for node in definition.nodes
+    )
+    return definition.model_copy(
+        update={"activities": activities, "stream_values": values, "nodes": nodes}
+    )
+
+
+def streams(definition: OrchestratorDefinition) -> dict[str, tuple[StreamValue, ...]]:
+    """Every stream a definition names, with the stream values read from each message on it."""
+    found: dict[str, tuple[StreamValue, ...]] = {}
+    for value in definition.stream_values:
+        found[value.stream] = (*found.get(value.stream, ()), value)
+    for node in definition.nodes:
+        for transition in node.transitions:
+            if transition.on is not None and transition.on not in RESERVED:
+                found.setdefault(transition.on, ())
+    return found
 
 
 def bind(definition: OrchestratorDefinition, deployed: Deployed) -> CheckedDefinition:
@@ -87,6 +111,7 @@ def bind(definition: OrchestratorDefinition, deployed: Deployed) -> CheckedDefin
     problems = [
         *_activity_problems(definition, deployed),
         *_args_problems(definition, deployed),
+        *_on_problems(definition, deployed),
         *shape_problems,
         *checked.problems,
     ]
@@ -123,6 +148,16 @@ def _activity_problems(definition: OrchestratorDefinition, deployed: Deployed) -
             )
 
 
+def _on_problems(definition: OrchestratorDefinition, deployed: Deployed) -> Iterator[str]:
+    for node in definition.nodes:
+        for transition in node.transitions:
+            if transition.on is None or transition.on in RESERVED:
+                continue
+            missing = _missing(deployed, transition.on, deployed.streams, "stream")
+            if missing:
+                yield f"node `{node.name}`: `on` {missing}"
+
+
 def _args_problems(definition: OrchestratorDefinition, deployed: Deployed) -> Iterator[str]:
     starts = {activity.name: activity.start for activity in definition.activities}
     for node in definition.nodes:
@@ -146,24 +181,26 @@ def _args_problems(definition: OrchestratorDefinition, deployed: Deployed) -> It
 def _shapes(
     definition: OrchestratorDefinition, deployed: Deployed
 ) -> tuple[dict[str, Shape], list[str]]:
-    """The shape of every signal and result key, and what is wrong with any of them."""
+    """The shape of every stream value and result key, and what is wrong with any of them."""
     shapes: dict[str, Shape] = {}
     problems: list[str] = []
-    for signal in definition.signals:
-        missing = _missing(deployed, signal.stream, deployed.streams, "stream")
+    for value in definition.stream_values:
+        missing = _missing(deployed, value.stream, deployed.streams, "stream")
         if missing:
-            problems.append(f"signal `{signal.name}`: `stream` {missing}")
+            problems.append(f"stream value `{value.name}`: `stream` {missing}")
             continue
-        message = deployed.streams[signal.stream]
+        message = deployed.streams[value.stream]
         shape = shape_of(message)
-        if signal.field is not None and isinstance(shape, dict) and signal.field not in shape:
-            problems.append(
-                f"signal `{signal.name}`: `field` names `{signal.field}`, "
-                f"which is not a field of `{message.__name__}`"
-            )
-        elif signal.field is not None:
-            shape = shape[signal.field] if isinstance(shape, dict) else UNKNOWN
-        shapes[signal.name] = shape
+        for part in value.field.split("."):
+            if isinstance(shape, dict) and part not in shape:
+                problems.append(
+                    f"stream value `{value.name}`: `field` names `{value.field}`, "
+                    f"which is not a field of `{message.__name__}`"
+                )
+                shape = UNKNOWN
+                break
+            shape = shape[part] if isinstance(shape, dict) else UNKNOWN
+        shapes[value.name] = shape
 
     starts = {activity.name: activity.start for activity in definition.activities}
     writers: dict[str, tuple[str, Shape]] = {}

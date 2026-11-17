@@ -36,12 +36,12 @@ from dimos.orchestration.engine import (
     SendCancel,
     SendStart,
     SetTimer,
-    SignalItem,
+    StreamItem,
     TimerItem,
     TransitionRecord,
 )
 from dimos.orchestration.loader import load_and_check
-from dimos.orchestration.plain import to_plain
+from dimos.orchestration.plain import field_to_plain, to_plain
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 
 DOCK_CYCLE = Path(__file__).parent / "m20_dock_cycle.toml"
@@ -80,6 +80,14 @@ DOCKED = _pose(2.0, 1.0, 0.2, 30.0)
 UNDOCKED = _pose(0.7608, 0.7464, 0.48, 40.0)
 
 
+def _odom(pose: PoseStamped) -> StreamItem:
+    values = {
+        "odom_header": field_to_plain(pose, "header"),
+        "odom_pose": field_to_plain(pose, "pose"),
+    }
+    return StreamItem("M20Connection.odom", values)
+
+
 def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], list[FaultReport]]:
     checked = _checked()
     calls: list[str] = []
@@ -94,7 +102,7 @@ def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], lis
                 case TransitionRecord(goto=goto):
                     records.append(effect)
                     if goto == "OnDock":
-                        queue.append(SignalItem("odom", to_plain(DOCKED)))
+                        queue.append(_odom(DOCKED))
                 case SendStart(call) if call.rpc == "MLSPlannerNative.go_to":
                     goal = call.args["pose"]
                     position = goal["pose"]["position"]
@@ -106,10 +114,14 @@ def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], lis
                     stamp = Time(len(calls), 0)
                     queue.append(ReturnItem(call, to_plain(stamp)))
                     status = GoalStatus(goal_id=GoalID(stamp=stamp), status=GoalStatus.SUCCEEDED)
-                    queue.append(SignalItem("nav_status", to_plain(status)))
+                    reached = {
+                        "nav_state": field_to_plain(status, "status"),
+                        "nav_stamp": field_to_plain(status, "goal_id.stamp"),
+                    }
+                    queue.append(StreamItem("MLSPlannerNative.nav_status", reached))
                 case SendStart(call) if call.rpc == "M20Connection.undock":
                     calls.append("undock")
-                    queue.append(SignalItem("odom", to_plain(UNDOCKED)))
+                    queue.append(_odom(UNDOCKED))
                     queue.append(ReturnItem(call))
                 case SendStart(call) if call.rpc == "M20Connection.dock":
                     calls.append("dock")
@@ -123,7 +135,7 @@ def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], lis
                 case FaultReport():
                     faults.append(effect)
 
-    queue.append(SignalItem("odom", to_plain(DOCKED)))
+    queue.append(_odom(DOCKED))
     runtime, effects = engine.start(checked, 0.0)
     perform(effects)
     while queue:

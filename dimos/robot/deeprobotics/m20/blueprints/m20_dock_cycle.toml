@@ -24,21 +24,25 @@ ABORTED = 4
 "spot.position_a" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
 "spot.position_b" = { header = { frame_id = "", seq = 0, stamp = { sec = 0, nsec = 0 } }, pose = { position = { x = 0.0, y = 0.0, z = 0.0 }, orientation = { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } } }
 
-[[signal]]
-name = "nav_status"
+[[stream_value]]
+name = "nav_state"
 stream = "MLSPlannerNative.nav_status"
+field = "status"
 
-[[signal]]
-name = "odom"
+[[stream_value]]
+name = "nav_stamp"
+stream = "MLSPlannerNative.nav_status"
+field = "goal_id.stamp"
+
+[[stream_value]]
+name = "odom_header"
 stream = "M20Connection.odom"
+field = "header"
 
-[[event]]
-name = "arrived"
-when = "nav_status.status == SUCCEEDED && nav_status.goal_id.stamp == nav.goal"
-
-[[event]]
-name = "gave_up"
-when = "(nav_status.status == ABORTED || nav_status.status == PREEMPTED) && nav_status.goal_id.stamp == nav.goal"
+[[stream_value]]
+name = "odom_pose"
+stream = "M20Connection.odom"
+field = "pose"
 
 [[activity]]
 name = "navigate"
@@ -65,13 +69,13 @@ name = "OnDock"
 
 # The robot sits square on the dock, so its pose there gives the dock's axis.
 [[node.transition]]
-on = "odom"
+on = "M20Connection.odom"
 goto = "Undocking"
 
 [node.transition.set]
-"spot.dock" = "odom"
-"axis.x" = "1.0 - 2.0 * (odom.pose.orientation.y * odom.pose.orientation.y + odom.pose.orientation.z * odom.pose.orientation.z)"
-"axis.y" = "2.0 * (odom.pose.orientation.x * odom.pose.orientation.y + odom.pose.orientation.z * odom.pose.orientation.w)"
+"spot.dock" = "{'header': odom_header, 'pose': odom_pose}"
+"axis.x" = "1.0 - 2.0 * (odom_pose.orientation.y * odom_pose.orientation.y + odom_pose.orientation.z * odom_pose.orientation.z)"
+"axis.y" = "2.0 * (odom_pose.orientation.x * odom_pose.orientation.y + odom_pose.orientation.z * odom_pose.orientation.w)"
 "dock.tries" = "0"
 
 [[node]]
@@ -81,13 +85,13 @@ activity = "undock"
 # The predock spot is the undock spot moved onto the dock's axis.
 # Positions A and B are one and two steps farther back along the axis, and all three sit on the floor.
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "GoingToA"
 
 [node.transition.set]
-"spot.predock" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + ((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) * axis.x, 'y': spot.dock.pose.position.y + ((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
-"spot.position_a" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - step_m) * axis.x, 'y': spot.dock.pose.position.y + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - step_m) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
-"spot.position_b" = "{'header': odom.header, 'pose': {'position': {'x': spot.dock.pose.position.x + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - 2.0 * step_m) * axis.x, 'y': spot.dock.pose.position.y + (((odom.pose.position.x - spot.dock.pose.position.x) * axis.x + (odom.pose.position.y - spot.dock.pose.position.y) * axis.y) - 2.0 * step_m) * axis.y, 'z': odom.pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
+"spot.predock" = "{'header': odom_header, 'pose': {'position': {'x': spot.dock.pose.position.x + ((odom_pose.position.x - spot.dock.pose.position.x) * axis.x + (odom_pose.position.y - spot.dock.pose.position.y) * axis.y) * axis.x, 'y': spot.dock.pose.position.y + ((odom_pose.position.x - spot.dock.pose.position.x) * axis.x + (odom_pose.position.y - spot.dock.pose.position.y) * axis.y) * axis.y, 'z': odom_pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
+"spot.position_a" = "{'header': odom_header, 'pose': {'position': {'x': spot.dock.pose.position.x + (((odom_pose.position.x - spot.dock.pose.position.x) * axis.x + (odom_pose.position.y - spot.dock.pose.position.y) * axis.y) - step_m) * axis.x, 'y': spot.dock.pose.position.y + (((odom_pose.position.x - spot.dock.pose.position.x) * axis.x + (odom_pose.position.y - spot.dock.pose.position.y) * axis.y) - step_m) * axis.y, 'z': odom_pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
+"spot.position_b" = "{'header': odom_header, 'pose': {'position': {'x': spot.dock.pose.position.x + (((odom_pose.position.x - spot.dock.pose.position.x) * axis.x + (odom_pose.position.y - spot.dock.pose.position.y) * axis.y) - 2.0 * step_m) * axis.x, 'y': spot.dock.pose.position.y + (((odom_pose.position.x - spot.dock.pose.position.x) * axis.x + (odom_pose.position.y - spot.dock.pose.position.y) * axis.y) - 2.0 * step_m) * axis.y, 'z': odom_pose.position.z - base_height_m}, 'orientation': spot.dock.pose.orientation}}"
 
 [[node]]
 name = "GoingToA"
@@ -96,15 +100,15 @@ args = { pose = "spot.position_a" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
 goto = "GoingToB"
 
 [[node.transition]]
-if = "gave_up"
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
 goto = "failed"
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "GoingToARetry"
 
 [[node]]
@@ -121,15 +125,15 @@ args = { pose = "spot.position_b" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
 goto = "Pausing"
 
 [[node.transition]]
-if = "gave_up"
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
 goto = "failed"
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "GoingToBRetry"
 
 [[node]]
@@ -153,15 +157,15 @@ args = { pose = "spot.position_a" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
 goto = "Returning"
 
 [[node.transition]]
-if = "gave_up"
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
 goto = "failed"
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "BackToARetry"
 
 [[node]]
@@ -178,15 +182,15 @@ args = { pose = "spot.predock" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
 goto = "Settling"
 
 [[node.transition]]
-if = "gave_up"
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
 goto = "failed"
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "ReturnRetry"
 
 [[node]]
@@ -208,18 +212,19 @@ name = "Docking"
 activity = "dock"
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "Resting"
 set = { "cycle.count" = "cycle.count + 1" }
 
 # The robot drifts while standing, so a dock that fails approaches again from position A.
 [[node.transition]]
-if = "failed && dock.tries + 1 < dock_attempts"
+on = "failed"
+if = "dock.tries + 1 < dock_attempts"
 goto = "BackToA"
 set = { "dock.tries" = "dock.tries + 1" }
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "failed"
 
 [[node]]

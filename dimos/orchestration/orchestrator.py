@@ -27,9 +27,9 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Transport
 from dimos.orchestration import engine
-from dimos.orchestration.binding import Deployed, bind, resolve
+from dimos.orchestration.binding import Deployed, bind, resolve, streams
 from dimos.orchestration.checks import CheckedDefinition
-from dimos.orchestration.definition import OrchestratorDefinition, Signal
+from dimos.orchestration.definition import OrchestratorDefinition, StreamValue
 from dimos.orchestration.engine import (
     DEFAULT_LIMITS,
     Call,
@@ -42,11 +42,12 @@ from dimos.orchestration.engine import (
     SendCancel,
     SendStart,
     SetTimer,
-    SignalItem,
+    StreamItem,
     Timer,
     TimerItem,
     TransitionRecord,
 )
+from dimos.orchestration.expressions import Plain
 from dimos.orchestration.loader import LoadError, load_and_check
 from dimos.orchestration.plain import field_to_plain, from_plain, to_plain
 from dimos.utils.logging_config import setup_logger
@@ -113,10 +114,11 @@ class Orchestrator(Module):
             self.rpc.rpc_timeouts[_topic(activity.start)] = _START_TIMEOUT_S
         with self._wake:
             self._running = True
-        for signal in definition.signals:
-            transport = descriptors[signal.stream].transport.build()
+        for stream, values in streams(definition).items():
+            transport = descriptors[stream].transport.build()
             self._transports.append(transport)
-            self._unsubscribes.append(transport.subscribe(partial(self._on_message, signal)))
+            received = partial(self._on_message, stream, values)
+            self._unsubscribes.append(transport.subscribe(received))
         self._thread = threading.Thread(
             target=self._run, args=(checked,), name="orchestrator-engine", daemon=True
         )
@@ -142,8 +144,8 @@ class Orchestrator(Module):
             infos: list[RpcInfo] = clients[module].get_rpc_signatures()
             rpcs.update({f"{module}.{info.name}": info for info in infos})
         descriptors: dict[str, StreamDescriptor] = {}
-        streams = {signal.stream.partition(".")[0] for signal in definition.signals}
-        for module in sorted(streams & clients.keys()):
+        publishers = {stream.partition(".")[0] for stream in streams(definition)}
+        for module in sorted(publishers & clients.keys()):
             found: list[StreamDescriptor] = clients[module].get_stream_descriptors()
             descriptors.update({f"{module}.{descriptor.name}": descriptor for descriptor in found})
         message_types = {name: descriptor.type for name, descriptor in descriptors.items()}
@@ -246,21 +248,22 @@ class Orchestrator(Module):
                 logger.error("Orchestrator cannot keep a result", rpc=call.rpc, error=str(error))
                 self._add(ReturnItem(call, raised=True))
 
-    def _on_message(self, signal: Signal, message: object) -> None:
-        try:
-            if signal.field is None:
-                value = to_plain(message, signal.name)
-            else:
-                value = field_to_plain(message, signal.field, signal.name)
-            item = SignalItem(signal.name, value)
-        except (AttributeError, TypeError) as error:
-            if signal.name not in self._unreadable:
-                self._unreadable.add(signal.name)
-                logger.error(
-                    "Orchestrator cannot read a signal", signal=signal.name, error=str(error)
-                )
-            return
-        self._add(item)
+    def _on_message(self, stream: str, values: tuple[StreamValue, ...], message: object) -> None:
+        """Queue one message with every stream value read from it. One that cannot be read drops it."""
+        read: dict[str, Plain] = {}
+        for value in values:
+            try:
+                read[value.name] = field_to_plain(message, value.field, value.name)
+            except (AttributeError, TypeError) as error:
+                if value.name not in self._unreadable:
+                    self._unreadable.add(value.name)
+                    logger.error(
+                        "Orchestrator cannot read a stream value",
+                        value=value.name,
+                        error=str(error),
+                    )
+                return
+        self._add(StreamItem(stream, read))
 
     def _halt(self) -> None:
         """Take no more items and drop every stream subscription."""

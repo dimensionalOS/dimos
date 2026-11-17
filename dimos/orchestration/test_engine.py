@@ -21,10 +21,9 @@ from dimos.orchestration.checks import check
 from dimos.orchestration.definition import (
     Activity,
     Check,
-    Event,
     Node,
     OrchestratorDefinition,
-    Signal,
+    StreamValue,
     Transition,
 )
 from dimos.orchestration.engine import (
@@ -39,7 +38,7 @@ from dimos.orchestration.engine import (
     SendCancel,
     SendStart,
     SetTimer,
-    SignalItem,
+    StreamItem,
     Timer,
     TimerItem,
     TransitionRecord,
@@ -49,8 +48,8 @@ from dimos.orchestration.engine import (
 )
 from dimos.orchestration.expressions import Plain
 
-HappeningKind = Literal["signal", "returns", "raises", "canceled", "timer", "deadline"]
-# What happens outside the engine: a kind, a signal or node name, and a value if it has one.
+HappeningKind = Literal["message", "returns", "raises", "canceled", "timer", "deadline"]
+# What happens outside the engine: a kind, a stream or node name, and what it carries if anything.
 Happening = tuple[HappeningKind, str] | tuple[HappeningKind, str, Plain]
 
 
@@ -65,8 +64,8 @@ class Case:
     limits: Limits = Limits()
 
 
-def signals(*names: str) -> list[Signal]:
-    return [Signal(name=name, stream=f"Panel.{name}") for name in names]
+def values(*names: str) -> list[StreamValue]:
+    return [StreamValue(name=name, stream=f"Panel.{name}", field="data") for name in names]
 
 
 WORK = OrchestratorDefinition(
@@ -84,7 +83,7 @@ WORK = OrchestratorDefinition(
             activity="power",
             children=["Pick", "Move"],
             initial="Pick",
-            transitions=[Transition(if_="failed", goto="Work")],
+            transitions=[Transition(on="failed", goto="Work")],
         ),
         Node(name="Pick", transitions=[Transition(goto="Move")]),
         Node(
@@ -92,7 +91,7 @@ WORK = OrchestratorDefinition(
             activity="drive",
             args={"speed": "top_speed"},
             result="drive.id",
-            transitions=[Transition(if_="succeeded", goto="Pick", set={"laps": "laps + 1"})],
+            transitions=[Transition(on="succeeded", goto="Pick", set={"laps": "laps + 1"})],
         ),
     ],
 )
@@ -104,58 +103,57 @@ LEFT_MOVE = [
     (
         2.0,
         ("returns", "Move", 7),
-        ["Move -if succeeded-> Pick", "cancel Base.stop", "set deadline Move 4.0", "Pick --> Move"],
+        ["Move -on succeeded-> Pick", "cancel Base.stop", "set deadline Move 4.0", "Pick --> Move"],
     ),
 ]
 
-SIGNALS = OrchestratorDefinition(
+STREAMS = OrchestratorDefinition(
     root="Top",
     vars={"presses": 0},
-    signals=signals("press"),
     nodes=[
         Node(name="Top", children=["Outer", "Rest"], initial="Outer"),
         Node(
             name="Outer",
             children=["Left", "Right"],
             initial="Left",
-            transitions=[Transition(on="press", if_="presses > 1", goto="Rest")],
+            transitions=[Transition(on="Panel.press", if_="presses > 1", goto="Rest")],
         ),
         Node(
             name="Left",
-            transitions=[Transition(on="press", goto="Right", set={"presses": "presses + 1"})],
+            transitions=[
+                Transition(on="Panel.press", goto="Right", set={"presses": "presses + 1"})
+            ],
         ),
         Node(
             name="Right",
-            transitions=[Transition(on="press", goto="Left", set={"presses": "presses + 1"})],
+            transitions=[Transition(on="Panel.press", goto="Left", set={"presses": "presses + 1"})],
         ),
-        Node(name="Rest", transitions=[Transition(on="press", goto="Outer")]),
+        Node(name="Rest", transitions=[Transition(on="Panel.press", goto="Outer")]),
     ],
 )
 
-EVENTS = OrchestratorDefinition(
+CONDITIONS = OrchestratorDefinition(
     root="Top",
     constants={"low": 10.0},
-    signals=signals("level"),
-    events=[Event(name="empty", when="level < low"), Event(name="filled", when="level >= low")],
+    stream_values=values("level"),
     nodes=[
         Node(name="Top", children=["Run", "Rest"], initial="Run"),
-        Node(name="Run", transitions=[Transition(if_="empty", goto="Rest")]),
-        Node(name="Rest", transitions=[Transition(if_="filled", goto="Run")]),
+        Node(name="Run", transitions=[Transition(if_="level < low", goto="Rest")]),
+        Node(name="Rest", transitions=[Transition(if_="level >= low", goto="Run")]),
     ],
 )
 
 TIMERS = OrchestratorDefinition(
     root="Top",
     constants={"pause": 2.0},
-    signals=signals("skip", "again"),
     nodes=[
         Node(name="Top", children=["Wait", "Go"], initial="Wait"),
         Node(
             name="Wait",
             transitions=[
                 Transition(after="pause", goto="Go"),
-                Transition(on="skip", goto="Go"),
-                Transition(on="again", goto="Wait"),
+                Transition(on="Panel.skip", goto="Go"),
+                Transition(on="Panel.again", goto="Wait"),
             ],
         ),
         Node(name="Go", transitions=[Transition(after=5, goto="Wait")]),
@@ -175,7 +173,6 @@ NEVER = OrchestratorDefinition(
 CHECKS = OrchestratorDefinition(
     root="Top",
     vars={"ready": False, "tidy": False},
-    signals=signals("go", "leave", "halt"),
     nodes=[
         Node(name="Top", children=["Work", "Safe", "Stop"], initial="Work"),
         Node(
@@ -183,21 +180,20 @@ CHECKS = OrchestratorDefinition(
             requires=[Check(expect=["ready"], fallback="Safe")],
             ensures=[Check(expect=["tidy"], fallback="Safe")],
             transitions=[
-                Transition(on="leave", goto="Stop"),
-                Transition(on="halt", mode="immediate", goto="Stop"),
+                Transition(on="Panel.leave", goto="Stop"),
+                Transition(on="Panel.halt", mode="immediate", goto="Stop"),
             ],
         ),
         Node(
             name="Safe",
-            transitions=[Transition(on="go", goto="Work", set={"ready": True})],
+            transitions=[Transition(on="Panel.go", goto="Work", set={"ready": True})],
         ),
-        Node(name="Stop", transitions=[Transition(on="go", goto="Work")]),
+        Node(name="Stop", transitions=[Transition(on="Panel.go", goto="Work")]),
     ],
 )
 
 PARALLEL = OrchestratorDefinition(
     root="Top",
-    signals=signals("all", "bad"),
     nodes=[
         Node(name="Top", children=["Both", "After"], initial="Both"),
         Node(
@@ -205,35 +201,34 @@ PARALLEL = OrchestratorDefinition(
             parallel=["Left", "Right"],
             outcomes=["done", "failed"],
             transitions=[
-                Transition(if_="done", goto="After"),
-                Transition(if_="failed", goto="After"),
+                Transition(on="done", goto="After"),
+                Transition(on="failed", goto="After"),
             ],
         ),
-        Node(name="Left", transitions=[Transition(on="all", goto="done")]),
+        Node(name="Left", transitions=[Transition(on="Panel.all", goto="done")]),
         Node(
             name="Right",
             transitions=[
-                Transition(on="all", goto="done"),
-                Transition(on="bad", goto="failed"),
+                Transition(on="Panel.all", goto="done"),
+                Transition(on="Panel.bad", goto="failed"),
             ],
         ),
-        Node(name="After", transitions=[Transition(on="all", goto="Both")]),
+        Node(name="After", transitions=[Transition(on="Panel.all", goto="Both")]),
     ],
 )
 
 # Entering Both starts drive and a timer on Left. Then the requires of Right fails.
 HALFWAY = OrchestratorDefinition(
     root="Top",
-    signals=signals("go"),
     activities=[Activity(name="drive", start="Base.drive", cancel="Base.stop")],
     nodes=[
         Node(name="Top", children=["Idle", "Both"], initial="Idle"),
-        Node(name="Idle", transitions=[Transition(on="go", goto="Both")]),
+        Node(name="Idle", transitions=[Transition(on="Panel.go", goto="Both")]),
         Node(
             name="Both",
             parallel=["Left", "Right"],
             outcomes=["done"],
-            transitions=[Transition(if_="done", goto="Idle")],
+            transitions=[Transition(on="done", goto="Idle")],
         ),
         Node(name="Left", activity="drive", transitions=[Transition(after=5, goto="done")]),
         Node(name="Right", requires=[Check(expect=["false"])]),
@@ -251,22 +246,20 @@ LOOP = OrchestratorDefinition(
 
 WAITING = OrchestratorDefinition(
     root="Top",
-    signals=signals("ok"),
-    events=[Event(name="ready", when="ok")],
+    stream_values=values("ok"),
     nodes=[
         Node(name="Top", children=["Wait", "Go"], initial="Wait"),
         Node(
             name="Wait",
-            transitions=[Transition(after=2, goto="Go"), Transition(if_="ready", goto="Go")],
+            transitions=[Transition(after=2, goto="Go"), Transition(if_="ok", goto="Go")],
         ),
-        Node(name="Go", transitions=[Transition(on="ok", goto="Wait")]),
+        Node(name="Go", transitions=[Transition(on="Panel.ok", goto="Wait")]),
     ],
 )
 
 DOCKING = OrchestratorDefinition(
     root="Top",
     vars={"tries": 0},
-    signals=signals("settled", "again"),
     activities=[Activity(name="dock", start="Dock.dock")],
     nodes=[
         Node(name="Top", children=["Docking", "Docked", "Stuck"], initial="Docking"),
@@ -274,30 +267,33 @@ DOCKING = OrchestratorDefinition(
             name="Docking",
             activity="dock",
             transitions=[
-                Transition(if_="succeeded && settled", goto="Docked"),
-                Transition(if_="failed && tries < 1", goto="Docking", set={"tries": "tries + 1"}),
-                Transition(if_="failed", goto="Stuck"),
+                Transition(on="succeeded", goto="Docked"),
+                Transition(
+                    on="failed", if_="tries < 1", goto="Docking", set={"tries": "tries + 1"}
+                ),
+                Transition(on="failed", goto="Stuck"),
             ],
         ),
-        Node(name="Docked", transitions=[Transition(on="again", goto="Docking")]),
-        Node(name="Stuck", transitions=[Transition(on="again", goto="Docking")]),
+        Node(name="Docked", transitions=[Transition(on="Panel.again", goto="Docking")]),
+        Node(name="Stuck", transitions=[Transition(on="Panel.again", goto="Docking")]),
     ],
 )
 
+ARRIVED = "nav_state == SUCCEEDED && nav_goal_id == nav.goal"
 NEXT = "NextWaypoint -if patrol.index < size(route)-> Navigating"
 PATROL_STARTUP = [NEXT, "start FakeBase.go_to(name='lobby')"]
 
 
 def waypoint(now: float, goal: str, then: str) -> list[tuple[float, Happening, list[str]]]:
     """One waypoint of the patrol: go_to returns a goal, the goal is reached, stop returns."""
-    reached: Plain = {"status": 3, "goal_id": {"id": goal}}
+    reached: Plain = {"nav_state": 3, "nav_goal_id": goal}
     return [
         (now, ("returns", "Navigating", goal), []),
         (
             now + 1.0,
-            ("signal", "nav_status", reached),
+            ("message", "FakeBase.status", reached),
             [
-                "Navigating -if arrived-> NextWaypoint",
+                f"Navigating -if {ARRIVED}-> NextWaypoint",
                 "cancel FakeBase.stop",
                 f"set deadline Navigating {now + 3.0}",
                 "NextWaypoint --> Navigating" if then == "lobby" else NEXT,
@@ -356,7 +352,7 @@ CASES = [
                 2.0,
                 ("raises", "Move"),
                 [
-                    "Work -if failed-> Work",
+                    "Work -on failed-> Work",
                     "cancel Base.stop",
                     "set deadline Move 4.0",
                     "cancel Base.disable",
@@ -384,24 +380,24 @@ CASES = [
         ],
     ),
     Case(
-        "a signal fires on every message, and the outermost node whose `if` passes takes it",
-        SIGNALS,
+        "a message is offered on every arrival, and the outermost node whose `if` passes takes it",
+        STREAMS,
         [],
         [
-            (1.0, ("signal", "press"), ["Left -on press-> Right"]),
-            (2.0, ("signal", "press"), ["Right -on press-> Left"]),
-            (3.0, ("signal", "press"), ["Outer -on press-> Rest"]),
+            (1.0, ("message", "Panel.press"), ["Left -on Panel.press-> Right"]),
+            (2.0, ("message", "Panel.press"), ["Right -on Panel.press-> Left"]),
+            (3.0, ("message", "Panel.press"), ["Outer -on Panel.press-> Rest"]),
         ],
     ),
     Case(
-        "a defined event is taken when its expression becomes true",
-        EVENTS,
+        "a transition with only an `if` is taken when its expression becomes true",
+        CONDITIONS,
         [],
         [
-            (1.0, ("signal", "level", 50.0), []),
-            (2.0, ("signal", "level", 5.0), ["Run -if empty-> Rest"]),
-            (3.0, ("signal", "level", 5.0), []),
-            (4.0, ("signal", "level", 60.0), ["Rest -if filled-> Run"]),
+            (1.0, ("message", "Panel.level", {"level": 50.0}), []),
+            (2.0, ("message", "Panel.level", {"level": 5.0}), ["Run -if level < low-> Rest"]),
+            (3.0, ("message", "Panel.level", {"level": 5.0}), []),
+            (4.0, ("message", "Panel.level", {"level": 60.0}), ["Rest -if level >= low-> Run"]),
         ],
     ),
     Case(
@@ -411,13 +407,13 @@ CASES = [
         [
             (
                 1.0,
-                ("signal", "again"),
-                ["Wait -on again-> Wait", "clear timer Wait 2.0", "set timer Wait 3.0"],
+                ("message", "Panel.again"),
+                ["Wait -on Panel.again-> Wait", "clear timer Wait 2.0", "set timer Wait 3.0"],
             ),
             (
                 1.5,
-                ("signal", "skip"),
-                ["Wait -on skip-> Go", "clear timer Wait 3.0", "set timer Go 6.5"],
+                ("message", "Panel.skip"),
+                ["Wait -on Panel.skip-> Go", "clear timer Wait 3.0", "set timer Go 6.5"],
             ),
             (6.5, ("timer", "Go"), ["Go -after-> Wait", "set timer Wait 8.5"]),
         ],
@@ -427,21 +423,29 @@ CASES = [
         CHECKS,
         ["Work -requires-> Safe"],
         [
-            (1.0, ("signal", "go"), ["Safe -on go-> Work"]),
-            (2.0, ("signal", "leave"), ["Work -on leave-> Stop", "Work -ensures-> Safe"]),
-            (3.0, ("signal", "go"), ["Safe -on go-> Work"]),
-            (4.0, ("signal", "halt"), ["Work -on halt-> Stop"]),
+            (1.0, ("message", "Panel.go"), ["Safe -on Panel.go-> Work"]),
+            (
+                2.0,
+                ("message", "Panel.leave"),
+                ["Work -on Panel.leave-> Stop", "Work -ensures-> Safe"],
+            ),
+            (3.0, ("message", "Panel.go"), ["Safe -on Panel.go-> Work"]),
+            (4.0, ("message", "Panel.halt"), ["Work -on Panel.halt-> Stop"]),
         ],
     ),
     Case(
-        "a signal is offered to each child of a parallel node, which is done when all are",
+        "a message is offered to each child of a parallel node, which is done when all are",
         PARALLEL,
         [],
         [
             (
                 1.0,
-                ("signal", "all"),
-                ["Left -on all-> done", "Right -on all-> done", "Both -if done-> After"],
+                ("message", "Panel.all"),
+                [
+                    "Left -on Panel.all-> done",
+                    "Right -on Panel.all-> done",
+                    "Both -on done-> After",
+                ],
             )
         ],
     ),
@@ -449,7 +453,13 @@ CASES = [
         "a child reaching `failed` fails its parallel node at once",
         PARALLEL,
         [],
-        [(1.0, ("signal", "bad"), ["Right -on bad-> failed", "Both -if failed-> After"])],
+        [
+            (
+                1.0,
+                ("message", "Panel.bad"),
+                ["Right -on Panel.bad-> failed", "Both -on failed-> After"],
+            )
+        ],
     ),
     Case(
         "a fault drops the starts and timers of its own step",
@@ -458,11 +468,11 @@ CASES = [
         [
             (
                 1.0,
-                ("signal", "go"),
+                ("message", "Panel.go"),
                 [
-                    "Idle -on go-> Both",
+                    "Idle -on Panel.go-> Both",
                     "cancel Base.stop",
-                    "fault at Right on go: a failed `requires` check with no fallback",
+                    "fault at Right on Panel.go: a failed `requires` check with no fallback",
                 ],
             ),
         ],
@@ -495,35 +505,26 @@ CASES = [
         [
             (
                 1.0,
-                ("signal", "ok", "yes"),
+                ("message", "Panel.ok", {"ok": "yes"}),
                 [
                     "clear timer Wait 2.0",
-                    "fault at Wait on ok: an expression error: "
+                    "fault at Wait on Panel.ok: an expression error: "
                     "`ok` gave 'yes', and true or false is needed",
                 ],
             ),
         ],
     ),
     Case(
-        "`succeeded` stays true until the rest of its `if` is",
-        DOCKING,
-        ["start Dock.dock()"],
-        [
-            (1.0, ("returns", "Docking"), []),
-            (2.0, ("signal", "settled", True), ["Docking -if succeeded && settled-> Docked"]),
-        ],
-    ),
-    Case(
-        "a `failed` is taken by the first `if` that reads it and passes",
+        "a `failed` is taken by the first transition on it whose `if` passes",
         DOCKING,
         ["start Dock.dock()"],
         [
             (
                 1.0,
                 ("raises", "Docking"),
-                ["Docking -if failed && tries < 1-> Docking", "start Dock.dock()"],
+                ["Docking -on failed-> Docking", "start Dock.dock()"],
             ),
-            (2.0, ("raises", "Docking"), ["Docking -if failed-> Stuck"]),
+            (2.0, ("raises", "Docking"), ["Docking -on failed-> Stuck"]),
         ],
     ),
 ]
@@ -554,8 +555,8 @@ def render(effect: Effect) -> str:
 def queue_item(runtime: Runtime, happening: Happening) -> QueueItem:
     kind, name, *rest = happening
     value = rest[0] if rest else None
-    if kind == "signal":
-        return SignalItem(name, value)
+    if kind == "message":
+        return StreamItem(name, value or {})
     if kind in ("timer", "deadline"):
         timers = [t for t in runtime.timers if t.node == name and label(t).startswith(kind)]
         return TimerItem(timers[0])
@@ -589,9 +590,9 @@ def test_a_stale_return_and_a_cleared_timer_are_discarded() -> None:
     assert step(checked, runtime, cleared, 3.0) == (runtime, [])
 
 
-def test_enqueue_replaces_an_unhandled_item_for_the_same_signal() -> None:
+def test_enqueue_replaces_an_unhandled_item_for_the_same_stream() -> None:
     timer = TimerItem(AfterTimer("Wait", 2.0, transition=0))
-    items: list[QueueItem] = [SignalItem("level", 1.0), timer]
-    enqueue(items, SignalItem("level", 2.0))
-    enqueue(items, SignalItem("skip"))
-    assert items == [SignalItem("level", 2.0), timer, SignalItem("skip")]
+    items: list[QueueItem] = [StreamItem("Panel.level", {"level": 1.0}), timer]
+    enqueue(items, StreamItem("Panel.level", {"level": 2.0}))
+    enqueue(items, StreamItem("Panel.skip"))
+    assert items == [StreamItem("Panel.level", {"level": 2.0}), timer, StreamItem("Panel.skip")]

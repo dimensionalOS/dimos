@@ -24,30 +24,20 @@ ABORTED = 4
 [vars]
 "patrol.index" = 0
 
-[[signal]]
-name = "nav_status"
+[[stream_value]]
+name = "nav_state"
 stream = "MLSPlannerNative.nav_status"
+field = "status"
 
-[[signal]]
+[[stream_value]]
+name = "nav_stamp"
+stream = "MLSPlannerNative.nav_status"
+field = "goal_id.stamp"
+
+[[stream_value]]
 name = "battery_level"
 stream = "FakeBattery.battery"
 field = "percentage"
-
-[[event]]
-name = "arrived"
-when = "nav_status.status == SUCCEEDED && nav_status.goal_id.stamp == nav.goal"
-
-[[event]]
-name = "gave_up"
-when = "(nav_status.status == ABORTED || nav_status.status == PREEMPTED) && nav_status.goal_id.stamp == nav.goal"
-
-[[event]]
-name = "battery_low"
-when = "battery_level < low_battery"
-
-[[event]]
-name = "charged"
-when = "battery_level >= full_battery"
 
 [[activity]]
 name = "navigate"
@@ -71,7 +61,7 @@ children = ["NextWaypoint", "Navigating", "Retrying", "Pausing"]
 initial = "NextWaypoint"
 
 [[node.transition]]
-if = "battery_low"
+if = "battery_level < low_battery"
 goto = "Charging"
 
 [[node]]
@@ -92,17 +82,17 @@ args = { pose = "route[patrol.index]" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
 goto = "Pausing"
 set = { "patrol.index" = "patrol.index + 1" }
 
 [[node.transition]]
-if = "gave_up"
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
 goto = "NextWaypoint"
 set = { "patrol.index" = "patrol.index + 1" }
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "Retrying"
 
 [[node]]
@@ -126,7 +116,7 @@ initial = "ReturnToCharger"
 outcomes = ["done"]
 
 [[node.transition]]
-if = "done"
+on = "done"
 goto = "Patrolling"
 
 [[node]]
@@ -136,15 +126,15 @@ args = { pose = "charger" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_stamp == nav.goal"
 goto = "OnCharger"
 
 [[node.transition]]
-if = "gave_up"
+if = "(nav_state == ABORTED || nav_state == PREEMPTED) && nav_stamp == nav.goal"
 goto = "ReturnRetry"
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "ReturnRetry"
 
 [[node]]
@@ -159,5 +149,5 @@ name = "OnCharger"
 activity = "charge"
 
 [[node.transition]]
-if = "charged"
+if = "battery_level >= full_battery"
 goto = "done"

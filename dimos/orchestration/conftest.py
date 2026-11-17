@@ -21,10 +21,9 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.orchestration.definition import (
     Activity,
-    Event,
     Node,
     OrchestratorDefinition,
-    Signal,
+    StreamValue,
     Transition,
 )
 
@@ -36,17 +35,10 @@ def patrol() -> OrchestratorDefinition:
         resources=["base"],
         constants={"route": ["lobby", "lab", "kitchen"], "SUCCEEDED": 3},
         vars={"patrol.index": 0},
-        signals=[
-            Signal(name="estop_button", stream="FakeEstop.pressed", field="data"),
-            Signal(name="nav_status", stream="FakeBase.status"),
-        ],
-        events=[
-            Event(name="estop", when="estop_button"),
-            Event(name="estop_cleared", when="!estop_button"),
-            Event(
-                name="arrived",
-                when="nav_status.status == SUCCEEDED && nav_status.goal_id.id == nav.goal",
-            ),
+        stream_values=[
+            StreamValue(name="estop_button", stream="FakeEstop.pressed", field="data"),
+            StreamValue(name="nav_state", stream="FakeBase.status", field="status"),
+            StreamValue(name="nav_goal_id", stream="FakeBase.status", field="goal_id.id"),
         ],
         activities=[
             Activity(name="go_to", start="FakeBase.go_to", cancel="FakeBase.stop", uses=["base"]),
@@ -57,7 +49,7 @@ def patrol() -> OrchestratorDefinition:
                 name="Patrolling",
                 children=["NextWaypoint", "Navigating"],
                 initial="NextWaypoint",
-                transitions=[Transition(if_="estop", mode="immediate", goto="Estopped")],
+                transitions=[Transition(if_="estop_button", mode="immediate", goto="Estopped")],
             ),
             Node(
                 name="NextWaypoint",
@@ -73,7 +65,7 @@ def patrol() -> OrchestratorDefinition:
                 result="nav.goal",
                 transitions=[
                     Transition(
-                        if_="arrived",
+                        if_="nav_state == SUCCEEDED && nav_goal_id == nav.goal",
                         goto="NextWaypoint",
                         set={"patrol.index": "patrol.index + 1"},
                     )
@@ -81,7 +73,7 @@ def patrol() -> OrchestratorDefinition:
             ),
             Node(
                 name="Estopped",
-                transitions=[Transition(if_="estop_cleared", goto="Patrolling")],
+                transitions=[Transition(if_="!estop_button", goto="Patrolling")],
             ),
         ],
     )

@@ -30,26 +30,20 @@ SUCCEEDED = 3
 [vars]
 "patrol.index" = 0
 
-[[signal]]
+[[stream_value]]
 name = "estop_button"
 stream = "FakeEstop.pressed"
 field = "data"
 
-[[signal]]
-name = "nav_status"
+[[stream_value]]
+name = "nav_state"
 stream = "FakeBase.status"
+field = "status"
 
-[[event]]
-name = "estop"
-when = "estop_button"
-
-[[event]]
-name = "estop_cleared"
-when = "!estop_button"
-
-[[event]]
-name = "arrived"
-when = "nav_status.status == SUCCEEDED && nav_status.goal_id.id == nav.goal"
+[[stream_value]]
+name = "nav_goal_id"
+stream = "FakeBase.status"
+field = "goal_id.id"
 
 [[activity]]
 name = "go_to"
@@ -68,7 +62,7 @@ children = ["NextWaypoint", "Navigating"]
 initial = "NextWaypoint"
 
 [[node.transition]]
-if = "estop"
+if = "estop_button"
 mode = "immediate"
 goto = "Estopped"
 
@@ -90,7 +84,7 @@ args = { name = "route[patrol.index]" }
 result = "nav.goal"
 
 [[node.transition]]
-if = "arrived"
+if = "nav_state == SUCCEEDED && nav_goal_id == nav.goal"
 goto = "NextWaypoint"
 set = { "patrol.index" = "patrol.index + 1" }
 
@@ -98,7 +92,7 @@ set = { "patrol.index" = "patrol.index + 1" }
 name = "Estopped"
 
 [[node.transition]]
-if = "estop_cleared"
+if = "!estop_button"
 goto = "Patrolling"
 """
 
@@ -106,14 +100,14 @@ goto = "Patrolling"
 BROKEN: list[tuple[str, str, str]] = [
     ('root = "Demo"', "root =", "not valid TOML: Invalid value (at line 1, column 7)"),
     ('goto = "Estopped"\n', "", "node `Patrolling`: transition 1: `goto` is required"),
-    ('stream = "FakeBase.status"\n', "", "signal `nav_status`: `stream` is required"),
+    ('field = "goal_id.id"\n', "", "stream_value `nav_goal_id`: `field` is required"),
     (
         'name = "Estopped"',
         'name = "Estopped"\nwind_down = "Parked"',
         "node `Estopped`: `wind_down` is not a field",
     ),
     (
-        'if = "estop_cleared"',
+        'if = "!estop_button"',
         'on = "estop_button"\nafter = 5',
         "node `Estopped`: transition 1: a transition has at most one of `on` and `after`",
     ),
