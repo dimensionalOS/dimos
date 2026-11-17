@@ -66,7 +66,7 @@ function fixture(
   const ui = { gateway, actions, ended, connection: state({ state: "live", since: epochMs(0) }) } as unknown as Ui;
   let attached = 0;
   const memory = newMenuMemory();
-  const open = () =>
+  const open = (height = 25) =>
     new MenuView({
       ui,
       memory,
@@ -76,7 +76,7 @@ function fixture(
       },
       close: () => {},
       requestRender: () => {},
-      height: () => 25,
+      height: () => height,
     });
   return { open, gateway, calls, attached: () => attached };
 }
@@ -165,6 +165,12 @@ test("module actions open vertically and execute the selected action with live d
   assert.match(text(menu), /r2 stopped/);
   menu.handleInput(keys.escape);
   assert.match(text(menu), /Search:/);
+
+  const short = f.open(9); // A ten-row terminal reserves one row for the status line.
+  t.after(() => short.dispose());
+  short.handleInput(keys.enter);
+  presses(short, keys.down, 2);
+  assert.match(stripVTControlCharacters(short.render(80).join("\n")), /› Delete/);
 });
 
 test("Jobs filter by full names, open actions before history, and return one level at a time", async (t) => {

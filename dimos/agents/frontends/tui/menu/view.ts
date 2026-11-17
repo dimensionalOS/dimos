@@ -116,11 +116,13 @@ export class MenuView implements Component {
     ];
     const statusLine = status.map((segment) => levelColor(segment.level, clean(segment.text))).join(muted(" · "));
     const lines = [tabs];
-    const withFooter = (footer: readonly string[]): string[] => {
+    const withFooter = (footer: readonly string[], focusedLine?: number): string[] => {
       const height = Math.max(0, this.options.height());
-      const bottom = footer.slice(Math.max(0, footer.length - height));
+      const footerHeight = focusedLine === undefined ? height : Math.max(0, height - 1);
+      const bottom = footer.slice(Math.max(0, footer.length - footerHeight));
       const bodyHeight = height - bottom.length;
-      const body = lines.slice(0, bodyHeight);
+      const start = Math.max(0, (focusedLine ?? 0) - bodyHeight + 1);
+      const body = lines.slice(start, start + bodyHeight);
       while (body.length < bodyHeight) body.push("");
       return [...body, ...bottom].map((line) => truncateToWidth(line, width));
     };
@@ -154,7 +156,10 @@ export class MenuView implements Component {
           index === screen.selected ? accent(`› ${clean(action.label)}`) : `  ${clean(action.label)}`,
         ),
       );
-      return withFooter([observation, muted("↑/↓ select action · Enter run · Esc back"), statusLine]);
+      return withFooter(
+        [observation, muted("↑/↓ select action · Enter run · Esc back"), statusLine],
+        actions.length ? lines.length - actions.length + screen.selected : undefined,
+      );
     }
     const items = this.items();
     this.selected = Math.min(this.selected, Math.max(0, items.length - 1));
