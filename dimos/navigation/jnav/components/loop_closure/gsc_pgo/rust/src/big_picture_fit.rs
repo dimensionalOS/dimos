@@ -85,6 +85,76 @@ fn in_plane(edges: &[Edge]) -> Vec<Edge> {
         .collect()
 }
 
+/// GNC's view of a solve's closures (in-plane when planar): each at its scaled variances, which start out, and the cutoff.
+struct GncClosures {
+    scaled: Vec<Edge>,
+    seeded_out: Vec<bool>,
+    threshold: f64,
+}
+
+impl GncClosures {
+    fn new(closures: &[Edge], config: &SolveConfig) -> GncClosures {
+        GncClosures {
+            // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
+            seeded_out: (0..closures.len())
+                .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
+                .collect(),
+            threshold: chi2_inverse_6dof(config.gnc_inlier_probability),
+            scaled: closures
+                .iter()
+                .map(|e| Edge {
+                    variances: e.variances.map(|v| v * config.gnc_variance_scale),
+                    ..*e
+                })
+                .collect(),
+        }
+    }
+    /// The worst whitened squared residual at `state` over the closures that start in (GNC iterates past the cutoff).
+    fn worst(&self, state: &State) -> f64 {
+        self.scaled
+            .iter()
+            .zip(&self.seeded_out)
+            .filter(|&(_, &out)| !out)
+            .fold(0.0, |worst: f64, (e, _)| worst.max(whitened_squared(e, state)))
+    }
+    /// Whether `config.seed_start` (one pose per keyframe of `keyframes`) fits every closure that starts in.
+    fn seed_fits(&self, config: &SolveConfig, keyframes: usize) -> bool {
+        config.seed_start.len() == keyframes && {
+            let (rotation, position) = config.seed_start.iter().copied().unzip();
+            let probe = State {
+                rotation,
+                position,
+                landmark: Vec::new(),
+                landmark_rotation: Vec::new(),
+            };
+            self.scaled
+                .iter()
+                .zip(&self.seeded_out)
+                .all(|(e, &out)| out || whitened_squared(e, &probe) <= self.threshold)
+        }
+    }
+}
+
+/// Whether `solve` (no position priors or landmark sightings) will run GNC's iterations: a closure that starts in is past
+/// GNC's cutoff where the solve starts (the accepted-graph seed when it fits them all, which by then none is past, else here).
+pub(crate) fn gnc_will_run(rotations: &[Mat3], positions: &[Vec3], closures: &[Edge], config: &SolveConfig) -> bool {
+    let planar_closures;
+    let closures = if config.planar {
+        planar_closures = in_plane(closures);
+        &planar_closures[..]
+    } else {
+        closures
+    };
+    let gnc = GncClosures::new(closures, config);
+    !gnc.seed_fits(config, rotations.len())
+        && gnc.worst(&State {
+            rotation: rotations.to_vec(),
+            position: positions.to_vec(),
+            landmark: Vec::new(),
+            landmark_rotation: Vec::new(),
+        }) > gnc.threshold
+}
+
 pub struct Solution {
     pub rotations: Vec<Mat3>,
     pub positions: Vec<Vec3>,
@@ -317,32 +387,10 @@ fn solve_from(
     } else {
         (odometry, closures)
     };
-    // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
-    let seeded_out: Vec<bool> = (0..closures.len())
-        .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
-        .collect();
-    let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
-    let scaled: Vec<Edge> = closures
-        .iter()
-        .map(|e| Edge {
-            variances: e.variances.map(|v| v * config.gnc_variance_scale),
-            ..*e
-        })
-        .collect();
+    // `gnc_will_run` reads the same start and cutoff at dispatch, so the two must stay in step
+    let gnc = GncClosures::new(closures, config);
     // use the seed only where it already fits what GNC would weigh; otherwise start from the odometry
-    let seeded = config.seed_start.len() == rotations.len() && unary.is_empty() && sightings.is_empty() && {
-        let (rotation, position) = config.seed_start.iter().copied().unzip();
-        let probe = State {
-            rotation,
-            position,
-            landmark: Vec::new(),
-            landmark_rotation: Vec::new(),
-        };
-        scaled
-            .iter()
-            .zip(&seeded_out)
-            .all(|(e, &out)| out || whitened_squared(e, &probe) <= threshold)
-    };
+    let seeded = unary.is_empty() && sightings.is_empty() && gnc.seed_fits(config, rotations.len());
     let seed: (Vec<Mat3>, Vec<Vec3>) = if seeded {
         config.seed_start.iter().copied().unzip()
     } else {
@@ -397,15 +445,12 @@ fn solve_from(
         &landmark_dims,
         config.planar,
     );
+    // GNC's starting mu from the start's residuals (as GTSAM's GncOptimizer): worse start, gentler tightening
+    let worst = gnc.worst(&state);
+    let GncClosures { scaled, seeded_out, threshold } = gnc;
     // GNC with truncated least squares (Yang et al. 2020): start convex, tighten until each closure is in or out
     let residual =
         |state: &State| -> Vec<f64> { scaled.iter().map(|e| whitened_squared(e, state)).collect() };
-    // GNC's starting mu from the start's residuals (as GTSAM's GncOptimizer): worse start, gentler tightening
-    let worst = residual(&state)
-        .into_iter()
-        .zip(&seeded_out)
-        .filter(|&(_, &out)| !out)
-        .fold(0.0, |worst: f64, (r, _)| worst.max(r));
     let mut weights: Vec<f64> = seeded_out.iter().map(|&out| if out { 0.0 } else { 1.0 }).collect();
     // position priors: GNC-weighted the same way, against the 3-DoF cutoff
     let unary_threshold = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);

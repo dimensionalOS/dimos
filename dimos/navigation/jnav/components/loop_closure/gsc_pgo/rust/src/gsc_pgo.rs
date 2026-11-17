@@ -454,11 +454,12 @@ pub struct DeterministicConfig {
     pub verification_scans_fixed_overhead: f64,
     pub verification_scans_per_round: f64,
     pub verification_scans_per_round_point: f64,
-    /// Solve: scale * keyframes^keyframe_power * (1 + closures)^closure_power * (1 + rejected by newest adopted solve)^rejected_power.
-    pub solve_scans_scale: f64,
-    pub solve_keyframe_power: f64,
-    pub solve_closure_power: f64,
-    pub solve_rejected_power: f64,
+    /// Solve with closures: scale * keyframes^keyframe_power, one curve where GNC will iterate and one where it will not (the
+    /// start fits every closure), told apart at dispatch by the solve's own check (`big_picture_fit::gnc_will_run`).
+    pub solve_gnc_scans_scale: f64,
+    pub solve_gnc_keyframe_power: f64,
+    pub solve_without_gnc_scans_scale: f64,
+    pub solve_without_gnc_keyframe_power: f64,
     /// A solve with no closures (only landmark sightings or world positions): closure_free_scale * keyframes^closure_free_power.
     pub solve_closure_free_scans_scale: f64,
     pub solve_closure_free_keyframe_power: f64,
@@ -485,12 +486,14 @@ impl Default for DeterministicConfig {
             verification_scans_fixed_overhead: 5.036066465159226,
             verification_scans_per_round: 0.7489339387672495,
             verification_scans_per_round_point: 6.563647896724165e-05,
-            solve_scans_scale: 9.097483642429608e-05,
-            solve_keyframe_power: 2.017,
-            solve_closure_power: -0.215,
-            solve_rejected_power: 0.558,
+            // the 0.0.6 candidate's Mac solves of at least one scan (570, 333 with GNC), a 99th-percentile log-space fit per
+            // curve (recordings weighed the same), scaled by R1's Jetson/Mac solve ratio 2.434 (Mac: 2.267e-4, 4.502e-9)
+            solve_gnc_scans_scale: 5.51861737248971e-4,
+            solve_gnc_keyframe_power: 1.7757715197461712,
+            solve_without_gnc_scans_scale: 1.0956986513453806e-8,
+            solve_without_gnc_keyframe_power: 2.8920067349091245,
             // the battery's Mac solve-cost fit at zero closures (17 maps: 3.585e-5 n^1.651 scans), times the margin the
-            // closure model above keeps over those measured solves (its 1st percentile, 18.4x); the closure model, fit where
+            // earlier one-curve closure model (9.10e-5 n^2.017 ...) kept over those measured solves (its 1st percentile, 18.4x); that model, fit where
             // every solve has closures, overstates a closure-free one (huge_fastlio tags-only: 105 s modeled, 1.4 s on the Mac)
             solve_closure_free_scans_scale: 6.606e-4,
             solve_closure_free_keyframe_power: 1.651,
@@ -717,7 +720,8 @@ impl Config {
             ("pressure_scans_fixed_overhead", self.deterministic_config.pressure_scans_fixed_overhead),
             ("pressure_scans_per_keyframe", self.deterministic_config.pressure_scans_per_keyframe),
             ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
-            ("solve_scans_scale", self.deterministic_config.solve_scans_scale),
+            ("solve_gnc_scans_scale", self.deterministic_config.solve_gnc_scans_scale),
+            ("solve_without_gnc_scans_scale", self.deterministic_config.solve_without_gnc_scans_scale),
             ("solve_closure_free_scans_scale", self.deterministic_config.solve_closure_free_scans_scale),
             ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
             ("fast_path_scans_per_free_keyframe", self.deterministic_config.fast_path_scans_per_free_keyframe),

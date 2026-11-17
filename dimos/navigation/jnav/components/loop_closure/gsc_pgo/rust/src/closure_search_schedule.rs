@@ -502,7 +502,8 @@ impl GscPgo {
                     "verification_scans_fixed_overhead" => &mut suggested.verification_scans_fixed_overhead,
                     "verification_scans_per_round" => &mut suggested.verification_scans_per_round,
                     "verification_scans_per_round_point" => &mut suggested.verification_scans_per_round_point,
-                    "solve_scans_scale" => &mut suggested.solve_scans_scale,
+                    "solve_gnc_scans_scale" => &mut suggested.solve_gnc_scans_scale,
+                    "solve_without_gnc_scans_scale" => &mut suggested.solve_without_gnc_scans_scale,
                     "solve_closure_free_scans_scale" => &mut suggested.solve_closure_free_scans_scale,
                     "debounce_scans_per_keyframe" => &mut suggested.debounce_scans_per_keyframe,
                     "merge_scans_per_keyframe" => &mut suggested.merge_scans_per_keyframe,
@@ -527,7 +528,7 @@ impl GscPgo {
             values[((values.len() - 1) as f64 * 0.99).round() as usize]
         };
         let c = &self.config;
-        let groups: [ProfileGroup; 7] = [
+        let groups: [ProfileGroup; 8] = [
             ("fast_match", vec![
                 ("fast_match_scans_fixed_overhead", c.deterministic_config.fast_match_scans_fixed_overhead),
                 ("fast_match_scans_per_keyframe", c.deterministic_config.fast_match_scans_per_keyframe),
@@ -540,8 +541,11 @@ impl GscPgo {
                 ("verification_scans_per_round_point", c.deterministic_config.verification_scans_per_round_point),
             ]),
             ("solve", vec![
-                ("solve_scans_scale", c.deterministic_config.solve_scans_scale),
+                ("solve_gnc_scans_scale", c.deterministic_config.solve_gnc_scans_scale),
                 ("solve_closure_free_scans_scale", c.deterministic_config.solve_closure_free_scans_scale),
+            ]),
+            ("solve_without_gnc", vec![
+                ("solve_without_gnc_scans_scale", c.deterministic_config.solve_without_gnc_scans_scale),
             ]),
             ("debounce", vec![("debounce_scans_per_keyframe", c.deterministic_config.debounce_scans_per_keyframe)]),
             ("merge", vec![("merge_scans_per_keyframe", c.deterministic_config.merge_scans_per_keyframe)]),
