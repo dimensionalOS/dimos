@@ -1,4 +1,5 @@
 import type { Accounts, LoginState } from "#dimos/agents/shared/protocol/auth.ts";
+import type { ProfileCatalog } from "#dimos/agents/shared/protocol/profiles.ts";
 import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
 import type { ConversationRow } from "#dimos/agents/shared/protocol/conversation/summary.ts";
 import type { DimosRun } from "#dimos/agents/shared/protocol/runtime/runs.ts";
@@ -18,6 +19,7 @@ import { methodsOf } from "#dimos/agents/shared/protocol/actions/methods.ts";
  * variants of the served view, so the members are listed once.
  */
 export const GatewayState = {
+  profiles: carried<ProfileCatalog>(),
   link: carried<LinkStatus>(),
   load: carried<LoadStatus>(),
   runs: carried<readonly DimosRun[]>(),

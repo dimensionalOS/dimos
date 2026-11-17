@@ -1,10 +1,8 @@
-import type { Extension } from "@earendil-works/pi-durable";
-import { defineExtension, section } from "@earendil-works/pi-durable";
 import { join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { readFile, readdir } from "node:fs/promises";
 
-type SkillInfo = {
+export type SkillInfo = {
   /** From the SKILL.md frontmatter. */
   readonly name: string;
   /** From the SKILL.md frontmatter, on one line. */
@@ -47,24 +45,4 @@ export async function loadSkills(
     }
   }
   return [...skills.values()];
-}
-
-/**
- * The `skills` section: one line per skill with its path. The agent loads a skill by reading that file, so skills
- * need no tool of their own and the tool list stays exactly the plan's table.
- */
-export function skillsExtension(skills: readonly SkillInfo[]): Extension {
-  return defineExtension({
-    name: "dimos-skills",
-    sections: [
-      section("skills", () =>
-        skills.length === 0
-          ? undefined
-          : [
-              "Read a skill's file before a task it covers:",
-              ...skills.map((skill) => `- ${skill.name}: ${skill.description} (${skill.path})`),
-            ].join("\n"),
-      ),
-    ],
-  });
 }

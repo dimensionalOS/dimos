@@ -16,7 +16,8 @@ import { createHost, webSocketLink } from "@earendil-works/chord";
 import { createServer } from "node:net";
 import { unixSocket } from "#dimos/agents/sdk/node.ts";
 import { dirname, join } from "node:path";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { GENERAL_PROFILE, profileIdentity } from "#dimos/agents/shared/protocol/profiles.ts";
 import { gatewayState, stopGateway } from "#dimos/agents/cli/process.ts";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
@@ -41,6 +42,79 @@ type ClientPrincipal = { readonly kind: "gateway" };
 type Client = { readonly host: Host<ClientPrincipal>; readonly socket: WebSocketLike };
 
 type OwnerConversation = Extract<Ref<typeof ConversationContract>, { readonly variant: "owner" }>;
+
+test(
+  "profile edits and agent saves publish immediately while conversation identities stay frozen",
+  { timeout: 30_000 },
+  async (t) => {
+    const { root, paths, remove } = await scratch();
+    const scripted = scriptedModel();
+    const faux = scripted.models.getProvider("faux");
+    assert.ok(faux);
+    await startGateway(t, root, paths, faux, scripted.model);
+    t.after(remove);
+    const client = await connect(paths, randomUUID() as TerminalId, "profiles");
+    t.after(() => client.host.close());
+    const gateway = await client.host.get(GatewayContract, {});
+    assert.equal(gateway.variant, "owner");
+    if (gateway.variant !== "owner") return;
+    const options = await gateway.profileOptions({});
+    assert.ok(options.ok);
+    assert.ok(options.value.skills.some((skill) => skill.name === "dimensional"));
+    const { id: _id, ...general } = GENERAL_PROFILE;
+    const draft = { ...general, name: "Snack sorter", role: "SORT_SNACKS_BY_TYPE" };
+    const saved = await gateway.saveProfile({ profile: draft });
+    assert.ok(saved.ok);
+    const profile = saved.value;
+    await until(gateway.profiles, (catalog) => catalog.profiles.find((entry) => entry.id === profile.id));
+    assert.ok((await gateway.setDefaultProfile({ profile: profile.id })).ok);
+    const made = await gateway.createConversation({ request: newActionRequest(), cwd: root });
+    assert.ok(made.ok);
+    const row = await until(gateway.conversations, (rows) =>
+      rows.find((row) => row.id === made.value.conversation && row.profile?.id === profile.id),
+    );
+    assert.deepEqual(row.profile, profileIdentity(profile));
+    const conversation = await client.host.get(ConversationContract, { conversation: row.id, role: "owner" });
+    assert.equal(conversation.variant, "owner");
+    if (conversation.variant !== "owner") return;
+    assert.ok(
+      (await gateway.saveProfile({ profile: { ...profile, name: "Edited snack sorter", role: "NEW_ROLE" } })).ok,
+    );
+    await until(gateway.profiles, (catalog) => catalog.profiles.find((entry) => entry.name === "Edited snack sorter"));
+    assert.equal((await gateway.deleteProfile({ profile: GENERAL_PROFILE.id })).ok, false);
+    assert.ok((await gateway.deleteProfile({ profile: profile.id })).ok);
+    await until(gateway.profiles, (catalog) =>
+      catalog.profiles.length === 1 && catalog.defaultProfile === null ? catalog : undefined,
+    );
+    assert.equal((await gateway.saveProfile({ profile })).ok, false);
+    const fromAgent = { ...draft, name: "Agent-created" };
+    scripted.script([
+      (request) => {
+        assert.match(JSON.stringify(request.messages), /SORT_SNACKS_BY_TYPE/);
+        assert.doesNotMatch(JSON.stringify(request.messages), /NEW_ROLE/);
+        return fauxAssistantMessage([fauxToolCall("profile", { op: "save", profile: fromAgent })], {
+          stopReason: "toolUse",
+        });
+      },
+      fauxAssistantMessage("Saved the new profile."),
+    ]);
+    const sent = await conversation.send({
+      request: newUserRequest(),
+      text: "Save another profile.",
+      images: [],
+      whenBusy: "followUp",
+    });
+    assert.ok(sent.ok);
+    await until(conversation.outcomes, (rows) => rows.find((entry) => entry.submission === sent.value.submission));
+    await until(gateway.profiles, (catalog) => catalog.profiles.find((entry) => entry.name === fromAgent.name));
+    assert.deepEqual(
+      gateway.conversations.value.find((entry) => entry.id === row.id)?.profile,
+      profileIdentity(profile),
+    );
+    assert.equal(gateway.runs.value.filter((run) => run.alive).length, 0);
+    assert.equal(gateway.modules.value.length, 0);
+  },
+);
 
 /** A free TCP port nothing listens on, so the gateway's DimOS link stays down. */
 async function freePort(): Promise<number> {
