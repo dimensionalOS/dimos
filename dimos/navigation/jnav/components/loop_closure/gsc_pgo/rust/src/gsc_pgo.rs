@@ -579,9 +579,9 @@ pub struct Config {
     pub graph_change_heat_half_life_s: f64,
     /// Seed a solve from the accepted graph when it already fits every closure GNC would weigh; otherwise from the odometry.
     pub solve_seed_from_accepted: bool,
-    /// Solver fast path (`fast_path`): closures GNC has not judged yet are published at once by a least squares over the
-    /// keyframes nearest the robot (as many as `solver_fast_path_budget_scans` affords), the rest held; GNC's graph is untouched
-    /// and its next adopted solve replaces the correction.
+    /// Solver fast path (`fast_path`): closures GNC has not judged yet that agree move the robot's recent trail (its newest
+    /// keyframes still among the nearest `solver_fast_path_budget_scans` affords) as one block, published at once; nothing
+    /// else moves; GNC's graph is untouched and its next adopted solve replaces the correction.
     pub solver_fast_path_enabled: bool,
     /// The scans a fast path job may take to land (1: before the next scan); with its cost model it sets the window's size.
     pub solver_fast_path_budget_scans: f64,
