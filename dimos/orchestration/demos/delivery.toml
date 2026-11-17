@@ -1,0 +1,144 @@
+# Fetch an item, wait for a person to approve, then deliver it.
+# Shows nested nodes, `done` and `failed` outcomes, a retry counter, and a var set from outside (`approved`).
+root = "Delivery"
+resources = ["base", "arm"]
+
+[constants]
+max_attempts = 3
+
+[vars]
+attempts = 0
+approved = false
+
+[[activity]]
+name = "drive"
+start = "ToyRobot.drive_to"
+cancel = "ToyRobot.stop_driving"
+uses = ["base"]
+
+[[activity]]
+name = "pick"
+start = "ToyRobot.pick"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[activity]]
+name = "place"
+start = "ToyRobot.place_item"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[activity]]
+name = "speak"
+start = "ToyRobot.speak"
+
+[[node]]
+name = "Delivery"
+children = ["Fetch", "AwaitApproval", "Deliver", "Delivered", "GaveUp"]
+initial = "Fetch"
+
+[[node]]
+name = "Fetch"
+children = ["GoToShelf", "Picking", "PickRetry"]
+initial = "GoToShelf"
+outcomes = ["done", "failed"]
+
+[[node.transition]]
+if = "done"
+goto = "AwaitApproval"
+
+[[node.transition]]
+if = "failed"
+goto = "GaveUp"
+
+[[node]]
+name = "GoToShelf"
+activity = "drive"
+args = { place = "'shelf'" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "Picking"
+
+[[node]]
+name = "Picking"
+activity = "pick"
+args = { item = "'parcel'" }
+result = "held_item"
+
+[[node.transition]]
+if = "succeeded"
+goto = "done"
+
+[[node.transition]]
+if = "failed && attempts + 1 < max_attempts"
+goto = "PickRetry"
+set = { attempts = "attempts + 1" }
+
+[[node.transition]]
+if = "failed"
+goto = "failed"
+
+[[node]]
+name = "PickRetry"
+
+[[node.transition]]
+after = 1.0
+goto = "Picking"
+
+[[node]]
+name = "AwaitApproval"
+activity = "speak"
+args = { text = "'Ready to deliver the ' + held_item + '. Approve?'" }
+
+[[node.transition]]
+if = "approved"
+goto = "Deliver"
+
+[[node]]
+name = "Deliver"
+children = ["GoToDesk", "HandingOver"]
+initial = "GoToDesk"
+outcomes = ["done"]
+
+[[node.transition]]
+if = "done"
+goto = "Delivered"
+
+[[node]]
+name = "GoToDesk"
+activity = "drive"
+args = { place = "'desk'" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "HandingOver"
+
+[[node]]
+name = "HandingOver"
+activity = "place"
+args = { item = "held_item" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "done"
+
+[[node]]
+name = "Delivered"
+activity = "speak"
+args = { text = "'Delivered the ' + held_item" }
+
+[[node.transition]]
+after = 4.0
+goto = "Fetch"
+set = { approved = false, attempts = 0 }
+
+[[node]]
+name = "GaveUp"
+activity = "speak"
+args = { text = "'Could not pick the parcel'" }
+
+[[node.transition]]
+after = 5.0
+goto = "Fetch"
+set = { attempts = 0 }

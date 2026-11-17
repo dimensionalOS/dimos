@@ -1,0 +1,89 @@
+# Scan a bay and report what is there.
+# Shows `requires` and `ensures` checks: a failed check sends the robot to the check's fallback instead.
+root = "Inspection"
+resources = ["base", "camera"]
+
+[constants]
+min_found = 5
+
+[vars]
+calibrated = false
+rescans = 0
+
+[[signal]]
+name = "gripper_ok"
+stream = "ToyRobot.gripper_ok"
+field = "data"
+
+[[activity]]
+name = "drive"
+start = "ToyRobot.drive_to"
+cancel = "ToyRobot.stop_driving"
+uses = ["base"]
+
+[[activity]]
+name = "scan"
+start = "ToyRobot.scan"
+cancel = "ToyRobot.stop_scan"
+
+[[activity]]
+name = "calibrate"
+start = "ToyRobot.calibrate"
+
+[[activity]]
+name = "speak"
+start = "ToyRobot.speak"
+
+[[node]]
+name = "Inspection"
+children = ["Approach", "Scanning", "Rescan", "Calibrating", "Reporting"]
+initial = "Approach"
+
+[[node]]
+name = "Approach"
+activity = "drive"
+args = { place = "'bay 4'" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "Scanning"
+
+[[node]]
+name = "Scanning"
+activity = "scan"
+args = { area = "'bay 4'" }
+result = "found"
+claims = ["camera"]
+requires = [{ expect = ["gripper_ok || calibrated"], fallback = "Calibrating" }]
+ensures = [{ expect = ["found >= min_found"], fallback = "Rescan" }]
+
+[[node.transition]]
+if = "succeeded"
+goto = "Reporting"
+
+[[node]]
+name = "Rescan"
+
+[[node.transition]]
+after = 1.5
+goto = "Scanning"
+set = { rescans = "rescans + 1" }
+
+[[node]]
+name = "Calibrating"
+activity = "calibrate"
+
+[[node.transition]]
+if = "succeeded"
+goto = "Scanning"
+set = { calibrated = true }
+
+[[node]]
+name = "Reporting"
+activity = "speak"
+args = { text = "'Found ' + string(found) + ' objects after ' + string(rescans) + ' rescans'" }
+
+[[node.transition]]
+after = 5.0
+goto = "Approach"
+set = { rescans = 0 }

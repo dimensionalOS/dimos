@@ -1,0 +1,134 @@
+# Three jobs at once until the shift's quota is met: a courier, a sorter and a watchdog.
+# Shows a `parallel` node: every region inside it is active together, each with its own resources.
+root = "Day"
+resources = ["base", "arm"]
+
+[constants]
+announce_s = 7.0
+
+[vars]
+trips = 0
+sorted = 0
+
+[[activity]]
+name = "drive"
+start = "ToyRobot.drive_to"
+cancel = "ToyRobot.stop_driving"
+uses = ["base"]
+
+[[activity]]
+name = "pick"
+start = "ToyRobot.pick"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[activity]]
+name = "place"
+start = "ToyRobot.place_item"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[activity]]
+name = "speak"
+start = "ToyRobot.speak"
+
+[[node]]
+name = "Day"
+children = ["Shift", "Closing"]
+initial = "Shift"
+
+[[node]]
+name = "Shift"
+parallel = ["Courier", "Sorter", "Watchdog"]
+
+[[node.transition]]
+if = "trips >= 6 && sorted >= 4"
+goto = "Closing"
+
+[[node]]
+name = "Closing"
+activity = "speak"
+args = { text = "'Shift over: ' + string(trips) + ' trips, ' + string(sorted) + ' sorted'" }
+
+[[node.transition]]
+after = 3.0
+goto = "Shift"
+set = { trips = 0, sorted = 0 }
+
+[[node]]
+name = "Courier"
+children = ["ToDockA", "ToDockB"]
+initial = "ToDockA"
+
+[[node]]
+name = "ToDockA"
+activity = "drive"
+args = { place = "'dock A'" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "ToDockB"
+set = { trips = "trips + 1" }
+
+[[node]]
+name = "ToDockB"
+activity = "drive"
+args = { place = "'dock B'" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "ToDockA"
+set = { trips = "trips + 1" }
+
+[[node]]
+name = "Sorter"
+children = ["Picking", "Placing", "Resting"]
+initial = "Picking"
+
+[[node]]
+name = "Picking"
+activity = "pick"
+args = { item = "'box'" }
+result = "box"
+
+[[node.transition]]
+if = "succeeded"
+goto = "Placing"
+
+[[node]]
+name = "Placing"
+activity = "place"
+args = { item = "box" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "Resting"
+set = { sorted = "sorted + 1" }
+
+[[node]]
+name = "Resting"
+
+[[node.transition]]
+after = 2.0
+goto = "Picking"
+
+[[node]]
+name = "Watchdog"
+children = ["Listening", "Announcing"]
+initial = "Listening"
+
+[[node]]
+name = "Listening"
+
+[[node.transition]]
+after = "announce_s"
+goto = "Announcing"
+
+[[node]]
+name = "Announcing"
+activity = "speak"
+args = { text = "string(trips) + ' trips, ' + string(sorted) + ' sorted'" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "Listening"

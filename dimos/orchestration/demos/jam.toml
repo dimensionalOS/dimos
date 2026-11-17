@@ -1,0 +1,51 @@
+# Pick and place gears until the arm jams.
+# Shows a held start (Placing needs the arm, so it waits for Picking's cancel to return) and the fault a cancel that
+# never returns causes: the orchestrator stops and cancels everything.
+root = "Cell"
+resources = ["arm"]
+
+[constants]
+pick_timeout_s = 3.0
+
+[vars]
+gears = 0
+
+[[activity]]
+name = "pick"
+start = "ToyRobot.pick"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[activity]]
+name = "place"
+start = "ToyRobot.place_item"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[node]]
+name = "Cell"
+children = ["Picking", "Placing"]
+initial = "Picking"
+
+[[node]]
+name = "Picking"
+activity = "pick"
+args = { item = "'gear'" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "Placing"
+
+[[node.transition]]
+after = "pick_timeout_s"
+goto = "Placing"
+
+[[node]]
+name = "Placing"
+activity = "place"
+args = { item = "'gear'" }
+
+[[node.transition]]
+if = "succeeded"
+goto = "Picking"
+set = { gears = "gears + 1" }
