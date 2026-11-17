@@ -49,6 +49,17 @@ fn run(window: bool, drift: f64, closure_turn: f64) -> (GscPgo, Vec<(bool, f64)>
 /// `run`; with `stop_at_publish`, it stops on the first scan the fast path published on, and also returns the published
 /// positions on the scan before it.
 fn run_with(window: bool, drift: f64, closure_turn: f64, stop_at_publish: bool) -> (GscPgo, Vec<(bool, f64)>, Vec<Vec3>) {
+    run_with_wrong(window, drift, closure_turn, stop_at_publish, false)
+}
+
+/// `run_with`; with `wrong_too`, a second closure (keyframe KEYFRAMES - 2 -> 1, turned 150 degrees) is committed with it.
+fn run_with_wrong(
+    window: bool,
+    drift: f64,
+    closure_turn: f64,
+    stop_at_publish: bool,
+    wrong_too: bool,
+) -> (GscPgo, Vec<(bool, f64)>, Vec<Vec3>) {
     let mut config = Config {
         mode: Mode::Deterministic,
         solver_fast_path_enabled: window,
@@ -87,6 +98,12 @@ fn run_with(window: bool, drift: f64, closure_turn: f64, stop_at_publish: bool) 
     let ((r0, p0), (r1, p1)) = (truth(0), truth(KEYFRAMES - 1));
     let back = mat3::transpose(&r0);
     pgo.commit_closure(KEYFRAMES - 1, 0, mat3::mat_mul(&mat3::mat_mul(&back, &r1), &mat3::rot_z(closure_turn)), mat3::mat_vec(&back, &mat3::sub(&p1, &p0)), 0.01);
+    if wrong_too {
+        let ((ra, pa), (rb, pb)) = (truth(1), truth(KEYFRAMES - 2));
+        let back = mat3::transpose(&ra);
+        let turn = mat3::rot_z(150f64.to_radians());
+        pgo.commit_closure(KEYFRAMES - 2, 1, mat3::mat_mul(&mat3::mat_mul(&back, &rb), &turn), mat3::mat_vec(&back, &mat3::sub(&pb, &pa)), 0.01);
+    }
     let mut trace = Vec::new();
     let mut before = Vec::new();
     for s in KEYFRAMES..KEYFRAMES + 60 {
@@ -202,4 +219,17 @@ fn the_window_leaves_a_wrong_closure_to_gnc() {
     assert!(with.closure_latency()[0].fast_path.is_none());
     assert_eq!(fast, slow, "the published map was never bent");
     assert_eq!(largest_difference(&with, &without), 0.0);
+}
+
+#[test]
+fn the_window_drops_a_disagreeing_closure_and_publishes_the_agreeing_one() {
+    // the true closure and a wrong one (150 degrees off) in one job: GNC's rule in the window drops the wrong one and
+    // the right one is published at once, not held back with it
+    let (drift, turn) = (2.5e-5, 0.0);
+    let (with, _, _) = run_with_wrong(true, drift, turn, true, true);
+    let record = &with.fast_path_records()[0];
+    assert_eq!(record.outcome, "adopted", "{record:?}");
+    assert_eq!(record.closures, vec![0], "{record:?}");
+    assert!(with.closure_latency()[0].fast_path.is_some());
+    assert!(with.closure_latency()[1].fast_path.is_none(), "the wrong closure was published");
 }

@@ -18,16 +18,18 @@
 //! everything else held exactly where the published map has it.
 //!
 //! - Window: the keyframes the published map puts nearest the newest one, as many as `solver_fast_path_budget_scans`
-//!   affords at `fast_path_scans_per_free_keyframe` (keyframe 0 held, as GNC holds it), ranked by distance.
-//! - Taper: the nearer `1 - solver_fast_path_taper_fraction` of the window is free; each farther one is pulled to its
+//!   affords at `fast_path_scans_per_free_keyframe` (keyframe 0 held, as GNC holds it), ranked newest first: the robot's
+//!   own recent trail is the free part, so closures that agree can move it as a block onto the older passes.
+//! - Taper: the newer `1 - solver_fast_path_taper_fraction` of the window is free; each older one is pulled to its
 //!   published pose (position and rotation) with the covariance the closure search judges a closure's yank by between it
 //!   and the robot (the newest GNC solve's, plus odometry since), times (1 - t) / t at taper depth t: free where the taper
 //!   starts, as loose as the map's own uncertainty halfway, fixed at the window's edge.
 //! - Graph: the window, its odometry, the held keyframes its odometry and closures reach (fixed).
-//! - Closures: the kept ones, the ones the published map already holds, and every pending one (unjudged, not refused)
-//!   with an end in the window: a job reapplies everything at once.
-//! - Gate (GNC's own): every closure in the window within GNC's cutoff at its scaled variance; else the worst new one is
-//!   refused (left to GNC) and the rest stay pending.
+//! - Closures: the kept ones, the ones the published map already holds, and every one GNC has not judged yet (a closure
+//!   an earlier job refused rides along again: agreeing evidence that arrives later can carry it) with an end in the window.
+//!   A job runs when a closure no job has refused yet arrives.
+//! - Gate (GNC's own rule, in the window): solve; while a closure is past GNC's cutoff at its scaled variance, drop the
+//!   worst unjudged one and solve again. What is left is published; the dropped ones wait for GNC or a later job.
 //! - Publish: the window at the solve, newer keyframes riding the newest one; no other keyframe moves.
 //!
 //! A logical-execution-time job (one worker, one job out), held to its estimate in deterministic mode. GNC never reads
@@ -43,11 +45,13 @@ use crate::gsc_pgo::{Config, GscPgo};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::store::{KeyFrames, SolvedPoses};
 
-/// What the worker returns: the window's poses, each closure's residual over GNC's cutoff (problem order), and seconds.
+/// What the worker returns: the window's poses, each kept closure's residual over GNC's cutoff, the closures it dropped
+/// (positions in the job's closure list), and seconds.
 struct FastPathResult {
     rotations: Vec<Mat3>,
     positions: Vec<Vec3>,
     over_cutoff: Vec<f64>,
+    dropped: Vec<usize>,
     converged: bool,
     seconds: f64,
 }
@@ -152,7 +156,7 @@ impl GscPgo {
             }
         }
     }
-    /// The window: the `budget` keyframes the published map puts nearest the newest one, keyframe 0 held (nearest first).
+    /// The window: the `budget` keyframes the published map puts nearest the newest one, keyframe 0 held (newest first).
     fn fast_path_window(&self) -> Vec<usize> {
         let published = self.key_poses();
         let n = published.len();
@@ -166,8 +170,9 @@ impl GscPgo {
             near.select_nth_unstable_by(budget, |a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
             near.truncate(budget);
         }
-        near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        near.into_iter().map(|(_, k)| k).collect()
+        let mut window: Vec<usize> = near.into_iter().map(|(_, k)| k).collect();
+        window.sort_unstable_by(|a, b| b.cmp(a));
+        window
     }
     fn dispatch_fast_path(&mut self) {
         let n = self.key_poses.len();
@@ -191,10 +196,8 @@ impl GscPgo {
             .filter_map(|i| {
                 if i < judged {
                     (self.committed_closures.weight(i) > 0.5).then_some((i, false))
-                } else if self.fast_path_accepted.contains(&i) {
-                    Some((i, false))
                 } else {
-                    pending(&i).then_some((i, true))
+                    Some((i, !self.fast_path_accepted.contains(&i)))
                 }
             })
             .unzip();
@@ -205,18 +208,21 @@ impl GscPgo {
         let published = self.key_poses().clone();
         let noise = self.odometry_error_estimate();
         let covariance = self.solved_relative_covariance.clone();
-        let estimate_raw_scans = self.config.deterministic_config.fast_path_scans_per_free_keyframe * free.len() as f64;
+        // one solve per unjudged closure it may drop, at most
+        let solves = new.iter().filter(|&&new| new).count() as f64;
+        let estimate_raw_scans = self.config.deterministic_config.fast_path_scans_per_free_keyframe * free.len() as f64 * solves;
         let config = self.config.clone();
         let window = free.clone();
         let dump = (self.scans_seen, self.newest_scan_time(), closures.clone(), new.clone());
+        let new_mask = new.clone();
         let slot = Arc::new(JobSlot::<FastPathResult>::default());
         let finish = slot.clone();
         self.fast_path_pool
             .get_or_insert_with(|| SearchPool::new(1, "gsc-fast-path"))
             .send(Box::new(move || {
                 let started = std::time::Instant::now();
-                let graph = window_graph(&published, &config, noise, covariance, &window, selected);
-                let fast = solve_window(&graph, &config);
+                let mut graph = window_graph(&published, &config, noise, covariance, &window, selected);
+                let (fast, dropped) = solve_window_dropping(&mut graph, &new_mask, &config);
                 #[cfg(feature = "native")]
                 dump_window(&dump, &published, &graph, &fast);
                 #[cfg(not(feature = "native"))]
@@ -226,6 +232,7 @@ impl GscPgo {
                     rotations: fast.rotations[..count].to_vec(),
                     positions: fast.positions[..count].to_vec(),
                     over_cutoff: fast.over_cutoff,
+                    dropped,
                     converged: fast.converged,
                     seconds: started.elapsed().as_secs_f64(),
                 });
@@ -278,7 +285,10 @@ impl GscPgo {
             self.fast_path_overshoots += 1;
         }
         self.record_job_ratio("fast_path", result.seconds, job.estimate_raw_scans);
-        let applied: Vec<usize> = job.closures.iter().zip(&job.new).filter(|(_, &new)| new).map(|(&i, _)| i).collect();
+        let applied: Vec<usize> = (0..job.closures.len())
+            .filter(|p| job.new[*p] && !result.dropped.contains(p))
+            .map(|p| job.closures[p])
+            .collect();
         let worst = result.over_cutoff.iter().copied().fold(0.0, f64::max);
         let mut record = FastPathRecord {
             scan: self.scans_seen,
@@ -297,22 +307,18 @@ impl GscPgo {
             // GNC replaced the graph it corrected: its closures are still pending, the next job redoes them
             record.outcome = "stale";
             false
-        } else if worst > 1.0 {
-            // GNC would weigh a closure here: the worst new one waits for GNC, the rest are retried
-            let refused = job
-                .closures
-                .iter()
-                .zip(&job.new)
-                .zip(&result.over_cutoff)
-                .filter(|((_, &new), _)| new)
-                .max_by(|a, b| a.1.total_cmp(b.1))
-                .map(|((&i, _), _)| i)
-                .expect("a new closure");
-            self.fast_path_refused.insert(refused);
+        } else if worst > 1.0 || applied.is_empty() {
+            // nothing unjudged agrees with the window: the dropped ones wait for GNC or a later job
+            for &p in &result.dropped {
+                self.fast_path_refused.insert(job.closures[p]);
+            }
             record.outcome = "over_cutoff";
-            record.refused = Some(refused);
+            record.refused = result.dropped.first().map(|&p| job.closures[p]);
             false
         } else {
+            for &p in &result.dropped {
+                self.fast_path_refused.insert(job.closures[p]);
+            }
             record.max_move_m = self.publish_fast_path(&job, &result);
             let stamp = (self.scans_seen, self.newest_scan_time());
             for &i in &applied {
@@ -442,9 +448,10 @@ fn window_graph(
     }
 }
 
-/// Solve a window: the nearer `1 - solver_fast_path_taper_fraction` free, each taper keyframe pulled to its published pose
-/// with its pull times (1 - t) / t at taper depth t in (0, 1), the held keyframes fixed.
-pub fn solve_window(graph: &WindowGraph, config: &Config) -> FastSolve {
+/// A window's full problem: its graph's nodes and odometry, plus for each taper keyframe (the nearer
+/// `1 - solver_fast_path_taper_fraction` are free) a fixed copy at its published pose and an edge from it carrying its pull
+/// times (1 - t) / t at taper depth t in (0, 1); the held keyframes fixed.
+pub fn window_problem(graph: &WindowGraph, config: &Config) -> (Vec<Mat3>, Vec<Vec3>, Vec<bool>, Vec<Edge>) {
     let count = graph.pull.len();
     let fraction = config.solver_fast_path_taper_fraction.clamp(0.0, 1.0);
     let free_count = count - (fraction * count as f64).round() as usize;
@@ -453,7 +460,6 @@ pub fn solve_window(graph: &WindowGraph, config: &Config) -> FastSolve {
     let mut odometry = graph.odometry.clone();
     for r in free_count..count {
         let t = (r - free_count + 1) as f64 / (count - free_count + 1) as f64;
-        // the pull is an edge from a fixed copy of the keyframe at its published pose
         odometry.push(Edge {
             from: rotations.len(),
             to: r,
@@ -465,6 +471,44 @@ pub fn solve_window(graph: &WindowGraph, config: &Config) -> FastSolve {
         positions.push(graph.positions[r]);
         free.push(false);
     }
+    (rotations, positions, free, odometry)
+}
+
+/// GNC's rule in the window: solve; while a closure is past GNC's cutoff, drop the unjudged one (`new`) furthest past it and
+/// solve again. Returns the last solve and the dropped closures (positions in `new`); every unjudged one dropped = refused.
+pub fn solve_window_dropping(graph: &mut WindowGraph, new: &[bool], config: &Config) -> (FastSolve, Vec<usize>) {
+    let mut kept: Vec<usize> = (0..graph.closures.len()).collect();
+    let all = graph.closures.clone();
+    let mut dropped = Vec::new();
+    loop {
+        graph.closures = kept.iter().map(|&p| all[p]).collect();
+        let fast = solve_window(graph, config);
+        let worst = kept
+            .iter()
+            .zip(&fast.over_cutoff)
+            .filter(|(&p, &over)| new[p] && over > 1.0)
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(&p, _)| p);
+        let past = fast.over_cutoff.iter().any(|&over| over > 1.0);
+        match worst {
+            Some(p) if past && kept.iter().filter(|&&q| new[q]).count() > 1 => {
+                dropped.push(p);
+                kept.retain(|&q| q != p);
+            }
+            _ => {
+                if past {
+                    dropped.extend(kept.iter().copied().filter(|&q| new[q]));
+                }
+                graph.closures = all;
+                return (fast, dropped);
+            }
+        }
+    }
+}
+
+/// Solve a window's problem (`window_problem`).
+pub fn solve_window(graph: &WindowGraph, config: &Config) -> FastSolve {
+    let (rotations, positions, free, odometry) = window_problem(graph, config);
     solve_fast_path(
         &rotations,
         &positions,
