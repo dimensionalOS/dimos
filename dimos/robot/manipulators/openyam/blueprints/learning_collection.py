@@ -15,7 +15,7 @@
 """Gravity-compensated OpenYAM collection, configured through dimos run."""
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -46,29 +46,25 @@ OPENYAM_TEACH_JOINTS = [
 ]
 
 
-def openyam_teach_control() -> Blueprint:
+def openyam_teach_control() -> MetaBlueprint:
     """Zero stiffness, teaching damping and passive jaws over the connection."""
-    return (
-        autoconnect(
-            OpenYamCoordinator.blueprint(
-                instance_name="ControlCoordinator",
-                connections=[arm_declaration(OpenYamConnection)],
-                tasks=[
-                    TaskConfig(
-                        name="teach_openyam",
-                        type="hand_guiding",
-                        joint_names=list(OPENYAM_TEACH_JOINTS),
-                        priority=10,
-                        auto_start=True,
-                    )
-                ],
-                zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=True),
-            ),
-            arm_connection(OpenYamConnection, teach=True),
-        )
-        .solidify()
-        .remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
-    )
+    return autoconnect(
+        OpenYamCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(OpenYamConnection)],
+            tasks=[
+                TaskConfig(
+                    name="teach_openyam",
+                    type="hand_guiding",
+                    joint_names=list(OPENYAM_TEACH_JOINTS),
+                    priority=10,
+                    auto_start=True,
+                )
+            ],
+            zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=True),
+        ),
+        arm_connection(OpenYamConnection, teach=True),
+    ).remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
 
 
 _state = FeatureSpec(
@@ -95,23 +91,19 @@ _profile = CollectionProfile(
     metadata={"name": "openyam-teach", "robot_type": "openyam"},
 )
 
-openyam_teach_collection = (
-    autoconnect(
-        collect(profile=_profile),
-        EpisodeMonitorModule.blueprint(instance_name="episodes"),
-        openyam_teach_control(),
-        WebcamModule.blueprint(
-            instance_name="wrist",
-            hardware=WebcamConfig(camera_index=0, fps=30, frame_id_prefix="wrist_image"),
-            frame_id="wrist_camera_link",
-        ),
-    )
-    .solidify()
-    .remappings(
-        [
-            ("wrist", "color_image", "wrist_image"),
-            ("wrist", "camera_info", "wrist_camera_info"),
-            ("wrist", "tf", "wrist_tf"),
-        ]
-    )
+openyam_teach_collection = autoconnect(
+    collect(profile=_profile),
+    EpisodeMonitorModule.blueprint(instance_name="episodes"),
+    openyam_teach_control(),
+    WebcamModule.blueprint(
+        instance_name="wrist",
+        hardware=WebcamConfig(camera_index=0, fps=30, frame_id_prefix="wrist_image"),
+        frame_id="wrist_camera_link",
+    ),
+).remappings(
+    [
+        ("wrist", "color_image", "wrist_image"),
+        ("wrist", "camera_info", "wrist_camera_info"),
+        ("wrist", "tf", "wrist_tf"),
+    ]
 )

@@ -91,4 +91,4 @@ def _keyboard_teleop() -> MetaBlueprint:
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-keyboard_teleop_a750 = _keyboard_teleop().solidify().remappings(A750_REMAPS)
+keyboard_teleop_a750 = _keyboard_teleop().remappings(A750_REMAPS)

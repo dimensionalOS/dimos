@@ -25,21 +25,17 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.web.cockpit import Col, Map2D, Map3D, Row, Teleop, Video, cockpit
 
-unitree_go2_cockpit = (
-    autoconnect(
-        unitree_go2,
-        cockpit(
-            layout=Row(
-                Col(Video("color_image"), Map3D(path="path", click="clicked_point")),
-                Col(
-                    Map2D(path="path", click="clicked_point", stop="stop_movement"),
-                    Teleop(),
-                    shares=[3, 1],
-                ),
-                shares=[2, 1],
+unitree_go2_cockpit = autoconnect(
+    unitree_go2,
+    cockpit(
+        layout=Row(
+            Col(Video("color_image"), Map3D(path="path", click="clicked_point")),
+            Col(
+                Map2D(path="path", click="clicked_point", stop="stop_movement"),
+                Teleop(),
+                shares=[3, 1],
             ),
+            shares=[2, 1],
         ),
-    )
-    .solidify()
-    .global_config(n_workers=11, robot_model="unitree_go2")
-)
+    ),
+).global_config(n_workers=11, robot_model="unitree_go2")

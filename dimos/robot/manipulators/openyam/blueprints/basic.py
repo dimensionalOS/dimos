@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.damiao.connection import zero_stiffness_joints
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
@@ -50,26 +50,22 @@ def _gripper_task() -> TaskConfig:
     )
 
 
-def openyam_control(*, teach: bool = False) -> Blueprint:
+def openyam_control(*, teach: bool = False) -> MetaBlueprint:
     """Trajectories and the gripper, through the OpenYAM connection.
 
     Args:
         teach: Run with zero stiffness and teaching damping, gravity
             compensated, and the jaw passive so an operator can guide it.
     """
-    return (
-        autoconnect(
-            OpenYamCoordinator.blueprint(
-                instance_name="ControlCoordinator",
-                connections=[arm_declaration(OpenYamConnection)],
-                tasks=[_trajectory_task(), _gripper_task()],
-                zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=teach),
-            ),
-            arm_connection(OpenYamConnection, teach=teach),
-        )
-        .solidify()
-        .remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
-    )
+    return autoconnect(
+        OpenYamCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(OpenYamConnection)],
+            tasks=[_trajectory_task(), _gripper_task()],
+            zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=teach),
+        ),
+        arm_connection(OpenYamConnection, teach=teach),
+    ).remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
 
 
 coordinator_openyam = openyam_control().remappings([])

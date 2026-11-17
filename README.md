@@ -331,7 +331,7 @@ blueprint = autoconnect(
     ObserveSkill.blueprint(),
     McpServer.blueprint(),
     Agent.blueprint(),
-).solidify().transports({("color_image", Image): make_transport("go2/color_image", Image)})
+).transports({("color_image", Image): make_transport("go2/color_image", Image)})
 
 # Run the blueprint
 if __name__ == "__main__":

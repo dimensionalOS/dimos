@@ -49,7 +49,7 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 blueprint = autoconnect(
     unitree_go2,
     WebsocketVisModule.blueprint(show_rerun_dashboard=True),
-).solidify().global_config(replay=True)
+).global_config(replay=True)
 
 if __name__ == "__main__":
     ModuleCoordinator.build(blueprint).loop()

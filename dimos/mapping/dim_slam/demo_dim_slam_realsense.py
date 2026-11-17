@@ -75,7 +75,6 @@ demo_dim_slam_realsense = (
             rerun_config=rerun_config,
         ),
     )
-    .solidify()
     .remappings(
         [
             (RealSenseCamera, "infrared_left", "image"),

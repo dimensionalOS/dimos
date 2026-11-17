@@ -64,7 +64,7 @@ _GRIPPER_BLUEPRINTS = [
     (keyboard_teleop_xarm7.solidify(), "arm/gripper"),
     (coordinator_teleop_xarm6.solidify(), "arm/gripper"),
     (coordinator_teleop_xarm7.solidify(), "arm/gripper"),
-    (xarm7_planner_coordinator, "arm/drive_joint"),
+    (xarm7_planner_coordinator.solidify(), "arm/drive_joint"),
     (xarm_perception_sim.solidify(), "arm/gripper"),
 ]
 
@@ -83,7 +83,7 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
     [
         keyboard_teleop_xarm6.solidify(),
         keyboard_teleop_xarm7.solidify(),
-        xarm_grasp,
+        xarm_grasp.solidify(),
         xarm_perception_sim.solidify(),
     ],
 )
@@ -155,7 +155,7 @@ def test_simulation_leaves_the_gripper_joint_to_the_sim(
     assert sim.kwargs["dof"] == len(arm.joints) - 1
 
 
-@pytest.mark.parametrize("blueprint", [xarm6_teleop, xarm7_teleop])
+@pytest.mark.parametrize("blueprint", [xarm6_teleop.solidify(), xarm7_teleop.solidify()])
 def test_connection_blueprint_shares_the_contract_declaration(blueprint: Blueprint) -> None:
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={}, overrides={"xarmconnection": {"ip": "192.0.2.1"}}

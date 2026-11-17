@@ -55,7 +55,6 @@ unitree_go2_coordinator = (
             ],
         ),
     )
-    .solidify()
     .remappings(
         [
             (GO2Connection, "cmd_vel", "go2_cmd_vel"),

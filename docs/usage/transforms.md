@@ -309,7 +309,7 @@ if __name__ == "__main__":
         RobotBaseModule.blueprint(),
         WebcamModule.blueprint(),
         PerceptionModule.blueprint(),
-    ).solidify())
+    ))
 
     # Give worker TF publishers a moment to populate the buffer before querying.
     time.sleep(2.5)

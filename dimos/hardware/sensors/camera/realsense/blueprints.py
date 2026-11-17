@@ -90,12 +90,8 @@ _vis = vis_module(
     },
 )
 
-real_sense_camera_vis = (
-    autoconnect(
-        RealSenseCamera.blueprint(enable_infrared=True),
-        RealSenseMountTf.blueprint(),
-        _vis,
-    )
-    .solidify()
-    .global_config(n_workers=4)
-)
+real_sense_camera_vis = autoconnect(
+    RealSenseCamera.blueprint(enable_infrared=True),
+    RealSenseMountTf.blueprint(),
+    _vis,
+).global_config(n_workers=4)

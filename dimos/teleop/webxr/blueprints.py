@@ -39,54 +39,38 @@ from dimos.teleop.webxr.module import WebXRTeleopModule
 from dimos.visualization.vis_module import vis_module
 
 # Arm teleop with press-and-hold engage (has rerun viz)
-teleop_webxr_rerun = (
-    autoconnect(
-        ArmTeleopModule.blueprint(),
-        vis_module("rerun"),
-    )
-    .solidify()
-    .transports(
-        {
-            ("left_controller_output", PoseStamped): LCMTransport(
-                "/teleop/left_delta", PoseStamped
-            ),
-            ("right_controller_output", PoseStamped): LCMTransport(
-                "/teleop/right_delta", PoseStamped
-            ),
-        }
-    )
+teleop_webxr_rerun = autoconnect(
+    ArmTeleopModule.blueprint(),
+    vis_module("rerun"),
+).transports(
+    {
+        ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
+        ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
+    }
 )
 
 
 # XArm7 teleop (sim with --simulation, real otherwise): right controller -> xarm7
-teleop_webxr_xarm7 = (
-    autoconnect(
-        ArmTeleopModule.blueprint(),
-        coordinator_teleop_xarm7,
-    )
-    .solidify()
-    .remappings(
-        [
-            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-        ]
-    )
+teleop_webxr_xarm7 = autoconnect(
+    ArmTeleopModule.blueprint(),
+    coordinator_teleop_xarm7,
+).remappings(
+    [
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+    ]
 )
 
 
 # XArm7 hand teleop: thumb-and-index pinch toggles tracking for each hand.
-teleop_webxr_hand_xarm7 = (
-    autoconnect(
-        HandTeleopModule.blueprint(),
-        coordinator_teleop_xarm7,
-    )
-    .solidify()
-    .remappings(
-        [
-            (HandTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (HandTeleopModule, "right_gripper_command", "right_gripper_command"),
-        ]
-    )
+teleop_webxr_hand_xarm7 = autoconnect(
+    HandTeleopModule.blueprint(),
+    coordinator_teleop_xarm7,
+).remappings(
+    [
+        (HandTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (HandTeleopModule, "right_gripper_command", "right_gripper_command"),
+    ]
 )
 
 
@@ -96,7 +80,6 @@ teleop_webxr_xarm7_video = (
         VideoArmTeleopModule.blueprint(),
         coordinator_teleop_xarm7,
     )
-    .solidify()
     .remappings(
         [
             (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
@@ -112,68 +95,52 @@ teleop_webxr_xarm7_video = (
 
 
 # Piper teleop (sim with --simulation, real otherwise): left controller -> piper arm
-teleop_webxr_piper = (
-    autoconnect(
-        ArmTeleopModule.blueprint(),
-        coordinator_teleop_piper,
-    )
-    .solidify()
-    .remappings(
-        [
-            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-        ]
-    )
+teleop_webxr_piper = autoconnect(
+    ArmTeleopModule.blueprint(),
+    coordinator_teleop_piper,
+).remappings(
+    [
+        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+    ]
 )
 
 
 # A1Z teleop (real arm only, through A1ZConnection): left controller -> A1Z arm
-teleop_webxr_a1z = (
-    autoconnect(
-        ArmTeleopModule.blueprint(),
-        coordinator_teleop_a1z,
-    )
-    .solidify()
-    .remappings(
-        [
-            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-        ]
-    )
+teleop_webxr_a1z = autoconnect(
+    ArmTeleopModule.blueprint(),
+    coordinator_teleop_a1z,
+).remappings(
+    [
+        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+    ]
 )
 
 
 # XArm6 teleop (sim with --simulation, real otherwise): right controller -> xarm6
-teleop_webxr_xarm6 = (
-    autoconnect(
-        ArmTeleopModule.blueprint(),
-        coordinator_teleop_xarm6,
-    )
-    .solidify()
-    .remappings(
-        [
-            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-        ]
-    )
+teleop_webxr_xarm6 = autoconnect(
+    ArmTeleopModule.blueprint(),
+    coordinator_teleop_xarm6,
+).remappings(
+    [
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+    ]
 )
 
 
 # Dual arm teleop: right -> piper, left -> xarm6 (two independent teleop IK tasks)
-teleop_webxr_dual = (
-    autoconnect(
-        ArmTeleopModule.blueprint(),
-        coordinator_teleop_dual,
-    )
-    .solidify()
-    .remappings(
-        [
-            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-        ]
-    )
+teleop_webxr_dual = autoconnect(
+    ArmTeleopModule.blueprint(),
+    coordinator_teleop_dual,
+).remappings(
+    [
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+    ]
 )
 
 

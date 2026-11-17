@@ -126,7 +126,7 @@ def test_make_openyam_model_config_preserves_explicit_home() -> None:
 
 
 def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
-    tasks = _coordinator_kwargs(teleop_webxr_openyam)["tasks"]
+    tasks = _coordinator_kwargs(teleop_webxr_openyam.solidify())["tasks"]
     teleop = next(task for task in tasks if task.type == "teleop_ik")
 
     assert teleop.params["pink"].gain == 1.0
@@ -153,7 +153,7 @@ def test_openyam_connection_rejects_empty_selector(port: str) -> None:
 
 
 def test_quest_teleop_module_accepts_blueprint_config() -> None:
-    kwargs = _module_kwargs(teleop_webxr_openyam, ArmTeleopModule)
+    kwargs = _module_kwargs(teleop_webxr_openyam.solidify(), ArmTeleopModule)
 
     module = ArmTeleopModule(**kwargs)
     module.stop()
@@ -162,7 +162,7 @@ def test_quest_teleop_module_accepts_blueprint_config() -> None:
 @pytest.mark.parametrize(
     "blueprint",
     [
-        coordinator_openyam,
+        coordinator_openyam.solidify(),
         openyam_planner_coordinator.solidify(),
     ],
 )
@@ -206,7 +206,7 @@ def test_openyam_teleop_blueprints_expose_arm_and_gripper_control(
     [
         keyboard_teleop_openyam.solidify(),
         keyboard_teleop_openyam_planner.solidify(),
-        teleop_webxr_openyam,
+        teleop_webxr_openyam.solidify(),
     ],
 )
 def test_openyam_task_bindings_have_coordinator_inputs(blueprint: Blueprint) -> None:
@@ -246,7 +246,7 @@ def test_keyboard_teleop_openyam_gripper_opens_toward_joint7_lower_end() -> None
 
 
 def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
-    tasks = _coordinator_kwargs(teleop_webxr_openyam)["tasks"]
+    tasks = _coordinator_kwargs(teleop_webxr_openyam.solidify())["tasks"]
     teleop = next(task for task in tasks if task.type == "teleop_ik")
     gripper = next(task for task in tasks if task.type == "gripper")
 

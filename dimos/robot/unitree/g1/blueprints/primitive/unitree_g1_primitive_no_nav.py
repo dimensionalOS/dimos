@@ -113,9 +113,9 @@ _camera = (
                 camera_info=zed.CameraInfo.SingleWebcam,
             ),
         ),
-    ).solidify()
+    )
     if not global_config.simulation
-    else autoconnect().solidify()
+    else autoconnect()
 )
 
 unitree_g1_primitive_no_nav = (
@@ -126,7 +126,6 @@ unitree_g1_primitive_no_nav = (
         CostMapper.blueprint(),
         WavefrontFrontierExplorer.blueprint(),
     )
-    .solidify()
     .global_config(n_workers=4, robot_model="unitree_g1")
     .transports(
         {

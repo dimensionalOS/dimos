@@ -38,25 +38,17 @@ xarm7_planner_coordinator_agent = autoconnect(
 # The stack already carries a detector and a segmenter; adding the agent on top
 # packs them into one worker, where the detector's lazy transformers import fails
 # outright, so give them room.
-xarm_grasp_agent = (
-    autoconnect(
-        xarm_grasp,
-        McpServer.blueprint(),
-        Agent.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
-    )
-    .solidify()
-    .global_config(n_workers=6)
-)
+xarm_grasp_agent = autoconnect(
+    xarm_grasp,
+    McpServer.blueprint(),
+    Agent.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+).global_config(n_workers=6)
 
-xarm_grasp_graspgenx_agent = (
-    autoconnect(
-        xarm_grasp_graspgenx,
-        McpServer.blueprint(),
-        Agent.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
-    )
-    .solidify()
-    .global_config(n_workers=6)
-)
+xarm_grasp_graspgenx_agent = autoconnect(
+    xarm_grasp_graspgenx,
+    McpServer.blueprint(),
+    Agent.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+).global_config(n_workers=6)
 
 xarm_perception_sim_agent = autoconnect(
     xarm_perception_sim,

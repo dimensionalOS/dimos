@@ -79,60 +79,56 @@ def _rerun_blueprint() -> rrb.Blueprint:
 _hw = xarm6_hardware("arm")
 _hw.auto_enable = True
 
-xarm6_worldbelief = (
-    autoconnect(
-        # Provides wrist-camera FK/TF.
-        ManipulationModule.blueprint(
-            model=make_xarm6_model_config(
-                add_gripper=False,
-                # Enables TF publication.
-                tf_extra_links=["link_base"],
+xarm6_worldbelief = autoconnect(
+    # Provides wrist-camera FK/TF.
+    ManipulationModule.blueprint(
+        model=make_xarm6_model_config(
+            add_gripper=False,
+            # Enables TF publication.
+            tf_extra_links=["link_base"],
+        ),
+    ),
+    # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
+    # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
+    RealSenseCamera.blueprint(
+        width=640,
+        height=480,
+        fps=15,
+    ),
+    RerunBridgeModule.blueprint(
+        blueprint=_rerun_blueprint,
+        topic_to_entity=_topic_to_entity,
+        visual_override={
+            "world/color_camera": partial(
+                _camera_info_to_rerun, image_topic="world/color_camera/color_image"
             ),
-        ),
-        # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
-        # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
-        RealSenseCamera.blueprint(
-            width=640,
-            height=480,
-            fps=15,
-        ),
-        RerunBridgeModule.blueprint(
-            blueprint=_rerun_blueprint,
-            topic_to_entity=_topic_to_entity,
-            visual_override={
-                "world/color_camera": partial(
-                    _camera_info_to_rerun, image_topic="world/color_camera/color_image"
-                ),
-                "world/depth_camera": partial(
-                    _camera_info_to_rerun, image_topic="world/depth_camera/depth_image"
-                ),
-            },
-            max_hz={
-                "world/color_camera/color_image": 10.0,
-                "world/depth_camera/depth_image": 5.0,
-                "world/detections_3d": 10.0,
-                "world/pointcloud": 5.0,
-            },
-        ),
-        WorldBeliefRecorder.blueprint(
-            db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
-        ),
-        WorldBeliefModule.blueprint(
-            db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
-            history_path=STATE_DIR / "worldbelief" / "xarm6" / "worldbelief_history.db",
-            scan_prompts=[],
-            depth_tolerance_s=0.1,
-            stationary_hz=4.0,
-            yoloe_model_name="yoloe-11l-seg.pt",
-            dino_model_name="facebook/dinov2-base",
-            clip_model_name="openai/clip-vit-base-patch32",
-        ),
-        McpServer.blueprint(),
-        coordinator(
-            hardware=[_hw],
-            tasks=[trajectory_task(_hw)],
-        ),
-    )
-    .solidify()
-    .global_config(n_workers=8)
-)
+            "world/depth_camera": partial(
+                _camera_info_to_rerun, image_topic="world/depth_camera/depth_image"
+            ),
+        },
+        max_hz={
+            "world/color_camera/color_image": 10.0,
+            "world/depth_camera/depth_image": 5.0,
+            "world/detections_3d": 10.0,
+            "world/pointcloud": 5.0,
+        },
+    ),
+    WorldBeliefRecorder.blueprint(
+        db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
+    ),
+    WorldBeliefModule.blueprint(
+        db_path=STATE_DIR / "worldbelief" / "xarm6" / "recordings" / "xarm6_worldbelief.db",
+        history_path=STATE_DIR / "worldbelief" / "xarm6" / "worldbelief_history.db",
+        scan_prompts=[],
+        depth_tolerance_s=0.1,
+        stationary_hz=4.0,
+        yoloe_model_name="yoloe-11l-seg.pt",
+        dino_model_name="facebook/dinov2-base",
+        clip_model_name="openai/clip-vit-base-patch32",
+    ),
+    McpServer.blueprint(),
+    coordinator(
+        hardware=[_hw],
+        tasks=[trajectory_task(_hw)],
+    ),
+).global_config(n_workers=8)

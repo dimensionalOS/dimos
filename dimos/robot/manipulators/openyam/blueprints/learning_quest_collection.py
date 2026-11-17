@@ -61,23 +61,19 @@ _profile = CollectionProfile(
     metadata={"name": "openyam-quest", "robot_type": "openyam"},
 )
 
-openyam_quest_collection = (
-    autoconnect(
-        collect(profile=_profile),
-        EpisodeMonitorModule.blueprint(instance_name="episodes"),
-        teleop_webxr_openyam,
-        WebcamModule.blueprint(
-            instance_name="wrist",
-            hardware=WebcamConfig(camera_index=0, fps=30, frame_id_prefix="wrist_image"),
-            frame_id="wrist_camera_link",
-        ),
-    )
-    .solidify()
-    .remappings(
-        [
-            ("wrist", "color_image", "wrist_image"),
-            ("wrist", "camera_info", "wrist_camera_info"),
-            ("wrist", "tf", "wrist_tf"),
-        ]
-    )
+openyam_quest_collection = autoconnect(
+    collect(profile=_profile),
+    EpisodeMonitorModule.blueprint(instance_name="episodes"),
+    teleop_webxr_openyam,
+    WebcamModule.blueprint(
+        instance_name="wrist",
+        hardware=WebcamConfig(camera_index=0, fps=30, frame_id_prefix="wrist_image"),
+        frame_id="wrist_camera_link",
+    ),
+).remappings(
+    [
+        ("wrist", "color_image", "wrist_image"),
+        ("wrist", "camera_info", "wrist_camera_info"),
+        ("wrist", "tf", "wrist_tf"),
+    ]
 )

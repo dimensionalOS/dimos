@@ -178,7 +178,7 @@ def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
     **connection: Any,
-) -> Blueprint:
+) -> MetaBlueprint:
     """R1ProConnection, ControlCoordinator and the head cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
@@ -223,7 +223,6 @@ def r1pro_control(
                 tasks=resolved_tasks,
             ),
         )
-        .solidify()
         # Rename so the chassis adapter owns the canonical /chassis/* names.
         .remappings(
             [
@@ -289,40 +288,32 @@ def r1pro_control(
     )
 
 
-def r1pro_lidar_odometry() -> Blueprint:
+def r1pro_lidar_odometry() -> MetaBlueprint:
     """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
     lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
-    return (
-        autoconnect(
-            mid360_for_pointlio(
-                frame_id=lidar_frame,
-                lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
-                host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
-            ),
-            PointLio.blueprint(sensor_frame_id=lidar_frame).remappings(
-                [(PointLio, "odometry", "pointlio_odometry")]
-            ),
-            R1ProLio.blueprint(),
-        )
-        .solidify()
-        .remappings(
-            [
-                (R1ProLio, "odometry", "pointlio_odometry"),
-                # The name the planners already read.
-                (R1ProLio, "pose", "chassis_odom"),
-            ]
-        )
+    return autoconnect(
+        mid360_for_pointlio(
+            frame_id=lidar_frame,
+            lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
+            host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
+        ),
+        PointLio.blueprint(sensor_frame_id=lidar_frame).remappings(
+            [(PointLio, "odometry", "pointlio_odometry")]
+        ),
+        R1ProLio.blueprint(),
+    ).remappings(
+        [
+            (R1ProLio, "odometry", "pointlio_odometry"),
+            # The name the planners already read.
+            (R1ProLio, "pose", "chassis_odom"),
+        ]
     )
 
 
 # n_workers keeps the 100 Hz coordinator tick loop out of the interpreter running the connection's sensor threads.
-r1pro_coordinator = (
-    autoconnect(
-        r1pro_visualization(),
-        # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
-        r1pro_control(publish_odom_tf=False),
-        r1pro_lidar_odometry(),
-    )
-    .solidify()
-    .global_config(n_workers=4)
-)
+r1pro_coordinator = autoconnect(
+    r1pro_visualization(),
+    # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
+    r1pro_control(publish_odom_tf=False),
+    r1pro_lidar_odometry(),
+).global_config(n_workers=4)

@@ -33,6 +33,7 @@ from dimos.core.coordination.blueprints import (
     ChoiceAtom,
     ChoiceResolutionError,
     DisabledModuleProxy,
+    MetaBlueprint,
     autoconnect,
 )
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -230,8 +231,10 @@ class Calculator1WithPort(Calculator1):
     extra_in: In[Image]
 
 
-def _build_without_rerun(blueprint: Blueprint) -> ModuleCoordinator:
+def _build_without_rerun(blueprint: Blueprint | MetaBlueprint) -> ModuleCoordinator:
     """Build with a parsed viewer override so tests never spawn Rerun."""
+    if isinstance(blueprint, MetaBlueprint):
+        blueprint = blueprint.solidify()
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={},
         overrides={"g": {"viewer": "none"}},
@@ -240,9 +243,7 @@ def _build_without_rerun(blueprint: Blueprint) -> ModuleCoordinator:
 
 
 def test_build_happy_path() -> None:
-    blueprint_set = autoconnect(
-        ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint()
-    ).solidify()
+    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
 
     coordinator = _build_without_rerun(blueprint_set)
 
@@ -507,7 +508,7 @@ def test_remapping() -> None:
 def test_future_annotations_autoconnect() -> None:
     """Test that autoconnect works with modules using `from __future__ import annotations`."""
 
-    blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint()).solidify()
+    blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint())
 
     coordinator = _build_without_rerun(blueprint_set)
 
@@ -534,7 +535,7 @@ def test_module_ref_direct() -> None:
         autoconnect(
             Calculator1.blueprint(),
             Mod1.blueprint(),
-        ).solidify()
+        )
     )
 
     try:
@@ -554,7 +555,7 @@ def test_module_ref_direct_accepts_a_subclass_provider() -> None:
         autoconnect(
             Calculator1WithPort.blueprint(),
             Mod1.blueprint(),
-        ).solidify()
+        )
     )
 
     try:
@@ -572,7 +573,7 @@ def test_module_ref_spec() -> None:
         autoconnect(
             Calculator1.blueprint(),
             Mod2.blueprint(),
-        ).solidify()
+        )
     )
 
     try:
@@ -585,11 +586,9 @@ def test_module_ref_spec() -> None:
 
 
 def test_disabled_modules_are_skipped_during_build() -> None:
-    blueprint_set = (
-        autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
-        .solidify()
-        .disabled_modules(ModuleC)
-    )
+    blueprint_set = autoconnect(
+        ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint()
+    ).disabled_modules(ModuleC)
 
     coordinator = _build_without_rerun(blueprint_set)
 
@@ -603,14 +602,10 @@ def test_disabled_modules_are_skipped_during_build() -> None:
 
 
 def test_disabled_module_ref_gets_noop_proxy() -> None:
-    blueprint_set = (
-        autoconnect(
-            Calculator1.blueprint(),
-            Mod2.blueprint(),
-        )
-        .solidify()
-        .disabled_modules(Calculator1)
-    )
+    blueprint_set = autoconnect(
+        Calculator1.blueprint(),
+        Mod2.blueprint(),
+    ).disabled_modules(Calculator1)
 
     coordinator = _build_without_rerun(blueprint_set)
 
@@ -631,9 +626,7 @@ def test_module_ref_remap_ambiguous() -> None:
             Calculator1.blueprint(),
             Calculator2.blueprint(),
             Mod2.blueprint(),
-        )
-        .solidify()
-        .remappings(
+        ).remappings(
             [
                 (Mod2, "calc", Calculator1),
             ]
@@ -685,9 +678,7 @@ def test_load_blueprint_basic(dynamic_coordinator) -> None:
 def test_load_blueprint_twice(dynamic_coordinator) -> None:
     """Two sequential load_blueprint calls share transports for matching streams."""
     dynamic_coordinator.load_blueprint(ModuleA.blueprint())
-    dynamic_coordinator.load_blueprint(
-        autoconnect(ModuleB.blueprint(), ModuleC.blueprint()).solidify()
-    )
+    dynamic_coordinator.load_blueprint(autoconnect(ModuleB.blueprint(), ModuleC.blueprint()))
 
     a = dynamic_coordinator.get_instance(ModuleA)
     b = dynamic_coordinator.get_instance(ModuleB)
@@ -826,7 +817,7 @@ def test_optional_module_ref_with_provider(build_coordinator) -> None:
         autoconnect(
             Calculator1.blueprint(),
             ModWithOptionalRef.blueprint(),
-        ).solidify(),
+        ),
     )
 
     mod = coordinator.get_instance(ModWithOptionalRef)
@@ -848,7 +839,7 @@ def test_build_with_explicit_instance_name(build_coordinator) -> None:
         autoconnect(
             ModuleA.blueprint(instance_name="custom/modulea"),
             ModuleB.blueprint(),
-        ).solidify()
+        )
     )
 
     module_a = coordinator.get_instance("custom/modulea")
@@ -912,7 +903,7 @@ def test_missing_dependency_prevents_worker_and_transport_startup(mocker) -> Non
     transports = mocker.patch("dimos.core.coordination.module_coordinator._materialize_transports")
 
     with pytest.raises(ImportError, match="install extra"):
-        ModuleCoordinator.build(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify())
+        ModuleCoordinator.build(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
 
     start.assert_not_called()
     transports.assert_not_called()
@@ -1005,9 +996,7 @@ def test_restart_module_basic(dynamic_coordinator, worker_exited) -> None:
 def test_restart_module_aborts_when_undeploy_fails(
     dynamic_coordinator: ModuleCoordinator, mocker: MockerFixture
 ) -> None:
-    dynamic_coordinator.load_blueprint(
-        autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify()
-    )
+    dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
     old_proxy = dynamic_coordinator.get_instance(ModuleA)
     consumer = dynamic_coordinator.get_instance(ModuleB)
     assert old_proxy is not None
@@ -1038,9 +1027,7 @@ def test_restart_module_aborts_when_undeploy_fails(
 
 def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:
     """Streams stay on the same transport after restart so consumers keep receiving data."""
-    dynamic_coordinator.load_blueprint(
-        autoconnect(ModuleA.blueprint(), ModuleC.blueprint()).solidify()
-    )
+    dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleC.blueprint()))
 
     c = dynamic_coordinator.get_instance(ModuleC)
     assert c is not None
@@ -1061,9 +1048,7 @@ def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:
 
 def test_restart_module_rewires_module_refs(dynamic_coordinator) -> None:
     """After restart, modules that reference the restarted class see the new proxy."""
-    dynamic_coordinator.load_blueprint(
-        autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify()
-    )
+    dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
 
     b = dynamic_coordinator.get_instance(ModuleB)
     assert b is not None
@@ -1076,9 +1061,7 @@ def test_restart_module_rewires_module_refs(dynamic_coordinator) -> None:
 
 def test_restart_consumer_rewires_outbound_refs(dynamic_coordinator) -> None:
     """Restarting a consumer re-injects its refs to existing target modules."""
-    dynamic_coordinator.load_blueprint(
-        autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify()
-    )
+    dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
 
     dynamic_coordinator.restart_module(ModuleB, reload_source=False)
 
@@ -1231,15 +1214,11 @@ def test_restart_sends_the_module_list_once_the_module_is_back(dynamic_coordinat
 
 def test_restart_preserves_remapped_streams(dynamic_coordinator) -> None:
     """Restart reconnects streams that were remapped during initial load."""
-    bp = (
-        autoconnect(
-            SourceModule.blueprint(),
-            TargetModule.blueprint(),
-        )
-        .solidify()
-        .remappings(
-            [(SourceModule, "color_image", "remapped_data")],
-        )
+    bp = autoconnect(
+        SourceModule.blueprint(),
+        TargetModule.blueprint(),
+    ).remappings(
+        [(SourceModule, "color_image", "remapped_data")],
     )
     dynamic_coordinator.load_blueprint(bp)
 
@@ -1463,7 +1442,7 @@ def test_io_port_autoconnects_and_flows_both_ways(wait_until) -> None:
     its own messages."""
     blueprint_set = autoconnect(
         IoTfPublisher.blueprint(), IoTfEcho.blueprint(), IoTfConsumer.blueprint()
-    ).solidify()
+    )
 
     coordinator = _build_without_rerun(blueprint_set)
     try:

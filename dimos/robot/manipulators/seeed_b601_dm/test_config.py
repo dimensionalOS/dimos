@@ -134,7 +134,7 @@ def test_connection_builds_seeed_motor_table(mocker) -> None:
 
 def test_simulation_composes_a_mock_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "simulation", "mujoco")
-    blueprint = seeed_b601_dm_control()
+    blueprint = seeed_b601_dm_control().solidify()
 
     assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
     [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]

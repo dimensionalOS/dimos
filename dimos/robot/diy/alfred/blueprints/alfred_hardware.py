@@ -30,44 +30,34 @@ from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 # out of its fd table so EMFILE cannot take down rerun/keyboard controls.
 RealSenseCamera.dedicated_worker = True
 
-_alfred_hardware = (
-    autoconnect(
-        RealSenseCamera.blueprint(
-            fps=30,
-            enable_infrared=True,
-            emitter_enabled=False,
-            enable_imu=True,
-            # Nothing consumes colour, and raw colour is 19.6 MB/s of wire traffic. The JPEG
-            # transport that used to pay for it only binds on a python module, and this one is
-            # native now. Depth is unaligned without colour, so it lands in its own frame.
-            enable_color=False,
-            align_depth_to_color=False,
-            frame_id="camera_front_link",
-            serial_number=ALFRED_HARDWARE.d455_serial,
-        ).remappings(
-            [
-                (RealSenseCamera, "infrared_left", "image"),
-                (RealSenseCamera, "infrared_right", "image"),
-                (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
-                (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
-                # Keep the colour info off the stream dimSLAM reads its rig from.
-                (RealSenseCamera, "camera_info", "color_camera_info"),
-            ]
-        ),
-        AlfredMountTf.blueprint(),
-        AlfredHighLevel.blueprint().remappings(
-            [(AlfredHighLevel, "wheel_odometry", "odom_sources")]
-        ),
-    )
-    .solidify()
-    .global_config(robot_model="alfred")
-)
+_alfred_hardware = autoconnect(
+    RealSenseCamera.blueprint(
+        fps=30,
+        enable_infrared=True,
+        emitter_enabled=False,
+        enable_imu=True,
+        # Nothing consumes colour, and raw colour is 19.6 MB/s of wire traffic. The JPEG
+        # transport that used to pay for it only binds on a python module, and this one is
+        # native now. Depth is unaligned without colour, so it lands in its own frame.
+        enable_color=False,
+        align_depth_to_color=False,
+        frame_id="camera_front_link",
+        serial_number=ALFRED_HARDWARE.d455_serial,
+    ).remappings(
+        [
+            (RealSenseCamera, "infrared_left", "image"),
+            (RealSenseCamera, "infrared_right", "image"),
+            (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
+            (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
+            # Keep the colour info off the stream dimSLAM reads its rig from.
+            (RealSenseCamera, "camera_info", "color_camera_info"),
+        ]
+    ),
+    AlfredMountTf.blueprint(),
+    AlfredHighLevel.blueprint().remappings([(AlfredHighLevel, "wheel_odometry", "odom_sources")]),
+).global_config(robot_model="alfred")
 
-_alfred_lidar_hardware = (
-    autoconnect(
-        AlfredMountTf.blueprint(root_frame="mid360_link"),
-        AlfredHighLevel.blueprint(),
-    )
-    .solidify()
-    .global_config(robot_model="alfred")
-)
+_alfred_lidar_hardware = autoconnect(
+    AlfredMountTf.blueprint(root_frame="mid360_link"),
+    AlfredHighLevel.blueprint(),
+).global_config(robot_model="alfred")

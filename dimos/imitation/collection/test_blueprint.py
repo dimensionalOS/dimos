@@ -41,7 +41,7 @@ AGGREGATE = "coordinator_joint_state"
     [
         learning_collect_webxr_xarm7.solidify(),
         learning_collect_webxr_piper.solidify(),
-        unitree_g1_teleop,
+        unitree_g1_teleop.solidify(),
     ],
 )
 def test_shipped_collection_monitor_configuration_is_valid(blueprint: Blueprint) -> None:

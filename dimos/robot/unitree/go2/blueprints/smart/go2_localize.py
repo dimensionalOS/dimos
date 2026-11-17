@@ -42,13 +42,9 @@ GO2_PARAMS = LocalizeParams(
     fuse_voxel_m=0.03,
 )
 
-go2_localize = (
-    autoconnect(
-        unitree_go2,
-        MovementManager.blueprint(),
-        PerceptionLocalize.blueprint(geometry="lidar", mobile=True, params=GO2_PARAMS),
-        McpServer.blueprint(),
-    )
-    .solidify()
-    .global_config(n_workers=12)
-)
+go2_localize = autoconnect(
+    unitree_go2,
+    MovementManager.blueprint(),
+    PerceptionLocalize.blueprint(geometry="lidar", mobile=True, params=GO2_PARAMS),
+    McpServer.blueprint(),
+).global_config(n_workers=12)

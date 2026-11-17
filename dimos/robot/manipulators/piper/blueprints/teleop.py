@@ -235,4 +235,4 @@ def _teleop() -> MetaBlueprint:
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-piper_teleop = _teleop().solidify().remappings(_ARM_REMAPS)
+piper_teleop = _teleop().remappings(_ARM_REMAPS)

@@ -201,7 +201,7 @@ class TestEstopStatus:
 
 
 def test_request_operator_reaches_the_coordinator() -> None:
-    assert resolve_module_refs(hybrid_teleop_sim)["teleopskills", "_coordinator"] == (
+    assert resolve_module_refs(hybrid_teleop_sim.solidify())["teleopskills", "_coordinator"] == (
         "ControlCoordinator"
     )
 
@@ -209,7 +209,7 @@ def test_request_operator_reaches_the_coordinator() -> None:
 def test_blueprint_ranks_hold_over_jog_over_autonomy():
     tasks = next(
         cast("list[TaskConfig]", cast("dict[str, Any]", atom.kwargs)["tasks"])
-        for atom in hybrid_teleop_sim.blueprints
+        for atom in hybrid_teleop_sim.solidify().blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
     priority = {task.type: task.priority for task in tasks}

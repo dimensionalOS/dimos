@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
@@ -96,65 +96,57 @@ _openarm_webxr_task = TaskConfig(
 )
 
 
-def openarm_teleop_control() -> Blueprint:
+def openarm_teleop_control() -> MetaBlueprint:
     """The WebXR task set over the OpenArm connection."""
-    return (
-        autoconnect(
-            DamiaoTeleopCoordinator.blueprint(
-                instance_name="ControlCoordinator",
-                connections=[arm_declaration(OpenArmConnection)],
-                tasks=[
-                    _openarm_webxr_task,
-                    # The left jaw is open at its joint's upper end, the right at its lower end.
-                    TaskConfig(
-                        name="left_arm_gripper",
-                        type="gripper",
-                        joint_names=["arm/openarm_left_finger_joint1"],
-                        priority=20,
-                        params={"open_at": "upper"},
-                        stream_bind={"gripper_command": "left_gripper_command"},
-                    ),
-                    TaskConfig(
-                        name="right_arm_gripper",
-                        type="gripper",
-                        joint_names=["arm/openarm_right_finger_joint1"],
-                        priority=20,
-                        params={"open_at": "lower"},
-                        stream_bind={"gripper_command": "right_gripper_command"},
-                    ),
-                    _trajectory_task(priority=10),
-                ],
-                zero_stiffness_joints=[],
-            ),
-            arm_connection(OpenArmConnection),
-        )
-        .solidify()
-        .remappings(arm_remaps(OpenArmConnection, DamiaoTeleopCoordinator))
-    )
+    return autoconnect(
+        DamiaoTeleopCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(OpenArmConnection)],
+            tasks=[
+                _openarm_webxr_task,
+                # The left jaw is open at its joint's upper end, the right at its lower end.
+                TaskConfig(
+                    name="left_arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/openarm_left_finger_joint1"],
+                    priority=20,
+                    params={"open_at": "upper"},
+                    stream_bind={"gripper_command": "left_gripper_command"},
+                ),
+                TaskConfig(
+                    name="right_arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/openarm_right_finger_joint1"],
+                    priority=20,
+                    params={"open_at": "lower"},
+                    stream_bind={"gripper_command": "right_gripper_command"},
+                ),
+                _trajectory_task(priority=10),
+            ],
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenArmConnection),
+    ).remappings(arm_remaps(OpenArmConnection, DamiaoTeleopCoordinator))
 
 
 # Both controller grips engage one fourteen-joint task.
-teleop_webxr_openarm = (
-    autoconnect(
-        ArmTeleopModule.blueprint(),
-        openarm_teleop_control(),
-        ManipulationModule.blueprint(
-            gripper_tasks={
-                "left_arm": "left_arm_gripper",
-                "right_arm": "right_arm_gripper",
-            },
-            model=_MODEL,
-            kinematics=_openarm_webxr_pink,
-            visualization={"backend": "viser"},
-        ),
-    )
-    .solidify()
-    .remappings(
-        [
-            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-        ]
-    )
+teleop_webxr_openarm = autoconnect(
+    ArmTeleopModule.blueprint(),
+    openarm_teleop_control(),
+    ManipulationModule.blueprint(
+        gripper_tasks={
+            "left_arm": "left_arm_gripper",
+            "right_arm": "right_arm_gripper",
+        },
+        model=_MODEL,
+        kinematics=_openarm_webxr_pink,
+        visualization={"backend": "viser"},
+    ),
+).remappings(
+    [
+        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+    ]
 )

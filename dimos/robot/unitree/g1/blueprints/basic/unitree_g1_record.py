@@ -101,33 +101,29 @@ _record_vis = vis_module(
 )
 
 
-unitree_g1_record = (
-    autoconnect(
-        MovementManager.blueprint(),
-        G1HighLevelDdsSdk.blueprint(),
-        mid360_for_pointlio(host_ip="192.168.123.164", lidar_ip="192.168.123.120"),
-        PointLio.blueprint(frame_id="world").remappings(
-            [
-                (PointLio, "lidar", "pointlio_lidar"),
-                (PointLio, "odometry", "pointlio_odometry"),
-            ]
-        ),
-        RealSenseCamera.blueprint(frame_id="d435_link").remappings(
-            [
-                (RealSenseCamera, "depth_image", "realsense_depth_image"),
-                (RealSenseCamera, "camera_info", "realsense_camera_info"),
-                (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
-            ]
-        ),
-        G1Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
-        # Mount frames onto tf, base_link edge live from the waist joints.
-        G1TfPublisher.blueprint(),
-        # Viewer keyboard teleop feeds MovementManager via tele_cmd_vel.
-        _record_vis,
-    )
-    .solidify()
-    .global_config(n_workers=13, robot_model="unitree_g1")
-)
+unitree_g1_record = autoconnect(
+    MovementManager.blueprint(),
+    G1HighLevelDdsSdk.blueprint(),
+    mid360_for_pointlio(host_ip="192.168.123.164", lidar_ip="192.168.123.120"),
+    PointLio.blueprint(frame_id="world").remappings(
+        [
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
+        ]
+    ),
+    RealSenseCamera.blueprint(frame_id="d435_link").remappings(
+        [
+            (RealSenseCamera, "depth_image", "realsense_depth_image"),
+            (RealSenseCamera, "camera_info", "realsense_camera_info"),
+            (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
+        ]
+    ),
+    G1Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
+    # Mount frames onto tf, base_link edge live from the waist joints.
+    G1TfPublisher.blueprint(),
+    # Viewer keyboard teleop feeds MovementManager via tele_cmd_vel.
+    _record_vis,
+).global_config(n_workers=13, robot_model="unitree_g1")
 
 
 if __name__ == "__main__":

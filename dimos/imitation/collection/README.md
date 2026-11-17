@@ -105,7 +105,7 @@ usb = autoconnect(*(
         hardware=WebcamConfig(camera_index=index, width=640, height=480, fps=30),
     )
     for index, name in enumerate(("left_wrist", "right_wrist", "overhead"))
-)).solidify()
+))
 realsense = autoconnect(*(
     RealSenseCamera.blueprint(
         instance_name=name, serial_number=serial, width=640, height=480, fps=30,
@@ -115,7 +115,7 @@ realsense = autoconnect(*(
         "right_wrist": "RIGHT_DEVICE_SERIAL",
         "overhead": "OVERHEAD_DEVICE_SERIAL",
     }.items()
-)).solidify()
+))
 remappings = [
     (name, "color_image", f"{name}_image")
     for name in ("left_wrist", "right_wrist", "overhead")

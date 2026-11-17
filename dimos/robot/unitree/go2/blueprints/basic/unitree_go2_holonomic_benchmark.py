@@ -65,7 +65,6 @@ unitree_go2_holonomic_benchmark = (
         # to trim a session; battery="fullpose" runs just the decoupled cases.
         Benchmarker.blueprint(robot="go2", battery="all", gate_source="stream"),
     )
-    .solidify()
     # Record the command the robot actually receives (/go2/cmd_vel, written by
     # the coordinator's base adapter) — NOT /cmd_vel, which only carries the
     # operator's teleop nudges.

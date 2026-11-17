@@ -52,7 +52,6 @@ unitree_go2_agentic_cockpit = (
         ),
         VoiceInput.blueprint(),
     )
-    .solidify()
     .disabled_modules(WebInput)
     .global_config(n_workers=9, robot_model="unitree_go2")
 )
