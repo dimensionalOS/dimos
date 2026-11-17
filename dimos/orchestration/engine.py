@@ -14,12 +14,12 @@
 
 """The engine: a function from a runtime and one queue item to a new runtime and effects."""
 
-from collections import ChainMap, deque
+from collections import deque
 from collections.abc import Callable, Mapping, MutableSequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from dimos.orchestration.checks import RESERVED, CheckedDefinition
+from dimos.orchestration.checks import CheckedDefinition
 from dimos.orchestration.definition import Check, Node, Outcome, Transition
 from dimos.orchestration.expressions import ExpressionError, Plain, evaluate, evaluate_bool
 
@@ -63,9 +63,11 @@ Timer = AfterTimer | CancelDeadline
 
 
 @dataclass(frozen=True)
-class SignalItem:
-    key: str
-    value: Plain = None
+class StreamItem:
+    """One message on a stream, and the stream values taken from it by key."""
+
+    stream: str
+    values: Mapping[str, Plain] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -82,7 +84,7 @@ class TimerItem:
     timer: Timer
 
 
-QueueItem = SignalItem | ReturnItem | TimerItem
+QueueItem = StreamItem | ReturnItem | TimerItem
 
 
 @dataclass(frozen=True)
@@ -92,7 +94,6 @@ class Runtime:
     calls: tuple[Call, ...] = ()
     timers: tuple[Timer, ...] = ()
     calls_made: int = 0
-    outcomes: frozenset[tuple[str, EngineEvent]] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -124,7 +125,7 @@ class ClearTimer:
 @dataclass(frozen=True)
 class TransitionRecord:
     """One transition taken, or one redirect to a fallback. `cause` reads as the file does:
-    `on` and a signal, `if` and an expression, `after`, `requires` or `ensures`.
+    `on` and a stream or an outcome, `if` and an expression, `after`, `requires` or `ensures`.
     """
 
     node: str
@@ -145,10 +146,10 @@ DEFAULT_LIMITS = Limits()
 
 
 def enqueue(items: MutableSequence[QueueItem], item: QueueItem) -> None:
-    """Add an item to a queue. A signal replaces an unhandled item for the same signal."""
-    if isinstance(item, SignalItem):
+    """Add an item to a queue. A message replaces an unhandled one for the same stream."""
+    if isinstance(item, StreamItem):
         for index, waiting in enumerate(items):
-            if isinstance(waiting, SignalItem) and waiting.key == item.key:
+            if isinstance(waiting, StreamItem) and waiting.stream == item.stream:
                 items[index] = item
                 return
     items.append(item)
@@ -180,8 +181,8 @@ def step(
 def _event(item: QueueItem) -> str:
     """What a fault report calls a queue item."""
     match item:
-        case SignalItem(key):
-            return key
+        case StreamItem(stream):
+            return stream
         case ReturnItem(call):
             return f"{call.kind}_return"
         case TimerItem():
@@ -220,16 +221,15 @@ class _Step:
         self.calls = list(runtime.calls)
         self.timers = list(runtime.timers)
         self.calls_made = runtime.calls_made
-        self.outcomes = set(runtime.outcomes)
         self.effects: list[Effect] = []
-        self.failures: deque[Node] = deque()
+        self.outcomes: deque[tuple[EngineEvent, Node]] = deque()
         self.taken = 0
 
     def run(self, event: str, action: Callable[[], None]) -> tuple[Runtime, list[Effect]]:
         try:
             action()
             self.drain()
-            if self.changed():
+            if self.blackboard != self.before.blackboard or self.active != self.before.active:
                 while self.walk(self.root, self.offer_conditions, stop_at_first=True):
                     self.drain()
         except _FaultError as fault:
@@ -240,17 +240,8 @@ class _Step:
             tuple(self.calls),
             tuple(self.timers),
             self.calls_made,
-            frozenset(self.outcomes),
         )
         return runtime, self.effects
-
-    def changed(self) -> bool:
-        before = self.before
-        return (
-            self.blackboard != before.blackboard
-            or self.active != before.active
-            or self.outcomes != before.outcomes
-        )
 
     def fault(self, fault: _FaultError, event: str) -> None:
         """Stop everything. Starts and timers this step was about to send are dropped."""
@@ -265,7 +256,6 @@ class _Step:
         self.active.clear()
         self.calls.clear()
         self.timers.clear()
-        self.outcomes.clear()
         cancels = [activity.cancel for activity in self.tree.activities.values()]
         for rpc in dict.fromkeys(cancel for cancel in cancels if cancel is not None):
             self.calls_made += 1
@@ -275,9 +265,9 @@ class _Step:
 
     def handle(self, item: QueueItem) -> None:
         match item:
-            case SignalItem(key, value):
-                self.blackboard[key] = value
-                self.walk(self.root, lambda node: self.offer(node, key), stop_at_first=False)
+            case StreamItem(stream, values):
+                self.blackboard.update(values)
+                self.walk(self.root, lambda node: self.offer(node, stream), stop_at_first=False)
             case ReturnItem():
                 self.handle_return(item)
             case TimerItem(timer):
@@ -308,12 +298,14 @@ class _Step:
                 raise _FaultError("a `cancel` that raised", node)
             self.release()
         elif item.raised:
-            self.failures.append(node)
+            self.outcomes.append(("failed", node))
         else:
             if node.result is not None:
                 self.blackboard[node.result] = item.value
-            self.outcomes.add((node.name, "succeeded"))
-            self.enter_inside(node)
+            if node.inside:
+                self.enter_inside(node)
+            else:
+                self.outcomes.append(("succeeded", node))
 
     def release(self) -> None:
         """Send every held start that no cancel still out holds back."""
@@ -326,11 +318,15 @@ class _Step:
         return any(call.kind == "cancel" and call.uses & uses for call in self.calls)
 
     def drain(self) -> None:
-        """Handle every failure raised so far, in the order raised."""
-        while self.failures:
-            node = self.failures.popleft()
-            if node.name in self.active:
+        """Offer every outcome that has happened so far, in the order it happened."""
+        while self.outcomes:
+            outcome, node = self.outcomes.popleft()
+            if node.name not in self.active:
+                continue
+            if outcome == "failed":
                 self.fail(node)
+            else:
+                self.offer(node, outcome)
 
     def walk(self, node: Node, offer: Callable[[Node], bool], stop_at_first: bool) -> bool:
         """Offer an event to a node, then to the active nodes inside it. The outermost wins."""
@@ -347,10 +343,10 @@ class _Step:
                 self.drain()
         return taken
 
-    def offer(self, node: Node, signal: str) -> bool:
-        """Take the first transition of a node on a signal whose `if` passes."""
+    def offer(self, node: Node, on: str) -> bool:
+        """Take the first transition of a node on a stream or an outcome whose `if` passes."""
         for transition in node.transitions:
-            if transition.on == signal and self.passes(node, transition):
+            if transition.on == on and self.passes(node, transition):
                 self.take(node, transition)
                 return True
         return False
@@ -364,15 +360,9 @@ class _Step:
         return False
 
     def fail(self, node: Node) -> None:
-        """Take the nearest transition that reads `failed` and passes, on a node or above it."""
         for candidate in (node, *self.tree.ancestors(node)):
-            self.outcomes.add((candidate.name, "failed"))
-            for transition in candidate.transitions:
-                if transition.if_ is None or "failed" not in self.expressions[transition.if_].reads:
-                    continue
-                if self.passes(candidate, transition):
-                    self.take(candidate, transition)
-                    return
+            if self.offer(candidate, "failed"):
+                return
         raise _FaultError("a `failed` that no node handles", node)
 
     def take(self, node: Node, transition: Transition) -> None:
@@ -396,10 +386,9 @@ class _Step:
             self.enter(self.tree.nodes[goto])
             return
         parent = self.tree.parent[node.name]
-        if goto == "failed":
-            self.failures.append(parent)
-        elif not any(name in self.active for name in parent.parallel):
-            self.outcomes.add((parent.name, "done"))
+        outcome: Outcome = "failed" if goto == "failed" else "done"
+        if outcome == "failed" or not any(name in self.active for name in parent.parallel):
+            self.outcomes.append((outcome, parent))
 
     def leave_inside(self, node: Node, graceful: bool) -> None:
         for name in node.inside:
@@ -413,7 +402,6 @@ class _Step:
 
     def leave(self, node: Node) -> None:
         self.active.discard(node.name)
-        self.outcomes = {outcome for outcome in self.outcomes if outcome[0] != node.name}
         self.calls = [c for c in self.calls if c.node != node.name or c.kind != "start"]
         self.clear_timers(
             [t for t in self.timers if isinstance(t, AfterTimer) and t.node == node.name]
@@ -503,9 +491,8 @@ class _Step:
         return value
 
     def holds(self, node: Node, source: str) -> bool:
-        outcomes: dict[str, Plain] = {name: (node.name, name) in self.outcomes for name in RESERVED}
         try:
-            return evaluate_bool(self.expressions[source], ChainMap(outcomes, self.blackboard))
+            return evaluate_bool(self.expressions[source], self.blackboard)
         except ExpressionError as error:
             raise _FaultError(f"an expression error: {error}", node) from None
 
