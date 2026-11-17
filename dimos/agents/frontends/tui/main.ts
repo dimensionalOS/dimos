@@ -737,7 +737,6 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     openMenu: () => {
       closeSwitcher();
       const view = new MenuView({
-        inventory,
         ui,
         current: showing?.id ?? null,
         attach: (conversation) => {
