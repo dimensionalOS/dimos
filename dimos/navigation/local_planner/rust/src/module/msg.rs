@@ -26,15 +26,12 @@ use lcm_msgs::std_msgs::{Header, Time};
 /// A plan waypoint as the laws and the planner see it: `(x, y, yaw)`.
 pub type State = [f64; 3];
 
-/// `header.seq` of a path whose last pose's yaw is the goal heading.
-pub const HEADING_GOAL_SEQ: i32 = 1;
-
-/// The goal heading a path carries, if its last pose's yaw is one.
+/// The heading a path ends on: its last pose's yaw, or None when that pose carries no
+/// orientation (an all-zero quaternion).
 pub fn heading_of(path: &Path) -> Option<f64> {
-    if path.header.seq != HEADING_GOAL_SEQ {
-        return None;
-    }
-    path.poses.last().map(|p| yaw_of(&p.pose.orientation))
+    let q = &path.poses.last()?.pose.orientation;
+    let none = q.x == 0.0 && q.y == 0.0 && q.z == 0.0 && q.w == 0.0;
+    (!none).then(|| yaw_of(q))
 }
 
 /// Yaw of a quaternion, matching `Quaternion.euler[2]` (scipy "xyz" extrinsic, the ROS

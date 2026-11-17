@@ -43,10 +43,6 @@ use tracing::{debug, info, warn};
 
 type Xyzi = (f32, f32, f32, f32);
 
-/// `header.seq` of a path whose last pose's yaw is the goal heading, the value the
-/// local planner's `msg::HEADING_GOAL_SEQ` reads.
-const HEADING_GOAL_SEQ: i32 = 1;
-
 /// State shared between the handle loop and the worker.
 type Shared<T> = Arc<Mutex<Option<T>>>;
 
@@ -1334,8 +1330,8 @@ fn empty_path(frame_id: &str, stamp: Time) -> Path {
     }
 }
 
-/// The route as a path. With a heading, the last pose faces it and the header is
-/// flagged, so the local planner and the follower end on that pose.
+/// The route as a path. Its poses carry no orientation (an all-zero quaternion), except
+/// the last when there is a goal heading, which faces it.
 fn build_path_from_waypoints(
     waypoints: &[Xyz],
     heading: Option<f32>,
@@ -1350,15 +1346,14 @@ fn build_path_from_waypoints(
             header: header(frame_id, stamp.clone()),
             pose: match heading {
                 Some(yaw) if k == last => pose_facing(w, yaw),
-                _ => pose_at(w, 1.0),
+                _ => pose_at(w, 0.0),
             },
         })
         .collect();
-    let mut header = header(frame_id, stamp);
-    if heading.is_some() {
-        header.seq = HEADING_GOAL_SEQ;
+    Path {
+        header: header(frame_id, stamp),
+        poses,
     }
-    Path { header, poses }
 }
 
 /// Emit edges as alternating PoseStamped pairs with orientation.w carrying
@@ -1578,20 +1573,21 @@ mod tests {
         assert_eq!(path_heading(&full, &goal_at(1, (5.0, 0.0, 0.0))), None);
 
         let stamp = Time { sec: 0, nsec: 0 };
-        let flagged = build_path_from_waypoints(
+        let facing = build_path_from_waypoints(
             &wp,
             Some(std::f32::consts::FRAC_PI_2),
             "odom",
             stamp.clone(),
         );
-        assert_eq!(flagged.header.seq, HEADING_GOAL_SEQ);
-        let last = &flagged.poses[1].pose.orientation;
+        let last = &facing.poses[1].pose.orientation;
         let half = std::f64::consts::FRAC_PI_4;
         assert!((last.z - half.sin()).abs() < 1e-6 && (last.w - half.cos()).abs() < 1e-6);
-        assert_eq!(flagged.poses[0].pose.orientation.w, 1.0);
+        assert_eq!(goal_yaw(&facing.poses[0].pose.orientation), Ok(None));
         let plain = build_path_from_waypoints(&wp, None, "odom", stamp);
-        assert_eq!(plain.header.seq, 0);
-        assert_eq!(plain.poses[1].pose.orientation.w, 1.0);
+        assert!(plain
+            .poses
+            .iter()
+            .all(|p| goal_yaw(&p.pose.orientation) == Ok(None)));
     }
 
     #[test]

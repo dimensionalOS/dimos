@@ -466,16 +466,17 @@ mod tests {
         assert_eq!(goal_of(&path_of(&[])), None);
         assert_eq!(
             goal_of(&path_of(&[[0.0, 0.0, 0.0], [1.0, 2.0, 0.0]])),
-            Some(point(1.0, 2.0))
+            Some(pose(1.0, 2.0, 0.0))
         );
     }
 
     #[test]
-    fn a_flagged_path_carries_its_last_yaw_as_the_goal_heading() {
+    fn a_path_ends_on_its_last_yaw_unless_that_pose_has_no_orientation() {
         let mut p = path_of(&[[0.0, 0.0, 0.0], [1.0, 2.0, 0.5]]);
-        assert_eq!(goal_of(&p), Some(point(1.0, 2.0)));
-        p.header.seq = msg::HEADING_GOAL_SEQ;
         assert_eq!(goal_of(&p), Some(pose(1.0, 2.0, 0.5)));
+        p.poses[1].pose.orientation.z = 0.0;
+        p.poses[1].pose.orientation.w = 0.0;
+        assert_eq!(goal_of(&p), Some(point(1.0, 2.0)));
     }
 
     #[test]

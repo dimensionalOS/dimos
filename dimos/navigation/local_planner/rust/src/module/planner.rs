@@ -317,7 +317,7 @@ pub fn plan_once(
         unseen_cost: config.unseen_cost,
         soft: &soft,
     };
-    let (states, honored) = match plan_explored(
+    let states = match plan_explored(
         &cloud,
         &terrain,
         pose,
@@ -328,7 +328,7 @@ pub fn plan_once(
         incumbent,
         COMMIT_MARGIN,
     ) {
-        Some((s, honored)) if !s.is_empty() => (s, honored),
+        Some((s, _)) if !s.is_empty() => s,
         _ => {
             debug!(
                 plan_ms = ms_since(started),
@@ -361,11 +361,7 @@ pub fn plan_once(
         plan_ms = ms_since(started),
         "path planned"
     );
-    let mut path = msg::build_path(&states, &ts, t0, &config.world_frame, ground.z);
-    if honored {
-        path.header.seq = msg::HEADING_GOAL_SEQ;
-    }
-    path
+    msg::build_path(&states, &ts, t0, &config.world_frame, ground.z)
 }
 
 /// Owns the replan cadence and the publishing, off the dispatch loop.
@@ -776,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn a_honored_heading_flags_the_published_path() {
+    fn a_honored_heading_ends_the_published_path() {
         let cfg = config();
         let produced = plan_once(
             &cfg,
@@ -790,13 +786,12 @@ mod tests {
             None,
         );
         assert!(produced.poses.len() > 1);
-        assert_eq!(produced.header.seq, msg::HEADING_GOAL_SEQ);
-        let yaw = msg::heading_of(&produced).expect("flagged");
+        let yaw = msg::heading_of(&produced).expect("a heading");
         assert!((yaw - FRAC_PI_2).abs() < 1e-9, "yaw={yaw}");
     }
 
     #[test]
-    fn a_heading_the_body_cannot_hold_publishes_the_position_plan_unflagged() {
+    fn a_heading_the_body_cannot_hold_publishes_the_position_plan() {
         // a wall 0.4 m past the goal: the body fits beside it, not facing it
         let mut wall = Vec::new();
         let mut t = -2.0f32;
@@ -817,8 +812,8 @@ mod tests {
             None,
         );
         assert!(produced.poses.len() > 1, "a plan, not a stub");
-        assert_eq!(produced.header.seq, 0);
-        assert_eq!(msg::heading_of(&produced), None);
+        let yaw = msg::heading_of(&produced).expect("the plan's own end heading");
+        assert!(yaw.abs() > 0.5, "does not face the wall: yaw={yaw}");
     }
 
     #[test]
