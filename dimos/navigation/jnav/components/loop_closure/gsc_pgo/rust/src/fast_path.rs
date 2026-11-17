@@ -15,19 +15,20 @@
 
 //! Solver fast path (`solver_fast_path_enabled`): the closures GNC has not judged yet, published before the GNC solve that
 //! judges them lands. One idea: the published map is GNC's graph plus a least squares over the keyframes nearest the robot,
-//! everything else held where the published map has it.
+//! everything else held exactly where the published map has it.
 //!
 //! - Window: the keyframes the published map puts nearest the newest one, as many as `solver_fast_path_budget_scans`
-//!   affords at `fast_path_scans_per_free_keyframe` (keyframe 0 held, as GNC holds it).
-//! - Graph: the free keyframes, keyframe 0 and every held end of a closure in it, in path order; odometry between path
-//!   neighbours, a held stretch between two of them summarized as one edge with the covariance the closure search judges
-//!   a closure's yank by (the newest GNC solve's, plus odometry since). That slack is where a loop's correction belongs.
+//!   affords at `fast_path_scans_per_free_keyframe` (keyframe 0 held, as GNC holds it), ranked by distance.
+//! - Taper: the nearer `1 - solver_fast_path_taper_fraction` of the window is free; each farther one is pulled to its
+//!   published pose (position and rotation) with the covariance the closure search judges a closure's yank by between it
+//!   and the robot (the newest GNC solve's, plus odometry since), times (1 - t) / t at taper depth t: free where the taper
+//!   starts, as loose as the map's own uncertainty halfway, fixed at the window's edge.
+//! - Graph: the window, its odometry, the held keyframes its odometry and closures reach (fixed).
 //! - Closures: the kept ones, the ones the published map already holds, and every pending one (unjudged, not refused)
 //!   with an end in the window: a job reapplies everything at once.
 //! - Gate (GNC's own): every closure in the window within GNC's cutoff at its scaled variance; else the worst new one is
 //!   refused (left to GNC) and the rest stay pending.
-//! - Publish: free keyframes at the solve, each summarized held stretch at the conditional mean of a chain given its two
-//!   ends (the correction interpolated by cumulative odometry variance), newer keyframes riding the newest one.
+//! - Publish: the window at the solve, newer keyframes riding the newest one; no other keyframe moves.
 //!
 //! A logical-execution-time job (one worker, one job out), held to its estimate in deterministic mode. GNC never reads
 //! what it publishes; an adopted GNC solve drops it, and the next job reapplies the closures GNC has not judged.
@@ -36,20 +37,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::adoption_schedule::JobSlot;
-use crate::big_picture_fit::{closure_edges, exp, log, odometry_edges_ending, solve_fast_path, Edge, SolveConfig};
+use crate::big_picture_fit::{closure_edges, odometry_edges_ending, solve_fast_path, Edge, FastSolve, SolveConfig};
 use crate::closure_search_schedule::{hold_scans, SearchPool};
 use crate::gsc_pgo::{Config, GscPgo};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::store::{KeyFrames, SolvedPoses};
 
-/// What the worker returns: the free keyframes' poses, each closure's residual over GNC's cutoff (problem order), each
-/// summarized stretch (its two ends) and the cumulative odometry variance to interpolate it by, and seconds.
+/// What the worker returns: the window's poses, each closure's residual over GNC's cutoff (problem order), and seconds.
 struct FastPathResult {
     rotations: Vec<Mat3>,
     positions: Vec<Vec3>,
     over_cutoff: Vec<f64>,
-    stretches: Vec<(usize, usize)>,
-    cumulative: Vec<f64>,
     converged: bool,
     seconds: f64,
 }
@@ -63,7 +61,7 @@ pub struct FastPathJob {
     estimate_raw_scans: f64,
     /// GNC solves adopted at dispatch: its result is stale once another has been.
     adopted_solves: u64,
-    /// The free keyframes (the result's order), the keyframes then, and the window's closures with which of them are new.
+    /// The window (the result's order), the keyframes then, and the window's closures with which of them are new.
     free: Vec<usize>,
     keyframes: usize,
     closures: Vec<usize>,
@@ -154,7 +152,7 @@ impl GscPgo {
             }
         }
     }
-    /// The window: the `budget` keyframes the published map puts nearest the newest one, keyframe 0 held (ascending).
+    /// The window: the `budget` keyframes the published map puts nearest the newest one, keyframe 0 held (nearest first).
     fn fast_path_window(&self) -> Vec<usize> {
         let published = self.key_poses();
         let n = published.len();
@@ -168,9 +166,8 @@ impl GscPgo {
             near.select_nth_unstable_by(budget, |a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
             near.truncate(budget);
         }
-        let mut free: Vec<usize> = near.into_iter().map(|(_, k)| k).collect();
-        free.sort_unstable();
-        free
+        near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        near.into_iter().map(|(_, k)| k).collect()
     }
     fn dispatch_fast_path(&mut self) {
         let n = self.key_poses.len();
@@ -218,22 +215,12 @@ impl GscPgo {
             .send(Box::new(move || {
                 let started = std::time::Instant::now();
                 let graph = window_graph(&published, &config, noise, covariance, &window, selected);
-                let fast = solve_fast_path(
-                    &graph.rotations,
-                    &graph.positions,
-                    &graph.free,
-                    &graph.odometry,
-                    &graph.closures,
-                    &solve_config(&config),
-                    config.solver_fast_path_max_lm_steps,
-                );
+                let fast = solve_window(&graph, &config);
                 let count = window.len();
                 *finish.done.lock().expect("fast path slot") = Some(FastPathResult {
                     rotations: fast.rotations[..count].to_vec(),
                     positions: fast.positions[..count].to_vec(),
                     over_cutoff: fast.over_cutoff,
-                    stretches: graph.stretches,
-                    cumulative: graph.cumulative,
                     converged: fast.converged,
                     seconds: started.elapsed().as_secs_f64(),
                 });
@@ -332,35 +319,14 @@ impl GscPgo {
         self.fast_path_records.push(record);
         adopted
     }
-    /// Publish a passed job: its free keyframes at the solve, each summarized stretch's held keyframes at the conditional mean
-    /// of a chain given its two ends, newer keyframes riding the newest; returns the largest keyframe move (m).
+    /// Publish a passed job: the window at the solve, newer keyframes riding the newest; returns the largest move (m).
     fn publish_fast_path(&mut self, job: &FastPathJob, result: &FastPathResult) -> f64 {
         let n = job.keyframes;
         let published = self.key_poses();
         let (mut rotations, mut positions): (Vec<Mat3>, Vec<Vec3>) = (0..n).map(|k| published.global(k)).unzip();
-        let (before_rotations, before_positions) = (rotations.clone(), positions.clone());
+        let before_positions = positions.clone();
         for (i, &k) in job.free.iter().enumerate() {
             (rotations[k], positions[k]) = (result.rotations[i], result.positions[i]);
-        }
-        // a keyframe's correction: the rigid motion taking its published pose to its new one (rotation vector, translation)
-        let correction = |k: usize, rotations: &[Mat3], positions: &[Vec3]| {
-            let turn = mat3::mat_mul(&rotations[k], &mat3::transpose(&before_rotations[k]));
-            (log(&turn), mat3::sub(&positions[k], &mat3::mat_vec(&turn, &before_positions[k])))
-        };
-        for &(a, b) in &result.stretches {
-            let ((wa, ta), (wb, tb)) = (correction(a, &rotations, &positions), correction(b, &rotations, &positions));
-            let (ca, span) = (result.cumulative[a], result.cumulative[b] - result.cumulative[a]);
-            for j in a + 1..b {
-                let s = if span > 0.0 {
-                    (result.cumulative[j] - ca) / span
-                } else {
-                    (j - a) as f64 / (b - a) as f64
-                };
-                let mix = |x: &Vec3, y: &Vec3| -> Vec3 { std::array::from_fn(|c| x[c] + s * (y[c] - x[c])) };
-                let turn = exp(mix(&wa, &wb));
-                rotations[j] = mat3::mat_mul(&turn, &before_rotations[j]);
-                positions[j] = mat3::add(&mat3::mat_vec(&turn, &before_positions[j]), &mix(&ta, &tb));
-            }
         }
         let moved = (0..n)
             .map(|k| mat3::norm(&mat3::sub(&positions[k], &before_positions[k])))
@@ -393,31 +359,32 @@ fn solve_config(config: &Config) -> SolveConfig {
     }
 }
 
-/// The window's problem: nodes (free keyframes first, then held ones), poses, edges, and its summarized stretches.
-struct WindowGraph {
-    rotations: Vec<Mat3>,
-    positions: Vec<Vec3>,
-    free: Vec<bool>,
-    odometry: Vec<Edge>,
-    closures: Vec<Edge>,
-    /// Each summarized held stretch's two ends (keyframe ids), and each keyframe's cumulative odometry position variance.
-    stretches: Vec<(usize, usize)>,
-    cumulative: Vec<f64>,
+/// The window's problem: nodes (the window nearest first, then the held keyframes it reaches), poses, edges, and per
+/// window keyframe the variances of its pull to its published pose before the taper scales them.
+#[derive(Clone)]
+#[cfg_attr(feature = "native", derive(serde::Serialize, serde::Deserialize))]
+pub struct WindowGraph {
+    pub keyframes: Vec<usize>,
+    pub rotations: Vec<Mat3>,
+    pub positions: Vec<Vec3>,
+    pub odometry: Vec<Edge>,
+    pub closures: Vec<Edge>,
+    pub pull: Vec<[f64; 6]>,
 }
 
-/// The path through the free keyframes, keyframe 0 and every held closure end, in order: odometry between neighbours one
-/// keyframe apart, a longer gap summarized as one edge (its published relative pose, the closure search's position
-/// covariance between its ends and its odometry's rotation variance, on its start's axes). Held-held gaps are left out.
+/// The window, its odometry steps and the held keyframes they and its closures reach; each window keyframe's pull is the
+/// closure search's position covariance between it and the robot and its odometry's rotation variance since, on its axes.
 fn window_graph(
     published: &KeyFrames,
     config: &Config,
     noise: [f64; 4],
     covariance: Option<(usize, Arc<Vec<Mat3>>)>,
-    free: &[usize],
+    window: &[usize],
     selected: Vec<crate::gsc_pgo::CommittedClosure>,
 ) -> WindowGraph {
-    let mut node = free.to_vec();
-    let mut slot: HashMap<usize, usize> = free.iter().enumerate().map(|(i, &k)| (k, i)).collect();
+    let n = published.len();
+    let mut node = window.to_vec();
+    let mut slot: HashMap<usize, usize> = window.iter().enumerate().map(|(i, &k)| (k, i)).collect();
     let mut index_of = |k: usize, node: &mut Vec<usize>| -> usize {
         *slot.entry(k).or_insert_with(|| {
             node.push(k);
@@ -429,50 +396,76 @@ fn window_graph(
         e.from = index_of(e.from, &mut node);
         e.to = index_of(e.to, &mut node);
     }
-    let is_free = |k: usize| free.binary_search(&k).is_ok();
-    let mut path = node.clone();
-    path.push(0);
-    path.sort_unstable();
-    path.dedup();
+    let mut in_window = vec![false; n];
+    for &k in window {
+        in_window[k] = true;
+    }
+    // each window keyframe's step in, and its step out when the next keyframe is held
+    let mut odometry = Vec::new();
+    for &k in window {
+        for b in [k, k + 1] {
+            if b == k + 1 && (b >= n || in_window[b]) {
+                continue;
+            }
+            let mut edge = odometry_edges_ending(published, config, noise, b..b + 1).remove(0);
+            (edge.from, edge.to) = (index_of(b - 1, &mut node), index_of(b, &mut node));
+            odometry.push(edge);
+        }
+    }
     let sums = crate::loop_overlap::odometry_error_estimate_sums(published, config, noise);
     let solved = covariance.as_ref().map(|(tip, covariance)| (*tip, covariance.as_slice()));
-    let (mut odometry, mut stretches) = (Vec::new(), Vec::new());
-    for pair in path.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
-        if !is_free(a) && !is_free(b) {
-            continue;
-        }
-        let (from, to) = (index_of(a, &mut node), index_of(b, &mut node));
-        if b == a + 1 {
-            let mut edge = odometry_edges_ending(published, config, noise, b..b + 1).remove(0);
-            (edge.from, edge.to) = (from, to);
-            odometry.push(edge);
-            continue;
-        }
-        let ((r0, p0), (r1, p1)) = (published.global(a), published.global(b));
-        let back = mat3::transpose(&r0);
-        let local = |world: &Mat3| mat3::mat_mul(&mat3::mat_mul(&back, world), &r0);
-        let position = local(&crate::loop_overlap::relative_covariance(published, &sums, solved, a, b));
-        let rotation = local(&mat3::sub_mat(&sums[b][1], &sums[a][1]));
-        odometry.push(Edge {
-            from,
-            to,
-            rotation: mat3::mat_mul(&back, &r1),
-            translation: mat3::mat_vec(&back, &mat3::sub(&p1, &p0)),
-            variances: [rotation[0][0], rotation[1][1], rotation[2][2], position[0][0], position[1][1], position[2][2]],
-        });
-        stretches.push((a, b));
-    }
-    let cumulative = sums.iter().map(|s| s[0][0][0] + s[0][1][1] + s[0][2][2]).collect();
+    let newest = n - 1;
+    let pull = window
+        .iter()
+        .map(|&k| {
+            let (r, _) = published.global(k);
+            let local = |world: &Mat3| mat3::mat_mul(&mat3::mat_mul(&mat3::transpose(&r), world), &r);
+            let position = local(&crate::loop_overlap::relative_covariance(published, &sums, solved, k, newest));
+            let rotation = local(&mat3::sub_mat(&sums[newest][1], &sums[k][1]));
+            [rotation[0][0], rotation[1][1], rotation[2][2], position[0][0], position[1][1], position[2][2]]
+        })
+        .collect();
     let (rotations, positions): (Vec<Mat3>, Vec<Vec3>) = node.iter().map(|&k| published.global(k)).unzip();
-    let free_mask = (0..node.len()).map(|i| i < free.len()).collect();
     WindowGraph {
+        keyframes: node,
         rotations,
         positions,
-        free: free_mask,
         odometry,
         closures,
-        stretches,
-        cumulative,
+        pull,
     }
+}
+
+/// Solve a window: the nearer `1 - solver_fast_path_taper_fraction` free, each taper keyframe pulled to its published pose
+/// with its pull times (1 - t) / t at taper depth t in (0, 1), the held keyframes fixed.
+pub fn solve_window(graph: &WindowGraph, config: &Config) -> FastSolve {
+    let count = graph.pull.len();
+    let fraction = config.solver_fast_path_taper_fraction.clamp(0.0, 1.0);
+    let free_count = count - (fraction * count as f64).round() as usize;
+    let (mut rotations, mut positions) = (graph.rotations.clone(), graph.positions.clone());
+    let mut free: Vec<bool> = (0..rotations.len()).map(|i| i < count).collect();
+    let mut odometry = graph.odometry.clone();
+    for r in free_count..count {
+        let t = (r - free_count + 1) as f64 / (count - free_count + 1) as f64;
+        // the pull is an edge from a fixed copy of the keyframe at its published pose
+        odometry.push(Edge {
+            from: rotations.len(),
+            to: r,
+            rotation: mat3::identity(),
+            translation: [0.0; 3],
+            variances: graph.pull[r].map(|v| v.max(f64::MIN_POSITIVE) * (1.0 - t) / t),
+        });
+        rotations.push(graph.rotations[r]);
+        positions.push(graph.positions[r]);
+        free.push(false);
+    }
+    solve_fast_path(
+        &rotations,
+        &positions,
+        &free,
+        &odometry,
+        &graph.closures,
+        &solve_config(config),
+        config.solver_fast_path_max_lm_steps,
+    )
 }

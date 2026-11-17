@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The fast path's window on a loop 3000 keyframes long: only the keyframes nearest the robot are freed, so the closure's
-//! span does not matter; its correction is published before GNC lands, continuous along the held stretch between the
-//! loop's two ends; a wrong closure is left to GNC; GNC's solve supersedes either way.
+//! The fast path's window on a loop 3000 keyframes long whose odometry drifted over its last `DRIFTING` steps: only the
+//! keyframes nearest the robot move, so the closure's span does not matter; its correction is published before GNC lands,
+//! bent into the window (its farther half tapering to held) while the rest of the loop stays exactly where it was; a wrong
+//! closure is left to GNC; GNC's solve supersedes either way.
 
 use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config, GscPgo, Mode, PoseWithTime};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
@@ -22,6 +23,8 @@ use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 const KEYFRAMES: usize = 3000;
 /// Keyframe spacing (m), as the small-loop fast path test's.
 const SPACING: f64 = 0.785;
+/// The odometry drifts over the loop's last this many steps (inside the window's free half): the correction is local.
+const DRIFTING: usize = 100;
 
 /// Keyframe k's true pose on a circle KEYFRAMES * SPACING around.
 fn truth(k: usize) -> (Mat3, Vec3) {
@@ -39,11 +42,13 @@ fn scan(pgo: &mut GscPgo, scan: usize, (rotation, translation): (Mat3, Vec3)) {
 /// Drive the loop, close it newest -> 0, then hold still; per scan, whether GNC has yet to judge the closure and the newest
 /// keyframe's published distance from the truth. The closure's rotation is off by `closure_turn` rad (0: the truth).
 fn run(window: bool, drift: f64, closure_turn: f64) -> (GscPgo, Vec<(bool, f64)>) {
-    run_with(window, drift, closure_turn, false)
+    let (pgo, trace, _) = run_with(window, drift, closure_turn, false);
+    (pgo, trace)
 }
 
-/// `run`; with `stop_at_publish`, it stops on the first scan the fast path published on.
-fn run_with(window: bool, drift: f64, closure_turn: f64, stop_at_publish: bool) -> (GscPgo, Vec<(bool, f64)>) {
+/// `run`; with `stop_at_publish`, it stops on the first scan the fast path published on, and also returns the published
+/// positions on the scan before it.
+fn run_with(window: bool, drift: f64, closure_turn: f64, stop_at_publish: bool) -> (GscPgo, Vec<(bool, f64)>, Vec<Vec3>) {
     let mut config = Config {
         mode: Mode::Deterministic,
         solver_fast_path_enabled: window,
@@ -58,17 +63,18 @@ fn run_with(window: bool, drift: f64, closure_turn: f64, stop_at_publish: bool) 
     dc.solve_scans_scale = 30.0 / (KEYFRAMES as f64).powf(dc.solve_keyframe_power) / 2f64.powf(dc.solve_closure_power);
     let mut pgo = GscPgo::new(config);
     pgo.set_wait_for_due_jobs(true);
-    // the true steps, each turned `drift` rad further
+    // the true steps, the last DRIFTING each turned `drift` rad further
     let odometry: Vec<(Mat3, Vec3)> = {
         let ((r0, p0), (_, p1)) = (truth(0), truth(1));
         let local = mat3::mat_vec(&mat3::transpose(&r0), &mat3::sub(&p1, &p0));
-        let turn = mat3::rot_z(std::f64::consts::TAU / KEYFRAMES as f64 + drift);
+        let step = std::f64::consts::TAU / KEYFRAMES as f64;
         let (mut rotation, mut position) = truth(0);
         let mut out = Vec::with_capacity(KEYFRAMES);
-        for _ in 0..KEYFRAMES {
+        for k in 0..KEYFRAMES {
             out.push((rotation, position));
             position = mat3::add(&position, &mat3::mat_vec(&rotation, &local));
-            rotation = mat3::mat_mul(&rotation, &turn);
+            let extra = if k + 1 >= KEYFRAMES - DRIFTING { drift } else { 0.0 };
+            rotation = mat3::mat_mul(&rotation, &mat3::rot_z(step + extra));
         }
         out
     };
@@ -81,7 +87,11 @@ fn run_with(window: bool, drift: f64, closure_turn: f64, stop_at_publish: bool) 
     let back = mat3::transpose(&r0);
     pgo.commit_closure(KEYFRAMES - 1, 0, mat3::mat_mul(&mat3::mat_mul(&back, &r1), &mat3::rot_z(closure_turn)), mat3::mat_vec(&back, &mat3::sub(&p1, &p0)), 0.01);
     let mut trace = Vec::new();
+    let mut before = Vec::new();
     for s in KEYFRAMES..KEYFRAMES + 60 {
+        if stop_at_publish {
+            before = (0..KEYFRAMES).map(|k| pgo.key_poses().position(k)).collect();
+        }
         scan(&mut pgo, s, odometry[KEYFRAMES - 1]);
         pgo.wait_for_due_solve();
         let newest = mat3::norm(&mat3::sub(&pgo.key_poses().position(KEYFRAMES - 1), &truth(KEYFRAMES - 1).1));
@@ -90,7 +100,7 @@ fn run_with(window: bool, drift: f64, closure_turn: f64, stop_at_publish: bool) 
             break;
         }
     }
-    (pgo, trace)
+    (pgo, trace, before)
 }
 
 fn largest_difference(a: &GscPgo, b: &GscPgo) -> f64 {
@@ -102,7 +112,7 @@ fn largest_difference(a: &GscPgo, b: &GscPgo) -> f64 {
 #[test]
 fn the_window_publishes_a_small_change_on_a_3000_keyframe_loop_before_gnc() {
     // ~10 cm apart at the closure
-    let (drift, turn) = (9e-8, 0.0);
+    let (drift, turn) = (2.5e-5, 0.0);
     let (without, slow) = run(false, drift, turn);
     let (with, fast) = run(true, drift, turn);
     let drifted = slow[0].1;
@@ -124,10 +134,10 @@ fn the_window_publishes_a_small_change_on_a_3000_keyframe_loop_before_gnc() {
 }
 
 #[test]
-fn the_correction_is_continuous_along_the_held_stretch() {
-    // ~1 m apart at the closure: the window's free runs at both ends move, and the 2000-keyframe held stretch between
-    // them has to follow without a kink at either end of it
-    let (drift, turn) = (9e-7, 0.0);
+fn the_correction_bends_inside_the_window_without_a_kink() {
+    // ~1 m apart at the closure: the robot's own run bends back onto the loop's start, without a kink where the window
+    // meets the 2500-keyframe held stretch
+    let (drift, turn) = (2.5e-4, 0.0);
     let (_, slow) = run(false, drift, turn);
     let (with, fast) = run(true, drift, turn);
     let before_gnc = slow.iter().take_while(|(unjudged, _)| *unjudged).count();
@@ -143,9 +153,36 @@ fn the_correction_is_continuous_along_the_held_stretch() {
     assert!(worst < 0.01 * record.max_move_m.max(0.1), "a step stretched by {worst:.4} m for a {:.3} m move", record.max_move_m);
 }
 
+#[test]
+fn keyframes_outside_the_window_do_not_move_and_its_farther_half_tapers() {
+    let drift = 2.5e-4;
+    let (_, slow) = run(false, drift, 0.0);
+    let (with, _, before) = run_with(true, drift, 0.0, true);
+    let published: Vec<Vec3> = (0..KEYFRAMES).map(|k| with.key_poses().position(k)).collect();
+    let record = &with.fast_path_records()[0];
+    assert_eq!(record.outcome, "adopted", "{record:?}");
+    // the window: the `free` keyframes the map before the publish puts nearest the newest
+    let mut rank: Vec<usize> = (1..KEYFRAMES).collect();
+    let distance = |k: usize| mat3::norm(&mat3::sub(&before[k], &before[KEYFRAMES - 1]));
+    rank.sort_by(|&a, &b| distance(a).total_cmp(&distance(b)).then(a.cmp(&b)));
+    let moved = |k: usize| mat3::norm(&mat3::sub(&published[k], &before[k]));
+    for &k in &rank[record.free..] {
+        assert_eq!(moved(k), 0.0, "keyframe {k} outside the window moved");
+    }
+    // the nearer half moves freely; the outermost tenth of the window barely
+    let half = record.free / 2;
+    let free_move = rank[..half].iter().map(|&k| moved(k)).fold(0.0, f64::max);
+    let edge_move = rank[record.free - record.free / 10..record.free].iter().map(|&k| moved(k)).fold(0.0, f64::max);
+    assert!(free_move > 0.3, "the free half moved {free_move:.3} m");
+    assert!(edge_move < 0.1 * free_move, "the window's edge moved {edge_move:.3} m, its free half {free_move:.3} m");
+    // and the loop is still closed: the newest keyframe nearer the truth than the odometry left it
+    let newest = mat3::norm(&mat3::sub(&published[KEYFRAMES - 1], &truth(KEYFRAMES - 1).1));
+    assert!(newest < 0.5 * slow[0].1, "window: {newest:.3} m from the truth, the odometry {:.3} m", slow[0].1);
+}
+
 /// `run` with the window, stopped once the first job landed: the published positions then, before GNC.
 fn run_until_published(drift: f64) -> (GscPgo, Vec<Vec3>) {
-    let (pgo, _) = run_with(true, drift, 0.0, true);
+    let (pgo, _, _) = run_with(true, drift, 0.0, true);
     let positions = (0..KEYFRAMES).map(|k| pgo.key_poses().position(k)).collect();
     (pgo, positions)
 }
@@ -154,7 +191,7 @@ fn run_until_published(drift: f64) -> (GscPgo, Vec<Vec3>) {
 fn the_window_leaves_a_wrong_closure_to_gnc() {
     // a closure turned 150 degrees: far past what the loop and its own variance allow, so GNC rejects it, and so does the
     // window's cutoff
-    let (drift, turn) = (9e-8, 150f64.to_radians());
+    let (drift, turn) = (2.5e-5, 150f64.to_radians());
     let (without, slow) = run(false, drift, turn);
     let (with, fast) = run(true, drift, turn);
     assert_eq!(with.committed_closures().weight(0), 0.0, "GNC rejected the closure");

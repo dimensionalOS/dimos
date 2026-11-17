@@ -184,6 +184,8 @@ class PGOConfig(NativeModuleConfig):
     solver_fast_path_budget_scans: float = 1.0
     # its Levenberg-Marquardt pass stops after this many steps
     solver_fast_path_max_lm_steps: int = 10
+    # the farther part of its window (by rank) is pulled to the published map, ever harder out to the window's edge
+    solver_fast_path_taper_fraction: float = 0.5
     # closure search pipeline: SC buffer (most similar first) -> fast-match workers -> verification buffer -> workers
     fast_match_workers: int = 2
     sc_buffer_size: int = 4

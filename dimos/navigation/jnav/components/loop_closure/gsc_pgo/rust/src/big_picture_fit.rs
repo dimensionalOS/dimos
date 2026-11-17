@@ -35,6 +35,7 @@ pub use crate::world_positions::{solve_with_priors, PositionPrior};
 
 /// Relative pose `from` -> `to` in `from`'s frame (R_to = R_from rotation, p_to = p_from + R_from translation).
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "native", derive(serde::Serialize, serde::Deserialize))]
 pub struct Edge {
     pub from: usize,
     pub to: usize,
@@ -156,11 +157,11 @@ pub fn solve(
 
 /// The solver fast path's window solve (`fast_path`): its poses, whether LM reached a minimum, and each closure's whitened
 /// squared residual over GNC's cutoff at GNC's scaled variances (under 1 everywhere: GNC would keep every closure as is).
-pub(crate) struct FastSolve {
-    pub(crate) rotations: Vec<Mat3>,
-    pub(crate) positions: Vec<Vec3>,
-    pub(crate) converged: bool,
-    pub(crate) over_cutoff: Vec<f64>,
+pub struct FastSolve {
+    pub rotations: Vec<Mat3>,
+    pub positions: Vec<Vec3>,
+    pub converged: bool,
+    pub over_cutoff: Vec<f64>,
 }
 
 /// GNC's two stages without GNC's iterations: least squares with every closure in at GNC's scaled variances, read against

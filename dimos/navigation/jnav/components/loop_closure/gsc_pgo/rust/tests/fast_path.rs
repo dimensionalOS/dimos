@@ -60,6 +60,8 @@ fn run(fast_path: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
         // keyframes without clouds
         auto_aggregate_cloud_size: 0,
         drop_reseen_points: false,
+        // the whole 40-keyframe loop free, so the window's problem is GNC's own
+        solver_fast_path_taper_fraction: 0.0,
         ..Config::default()
     };
     // GNC held 30 scans, the fast path one

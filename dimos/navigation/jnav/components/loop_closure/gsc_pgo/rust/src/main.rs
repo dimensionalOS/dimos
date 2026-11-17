@@ -103,6 +103,7 @@ config! {
     solver_fast_path_enabled: bool,
     solver_fast_path_budget_scans: f64,
     solver_fast_path_max_lm_steps: usize,
+    solver_fast_path_taper_fraction: f64,
     fast_match_workers: usize,
     sc_buffer_size: usize,
     verification_workers: usize,

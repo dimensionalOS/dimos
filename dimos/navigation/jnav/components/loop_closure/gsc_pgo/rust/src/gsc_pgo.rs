@@ -582,6 +582,8 @@ pub struct Config {
     pub solver_fast_path_budget_scans: f64,
     /// Its Levenberg-Marquardt pass stops after this many steps.
     pub solver_fast_path_max_lm_steps: usize,
+    /// The farther part of its window (by rank) pulled to the published map, ever harder out to the window's edge.
+    pub solver_fast_path_taper_fraction: f64,
     /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
     /// Search pipeline (`closure_search_schedule`): candidate buffer -> fast-match workers; uncertain matches -> verification buffer -> workers.
@@ -792,6 +794,7 @@ impl Default for Config {
             solver_fast_path_enabled: false,
             solver_fast_path_budget_scans: 1.0,
             solver_fast_path_max_lm_steps: 10,
+            solver_fast_path_taper_fraction: 0.5,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,
