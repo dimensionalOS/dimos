@@ -1,6 +1,6 @@
 # Eval worker image for `dimos evals run --docker`; see docs/usage/evals-docker.md.
 # Build from the repo root after `git lfs pull --include="misc/DimSim/**"`.
-FROM ubuntu:24.04
+FROM ubuntu:25.10
 
 # Keep in sync with dimos/utils/deno.py (DENO_VERSION) and
 # dimos/simulation/dimsim/deno_utils.py (playwright version).
