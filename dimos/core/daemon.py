@@ -176,6 +176,9 @@ def run_coordinator(
     from dimos.memory.tap import recording
 
     os.environ[DIMOS_RUN_ID_ENV] = run_id
+    # Build can launch detached viewers before a module fails to start. Arm the
+    # sweep first so startup failures receive the same cleanup as normal exits.
+    spawn_watchdog(run_id, log_dir=log_dir)
     coordinator = ModuleCoordinator.build(blueprint, config, remote_module_refs=remote_module_refs)
     try:
         if not coordinator.health_check():
@@ -184,7 +187,6 @@ def run_coordinator(
     except BaseException:
         coordinator.stop()
         raise
-    spawn_watchdog(run_id, log_dir=log_dir)
     install_signal_handlers(run_id, coordinator, sigint=sigint)
     try:
         if on_ready is not None:
