@@ -204,6 +204,11 @@ impl GscPgo {
                 }
             })
             .unzip();
+        // an unjudged closure not between the trail and the rest of the map is not the trail's to move: it waits for GNC
+        // (it rides along again if a later job's trail reaches it), so it does not start a job every scan
+        let elsewhere: Vec<usize> =
+            (judged..self.committed_closures.len()).filter(|i| pending(i) && !closures.contains(i)).collect();
+        self.fast_path_refused.extend(elsewhere);
         if !new.iter().any(|&new| new) {
             return;
         }
