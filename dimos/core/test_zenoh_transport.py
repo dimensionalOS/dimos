@@ -41,6 +41,7 @@ from dimos.core.transport import (
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.zenohpubsub import (
+    QOS_CONTROL,
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
     Topic as ZenohTopic,
@@ -224,15 +225,17 @@ def test_stop_and_restart(session_pool) -> None:
     t.stop()
 
 
-def test_zenoh_transport_roundtrip_preserves_topic_qos() -> None:
-    t = ZenohTransport(ZenohTopic("dimos/camera/color", Image, qos=QOS_LATEST_WINS))
+@pytest.mark.parametrize("qos", [QOS_LATEST_WINS, QOS_CONTROL])
+def test_zenoh_transport_roundtrip_preserves_topic_qos(qos) -> None:
+    t = ZenohTransport(ZenohTopic("dimos/camera/color", Image, qos=qos))
     t2 = decode(encode(t))
     assert type(t2) is ZenohTransport
     assert t2.topic == t.topic  # topic, lcm_type and qos all round-trip
 
 
-def test_pzenoh_transport_roundtrip_preserves_topic_qos() -> None:
-    t = pZenohTransport(ZenohTopic("dimos/human_input", qos=QOS_NEVER_DROP))
+@pytest.mark.parametrize("qos", [QOS_NEVER_DROP, QOS_CONTROL])
+def test_pzenoh_transport_roundtrip_preserves_topic_qos(qos) -> None:
+    t = pZenohTransport(ZenohTopic("dimos/human_input", qos=qos))
     t2 = decode(encode(t))
     assert type(t2) is pZenohTransport
     assert t2.topic == "dimos/human_input"
@@ -257,11 +260,21 @@ def test_coerce_zenoh_to_lcm_typed(use_lcm) -> None:
     assert t.topic.topic == "/cmd_vel"
 
 
-def test_coerce_rescopes_a_plain_zenoh_transport_into_the_run(use_zenoh, mocker) -> None:
+@pytest.mark.parametrize("qos", [QOS_LATEST_WINS, QOS_NEVER_DROP, QOS_CONTROL])
+@pytest.mark.parametrize("typed", [True, False])
+def test_coerce_rescopes_a_plain_zenoh_transport_into_the_run(
+    use_zenoh, mocker, qos, typed
+) -> None:
     mocker.patch.object(global_config, "zenoh_domain", "r1")
-    t = _coerce_transport_to_backend(ZenohTransport("dimos/cmd_vel", Image))
-    assert type(t) is ZenohTransport
-    assert t.topic.topic == "dimos-domains/r1/cmd_vel"
+    original = (
+        ZenohTransport("dimos/cmd_vel", Image, qos=qos)
+        if typed
+        else pZenohTransport("dimos/cmd_vel", qos=qos)
+    )
+    t = _coerce_transport_to_backend(original)
+    assert type(t) is type(original)
+    assert t.cbor_encode() == {**original.cbor_encode(), "topic": "dimos-domains/r1/cmd_vel"}
+    assert t.publish_qos == qos.to_wire()
     assert _coerce_transport_to_backend(t) is t
     jpeg = JpegLcmTransport("/color_image", Image)
     assert _coerce_transport_to_backend(jpeg) is jpeg
