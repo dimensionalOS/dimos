@@ -52,7 +52,7 @@ def patrol() -> OrchestratorDefinition:
                 name="Patrolling",
                 children=["NextWaypoint", "Navigating"],
                 initial="NextWaypoint",
-                transitions=[Transition(trigger="estop", mode="immediate", goto="Estopped")],
+                transitions=[Transition(if_="estop", mode="immediate", goto="Estopped")],
             ),
             Node(
                 name="NextWaypoint",
@@ -68,7 +68,7 @@ def patrol() -> OrchestratorDefinition:
                 result="nav.goal",
                 transitions=[
                     Transition(
-                        trigger="arrived",
+                        if_="arrived",
                         goto="NextWaypoint",
                         set={"patrol.index": "patrol.index + 1"},
                     )
@@ -76,7 +76,7 @@ def patrol() -> OrchestratorDefinition:
             ),
             Node(
                 name="Estopped",
-                transitions=[Transition(trigger="estop_cleared", goto="Patrolling")],
+                transitions=[Transition(if_="estop_cleared", goto="Patrolling")],
             ),
         ],
     )

@@ -19,7 +19,13 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import get_args
 
-from dimos.orchestration.definition import Activity, Node, OrchestratorDefinition, Outcome
+from dimos.orchestration.definition import (
+    Activity,
+    Node,
+    OrchestratorDefinition,
+    Outcome,
+    Transition,
+)
 from dimos.orchestration.expressions import (
     NUMBER,
     UNKNOWN,
@@ -32,7 +38,6 @@ from dimos.orchestration.expressions import (
 
 OUTCOMES: tuple[str, ...] = get_args(Outcome)
 RESERVED = ("succeeded", *OUTCOMES)
-RECORD_TRIGGERS = ("after", "requires", "ensures")
 
 
 @dataclass(frozen=True)
@@ -56,7 +61,7 @@ def check(
         expressions, problems = _compile(definition, shapes or {})
         problems += [
             *_node_problems(tree),
-            *_transition_problems(tree),
+            *_transition_problems(tree, expressions),
             *_fallback_problems(tree),
             *_resource_problems(tree),
         ]
@@ -75,7 +80,7 @@ class Tree:
         self.nodes = {node.name: node for node in definition.nodes}
         self.activities = {activity.name: activity for activity in definition.activities}
         self.events = {event.name: event.when for event in definition.events}
-        self.triggers = {*self.events, *(signal.name for signal in definition.signals)}
+        self.signals = {signal.name for signal in definition.signals}
         self.parent = {
             inner: self.nodes[node.name] for node in definition.nodes for inner in node.inside
         }
@@ -98,20 +103,20 @@ def _name_problems(definition: OrchestratorDefinition) -> Iterator[str]:
     events = [event.name for event in definition.events]
     nodes = [node.name for node in definition.nodes]
     activities = [activity.name for activity in definition.activities]
+    results = {node.result for node in definition.nodes if node.result is not None}
+    keys = Counter([*definition.constants, *definition.vars, *signals, *results])
     for kind, names in (("node", nodes), ("activity", activities), ("event", events)):
         for name, count in Counter(names).items():
             if count > 1:
                 yield f"{kind} `{name}` is defined more than once"
-    for name in (*signals, *events):
-        if name in RESERVED or name in RECORD_TRIGGERS:
-            yield f"`{name}` is reserved, and no signal or event may have that name"
-    for name in sorted(set(signals) & set(events)):
-        yield f"`{name}` is both a signal and an event"
+    for name in (*keys, *events):
+        if name in RESERVED:
+            yield f"`{name}` is reserved, and no key or event may have that name"
+    for name in sorted(set(keys) & set(events)):
+        yield f"`{name}` is both a key and an event"
     for name in nodes:
         if name in OUTCOMES:
             yield f"`{name}` is reserved, and no node may have that name"
-    results = {node.result for node in definition.nodes if node.result is not None}
-    keys = Counter([*definition.constants, *definition.vars, *signals, *results])
     for key, count in keys.items():
         if count > 1:
             yield f"key `{key}` is declared more than once"
@@ -169,29 +174,38 @@ def _node_problems(tree: Tree) -> Iterator[str]:
             yield f"{where} has `outcomes`, and no nodes inside"
 
 
-def _transition_problems(tree: Tree) -> Iterator[str]:
+def _outcomes_read(expressions: Mapping[str, Expression], transition: Transition) -> set[str]:
+    """Which of `succeeded`, `failed` and `done` the `if` of a transition reads."""
+    expression = expressions.get(transition.if_ or "")
+    return set(RESERVED).intersection(expression.reads) if expression is not None else set()
+
+
+def _transition_problems(tree: Tree, expressions: Mapping[str, Expression]) -> Iterator[str]:
     for node in tree.definition.nodes:
         where = f"node `{node.name}`"
         parent = tree.parent.get(node.name)
         above = list(tree.ancestors(node))
+        reads = [_outcomes_read(expressions, transition) for transition in node.transitions]
         if node.is_switch:
             if node.activity is not None or node.inside:
                 yield f"{where} is a switch node, and it has an activity or nodes inside"
-            if any(t.trigger is not None or t.after is not None for t in node.transitions):
-                yield f"{where} is a switch node, and a transition has a `trigger` or an `after`"
+            if not all(transition.is_condition for transition in node.transitions):
+                yield f"{where} is a switch node, and a transition has an `on` or an `after`"
             if node.transitions[-1].if_ is not None:
                 yield f"{where} is a switch node, and its last transition has an `if`"
         if parent is not None and not any(n.transitions for n in (node, *above)):
             yield f"{where} has no way out through its own transitions or an ancestor's"
         ended = any(t.goto == "done" for name in node.inside for t in tree.nodes[name].transitions)
-        if parent is not None and ended and all(t.trigger != "done" for t in node.transitions):
-            yield f"{where} can be ended with `done`, and it has no transition on `done`"
-        for transition in node.transitions:
-            trigger, goto = transition.trigger, transition.goto
-            if trigger is not None and trigger not in tree.triggers and trigger not in RESERVED:
-                yield f"{where}: trigger `{trigger}` is not a signal or an event"
-            if trigger == "succeeded" and node.inside:
-                yield f"{where} has nodes inside, and a transition on `succeeded`"
+        if parent is not None and ended and not any("done" in read for read in reads):
+            yield f"{where} can be ended with `done`, and no `if` of its transitions reads `done`"
+        for transition, read in zip(node.transitions, reads, strict=True):
+            on, goto = transition.on, transition.goto
+            if on is not None and on not in tree.signals:
+                yield f"{where}: `on` names `{on}`, which is not a signal"
+            if "succeeded" in read and node.inside:
+                yield f"{where} has nodes inside, and a transition that reads `succeeded`"
+            if "failed" in read and not transition.is_condition:
+                yield f"{where}: `failed` is never true in a transition with an `on` or an `after`"
             if parent is not None and parent.parallel:
                 if goto not in parent.outcomes:
                     yield (
@@ -210,15 +224,22 @@ def _transition_problems(tree: Tree) -> Iterator[str]:
             for var in transition.set:
                 if var not in tree.definition.vars:
                     yield f"{where} sets `{var}`, which is not a var"
-            if trigger in tree.events and goto == node.name:
-                yield f"{where}: a transition on the event `{trigger}` points back at its own node"
+            if transition.is_condition and goto == node.name and not read:
+                yield f"{where}: a transition with only an `if` points back at its own node"
             for outer in above:
-                if trigger in tree.triggers and any(
-                    t.trigger == trigger and t.if_ is None for t in outer.transitions
+                if on is not None and any(t.on == on and t.if_ is None for t in outer.transitions):
+                    yield (
+                        f"{where}: its transition on `{on}` is never taken, "
+                        f"since `{outer.name}` has one with no `if`"
+                    )
+                if (
+                    transition.is_condition
+                    and not read
+                    and any(t.is_condition and t.if_ == transition.if_ for t in outer.transitions)
                 ):
                     yield (
-                        f"{where}: its transition on `{trigger}` is never taken, "
-                        f"since `{outer.name}` has one with no `if`"
+                        f"{where}: its transition on `{transition.if_}` is never taken, "
+                        f"since `{outer.name}` has one with the same `if`"
                     )
             if transition.mode == "immediate" and goto in tree.nodes:
                 for name in sorted(_started_on_entering(tree, goto, set())):
@@ -301,7 +322,7 @@ def _resource_problems(tree: Tree) -> Iterator[str]:
 
 
 def _sources(definition: OrchestratorDefinition) -> Iterator[tuple[str, str, Wanted]]:
-    """Every expression in a definition, with where it is and what it must give."""
+    """Every expression but an `if`, with where it is and what it must give."""
     for event in definition.events:
         yield f"event `{event.name}`: `when`", event.when, True
     for node in definition.nodes:
@@ -312,8 +333,6 @@ def _sources(definition: OrchestratorDefinition) -> Iterator[tuple[str, str, Wan
         for parameter, source in node.args.items():
             yield f"{where}: `args` entry `{parameter}`", source, UNKNOWN
         for transition in node.transitions:
-            if transition.if_ is not None:
-                yield f"{where}: `if`", transition.if_, True
             if transition.after is not None:
                 yield f"{where}: `after`", transition.after, NUMBER
             for var, source in transition.set.items():
@@ -325,18 +344,31 @@ def _compile(
 ) -> tuple[dict[str, Expression], list[str]]:
     written = [signal.name for signal in definition.signals]
     written += [node.result for node in definition.nodes if node.result is not None]
-    compiler = Compiler(
-        {
-            **definition.constants,
-            **definition.vars,
-            **{key: shapes.get(key, UNKNOWN) for key in written},
-        }
-    )
+    keys: dict[str, Shape] = {
+        **definition.constants,
+        **definition.vars,
+        **{key: shapes.get(key, UNKNOWN) for key in written},
+    }
     expressions: dict[str, Expression] = {}
     problems: list[str] = []
-    for where, source, gives in _sources(definition):
+
+    def add(compiler: Compiler, where: str, source: str, gives: Wanted) -> None:
         try:
             expressions[source] = compiler.compile(source, gives)
         except ExpressionError as error:
             problems.append(f"{where}: {error}")
+
+    plain = Compiler(keys)
+    for where, source, gives in _sources(definition):
+        add(plain, where, source, gives)
+    events = {event.name: expressions.get(event.when) for event in definition.events}
+    broken = [name for name, when in events.items() if when is None]
+    guards = Compiler(
+        {**keys, **dict.fromkeys((*RESERVED, *broken), False)},
+        {name: when for name, when in events.items() if when is not None},
+    )
+    for node in definition.nodes:
+        for transition in node.transitions:
+            if transition.if_ is not None:
+                add(guards, f"node `{node.name}`: `if`", transition.if_, True)
     return expressions, problems
