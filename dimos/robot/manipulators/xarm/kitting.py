@@ -66,6 +66,8 @@ _OBSTACLE_PREFIX = "kitting/"
 EXECUTE_TIMEOUT_S = 120.0
 # How many times a long planned move may be split at its midpoint.
 MAX_SPLITS = 2
+# Plans asked for per planned move; the one that swings the joints least is kept.
+PLAN_TRIES = 3
 
 
 class BinPose(BaseModel):
@@ -135,8 +137,8 @@ class XArm7KittingConfig(ModuleConfig):
     release_gap_m: float = 0.008
     speed_scale: float = Field(default=0.3, gt=0.0, le=1.0)
     carry_speed_scale: float = Field(default=0.15, gt=0.0, le=1.0)
-    # A closed gripper reading (0 closed, 1 open) at or below this holds nothing. The twin reads
-    # 0.002 closed on air and 0.024 on its 5 mm wall; a real 3 mm wall is about 0.035.
+    # A closed gripper reading (0 closed, 1 open) at or below this holds nothing: closed on air
+    # reads about 0.002, on a real 3 mm wall about 0.035, on the twin's 7 mm wall about 0.06.
     empty_reading: float = Field(default=0.012, ge=0.0, le=1.0)
     bench_boxes: list[BenchBox] = Field(
         default_factory=lambda: [
@@ -282,8 +284,17 @@ class XArm7KittingModule(Module):
             # arm. Then the rest of the bin's turn, the shorter way.
             turn = _wrap(math.atan2(place_xy[1], place_xy[0]) - math.atan2(pick_xy[1], pick_xy[0]))
             bin_turn = turn + _wrap(math.radians(target.yaw_deg - source.yaw_deg) - turn)
+            # The wrist turn is the tool's yaw less the base's: keep it near the present one.
+            now = arm.pose()
+            wrist_now = tool_yaw(now.orientation.to_tuple()) - math.atan2(
+                now.position.y, now.position.x
+            )
             pick_yaw = wrist_friendly_yaw(
-                pick_yaw, bin_turn, tool_yaw(arm.pose().orientation.to_tuple())
+                pick_yaw,
+                bin_turn,
+                math.atan2(pick_xy[1], pick_xy[0]),
+                math.atan2(place_xy[1], place_xy[0]),
+                wrist_now,
             )
             pick_q = tool_quaternion(pick_yaw)
             place_q = tool_quaternion(pick_yaw + bin_turn)
@@ -361,10 +372,23 @@ class XArm7KittingModule(Module):
         """A planned move to ``xyz``, ``q`` that swings no joint more than
         ``max_joint_travel_rad``; a plan that would goes through the midpoint instead."""
         target = PoseStamped(frame_id="world", position=Vector3(*xyz), orientation=Quaternion(*q))
-        plan = self._manipulation.plan_to_poses({arm.info.id: target}, speed_scale=speed)
+        # Plans differ from one call to the next: keep the one that swings the joints least.
+        plan, travel = None, math.inf
+        for _ in range(PLAN_TRIES):
+            attempt = self._manipulation.plan_to_poses({arm.info.id: target}, speed_scale=speed)
+            if not attempt.succeeded or attempt.plan is None:
+                if plan is None:
+                    plan = attempt
+                continue
+            attempt_travel = joint_travel(attempt.plan.path, arm.info.joint_names)
+            if attempt_travel < travel:
+                plan, travel = attempt, attempt_travel
+            if travel <= self.config.max_joint_travel_rad:
+                break
+        if plan is None:
+            raise RuntimeError("the planner returned no plan")
         if not plan.succeeded or plan.plan is None:
             raise MotionError("move_pose", plan)
-        travel = joint_travel(plan.plan.path, arm.info.joint_names)
         if travel > self.config.max_joint_travel_rad:
             if depth >= MAX_SPLITS:
                 raise RuntimeError(f"every plan there swings a joint {travel:.2f} rad")
@@ -492,14 +516,21 @@ def tool_yaw(xyzw: Sequence[float]) -> float:
     return math.atan2(m[1, 0], m[0, 0]) - math.pi / 2
 
 
-def wrist_friendly_yaw(wall_yaw: float, bin_turn: float, now: float) -> float:
+def wrist_friendly_yaw(
+    wall_yaw: float, bin_turn: float, pick_angle: float, place_angle: float, wrist_now: float
+) -> float:
     """``wall_yaw`` or the same wall from the other side (the fingers are symmetric), whichever
-    keeps the tool nearest its current turn at the pick and at the place."""
-    best = min(
-        (wall_yaw, wall_yaw + math.pi),
-        key=lambda yaw: abs(_wrap(yaw - now)) + abs(_wrap(yaw + bin_turn - now)),
-    )
-    return now + _wrap(best - now)
+    keeps the wrist's turn (tool yaw less the base's angle) nearer ``wrist_now`` at the pick and
+    at the place, so the last joint stays clear of its limits."""
+
+    def wrist_offset(yaw: float) -> float:
+        return max(
+            abs(_wrap(yaw - pick_angle - wrist_now)),
+            abs(_wrap(yaw + bin_turn - place_angle - wrist_now)),
+        )
+
+    best = min((wall_yaw, wall_yaw + math.pi), key=wrist_offset)
+    return pick_angle + wrist_now + _wrap(best - pick_angle - wrist_now)
 
 
 def tool_quaternion(wall_normal_yaw: float) -> list[float]:

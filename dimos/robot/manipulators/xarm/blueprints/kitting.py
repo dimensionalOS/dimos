@@ -100,6 +100,5 @@ xarm7_kitting_sim = autoconnect(
         reset_joint_positions=XARM7_KITTING_HOME,
         tracked_bodies=XARM7_KITTING_BODIES,
     ),
-    # the twin's wall is only 0.8 mm thicker than its closed fingers, so a hold reads about 0.01
-    XArm7KittingModule.blueprint(empty_reading=0.005),
+    XArm7KittingModule.blueprint(),
 )

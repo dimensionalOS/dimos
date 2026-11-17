@@ -64,12 +64,18 @@ def test_the_carry_ends_at_the_target_with_the_bin_turned() -> None:
     assert max(radii) <= max(math.hypot(*start), math.hypot(*end)) + 1e-9
 
 
-def test_the_wrist_side_keeps_the_same_wall_and_the_smaller_twist() -> None:
-    now = 0.1
-    chosen = wrist_friendly_yaw(math.pi / 2 + math.pi, -math.pi / 2, now)
+def test_the_wrist_side_keeps_the_last_joint_clear_of_its_limits() -> None:
+    # an empty bin whose wall needs the wrist turned 170 deg from home at the pick, and the carry
+    # turns it a further 160 deg relative to the base: either side alone would pass the limit
+    pick_angle, place_angle, wrist_home = 0.0, 0.5, 0.0
+    bin_turn = place_angle + math.radians(160)
+    chosen = wrist_friendly_yaw(math.radians(170), bin_turn, pick_angle, place_angle, wrist_home)
     # the same wall normal axis, from whichever side
-    assert math.sin(chosen - math.pi / 2) == pytest.approx(0.0, abs=1e-9)
-    assert abs(chosen - now) <= math.pi / 2 + 1e-9
+    assert math.sin(chosen - math.radians(170)) == pytest.approx(0.0, abs=1e-9)
+    at_pick = chosen - pick_angle - wrist_home
+    at_place = chosen + bin_turn - place_angle - wrist_home
+    assert abs(at_pick) < math.pi - 0.03
+    assert abs(at_place) < math.pi - 0.03
 
 
 @pytest.fixture
