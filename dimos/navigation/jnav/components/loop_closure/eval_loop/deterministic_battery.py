@@ -49,6 +49,18 @@ BATTERY = [
     "athens_pointlio",
 ]
 
+# FAST-LIO's heading drift is 5.7x the shared Mid-360 estimate (Point-LIO keeps it): yaw per sqrt rad 0.0496, fit held-out on the gir maps' fastlio_odometry vs Point-LIO GT (solvetime/yaw_fit.py)
+FASTLIO_CONFIG = {
+    "lidar_range": {
+        "mid360_odometry_error_estimate": [
+            [3.91e-4, 6.35e-3],
+            [6.42e-4, 3.86e-3],
+            [1e-6, 0.0496],
+            [6.91e-4, 3.3e-3],
+        ]
+    }
+}
+
 
 def summarize(log: str) -> dict:
     """The run's speed, closures and overshoots from pgo-eval's stderr."""
@@ -170,7 +182,10 @@ def main() -> None:
         out = root / name
         out.mkdir(parents=True, exist_ok=True)
         # mounts come from the db's tf; deterministic mode at the module defaults plus the --config overlay
-        (out / "config.json").write_text(json.dumps(config) + "\n")
+        run_config = config | (
+            FASTLIO_CONFIG if recording["odometry"].startswith("fastlio") else {}
+        )
+        (out / "config.json").write_text(json.dumps(run_config) + "\n")
         command = [str(PGO_EVAL), "--db", str(db), "--odom-stream", recording["odometry"]]
         command += ["--lidar-stream", recording["lidar"], "--config", "config.json"]
         command += ["--output", "a.json", "--event-dump", "a.kf"]
@@ -185,7 +200,7 @@ def main() -> None:
         summaries[name] = summarize(result.stderr) | {
             "returncode": result.returncode,
             "command": command,
-            "config": config,
+            "config": run_config,
         }
         summaries[name] |= {"load_before": load_before, "load_after": os.getloadavg()[0]}
         (out / "summary.json").write_text(json.dumps(summaries[name], indent=2) + "\n")
