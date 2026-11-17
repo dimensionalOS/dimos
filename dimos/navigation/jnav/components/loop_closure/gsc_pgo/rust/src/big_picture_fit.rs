@@ -443,6 +443,7 @@ fn solve_from(
         landmark,
         landmark_rotation,
     };
+    let start_state = state.clone();
     let sightings = &sightings[..];
     let pattern = Pattern::new(
         free,
@@ -688,40 +689,49 @@ fn solve_from(
         .collect();
 
     // the kept closures at their own variances, Huber-weighted
-    let mut huber = kept.clone();
-    for _ in 0..3 {
-        levenberg_marquardt(
-            &mut state,
-            &pattern,
-            odometry,
-            closures,
-            &huber,
-            unary,
-            &unary_kept,
-            sightings,
-            &sighting_kept,
-            1e-5,
-        );
-        for (h, (e, &k)) in huber.iter_mut().zip(closures.iter().zip(&kept)) {
-            let r = whitened_squared(e, &state).sqrt();
-            *h = if config.huber_k > 0.0 && r > config.huber_k {
-                k * config.huber_k / r
-            } else {
-                k
-            };
+    let polish = |mut state: State| {
+        let mut huber = kept.clone();
+        for _ in 0..3 {
+            levenberg_marquardt(
+                &mut state,
+                &pattern,
+                odometry,
+                closures,
+                &huber,
+                unary,
+                &unary_kept,
+                sightings,
+                &sighting_kept,
+                1e-5,
+            );
+            for (h, (e, &k)) in huber.iter_mut().zip(closures.iter().zip(&kept)) {
+                let r = whitened_squared(e, &state).sqrt();
+                *h = if config.huber_k > 0.0 && r > config.huber_k {
+                    k * config.huber_k / r
+                } else {
+                    k
+                };
+            }
         }
-    }
-    let error = 0.5
-        * cost(
-            &state,
-            odometry,
-            closures,
-            &huber,
-            unary,
-            &unary_kept,
-            sightings,
-            &sighting_kept,
-        );
+        let error = 0.5
+            * cost(
+                &state,
+                odometry,
+                closures,
+                &huber,
+                unary,
+                &unary_kept,
+                sightings,
+                &sighting_kept,
+            );
+        (state, huber, error)
+    };
+    // LM cannot undo a large bend GNC's looser rounds put in (stiff translations on long levers leave its steps no
+    // descent), so the verdicts are also solved from the solve's start, and the lower cost wins (all out: the odometry)
+    let (state, huber, error) = {
+        let (from_gnc, from_start) = (polish(state), polish(start_state));
+        if from_start.2 < from_gnc.2 { from_start } else { from_gnc }
+    };
     let relative_position_covariance = relative_position_covariances(
         &state,
         &pattern,
