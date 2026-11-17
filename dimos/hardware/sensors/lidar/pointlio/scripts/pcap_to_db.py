@@ -496,7 +496,11 @@ def main(argv: list[str]) -> int:
         "--rate", type=float, default=1.0, help="replay-speed multiplier (default 1.0)"
     )
     parser.add_argument(
-        "--odom-freq", type=float, default=30.0, help="Point-LIO odometry rate Hz (default 30)"
+        "--odom-freq",
+        type=float,
+        default=30.0,
+        help="upper limit on the Point-LIO odometry rate in Hz (default 30). "
+        "One pose comes out per lidar scan, so a value above the scan rate changes nothing",
     )
     parser.add_argument(
         "--max-sensor-sec",

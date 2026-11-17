@@ -12,66 +12,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Which connection each OpenYAM collection and rollout stack deploys."""
 
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.protocol.rpc.zenohrpc import ZenohRPC
-from dimos.robot.manipulators.openyam.blueprints.learning_collection import openyam_teach_collection
+from dimos.robot.manipulators.openyam.blueprints.learning_collection import (
+    OPENYAM_TEACH_JOINTS,
+    openyam_teach_collection,
+)
 from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection import (
     openyam_quest_collection,
 )
 from dimos.robot.manipulators.openyam.blueprints.learning_rollout import build_openyam_rollout
-from dimos.robot.manipulators.openyam.coordinator import (
-    OpenYamCoordinator,
-    OpenYamTeleopCoordinator,
-)
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+
+ROLLOUT = build_openyam_rollout()
+QUEST_ROLLOUT = build_openyam_rollout(quest_control=True)
 
 
 @pytest.mark.parametrize(
-    "blueprint",
+    ("blueprint", "teach"),
     [
-        openyam_teach_collection,
-        openyam_quest_collection,
-        build_openyam_rollout(),
-        build_openyam_rollout(quest_control=True),
+        (openyam_teach_collection, True),
+        (openyam_quest_collection, False),
+        (ROLLOUT, False),
+        (QUEST_ROLLOUT, False),
     ],
+    ids=["teach", "quest", "rollout", "quest-rollout"],
 )
-async def test_can_override_reaches_hardware_without_changing_teaching_gains(
-    blueprint, mocker, tmp_path
-):
-    flags = ["--controlcoordinator.can-port", "follower_l"]
+def test_can_selector_belongs_to_the_connection(blueprint, teach, tmp_path):
+    flags = ["--openyamconnection.can-port", "/dev/ttyACM0"]
     if blueprint in (openyam_teach_collection, openyam_quest_collection):
         flags.extend(["--recorder.recording", str(tmp_path / "session"), "--episodes.task", "pick"])
     else:
         flags.extend(["--policy.policy-path", "checkpoint", "--policy.task", "pick"])
     parsed = BlueprintConfigParser(blueprint).parse(flags, environ={})
+
+    assert parsed.module_kwargs("openyamconnection")["can_port"] == "/dev/ttyACM0"
     atom = next(
-        atom
-        for atom in blueprint.active_blueprints
-        if issubclass(atom.module, (OpenYamCoordinator, OpenYamTeleopCoordinator))
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, OpenYamConnection)
     )
-    kwargs = {**atom.kwargs, **parsed.module_kwargs("ControlCoordinator")}
-    original = atom.kwargs["hardware"][0]
-    runtime = original.adapter_kwargs["runtime_config"]
-    setup = mocker.patch.object(ControlCoordinator, "_setup_from_config")
-    mocker.patch.object(ZenohRPC, "start")
-    mocker.patch.object(ZenohRPC, "serve_module_rpc")
-    coordinator = atom.module(**kwargs)
-    try:
-        coordinator._setup_from_config()
-        configured = coordinator.config.hardware[0]
-        assert configured.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "follower_l"}
-        assert (
-            configured.adapter_kwargs["runtime_config"].passive_grippers == runtime.passive_grippers
-        )
-        assert configured.adapter_kwargs["runtime_config"].gravity_comp is runtime.gravity_comp
-        assert configured.wb_config == original.wb_config
-        if blueprint is openyam_teach_collection:
-            assert configured.wb_config.kp == (0.0,) * 7
-            assert configured.wb_config.kd == (2.0, 2.0, 2.0, 0.5, 0.5, 0.5, 0.0)
-            assert configured.adapter_kwargs["runtime_config"].passive_grippers == ("gripper",)
-        setup.assert_called_once_with()
-    finally:
-        coordinator.stop()
+    assert atom.module is OpenYamConnection
+    assert atom.kwargs["source"] == "arm"
+    assert atom.kwargs["teach"] is teach
+    coordinator = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    assert not coordinator.kwargs.get("hardware")
+    if teach:
+        assert coordinator.kwargs["zero_stiffness_joints"] == OPENYAM_TEACH_JOINTS
+    else:
+        assert coordinator.kwargs["zero_stiffness_joints"] == []

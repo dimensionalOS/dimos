@@ -24,6 +24,8 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.viz import MAP_REGIONS_ENTITY, render_map_region
+from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
+from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.navigation.global_planner.mls_planner.viz import (
     SURFACE_MAP_ENTITY,
     render_surface_region,
@@ -36,7 +38,7 @@ from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
     go2_nav_static,
 )
 from dimos.robot.unitree.go2.dds.module import GO2DDS, GO2L1Lidar
-from dimos.robot.unitree.go2.nav_3d_config import NAV_VIEWER_TOPICS, relocalization, voxel_size
+from dimos.robot.unitree.go2.nav_3d_config import NAV_VIEWER_TOPICS, voxel_size
 from dimos.visualization.vis_module import vis_module
 
 # The Host daemon on the Jetson is the robot's zenoh router (the Go2 forwards 7447 to it,
@@ -82,7 +84,7 @@ _go2_nav_stack = autoconnect(
     GO2DDS.blueprint(**_MID360_KWARGS, obstacle_avoidance=False).remappings(_MID360_REMAPPINGS),
     mid360_for_pointlio(),
     _go2_nav,
-    relocalization(republish_loaded_map=0.0),
+    LocalMapRelocalization.blueprint(world_frame="odom", relocalize=MID360_NAV),
     PointLio.blueprint(),
 )
 

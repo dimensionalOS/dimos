@@ -500,6 +500,7 @@ def test_derived_rust_log_keeps_zenoh_quiet(monkeypatch, dimos_level: str, rust_
     monkeypatch.setenv("DIMOS_LOG_LEVEL", dimos_level)
     assert _spawn_env()["RUST_LOG"] == (
         f"{rust_level},zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+        ",zenoh::net::routing::hat::peer=error"
     )
 
 
@@ -507,7 +508,10 @@ def test_rust_log_always_follows_dimos_log_level(monkeypatch) -> None:
     monkeypatch.setenv("RUST_LOG", "trace,zenoh=debug")
     monkeypatch.setenv("DIMOS_LOG_LEVEL", "WARNING")
     env = _spawn_env({"RUST_LOG": "trace"})
-    assert env["RUST_LOG"] == "warn,zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+    assert env["RUST_LOG"] == (
+        "warn,zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+        ",zenoh::net::routing::hat::peer=error"
+    )
 
 
 def test_json_mode_malformed_falls_back_to_plain_text() -> None:
@@ -565,7 +569,11 @@ def test_builtin_build_outputs_use_shared_checkout(
 ):
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
     module_class = getattr(importlib.import_module(module_path), class_name)
-    options = {"setup_network": False} if class_name == "VirtualMid360" else {}
+    options = (
+        {"setup_network": False, "pcap": "capture.pcap", "host_ip": "192.168.1.5"}
+        if class_name == "VirtualMid360"
+        else {}
+    )
     module = module_class(**options)
     try:
         module.config.model_validate(module.config.model_dump())

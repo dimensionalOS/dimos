@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+RESOURCE_STATS_TOPIC = "/resource_stats"
+
 
 class ResourceLogger(Protocol):
     def log_stats(self, coordinator: ProcessStats, workers: list[WorkerStats]) -> None: ...
@@ -66,7 +68,7 @@ class StructlogResourceLogger:
 class LCMResourceLogger:
     """Publishes resource stats as dicts over the active transport's pubsub channel."""
 
-    def __init__(self, topic: str = "/resource_stats") -> None:
+    def __init__(self, topic: str = RESOURCE_STATS_TOPIC) -> None:
         from dimos.core.transport_factory import make_transport
 
         self._transport: PubSubTransport[dict[str, Any]] = make_transport(topic)

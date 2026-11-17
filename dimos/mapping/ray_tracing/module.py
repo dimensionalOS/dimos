@@ -44,6 +44,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     emit_fine: bool = False
     # Maximum range for ray tracing
     max_range: float = 30.0
+    # Keep every Nth point of each lidar cloud before any other step
+    pre_trace_subsample: int = 1
     # Proportion of points that are ray traced
     # Higher subsample means less tracing
     ray_subsample: int = 1

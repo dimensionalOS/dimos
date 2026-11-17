@@ -16,6 +16,7 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
+from unittest import mock
 
 import pytest
 from reactivex.disposable import Disposable
@@ -226,6 +227,28 @@ def test_slow_first_decode_does_not_skip_other_streams(
         time.sleep(0.01)
     module.stop()
     assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
+
+
+def test_slow_stream_setup_does_not_skip_the_first_frames(recording: str) -> None:
+    """Slow setup should not lose initial frames."""
+    real = ReplayStream._base_stream
+
+    def slow(self: Any) -> Any:
+        time.sleep(0.1)  # twice the late tolerance, on every query a subscribe makes
+        return real(self)
+
+    got: dict[str, list[float]] = {"odom": [], "goal": []}
+    with mock.patch("dimos.memory.replay.ReplayStream._base_stream", slow):
+        module = replay_module(recording)(dataset=recording)
+        module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
+        module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
+        module.start()
+    deadline = time.time() + 5
+    while time.time() < deadline and (len(got["odom"]) < 3 or not got["goal"]):
+        time.sleep(0.01)
+    module.stop()
+    assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
+    assert [round(t, 3) for t in got["goal"]] == [1.05]
 
 
 def test_recorded_rerun_config_from_run_dir(tmp_path: Path) -> None:

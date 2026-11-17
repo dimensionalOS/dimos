@@ -200,6 +200,8 @@ class HostDaemon:
                 connect=self.connect,
             )
             stop.wait()
+        # After the cleanup: a Host that died on the way down does not get here.
+        logger.info("Host down", name=self.config.name, host_id=self.host_id)
 
     def describe(self) -> HostDescriptor:
         live = live_tags()

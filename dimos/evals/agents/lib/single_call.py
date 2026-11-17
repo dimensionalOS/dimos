@@ -26,7 +26,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.outputs import ChatGeneration
 
 from dimos.agents.llm_trace import latest_pair, write_normalized
-from dimos.evals.agents.base import EvalSubject, ModelAgentConfig
+from dimos.evals.agents.base import EvalSubject, ModelSubjectConfig
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.types import RunningEnvironment, Trajectory
@@ -34,7 +34,7 @@ from dimos.evals.types import RunningEnvironment, Trajectory
 Blocks = list[str | dict[str, Any]]
 
 
-class SingleCallAgentConfig(ModelAgentConfig):
+class SingleCallAgentConfig(ModelSubjectConfig):
     system_prompt: str = "Answer the question using only the provided observations."
     chat_model: BaseChatModel | None = None
 
@@ -62,7 +62,7 @@ class SingleCallAgent(EvalSubject):
         blocks = self._observation_blocks(env)
         if self.config.chat_model is None:
             # The production factory loads optional model-provider dependencies.
-            from dimos.agents.mcp.mcp_client import init_model
+            from dimos.agents.agent import init_model
 
             chat = init_model(self.config.model, trace_dir=run_dir / "raw")
             model_name = self.config.model

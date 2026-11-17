@@ -20,7 +20,7 @@ git rev-parse HEAD
 test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT:?}"
 ```
 
-Expected result: the installer prints "installation verified" and "smoke test passed", replay appears in Rerun, and the branch and commit match the release test record.
+Expected result: the installer prints "installation verified" and "smoke test passed" (the smoke test replays headless with `--viewer none`, so no Rerun window opens), and the branch and commit match the release test record.
 
 ## 6.2 New macOS install
 
@@ -37,7 +37,7 @@ test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT:?}"
 uv run dimos --simulation run unitree-go2
 ```
 
-Expected result: the branch and commit match the release test record, the installer prints "installation verified" and "smoke test passed", and replay appears in Rerun. The separate simulation run opens MuJoCo and Rerun with the robot in them.
+Expected result: the branch and commit match the release test record, and the installer prints "installation verified" and "smoke test passed" (the smoke test replays headless with `--viewer none`, so no Rerun window opens). The separate simulation run opens MuJoCo and Rerun with the robot in them.
 
 ## 6.3 Native modules built with Nix
 

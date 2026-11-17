@@ -52,7 +52,11 @@ export class BashCard implements ToolCard {
     this.update(
       result.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n"),
       false,
-      !this.moved && (result.isError || (result.details.tool === "bash" && result.details.details.exitCode !== 0)),
+      !this.moved &&
+        (result.isError ||
+          (result.details.tool === "bash" &&
+            result.details.details.exitCode !== null &&
+            result.details.details.exitCode !== 0)),
     );
   }
 

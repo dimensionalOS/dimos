@@ -217,6 +217,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     tui,
     commands.map((command) => command.name),
     cwd(),
+    () => ui.gateway.streams.value,
   );
   const login = new LoginPanel(tui, ui);
   const progressSlot = new Container();

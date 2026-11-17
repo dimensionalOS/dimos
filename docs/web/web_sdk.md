@@ -2,7 +2,7 @@
 
 Use the web SDK to build your own robot web page. It connects to a relay, watches a robot and hands you decoded channel data. It can also send input to the robot. The cockpit is built on the same SDK, and the robot side does not change: the same bridge and the same relay serve the cockpit and your page.
 
-You need no build step. The relay serves the SDK as an ES module at `/sdk.js`, so a plain HTML file can `import { connect } from "/sdk.js"`. Inside the dimos repository it is also the `@dimos/sdk` Deno workspace package with React bindings (it is not published to npm yet).
+You need no build step. The relay serves the SDK as an ES module at `/sdk.js`, so a plain HTML file can `import { connect } from "/sdk.js"`. The same SDK is available as the `@dimos/sdk` Deno workspace package and a buildable Node ESM package with TypeScript declarations and optional React bindings. It is not published to npm yet.
 
 This page starts with "show odom on my own page", then adds a channel of your own, a custom binary encoding, and input to the robot. The reference for every call is at the end.
 
@@ -110,7 +110,123 @@ function Pose({ session }) {
 }
 ```
 
-`@dimos/sdk` is not published to npm yet. Outside the repository, use `/sdk.js`.
+For a Node/Vite consumer outside this repository, build and pack a reviewed checkout:
+
+```bash
+cd web/sdk
+deno task build:package
+npm pack
+```
+
+Install the resulting `dimos-sdk-0.1.0.tgz` in your application and pin its checksum with the dependency. The package exports `@dimos/sdk` and `@dimos/sdk/react`, including declarations and bundled internal protocol dependencies; no Deno import map is needed by the consumer. Importing the root does not load React. This is a package build, not a Node WebTransport implementation: the application still needs a runtime that supplies WebTransport, normally a supported browser.
+
+## Raw topics
+
+`session.topics` operates alongside the declared-channel API. A topic source has its own lifetime and does not require a watched robot, a robot manifest, or a running blueprint. It needs a topic provider running next to the robot and a relay with open topics: a local relay is open, and a relay with an auth file opens them with `--open-topics`. See [Raw topics](/docs/web/relay.md#raw-topics) on the relay page.
+
+Name the source with `connect({ url, token, topicSource })`, or leave `topicSource` out when a single provider is connected. A subscription to a source that is not connected yet waits (`interrupted` with `source_offline`) and attaches when the provider connects. The provider's Zenoh session defines the reachable network; selecting a robot in the UI does not narrow it.
+
+| Call | Behavior |
+|---|---|
+| `session.topics.subscribe(keyExpr, options, onMessage)` | Returns a handle immediately. Zenoh expressions such as `workspace/desktop/events/**` retain each sample's concrete key. No catalog entry or existing publisher is needed. |
+| `handle.ready()` | Resolves after the provider installs the subscription and the route is ready, even when no publisher exists. |
+| `handle.status()` / `handle.onStatus(callback)` | Reports `connecting`, `ready`, `interrupted`, `rejected`, or `closed`, with a structured error when applicable. `onStatus` returns a listener cleanup function. |
+| `handle.update(options)` | Changes the settings of this handle and resolves with the settings in force. A changed `source`, `delivery` or `profile` reopens only this handle; other consumers of the old route keep theirs. |
+| `handle.settings()` | The settings in force: the profile values until the relay acknowledges the subscription. |
+| `handle.onSettings(callback)` | Runs when settings are acknowledged, including automatic adaptation; returns a listener cleanup function. |
+| `handle.stats()` | Latest two-second delivery window, or `null` before a window is available. See [Adapting to a slow link](#adapting-to-a-slow-link). |
+| `session.topics.setAdaptation(enabled)` | Enables adaptation (the default), or lifts all caps within one cooldown and stops the controller. |
+| `handle.close()` | Releases this handle. The source subscription ends after its last consumer leaves. |
+| `session.topics.onReconnect(callback)` | Runs after available subscriptions recover; sources that are not connected do not block it. Refetch authoritative HTTP state here after an interrupted event stream. |
+| `session.topics.sources()` / `onSources(callback)` | Lists the connected sources with their generation, the provider's read/write capabilities, supported profiles and `profileOptions`, the settings each profile takes with their ranges and defaults. A source that disconnects leaves the list. |
+| `session.topics.list({ source, prefix, cursor, limit })` | Returns a bounded page of descriptors plus a continuation cursor. An empty cursor ends pagination. |
+| `session.topics.publish(key, bytes, { source, encoding })` | Sends binary bytes to a concrete key and resolves with the provider's local-put receipt. Requires a provider that accepts writes. |
+| `session.topics.video(key, options, onTrack)` | A camera as a `MediaStreamTrack` over a direct WebRTC connection to the provider. See [Direct video for topics](#direct-video-for-topics). |
+
+Subscription options are the identity, `source`, `delivery` and `profile`, and the settings below. Select `delivery: "reliable"` for events, with `profile: "raw"`; every delivered sample invokes the callback immediately, outside the UI snapshot tick. Dense event bursts may be coalesced for up to 90 ms while preserving individual frames and callbacks. Reliable overflow interrupts the route explicitly so the application can resynchronize. `delivery: "latest"` keeps the newest sample per concrete key and drops obsolete work; `maxHz` limits this sampling, not reliable event delivery.
+
+| Setting | Profiles | Meaning |
+|---|---|---|
+| `maxHz` | all | Latest sampling rate, per viewer, in (0, 1000]. Reliable event streams ignore it. On `video.h264.v1` a different rate is a different encoder. |
+| `maxResolution` | `image.jpeg.*`, `video.h264.v1` | `[w, h]` box the picture is fitted into, 16 to 4096 a side. |
+| `quality` | `image.jpeg.*` | JPEG quality, 1 to 100. |
+| `maxBitrate` | `video.h264.v1` | Encoder target in bit/s, at least 100,000, capped at the normalized resolution class: 1,000,000 at 360p, 2,500,000 at 720p, 4,500,000 at 1080p. |
+| `keepEvery` | `cloud.q16.*` | One point in N after the finite filter, 1 to 64. |
+| `fields` | `cloud.q16.*` | The optional buffers to encode, a subset of `["intensity", "color"]`. |
+| `adapt` | client only | Defaults to on for latest media and video, off for raw. `false` opts out; `true` opts raw latest into rate adaptation. Also accepts `{ priority, keep }`. Reliable routes never adapt. |
+| `priority` | client only | Integer 1 (highest) through 7 (lowest), default 4. Lower-priority stalled handles degrade first; higher-priority degraded handles recover first. |
+| `keep` | client only | `"rate"` (default) reduces detail before rate; `"quality"` reduces rate first. Top-level `priority` and `keep` override values inside `adapt`. |
+
+The profile is the default and the ceiling of every setting: a larger size, quality or rate comes back clamped to the profile value, and a smaller `keepEvery` comes back raised to it. An omitted or `undefined` key keeps its requested value; `null` resets it to the profile value. For example, `maxHz: null` restores the advertised profile rate, or the protocol default of 1000 Hz for raw topics. `update()` resolves with the normalized settings, so `maxResolution: [3000, 3000]` on `image.jpeg.low.v1` resolves with `[640, 360]`, and `settings()` reports the same values at any time.
+
+`update()` takes one of two paths. A handle alone on its subscription changes it in place: no status change, no missed frame, one acknowledgement. A handle sharing its subscription with other consumers, or asking for settings another subscription already serves, moves to that subscription once it is ready, so the others keep what they had. Changes go to the relay one at a time: an `update()` before the previous one is answered waits for that answer and merges into the settings it left in force. A rejected change leaves the handle untouched and rejects with `unsupported_option` for a name the profile does not take, `option_out_of_range` for a value outside the advertised range, or `variant_limit` for a fifth distinct settings set on one camera and profile. Against a provider older than this SDK, which advertises no ranges, only `maxHz` can change.
+
+The bundled provider shares subscriptions across consumers with the same
+source, key expression, delivery and profile. Consumers with the same encode
+settings share one transform; different settings on one camera share the
+Zenoh subscription but encode separately, up to four variants per route.
+Each variant samples at the highest rate among its viewers; the relay applies
+each viewer's rate separately and retains that viewer's newest pending sample.
+
+Route faults preserve their error code in `onStatus` and retry only the affected subscription with exponential backoff from 1 to 30 seconds. Other subscriptions and guarded publishers keep their connection. Temporary readiness and capacity rejections also retry; a new subscription, `update()`, or reconnect makes a fresh attempt after a rejection. Unknown option names are rejected. Each route tracks up to 128 concrete keys; a larger wildcard reports `topic_key_limit`, so narrow or split the expression when needed.
+
+An undecodable media sample is dropped without interrupting the route. The provider logs a rate-limited warning for that route and counts `decodeFailures` in diagnostics and subsequent media sample metadata.
+
+Each callback receives `payload: Uint8Array`, `key`, `encoding`, `source`, `generation`, `sequence`, `ingressTs`, optional `sourceTs`, `sentTs`, and `metadata`. Payload bytes are borrowed: copy before mutation or transfer to a worker. The timestamp fields distinguish acquisition, provider ingress and transmission. Preserve that distinction when measuring age. Decode JSON with a reused `TextDecoder` only on a stream whose encoding you know. Unknown encodings remain bytes; descriptor names never trigger imports or Python object construction.
+
+Catalog entries distinguish known, observed and advertised topics. Quiet metadata is not proof that a publisher is currently producing data. Use the exact descriptor key, including remappings and domain/type suffixes. Raw reads remain possible when discovery is empty.
+
+A successful binary publish means the provider's Zenoh put completed locally, not that the robot acted. A `TopicError` exposes `code` and an `outcome` of `rejected`, `unknown`, or `interrupted`. Disconnects and acknowledgement timeouts may have an unknown outcome. Commands are never automatically replayed after reconnect; do not retry an unknown result blindly.
+
+Ordinary puts have a five-second provider deadline including queue time. A blocked put reports `topic_put_timeout` with an unknown outcome; subsequent writes are rejected as `topic_put_busy` until it completes. Expired queued writes are rejected before execution. This preserves subscriptions and the independent guarded-command lane without spawning more blocked put threads.
+
+### Media and custom data
+
+Select an advertised fixed profile with latest delivery. The provider gates the source before conversion and shares identical subscriptions; the SDK's `TopicMediaDecoder` bounds browser work across consumers. Feed raw callbacks to `decoder.push(sample)`, call `decoder.reset()` on subscription interruption or profile change, and `decoder.close()` with the subscription. Its callback receives a decoded media value and the original sample. Render through canvas/WebGL and animation frames instead of React state per frame. The renderer owns and must close any bitmaps it creates.
+
+| Profile | Decoded value |
+|---|---|
+| `image.jpeg.low.v1` | JPEG bytes, at most 640×360, quality 60, 30 Hz |
+| `image.jpeg.balanced.v1` | JPEG bytes, at most 1280×720, quality 75, 30 Hz |
+| `image.jpeg.high.v1` | JPEG bytes, at most 1920×1080, quality 85, 30 Hz |
+| `video.h264.v1` | No samples: a `MediaStreamTrack` through `topics.video()`, at most 1920×1080, 30 Hz, from a provider with video enabled |
+| `depth.lossless.v1` | Lossless `Uint16Array` or `Float32Array`, original shape/encoding, units and invalid values, at most 30 Hz |
+| `cloud.q16.low.v1` | Quantized positions, one in four valid points, at most 5 Hz |
+| `cloud.q16.balanced.v1` | Quantized positions, all valid points, at most 20 Hz |
+| `cloud.q16.full.v1` | Quantized positions, all valid points, at most 30 Hz |
+
+Clouds expose `Float32Array` positions and optional float intensity/RGB buffers, source count, acquisition header and quantization error. Depth is numeric data, not color JPEG. The profiles are ceilings: the [settings](#raw-topics) lower the size, quality, stride or buffers of one subscription without reopening it, and the sample metadata (`w`, `h`, `quality`, `keepEvery`, `intensity`, `color`) reports the values in force.
+
+For explicit `pZenohTransport` reads, `projectCbor(sample.payload)` returns either `{ kind: "value", value }` or `{ kind: "opaque", bytes, reason }`. JSON-like values, tuples and simple dataclass fields have a bounded data-only projection. A dataclass name is inert metadata; unknown Python tags remain opaque. The existing LCM decoder and Desktop's `/msgs.js` wrappers remain available for known schemas and typed publishing.
+
+### Adapting to a slow link
+
+One SDK controller reduces the requested detail or rate when measured congestion persists, then restores it one rung at a time. It ticks every 500 ms while the page is visible and clears measurement windows while hidden. It uses the relay's per-viewer congestion-abort counter, arrival age above the smallest age in the last 30 seconds, and direct video's receiver statistics. The age baseline absorbs clock offset and base latency. Older relays without the counter still supply the age signal.
+
+Two consecutive stalled ticks trigger one step down. A tick stalls when median age excess exceeds 200 ms, or video reports over 2% packet loss, freezes for over 20% of the measured interval, bytes without decoded frames, or an incoming bitrate estimate below 80% of the target. A pong that brings congestion aborts covers a total stall; pings remain three seconds apart. Idle sources and a source rate below the subscription ceiling do not trigger adaptation. Firefox can operate using loss and decode counters without freeze or bitrate-estimate fields.
+
+Among stalled eligible handles, the controller chooses lowest priority first, then the largest delivered byte rate. Abort-only stalls consider every adaptive handle. A change starts a two-second cooldown for data or four seconds for video. After ten clean seconds, the highest-priority degraded handle takes one step up and the clean clock restarts. At most one automatic change starts per tick.
+
+| Profile | Detail rungs, then rate rungs with `keep: "rate"` | Floors |
+|---|---|---|
+| JPEG | Quality ×0.75, ×0.5; resolution ×0.5, ×0.25; rate ×0.5, ×0.25, 1 Hz | Quality 30, width 160 px, 1 Hz |
+| Cloud | `keepEvery` ×2, ×4, ×8; remove color, then intensity; rate ×0.5, ×0.25, 1 Hz | `keepEvery` at most 64, 1 Hz |
+| Depth or opted-in raw | Rate ×0.5, ×0.25, 1 Hz | 1 Hz |
+| Direct video | Bitrate ×0.6, ×0.35; resolution down through 720p and 360p; rate 15, 10, 5 Hz with proportional bitrate | 360p, 200 kbit/s, 5 Hz |
+
+Fractions are relative to the normalized page request; smaller page requests remain ceilings even below these floors. `keep: "quality"` moves rate rungs first. The controller keeps its cap separate from your request. An `update()` while capped merges into your request, resolves with the capped settings, and fires `onSettings`. Joining consumers inherit a shared group's cap. Lifting a cap restores your value, or the profile default for a setting you omitted. A refused automatic update, such as `variant_limit`, leaves the handle ready, records the error, and retries after its cooldown.
+
+Call `session.topics.setAdaptation(false)` to restore page requests within one cooldown and stop automatic changes. Pass `adapt: false` on individual subscriptions to opt them out. The controller does not estimate a bandwidth budget, change transport congestion control, or diagnose browser decode pressure. It cannot guarantee that a link carries even the floors; measured limitations are recorded in [the adaptation benchmark](/docs/web/benchmarks/topic-adaptation.md).
+
+`handle.stats()` returns `{ deliveredHz, ageMs: { p50, p95 }, aborted, rung, adapted }` over the last two seconds. `ageMs` is age excess over the rolling baseline, not synchronized source-to-display latency. `aborted` is this viewer's congestion-abort delta in the window; `rung` is `{ name, index }` or `null` at the request. `rejected` records the most recent failed automatic update until one succeeds. Direct video adds `video: { lossFraction, freezeMs, bitrate, fps }`; `bitrate` is received bit/s. Direct RTP has no topic ingress timestamps, so its `ageMs` remains zero. `session.rttMs()` reports the lowest RTT of the last four matched pongs, or `null` before the first. Stats windows clear on hide, disconnect, and a change to the adaptation switch.
+
+### Continuous controls
+
+Use `session.topics.publisher(key, safeStopBytes, { source, encoding, group, timeoutMs, takeover })` for a provider that advertises `guardedPublishers`. It requires a provider that accepts writes and an explicit safe-stop payload. `group` identifies shared control ownership; takeover is explicit. The handle has `ready()`, `status()`, `onStatus()`, `publish(bytes)`, and terminal `close()`. Wait for readiness before accepting fresh user input. Commands received while opening are rejected, not queued.
+
+Provider expiry is 100–1000 ms, with 400 ms as the SDK default. The provider sends the safe stop on release, expiry or lost ownership, and the SDK retires a handle on focus/page/connection loss and refuses to open one while the page is hidden. The handle itself expires after `timeoutMs` without an accepted command, including a newly ready handle that never sent a command; heartbeats cannot keep it armed. A provider `guard_expired` status requires a new handle. After failure or reconnect, clear held controls and require a neutral transition and new input before creating another handle.
+
+The robot also needs a watchdog on its side of any link whose loss could leave motion active. The migrated Controller uses the R1 Pro velocity watchdog and guarded joint-jog expiry in the robot-side trajectory task. An older robot runtime does not acquire those protections from a browser update. The dim-app adapter exposes `guardedPublisher`; its legacy `publisher().setDeadman()` API has not been recreated wholesale.
 
 ## Exposing your own channels
 
@@ -157,6 +273,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.web.cockpit import Channel, cockpit
 
@@ -185,7 +302,12 @@ class HealthMonitor(Module):
 go2_web = autoconnect(
     unitree_go2,
     HealthMonitor.blueprint(),
-    cockpit(channels=[Channel("health", Health, max_hz=1.0)]),
+    cockpit(
+        channels=[
+            Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+            Channel("health", Health, max_hz=1.0),
+        ]
+    ),
 )
 ```
 
@@ -195,6 +317,17 @@ How the pieces connect:
 - `Channel("health", Health)` uses `json.v1`, the default for JSON scalars, lists, dicts and plain dataclasses. The browser decodes it without registration.
 - Encoding is lazy. A channel costs nothing until some viewer subscribes, and stops encoding when the last viewer leaves.
 - `cockpit(layout=..., channels=[...])` is fine too. For a pure SDK setup, leave `layout` out and declare only the channels you want to serve.
+- A nonempty `channels` list with no `layout` replaces the default preset, even when `pages` are supplied. Explicit layouts and pages still contribute their requested channels. This example declares `odom` at the preset's 20 Hz so the first page's subscription keeps working. Subscribing to an omitted channel reports `unknown_channel`.
+
+To retain a built-in receive stream, its declaration must match the built-in message type, [encoding](/docs/web/bridge.md#encodings) and delivery mode:
+
+| Stream | Message type | Encoding | Delivery |
+|---|---|---|---|
+| `odom` | `PoseStamped` | `pose.json.v1` | `reliable` (the `Channel` default) |
+| `color_image` | `Image` | `jpeg.v1` | `latest` |
+| `global_costmap` | `OccupancyGrid` | `costmap.zlib.v1` | `latest` |
+
+Set `delivery="latest"` explicitly for `color_image` and `global_costmap`; the default `reliable` delivery is rejected for those streams. To keep the full cockpit with extra channels, pass an explicit [layout](/docs/web/cockpit.md#describe-the-layout-in-python) containing `Video()`, `Map2D()` and `Teleop()`. Teleop is requested through `Teleop()` in a layout or page: its specialized protocol cannot be restored with a generic publish `Channel`.
 
 `page/index.html` shows the value:
 
@@ -229,7 +362,7 @@ The page opens automatically and the health line updates once a second.
 
 The Go2's `lidar` stream is a `PointCloud2`. Its default LCM encoding costs 16 bytes per point at the full rate. This step sends a quarter of the points as bare (x, y) pairs instead and draws them as a live 2D scatter. It adds an encoder and a channel on the robot side, and a decoder and a canvas on the page.
 
-In `web.py`, the encoder and the second channel:
+Add the encoder and its imports to `web.py`:
 
 ```python skip
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -243,13 +376,14 @@ def encode_lidar_xy(msg: PointCloud2) -> EncodedPayload:
     return EncodedPayload(points.tobytes(), {"n": len(points)})
 ```
 
+Then replace the `cockpit(...)` argument inside `autoconnect(...)`, keeping the earlier channels:
+
 ```python skip
-    cockpit(
-        channels=[
-            Channel("health", Health, max_hz=1.0),
-            Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
-        ]
-    ),
+cockpit(channels=[
+    Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+    Channel("health", Health, max_hz=1.0),
+    Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
+])
 ```
 
 `autoconnect` wires `lidar` to the driver's `lidar: Out[PointCloud2]` already inside `unitree_go2`. An encoder returns `bytes`, an `EncodedPayload` (payload plus a small JSON meta mapping sent in the frame header), or `None` to skip a sample. Because dimOS modules live in different processes, codec functions must be importable by name (the registry ships them by reference). A function defined inline in a script or a lambda is rejected.
@@ -305,12 +439,46 @@ session.subscribe("color_image", (snapshot) => {
 
 The cockpit's video panel does exactly this. The relay's `/api/info` says whether it offers WebRTC video (`rtc: true`), and the manifest's encoding says which channels use it. A relay without Cloudflare, or a robot without aiortc (`dimos[webrtc]`), keeps `jpeg.v1`. A `rtc_failed` session error means a WebRTC step failed, at the relay (which retries it) or locally (the SDK drops its peer connection and offers again with the transport's backoff, also when the relay reports the SFU session gone or the peer connection fails later). The WebTransport session itself is unaffected.
 
+### Direct video for topics
+
+A topic provider with video enabled ([Raw topics](/docs/web/relay.md#raw-topics)) advertises `video.h264.v1`. `session.topics.video()` subscribes to a camera key with that profile and opens a WebRTC connection straight to the provider, signaled through the relay: the provider encodes each frame once in software H.264 for every viewer of the same settings, rate included, the browser decodes in hardware, and no media rides the relay. No Cloudflare account or internet is needed, but the browser must reach the provider's UDP ports (host candidates only, no STUN or TURN).
+
+```js
+const video = session.topics.video("camera/color", { maxHz: 30 }, (track) => {
+  document.querySelector("video").srcObject = track === null ? null : new MediaStream([track]);
+});
+await video.ready();
+console.log(video.mode()); // "rtc"
+await video.update({ maxResolution: [1280, 720] });
+```
+
+`onTrack` fires with the track when it arrives, which can be before any media does, again with a new track after a reconnect or a settings change that moved the viewer to another encoder, and with `null` when the track ends. Pass `fallback: "jpeg"` to open `image.jpeg.balanced.v1` instead when direct video is unavailable or has failed for good; the handle then reports `mode()` `jpeg`, keeps the reason in `status().error`, and delivers the JPEG samples to `options.onSample`.
+
+| Member | What it does |
+|---|---|
+| `ready()` | Resolves once the first packet of a track arrives (or the JPEG fallback is ready). It stays pending on a camera that publishes nothing. |
+| `status()` / `onStatus(cb)` | `connecting`, `ready`, `interrupted`, `rejected` or `closed`, with a `TopicError`. Codes: `rtc_unavailable` (the source offers no video, the browser offers no compatible H.264, or the provider is at its peer or encoder limit), `rtc_failed` (ICE, the answer timeout, a failed connection; the message says which, `no_direct_path` when no candidate pair connects, also 15 s after the answer), `encoder_failed`. |
+| `mode()` | `rtc` once media plays on the track, `jpeg` on the fallback, `none` otherwise. |
+| `track()` / `receiver()` | The current `MediaStreamTrack` and its `RTCRtpReceiver` (for `jitterBufferTarget` and `getStats()`). |
+| `settings()` / `update(options)` | As on a subscription: `maxHz`, `maxResolution` (at most 1920×1080, 30 Hz), and `maxBitrate`. `profile` cannot change. A sole viewer's encoder reconfigures in place; shared variants re-offer. The JPEG fallback keeps the source and compatible settings in force. |
+| `onSettings(cb)` / `stats()` | Acknowledged settings changes and the two-second delivery window, including direct-video receiver counters. |
+| `close()` | Ends the peer and the subscription. |
+
+`maxBitrate` is the encoder target after normalization: a request for 10,000,000 bit/s at 1280×720 acknowledges 2,500,000. It is a ceiling on the class of the picture actually encoded, so a 640×360 camera under the default 1080p box encodes at 1,000,000. Other profiles reject this option. When only one subscription holds a video variant, it is no longer the route's opening variant, no other variant already encodes the requested settings, and the provider advertises `videoReconfigure`, changing bitrate, resolution or rate rebuilds its encoder at the next frame boundary. The next frame is an IDR with monotonic timestamps, the peer and track stay in place, and `onTrack` does not fire again. Otherwise the handle follows the move and re-offer path, including its media gap.
+
+A peer that fails is offered again after 1 second, then after 2. The third failure in a row with no media played is final. Each `video()` handle has its own relay route and peer. Two handles on one camera at the same rate, size and bitrate cost the provider one encode and two packetizations, and different settings cost one encode each, so share the track on the page instead.
+
 ## Publishing to the robot
 
 A `dir="tx"` channel with `publish="shared"` is a browser input. Any viewer may publish on it. The bridge decodes the JSON value with the matching decoder and publishes it on a typed `Out` port, and your modules consume it like any other stream.
 
+Append the input declaration to the existing channel list. Continuing the tutorial, replace the `cockpit(...)` argument with:
+
 ```python skip
 cockpit(channels=[
+    Channel("odom", PoseStamped, encoding="pose.json.v1", max_hz=20.0),
+    Channel("health", Health, max_hz=1.0),
+    Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
     Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
 ])
 ```
@@ -355,6 +523,8 @@ try {
 | `subscribe(ch, cb)` | Registers a UI-tick callback and asks the relay for the channel in one step. Allowed before a robot or manifest exists. Once a manifest is adopted, a missing or non-rx channel raises an `unknown_channel` session error and stays desired for a later manifest. Returns an unsubscribe function. |
 | `publish(ch, value, { clientTs? })` | Publishes one JSON value on a `publish="shared"` tx channel. Resolves with `{ ch, relayTs, bridgeTs }` (seconds since the epoch) once the bridge published it. See [Publishing](#publishing). |
 | `close()` | Closes the transport, drops every subscription and rejects pending publishes. |
+| `rttMs()` | Lowest RTT in milliseconds among the last four matched pongs, or `null` before a measurement. Clears on reconnect. |
+| `topics.setAdaptation(enabled)` | Controls the topic adaptation controller; see [Adapting to a slow link](#adapting-to-a-slow-link) for options and `onSettings` / `stats`. |
 
 `SessionStatus` has `transport` (the phase below), `robots` (every robot on the relay, `{ id, name, model }`), `watchedRobot`, `manifest`, `manifestUnsupported` (the robot's manifest version is newer than the SDK), `epoch` (bumps whenever the manifest changes) and `lastError` (`{ code, message, ch? }` with code `invalid_manifest`, `unknown_channel`, `rtc_failed` or `relay_error`).
 

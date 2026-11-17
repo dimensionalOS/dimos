@@ -33,21 +33,25 @@ from experimental.gateway.errors import ApiError as ApiError
 from experimental.gateway.launches import RunSource
 from experimental.gateway.live import Live
 from experimental.gateway.process_stats import ProcessStats
+from experimental.gateway.uploads import Uploads
 
 logger = setup_logger()
 
-API_VERSION = "8.0.0"
+API_VERSION = "9.2.0"
 
 
 @dataclass
 class State:
     dimos_dir: Path
     bus: events.Bus
+    uploads: Uploads
     scanner: Scanner
     jobs: Jobs = field(default_factory=Jobs)
     live: Live = field(default_factory=Live)
     process_stats: ProcessStats = field(default_factory=ProcessStats)
     cache: introspect.Cache = field(default_factory=introspect.Cache)
+    # the checkout's fingerprint the cache was filled under
+    cache_fingerprint: str | None = None
     listed: list[dict[str, Any]] | None = None
     exit: Callable[[], None] = lambda: os._exit(0)
     started_at: int = field(default_factory=lambda: int(time.time()))
@@ -62,6 +66,10 @@ class State:
         self, args: list[str], stdin: Any = None, source: RunSource | None = None
     ) -> Any:
         """Introspect the gateway's checkout, or the one a run's dimos came from."""
+        # an edit, a commit or an install changes what the code answers: what was introspected before it is forgotten
+        fingerprint = await asyncio.to_thread(self.scanner.current_fingerprint)
+        if fingerprint != self.cache_fingerprint:
+            self.cache, self.cache_fingerprint = introspect.Cache(), fingerprint
         key = self.introspect_key(args, stdin, source)
         dimos_dir, python = (source.checkout, source.python) if source else (self.dimos_dir, None)
         try:
@@ -94,8 +102,14 @@ def site_dirs(dimos_dir: Path) -> list[Path]:
 
 def new_state(dimos_dir: Path, bus: events.Bus | None = None) -> State:
     bus = bus or events.Bus()
+    store.serve(dimos_dir)
+    uploads = Uploads(bus, store.gateway_dir() / "uploads.json")
     jobs = Jobs()
-    return State(dimos_dir=dimos_dir, bus=bus, scanner=Scanner(dimos_dir, jobs), jobs=jobs)
+    state = State(
+        dimos_dir=dimos_dir, bus=bus, uploads=uploads, scanner=Scanner(dimos_dir, jobs), jobs=jobs
+    )
+    state.process_stats.on_sample = lambda: bus.send({"type": "stats"})
+    return state
 
 
 def gateway_state(request: Request) -> State:

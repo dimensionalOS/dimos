@@ -11,7 +11,7 @@ import { CloudflareClient, type FetchFn, type RtcConfig } from "./cloudflare.ts"
 import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
 import { RtcHub } from "./rtc.ts";
-import { RobotSession, ViewerSession } from "./session.ts";
+import { collectResetStreams, RobotSession, ViewerSession } from "./session.ts";
 
 export interface RelayOptions {
   /**
@@ -40,12 +40,19 @@ export interface RelayOptions {
   cert?: string;
   key?: string;
   /**
-   * Parsed --auth-file (auth.ts): robot keys bound to robot ids and viewer
-   * tokens. Robots and viewers must present them in hello, /api/stats needs
-   * a bearer viewer token, and together with cert/key it lifts the
-   * loopback-only rule below.
+   * Parsed --auth-file (auth.ts): robot keys bound to robot ids, viewer
+   * tokens, and topic source keys. Robots, viewers and topic providers must
+   * present them in hello, /api/stats needs a bearer viewer token, and
+   * together with cert/key it lifts the loopback-only rule below.
    */
   auth?: Auth;
+  /**
+   * Admit topic providers and give every viewer read/write access to every
+   * connected topic source (--open-topics). Default: on without `auth`, where
+   * nothing else is protected either; off with it, which turns providers away
+   * (`topics_disabled`) and denies viewers every topic operation.
+   */
+  openTopics?: boolean;
   /**
    * Parsed --rtc-file (cloudflare.ts): enables video.webrtc.v1 channels
    * through the Cloudflare SFU. Does not lift the loopback-only rule below.
@@ -246,7 +253,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   const hub = options.rtc === undefined
     ? null
     : new RtcHub(new CloudflareClient(options.rtc, options.rtcFetch));
-  const registry = new Registry(Date.now, hub);
+  const registry = new Registry(Date.now, hub, options.openTopics ?? options.auth === undefined);
   // Awaited, and before either listener binds: a peer gets its ICE servers
   // right after welcome (and again at every refresh, through the registry),
   // and nothing answers while the relay is half started (handleHttp closes
@@ -339,7 +346,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   // only under --v8-flags=--expose-gc (relay_run_cmd passes it).
   const reapTimer = setInterval(() => {
     registry.reapAll(Date.now());
-    (globalThis as { gc?: () => void }).gc?.();
+    collectResetStreams();
   }, LATEST_STALE_MS);
   // A pending reap must not keep the Deno process alive after shutdown().
   Deno.unrefTimer(reapTimer);

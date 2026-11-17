@@ -60,6 +60,8 @@ from dimos.web.relay_bridge.protocol import (
     msg_from_dict,
     peek_data_frame_lengths,
 )
+from dimos.web.relay_bridge.topic_profiles import PROFILE_OPTIONS
+from dimos.web.relay_bridge.topic_protocol import TopicCapabilities
 
 FIXTURES = find_web_dir() / "shared" / "fixtures"
 
@@ -74,6 +76,26 @@ DATAGRAMS = _vectors("datagrams.json")
 DATA = _vectors("data_frames.json")
 
 
+@pytest.mark.parametrize(
+    "vector", _vectors("topics_invalid.json"), ids=lambda vector: vector["name"]
+)
+def test_topic_messages_reject_shared_invalid_wire_vectors(vector):
+    assert decode_datagram(json.dumps(vector["message"]).encode()) is None
+
+
+def test_advertised_profile_options_match_the_fixture_table():
+    # The TypeScript fixture spells out the ranges the provider derives from
+    # its profile table; the relay normalizes against exactly these.
+    hello = next(v["message"] for v in DATAGRAMS if v["name"] == "hello_topic_source_options")
+    advertised = hello["topicCapabilities"]["profileOptions"]
+    assert advertised == {name: PROFILE_OPTIONS[name] for name in advertised}
+    capabilities = TopicCapabilities(
+        read=True, write=False, profiles=[*PROFILE_OPTIONS], profileOptions=PROFILE_OPTIONS
+    )
+    wire = capabilities.model_dump_json(exclude_none=True)
+    assert TopicCapabilities.model_validate_json(wire) == capabilities
+
+
 def _header(d):
     return FrameHeader(
         ch=d["ch"], seq=d["seq"], ts=d["ts"], delivery=d["delivery"], meta=d.get("meta")
@@ -81,10 +103,8 @@ def _header(d):
 
 
 def test_protocol_version():
-    # v7: the WebRTC signaling messages (rtc_ice/rtc_offer/rtc_answer) and
-    # video.webrtc.v1 track channels; an older peer would drop the messages
-    # and show a video panel that never draws, so the handshake must fail.
-    assert PROTOCOL_VERSION == 7
+    # Topic sources and persistent upstream routes require matching peers.
+    assert PROTOCOL_VERSION == 8
 
 
 def test_control_hello_payload_is_the_datagram_encoding():

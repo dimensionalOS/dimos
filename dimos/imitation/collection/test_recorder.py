@@ -196,7 +196,6 @@ def deployed_recorders(worker_manager):
         proxy.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_generated_inputs_survive_forkserver_and_fresh_deployment(
     worker_manager,
     deployed_recorders,

@@ -83,8 +83,17 @@ function moduleRow(instance: string): ModuleRow {
 }
 
 test("sidebar navigates measured picture rows and folds duplicate occurrences through the real TUI viewport", async (t) => {
+  const previous = { TERM: process.env.TERM, NO_COLOR: process.env.NO_COLOR };
+  process.env.TERM = "tmux-256color";
+  delete process.env.NO_COLOR;
+  t.after(() => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
   initTheme("dark", false);
-  setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+  setCapabilities({ images: null, trueColor: true, hyperlinks: false });
   setCellDimensions({ widthPx: 10, heightPx: 20 });
   const terminal = new MemoryTerminal();
   const tui = new TuiAltScreen(terminal, false, undefined, { mouse: false });
@@ -150,6 +159,28 @@ test("sidebar navigates measured picture rows and folds duplicate occurrences th
   const deadline = Date.now() + 3000;
   while (sidebar.render(40).length <= beforePicture && Date.now() < deadline) await delay(10);
   assert(sidebar.render(40).length > beforePicture, "a real picture makes a multi-line row");
+  const waitForColor = async (color: string) => {
+    const deadline = Date.now() + 3000;
+    do {
+      tui.renderNow();
+      if (tui.getScreenLines().some((line) => line.includes("▀") && line.includes(color))) return;
+      await delay(10);
+    } while (Date.now() < deadline);
+    assert.fail("the visible sidebar must render the prepared frame in color");
+  };
+  await waitForColor("38;2;254;0;0");
+  const blue = await sharp({ create: { width: 320, height: 240, channels: 3, background: "blue" } })
+    .jpeg()
+    .toBuffer();
+  frames.emit({
+    kind: "image",
+    channel: system[0]!.channel,
+    at: epochMs(Date.now()),
+    width: 320,
+    height: 240,
+    jpeg: blue,
+  });
+  await waitForColor("38;2;0;0;254");
 
   tui.setFocus(sidebar);
   tui.renderNow();

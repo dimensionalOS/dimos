@@ -57,6 +57,7 @@ from dimos.simulation.mujoco.constants import (
 from dimos.simulation.mujoco.menagerie import SIM_INSTALL_HINT, ensure_menagerie
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
+from dimos.utils.executable import find_executable
 from dimos.utils.logging_config import setup_logger
 
 ODOM_FREQUENCY = 50
@@ -140,7 +141,11 @@ class MujocoConnection:
             # It needs libpython on the dylib search path; uv-installed Pythons
             # use @rpath which doesn't always resolve inside venvs, so we
             # point DYLD_LIBRARY_PATH at the real libpython directory.
-            executable = sys.executable if sys.platform != "darwin" else "mjpython"
+            executable = (
+                sys.executable
+                if sys.platform != "darwin"
+                else find_executable("mjpython") or "mjpython"
+            )
             env = os.environ.copy()
             if sys.platform == "darwin":
                 # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
