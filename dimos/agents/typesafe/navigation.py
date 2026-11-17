@@ -159,6 +159,8 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             lidar_band=self.config.lidar_band,
         )
         self._state_gen = gen
+        # The detections are read against this pose, so the goal they resolve to is in its frame.
+        self._state_frame = pose.frame_id
         return state
 
     def questions(self, state: object) -> dict[str, Question]:
@@ -188,6 +190,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             "lidar": getter_streaming(self.lidar.observable(), timeout=0, nonblocking=True),
         }
         self._state_gen = 0
+        self._state_frame = ""
         super().start()
         self.register_disposable(Disposable(self.human_input.subscribe(self.set_goal)))
         self._stop_event.clear()
@@ -297,7 +300,9 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             self._goal_xy = (x, y)
         if prev is None or abs(prev[0] - x) > 0.1 or abs(prev[1] - y) > 0.1:
             self.goal.publish(
-                PoseStamped(frame_id="world", position=[x, y, 0.0], orientation=NO_HEADING)
+                PoseStamped(
+                    frame_id=self._state_frame, position=[x, y, 0.0], orientation=NO_HEADING
+                )
             )
 
     def _set_target(self, target: Vec3, *, immediate: bool = False, gen: int | None = None) -> None:
