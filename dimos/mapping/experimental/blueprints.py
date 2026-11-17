@@ -32,17 +32,23 @@ _viewer = nav_viewer(
     visual_override={MESH_ENTITY: MeshColours(alpha=1.0)},
     hidden=(MAP_REGIONS_ENTITY, SURFACE_MAP_ENTITY),
 )
-go2_nav_viewer_mesh = autoconnect(
-    _viewer, MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND)
-).global_config(n_workers=4, **VIEWER_GLOBAL_CONFIG)
+go2_nav_viewer_mesh = (
+    autoconnect(_viewer, MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND))
+    .solidify()
+    .global_config(n_workers=4, **VIEWER_GLOBAL_CONFIG)
+)
 
 # go2-nav on the go2 Host, the mesher on the GPU Host with the most memory, the
 # viewer here. Run with `dimos run go2-nav-hosted`. This machine's Host reaches the
 # robot's by HOST__CONNECT=tcp/<robot-ip>:7447, or by scouting where the LAN carries multicast.
-go2_nav_hosted = autoconnect(
-    _go2_nav_stack.hosted(tags={"go2": True}),
-    MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND).hosted(
-        tags={"gpu": True}, prefer=Tag.gpu_mem
-    ),
-    _viewer,
-).global_config(transport="zenoh", robot_model="unitree_go2")
+go2_nav_hosted = (
+    autoconnect(
+        _go2_nav_stack.hosted(tags={"go2": True}),
+        MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND).hosted(
+            tags={"gpu": True}, prefer=Tag.gpu_mem
+        ),
+        _viewer,
+    )
+    .solidify()
+    .global_config(transport="zenoh", robot_model="unitree_go2")
+)

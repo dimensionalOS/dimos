@@ -31,4 +31,4 @@ _agentic_skills = autoconnect(
     ObserveSkill.blueprint(),
     SpeakSkill.blueprint(),
     UnitreeG1SkillContainer.blueprint(),
-)
+).solidify()

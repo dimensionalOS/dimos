@@ -78,8 +78,12 @@ rerun_config: dict[str, Any] = {
 }
 
 
-xarm_localize_live = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
-    PerceptionLocalize.blueprint(world_frame="world"),
-    McpServer.blueprint(),
-).global_config(n_workers=5)
+xarm_localize_live = (
+    autoconnect(
+        vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
+        PerceptionLocalize.blueprint(world_frame="world"),
+        McpServer.blueprint(),
+    )
+    .solidify()
+    .global_config(n_workers=5)
+)

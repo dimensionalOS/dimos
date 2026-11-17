@@ -22,4 +22,4 @@ from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 unitree_g1_joystick = autoconnect(
     unitree_g1_basic,
     KeyboardTeleop.blueprint(),  # Pygame-based joystick control
-)
+).solidify()

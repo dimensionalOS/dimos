@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from reactivex import interval
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -228,7 +229,7 @@ def recorded_rerun_config(dataset: str) -> dict[str, Any]:
 
     if name not in all_blueprints:
         return {}
-    for atom in get_blueprint_by_name(name).blueprints:
+    for atom in autoconnect(get_blueprint_by_name(name)).solidify().blueprints:
         if atom.module is RerunBridgeModule:
             return {k: atom.kwargs[k] for k in _VIS_KEYS if k in atom.kwargs}
     return {}

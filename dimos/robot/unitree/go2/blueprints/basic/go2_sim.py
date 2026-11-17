@@ -69,11 +69,15 @@ rerun_config: dict[str, Any] = {
     "visual_override": {"world/scene": _scene_lines},
 }
 
-go2_sim = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
-    SimGo2World.blueprint(),
-    Go2Mid360StaticTf.blueprint(),
-    MovementManager.blueprint(),
-    # gossip off until zenoh fixes its pending-connection bug: with it on, native modules
-    # spawned together never link, which the nav stack composed on this blueprint needs
-).global_config(transport="zenoh", zenoh_gossip=False, n_workers=5, robot_model="unitree_go2")
+go2_sim = (
+    autoconnect(
+        vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
+        SimGo2World.blueprint(),
+        Go2Mid360StaticTf.blueprint(),
+        MovementManager.blueprint(),
+        # gossip off until zenoh fixes its pending-connection bug: with it on, native modules
+        # spawned together never link, which the nav stack composed on this blueprint needs
+    )
+    .solidify()
+    .global_config(transport="zenoh", zenoh_gossip=False, n_workers=5, robot_model="unitree_go2")
+)

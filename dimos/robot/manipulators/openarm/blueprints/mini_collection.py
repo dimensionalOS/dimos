@@ -75,25 +75,31 @@ _profile = CollectionProfile(
 
 
 def _cameras() -> Blueprint:
-    return autoconnect(
-        *(
-            WebcamModule.blueprint(
-                instance_name=name,
-                hardware=WebcamConfig(camera_index=index, fps=30, frame_id_prefix=f"{name}_image"),
-                frame_id=f"{name}_camera_link",
+    return (
+        autoconnect(
+            *(
+                WebcamModule.blueprint(
+                    instance_name=name,
+                    hardware=WebcamConfig(
+                        camera_index=index, fps=30, frame_id_prefix=f"{name}_image"
+                    ),
+                    frame_id=f"{name}_camera_link",
+                )
+                for index, name in enumerate(_CAMERAS)
             )
-            for index, name in enumerate(_CAMERAS)
         )
-    ).remappings(
-        [
-            remapping
-            for name in _CAMERAS
-            for remapping in (
-                (name, "color_image", f"{name}_image"),
-                (name, "camera_info", f"{name}_camera_info"),
-                (name, "tf", f"{name}_tf"),
-            )
-        ]
+        .solidify()
+        .remappings(
+            [
+                remapping
+                for name in _CAMERAS
+                for remapping in (
+                    (name, "color_image", f"{name}_image"),
+                    (name, "camera_info", f"{name}_camera_info"),
+                    (name, "tf", f"{name}_tf"),
+                )
+            ]
+        )
     )
 
 
@@ -104,7 +110,7 @@ openarm_mini_collection = autoconnect(
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
     teleop_openarm_mini,
     _cameras(),
-)
+).solidify()
 
 # Robot side of the split deployment; the operator runs teleop-openarm-mini-leader.
 openarm_mini_follower_collection = autoconnect(
@@ -112,4 +118,4 @@ openarm_mini_follower_collection = autoconnect(
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
     teleop_openarm_mini_follower,
     _cameras(),
-)
+).solidify()

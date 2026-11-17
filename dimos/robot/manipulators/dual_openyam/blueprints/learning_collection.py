@@ -70,27 +70,31 @@ _profile = CollectionProfile(
     metadata={"name": "dual-openyam-quest", "robot_type": "dual_openyam"},
 )
 
-dual_openyam_quest_collection = autoconnect(
-    collect(profile=_profile),
-    EpisodeMonitorModule.blueprint(instance_name="episodes"),
-    build_dual_openyam_webxr(visualization=ViserVisualizationConfig(host="0.0.0.0")),
-    WebcamModule.blueprint(
-        instance_name="left_wrist",
-        hardware=WebcamConfig(camera_index=0, fps=30, frame_id_prefix="left_wrist_image"),
-        frame_id="left_wrist_camera_link",
-    ),
-    WebcamModule.blueprint(
-        instance_name="right_wrist",
-        hardware=WebcamConfig(camera_index=1, fps=30, frame_id_prefix="right_wrist_image"),
-        frame_id="right_wrist_camera_link",
-    ),
-).remappings(
-    [
-        ("left_wrist", "color_image", "left_wrist_image"),
-        ("left_wrist", "camera_info", "left_wrist_camera_info"),
-        ("left_wrist", "tf", "left_wrist_tf"),
-        ("right_wrist", "color_image", "right_wrist_image"),
-        ("right_wrist", "camera_info", "right_wrist_camera_info"),
-        ("right_wrist", "tf", "right_wrist_tf"),
-    ]
+dual_openyam_quest_collection = (
+    autoconnect(
+        collect(profile=_profile),
+        EpisodeMonitorModule.blueprint(instance_name="episodes"),
+        build_dual_openyam_webxr(visualization=ViserVisualizationConfig(host="0.0.0.0")),
+        WebcamModule.blueprint(
+            instance_name="left_wrist",
+            hardware=WebcamConfig(camera_index=0, fps=30, frame_id_prefix="left_wrist_image"),
+            frame_id="left_wrist_camera_link",
+        ),
+        WebcamModule.blueprint(
+            instance_name="right_wrist",
+            hardware=WebcamConfig(camera_index=1, fps=30, frame_id_prefix="right_wrist_image"),
+            frame_id="right_wrist_camera_link",
+        ),
+    )
+    .solidify()
+    .remappings(
+        [
+            ("left_wrist", "color_image", "left_wrist_image"),
+            ("left_wrist", "camera_info", "left_wrist_camera_info"),
+            ("left_wrist", "tf", "left_wrist_tf"),
+            ("right_wrist", "color_image", "right_wrist_image"),
+            ("right_wrist", "camera_info", "right_wrist_camera_info"),
+            ("right_wrist", "tf", "right_wrist_tf"),
+        ]
+    )
 )

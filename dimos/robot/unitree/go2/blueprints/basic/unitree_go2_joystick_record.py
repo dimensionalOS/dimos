@@ -123,6 +123,7 @@ unitree_go2_joystick_record = (
         KeyboardTeleop.blueprint(),
         vis_module(viewer_backend=global_config.viewer, rerun_config=record_rerun_config),
     )
+    .solidify()
     .disabled_modules(RerunWebSocketServer)
     .global_config(n_workers=4, robot_model="unitree_go2")
 )

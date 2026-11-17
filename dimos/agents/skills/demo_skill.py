@@ -22,4 +22,4 @@ demo_skill = autoconnect(
     DemoCalculatorSkill.blueprint(),
     McpServer.blueprint(),
     Agent.blueprint(),
-)
+).solidify()

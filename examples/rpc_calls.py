@@ -56,5 +56,5 @@ if __name__ == "__main__":
         autoconnect(
             Calculator.blueprint(),
             Client.blueprint(),
-        )
+        ).solidify()
     ).loop()

@@ -95,7 +95,7 @@ keyboard_teleop_xarm6 = autoconnect(
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, 6),
-)
+).solidify()
 
 keyboard_teleop_xarm7 = autoconnect(
     KeyboardTeleopModule.blueprint(),
@@ -128,7 +128,7 @@ keyboard_teleop_xarm7 = autoconnect(
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(XARM7_SIM_PATH, 7),
-)
+).solidify()
 
 _lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
 
@@ -162,7 +162,7 @@ keyboard_teleop_lite6 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
-)
+).solidify()
 
 _xarm6_control_hw = make_xarm_hardware(
     "arm",
@@ -277,7 +277,7 @@ coordinator_teleop_xarm7 = autoconnect(
     # Serves the URDF and its meshes to viewers; the planner already puts the links on tf.
     UrdfManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
     *mujoco_if_sim(XARM7_SIM_PATH, 7),
-)
+).solidify()
 
 coordinator_teleop_xarm6 = autoconnect(
     TeleopControlCoordinator.blueprint(
@@ -318,7 +318,7 @@ coordinator_teleop_xarm6 = autoconnect(
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, 6),
-)
+).solidify()
 
 
 class XArmTwistCoordinator(ArmTwistCoordinator):
@@ -391,7 +391,7 @@ def _teleop(arm: XArmType) -> Blueprint:
         ),
         XArmConnection.blueprint(arm=arm, gripper="xarm", **declaration.model_dump()),
         UrdfManager.blueprint(model=model),
-    )
+    ).solidify()
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.

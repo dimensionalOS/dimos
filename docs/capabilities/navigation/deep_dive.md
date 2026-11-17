@@ -183,7 +183,7 @@ unitree_go2 = autoconnect(
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2")
+).solidify().global_config(n_workers=10, robot_model="unitree_go2")
 
 to_svg(unitree_go2, "assets/go2_blueprint.svg")
 ```

@@ -25,17 +25,21 @@ from dimos.robot.urdf_manager import UrdfManager
 from dimos.simulation.m20_sim.world import SIM_M20, SimM20World
 from dimos.visualization.vis_module import vis_module
 
-m20_sim_nav = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=m20_sim_rerun_config()),
-    SimM20World.blueprint().remappings(
-        [
-            (SimM20World, "lidar", "slam_body_points"),
-            (SimM20World, "odometry", "slam_odom"),
-            # the sim's measured joint angles pose the same URDF the real robot shows
-            (SimM20World, "joint_state", "coordinator_joint_state"),
-        ]
-    ),
-    UrdfManager.blueprint(model=M20_MODEL),
-    m20_nav_stack(SIM_M20),
-    # gossip off: with it on, zenoh's pending-connection bug keeps native modules spawned together from linking
-).global_config(zenoh_gossip=False, n_workers=9)
+m20_sim_nav = (
+    autoconnect(
+        vis_module(viewer_backend=global_config.viewer, rerun_config=m20_sim_rerun_config()),
+        SimM20World.blueprint().remappings(
+            [
+                (SimM20World, "lidar", "slam_body_points"),
+                (SimM20World, "odometry", "slam_odom"),
+                # the sim's measured joint angles pose the same URDF the real robot shows
+                (SimM20World, "joint_state", "coordinator_joint_state"),
+            ]
+        ),
+        UrdfManager.blueprint(model=M20_MODEL),
+        m20_nav_stack(SIM_M20),
+        # gossip off: with it on, zenoh's pending-connection bug keeps native modules spawned together from linking
+    )
+    .solidify()
+    .global_config(zenoh_gossip=False, n_workers=9)
+)

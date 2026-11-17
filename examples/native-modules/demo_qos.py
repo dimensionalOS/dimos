@@ -169,11 +169,15 @@ def _percentiles_ms(samples: list[float]) -> dict[str, float]:
 
 
 def blueprint(args: argparse.Namespace) -> Blueprint:
-    bp = autoconnect(
-        FramePublisher.blueprint(rate_hz=args.rate, size_bytes=args.size, count=args.count),
-        SlowHandlerModule.blueprint(handler_delay_ms=args.handler_delay_ms),
-        FrameSink.blueprint(),
-    ).global_config(viewer="none", transport=args.transport)
+    bp = (
+        autoconnect(
+            FramePublisher.blueprint(rate_hz=args.rate, size_bytes=args.size, count=args.count),
+            SlowHandlerModule.blueprint(handler_delay_ms=args.handler_delay_ms),
+            FrameSink.blueprint(),
+        )
+        .solidify()
+        .global_config(viewer="none", transport=args.transport)
+    )
     if args.transport == "zenoh":
         topic = ZenohTopic(_FRAMES_TOPIC, Image, qos=_PRESETS[args.qos])
         bp = bp.transports({("frames", Image): ZenohTransport.spec(topic)})

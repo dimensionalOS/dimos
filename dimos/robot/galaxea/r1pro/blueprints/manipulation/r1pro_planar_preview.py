@@ -74,4 +74,4 @@ r1pro_planar_preview = autoconnect(
             ),
         ],
     ),
-)
+).solidify()

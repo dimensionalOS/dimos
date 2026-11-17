@@ -63,7 +63,8 @@ blueprint = autoconnect(
 )
 ```
 
-`blueprint` itself is a `Blueprint` so you can link it with other modules:
+`autoconnect()` returns a `MetaBlueprint`: an unresolved composition of concrete
+blueprints, other metablueprints, and optional choices. You can compose it further:
 
 ```python session=blueprint-ex1
 class Module4(Module):
@@ -82,7 +83,72 @@ expanded_blueprint = autoconnect(
 )
 ```
 
-Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
+Call `.solidify()` to produce a concrete `Blueprint` before applying operations
+such as `.transports()`, `.remappings()`, `.namespace()`, or `.hosted()`, or passing
+it to `BlueprintConfigParser` or `ModuleCoordinator.build()`:
+
+```python session=blueprint-ex1
+concrete_blueprint = expanded_blueprint.solidify()
+```
+
+Both types are frozen data classes. Solidification leaves the composition intact,
+so it can be resolved repeatedly with different choices. A `MetaBlueprint` also
+offers `.build(choices=...)`, which solidifies and calls `ModuleCoordinator.build()`.
+As with other coordinator builds, call it under an `if __name__ == "__main__":`
+guard when running a script.
+
+## Choices
+
+`ChoiceAtom` selects one fragment by name. Each alternative can be a concrete
+`Blueprint` or a nested `MetaBlueprint`:
+
+```python session=blueprint-choices
+from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
+from dimos.core.module import Module
+
+class VisModule(Module):
+    pass
+
+class RaytracerModule(Module):
+    pass
+
+class VoxelMapper(Module):
+    pass
+
+mapping = autoconnect(
+    VisModule.blueprint(),
+    ChoiceAtom(
+        name="PointClearing",
+        default="raycasting",
+        choices={
+            "raycasting": RaytracerModule.blueprint(),
+            "column_carving": VoxelMapper.blueprint(),
+        },
+    ),
+)
+
+default_mapping = mapping.solidify()
+voxel_mapping = mapping.solidify(choices={"PointClearing": "column_carving"})
+```
+
+Expose the unresolved `mapping` variable through the blueprint registry or a
+package entry point to select alternatives at launch:
+
+```bash
+dimos run mapping
+dimos run mapping --choice PointClearing=column_carving
+```
+
+Repeat `--choice NAME=OPTION` for multiple choices. Names and options are case
+sensitive. A choice without a default requires an explicit selection. Invalid
+options, unknown or inactive names, and repeated CLI selections are errors.
+Nested choices are resolved only inside selected alternatives, so an unselected
+branch's required choices do not need values. Distinct active choices must have
+unique names; the same `ChoiceAtom` object can be reused across compositions.
+
+The CLI solidifies before configuration parsing and dependency checks. Module
+options and `--help` therefore describe the selected modules. Blueprint runtime
+features, including hosted placement, operate on the resulting concrete blueprint.
 
 ## Publishing external blueprints
 
@@ -116,7 +182,7 @@ External names are always `<canonical-distribution-namespace>.<external-local-bl
 
 Entry point targets may be either:
 
-- a `Blueprint` object, such as a module-level `go2_blueprint`; or
+- a `Blueprint` or `MetaBlueprint` object, such as a module-level `go2_blueprint`; or
 - a dimOS `Module` class, such as `KeyboardTeleop`, which dimOS converts with
   `.blueprint()`.
 
@@ -137,7 +203,7 @@ blueprint = autoconnect(
     module1(arg1=1),
     module2(),
     module1(arg1=2),  # This one is used, the first is discarded
-)
+).solidify()
 ```
 
 This is so you can "inherit" from one blueprint but override something you need to change.
@@ -166,7 +232,7 @@ class ModuleB(Module):
 module_a = partial(Blueprint.create, ModuleA)
 module_b = partial(Blueprint.create, ModuleB)
 
-autoconnect(module_a(), module_b())
+autoconnect(module_a(), module_b()).solidify()
 ```
 
 Connections are linked based on `(property_name, object_type)`. In this case `('image', Image)` will be connected between the two modules, but `begin_explore` will not be linked to `start_explore`.
@@ -191,12 +257,12 @@ from dimos.core.transport_factory import make_transport
 base_blueprint = autoconnect(
     module1(arg1=1),
     module2(),
-)
+).solidify()
 expanded_blueprint = autoconnect(
     base_blueprint,
     module4(),
     module5(),
-)
+).solidify()
 base_blueprint = base_blueprint.transports({
     ("image", Image): make_transport("go2/color_image", Image),
     ("start_explore", bool): make_transport("start_explore", bool),
@@ -228,7 +294,7 @@ blueprint = (
     autoconnect(
         ConnectionModule.blueprint(),
         ProcessingModule.blueprint(),
-    )
+    ).solidify()
     .remappings([
         (ConnectionModule, 'color_image', 'rgb_image'),
     ])
@@ -282,7 +348,7 @@ fleet = autoconnect(
         Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
         for i, ip in enumerate(robot_ips)
     ],
-)
+).solidify()
 ```
 
 Inside a namespace everything is prefixed:

@@ -24,4 +24,4 @@ unitree_go2_agentic = autoconnect(
     McpServer.blueprint(),
     Agent.blueprint(),
     _common_agentic,
-)
+).solidify()

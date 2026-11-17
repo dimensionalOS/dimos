@@ -85,7 +85,7 @@ def blueprint(topology: bool = False) -> Blueprint:
     return autoconnect(
         PingModule.blueprint(session=ping_zenoh),
         PongModule.blueprint(session=pong_zenoh),
-    )
+    ).solidify()
 
 
 if __name__ == "__main__":

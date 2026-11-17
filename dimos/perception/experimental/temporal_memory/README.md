@@ -54,7 +54,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.perception.experimental.temporal_memory.temporal_memory import TemporalMemory
 
-bp = autoconnect(WebcamModule.blueprint(), TemporalMemory.blueprint())
+bp = autoconnect(WebcamModule.blueprint(), TemporalMemory.blueprint()).solidify()
 ```
 
 ## Configuration

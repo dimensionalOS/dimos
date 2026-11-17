@@ -51,6 +51,7 @@ unitree_g1_detection = (
             cameraInfo=zed.CameraInfo.SingleWebcam,
         ),
     )
+    .solidify()
     .global_config(n_workers=8)
     .remappings(
         [

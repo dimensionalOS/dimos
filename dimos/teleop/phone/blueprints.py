@@ -21,16 +21,16 @@ from dimos.teleop.phone.phone_extensions import SimplePhoneTeleop
 # Simple phone teleop (mobile base axis filtering + cmd_vel output)
 teleop_phone = autoconnect(
     SimplePhoneTeleop.blueprint(),
-)
+).solidify()
 
 # Phone teleop wired to Unitree Go2
 teleop_phone_go2 = autoconnect(
     SimplePhoneTeleop.blueprint(),
     unitree_go2_basic,
-)
+).solidify()
 
 # Phone teleop wired to Go2 fleet — twist commands sent to all robots
 teleop_phone_go2_fleet = autoconnect(
     SimplePhoneTeleop.blueprint(),
     unitree_go2_fleet,
-)
+).solidify()

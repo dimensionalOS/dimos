@@ -231,17 +231,21 @@ def test_io_port_publisher_qos_reaches_the_native_process() -> None:
 
 def test_autoconnect(args_file: str) -> None:
     """autoconnect passes correct topic args to the native subprocess."""
-    blueprint = autoconnect(
-        StubNativeModule.blueprint(
-            some_param=2.5,
-            output_file=args_file,
-        ),
-        StubConsumer.blueprint(),
-        StubProducer.blueprint(),
-    ).transports(
-        {
-            ("pointcloud", PointCloud2): make_transport("/my/custom/lidar", PointCloud2),
-        },
+    blueprint = (
+        autoconnect(
+            StubNativeModule.blueprint(
+                some_param=2.5,
+                output_file=args_file,
+            ),
+            StubConsumer.blueprint(),
+            StubProducer.blueprint(),
+        )
+        .solidify()
+        .transports(
+            {
+                ("pointcloud", PointCloud2): make_transport("/my/custom/lidar", PointCloud2),
+            },
+        )
     )
 
     coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))

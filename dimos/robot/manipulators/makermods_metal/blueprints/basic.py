@@ -31,25 +31,29 @@ _MODEL = make_metal_model_config(robot="arm")
 
 def metal_control() -> Blueprint:
     """Trajectories and the Metal jaw over the connection."""
-    return autoconnect(
-        DamiaoCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(MetalConnection)],
-            tasks=[
-                joint_trajectory_task(list(_MODEL.joint_names)),
-                # joint7 is open at its lower end.
-                TaskConfig(
-                    name="metal_gripper",
-                    type="gripper",
-                    joint_names=["arm/joint7"],
-                    priority=20,
-                    params={"open_at": "lower"},
-                ),
-            ],
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(MetalConnection),
-    ).remappings(arm_remaps(MetalConnection, DamiaoCoordinator))
+    return (
+        autoconnect(
+            DamiaoCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(MetalConnection)],
+                tasks=[
+                    joint_trajectory_task(list(_MODEL.joint_names)),
+                    # joint7 is open at its lower end.
+                    TaskConfig(
+                        name="metal_gripper",
+                        type="gripper",
+                        joint_names=["arm/joint7"],
+                        priority=20,
+                        params={"open_at": "lower"},
+                    ),
+                ],
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(MetalConnection),
+        )
+        .solidify()
+        .remappings(arm_remaps(MetalConnection, DamiaoCoordinator))
+    )
 
 
 coordinator_makermods_metal = metal_control().remappings([])

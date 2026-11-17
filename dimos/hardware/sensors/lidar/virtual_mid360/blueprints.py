@@ -25,9 +25,13 @@ from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for
 from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360, VirtualMid360Config
 from dimos.visualization.vis_module import vis_module
 
-demo_virtual_mid360_pointlio = autoconnect(
-    VirtualMid360.blueprint(),
-    mid360_for_pointlio(lidar_ip=VirtualMid360Config.model_fields["lidar_ip"].default),
-    PointLio.blueprint(),
-    vis_module("rerun"),
-).global_config(n_workers=4, robot_model="virtual_mid360_pointlio")
+demo_virtual_mid360_pointlio = (
+    autoconnect(
+        VirtualMid360.blueprint(),
+        mid360_for_pointlio(lidar_ip=VirtualMid360Config.model_fields["lidar_ip"].default),
+        PointLio.blueprint(),
+        vis_module("rerun"),
+    )
+    .solidify()
+    .global_config(n_workers=4, robot_model="virtual_mid360_pointlio")
+)

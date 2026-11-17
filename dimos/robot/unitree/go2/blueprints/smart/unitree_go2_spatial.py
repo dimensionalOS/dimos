@@ -18,8 +18,12 @@ from dimos.perception.experimental.perceive_loop_skill import PerceiveLoopSkill
 from dimos.perception.experimental.spatial_perception import SpatialMemory
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
-unitree_go2_spatial = autoconnect(
-    unitree_go2,
-    SpatialMemory.blueprint(),
-    PerceiveLoopSkill.blueprint(),
-).global_config(n_workers=8)
+unitree_go2_spatial = (
+    autoconnect(
+        unitree_go2,
+        SpatialMemory.blueprint(),
+        PerceiveLoopSkill.blueprint(),
+    )
+    .solidify()
+    .global_config(n_workers=8)
+)

@@ -178,45 +178,51 @@ def _leader(connection: type[OpenArmMiniConnection] = OpenArmMiniConnection) -> 
 
 def _joycon_leader() -> Blueprint:
     """Leaders without triggers, and a Joy-Con on each for its jaw, episodes and pause."""
-    return autoconnect(_leader(OpenArmMiniArmConnection), JoyconConnectionModule.blueprint())
+    return autoconnect(
+        _leader(OpenArmMiniArmConnection), JoyconConnectionModule.blueprint()
+    ).solidify()
 
 
 def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:
     """The leader's targets over the OpenArm connection; --simulation swaps in a mock."""
-    return autoconnect(
-        OpenArmLeaderCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(OpenArmConnection)],
-            tasks=[
-                # The trajectory task follows the leader's targets instead of joint_command.
-                replace(
-                    joint_trajectory_task(_MODEL.joint_names, velocity_limits=_VELOCITY_LIMITS),
-                    stream_bind={"joint_command": "leader_joint_command"},
-                ),
-                *[
-                    TaskConfig(
-                        name=f"{side}_arm_gripper",
-                        type="gripper",
-                        joint_names=[f"arm/{_JAWS[side].joint}"],
-                        priority=20,
-                        params={"open_at": _JAWS[side].open_at},
-                        stream_bind={"gripper_command": f"{side}_gripper_command"},
-                    )
-                    for side in OPENARM_SIDES
+    return (
+        autoconnect(
+            OpenArmLeaderCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(OpenArmConnection)],
+                tasks=[
+                    # The trajectory task follows the leader's targets instead of joint_command.
+                    replace(
+                        joint_trajectory_task(_MODEL.joint_names, velocity_limits=_VELOCITY_LIMITS),
+                        stream_bind={"joint_command": "leader_joint_command"},
+                    ),
+                    *[
+                        TaskConfig(
+                            name=f"{side}_arm_gripper",
+                            type="gripper",
+                            joint_names=[f"arm/{_JAWS[side].joint}"],
+                            priority=20,
+                            params={"open_at": _JAWS[side].open_at},
+                            stream_bind={"gripper_command": f"{side}_gripper_command"},
+                        )
+                        for side in OPENARM_SIDES
+                    ],
                 ],
-            ],
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(OpenArmConnection),
-        ManipulationModule.blueprint(
-            model=_MODEL,
-            visualization=visualization if visualization is not None else {"backend": "viser"},
-            gripper_tasks={f"{side}_arm": f"{side}_arm_gripper" for side in OPENARM_SIDES},
-        ),
-    ).remappings(arm_remaps(OpenArmConnection, OpenArmLeaderCoordinator))
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(OpenArmConnection),
+            ManipulationModule.blueprint(
+                model=_MODEL,
+                visualization=visualization if visualization is not None else {"backend": "viser"},
+                gripper_tasks={f"{side}_arm": f"{side}_arm_gripper" for side in OPENARM_SIDES},
+            ),
+        )
+        .solidify()
+        .remappings(arm_remaps(OpenArmConnection, OpenArmLeaderCoordinator))
+    )
 
 
-teleop_openarm_mini = autoconnect(_leader(), _follower())
+teleop_openarm_mini = autoconnect(_leader(), _follower()).solidify()
 
 # Split deployment: leaders on an operator machine, follower on the robot.
 # The robot stack owns the Coordinator name, so the leader half does not claim it.
@@ -226,7 +232,7 @@ teleop_openarm_mini_leader = _leader().global_config(
 
 # Joy-Cons in place of the trigger servos: ZL / ZR close the jaws, B / Y run
 # episodes, plus pauses and resumes following.
-teleop_openarm_mini_joycon = autoconnect(_joycon_leader(), _follower())
+teleop_openarm_mini_joycon = autoconnect(_joycon_leader(), _follower()).solidify()
 
 teleop_openarm_mini_joycon_leader = _joycon_leader().global_config(
     zenoh_mode="client", serve_coordinator_rpc=False

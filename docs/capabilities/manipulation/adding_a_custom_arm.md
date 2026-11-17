@@ -742,7 +742,7 @@ yourarm_planner = autoconnect(
         trajectory_parametrization={"backend": "simple_trapezoid"},
     ),
     coordinator_yourarm,
-)
+).solidify()
 # The planner's `coordinator_joint_state` input auto-connects to the
 # ControlCoordinator's output on the default `/coordinator_joint_state`
 # topic, so no `.transports(...)` override is needed.
@@ -768,7 +768,7 @@ yourarm_planner = autoconnect(
         visualization={"backend": "viser"},
     ),
     coordinator_yourarm,
-)
+).solidify()
 ```
 
 ### Key config fields

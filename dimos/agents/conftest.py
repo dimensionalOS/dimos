@@ -78,7 +78,7 @@ def agent_setup(request, mcp_port: int, lcm_url: str):
             McpServer.blueprint(port=mcp_port),
             Agent.blueprint(**agent_kwargs),
             AgentTestRunner.blueprint(messages=messages),
-        )
+        ).solidify()
 
         global_config.update(viewer="none", transport="lcm")  # fixture uses pLCMTransport sidecars
 

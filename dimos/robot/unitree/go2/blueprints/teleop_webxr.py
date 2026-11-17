@@ -27,6 +27,7 @@ teleop_webxr_go2 = (
         Go2TeleopModule.blueprint(),
         GO2Connection.blueprint(),
     )
+    .solidify()
     .transports(
         {
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),

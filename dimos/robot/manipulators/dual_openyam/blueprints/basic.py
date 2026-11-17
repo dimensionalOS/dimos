@@ -56,15 +56,19 @@ def _gripper_tasks() -> list[TaskConfig]:
 
 def dual_openyam_control() -> Blueprint:
     """Trajectories and both jaws over the two-bus connection."""
-    return autoconnect(
-        DamiaoCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(DualOpenYamConnection)],
-            tasks=[dual_openyam_trajectory_task(), *_gripper_tasks()],
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(DualOpenYamConnection),
-    ).remappings(arm_remaps(DualOpenYamConnection, DamiaoCoordinator))
+    return (
+        autoconnect(
+            DamiaoCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(DualOpenYamConnection)],
+                tasks=[dual_openyam_trajectory_task(), *_gripper_tasks()],
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(DualOpenYamConnection),
+        )
+        .solidify()
+        .remappings(arm_remaps(DualOpenYamConnection, DamiaoCoordinator))
+    )
 
 
 coordinator_dual_openyam = dual_openyam_control().remappings([])
@@ -77,4 +81,4 @@ dual_openyam_planner_coordinator = autoconnect(
         },
     ),
     dual_openyam_control(),
-)
+).solidify()

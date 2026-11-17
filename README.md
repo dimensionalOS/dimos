@@ -303,14 +303,15 @@ if __name__ == "__main__":
         autoconnect(
             RobotConnection.blueprint(),
             Listener.blueprint(),
-        )
+        ).solidify()
     ).loop()
 ```
 
 ## Blueprints
 
 Blueprints are instructions for how to construct and wire modules. We compose them with
-`autoconnect(...)`, which connects streams by `(name, type)` and returns a `Blueprint`.
+`autoconnect(...)`, which returns a `MetaBlueprint`. Call `.solidify()` to resolve
+choices into a concrete `Blueprint`; streams connect by `(name, type)`.
 
 Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
 
@@ -330,7 +331,7 @@ blueprint = autoconnect(
     ObserveSkill.blueprint(),
     McpServer.blueprint(),
     Agent.blueprint(),
-).transports({("color_image", Image): make_transport("go2/color_image", Image)})
+).solidify().transports({("color_image", Image): make_transport("go2/color_image", Image)})
 
 # Run the blueprint
 if __name__ == "__main__":

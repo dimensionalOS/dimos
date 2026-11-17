@@ -20,11 +20,15 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree_go2_spatial
 
-unitree_go2_agentic_ollama = autoconnect(
-    unitree_go2_spatial,
-    McpServer.blueprint(),
-    Agent.blueprint(model="ollama:qwen3-vl:8b"),
-    _common_agentic,
-).requirements(
-    ollama_installed,
+unitree_go2_agentic_ollama = (
+    autoconnect(
+        unitree_go2_spatial,
+        McpServer.blueprint(),
+        Agent.blueprint(model="ollama:qwen3-vl:8b"),
+        _common_agentic,
+    )
+    .solidify()
+    .requirements(
+        ollama_installed,
+    )
 )

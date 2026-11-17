@@ -107,25 +107,33 @@ def _rerun_config(extra: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 # The native is zenoh-only, so every layer pins the transport.
-habitat_teleop = autoconnect(
-    HabitatConnection.blueprint(publish_scan=False),
-    vis_module(global_config.viewer, rerun_config=_rerun_config()).remappings(
-        [(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]
-    ),
-).global_config(transport="zenoh")
+habitat_teleop = (
+    autoconnect(
+        HabitatConnection.blueprint(publish_scan=False),
+        vis_module(global_config.viewer, rerun_config=_rerun_config()).remappings(
+            [(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]
+        ),
+    )
+    .solidify()
+    .global_config(transport="zenoh")
+)
 
 
-habitat_voxel = autoconnect(
-    HabitatConnection.blueprint(publish_scan=True, scan_frame=SCAN_FRAME_REGISTERED).remappings(
-        [(HabitatConnection, "registered_scan", SCAN_TOPIC)]
-    ),
-    VoxelGridMapper.blueprint(voxel_size=voxel_size, frame_id=WORLD_FRAME).remappings(
-        [(VoxelGridMapper, "lidar", SCAN_TOPIC)]
-    ),
-    vis_module(global_config.viewer, rerun_config=_rerun_config()).remappings(
-        [(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]
-    ),
-).global_config(transport="zenoh")
+habitat_voxel = (
+    autoconnect(
+        HabitatConnection.blueprint(publish_scan=True, scan_frame=SCAN_FRAME_REGISTERED).remappings(
+            [(HabitatConnection, "registered_scan", SCAN_TOPIC)]
+        ),
+        VoxelGridMapper.blueprint(voxel_size=voxel_size, frame_id=WORLD_FRAME).remappings(
+            [(VoxelGridMapper, "lidar", SCAN_TOPIC)]
+        ),
+        vis_module(global_config.viewer, rerun_config=_rerun_config()).remappings(
+            [(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]
+        ),
+    )
+    .solidify()
+    .global_config(transport="zenoh")
+)
 
 
 _ray_tracing_config = RayTracingVoxelMapConfig(
@@ -162,50 +170,62 @@ _mls_planner = MLSPlannerNative.blueprint(
 
 
 # Newest duplicate wins: re-declared with the sensor-frame scan.
-habitat_raycaster = autoconnect(
-    habitat_teleop,
-    HabitatConnection.blueprint(publish_scan=True, scan_frame=SCAN_FRAME_SENSOR).remappings(
-        [(HabitatConnection, "registered_scan", SCAN_TOPIC)]
-    ),
-    RayTracingVoxelMap.blueprint(**_ray_tracing_config.model_dump(exclude_unset=True)).remappings(
-        [(RayTracingVoxelMap, "lidar", SCAN_TOPIC)]
-    ),
-).global_config(transport="zenoh")
+habitat_raycaster = (
+    autoconnect(
+        habitat_teleop,
+        HabitatConnection.blueprint(publish_scan=True, scan_frame=SCAN_FRAME_SENSOR).remappings(
+            [(HabitatConnection, "registered_scan", SCAN_TOPIC)]
+        ),
+        RayTracingVoxelMap.blueprint(
+            **_ray_tracing_config.model_dump(exclude_unset=True)
+        ).remappings([(RayTracingVoxelMap, "lidar", SCAN_TOPIC)]),
+    )
+    .solidify()
+    .global_config(transport="zenoh")
+)
 
 
 # Click the surface to set a goal. A key press cancels it.
-habitat_nav = autoconnect(
-    habitat_raycaster,
-    _mls_planner,
-    # Defaults to odom; the sim's tf root is world.
-    LocalPlannerNative.blueprint(embodiment=HABITAT, world_frame=WORLD_FRAME),
-    TrajectoryFollowerNative.blueprint(embodiment=HABITAT),
-    MovementManager.blueprint(),
-    # The tele_cmd_vel remap undoes the teleop layer's, so keys reach MovementManager.
-    vis_module(
-        global_config.viewer,
-        rerun_config=_rerun_config(
-            {
-                "world/path": render_path,
-                **planner_visual_override(
-                    planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=wall_clearance_m
-                ),
-            }
-        ),
-    ).remappings([(RerunWebSocketServer, "tele_cmd_vel", "tele_cmd_vel")]),
-).global_config(transport="zenoh")
+habitat_nav = (
+    autoconnect(
+        habitat_raycaster,
+        _mls_planner,
+        # Defaults to odom; the sim's tf root is world.
+        LocalPlannerNative.blueprint(embodiment=HABITAT, world_frame=WORLD_FRAME),
+        TrajectoryFollowerNative.blueprint(embodiment=HABITAT),
+        MovementManager.blueprint(),
+        # The tele_cmd_vel remap undoes the teleop layer's, so keys reach MovementManager.
+        vis_module(
+            global_config.viewer,
+            rerun_config=_rerun_config(
+                {
+                    "world/path": render_path,
+                    **planner_visual_override(
+                        planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=wall_clearance_m
+                    ),
+                }
+            ),
+        ).remappings([(RerunWebSocketServer, "tele_cmd_vel", "tele_cmd_vel")]),
+    )
+    .solidify()
+    .global_config(transport="zenoh")
+)
 
 
 # `go to the chair` on /human_input; visible annotated instances are the detections.
-habitat_typesafe = autoconnect(
-    habitat_teleop,
-    HabitatConnection.blueprint(
-        publish_scan=True, scan_frame=SCAN_FRAME_REGISTERED, publish_objects=True
-    ).remappings(
-        [
-            (HabitatConnection, "registered_scan", "lidar"),
-            (HabitatConnection, "objects", "detections_3d"),
-        ]
-    ),
-    TypeSafeNavigationAgent.blueprint(),
-).global_config(transport="zenoh")
+habitat_typesafe = (
+    autoconnect(
+        habitat_teleop,
+        HabitatConnection.blueprint(
+            publish_scan=True, scan_frame=SCAN_FRAME_REGISTERED, publish_objects=True
+        ).remappings(
+            [
+                (HabitatConnection, "registered_scan", "lidar"),
+                (HabitatConnection, "objects", "detections_3d"),
+            ]
+        ),
+        TypeSafeNavigationAgent.blueprint(),
+    )
+    .solidify()
+    .global_config(transport="zenoh")
+)

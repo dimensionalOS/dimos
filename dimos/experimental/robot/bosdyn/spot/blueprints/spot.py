@@ -44,22 +44,26 @@ from dimos.experimental.robot.bosdyn.spot.rerun import (
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.visualization.vis_module import vis_module
 
-spot = autoconnect(
-    SpotHighLevel.blueprint(),
-    MovementManager.blueprint(),
-    vis_module(
-        global_config.viewer,
-        rerun_config={
-            "blueprint": spot_camera_layout,
-            "visual_override": spot_camera_visual_overrides(),
-        },
-    ),
-).remappings(
-    [
-        # No nav stack here, so MovementManager's goal/way_point/stop_movement
-        # outputs have no consumer — park them so autoconnect stays quiet.
-        (MovementManager, "goal", "_spot_goal_unused"),
-        (MovementManager, "way_point", "_spot_way_point_unused"),
-        (MovementManager, "stop_movement", "_spot_stop_movement_unused"),
-    ]
+spot = (
+    autoconnect(
+        SpotHighLevel.blueprint(),
+        MovementManager.blueprint(),
+        vis_module(
+            global_config.viewer,
+            rerun_config={
+                "blueprint": spot_camera_layout,
+                "visual_override": spot_camera_visual_overrides(),
+            },
+        ),
+    )
+    .solidify()
+    .remappings(
+        [
+            # No nav stack here, so MovementManager's goal/way_point/stop_movement
+            # outputs have no consumer — park them so autoconnect stays quiet.
+            (MovementManager, "goal", "_spot_goal_unused"),
+            (MovementManager, "way_point", "_spot_way_point_unused"),
+            (MovementManager, "stop_movement", "_spot_stop_movement_unused"),
+        ]
+    )
 )

@@ -21,6 +21,8 @@ from dimos.navigation.bench.driver import EpisodeDriver
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav import m20_sim_nav
 from dimos.simulation.m20_sim.world import SimM20World
 
-m20_sim_nav_episode = autoconnect(
-    m20_sim_nav, SimM20World.blueprint(wait_for_scene=True), EpisodeDriver.blueprint()
-).global_config(n_workers=10)
+m20_sim_nav_episode = (
+    autoconnect(m20_sim_nav, SimM20World.blueprint(wait_for_scene=True), EpisodeDriver.blueprint())
+    .solidify()
+    .global_config(n_workers=10)
+)

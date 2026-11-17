@@ -97,15 +97,19 @@ _rgbd_mesh = RgbdMesh.blueprint().remappings(
     ]
 )
 
-unitree_g1_replay_mesh = autoconnect(
-    G1Replay.blueprint(),
-    _rgbd_mesh,
-    _replay_mesh_vis,
-).global_config(
-    n_workers=4,
-    robot_model="unitree_g1",
-    replay=True,
-    replay_db=DEFAULT_G1_DATASET,
+unitree_g1_replay_mesh = (
+    autoconnect(
+        G1Replay.blueprint(),
+        _rgbd_mesh,
+        _replay_mesh_vis,
+    )
+    .solidify()
+    .global_config(
+        n_workers=4,
+        robot_model="unitree_g1",
+        replay=True,
+        replay_db=DEFAULT_G1_DATASET,
+    )
 )
 
 

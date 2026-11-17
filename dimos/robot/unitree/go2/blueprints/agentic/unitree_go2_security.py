@@ -51,4 +51,4 @@ unitree_go2_security = autoconnect(
         viewer_backend=global_config.viewer,
         rerun_config={**rerun_config, "blueprint": _go2_rerun_blueprint},
     ),
-)
+).solidify()

@@ -54,15 +54,19 @@ def _rollout_control(
     coordinator: type[ControlCoordinator] = DamiaoCoordinator,
 ) -> Blueprint:
     """A trajectory coordinator named ControlCoordinator over the connection."""
-    return autoconnect(
-        coordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[arm_declaration(OpenYamConnection)],
-            tasks=list(tasks),
-            zero_stiffness_joints=[],
-        ),
-        arm_connection(OpenYamConnection),
-    ).remappings(arm_remaps(OpenYamConnection, coordinator))
+    return (
+        autoconnect(
+            coordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[arm_declaration(OpenYamConnection)],
+                tasks=list(tasks),
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(OpenYamConnection),
+        )
+        .solidify()
+        .remappings(arm_remaps(OpenYamConnection, coordinator))
+    )
 
 
 def build_openyam_rollout(
@@ -98,32 +102,36 @@ def build_openyam_rollout(
     )
 
     if quest_control:
-        blueprint = autoconnect(
-            policy,
-            ArmTeleopModule.blueprint(),
-            _rollout_control(openyam_quest_tasks(), DamiaoTeleopCoordinator),
-            camera,
-            ManipulationModule.blueprint(
-                gripper_tasks={"manipulator": "arm_gripper"},
-                model=OPENYAM_QUEST_MODEL,
-                kinematics=OPENYAM_QUEST_KINEMATICS,
-                visualization={"backend": "viser"},
-            ),
-        ).remappings(
-            [
-                (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-                (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-            ]
+        blueprint = (
+            autoconnect(
+                policy,
+                ArmTeleopModule.blueprint(),
+                _rollout_control(openyam_quest_tasks(), DamiaoTeleopCoordinator),
+                camera,
+                ManipulationModule.blueprint(
+                    gripper_tasks={"manipulator": "arm_gripper"},
+                    model=OPENYAM_QUEST_MODEL,
+                    kinematics=OPENYAM_QUEST_KINEMATICS,
+                    visualization={"backend": "viser"},
+                ),
+            )
+            .solidify()
+            .remappings(
+                [
+                    (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+                    (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+                ]
+            )
         )
     else:
         blueprint = autoconnect(
             policy,
             _rollout_control([joint_trajectory_task(OPENYAM_ROLLOUT_JOINTS)]),
             camera,
-        )
+        ).solidify()
 
     return blueprint
 
 
-openyam_lerobot_rollout = autoconnect(build_openyam_rollout())
-openyam_lerobot_quest_rollout = autoconnect(build_openyam_rollout(quest_control=True))
+openyam_lerobot_rollout = autoconnect(build_openyam_rollout()).solidify()
+openyam_lerobot_quest_rollout = autoconnect(build_openyam_rollout(quest_control=True)).solidify()

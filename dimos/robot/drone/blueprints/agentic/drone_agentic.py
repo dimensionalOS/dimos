@@ -41,19 +41,23 @@ Here are some GPS locations to remember
 5th and mission intersection: 37.782598539339695, -122.40649441875473
 6th and mission intersection: 37.781007204789354, -122.40868447123661"""
 
-drone_agentic = autoconnect(
-    drone_basic,
-    DroneTrackingModule.blueprint(outdoor=False),
-    GoogleMapsSkillContainer.blueprint(),
-    ObserveSkill.blueprint(),
-    OsmSkill.blueprint(),
-    McpServer.blueprint(),
-    Agent.blueprint(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
-    WebInput.blueprint(),
-).remappings(
-    [
-        (DroneTrackingModule, "video_input", "video"),
-        (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
-        (ObserveSkill, "color_image", "video"),
-    ]
+drone_agentic = (
+    autoconnect(
+        drone_basic,
+        DroneTrackingModule.blueprint(outdoor=False),
+        GoogleMapsSkillContainer.blueprint(),
+        ObserveSkill.blueprint(),
+        OsmSkill.blueprint(),
+        McpServer.blueprint(),
+        Agent.blueprint(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
+        WebInput.blueprint(),
+    )
+    .solidify()
+    .remappings(
+        [
+            (DroneTrackingModule, "video_input", "video"),
+            (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
+            (ObserveSkill, "color_image", "video"),
+        ]
+    )
 )

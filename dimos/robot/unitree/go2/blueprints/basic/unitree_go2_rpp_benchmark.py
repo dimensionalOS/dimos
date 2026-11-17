@@ -75,6 +75,7 @@ unitree_go2_rpp_benchmark = (
         unitree_go2_rpp_controller,
         Benchmarker.blueprint(robot="go2", gate_source="stream"),
     )
+    .solidify()
     # Record the command the robot actually receives (/go2/cmd_vel, written by
     # the coordinator's base adapter) — NOT /cmd_vel, which only carries the
     # operator's teleop nudges.
