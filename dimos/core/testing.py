@@ -46,10 +46,7 @@ class MockRobotClient(Module):
     def start(self) -> None:
         super().start()
 
-        # The loop converts a lidar frame between odometry samples, and the first
-        # conversion imports open3d: seconds on an idle host, tens of seconds on a
-        # loaded CI runner. Pay it before the loop publishes anything, so the
-        # tests' 10 s waits for the next odometry sample never sit behind it.
+        # Ensure heavy imports are done before we start the odometry loop.
         PointCloud2.lcm_warmup()
 
         self._thread = Thread(target=self.odomloop)  # type: ignore[assignment]
