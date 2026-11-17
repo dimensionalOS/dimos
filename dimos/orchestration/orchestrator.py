@@ -56,7 +56,7 @@ from dimos.orchestration.engine import (
 )
 from dimos.orchestration.expressions import Plain
 from dimos.orchestration.journal import EditItem, Journal, Json, definition_to_plain
-from dimos.orchestration.loader import LoadError, load_and_check
+from dimos.orchestration.loader import LoadError, check_source, load_and_check
 from dimos.orchestration.plain import field_to_plain, from_plain, to_plain
 from dimos.utils.logging_config import setup_logger
 
@@ -144,6 +144,7 @@ class Orchestrator(Module):
         self._unreadable: set[str] = set()
         self._published = 0
         self._journal = Journal(self.config.journal_size)
+        self._modules: list[RPCClient] = []
 
     @rpc
     def start(self) -> None:
@@ -163,7 +164,17 @@ class Orchestrator(Module):
         checked = bind(definition, deployed)
         if checked.problems:
             raise LoadError(self.config.file, checked.problems)
+        self._modules = modules
+        self._begin(definition, checked, deployed, descriptors)
 
+    def _begin(
+        self,
+        definition: OrchestratorDefinition,
+        checked: CheckedDefinition,
+        deployed: Deployed,
+        descriptors: dict[str, StreamDescriptor],
+    ) -> None:
+        """Subscribe to the signals' streams and start the engine thread on a checked definition."""
         self._checked = checked
         self._rpcs = deployed.rpcs
         for activity in definition.activities:
@@ -231,6 +242,35 @@ class Orchestrator(Module):
         if key not in settable:
             raise ValueError(f"`{key}` is not a var or stream value (they are: {sorted(settable)})")
         self._add(EditItem.of(key, value))
+
+    @rpc
+    def set_source(self, source: str) -> list[str]:
+        """Replace the orchestrator file with `source` and run it from its start.
+
+        The text is checked against the running blueprint first: if anything is wrong, nothing changes and the
+        problems come back. Otherwise the activities under way are cancelled, the file is written, and the engine
+        starts over with a fresh blackboard and journal (so a reader sees `seq` go back to 1).
+        """
+        if self._checked is None:
+            raise RuntimeError("the orchestrator is not running")
+        try:
+            definition = check_source(source, self.config.file)
+        except LoadError as error:
+            return list(error.problems)
+        deployed, descriptors = self._describe(definition, self._modules)
+        checked = bind(definition, deployed)
+        if checked.problems:
+            return list(checked.problems)
+        self._halt()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._cancel_all()
+        self.config.file.write_text(source)
+        self._definition = definition
+        self._timers = []
+        self._journal = Journal(self.config.journal_size)
+        self._begin(definition, checked, deployed, descriptors)
+        return []
 
     def _describe(
         self, definition: OrchestratorDefinition, modules: list[RPCClient]

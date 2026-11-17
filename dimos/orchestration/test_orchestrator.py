@@ -158,7 +158,7 @@ NEAREST: list[tuple[str, set[str], str]] = [
 
 
 class FakeBase(Module):
-    """Reports each goal as reached, by its id, until it is halted."""
+    """Reports each goal as reached, by its id, until it is halted (a new goal resumes the reports)."""
 
     status: Out[GoalStatus]
 
@@ -170,6 +170,7 @@ class FakeBase(Module):
     @rpc
     def go_to(self, name: str) -> str:
         self._calls.append(f"go_to {name}")
+        self._halted.clear()
         reached = GoalStatus(goal_id=GoalID(id=name), status=GoalStatus.SUCCEEDED)
         threading.Thread(target=self._report, args=(reached,), daemon=True).start()
         return name
@@ -549,6 +550,28 @@ def test_a_set_value_is_handled_like_a_stream_value(tmp_path: Path, build: Build
     )
     edit = next(entry for entry in entries if entry["item"]["kind"] == "edit")
     assert edit["item"]["key"] == "status"
+
+
+def test_a_new_source_restarts_the_engine_on_it(tmp_path: Path, build: Build) -> None:
+    path = _written(tmp_path, JOB)
+    orchestrator = build(_blueprint(path)).get_instance(Orchestrator)
+    _journal_until(orchestrator, lambda found: ("Going", "Arrived") in _transitions(found))
+    renamed = JOB.replace("Arrived", "Docked")
+    assert orchestrator.set_source(renamed) == []
+    assert path.read_text() == renamed
+    entries = _journal_until(orchestrator, lambda found: ("Going", "Docked") in _transitions(found))
+    assert entries[0]["seq"] == 1 and entries[0]["item"] == {"kind": "startup"}
+    assert orchestrator.definition()["source"] == renamed
+
+
+def test_a_broken_source_changes_nothing(tmp_path: Path, build: Build) -> None:
+    path = _written(tmp_path, JOB)
+    orchestrator = build(_blueprint(path)).get_instance(Orchestrator)
+    _journal_until(orchestrator, lambda found: ("Going", "Arrived") in _transitions(found))
+    assert orchestrator.set_source("nodes = [") != []
+    assert orchestrator.set_source(JOB.replace("FakeBase.", "Nowhere.")) != []
+    assert path.read_text() == JOB
+    assert orchestrator.state()["running"]
 
 
 @pytest.mark.parametrize("key", ["SUCCEEDED", "done", "nope"])
