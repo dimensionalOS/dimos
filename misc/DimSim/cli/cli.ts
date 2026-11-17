@@ -13,7 +13,7 @@
 
 import { resolve, dirname, fromFileUrl } from "@std/path";
 import { startBridgeServer } from "./bridge/server.ts";
-import { launchHeadless, launchMultiPage, type RenderMode } from "./headless/launcher.ts";
+import { BrowserLifecycle, launchHeadless, launchMultiPage, type RenderMode } from "./headless/launcher.ts";
 import { runEvals, runEvalsMultiPage, collectWorkflows, toJunitXml } from "../evals/runner.ts";
 
 const CLI_DIR = dirname(fromFileUrl(import.meta.url));
@@ -167,6 +167,33 @@ function parseArgs(args: string[]) {
 }
 
 async function main() {
+  const browsers = new BrowserLifecycle();
+  let shutdown: Promise<void> | undefined;
+  const stop = () => shutdown ??= (async () => {
+    try {
+      await browsers.close();
+      // The bridge owns long-lived HTTP/LCM sockets and physics timers.
+      // Once Chromium is reaped, exiting releases those process resources.
+      Deno.exit(0);
+    } catch (error) {
+      console.error("[dimsim] Shutdown failed:", error);
+      Deno.exit(1);
+    }
+  })();
+  Deno.addSignalListener("SIGTERM", stop);
+  Deno.addSignalListener("SIGINT", stop);
+
+  try {
+    await run(browsers);
+  } catch (error) {
+    // Closing Chromium interrupts pending page operations during startup/evals.
+    // Let signal cleanup finish reaping the browser before exiting.
+    if (shutdown) await shutdown;
+    else throw error;
+  }
+}
+
+async function run(browsers: BrowserLifecycle) {
   const subcommand = Deno.args[0];
   const opts = parseArgs(Deno.args.slice(1));
 
@@ -247,7 +274,7 @@ async function main() {
         // Multi-page mode: open N browser pages in one Chromium instance
         console.log(`[dimsim] Launching headless browser with ${numChannels} pages...`);
         const url = `http://localhost:${port}`;
-        await launchMultiPage({ url, numPages: numChannels, render, timeout: 120_000 });
+        await launchMultiPage(browsers, { url, numPages: numChannels, render, timeout: 120_000 });
         await new Promise((r) => setTimeout(r, 3000));
         console.log(`[dimsim] ${numChannels} headless pages ready. LCM bridge active.`);
       } else {
@@ -258,7 +285,7 @@ async function main() {
         const headlessTimeout = parseInt(
           Deno.env.get("DIMSIM_HEADLESS_TIMEOUT") || "90000",
         );
-        await launchHeadless({ url, timeout: headlessTimeout, render });
+        await launchHeadless(browsers, { url, timeout: headlessTimeout, render });
         await new Promise((r) => setTimeout(r, 3000));
         console.log("[dimsim] Headless browser ready. LCM bridge active.");
       }
@@ -372,7 +399,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500));
 
       const url = `http://localhost:${port}`;
-      const instance = await launchMultiPage({ url, numPages, timeout, render });
+      const instance = await launchMultiPage(browsers, { url, numPages, timeout, render });
       await new Promise((r) => setTimeout(r, 2000));
 
       const allResults = await runEvalsMultiPage({
@@ -400,7 +427,7 @@ async function main() {
     const url = `http://localhost:${port}`;
     if (headless) {
       console.log("[dimsim] Launching headless browser…");
-      const instance = await launchHeadless({ url, timeout, render });
+      const instance = await launchHeadless(browsers, { url, timeout, render });
       await new Promise((r) => setTimeout(r, 3000));
 
       const results = await runEvals({ wsUrl, scenesRoot: SCENES_DIR, filterScene, filterWorkflow });
