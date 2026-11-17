@@ -29,7 +29,7 @@ from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.orchestration import engine
-from dimos.orchestration.binding import Deployed, bind
+from dimos.orchestration.binding import Deployed, bind, resolve
 from dimos.orchestration.engine import Call, SendCancel, SendStart, SignalItem
 from dimos.orchestration.loader import load_and_check
 from dimos.orchestration.orchestrator import Orchestrator
@@ -138,6 +138,16 @@ UNBOUND: list[tuple[str, str, str]] = [
 ]
 
 
+# The namespace the Orchestrator is in, the deployed modules, and what `FakeBase.go_to` then names.
+NEAREST: list[tuple[str, set[str], str]] = [
+    ("", {"FakeBase"}, "FakeBase.go_to"),
+    ("robot1", {"robot1/fakebase", "robot2/fakebase"}, "robot1/fakebase.go_to"),
+    ("fleet/robot1", {"fleet/fakebase", "FakeBase"}, "fleet/fakebase.go_to"),
+    ("robot1", {"FakeBase"}, "FakeBase.go_to"),
+    ("robot1", {"robot2/fakebase"}, "FakeBase.go_to"),
+]
+
+
 class FakeBase(Module):
     """Reports each goal as reached, by its id, until it is halted."""
 
@@ -211,6 +221,14 @@ def test_a_file_that_does_not_fit_the_blueprint(
     assert any(problem in found for found in problems), problems
 
 
+@pytest.mark.parametrize(("namespace", "modules", "start"), NEAREST)
+def test_a_module_name_means_the_nearest_module_from_the_namespace_outward(
+    tmp_path: Path, namespace: str, modules: set[str], start: str
+) -> None:
+    definition = resolve(load_and_check(_written(tmp_path, JOB)), namespace, modules)
+    assert definition.activities[0].start == start
+
+
 def _calls_with(coordinator: ModuleCoordinator, wanted: set[str]) -> list[str]:
     """The fake's calls, read a moment after it has had every wanted one."""
     base = coordinator.get_instance(FakeBase)
@@ -232,6 +250,22 @@ def test_the_orchestrator_reaches_a_node_that_needs_a_message_and_a_return(
     coordinator = build(_blueprint(_written(tmp_path, JOB)))
     calls = _calls_with(coordinator, {"halt", "mark"})
     # Arrived starts mark, and it is entered only once go_to returned and a status matched it.
+    assert calls[0] == "go_to lobby"
+    assert sorted(calls[1:]) == ["halt", "mark"]
+
+
+@pytest.mark.parametrize("orchestrator_inside", [True, False])
+def test_the_orchestrator_drives_a_module_in_a_namespace(
+    tmp_path: Path, build: Build, orchestrator_inside: bool
+) -> None:
+    if orchestrator_inside:
+        blueprint = _blueprint(_written(tmp_path, JOB)).namespace("robot1")
+    else:
+        job = _written(tmp_path, JOB.replace("FakeBase.", "robot1/FakeBase."))
+        blueprint = autoconnect(
+            FakeBase.blueprint().namespace("robot1"), Orchestrator.blueprint(file=job)
+        )
+    calls = _calls_with(build(blueprint), {"halt", "mark"})
     assert calls[0] == "go_to lobby"
     assert sorted(calls[1:]) == ["halt", "mark"]
 

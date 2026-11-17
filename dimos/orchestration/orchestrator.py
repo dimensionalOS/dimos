@@ -27,7 +27,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Transport
 from dimos.orchestration import engine
-from dimos.orchestration.binding import Deployed, bind
+from dimos.orchestration.binding import Deployed, bind, resolve
 from dimos.orchestration.checks import CheckedDefinition
 from dimos.orchestration.definition import OrchestratorDefinition, Signal
 from dimos.orchestration.engine import (
@@ -100,6 +100,8 @@ class Orchestrator(Module):
         if definition is None or self._checked is not None:
             logger.info("Orchestrator ignores a change to the system's modules")
             return
+        namespace = (self.config.instance_name or "").rpartition("/")[0]
+        definition = resolve(definition, namespace, {module.remote_name for module in modules})
         deployed, descriptors = self._describe(definition, modules)
         checked = bind(definition, deployed)
         if checked.problems:
