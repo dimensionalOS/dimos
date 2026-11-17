@@ -55,6 +55,7 @@ BOARD: dict[str, Plain] = {
     "untyped_result": {"anything": 4},
     "untyped_flag": True,
 }
+CONDITIONS = {"low": "battery_pct < low_battery", "far": "route[5] == 'lab'"}
 UNSET = object()
 ERROR = object()
 
@@ -83,12 +84,16 @@ EVALUATED: list[tuple[str, Wanted, dict[str, object], object]] = [
     ("untyped_flag", True, {"untyped_flag": "false"}, ERROR),
     ("route[5]", UNKNOWN, {}, ERROR),
     ("low_battery > 1.0 && route[5] == 'lab'", True, {}, ERROR),
+    ("low && estop_button", True, {"battery_pct": 19.5}, True),
+    ("!low", True, {}, False),
+    ("estop_button || far", True, {}, True),
 ]
 
 
 @pytest.fixture(scope="module")
 def compiler() -> Compiler:
-    return Compiler(SHAPES)
+    keys = Compiler(SHAPES)
+    return Compiler(SHAPES, {name: keys.compile(when, True) for name, when in CONDITIONS.items()})
 
 
 def test_compile_gives_the_keys_read(compiler: Compiler) -> None:

@@ -45,9 +45,12 @@ class ExpressionError(Exception):
 
 @dataclass(frozen=True)
 class Expression:
+    """A compiled expression, the keys it reads and the conditions it reads by name."""
+
     source: str
     program: cel.Expression
     reads: tuple[str, ...]
+    conditions: tuple[tuple[str, "Expression"], ...] = ()
 
 
 def _type(shape: Shape) -> cel.Type:
@@ -113,13 +116,21 @@ def _marker(path: str) -> bytes:
 
 
 class Compiler:
-    """Compiles expressions against the shape of every blackboard key."""
+    """Compiles expressions against the shape of every blackboard key.
 
-    def __init__(self, shapes: Mapping[str, Shape]) -> None:
+    A condition is a true-or-false expression that other expressions read by its name.
+    """
+
+    def __init__(
+        self, shapes: Mapping[str, Shape], conditions: Mapping[str, Expression] | None = None
+    ) -> None:
         strict: dict[str, cel.Type] = {}
         loose: dict[str, cel.Type] = {}
+        self._conditions = dict(conditions or {})
         for key, shape in shapes.items():
             _declare(key, shape, strict, loose)
+        for name in self._conditions:
+            _declare(name, False, strict, loose)
         self._markers = {path: _marker(path) for path in strict}
         self._strict = cel.NewEnv(variables=strict)
         self._loose = cel.NewEnv(variables=loose)
@@ -137,8 +148,12 @@ class Compiler:
         if not any(_fits(result, name) for name in wanted):
             raise ExpressionError(f"`{source}` gives {result}, and {' or '.join(wanted)} is needed")
         serialized: bytes = checked.serialize()
-        reads = tuple(path for path, marker in self._markers.items() if marker in serialized)
-        return Expression(source, program, reads)
+        found = [path for path, marker in self._markers.items() if marker in serialized]
+        reads = tuple(path for path in found if path not in self._conditions)
+        conditions = tuple(
+            (name, self._conditions[name]) for name in found if name in self._conditions
+        )
+        return Expression(source, program, reads, conditions)
 
 
 def _read(blackboard: Mapping[str, Plain], path: str) -> tuple[bool, Plain]:
@@ -157,36 +172,47 @@ def _read(blackboard: Mapping[str, Plain], path: str) -> tuple[bool, Plain]:
     return False, None
 
 
+def _truth(expression: Expression, value: Plain) -> bool:
+    if not isinstance(value, bool):
+        raise ExpressionError(f"`{expression.source}` gave {value!r}, and true or false is needed")
+    return value
+
+
 def evaluate(expression: Expression, blackboard: Mapping[str, Plain]) -> Plain:
-    """Evaluate an expression. A missing field is an error only if the result needs it."""
+    """Evaluate an expression. What it cannot read is an error only if the result needs it."""
     data: dict[str, Plain] = {}
-    missing: list[ExpressionError] = []
+    errors: list[ExpressionError] = []
+    unset = False
     for path in expression.reads:
         try:
             has_value, read = _read(blackboard, path)
         except ExpressionError as error:
-            missing.append(error)
+            errors.append(error)
             continue
         if has_value:
             data[path] = read
+        else:
+            unset = True
+    for name, condition in expression.conditions:
+        try:
+            data[name] = _truth(condition, evaluate(condition, blackboard))
+        except ExpressionError as error:
+            errors.append(error)
     value = expression.program.eval(data=data)
     plain: Plain = value.plain_value()
     if value.type() != cel.Type.ERROR:
         return plain
-    if missing:
-        raise missing[0]
-    unset = len(data) < len(expression.reads)
-    raise ExpressionError(f"`{expression.source}`: {plain}", unset=unset)
+    for deferred in errors:
+        if not deferred.unset:
+            raise deferred
+    raise ExpressionError(f"`{expression.source}`: {plain}", unset=unset or bool(errors))
 
 
 def evaluate_bool(expression: Expression, blackboard: Mapping[str, Plain]) -> bool:
     """Evaluate a true-or-false expression. An error while a key it reads has no value is false."""
     try:
-        value = evaluate(expression, blackboard)
+        return _truth(expression, evaluate(expression, blackboard))
     except ExpressionError as error:
         if error.unset:
             return False
         raise
-    if not isinstance(value, bool):
-        raise ExpressionError(f"`{expression.source}` gave {value!r}, and true or false is needed")
-    return value
