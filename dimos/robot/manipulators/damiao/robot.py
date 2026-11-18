@@ -23,15 +23,12 @@ deployment can be reviewed without reading any motor code.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from typing import Literal
 
 from dimos.robot.assets.model import RobotModel
 
 GripperOpening = Literal["increasing_position", "decreasing_position"]
 OpenAt = Literal["lower", "upper"]
-
-_ROBOT_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,10 +146,6 @@ class DamiaoRobot:
     def __post_init__(self) -> None:
         if not self.buses:
             raise ValueError("a Damiao robot needs at least one bus")
-        if self.name and not _ROBOT_NAME.fullmatch(self.name):
-            raise ValueError(
-                f"robot name must be letters, digits, '_', '.' or '-', got {self.name!r}"
-            )
         names = [bus.name for bus in self.buses]
         if any(not name for name in names) or len(set(names)) != len(names):
             raise ValueError("bus names must be non-empty and distinct")
