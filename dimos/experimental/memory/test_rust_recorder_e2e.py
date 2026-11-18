@@ -186,7 +186,7 @@ def test_native_collection_directory_preserves_schema_and_messages(
         names=["x", "y", "z"],
     )
     profile = CollectionProfile(
-        metadata={"name": "native-test", "robot_type": "test"},
+        metadata={"name": "native-test", "robot_type": "test-例"},
         observations={"image": camera, "state": state},
         actions={"action": state},
     )
@@ -197,6 +197,9 @@ def test_native_collection_directory_preserves_schema_and_messages(
     assert schema.payload == artifact.name
     assert schema.observation["state"].stream == "imu"
     assert schema.name == "native-test"
+    assert (artifact.parent / "schema.json").read_bytes() == (
+        schema.model_dump_json(indent=2) + "\n"
+    ).encode()
 
 
 def _capture_native_artifact(
@@ -252,6 +255,9 @@ def _capture_native_artifact(
         recorder = atom.module(**atom.kwargs, **kwargs)
         artifact = Path(recorder.config.store.path)
         recorder.status.transport = FakeTransport("dimos/collection_status")
+    elif store_kind == "mcap":
+        # Generic recording must not pick up unrelated neighboring sidecars.
+        (tmp_path / "schema.json").write_bytes(b"{}\n")
     session_pool = ZenohSessionPool()
     channel_suffix = uuid.uuid4().hex[:8]
     publisher: ZenohTransport[Imu] = ZenohTransport(
@@ -354,12 +360,21 @@ def _capture_native_artifact(
 
     if store_kind == "mcap":
         with artifact.open("rb") as recording:
-            reader = make_reader(recording)
+            reader = make_reader(recording, validate_crcs=True)
             assert reader.get_header().profile == "dimos"
             summary = reader.get_summary()
             assert summary is not None
             assert summary.statistics is not None
             assert summary.statistics.message_count == 4
+            attachments = list(reader.iter_attachments())
+            assert summary.statistics.attachment_count == len(attachments)
+            if profile is None:
+                assert attachments == []
+            else:
+                [attachment] = attachments
+                assert attachment.name == "schema.json"
+                assert attachment.media_type == "application/json"
+                assert attachment.data == (artifact.parent / "schema.json").read_bytes()
             channels = {channel.topic: channel for channel in summary.channels.values()}
             assert set(channels) == {"imu", "color_image", "status"}
             assert channels["imu"].message_encoding == "lz4+lcm"

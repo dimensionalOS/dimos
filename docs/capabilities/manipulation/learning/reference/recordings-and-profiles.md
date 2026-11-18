@@ -18,6 +18,12 @@ extraction, synchronization, and quality settings. No Python classes or absolute
 dataset paths are serialized. An interrupted session remains available for
 inspection; incomplete and discarded episodes are not exported.
 
+New MCAP collections also embed the exact sidecar bytes as a standard
+`schema.json` attachment (`application/json`). Keep the sidecar: dimOS data
+preparation still reads it from the directory. SQLite and existing recordings
+are unchanged. If native capture fails to finalize, treat the recording as
+incomplete even if its sidecar exists.
+
 ## Profile declarations
 
 `CollectionProfile` has required `observations` and `actions` mappings and optional

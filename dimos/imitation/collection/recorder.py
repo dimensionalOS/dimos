@@ -41,8 +41,10 @@ from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.schema import RecordingSchema
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.std_msgs.String import String
+from dimos.utils.logging_config import setup_logger
 
 PortTypes = tuple[tuple[str, type[Any]], ...]
+logger = setup_logger()
 
 
 def _validate_input_types(
@@ -79,6 +81,18 @@ class CollectionModuleConfig(RustRecorderConfig):
         default=0, description="Collection does not rotate backups."
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _mcap_writer_defaults(cls, values: Any) -> Any:
+        if isinstance(values, dict) and values.get("format", "mcap") == "mcap":
+            # Do not reuse the generic recorder's pre-attachment build.
+            return {
+                "executable": "result-collection-schema-v1/bin/dimos-memory-recorder",
+                "build_command": "nix build -L path:. --out-link result-collection-schema-v1",
+                **values,
+            }
+        return values
+
     @field_validator("recording", mode="before")
     @classmethod
     def _resolve_recording(cls, value: str | Path) -> Path:
@@ -97,9 +111,12 @@ class CollectionModuleConfig(RustRecorderConfig):
         return self
 
     def to_config_dict(self) -> dict[str, Any]:
-        # Collection settings stay in Python; Rust accepts only its recorder config.
+        store = self.store.model_dump()
+        if self.format == "mcap":
+            # Older writers reject this variant rather than silently omitting the attachment.
+            store["kind"] = "collection_mcap"
         return {
-            "store": self.store.model_dump(),
+            "store": store,
             "encoding_threads": self.encoding_threads,
             "streams": [stream.model_dump() for stream in self.streams],
         }
@@ -161,6 +178,20 @@ class CollectionModule(RustRecorder):
             file.write(encoded + "\n")
         super()._prepare_store(specs)
         self._store_prepared = True
+
+    @rpc
+    def stop(self) -> None:
+        process = self._process
+        super().stop()
+        if (
+            self.config.format == "mcap"
+            and process is not None
+            and process.returncode not in (0, None)
+        ):
+            logger.error(
+                "Collection MCAP did not finalize successfully; recording may be incomplete",
+                returncode=process.returncode,
+            )
 
     recording_inputs: PortTypes
 

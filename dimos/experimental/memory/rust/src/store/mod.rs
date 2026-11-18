@@ -16,8 +16,9 @@ mod mcap;
 mod sqlite;
 
 use std::sync::Arc;
+use std::{fs, path::Path};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::StreamConfig;
@@ -26,14 +27,22 @@ use crate::StreamConfig;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum RecordingStoreConfig {
-    Sqlite { path: String },
-    Mcap { path: String },
+    Sqlite {
+        path: String,
+    },
+    Mcap {
+        path: String,
+    },
+    #[serde(rename = "collection_mcap")]
+    CollectionMcap {
+        path: String,
+    },
 }
 
 impl RecordingStoreConfig {
     pub fn path(&self) -> &str {
         match self {
-            Self::Sqlite { path } | Self::Mcap { path } => path,
+            Self::Sqlite { path } | Self::Mcap { path } | Self::CollectionMcap { path } => path,
         }
     }
 }
@@ -69,5 +78,39 @@ pub fn open(
             streams,
             compression_threads,
         )?)),
+        RecordingStoreConfig::CollectionMcap { path } => {
+            // The collector exclusively creates the directory and closes the sidecar before launch.
+            let schema_path = Path::new(path).with_file_name("schema.json");
+            let schema = fs::read(&schema_path).with_context(|| {
+                format!(
+                    "failed to read collection schema: {}",
+                    schema_path.display()
+                )
+            })?;
+            let mut store = mcap::McapRecordingStore::open(path, streams, compression_threads)?;
+            store.attach_collection_schema(&schema)?;
+            Ok(Box::new(store))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collection_mcap_requires_the_sidecar_before_creating_an_artifact() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("recording.mcap");
+        let config = RecordingStoreConfig::CollectionMcap {
+            path: path.to_str().unwrap().into(),
+        };
+        let Err(error) = open(&config, &[], 1) else {
+            panic!("collection accepted a missing schema.json");
+        };
+        assert!(error
+            .to_string()
+            .contains("failed to read collection schema"));
+        assert!(!path.exists());
     }
 }

@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use mcap::records::MessageHeader;
-use mcap::{Compression, WriteOptions, Writer};
+use mcap::{Attachment, Compression, WriteOptions, Writer};
 
 use super::{Observation, RecordingStore};
 use crate::StreamConfig;
@@ -68,6 +68,19 @@ impl McapRecordingStore {
             sequences: HashMap::new(),
         })
     }
+
+    pub(super) fn attach_collection_schema(&mut self, schema: &[u8]) -> Result<()> {
+        let time = timestamp_ns(crate::wall_time())?;
+        self.writer
+            .attach(&Attachment {
+                log_time: time,
+                create_time: time,
+                name: "schema.json".into(),
+                media_type: "application/json".into(),
+                data: schema.into(),
+            })
+            .context("failed to attach collection schema.json to MCAP")
+    }
 }
 
 impl RecordingStore for McapRecordingStore {
@@ -105,7 +118,7 @@ impl RecordingStore for McapRecordingStore {
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.writer.finish()?;
+        self.writer.finish().context("failed to finalize MCAP")?;
         Ok(())
     }
 }

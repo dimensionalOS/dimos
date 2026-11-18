@@ -14,6 +14,7 @@
 
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -177,7 +178,9 @@ def test_native_collection_uses_the_recorder_build_directory(recorder):
     root = Path(__file__).parents[2] / "experimental" / "memory" / "rust"
     cwd, executable = recorder.config.resolve_paths()
     assert Path(cwd) == root
-    assert Path(executable) == root / "result/bin/dimos-memory-recorder"
+    assert Path(executable) == root / "result-collection-schema-v1/bin/dimos-memory-recorder"
+    assert recorder.config.build_command is not None
+    assert recorder.config.build_command.endswith("--out-link result-collection-schema-v1")
 
 
 @pytest.fixture
@@ -317,7 +320,10 @@ def test_build_saves_portable_schema_before_native_capture(
     start.assert_called_once_with()
     native_config = recorder.config.to_config_dict()
     assert set(native_config) == {"store", "encoding_threads", "streams"}
-    assert native_config["store"] == {"kind": format, "path": str(directory / payload)}
+    assert native_config["store"] == {
+        "kind": "collection_mcap" if format == "mcap" else "sqlite",
+        "path": str(directory / payload),
+    }
     assert native_config["streams"] == [spec.model_dump() for spec in recorder._stream_specs()]
 
 
@@ -349,6 +355,21 @@ def test_schema_write_failure_prevents_capture(connected_recorder, mocker):
         recorder.build()
     start.assert_not_called()
     assert not (recorder.config.recording / "schema.json").exists()
+
+
+def test_failed_native_shutdown_is_reported(connected_recorder, mocker):
+    recorder = connected_recorder()
+    # Model a child that fails while NativeModule waits for shutdown.
+    process = mocker.Mock(returncode=None)
+    error = mocker.patch.object(recorder_module.logger, "error")
+    with (
+        patch.object(recorder, "_process", process),
+        patch.object(NativeModule, "stop", side_effect=lambda: setattr(process, "returncode", 1)),
+    ):
+        recorder.stop()
+    error.assert_called_once_with(
+        "Collection MCAP did not finalize successfully; recording may be incomplete", returncode=1
+    )
 
 
 def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypatch):
