@@ -16,18 +16,21 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     eef_twist_task,
-    planner,
     trajectory_task,
 )
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
@@ -53,36 +56,62 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 _xarm7_sim_model = make_xarm7_sim_robot_config(tf_extra_links=xarm_link_frames(7))
 _xarm7_sim_hw = make_xarm7_sim_hardware()
 _xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)
+_xarm6_sim_model = make_xarm_sim_robot_config(6, tf_extra_links=xarm_link_frames(6))
+_xarm6_sim_hw = make_xarm_sim_hardware(6)
 
-# UrdfManager serves the URDF to web 3D views. The planner already puts every
-# link on tf, so the manager leaves joint tf off (on, links would get two parents).
+
+def _perception_sim(
+    model: RobotModelConfig, hardware: HardwareComponent, sim_kwargs: dict[str, Any]
+) -> tuple[Blueprint, ...]:
+    """Scan, pick and place with an xArm in MuJoCo, finding objects with its wrist camera.
+
+    UrdfManager serves the URDF to web 3D views. The planner already puts every
+    link on tf, so the manager leaves joint tf off (on, links would get two parents).
+
+    Args:
+        model: The arm's planning model, with every link on tf.
+        hardware: The simulated arm and its gripper, named "arm".
+        sim_kwargs: MujocoSimModule settings: the scene and the wrist camera's link.
+    """
+    return (
+        ManipulationModule.blueprint(
+            gripper_tasks={"manipulator": "arm_gripper"},
+            model=model,
+            planning_timeout=10.0,
+            visualization={"backend": "viser"},
+        ),
+        ManipulationSkills.blueprint(),
+        PickAndPlaceModule.blueprint(planning_frame="world", robot=model),
+        HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
+        MujocoSimModule.blueprint(**sim_kwargs),
+        # The wrist camera holds still while the arm waits, so one view confirms an object.
+        ManipulationLocalize.blueprint(world_frame="world", params=LocalizeParams(min_views=1)),
+        coordinator(
+            hardware=[hardware],
+            tasks=[
+                trajectory_task(hardware),
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                ),
+            ],
+        ),
+        UrdfManager.blueprint(model=model.model, publish_joint_tf=False),
+        RerunBridgeModule.blueprint(),
+    )
+
+
 xarm_perception_sim = autoconnect(
-    ManipulationModule.blueprint(
-        gripper_tasks={"manipulator": "arm_gripper"},
-        model=_xarm7_sim_model,
-        planning_timeout=10.0,
-        visualization={"backend": "viser"},
-    ),
-    ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
-    HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
-    MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
-    # The wrist camera holds still while the arm waits, so one view confirms an object.
-    ManipulationLocalize.blueprint(world_frame="world", params=LocalizeParams(min_views=1)),
-    coordinator(
-        hardware=[_xarm7_sim_hw],
-        tasks=[
-            trajectory_task(_xarm7_sim_hw),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
-        ],
-    ),
-    UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
-    RerunBridgeModule.blueprint(),
+    *_perception_sim(_xarm7_sim_model, _xarm7_sim_hw, _xarm7_sim_kwargs)
+)
+
+# The same stack on the xArm6, its wrist camera on link6.
+xarm6_sim = autoconnect(
+    *_perception_sim(
+        _xarm6_sim_model, _xarm6_sim_hw, make_xarm_sim_module_kwargs(6, XARM6_SIM_PATH)
+    )
 )
 
 # Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without dimOS.
@@ -119,30 +148,6 @@ xarm_sim = autoconnect(
         gripper_joint="arm/gripper",
         gripper_range=(0.0, 0.85),
     ),
-)
-
-_xarm6_sim_model = make_xarm_sim_robot_config(6, tf_extra_links=xarm_link_frames(6))
-_xarm6_sim_hw = make_xarm_sim_hardware(6)
-
-# Plan and run motions of the xArm6 in MuJoCo. UrdfManager serves the URDF to web
-# 3D views; the planner already puts every link on tf, so the manager leaves joint
-# tf off (on, links would get two parents).
-xarm6_sim = autoconnect(
-    planner(model=_xarm6_sim_model, gripper_tasks={"manipulator": "arm_gripper"}),
-    MujocoSimModule.blueprint(**make_xarm_sim_module_kwargs(6, XARM6_SIM_PATH)),
-    coordinator(
-        hardware=[_xarm6_sim_hw],
-        tasks=[
-            trajectory_task(_xarm6_sim_hw),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
-        ],
-    ),
-    UrdfManager.blueprint(model=_xarm6_sim_model.model, publish_joint_tf=False),
 )
 
 # teleop-webxr-xarm6 over the arm in MuJoCo: the Quest's right controller drives
