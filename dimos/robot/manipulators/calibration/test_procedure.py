@@ -426,6 +426,28 @@ def test_steps_the_connection_cannot_save_or_serve_are_skipped_with_why(
     assert closed.fake.commands == 0
 
 
+@pytest.mark.parametrize("steps", [None, ["gravity_poses", "summary"]])
+def test_a_connection_that_does_not_say_what_it_serves_fails_the_run(
+    make_rig: Callable[..., Rig], steps: list[str] | None
+) -> None:
+    rig = make_rig()
+
+    def unanswered() -> Any:
+        raise TimeoutError("RPC call to 'config_keys' timed out after 120.0 seconds")
+
+    rig.fake.config_keys = unanswered  # type: ignore[method-assign]
+
+    status = rig.run(steps)
+
+    assert status["state"] == "failed"
+    assert status["message"] == (
+        "the connection did not say what it serves: RPC call to 'config_keys' timed out "
+        "after 120.0 seconds; no step ran"
+    )
+    assert set(rig.statuses().values()) <= {"pending", "not_selected"}
+    assert rig.fake.commands == 0
+
+
 def test_a_workspace_without_a_guard_fails_the_check_before_any_motion(
     make_rig: Callable[..., Rig],
 ) -> None:

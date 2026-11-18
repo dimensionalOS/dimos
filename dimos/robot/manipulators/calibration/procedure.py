@@ -591,16 +591,19 @@ class Procedure:
                 self.caps = replace(self.caps, keys=keys)
         return keys
 
-    def _ask_keys(self) -> None:
-        """Ask for the keys before the steps say whether they can run; a failure is only logged.
+    def _ask_keys(self) -> str | None:
+        """Ask for the keys before the steps say whether they can run; why not, when it failed.
 
-        Without them every step but ``check`` and ``summary`` says it cannot
-        run, and ``check`` fails with the reason.
+        A failure is logged. Without the keys every step but ``check`` and
+        ``summary`` says it cannot run, so a run fails at once instead
+        (``_run_steps``) rather than skipping them all and ending "done".
         """
         try:
             self.keys()
         except StepFailedError as error:
             logger.warning(f"{self.spec.arm_id}: {error}")
+            return str(error)
+        return None
 
     def persist(
         self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
@@ -1029,7 +1032,11 @@ class Procedure:
 
     def _run_steps(self, run: RunState, selected: set[str]) -> None:
         ctx = StepContext(self, run)
-        self._ask_keys()
+        unknown = self._ask_keys()
+        if unknown is not None:
+            with self._lock:
+                self._set_state("failed", f"{unknown}; no step ran")
+            return
         try:
             for step in self._steps:
                 if step.id not in selected:
