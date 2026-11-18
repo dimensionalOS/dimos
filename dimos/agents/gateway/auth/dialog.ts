@@ -1,6 +1,6 @@
 import type { AuthInteraction, AuthPrompt, Models } from "@earendil-works/pi-ai";
 import type { DialogId, LoginState } from "#dimos/agents/shared/protocol/auth.ts";
-import type { ModelCatalog } from "#dimos/agents/gateway/auth/models.ts";
+import { type ModelCatalog, refreshCatalog } from "#dimos/agents/gateway/auth/models.ts";
 import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
 import type { Live } from "#dimos/agents/shared/protocol/status.ts";
 import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
@@ -72,6 +72,7 @@ export class LoginFlows {
     flow.status.set({ phase: "running", provider, method, prompt: null, info: [] });
     this.models
       .login(provider, method, this.interaction(flow, login.signal))
+      .then(() => refreshCatalog(this.models, provider, login.signal).catch(this.report))
       .then(
         () => flow.status.set({ phase: "done", provider, at: epochMs(Date.now()) }),
         (error: unknown) => flow.status.set({ phase: "failed", provider, error: messageOf(error) }),
