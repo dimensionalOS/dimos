@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -107,6 +108,33 @@ def make_test_robot() -> DamiaoRobot:
 
 #: The shared robot the Damiao fixtures deploy; tests clone it with overrides.
 TEST_ROBOT = make_test_robot()
+
+
+def mass_test_model() -> RobotModel:
+    """``TEST_ROBOT``'s three arm joints with mass: 1 kg links, 0.2 m apart.
+
+    Every joint turns about y and every link reaches along x at zero, so
+    gravity loads all three; link3 alone loads joint3.
+    """
+    inertia = 'ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"'
+    links = '<link name="link0"/>' + "".join(
+        f'<link name="link{i}"><inertial><origin xyz="0.1 0 0"/><mass value="1.0"/>'
+        f"<inertia {inertia}/></inertial></link>"
+        for i in range(1, 4)
+    )
+    limit = 'lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"'
+    chain = "".join(
+        f'<joint name="joint{i}" type="revolute"><parent link="link{i - 1}"/>'
+        f'<child link="link{i}"/><origin xyz="{0.0 if i == 1 else 0.2} 0 0"/>'
+        f'<axis xyz="0 1 0"/><limit {limit}/></joint>'
+        for i in range(1, 4)
+    )
+    return RobotModel.from_urdf_string(f'<robot name="rig">{links}{chain}</robot>')
+
+
+def make_calibrated_test_robot() -> DamiaoRobot:
+    """``TEST_ROBOT`` named "rig", with gravity on and masses: arms "rig/left" and "rig/right"."""
+    return replace(TEST_ROBOT, name="rig", gravity=True, gravity_model=mass_test_model())
 
 
 class LocalTransport:

@@ -19,12 +19,20 @@
 selectors, and exposes four operations: :meth:`DamiaoArm.enable`,
 :meth:`DamiaoArm.command`, :meth:`DamiaoArm.read` and :meth:`DamiaoArm.disable`.
 The DimOS connection module only translates ports and time into those calls.
+
+Calibration changes how each joint is held, never where it is told to go:
+:meth:`DamiaoArm.apply_calibration` puts a calibration file's gains and link
+masses in place, and :meth:`DamiaoArm.set_gains`, :meth:`DamiaoArm.set_float`
+and :meth:`DamiaoArm.set_feedforward` tune one joint live. Every MIT row is
+limited in one place, ``DamiaoArm._send``: kp to ``MIT_KP_MAX``, kd to
+``MIT_KD_MAX`` and the feed-forward torque to the motor's peak torque.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import math
 import sys
 from typing import Any
 
@@ -35,12 +43,20 @@ from numpy.typing import NDArray
 import pinocchio
 
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.calibration._inertial import (
+    LinkInertial,
+    apply_inertial_overrides,
+)
+from dimos.robot.manipulators.calibration.spec import motor_torque_limit_nm
 from dimos.robot.manipulators.damiao.robot import (
     DamiaoBus,
     DamiaoMotor,
     DamiaoProfile,
     DamiaoRobot,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 #: Native Damiao motor types a robot may name in its data.
 MOTOR_TYPES: dict[str, Any] = {
@@ -49,9 +65,27 @@ MOTOR_TYPES: dict[str, Any] = {
     "DM8009": damiao.MotorType.DM8009,
 }
 
+#: The highest position gain the Damiao MIT frame carries; a higher one is
+#: clamped to it.
+MIT_KP_MAX = 500.0
+#: The highest velocity gain the Damiao MIT frame carries; a higher one is
+#: clamped to it.
+MIT_KD_MAX = 5.0
+
 
 class PhysicalModel:
-    """Numerical arm model: exact joint coordinates and gravity."""
+    """Numerical arm model: exact joint coordinates and gravity.
+
+    Args:
+        robot_model: The mass-bearing URDF.
+        joint_names: The arm joints in motor order; every other joint is
+            locked at its neutral position.
+        gravity_comp: Whether :meth:`gravity` computes torques or returns zeros.
+        inertial_overrides: Fitted mass and centre of mass by link body, e.g.
+            from ``calibration.schema.to_inertial_overrides``. They replace the
+            URDF values after the other joints are locked, so a body is the
+            link plus the links merged into it.
+    """
 
     def __init__(
         self,
@@ -59,6 +93,7 @@ class PhysicalModel:
         joint_names: list[str],
         *,
         gravity_comp: bool,
+        inertial_overrides: Mapping[str, LinkInertial] | None = None,
     ) -> None:
         self._gravity_comp = gravity_comp
         self._names = tuple(joint_names)
@@ -75,8 +110,25 @@ class PhysicalModel:
             raise ValueError("physical model dimensions do not match angular joints")
         if tuple(str(name) for name in model.names[1:]) != self._names:
             raise ValueError("physical model joint order does not match angular joints")
+        overrides = dict(inertial_overrides or {})
+        if overrides:
+            unknown = sorted(
+                name for name in overrides if not model.existFrame(name, pinocchio.FrameType.BODY)
+            )
+            if unknown:
+                raise ValueError(f"inertial overrides name links the arm model lacks: {unknown}")
+            for name, inertial in overrides.items():
+                if not math.isfinite(inertial.mass_kg) or not np.isfinite(inertial.com_m).all():
+                    raise ValueError(f"inertial override for {name!r} is not finite")
+            apply_inertial_overrides(model, overrides)
+        self._overrides = overrides
         self._model = model
         self._data = model.createData()
+
+    @property
+    def inertial_overrides(self) -> dict[str, LinkInertial]:
+        """The link bodies whose URDF mass and centre of mass were replaced."""
+        return dict(self._overrides)
 
     def gravity(self, positions: NDArray[np.float64]) -> NDArray[np.float64]:
         """Gravity torques for a measured arm pose, or zeros without compensation."""
@@ -97,7 +149,14 @@ class PhysicalModel:
 
 @dataclass(frozen=True, slots=True)
 class ArmReading:
-    """One synchronous sample of every commanded joint."""
+    """One synchronous sample of every commanded joint, in ``joint_names`` order.
+
+    Attributes:
+        position: Measured positions; a jaw's comes from its opening.
+        velocity: Measured velocities; 0 for a jaw.
+        effort: The torque each arm motor reports it is producing, N m,
+            never the commanded one; 0 for a jaw.
+    """
 
     position: list[float]
     velocity: list[float]
@@ -147,6 +206,16 @@ class DamiaoArm:
         self._travel: dict[str, tuple[float, float]] = {}
         self._targets: dict[str, float] = {}
         self._active = False
+        # How each arm joint is held, from the bottom layer up: the bus
+        # defaults, a calibration's gains, then live overrides while tuning.
+        self._calibration_gains: dict[str, tuple[float, float]] = {}
+        self._gain_overrides: dict[str, tuple[float, float]] = {}
+        # Joints floating with zero stiffness, by joint, with their damping.
+        self._floating: dict[str, float] = {}
+        # Extra torque added to a joint's gravity torque, N m.
+        self._feedforward: dict[str, float] = {}
+        self._inertial_overrides: dict[str, LinkInertial] = {}
+        self._torque_limits: NDArray[np.float64] | None = None
 
     @property
     def robot(self) -> DamiaoRobot:
@@ -161,12 +230,28 @@ class DamiaoArm:
         """Whether the motors are enabled and accepting commands."""
         return self._active
 
+    @property
+    def floating(self) -> dict[str, float]:
+        """The joints floating with zero stiffness, with the damping each floats with."""
+        return dict(self._floating)
+
+    @property
+    def feedforward(self) -> dict[str, float]:
+        """The extra torque added to each joint's gravity torque, N m; absent means 0."""
+        return dict(self._feedforward)
+
+    @property
+    def inertial_overrides(self) -> dict[str, LinkInertial]:
+        """The link masses the gravity model uses instead of the URDF's."""
+        return dict(self._inertial_overrides)
+
     def connect(self) -> None:
         """Build the native robot, open its buses and take a first reading."""
         self._physical = PhysicalModel(
             self._robot.gravity_model,
             self._robot.arm_joint_names,
             gravity_comp=self._robot.gravity,
+            inertial_overrides=self._inertial_overrides,
         )
         self._travel = self._robot.gripper_travel()
         native = self._build()
@@ -218,13 +303,140 @@ class DamiaoArm:
         self._send()
 
     def read(self) -> ArmReading:
-        """Sample every joint; while teaching, also refresh the gravity torques."""
+        """Sample every joint; while teaching or floating, also refresh the gravity torques."""
         reading = self._sample()
-        if self._teach and self._active:
+        if (self._teach or self._floating) and self._active:
             # The coordinator may go quiet while an operator moves the arm. The
             # MIT torque slot must still follow the new pose, so re-send it.
             self._send()
         return reading
+
+    def get_gains(self) -> dict[str, tuple[float, float]]:
+        """Each arm joint's holding gains, (kp, kd), in joint order.
+
+        A live override from :meth:`set_gains`, else the calibration's gains,
+        else the bus defaults. Teaching and floating hold a joint with zero
+        stiffness instead without changing these, so restoring what this
+        returns never leaves a joint limp.
+        """
+        return {
+            motor.name: self._hold_gains(motor.name, (float(kp), float(kd)))
+            for bus in self._robot.buses
+            for motor, kp, kd in zip(bus.arm, bus.kp, bus.kd, strict=True)
+        }
+
+    def set_gains(self, joint: str, kp: float, kd: float) -> tuple[float, float]:
+        """Hold ``joint`` with ``kp`` and ``kd`` instead, sent at once when enabled.
+
+        Gains are clamped into the MIT frame's range, kp 0 to ``MIT_KP_MAX``
+        and kd 0 to ``MIT_KD_MAX``; a non-finite gain or a joint that is not
+        an arm joint is refused with ``ValueError``. Teaching and floating
+        still win while they last. Returns the gains as applied.
+        """
+        self._arm_index(joint)
+        gains, clamped = _mit_gains(joint, kp, kd)
+        if clamped:
+            logger.warning(f"Damiao {joint} gains kp={kp}, kd={kd} clamped to {gains}")
+        before = self.get_gains()[joint]
+        self._gain_overrides[joint] = gains
+        if gains != before:
+            logger.info(
+                f"Damiao {joint} gains: kp {before[0]:g} -> {gains[0]:g}, "
+                f"kd {before[1]:g} -> {gains[1]:g}"
+            )
+        self._resend()
+        return gains
+
+    def reset_gains(self) -> None:
+        """Drop every live gain override: back to the calibration's gains, else the bus defaults."""
+        if self._gain_overrides:
+            logger.info(f"Damiao gain overrides cleared for {sorted(self._gain_overrides)}")
+        self._gain_overrides.clear()
+        self._resend()
+
+    def set_float(self, joint: str, on: bool, kd: float | None = None) -> None:
+        """Let ``joint`` float, or hold it again; sent at once when enabled.
+
+        A floating joint has zero stiffness and ``kd`` damping (by default the
+        robot's ``teach_kd``, else the joint's holding kd), and its gravity
+        and feed-forward torques are still applied, so it stays where a hand
+        leaves it. Holding it again holds it where it is now, never where it
+        was told to be before it floated.
+        """
+        index = self._arm_index(joint)
+        if on:
+            if kd is None:
+                teach_kd = self._robot.teach_kd
+                kd = teach_kd[index] if teach_kd is not None else self.get_gains()[joint][1]
+            (_, damping), clamped = _mit_gains(joint, 0.0, kd)
+            if clamped:
+                logger.warning(f"Damiao {joint} float damping kd={kd} clamped to {damping}")
+            self._floating[joint] = damping
+            logger.info(f"Damiao {joint} floating with kd {damping:g}")
+        elif joint in self._floating:
+            del self._floating[joint]
+            if self._native is not None and self._active:
+                self._targets[joint] = float(self._arm_positions()[index])
+            logger.info(f"Damiao {joint} held again where it is")
+        self._resend()
+
+    def set_feedforward(self, joint: str, tau_nm: float) -> float:
+        """Add ``tau_nm`` to ``joint``'s gravity torque on every tick; 0 removes it.
+
+        Clamped to the motor's peak torque; a non-finite torque or a joint
+        that is not an arm joint is refused with ``ValueError``. Sent at once
+        when enabled. Returns the torque as applied, N m.
+        """
+        index = self._arm_index(joint)
+        if not math.isfinite(tau_nm):
+            raise ValueError(f"Damiao {joint} feed-forward torque must be finite, got {tau_nm}")
+        limit = float(self._limits()[index])
+        tau = min(max(float(tau_nm), -limit), limit)
+        if tau != tau_nm:
+            logger.warning(f"Damiao {joint} feed-forward {tau_nm} N m clamped to {tau} N m")
+        if tau == 0.0:
+            self._feedforward.pop(joint, None)
+        else:
+            self._feedforward[joint] = tau
+        logger.info(f"Damiao {joint} feed-forward torque {tau:g} N m")
+        self._resend()
+        return tau
+
+    def check_calibration(
+        self,
+        gains: Mapping[str, tuple[float, float]],
+        inertial_overrides: Mapping[str, LinkInertial],
+    ) -> None:
+        """Raise ``ValueError`` if :meth:`apply_calibration` would refuse these."""
+        self._prepare_calibration(gains, inertial_overrides)
+
+    def apply_calibration(
+        self,
+        gains: Mapping[str, tuple[float, float]],
+        inertial_overrides: Mapping[str, LinkInertial],
+    ) -> None:
+        """Hold the named joints with these gains and use these link masses for gravity.
+
+        Replaces the previous calibration as a whole, and drops live gain
+        overrides so the arm runs exactly this one; floating joints and
+        feed-forward torques are kept. Everything is checked first: an
+        unknown joint or link, or a non-finite value, raises ``ValueError``
+        and leaves the arm as it was. Sent at once when enabled. Gains are
+        clamped as in :meth:`set_gains`.
+        """
+        limited, physical = self._prepare_calibration(gains, inertial_overrides)
+        for joint, (kp, kd) in gains.items():
+            if limited[joint] != (kp, kd):
+                logger.warning(
+                    f"Damiao {joint} calibration gains kp={kp}, kd={kd} clamped to {limited[joint]}"
+                )
+        self._calibration_gains = limited
+        self._gain_overrides.clear()
+        self._inertial_overrides = dict(inertial_overrides)
+        if self._physical is not None:
+            # Before connect, connect builds the model with these overrides.
+            self._physical = physical
+        self._resend()
 
     def disable(self) -> None:
         """De-energize the motors. Safe before enable and after a fault."""
@@ -314,11 +526,63 @@ class DamiaoArm:
                 used.append(profile)
         return damiao.DamiaoCodec(profiles=used) if used else damiao.DamiaoCodec()
 
-    def _gains(self, bus: DamiaoBus, offset: int) -> tuple[list[float], list[float]]:
+    def _arm_index(self, joint: str) -> int:
+        names = self._robot.arm_joint_names
+        if joint not in names:
+            raise ValueError(f"{joint!r} is not an arm joint of this Damiao robot; it has {names}")
+        return names.index(joint)
+
+    def _hold_gains(self, joint: str, default: tuple[float, float]) -> tuple[float, float]:
+        """A live override, else the calibration's gains, else ``default`` (the bus's)."""
+        for layer in (self._gain_overrides, self._calibration_gains):
+            if joint in layer:
+                return layer[joint]
+        return default
+
+    def _wire_gains(
+        self, index: int, joint: str, default: tuple[float, float]
+    ) -> tuple[float, float]:
+        """The gains a joint is sent with: teaching, then floating, then holding."""
         if self._teach:
             assert self._robot.teach_kd is not None
-            return [0.0] * len(bus.arm), list(self._robot.teach_kd[offset : offset + len(bus.arm)])
-        return list(bus.kp), list(bus.kd)
+            return 0.0, float(self._robot.teach_kd[index])
+        if joint in self._floating:
+            return 0.0, self._floating[joint]
+        return self._hold_gains(joint, default)
+
+    def _limits(self) -> NDArray[np.float64]:
+        """Each arm motor's peak torque, N m, in joint order."""
+        if self._torque_limits is None:
+            self._torque_limits = np.asarray(
+                [motor_torque_limit_nm(motor) for bus in self._robot.buses for motor in bus.arm],
+                dtype=np.float64,
+            )
+        return self._torque_limits
+
+    def _prepare_calibration(
+        self,
+        gains: Mapping[str, tuple[float, float]],
+        inertial_overrides: Mapping[str, LinkInertial],
+    ) -> tuple[dict[str, tuple[float, float]], PhysicalModel]:
+        limited: dict[str, tuple[float, float]] = {}
+        for joint, (kp, kd) in gains.items():
+            self._arm_index(joint)
+            limited[joint], _ = _mit_gains(joint, kp, kd)
+        physical = PhysicalModel(
+            self._robot.gravity_model,
+            self._robot.arm_joint_names,
+            gravity_comp=self._robot.gravity,
+            inertial_overrides=inertial_overrides,
+        )
+        if self._arms:
+            # The new masses must give finite torques at the measured pose.
+            physical.gravity(self._arm_positions())
+        return limited, physical
+
+    def _resend(self) -> None:
+        """Send changed gains or torques at once; before enable they apply from enable."""
+        if self._native is not None and self._active:
+            self._send()
 
     def _passive_gripper_names(self) -> list[str]:
         return [gripper.name for gripper in self._robot.grippers if gripper.name in self._passive]
@@ -344,6 +608,12 @@ class DamiaoArm:
         missing = [name for name in self.joint_names if name not in self._targets]
         if missing:
             raise RuntimeError(f"no target for Damiao joints: {missing}")
+        measured = self._arm_positions()
+        arm_names = self._robot.arm_joint_names
+        # A floating joint is wherever the hand left it; its target follows,
+        # so holding it again never pulls it back.
+        for joint in self._floating:
+            self._targets[joint] = float(measured[arm_names.index(joint)])
         positions = [self._targets[name] for name in self.joint_names]
         if not np.isfinite(positions).all():
             raise ValueError("position command contains non-finite values")
@@ -358,26 +628,28 @@ class DamiaoArm:
                 raise ValueError(f"{gripper.joint} target {target} is outside its URDF range")
             openings[gripper.name] = opening
         assert self._physical is not None
-        gravity = self._physical.gravity(self._arm_positions())
+        gravity = self._physical.gravity(measured)
+        torque_limits = self._limits()
         offset = 0
         arm_rows: list[tuple[str, NDArray[np.float64]]] = []
         for bus in self._robot.buses:
-            kp, kd = self._gains(bus, offset)
-            rows = np.asarray(
-                [
-                    [
-                        kp[index],
-                        kd[index],
-                        positions[offset + index],
-                        0.0,
-                        gravity[offset + index],
-                    ]
-                    for index in range(len(bus.arm))
-                ],
-                dtype=np.float64,
-            )
+            values: list[list[float]] = []
+            for index, motor in enumerate(bus.arm, start=offset):
+                default = (bus.kp[index - offset], bus.kd[index - offset])
+                kp, kd = self._wire_gains(index, motor.name, default)
+                tau = gravity[index]
+                if motor.name in self._feedforward:
+                    tau = tau + self._feedforward[motor.name]
+                values.append([kp, kd, positions[index], 0.0, tau])
+            rows = np.asarray(values, dtype=np.float64)
             if not np.isfinite(rows).all():
                 raise ValueError(f"arm {bus.name!r} command contains non-finite values")
+            # The one place every MIT row is limited: the gains to the frame's
+            # range, the feed-forward torque to the motor's peak.
+            limits = torque_limits[offset : offset + len(bus.arm)]
+            rows[:, 0] = np.clip(rows[:, 0], 0.0, MIT_KP_MAX)
+            rows[:, 1] = np.clip(rows[:, 1], 0.0, MIT_KD_MAX)
+            rows[:, 4] = np.clip(rows[:, 4], -limits, limits)
             arm_rows.append((bus.name, rows))
             offset += len(bus.arm)
         for name, rows in arm_rows:
@@ -416,3 +688,11 @@ class DamiaoArm:
         if not np.isfinite([q, dq, tau]).all():
             raise RuntimeError("Damiao feedback contains non-finite values")
         return ArmReading(position=q, velocity=dq, effort=tau)
+
+
+def _mit_gains(joint: str, kp: float, kd: float) -> tuple[tuple[float, float], bool]:
+    """``(kp, kd)`` clamped into the MIT frame's range, and whether either was clamped."""
+    if not math.isfinite(kp) or not math.isfinite(kd):
+        raise ValueError(f"Damiao {joint} gains must be finite, got kp={kp}, kd={kd}")
+    limited = (min(max(float(kp), 0.0), MIT_KP_MAX), min(max(float(kd), 0.0), MIT_KD_MAX))
+    return limited, limited != (kp, kd)
