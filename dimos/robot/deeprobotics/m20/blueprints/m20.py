@@ -20,9 +20,8 @@ the Map Editor, then run with ``--map-file <recording>.db``.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
+from dimos.mapping.relocalization.lidar.module import DiffRelocalization
 from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -32,25 +31,25 @@ from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
-from dimos.robot.deeprobotics.m20.rerun import m20_rerun_config
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.visualization.vis_module import vis_module
 
 m20 = (
     autoconnect(
-        vis_module(viewer_backend=global_config.viewer, rerun_config=m20_rerun_config()),
         M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
         M20Connection.blueprint().remappings([(M20Connection, "odometry", "slam_odom")]),
         UrdfManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
-        m20_nav_stack().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
-        LocalMapRelocalization.blueprint(
+        # DiffRelocalization keeps its live map from the voxel map's diffs
+        m20_nav_stack(map_diffs=True).remappings(
+            [(MovementManager, "cmd_vel", "requested_cmd_vel")]
+        ),
+        DiffRelocalization.blueprint(
             world_frame=WORLD_FRAME,
             map_frame="premap",
             relocalize=MID360_NAV,
             new_map=True,
             tf_interval=1.0,
-            # pre_trace_subsample=5 leaves ~12k local points, under the 20k default
+            # live voxels the first match waits for, under the 20k default
             min_local_points=8_000,
         ),
     )
