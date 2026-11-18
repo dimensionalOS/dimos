@@ -1690,48 +1690,8 @@ wheels = [
 
 [[package]]
 name = "cyclonedds"
-version = "0.10.5"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.12' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-]
-dependencies = [
-    { name = "rich-click" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/91/cf/28eb9c823dfc245c540f5286d71b44aeee2a51021fc85b25bb9562be78cc/cyclonedds-0.10.5.tar.gz", hash = "sha256:63fc4d6fdb2fd35181c40f4e90757149f2def5f570ef19fb71edc4f568755f8a", size = 156919, upload-time = "2024-06-05T18:50:42.999Z" }
-
-[[package]]
-name = "cyclonedds"
 version = "11.1.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version >= '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version >= '3.12' and platform_machine != 'aarch64' and ((platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'))",
-    "python_full_version >= '3.12' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version >= '3.12' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version >= '3.12' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
-    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and ((platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'))",
-    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
-    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
-    "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'darwin'",
-    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'win32'",
-    "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'win32'",
-    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
-    "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
-]
 dependencies = [
     { name = "rich-click" },
 ]
@@ -2133,8 +2093,7 @@ cuda = [
     { name = "warp-lang" },
 ]
 dds = [
-    { name = "cyclonedds", version = "0.10.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "cyclonedds", version = "11.1.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "cyclonedds" },
 ]
 drone = [
     { name = "pymavlink" },
@@ -2318,8 +2277,7 @@ unitree-dds = [
     { name = "aioquic" },
     { name = "av" },
     { name = "chromadb" },
-    { name = "cyclonedds", version = "0.10.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "cyclonedds", version = "11.1.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "cyclonedds" },
     { name = "dimos-viewer" },
     { name = "edgetam-dimos" },
     { name = "einops" },
@@ -2482,6 +2440,7 @@ tests = [
     { name = "click" },
     { name = "coacd" },
     { name = "coverage" },
+    { name = "cyclonedds", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "mapping", "visualization", "web", "webrtc"] },
     { name = "dimos-cdrgen" },
     { name = "einops" },
@@ -2538,6 +2497,7 @@ tests-self-hosted = [
     { name = "click" },
     { name = "coacd" },
     { name = "coverage" },
+    { name = "cyclonedds", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "dim-odom" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc"] },
     { name = "dimos-cdrgen" },
@@ -2614,14 +2574,14 @@ requires-dist = [
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
-    { name = "cyclonedds", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'dds'", specifier = ">=0.10.5,<11" },
-    { name = "cyclonedds", marker = "(platform_machine != 'aarch64' or sys_platform != 'linux') and extra == 'dds'", specifier = ">=11.1.0" },
+    { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=11.1.0" },
+    { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=11.1.0" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
-    { name = "dimos", extras = ["unitree", "dds"], marker = "extra == 'unitree-dds'" },
+    { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-lcm", specifier = ">=0.1.6" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
@@ -2839,6 +2799,7 @@ tests = [
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
+    { name = "cyclonedds", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=11.1.0" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
@@ -2896,6 +2857,7 @@ tests-self-hosted = [
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
+    { name = "cyclonedds", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=11.1.0" },
     { name = "dim-odom", specifier = ">=0.4.1" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
@@ -11067,8 +11029,7 @@ name = "unitree-sdk2py-dimos"
 version = "1.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cyclonedds", version = "0.10.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "cyclonedds", version = "11.1.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "cyclonedds" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "opencv-python", marker = "sys_platform == 'never'" },
