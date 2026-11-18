@@ -23,6 +23,7 @@ from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     eef_twist_task,
@@ -66,7 +67,8 @@ xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
     MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
-    ManipulationLocalize.blueprint(world_frame="world"),
+    # The wrist camera holds still while the arm waits, so one view confirms an object.
+    ManipulationLocalize.blueprint(world_frame="world", params=LocalizeParams(min_views=1)),
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[

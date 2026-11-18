@@ -23,6 +23,7 @@ from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.manipulators.common.blueprints import coordinator, manipulation_mapping
 from dimos.robot.manipulators.makermods_metal.config import (
     METAL_HEURISTIC_AIM,
@@ -80,5 +81,6 @@ metal_perception_sim = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_MODEL),
     HeuristicGraspModule.blueprint(**METAL_HEURISTIC_AIM),
-    ManipulationLocalize.blueprint(world_frame="world"),
+    # The wrist camera holds still while the arm waits, so one view confirms an object.
+    ManipulationLocalize.blueprint(world_frame="world", params=LocalizeParams(min_views=1)),
 )
