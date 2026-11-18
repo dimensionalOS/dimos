@@ -18,6 +18,7 @@ import sys
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprint_config.values import plain
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
@@ -407,6 +408,9 @@ def test_collection_config_roundtrip_keeps_derived_store(tmp_path, format, paylo
     restored = CollectionModuleConfig.model_validate(config.model_dump())
     assert restored.store.path == str(tmp_path / "session" / payload)
     assert restored.to_config_dict() == config.to_config_dict()
+    # The blueprint parser hands workers only the fields that were set.
+    parsed = CollectionModuleConfig.model_validate(plain(config, exclude_unset=True))
+    assert parsed.to_config_dict() == config.to_config_dict()
 
 
 @pytest.mark.parametrize(
