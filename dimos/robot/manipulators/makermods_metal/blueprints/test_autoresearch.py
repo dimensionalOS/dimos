@@ -23,9 +23,9 @@ from dimos.autoresearch.truth_scene import TruthSceneModule
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionModule
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.makermods_metal.blueprints.autoresearch import autoresearch_metal_sim
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
@@ -75,7 +75,7 @@ def test_lab_blueprint_takes_the_session_at_launch_and_offers_only_the_lab_tools
     assert issubclass(atoms[0].module, CollectionModule)
     assert {AutoresearchModule, TruthSceneModule, McpServer, EpisodeMonitorModule} <= modules
     assert MujocoSimModule in modules
-    assert not modules & {ManipulationSkills, PickAndPlaceModule, ObjectSceneRegistrationModule}
+    assert not modules & {ManipulationSkills, PickAndPlaceModule, ManipulationLocalize}
     assert {module for module in modules if _skills(module)} == {AutoresearchModule, McpServer}
     assert _skills(AutoresearchModule) == LAB_TOOLS
     assert autoresearch_metal_sim.remapping_map[("recorder", "wrist_image")] == "color_image"

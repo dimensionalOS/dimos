@@ -21,8 +21,10 @@ import pytest
 
 from dimos.control._control_test_helpers import FAKE_ARM_JOINTS, fake_arm_model
 from dimos.control.components import HardwareComponent, HardwareType, JointState as JointReading
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.convert import motor_joints
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tick_loop import TickLoop
@@ -111,8 +113,13 @@ def make_connection_loop(callback):
     model = fake_arm_model().with_renamed_joints(
         dict(zip(FAKE_ARM_JOINTS, MOCK_JOINTS, strict=True))
     )
+    config = ConnectionConfig(
+        source="mock",
+        model=model,
+        joint_commands=dict.fromkeys(MOCK_JOINTS, (Interface.POSITION, Interface.VELOCITY)),
+    )
     source = ConnectionSource(
-        "mock", ["position_command", "velocity_command"], ["joint_state"], model, 10.0
+        config, ["position_command", "velocity_command"], ["joint_state"], 10.0
     )
     source.on_message(
         "joint_state", JointState(name=MOCK_JOINTS, position=[0.0] * len(MOCK_JOINTS))
@@ -139,8 +146,10 @@ def test_connection_position_winners_are_published_and_other_ticks_are_not(mode)
     tick, sent = make_connection_loop(messages.append)
     with patch("dimos.control.tick_loop.time.time", return_value=123.25):
         tick._write_all_connections({})
-        tick._write_all_connections({"mock": ({"mock/joint3": 0.4, "mock/joint1": 1.2}, mode)})
-        tick._write_all_connections({"mock": ({"mock/joint1": 0.1}, ControlMode.VELOCITY)})
+        tick._write_all_connections(
+            {"mock/joint3": (0.4, mode, "traj"), "mock/joint1": (1.2, mode, "traj")}
+        )
+        tick._write_all_connections({"mock/joint1": (0.1, ControlMode.VELOCITY, "traj")})
     # The robot got its keep-alive command on every tick regardless.
     assert [name for name, _ in sent] == ["mock"] * 3
     (message,) = messages

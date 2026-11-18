@@ -37,6 +37,7 @@ from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from dimos.autoresearch.scene_spec import ObjectSceneSpec
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
@@ -51,9 +52,6 @@ from dimos.msgs.geometry_msgs.Pose import Pose as PoseMsg
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.experimental.object_scene_registration_spec import (
-    ObjectSceneRegistrationSpec,
-)
 from dimos.porcelain.dimos import Dimos
 
 T = TypeVar("T")
@@ -437,7 +435,7 @@ def subscribe_map(app: Dimos, maps: MapStamps) -> Callable[[], None]:
 
 class DimosBackend:
     """``RobotBackend`` over a running DimOS stack: the ``Arm`` SDK for motion
-    and the gripper, the object-registration module for the scene, the map's
+    and the gripper, the stack's ``ObjectSceneSpec`` module for the scene, the map's
     box filter for clearing objects, and an ``Observer`` for camera frames.
     ``maps`` must be fed from the box filter's output: ``clear_object`` and
     ``restore`` return once a map captured after the change has arrived."""
@@ -445,7 +443,7 @@ class DimosBackend:
     def __init__(
         self,
         arm: Arm,
-        scene: ObjectSceneRegistrationSpec,
+        scene: ObjectSceneSpec,
         box_filter: PointCloudBoxFilterSpec,
         observer: Observer,
         gripper: GripperRange,
@@ -475,7 +473,7 @@ class DimosBackend:
         the frame the arm plans in; ``objects()`` refuses any other frame."""
         app = Dimos.connect()
         arm = Arm.from_app(app, group=group, instance_name=instance_name)
-        scene = app.find_module_by_spec(ObjectSceneRegistrationSpec)
+        scene = app.find_module_by_spec(ObjectSceneSpec)
         box_filter = app.find_module_by_spec(PointCloudBoxFilterSpec)
         maps = MapStamps()
         subscribe_map(app, maps)

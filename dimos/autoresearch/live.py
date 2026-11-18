@@ -28,13 +28,11 @@ from dimos.autoresearch.program import (
     RobotBackend,
     subscribe_map,
 )
+from dimos.autoresearch.scene_spec import ObjectSceneSpec
 from dimos.core.stream import RemoteOut
 from dimos.manipulation.sdk import Arm
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.experimental.object_scene_registration_spec import (
-    ObjectSceneRegistrationSpec,
-)
 from dimos.porcelain.dimos import Dimos
 
 # The Metal's jaw joint (joint7) in metres: 0 closed, -0.05 fully open (METAL_GRIPPER_RANGE).
@@ -87,7 +85,7 @@ def backend(trial_dir: Path) -> RobotBackend:
     observer = StreamObserver(app.get_module(cameras[0].module_name).get_stream("color_image"))
     atexit.register(observer.close)
     arm = Arm.from_app(app)
-    scene = app.find_module_by_spec(ObjectSceneRegistrationSpec)
+    scene = app.find_module_by_spec(ObjectSceneSpec)
     box_filter = app.find_module_by_spec(PointCloudBoxFilterSpec)
     maps = MapStamps()
     atexit.register(subscribe_map(app, maps))

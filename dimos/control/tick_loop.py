@@ -529,12 +529,15 @@ class TickLoop:
 
         Every robot that has reported gets one, every tick, whether or not a
         task drives it, so its connection module's deadman never fires while
-        the coordinator runs. One whose readings are stale gets none.
+        the coordinator runs. One whose readings are stale gets none. The
+        positions tasks asked for also go out on the joint command stream,
+        as they do for adapter-driven hardware.
         """
         publish = self._connection_command_callback
         if publish is None:
             return
         now = time.monotonic()
+        positions: dict[str, float] = {}
         with self._hardware_lock:
             for name, source in self._connections.items():
                 if not source.ready_for_control(now):
@@ -545,10 +548,17 @@ class TickLoop:
                     for joint, (value, mode, _) in joint_commands.items()
                     if self._joint_to_hardware.get(joint) == name
                 }
+                positions.update(
+                    (joint, winners[joint][0])
+                    for joint in source.joint_names
+                    if joint in winners
+                    and winners[joint][1] in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
+                )
                 try:
                     publish(name, source.command(winners))
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
+        self._publish_joint_commands(positions)
 
     def _publish_joint_commands(self, commands: dict[str, float]) -> None:
         """Publish the joint positions tasks asked for this tick; nothing when there are none.

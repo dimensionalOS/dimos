@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Scene scans answered from the simulator's true body poses instead of a
-detector, in the shape of the object-registration module's RPCs."""
+detector, through the ``ObjectSceneSpec`` RPCs."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class TruthSceneModuleConfig(ModuleConfig):
 class TruthSceneModule(Module):
     """Answers ``scan_scene`` with a world-frame box for every tracked body named
     in the query, from the latest ``body_poses`` message. Takes the place of
-    the object-registration module on a simulated stack without a detector."""
+    a detector on a simulated stack."""
 
     config: TruthSceneModuleConfig
 
