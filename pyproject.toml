@@ -280,9 +280,10 @@ unitree = [
 ]
 
 unitree-dds = [
-    "dimos[unitree,dds]",
+    "dimos[unitree]",
     # 1.0.4 is the first release whose messages match the robots' under cyclonedds 11.
     "unitree-sdk2py-dimos>=1.0.4",
+    "cyclonedds>=11.1.0",
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
@@ -361,11 +362,7 @@ drone = [
 ]
 
 dds = [
-    # 11.x ships wheels with the C library for x86_64 Linux, macOS and Windows. Linux
-    # arm64 has none, so it stays on 0.10, which builds against the CycloneDDS 0.10
-    # that Ubuntu 24.04 and Unitree's robots ship (11.x does not build against it).
-    "cyclonedds>=11.1.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
-    "cyclonedds>=0.10.5,<11; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "cyclonedds>=11.1.0",
 ]
 
 webrtc = [
@@ -480,6 +477,9 @@ tests = [
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
     "viser[urdf]>=1.0.29; sys_platform != 'linux' or platform_machine != 'aarch64'",
+    # DDS tests. Not on Linux arm64: no wheels there, so it needs CycloneDDS built from
+    # source (docs/usage/transports/dds.md).
+    "cyclonedds>=11.1.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
 
     {include-group = "project-deps"},
 ]
@@ -525,9 +525,7 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[manipulation,misc,unitree]",
-    # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
-    # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
-    # doesn't expose to the build — and these tests never open a live DDS link.
+    # go2 dds store tests decode mcap (pure-Python).
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
