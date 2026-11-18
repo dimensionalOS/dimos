@@ -21,12 +21,12 @@ the Map Editor, then run with ``--map-file <recording>.db``.
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import ZenohTransport
-from dimos.mapping.relocalization.lidar.module import DiffRelocalization
+from dimos.mapping.relocalization.lidar.module import ContinuousRelocalization
 from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
-from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
+from dimos.robot.deeprobotics.m20.blueprints._nav import VOXEL_SIZE_M, m20_nav_stack
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
@@ -39,11 +39,8 @@ m20 = (
         M20Connection.blueprint().remappings([(M20Connection, "odometry", "slam_odom")]),
         UrdfManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
-        # DiffRelocalization keeps its live map from the voxel map's diffs
-        m20_nav_stack(map_diffs=True).remappings(
-            [(MovementManager, "cmd_vel", "requested_cmd_vel")]
-        ),
-        DiffRelocalization.blueprint(
+        m20_nav_stack().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
+        ContinuousRelocalization.blueprint(
             world_frame=WORLD_FRAME,
             map_frame="premap",
             relocalize=MID360_NAV,
@@ -51,6 +48,8 @@ m20 = (
             tf_interval=1.0,
             # live voxels the first match waits for, under the 20k default
             min_local_points=8_000,
+            # one kept point per ray tracer voxel, so a standing robot's map is not thinned below min_local_points
+            live_voxel_m=VOXEL_SIZE_M,
         ),
     )
     .global_config(

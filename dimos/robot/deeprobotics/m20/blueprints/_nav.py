@@ -32,11 +32,8 @@ PLANNER_VIZ_HZ = 2.0
 PLANNER_VIZ_SWEEP_CELLS = 1
 
 
-def m20_nav_stack(embodiment: Embodiment = M20, map_diffs: bool = False) -> MetaBlueprint:
-    """Voxel map, planners and follower for an M20 whose step and body limits are `embodiment`'s.
-
-    `map_diffs` has the voxel map publish its changes on map_update instead of the whole global map.
-    """
+def m20_nav_stack(embodiment: Embodiment = M20) -> MetaBlueprint:
+    """Voxel map, planners and follower for an M20 whose step and body limits are `embodiment`'s."""
     return autoconnect(
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_M,
@@ -47,7 +44,6 @@ def m20_nav_stack(embodiment: Embodiment = M20, map_diffs: bool = False) -> Meta
             global_emit_every=50,
             world_frame=WORLD_FRAME,
             worker_threads=3,
-            diff=map_diffs,
         ).remappings([(RayTracingVoxelMap, "lidar", "slam_body_points")]),
         MLSPlannerNative.blueprint(
             world_frame=WORLD_FRAME,

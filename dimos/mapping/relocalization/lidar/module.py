@@ -21,19 +21,19 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
 import numpy as np
 import reactivex as rx
 from reactivex import Observable, operators as ops
 
 from dimos.core.core import rpc
-from dimos.core.stream import In, Out
+from dimos.core.stream import In
 from dimos.mapping.relocalization.lidar.relocalize import (
     MID360,
     LidarRelocalizer,
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.module import Config, PremapModule
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import FLAG_NAMES, PointCloud2
 from dimos.utils.logging_config import setup_logger
@@ -181,79 +181,131 @@ class LocalMapRelocalization(CloudRelocalization):
         )
 
 
-class DiffConfig(LidarConfig):
-    relocalize_once: bool = False
+_PREMAP_BIT = 1 << FLAG_NAMES.index("premap")
+
+# A voxel key's three axes, packed into one int64 at this many bits each.
+_KEY_BITS = 21
+_KEY_OFFSET = 1 << (_KEY_BITS - 1)
 
 
-class DiffRelocalization(CloudRelocalization):
-    """Matches its own copy of the live map, kept from the ray tracer's diffs without the premap's voxels.
+def _pack(points: np.ndarray, voxel: float) -> np.ndarray:
+    keys = np.floor(points / voxel).astype(np.int64) + _KEY_OFFSET
+    packed: np.ndarray = (keys[:, 0] << (2 * _KEY_BITS)) | (keys[:, 1] << _KEY_BITS) | keys[:, 2]
+    return packed
 
-    The first fix searches the whole premap. Every later one refines the current
-    fix by ICP, so the premap stays where the first fix put it in the ray tracer
-    and only ``world -> map`` moves.
+
+def _in_cylinder(points: np.ndarray, bounds: PoseStamped) -> np.ndarray:
+    """Which points the ray tracer's bounds cylinder holds (orientation x, y, z = radius, z_min, z_max)."""
+    radius, z_min, z_max = bounds.orientation.x, bounds.orientation.y, bounds.orientation.z
+    dx = points[:, 0] - bounds.position.x
+    dy = points[:, 1] - bounds.position.y
+    inside: np.ndarray = (
+        (dx * dx + dy * dy <= radius * radius) & (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
+    )
+    return inside
+
+
+class LiveMap:
+    """The live (non-premap) part of the ray tracer's local maps, kept one point per voxel.
+
+    Each local map replaces what its bounds cylinder held, so what live rays carved goes too.
     """
 
-    config: DiffConfig
+    def __init__(self, voxel: float) -> None:
+        self.voxel = voxel
+        self._keys = np.empty(0, dtype=np.int64)
+        self._points = np.empty((0, 3), dtype=np.float32)
+        self._lock = threading.Lock()
 
-    map_update: In[PointCloud2]
-    # The ray tracer's keyframes: its whole map, which the diffs carry on from.
-    global_map: In[PointCloud2]
-    cloud_keyframe_request: Out[Bool]
+    def __len__(self) -> int:
+        return len(self._keys)
+
+    def fold(self, local_map: PointCloud2, bounds: PoseStamped | None) -> None:
+        points = local_map.points_f32().reshape(-1, 3)
+        flags = local_map.flags_u32()
+        if flags is not None:
+            points = points[(flags & _PREMAP_BIT) == 0]
+        keys = _pack(points, self.voxel)
+        with self._lock:
+            kept = np.ones(len(self._keys), dtype=bool)
+            if bounds is not None:
+                kept = ~_in_cylinder(self._points, bounds)
+            all_keys = np.concatenate([keys, self._keys[kept]])
+            all_points = np.concatenate([points, self._points[kept]])
+            # First occurrence wins, so a voxel's newest point is kept.
+            self._keys, first = np.unique(all_keys, return_index=True)
+            self._points = all_points[first]
+
+    def cloud(
+        self, frame_id: str, center: tuple[float, float] | None, radius: float
+    ) -> PointCloud2:
+        """The kept points, only those within ``radius`` (xy) of ``center`` when both are given."""
+        with self._lock:
+            points = self._points
+        if center is not None and radius > 0:
+            dx = points[:, 0] - center[0]
+            dy = points[:, 1] - center[1]
+            points = points[dx * dx + dy * dy <= radius * radius]
+        return PointCloud2.from_numpy(points, frame_id=frame_id)
+
+
+class ContinuousConfig(LidarConfig):
+    relocalize_once: bool = False
+    # Fold the ray tracer's local_map into the kept live map at most this often (s)
+    accumulate_interval: float = 1.0
+    # The kept live map's voxel edge (m)
+    live_voxel_m: float = 0.1
+    # Match only kept live points within this xy distance (m) of the robot's latest local map; 0 matches them all
+    match_radius_m: float = 30.0
+
+
+class ContinuousRelocalization(CloudRelocalization):
+    """Keeps refining ``world -> map`` against its own map of the ray tracer's live voxels.
+
+    It keeps the live (non-premap) voxels of the ray tracer's local maps, so the premap never
+    confirms itself. The first fix searches the whole premap and places it in the ray tracer;
+    every later one refines the current fix by ICP and only moves ``world -> map``.
+    world_frame must be the frame the ray tracer maps in.
+    """
+
+    config: ContinuousConfig
+
+    local_map: In[PointCloud2]
+    region_bounds: In[PoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        # Live voxel centers (no premap-only voxel), and the stamp of the keyframe they carry on from.
-        self._live: set[tuple[float, float, float]] = set()
-        self._keyframe_ts: float | None = None
-        self._lock = threading.Lock()
+        self.live = LiveMap(self.config.live_voxel_m)
+        # region_bounds by stamp, which local_map pairs on
+        self._bounds: deque[PoseStamped] = deque(maxlen=32)
+        self._center: tuple[float, float] | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         if self.premap is None:
             return
-        self.register_disposable(self.global_map.observable().subscribe(self.on_keyframe))  # type: ignore[no-untyped-call]
-        self.register_disposable(self.map_update.observable().subscribe(self.on_diff))  # type: ignore[no-untyped-call]
-        # The diffs since the ray tracer started may be gone, so start from its whole map.
-        self.cloud_keyframe_request.publish(Bool(data=True))
+        self.register_disposable(self.region_bounds.observable().subscribe(self._bounds.append))  # type: ignore[no-untyped-call]
+        self.register_disposable(
+            self.local_map.observable()  # type: ignore[no-untyped-call]
+            .pipe(ops.throttle_first(self.config.accumulate_interval))
+            .subscribe(self.on_local_map)
+        )
 
-    def on_keyframe(self, cloud: PointCloud2) -> None:
-        live = {tuple(p) for p in cloud.points_f32()[~_premap(cloud)]}
-        with self._lock:
-            self._live = live
-            self._keyframe_ts = cloud.ts
-
-    def on_diff(self, cloud: PointCloud2) -> None:
-        if self._keyframe_ts is not None and cloud.ts is not None and cloud.ts < self._keyframe_ts:
-            return  # the keyframe already holds it
-        change = cloud.change_u8()
-        if change is None:
-            logger.warning("map_update without a change field, dropped")
-            return
-        points, premap = cloud.points_f32(), _premap(cloud)
-        added = {tuple(p) for p in points[(change != 0) & ~premap]}
-        # Removed voxels, and ones only the premap now holds.
-        gone = {tuple(p) for p in points[(change == 0) | premap]}
-        with self._lock:
-            self._live -= gone
-            self._live |= added
-
-    def live_cloud(self) -> PointCloud2:
-        with self._lock:
-            points = np.array(list(self._live), dtype=np.float32).reshape(-1, 3)
-        return PointCloud2.from_numpy(points, frame_id=self.config.world_frame)
+    def on_local_map(self, cloud: PointCloud2) -> None:
+        bounds = next((b for b in reversed(self._bounds) if b.ts == cloud.ts), None)
+        self.live.fold(cloud, bounds)
+        if bounds is not None:
+            self._center = (bounds.position.x, bounds.position.y)
 
     def clouds(self) -> Observable[PointCloud2]:
-        return rx.interval(self.config.reloc_interval).pipe(ops.map(lambda _: self.live_cloud()))
+        return rx.interval(self.config.reloc_interval).pipe(
+            ops.map(
+                lambda _: self.live.cloud(
+                    self.config.world_frame, self._center, self.config.match_radius_m
+                )
+            )
+        )
 
     def near(self) -> Transform | None:
         return self.fix
-
-
-def _premap(cloud: PointCloud2) -> np.ndarray:
-    """Per point, whether only the premap put that voxel there (all False without a flags field)."""
-    flags = cloud.flags_u32()
-    if flags is None:
-        return np.zeros(len(cloud), dtype=bool)
-    premap: np.ndarray = (flags & (1 << FLAG_NAMES.index("premap"))) != 0
-    return premap

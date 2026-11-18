@@ -12,84 +12,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Continuous relocalization on the M20 fixture (continuous_fixture.py): a first fix
-that is off gets corrected by the later ones, which only move world -> map."""
-
 import numpy as np
-import pytest
 
-pytest.importorskip("open3d")
-
-from dimos.mapping.relocalization.lidar.continuous_fixture import MAP_IN_WORLD, NAME
-from dimos.mapping.relocalization.lidar.module import DiffRelocalization
-from dimos.mapping.relocalization.lidar.relocalize import LidarRelocalizer
-from dimos.mapping.relocalization.module import fix_error
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.mapping.relocalization.lidar.module import LiveMap
+from dimos.mapping.relocalization.lidar.relocalize import MID360, LidarRelocalizer
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.utils.data import get_data
 
-# Diffs folded in between matches: the fixture's diffs are 1 s apart, the module matches every reloc_interval.
-DIFFS_PER_MATCH = 2
-
-# How far off the deliberately wrong first fix is, and how close the corrected ones must come.
-WRONG_BY = Transform(
-    translation=Vector3(0.3, 0.2, 0.0),
-    rotation=Quaternion.from_euler(Vector3(0.0, 0.0, np.radians(4.0))),
-    frame_id="map",
-    child_frame_id="map",
-)
-CLOSE_M, CLOSE_DEG = 0.1, 1.0
+PREMAP = 1
 
 
-def _diffs() -> list[PointCloud2]:
-    with SqliteStore(path=str(get_data(NAME) / "map_update.db"), must_exist=True) as store:
-        return [obs.data for obs in store.stream("map_update", PointCloud2).order_by("ts")]
+def local_map(points, flags=None):
+    points = np.asarray(points, dtype=np.float32)
+    flags = None if flags is None else np.asarray(flags, dtype=np.uint32)
+    return PointCloud2.from_numpy(points, frame_id="world", flags=flags)
 
 
-def _run(first_fix: Transform | None) -> list[Transform]:
-    """Every fix the module accepts over the fixture, starting from ``first_fix`` when given."""
-    # Driven by hand, without a bus, so the premap is set rather than loaded and published.
-    m = DiffRelocalization(map_frame="map")
-    m.premap = PointCloud2.lcm_decode((get_data(NAME) / "premap.pc2.lcm").read_bytes())
-    m._relocalizer = LidarRelocalizer(m.premap.pointcloud, m.config.relocalize)
-    fixes: list[Transform] = []
-    m.fixes.subscribe(fixes.append)
-    if first_fix is not None:
-        m.submit(first_fix, "test")
-    try:
-        for index, diff in enumerate(_diffs(), 1):
-            m.on_diff(diff)
-            if index % DIFFS_PER_MATCH == 0 and m._has_enough_points(cloud := m.live_cloud()):
-                m._relocalize(cloud)
-    finally:
-        m.dispose()
-    return fixes
-
-
-def _off(fix: Transform, reference: Transform) -> tuple[float, float]:
-    dyaw, dist_m = fix_error(fix, reference)
-    return abs(dyaw), dist_m
-
-
-@pytest.mark.self_hosted
-def test_a_slightly_wrong_first_fix_is_corrected_and_stays_corrected() -> None:
-    reference = _run(None)[-1]
-    # The fixture's live frame sits MAP_IN_WORLD from the premap, so that is what an unperturbed run finds.
-    dyaw, dist_m = _off(reference, MAP_IN_WORLD)
-    assert dist_m < 0.2 and dyaw < 2.0, (
-        f"unperturbed run off the truth by {dist_m:.2f} m {dyaw:.1f} deg"
+def bounds(x, y, radius, z_min=-5.0, z_max=5.0):
+    return PoseStamped(
+        position=Vector3(x, y, 0.0), orientation=Quaternion(radius, z_min, z_max, 0.0)
     )
 
-    wrong = reference + WRONG_BY
-    dyaw, dist_m = _off(wrong, reference)
-    assert dist_m >= 0.3 and dyaw >= 3.0
 
-    fixes = _run(wrong)
-    errors = [_off(fix, reference) for fix in fixes[1:]]
-    close = [dyaw < CLOSE_DEG and dist_m < CLOSE_M for dyaw, dist_m in errors]
-    assert any(close), f"never corrected: {errors}"
-    first_close = close.index(True)
-    assert all(close[first_close:]), f"got worse once corrected: {errors[first_close:]}"
+def held(live):
+    return sorted(map(tuple, live.cloud("world", None, 0).points_f32().round(2).tolist()))
+
+
+def test_live_map_keeps_only_live_voxels():
+    live = LiveMap(0.1)
+    live.fold(local_map([[1, 0, 0], [2, 0, 0], [3, 0, 0]], [0, PREMAP, 0]), None)
+    assert held(live) == [(1, 0, 0), (3, 0, 0)]
+
+
+def test_a_local_map_replaces_what_its_bounds_held():
+    live = LiveMap(0.1)
+    live.fold(local_map([[1, 0, 0], [10, 0, 0]]), None)
+    # The voxel at x=1 was carved: the next local map around it no longer has it.
+    live.fold(local_map([[2, 0, 0]]), bounds(0, 0, 5))
+    assert held(live) == [(2, 0, 0), (10, 0, 0)]
+
+
+def test_one_point_per_voxel():
+    live = LiveMap(1.0)
+    live.fold(local_map([[1.2, 0.2, 0.2], [1.4, 0.4, 0.4]]), None)
+    assert len(live) == 1
+
+
+def test_the_match_cloud_keeps_near_the_robot():
+    live = LiveMap(0.1)
+    live.fold(local_map([[1, 0, 0], [50, 0, 0]]), None)
+    near = live.cloud("world", (0.0, 0.0), 10.0).points_f32().tolist()
+    assert near == [[1, 0, 0]]
+
+
+def _room(rng):
+    """Points on the walls, floor and a few boxes of a 12 x 8 m room."""
+    faces = []
+    for _ in range(6000):
+        u, v = rng.uniform(0, 1, 2)
+        faces.append(
+            [
+                [u * 12, v * 8, 0],
+                [0, u * 8, v * 3],
+                [12, u * 8, v * 3],
+                [u * 12, 0, v * 3],
+                [u * 12, 8, v * 3],
+                [2 + u, 2 + v, 1],
+                [7 + 2 * u, 5, v * 2],
+            ][rng.integers(7)]
+        )
+    return np.asarray(faces, dtype=np.float32)
+
+
+def test_a_near_fix_is_refined_by_icp_alone():
+    rng = np.random.default_rng(0)
+    room = _room(rng)
+    relocalizer = LidarRelocalizer(PointCloud2.from_numpy(room).pointcloud, MID360)
+    # The live world sits 0.3 m and 3 deg off the map; the current fix is off by that much.
+    truth = Transform(
+        translation=Vector3(0.3, -0.2, 0.0),
+        rotation=Quaternion.from_euler(Vector3(0.0, 0.0, np.radians(3.0))),
+        frame_id="world",
+        child_frame_id="map",
+    )
+    world_room = (truth.to_matrix() @ np.c_[room, np.ones(len(room))].T).T[:, :3]
+    live = PointCloud2.from_numpy(world_room.astype(np.float32)).pointcloud
+    near = Transform(frame_id="world", child_frame_id="map")
+    fix = relocalizer.attempt(live, "world", "map", near).fix
+    assert fix is not None
+    assert (fix.translation - truth.translation).length() < 0.05

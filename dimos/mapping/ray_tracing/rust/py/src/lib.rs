@@ -77,17 +77,6 @@ fn flat_to_array(py: Python<'_>, points: Vec<f32>) -> Bound<'_, PyArray2<f32>> {
         .into_pyarray(py)
 }
 
-/// Hand-off of flat rows of `columns` values, the fourth `Voxel::flags` bits, to a
-/// (N, columns) numpy array, with the flags as their numeric value.
-fn flagged_rows(py: Python<'_>, mut points: Vec<f32>, columns: usize) -> Bound<'_, PyArray2<f32>> {
-    for row in points.chunks_exact_mut(columns) {
-        row[3] = row[3].to_bits() as f32;
-    }
-    Array2::from_shape_vec((points.len() / columns, columns), points)
-        .expect("emitters produce whole rows")
-        .into_pyarray(py)
-}
-
 #[pyclass]
 pub struct VoxelRayMapper {
     mapper: Mapper,
@@ -177,7 +166,6 @@ impl VoxelRayMapper {
             viz_cell_m: region_m,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
-            diff: false,
         };
         config
             .validate()
@@ -253,20 +241,6 @@ impl VoxelRayMapper {
         let mapper = &self.mapper;
         let points = py.allow_threads(|| mapper.global_points());
         flat_to_array(py, points)
-    }
-
-    /// The global map as (M, 4) float32 (x, y, z, flags), made the baseline global_diff is taken against.
-    fn global_keyframe<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
-        let mapper = &mut self.mapper;
-        let points = py.allow_threads(|| mapper.global_keyframe());
-        flagged_rows(py, points, 4)
-    }
-
-    /// What changed since the last keyframe or diff as (M, 5) float32 (x, y, z, flags, change), change 1 added, 0 removed.
-    fn global_diff<'py>(&mut self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
-        let mapper = &mut self.mapper;
-        let points = py.allow_threads(|| mapper.global_diff());
-        flagged_rows(py, points, 5)
     }
 
     /// Partition a world-frame map cloud into regions nearest `origin` first,

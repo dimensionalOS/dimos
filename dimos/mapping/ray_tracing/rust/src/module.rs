@@ -28,7 +28,7 @@ use dimos_module::{
 };
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Bool, Header, Time};
+use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
@@ -42,8 +42,6 @@ enum Job {
     /// A loaded map placed in the world and split into tiles, or None when
     /// it could not be placed.
     SeedPrepared(Option<SeedPartition>),
-    /// Publish the whole map on global_map now, restarting diffs from it.
-    Keyframe,
 }
 
 /// Messages the handlers can queue ahead of the worker before they wait.
@@ -63,20 +61,11 @@ pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
     loaded_map: Input<PointCloud2>,
 
-    // True publishes the whole map on global_map now, and restarts diffs from it.
-    #[input(decode = Bool::decode, handler = on_cloud_keyframe_request)]
-    cloud_keyframe_request: Input<Bool>,
-
     #[tf]
     tf: Tf,
 
     #[output(encode = PointCloud2::encode)]
     global_map: Output<PointCloud2>,
-
-    // In diff mode, the voxels changed since the last publish, with a `change`
-    // field (1 added, 0 removed) beside `flags`.
-    #[output(encode = PointCloud2::encode)]
-    map_update: Output<PointCloud2>,
 
     #[output(encode = PointCloud2::encode)]
     local_map: Output<PointCloud2>,
@@ -130,7 +119,6 @@ impl RayTracingVoxelMap {
             tf: self.tf.clone(),
             config: self.config.clone(),
             global_map: self.global_map.clone(),
-            map_update: self.map_update.clone(),
             local_map: self.local_map.clone(),
             local_map_fine: self.local_map_fine.clone(),
             region_bounds: self.region_bounds.clone(),
@@ -155,12 +143,6 @@ impl RayTracingVoxelMap {
 
     async fn on_loaded_map(&mut self, msg: PointCloud2) {
         self.enqueue(Job::LoadedMap(msg)).await;
-    }
-
-    async fn on_cloud_keyframe_request(&mut self, msg: Bool) {
-        if msg.data {
-            self.enqueue(Job::Keyframe).await;
-        }
     }
 
     async fn enqueue(&self, job: Job) {
@@ -329,7 +311,6 @@ struct Worker {
     tf: Tf,
     config: Config,
     global_map: Output<PointCloud2>,
-    map_update: Output<PointCloud2>,
     local_map: Output<PointCloud2>,
     local_map_fine: Output<PointCloud2>,
     region_bounds: Output<PoseStamped>,
@@ -378,23 +359,6 @@ impl Worker {
                     );
                 }
                 state.seed.placed(partition);
-            }
-            Job::Keyframe => {
-                let mapper = &mut state.mapper;
-                let diff = self.config.diff;
-                // In diff mode the changes not yet sent go out first, so the diffs a
-                // subscriber applied add up to exactly the keyframe that follows.
-                let (pending, points) = tokio::task::block_in_place(|| {
-                    (diff.then(|| mapper.global_diff()), mapper.global_keyframe())
-                });
-                let frame = self.config.world_frame.as_str();
-                let stamp = state.last_frame_stamp.clone();
-                if let Some(pending) = pending.filter(|p| !p.is_empty()) {
-                    let update = diff_to_cloud(&pending, frame, stamp.clone());
-                    publish_cloud(&self.map_update, &update).await;
-                }
-                let cloud = points_to_cloud(&points, true, frame, stamp);
-                publish_cloud(&self.global_map, &cloud).await;
             }
         }
     }
@@ -447,20 +411,13 @@ impl Worker {
 
         let mapper = &mut state.mapper;
         let emit_fine = self.config.emit_fine;
-        let diff = self.config.diff;
         let process_start = Instant::now();
         let (region, global_points, local_points, fine_points) =
             tokio::task::block_in_place(|| {
                 mapper.add_frame(points, tf_to_pose(&tf_pose));
                 let region = mapper.local_due().then(|| mapper.take_local_bounds());
                 let cylinder = region.map(|c| c.bounds());
-                let global_points = mapper.global_due().then(|| {
-                    if diff {
-                        mapper.global_diff()
-                    } else {
-                        mapper.global_points_flags()
-                    }
-                });
+                let global_points = mapper.global_due().then(|| mapper.global_points_flags());
                 let local_points = cylinder.as_ref().map(|cyl| mapper.local_points_flags(cyl));
                 let fine_points = emit_fine
                     .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
@@ -484,13 +441,8 @@ impl Worker {
         }
 
         if let Some(points) = global_points {
-            if !diff {
-                let global = points_to_cloud(&points, true, out_frame_id, stamp.clone());
-                publish_cloud(&self.global_map, &global).await;
-            } else if !points.is_empty() {
-                let update = diff_to_cloud(&points, out_frame_id, stamp.clone());
-                publish_cloud(&self.map_update, &update).await;
-            }
+            let global = points_to_cloud(&points, true, out_frame_id, stamp.clone());
+            publish_cloud(&self.global_map, &global).await;
         }
         if let Some(points) = local_points {
             let local = points_to_cloud(&points, true, out_frame_id, stamp.clone());
@@ -714,9 +666,6 @@ fn prepare_seed(
 /// the bits' names, comma separated, lowest bit first: `flags:premap`.
 const FLAGS_FIELD_PREFIX: &str = "flags:";
 
-/// The per-point uint8 field of a diff cloud: 1 for a voxel added, 0 for one removed.
-const CHANGE_FIELD: &str = "change";
-
 fn flags_field_name() -> String {
     format!("{FLAGS_FIELD_PREFIX}{}", VoxelFlags::NAMES.join(","))
 }
@@ -913,36 +862,9 @@ fn points_to_cloud(points: &[f32], flags: bool, frame_id: &str, stamp: Time) -> 
             datatype: PointField::UINT32 as u8,
             count: 1,
         });
+        cloud.point_step = step;
+        cloud.row_step = step * n;
     }
-    cloud.point_step = step;
-    cloud.row_step = step * n;
-    cloud
-}
-
-/// Pack flat (x, y, z, flags, change) quintuples into an LCM diff cloud: the
-/// `points_to_cloud` flags layout plus a uint8 `change` field (1 added, 0 removed).
-fn diff_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let points = points.as_chunks::<5>().0;
-    let quads: Vec<f32> = points
-        .iter()
-        .flat_map(|p| [p[0], p[1], p[2], p[3]])
-        .collect();
-    let mut cloud = points_to_cloud(&quads, true, frame_id, stamp);
-    let step = cloud.point_step as usize;
-    let mut data = Vec::with_capacity(cloud.data.len() + points.len());
-    for (point, p) in cloud.data.chunks_exact(step).zip(points) {
-        data.extend_from_slice(point);
-        data.push(u8::from(p[4] != 0.0));
-    }
-    cloud.fields.push(PointField {
-        name: CHANGE_FIELD.into(),
-        offset: step as i32,
-        datatype: PointField::UINT8 as u8,
-        count: 1,
-    });
-    cloud.point_step += 1;
-    cloud.row_step = cloud.point_step * cloud.width;
-    cloud.data = data;
     cloud
 }
 
@@ -993,7 +915,6 @@ mod tests {
             viz_cell_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
-            diff: false,
         }
     }
 
@@ -1144,33 +1065,6 @@ mod tests {
         cloud.fields.last_mut().unwrap().name = "flags:other,premap".into();
         let (_, flags) = extract_xyz_flags(&cloud).expect("flags cloud must decode");
         assert_eq!(flags, Some(vec![VoxelFlags::PREMAP, 0]));
-    }
-
-    /// A diff cloud carries uint32 flags then a uint8 change after x, y, z, intensity.
-    #[test]
-    fn diff_cloud_packs_flags_and_change() {
-        let premap = f32::from_bits(VoxelFlags::PREMAP);
-        let cloud = diff_to_cloud(
-            &[0.5, 0.5, 0.5, premap, 0.0, 1.5, 0.5, 0.5, 0.0, 1.0],
-            "world",
-            Time::default(),
-        );
-        let fields: Vec<(&str, i32)> = cloud.fields[4..]
-            .iter()
-            .map(|f| (f.name.as_str(), f.offset))
-            .collect();
-        assert_eq!(fields, vec![("flags:premap", 16), ("change", 20)]);
-        assert_eq!((cloud.point_step, cloud.width), (21, 2));
-        assert_eq!(cloud.data.len(), 42);
-        assert_eq!(
-            [
-                cloud.data[16],
-                cloud.data[20],
-                cloud.data[37],
-                cloud.data[41]
-            ],
-            [1, 0, 0, 1]
-        );
     }
 
     /// A loaded cloud without the field is all premap.

@@ -52,8 +52,7 @@ def test_sim_composes_the_navigation_the_robot_runs() -> None:
     sim, robot = _atoms(m20_sim_nav.solidify()), _atoms(m20.solidify())
     sim_stack, robot_stack = (
         _atoms(m20_nav_stack(SIM_M20).solidify()),
-        # Only the robot relocalizes, from the voxel map's diffs.
-        _atoms(m20_nav_stack(map_diffs=True).solidify()),
+        _atoms(m20_nav_stack().solidify()),
     )
     for name in robot_stack:
         assert (robot[name].module, robot[name].kwargs) == (
