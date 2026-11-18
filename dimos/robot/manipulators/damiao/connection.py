@@ -30,7 +30,7 @@ calibration tools only.
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 import threading
 import time
@@ -74,9 +74,18 @@ from dimos.robot.manipulators.calibration.schema import (
 from dimos.robot.manipulators.calibration.spec import model_sha256
 from dimos.robot.manipulators.damiao.arm import ArmReading, DamiaoArm
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
+from dimos.robot.manipulators.damiao.status import DamiaoConnectionStatus
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+__all__ = [
+    "CALIBRATION_ROOT",
+    "DamiaoConnection",
+    "DamiaoConnectionConfig",
+    "DamiaoConnectionStatus",
+    "zero_stiffness_joints",
+]
 
 #: Where "auto" looks for each arm's calibration, ``<root>/<arm_id>/calibration.json``.
 #: Read at every load, so tests can point it at a scratch directory.
@@ -124,18 +133,6 @@ class DamiaoConnectionConfig(ConnectionConfig):
         if any(interfaces != (Interface.POSITION,) for interfaces in self.joint_commands.values()):
             raise ValueError("Damiao connections accept position commands only")
         return self
-
-
-@dataclass(frozen=True, slots=True)
-class DamiaoConnectionStatus(ConnectionStatus):
-    """``ConnectionStatus`` plus the calibration each arm runs.
-
-    Attributes:
-        calibration: By arm id, the file that arm runs, or ``None`` for its
-            URDF masses and bus gains.
-    """
-
-    calibration: dict[str, AppliedCalibration | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
