@@ -772,10 +772,7 @@ jobs:
     strategy:
       matrix:
         pyver: ['3.10', '3.11', '3.12']
-        # Not ubuntu-latest: on 26.04 `import sounddevice` raises without an audio
-        # server. PortAudio there has a PulseAudio backend that fails to start when
-        # it cannot connect, and unitree_webrtc_connect imports sounddevice.
-        os: ["macos-latest", "ubuntu-24.04"]
+        os: ["macos-latest", "ubuntu-latest"]
         experimental: [false]
         include:
           - os: "ubuntu-24.04-arm"
