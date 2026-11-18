@@ -799,6 +799,48 @@ def test_a_save_of_nothing_a_file_holds_writes_nothing(start, boundary, calibrat
     assert not (path.parent / "history").exists()
 
 
+def test_a_check_is_recorded_only_in_the_file_the_arm_runs(start, boundary, calibration_root):
+    module = start(config_sessions=True)
+    path = calibration_root / "rig/left/calibration.json"
+    check = ConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}})
+    # The file the arm runs takes a check.
+    module.config_set(
+        ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)}),
+        scope="persist",
+    )
+    assert module.config_set(check, scope="persist").unsupported == []
+    # New masses saved without applying them: the arm still runs the old file.
+    heavier = ConfigPatch(
+        arm_id="rig/left", links={"link2": LinkGravity(mass_kg=1.5, com_m=(0.1, 0.0, 0.0))}
+    )
+    module.config_set(heavier, scope="persist", apply_now=False)
+    refused = module.config_set(
+        check.model_copy(update={"notes": "after the check"}), scope="persist"
+    )
+    assert refused.unsupported == ["checks.float"]
+    assert refused.why["checks.float"].startswith(f"the arm does not run {path} as it is on disk")
+    stored = load_calibration(path)
+    assert stored.checks is None and stored.notes == "after the check"
+    # Nothing left to save but the check: nothing is written.
+    written = path.read_bytes()
+    assert module.config_set(check, scope="persist").path is None
+    assert path.read_bytes() == written
+
+
+def test_a_check_is_refused_while_the_arm_runs_no_file(start, boundary, calibration_root):
+    path = save_calibration(
+        calibration_root / "rig/left", _calibration(gains={"joint1": (0.0, 1.0)})
+    )
+    module = start(config_sessions=True)
+    assert _files(module)["rig/left"] is None
+    refused = module.config_set(
+        ConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}}), scope="persist"
+    )
+    assert refused.unsupported == ["checks.float"] and refused.path is None
+    assert "it runs no calibration file" in refused.why["checks.float"]
+    assert load_calibration(path).checks is None
+
+
 def test_a_session_leaves_out_what_only_a_file_holds(start, boundary, calibration_root):
     module = start(config_sessions=True)
     session = _begin(module)

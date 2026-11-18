@@ -514,6 +514,44 @@ def test_declining_the_forced_apply_leaves_the_old_calibration_running(
     assert applied is not None and applied.path == str(old)
 
 
+def test_a_check_is_not_recorded_against_a_fit_the_arm_never_ran(
+    make_rig: Callable[..., Rig], arm: ArmModel, left_spec: ArmCalibrationSpec, tmp_path: Path
+) -> None:
+    # The fit is refused at home and saved without applying it: the arm still
+    # runs the old file when it floats, so the float check is not the new file's.
+    forearm = arm.model.inertias[body_joint_id(arm.model, "left_link3")]
+    heavy = {
+        "left_link3": LinkInertial(
+            mass_kg=float(forearm.mass) + 3.0, com_m=tuple(float(v) for v in forearm.lever)
+        )
+    }
+    old = tmp_path / "old_calibration.json"
+    save_calibration(
+        old,
+        ArmCalibration.for_spec(
+            left_spec,
+            gravity=GravityCalibration(links=gravity_links_from_inertial(left_spec, heavy)),
+        ),
+    )
+    rig = make_rig(
+        confirm_each=False, fake={"applied": old}, float_window_s=1.0, float_settle_s=0.0
+    )
+
+    status = rig.run(
+        ["check", "gravity_poses", "gravity_fit", "float_check"],
+        lambda p: "skip" if p.startswith("The connection refused") else "confirm",
+    )
+
+    assert status["state"] == "done", status["message"]
+    assert rig.statuses()["float_check"] == "done"
+    path = calibration_path(left_spec.arm_id, rig.root)
+    floats = rig.procedure.results()["float_check"]
+    assert floats["saved"] is None
+    assert floats["not_saved"].startswith(f"the arm does not run {path} as it is on disk")
+    assert "; not recorded: the arm does not run" in rig.messages()["float_check"]
+    assert load_for_spec(left_spec, path).checks is None
+
+
 def test_a_floating_joint_that_drifts_is_held_again_and_fails(
     make_rig: Callable[..., Rig],
 ) -> None:

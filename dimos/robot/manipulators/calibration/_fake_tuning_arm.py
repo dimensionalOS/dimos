@@ -670,6 +670,18 @@ class FakeTuningArm:
         )
         kept = {joint: gains for joint, gains in (patch.gains or {}).items() if gains.kp != 0.0}
         saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
+        path = calibration_path(arm_id, self._root)
+        on_disk = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+        running = None if self._file is None else self._file.sha256
+        if patch.checks is not None and running != on_disk:
+            # As the connection: a check belongs only in the file the arm runs.
+            why.update(
+                dict.fromkeys(
+                    [key for key in patch.keys() if key.split(".")[0] == "checks"],
+                    f"the arm does not run {path} as it is on disk",
+                )
+            )
+            saved = saved.model_copy(update={"checks": None})
         refused = [key for key in saved.keys() if key.split(".")[0] not in self._persist]
         if refused or not saved.keys():
             # Nothing it may save, or nothing a file holds: nothing is written.
@@ -682,7 +694,6 @@ class FakeTuningArm:
                 why=why,
                 applied_now=False,
             )
-        path = calibration_path(arm_id, self._root)
         now = datetime.now(timezone.utc)
         stored = (
             load_for_spec(self.spec, path)

@@ -477,7 +477,8 @@ class DamiaoConnection(ConnectionModule):
         more than ``MAX_GRAVITY_STEP_NM`` unless ``force``, else nothing is
         written. ``apply_now`` False only writes the file. A save without
         gains or links changes nothing the arm runs, so it is not applied; one
-        with nothing a file holds writes nothing.
+        with nothing a file holds writes nothing. Checks are refused unless
+        the arm runs the file as it is on disk (``_checks_refused``).
         """
         arm_id = patch.arm_id
         unsupported: dict[str, str] = dict.fromkeys(
@@ -501,7 +502,21 @@ class DamiaoConnection(ConnectionModule):
             kept[joint] = JointGains(kp=kp, kd=kd)
             clamped += [f"gains.{joint}.kp"] if kp != asked.kp else []
             clamped += [f"gains.{joint}.kd"] if kd != asked.kd else []
-        saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
+        path = calibration_path(arm_id, CALIBRATION_ROOT)
+        checks_refused = self._checks_refused(arm_id, path) if patch.checks is not None else None
+        if checks_refused is not None:
+            unsupported.update(
+                dict.fromkeys(
+                    [key for key in patch.keys() if key.split(".")[0] == "checks"], checks_refused
+                )
+            )
+        saved = patch.model_copy(
+            update={
+                "gains": kept or None,
+                "torque_offset_nm": None,
+                **({"checks": None} if checks_refused is not None else {}),
+            }
+        )
         if not saved.keys():
             # Nothing a file holds: the file and its history stay as they are.
             return ConfigApplied(
@@ -512,7 +527,6 @@ class DamiaoConnection(ConnectionModule):
                 why=unsupported,
                 applied_now=False,
             )
-        path = calibration_path(arm_id, CALIBRATION_ROOT)
         now = datetime.now(timezone.utc)
         merged = merge_patch(self._stored(path, arm_id, now), saved, created=now)
         sha256 = hashlib.sha256(calibration_text(merged).encode("utf-8")).hexdigest()
@@ -569,6 +583,28 @@ class DamiaoConnection(ConnectionModule):
             path=str(target),
             applied_now=live,
             gravity_step_nm=step,
+        )
+
+    def _checks_refused(self, arm_id: str, path: Path) -> str | None:
+        """Why a check may not be recorded in ``path`` now, or ``None`` when it may.
+
+        A check says how the arm ran, so it belongs only in the file the arm
+        runs as it is on disk: not in one saved without being applied, nor
+        in one rewritten since it was applied.
+        """
+        with self._lock:
+            running = self._applied.get(arm_id)
+        on_disk = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+        if (None if running is None else running.sha256) == on_disk:
+            return None
+        runs = (
+            "no calibration file"
+            if running is None
+            else f"the calibration created {running.calibration.created:%Y-%m-%d %H:%M} UTC"
+        )
+        return (
+            f"the arm does not run {path} as it is on disk (it runs {runs}), so a check made "
+            "now does not describe that file; apply it (restart the robot) and check again"
         )
 
     def _stored(self, path: Path, arm_id: str, now: datetime) -> ArmCalibration:

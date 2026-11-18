@@ -50,7 +50,8 @@ config sessions, and each what it changes (``config_keys``): the gravity
 poses read the gains, the fit saves links, the float check floats joints
 live, the gain sweep changes gains live and picking saves them. A step the
 connection cannot do is listed unsupported with the reason and skipped; a
-check is recorded only where the connection saves checks.
+check is recorded only where the connection saves checks, and only in the
+file the arm runs as it is on disk (else the step says it was not recorded).
 
 A step that needs a recording reads it from the run's recording
 (``recording.RecordingSource``), cut to the time it ran. Calibrations are saved
@@ -318,18 +319,37 @@ def _stored(ctx: StepContext) -> tuple[Path, ArmCalibration | None]:
         raise StepFailedError(f"the stored calibration cannot be updated: {error}")
 
 
-def _record_check(ctx: StepContext, name: str, value: dict[str, Any]) -> str | None:
+def _record_check(ctx: StepContext, name: str, value: dict[str, Any]) -> dict[str, Any]:
     """Save ``value`` as ``checks[name]`` in the arm's calibration file, if it has one.
 
-    Nothing is saved when the connection cannot save checks. A check changes
-    nothing the arm runs, so the connection does not apply it.
+    Returns the step's data on it: ``saved``, the file written or ``None``,
+    and ``not_saved``, why, when the connection would not record it. Nothing
+    is saved when the connection cannot save checks or the arm has no file.
+    The connection refuses a check while the arm does not run the file as
+    it is on disk (a fit saved without being applied): the check describes
+    what the arm ran, not that file. That skips the record, not the step. A
+    check changes nothing the arm runs, so the connection does not apply it.
     """
     if "checks" not in ctx.keys().persist:
-        return None
+        return {"saved": None}
     _, stored = _stored(ctx)
     if stored is None:
-        return None
-    return _persist(ctx, ConfigPatch(arm_id=ctx.spec.arm_id, checks={name: value})).path
+        return {"saved": None}
+    try:
+        saved = ctx.persist(ConfigPatch(arm_id=ctx.spec.arm_id, checks={name: value}))
+    except Exception as error:
+        raise StepFailedError(f"the connection did not save the calibration: {plain_error(error)}")
+    if saved.unsupported:
+        why = "; ".join(saved.why.get(key, "not supported") for key in saved.unsupported)
+        ctx.say(f"the {name} check is not recorded: {why}")
+        return {"saved": None, "not_saved": why}
+    return {"saved": saved.path}
+
+
+def _not_recorded(data: Mapping[str, Any]) -> str:
+    """ "; not recorded: why" for a step message when the connection refused its check."""
+    why = data.get("not_saved")
+    return "" if why is None else f"; not recorded: {why}"
 
 
 def _applied_now(ctx: StepContext) -> ArmConfigState | None:
@@ -948,12 +968,13 @@ class FloatCheckStep(Step):
         data = {
             "joints": joints,
             "pose": where,
-            "saved": _record_check(ctx, "float", check) if tried else None,
+            **(_record_check(ctx, "float", check) if tried else {"saved": None}),
         }
         held = "" if not floats or last is None else f"; arm holds at {last}"
         return StepResult(
             f"{len(passed)} of {len(tried)} joints held within the limit at every pose"
-            f"{f'; {len(no_load)} with no gravity load' if no_load else ''}{held}",
+            f"{f'; {len(no_load)} with no gravity load' if no_load else ''}{held}"
+            f"{_not_recorded(data)}",
             data,
         )
 
@@ -1202,10 +1223,12 @@ class ConfirmTrackingStep(Step):
             **tracking,
             "baseline": baseline,
         }
-        data = {**check, "saved": _record_check(ctx, "tracking", check)}
+        data = {**check, **_record_check(ctx, "tracking", check)}
         rest = tracking["rest_rms_deg"]
         worst = max(rest.values(), default=0.0)
-        return StepResult(f"{len(visited)} poses; worst resting RMS {worst:.3f} deg", data)
+        return StepResult(
+            f"{len(visited)} poses; worst resting RMS {worst:.3f} deg{_not_recorded(data)}", data
+        )
 
 
 class SummaryStep(Step):
