@@ -39,8 +39,9 @@ logger = setup_logger()
 
 # The table's planner obstacle and its cut out of the voxel map share this name.
 TABLE = "scene/table"
-# add_table takes the widest surface with at least this many points standing on it
-# (find_surface's points_above): the table the objects are on, not the floor round it.
+# add_table takes the surface the camera looks at; failing that, the widest with at
+# least this many points standing on it (find_surface's points_above): the table the
+# objects are on, not the floor round it.
 TABLE_MIN_STANDING = 10
 # add_table(height=...) takes the surface within this of the height asked, metres.
 TABLE_HEIGHT_TOLERANCE = 0.02
@@ -284,10 +285,11 @@ class ManipulationLocalize(PerceptionLocalize):
 
         Measures the table's height in the window, as ``find_surface`` does, and
         puts a box whose top is the measured surface under the whole of the
-        arm's reach. The table is the widest surface with objects standing on
-        it, so it wins over a tray on it and over an empty floor round it;
-        ``height`` (metres, in the world frame) takes the ``find_surface``
-        surface nearest it instead. The answer lists every surface seen.
+        arm's reach. The table is the surface the camera is looking at in the
+        newest frame, so look at the table before calling; if the camera looks
+        at no surface, the widest with objects standing on it. ``height``
+        (metres, in the world frame) takes the ``find_surface`` surface nearest
+        it instead. The answer lists every surface seen.
 
         The voxel map's cells under that surface are cut: the coarse cells make
         the table look thicker than it is, and nothing under the table top can
@@ -307,7 +309,7 @@ class ManipulationLocalize(PerceptionLocalize):
         surfaces = self.surfaces(start, duration)
         if not surfaces:
             return "no table: no flat surface in the window. Look at the table and try again."
-        table = pick_table(surfaces, height)
+        table = pick_table(surfaces, height, self._line_of_sight())
         heights = ", ".join(
             f"{surface['height']:.3f} m ({surface['size'][0]:.2f} x {surface['size'][1]:.2f})"
             for surface in surfaces
@@ -346,6 +348,16 @@ class ManipulationLocalize(PerceptionLocalize):
         removed = self._obstacles.remove_obstacle(TABLE)
         self._box_filter.clear_box(TABLE)
         return "table removed" if removed else "no table to remove"
+
+    def _line_of_sight(self) -> tuple[np.ndarray, np.ndarray] | None:
+        """The newest frame's camera position and viewing direction in the world frame."""
+        _, head = self.index.get_time_range()
+        for camera in self.rig.cameras:
+            pose = self.rig.camera_pose(head, camera)
+            if pose is not None:
+                forward = pose.orientation.rotate_vector(Vector3(0.0, 0.0, 1.0))
+                return pose.position.to_numpy(), forward.to_numpy()
+        return None
 
     def _origin(self, frame: str) -> np.ndarray | None:
         """Where a frame's origin is in the world frame now; None while tf lacks it."""
@@ -405,19 +417,52 @@ class ManipulationLocalize(PerceptionLocalize):
 
 
 def pick_table(
-    surfaces: list[dict[str, Any]], height: float | None = None
+    surfaces: list[dict[str, Any]],
+    height: float | None = None,
+    sight: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> dict[str, Any] | None:
-    """The table among ``surfaces`` entries: the one nearest ``height``, within
-    ``TABLE_HEIGHT_TOLERANCE``, or without a height the widest of those with at least
-    ``TABLE_MIN_STANDING`` points standing on them, or the widest when nothing stands
-    on any. None when no surface fits."""
+    """The table among ``surfaces`` entries.
+
+    The one nearest ``height``, within ``TABLE_HEIGHT_TOLERANCE``, when a height is
+    given. Otherwise the first surface the camera's line of sight, ``sight`` as
+    (origin, direction), meets inside its outline: what the camera is looking at.
+    Failing that, the widest of those with at least ``TABLE_MIN_STANDING`` points
+    standing on them, or the widest when nothing stands on any. None when no
+    surface fits.
+    """
     if not surfaces:
         return None
     if height is not None:
         nearest = min(surfaces, key=lambda surface: abs(surface["height"] - height))
         return nearest if abs(nearest["height"] - height) <= TABLE_HEIGHT_TOLERANCE else None
+    if sight is not None:
+        hits = [(t, surface) for surface in surfaces if (t := _sight_hit(surface, *sight))]
+        if hits:
+            return min(hits, key=lambda hit: hit[0])[1]
     holding = [s for s in surfaces if s.get("points_above", 0) >= TABLE_MIN_STANDING]
     return max(holding or surfaces, key=lambda surface: surface["size"][0] * surface["size"][1])
+
+
+def _sight_hit(surface: dict[str, Any], origin: np.ndarray, direction: np.ndarray) -> float | None:
+    """How far along the line of sight it meets the surface inside its outline, or None."""
+    a, b, c, d = surface["coefficients"]
+    normal = np.array([a, b, c], dtype=np.float64)
+    facing = float(normal @ direction)
+    if abs(facing) < 1e-6:
+        return None
+    t = -(float(normal @ origin) + d) / facing
+    if t <= 0.0:
+        return None
+    # The hit in the surface's own axes: along its long side and across it.
+    offset = origin + t * direction - np.asarray(surface["center"], dtype=np.float64)
+    yaw = np.radians(surface["yaw_deg"])
+    along = np.array([np.cos(yaw), np.sin(yaw), 0.0])
+    along -= normal * (along @ normal)
+    along /= max(float(np.linalg.norm(along)), 1e-9)
+    across = np.cross(normal, along)
+    length, width = surface["size"]
+    inside = abs(float(offset @ along)) <= length / 2 and abs(float(offset @ across)) <= width / 2
+    return t if inside else None
 
 
 def table_boxes(

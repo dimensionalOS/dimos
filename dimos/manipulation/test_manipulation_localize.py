@@ -25,6 +25,8 @@ from dimos.manipulation.manipulation_localize import (
     table_boxes,
 )
 from dimos.mapping.pointclouds.box_filter import inside_boxes
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -57,6 +59,7 @@ def _ready(module, mocker, views):
     module.index.time_range.return_value = [SimpleNamespace(ts=float(i)) for i in range(len(views))]
     module.rig = mocker.Mock(cameras={"camera_color_optical_frame": None}, world_frame="world")
     module.rig.backdrop.side_effect = lambda ts, frame, trunc: views[int(ts)]
+    module.rig.camera_pose.return_value = None
 
 
 def _hit(instance_id, points, position=(0.0, 0.0, 0.0)):
@@ -341,6 +344,38 @@ def test_with_nothing_standing_anywhere_the_widest_surface_is_the_table():
     table = _surface(center=(0.5, 0.0, 0.12), size=(0.9, 0.6))
 
     assert pick_table([table, floor]) is floor
+
+
+def test_the_table_is_what_the_camera_looks_at():
+    """On the real rig the floor past the table's edge can be wider in view, with legs on it."""
+    floor = _surface(center=(1.2, 0.0, -0.6), size=(1.4, 0.9), points=26000, above=400)
+    table = _surface(center=(0.5, 0.0, 0.12), size=(0.6, 0.4), points=9000, above=300)
+    down = np.array([0.0, 0.0, -1.0])
+
+    assert pick_table([floor, table], sight=(np.array([0.5, 0.05, 0.45]), down)) is table
+    # Looking past the table's edge, the floor is what the camera sees.
+    assert pick_table([floor, table], sight=(np.array([1.3, 0.0, 0.45]), down)) is floor
+    # Looking up at nothing: the area rule.
+    assert pick_table([floor, table], sight=(np.zeros(3), -down)) is floor
+
+
+def test_add_table_takes_the_newest_view(localizer, mocker):
+    _ready(localizer, mocker, [])
+    floor = _surface(center=(1.2, 0.0, -0.6), size=(1.4, 0.9), points=26000, above=400)
+    mocker.patch.object(localizer, "surfaces", return_value=[floor, _surface(above=50)])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (SimpleNamespace(base_frame="world"),)
+    localizer._obstacles.add_obstacle.return_value = TABLE
+    localizer._box_filter = mocker.Mock()
+    # The optical frame 40 cm over the table, looking straight down (optical z down).
+    localizer.rig.camera_pose.return_value = PoseStamped(
+        frame_id="world",
+        position=Vector3(0.5, 0.0, 0.5),
+        orientation=Quaternion(1.0, 0.0, 0.0, 0.0),
+    )
+
+    assert localizer.add_table().startswith("table added: top at z=0.080 m")
+    localizer.rig.camera_pose.assert_called_once_with(10.0, "camera_color_optical_frame")
 
 
 def test_add_table_lists_the_surfaces_it_chose_from(localizer, mocker):
