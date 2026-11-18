@@ -37,7 +37,7 @@ import time
 from typing import Any
 
 from dimos.cli.cloud import api_key
-from dimos.cloud import codecs, lerobot_directory, preview
+from dimos.cloud import codecs, directory_archive, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.cloud.config import CloudConfig
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
@@ -111,10 +111,11 @@ class MultipartBackend:
                     raise RuntimeError(f"{what} failed after {attempt} attempts: {e}") from e
                 time.sleep(attempt)
 
-    def _staging(self, beside: Path) -> tempfile.TemporaryDirectory[str]:
+    def _staging(self, beside: Path, *, reap: bool = True) -> tempfile.TemporaryDirectory[str]:
         parent = self.staging_dir or beside.parent
         parent.mkdir(parents=True, exist_ok=True)
-        _reap_stale(parent)
+        if reap:
+            _reap_stale(parent)
         return tempfile.TemporaryDirectory(prefix=".dimos-staging-", dir=parent)
 
     def upload(
@@ -128,10 +129,11 @@ class MultipartBackend:
     ) -> dict[str, Any]:
         tick = progress or (lambda phase, done, total: None)
         directory = path.is_dir()
-        manifest = lerobot_directory.MANIFEST if directory else _manifest(path)
+        manifest = directory_archive.MANIFEST if directory else _manifest(path)
         if not directory and (bp := _blueprint(path)):
             manifest = dict(manifest or {}, blueprint=bp)
-        with self._staging(path) as tmp:
+        location = Path(os.path.abspath(path)) if directory else path
+        with self._staging(location, reap=not directory) as tmp:
             # A file already carrying the codec's suffix uploads as-is; it must not be
             # stamped, or pull would decompress bytes we never compressed.
             compress = (
@@ -141,8 +143,8 @@ class MultipartBackend:
             )
             if directory:
                 tick("pack", 0, 0)
-                artifact = Path(tmp) / (path.absolute().name + ".tar")
-                lerobot_directory.pack(path, artifact, _require_space)
+                artifact = Path(tmp) / "directory.tar"
+                directory_archive.pack(path, artifact, _require_space)
             elif compress:
                 _require_space(Path(tmp), path.stat().st_size)
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
@@ -152,7 +154,7 @@ class MultipartBackend:
                 artifact = path
             size = artifact.stat().st_size
             spec = dict(
-                filename=artifact.name,
+                filename=f"{location.name or 'root'}.tar" if directory else artifact.name,
                 size=size,
                 sha256=_sha256(artifact),
                 kind=kind,
@@ -161,7 +163,24 @@ class MultipartBackend:
                 manifest=manifest,
                 part_size=part_size,
             )
-            create = self.api.create(**spec)
+
+            # The service deduplicates by wire digest; never reuse the opposite type.
+            def create_upload() -> dict[str, Any]:
+                result = self.api.create(**spec)
+                if not compress:
+                    prior = next(
+                        (row for row in self.api.list() if row["id"] == result["upload_id"]), None
+                    )
+                    if (prior is None and result["state"] == "complete") or (
+                        prior is not None
+                        and directory_archive.marked(prior.get("manifest")) != directory
+                    ):
+                        raise RuntimeError(
+                            "identical wire bytes already have a different or unknown upload type"
+                        )
+                return result
+
+            create = create_upload()
             if create["state"] == "complete":
                 # already uploaded: (re)send the preview, so a failed send is repaired
                 # by simply running the upload again
@@ -195,7 +214,7 @@ class MultipartBackend:
                         # clock; an upload slower than the TTL outlives them and
                         # S3 answers 403. create is idempotent by sha256 and
                         # re-signs every URL.
-                        fresh = self.api.create(**spec)
+                        fresh = create_upload()
                         if fresh["state"] == "complete":
                             return {**fresh, "skipped": True}
                         urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
@@ -252,36 +271,37 @@ class MultipartBackend:
         tag: str = "",
         progress: Progress | None = None,
         size: int = 0,
-        bundle: str | None = None,
+        directory: bool = False,
         sha256: str | None = None,
     ) -> Path:
         tick = progress or (lambda phase, done, total: None)
+        if directory and not re.fullmatch(r"[A-Za-z0-9_-]+", upload_id):
+            raise RuntimeError("invalid directory upload id")
         d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
-        name = _plain_name(d["filename"], wire) if bundle or dest is None else ""
-        if bundle:
+        name = _plain_name(d["filename"], wire) if directory or dest is None else ""
+        if directory:
             if (
                 wire
-                or not name.removesuffix(".tar")
+                or name.removesuffix(".tar") in ("", ".", "..")
                 or not name.endswith(".tar")
-                or not re.fullmatch(r"[A-Za-z0-9_-]+", upload_id)
-                or not 0 < size <= lerobot_directory.MAX_WIRE
+                or not 0 < size <= directory_archive.MAX_WIRE
             ):
-                raise RuntimeError("invalid LeRobot download descriptor")
+                raise RuntimeError("invalid directory download descriptor")
             if sha256 != d["sha256"]:
-                raise RuntimeError("LeRobot listing and download SHA-256 disagree")
+                raise RuntimeError("directory listing and download SHA-256 disagree")
             name = name.removesuffix(".tar")
         out = dest or DOWNLOADS_DIR / f"{tag}{name}"
-        if bundle and os.path.lexists(out):
+        if directory and os.path.lexists(out):
             raise FileExistsError(f"destination already exists: {out}")
 
         def downloaded(done: int, total: int) -> None:
-            if bundle and (done > size or (total and total != size)):
-                raise lerobot_directory.BundleError("LeRobot wire size mismatch")
+            if directory and (done > size or (total and total != size)):
+                raise RuntimeError("directory wire size mismatch")
             tick("download", done, total)
 
         out.parent.mkdir(parents=True, exist_ok=True)
-        with self._staging(out) as tmp:
+        with self._staging(out, reap=not directory) as tmp:
             if size:
                 # wire and decompressed copies coexist in staging before the move
                 _require_space(Path(tmp), size * 2 if wire else size)
@@ -294,18 +314,18 @@ class MultipartBackend:
             tick("verify", 0, 0)
             if _sha256(raw) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
-            if bundle:
+            if directory:
                 if raw.stat().st_size != size:
-                    raise RuntimeError("LeRobot wire size mismatch")
+                    raise RuntimeError("directory wire size mismatch")
                 _require_space(out.parent, size)
                 # Stage the directory on the destination filesystem, even if wire
                 # staging is configured on another mount.
                 with tempfile.TemporaryDirectory(prefix=".dimos-restore-", dir=out.parent) as stage:
-                    dataset = Path(stage).resolve() / "dataset"
-                    dataset.mkdir()
+                    tree = Path(stage) / "tree"
+                    tree.mkdir()
                     tick("extract", 0, 0)
-                    lerobot_directory.extract(raw, dataset, bundle)
-                    lerobot_directory.publish_directory(dataset, out)
+                    directory_archive.extract(raw, tree)
+                    directory_archive.publish_directory(tree, out)
                 return out
             if wire:
                 tick("decompress", 0, 0)
@@ -355,10 +375,12 @@ class CloudData:
         skip_recent: bool = False,
     ) -> dict[str, Any]:
         path = path.expanduser()
+        if path.is_symlink():
+            raise RuntimeError(f"refusing to upload symlink: {path}")
         directory = path.is_dir()
         if directory:
             if kind not in (None, "blob"):
-                raise RuntimeError("LeRobot directories can only be uploaded as blobs")
+                raise RuntimeError("directories can only be uploaded as blobs")
         elif not path.is_file():
             raise FileNotFoundError(path)
         if not directory and _is_sidecar(path):
@@ -388,16 +410,16 @@ class CloudData:
         self, upload_id: str | None, dest: Path | None = None, progress: Progress | None = None
     ) -> Path:
         row = self.resolve(upload_id)
-        bundle = lerobot_directory.bundle_format(row.get("manifest"))
-        if bundle and row.get("kind") != "blob":
-            raise RuntimeError("LeRobot bundle must be a blob")
+        directory = directory_archive.marked(row.get("manifest"))
+        if directory and row.get("kind") != "blob":
+            raise RuntimeError("directory archive must be a blob")
         return self.backend.pull(
             str(row["id"]),
             dest,
             tag=_tag(row),
             progress=progress,
             size=int(row.get("size") or 0),
-            bundle=bundle,
+            directory=directory,
             sha256=row.get("sha256"),
         )
 

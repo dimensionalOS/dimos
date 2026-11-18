@@ -1,6 +1,6 @@
 # Cloud data
 
-`dimos data` uploads recordings, files, or finalized LeRobot datasets, to Dimensional's hosted storage and pulls them back byte-identical on any machine. Authenticate once with `dimos login` (device code; the key lands in the system keyring, or `~/.config/dimos/credentials`).
+`dimos data` uploads recordings, files, or directories to Dimensional's hosted storage and pulls them back byte-identical on any machine. Authenticate once with `dimos login` (device code; the key lands in the system keyring, or `~/.config/dimos/credentials`).
 
 ```bash
 dimos login
@@ -26,37 +26,34 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 - Compression stages next to the source file (not `/tmp`), with a free-space check first; point `staging_dir` at a bigger partition if needed.
 - Each successful upload prints a `console:` link to it (production and staging APIs only).
 
-### LeRobot directories
+### Directories
 
 ```bash
-dimos data upload lerobot_data1
-dimos data pull <upload-id> --dest restored-lerobot
+dimos data upload ./my-folder
+dimos data pull <upload-id> --dest restored-folder
 ```
 
-Use a finalized LeRobot **v3.0** directory with standard shard paths, numeric
-observations/actions and optional RGB MP4 cameras. Install `dimos[learning]`
-for the Parquet reader and `ffmpeg` for video uploads. The CLI uploads a `blob`
-with manifest `dimos.lerobot.directory` v1, an uncompressed tar. It includes
-only referenced shards and public dataset metadata, omitting cache files,
-annotation sidecars, extra columns and private metadata fields. Clean numeric
-Parquet shards are copied; video is stream-copied without encoding, dropping
-non-video tracks, chapters and container metadata. Review dataset values, task
-labels and video pixels before sharing: this is not content redaction.
+Passing a directory uploads the **whole tree**, including hidden files, private
+metadata, and empty folders. Nothing is filtered or redacted. Review the folder
+before uploading and stop anything writing to it. Ordinary file bytes are kept
+as-is; permissions, ownership, and timestamps are not preserved. Symlinks,
+FIFOs, devices, and other special entries cause the upload to fail.
 
-Pull restores to a **new** directory on Linux or macOS (no overwrite); omit
-`--dest` for the usual download location, without the `.tar` suffix. Limits are
-20,000 files, 100 GiB total, just under 8 GiB per USTAR member, and 16 MiB per
-metadata file. Cloud quota and size limits still apply (including the 1 MiB
-minimum; the CLI does not pad small bundles). Ordinary `.tar` uploads still
-pull as files.
+The CLI sends a plain, uncompressed tar blob with the `dimos.directory.tar` v1
+marker. Small archives use standard zero padding to reach the cloud's 1 MiB
+minimum. Cloud quotas apply, and the CLI caps archives at 100 GiB and 20,000
+entries. Files you upload yourself, including `.tar` files, use the normal file
+path and are never auto-extracted. If identical wire bytes already have a
+different upload type, the CLI refuses to reuse the object.
 
-Desktop's `dimos.lerobot.bundle` v1 requires source lineage and a hashed inventory.
-The CLI can restore standard v3.0 Desktop bundles with that envelope; it does
-not create lineage or make CLI uploads importable by the retained Desktop app.
+Only marked uploads restore as directories. Pull verifies the archive before
+extracting, rejects unsafe paths and unsupported tar entries (including links),
+and publishes to a **new** directory on Linux or macOS without overwriting.
+Without `--dest`, it uses the usual download location without the `.tar` suffix.
 
 ## Pulls
 
-Pulls land in `downloads/` under the checkout (`~/.local/state/dimos/downloads/` for an installed package), named `<upload-time>-<id-prefix>-<filename>` so nothing overwrites. `--dest` takes an exact target path. The wire bytes are sha256-verified, decoded, and moved into place atomically; a failed pull never clobbers an existing destination file.
+Pulls land in `downloads/` under the checkout (`~/.local/state/dimos/downloads/` for an installed package), named `<upload-time>-<id-prefix>-<filename>` to distinguish different uploads. `--dest` takes an exact target path. Pulls verify the wire SHA-256 before decoding or extracting.
 
 View a pulled recording with [`dimos mem rerun`](/docs/usage/cli.md):
 
