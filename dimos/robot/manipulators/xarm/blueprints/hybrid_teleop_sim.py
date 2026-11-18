@@ -75,6 +75,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
+    xarm_link_frames,
 )
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
@@ -150,10 +151,9 @@ class HybridTeleopCoordinator(OperatorHoldCoordinator, ArmTwistCoordinator):
     """
 
 
-# The planner publishes these links on tf at the arm's real mount; the Desktop
+# The planner publishes every link on tf at the arm's real mount; the Desktop
 # draws each URDF link at its tf frame.
-_ARM_LINKS = ["link_base", *(f"link{i}" for i in range(1, 8))]
-_xarm7_sim_model = make_xarm7_sim_robot_config(tf_extra_links=_ARM_LINKS)
+_xarm7_sim_model = make_xarm7_sim_robot_config(tf_extra_links=xarm_link_frames(7))
 _xarm7_sim_hw = make_xarm7_sim_hardware()
 
 # The wrist camera's image size in pixels. The recording's profile states it,

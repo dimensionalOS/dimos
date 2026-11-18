@@ -109,9 +109,34 @@ def xarm_wrist_camera_transform(dof: int) -> Transform:
     )
 
 
+# The xArm Gripper's links, from its mount on the flange to the fingers.
+XARM_GRIPPER_LINKS = [
+    "xarm_gripper_base_link",
+    "left_outer_knuckle",
+    "left_finger",
+    "left_inner_knuckle",
+    "right_outer_knuckle",
+    "right_finger",
+    "right_inner_knuckle",
+]
+
+
 def xarm_link_frames(dof: int) -> list[str]:
-    """The xArm's base and arm links: the frames a viewer needs to draw the arm as it moves."""
-    return ["link_base", *(f"link{i}" for i in range(1, dof + 1))]
+    """Every link of the xArm and its gripper: the frames a viewer needs to draw the robot as it moves.
+
+    The planner's joint state has no gripper joint, so the fingers are drawn open.
+
+    Args:
+        dof: The arm's joint count: 7 for the xArm7, 6 for the xArm6. The model
+            must carry the xArm Gripper (``add_gripper=True``).
+    """
+    return [
+        "link_base",
+        *(f"link{i}" for i in range(1, dof + 1)),
+        "link_eef",
+        *XARM_GRIPPER_LINKS,
+        "link_tcp",
+    ]
 
 
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"

@@ -22,6 +22,8 @@ from dimos.robot.manipulators.xarm.config import (
     make_dual_xarm6_model_config,
     make_lite6_model_config,
     make_xarm6_model_config,
+    make_xarm_sim_robot_config,
+    xarm_link_frames,
 )
 
 
@@ -53,6 +55,15 @@ def test_dual_xarm6_model_contains_canonical_joint_topology() -> None:
         config.joint_names
     )
     assert {"left/drive_joint", "right/drive_joint"} <= {joint.name for joint in model.joints}
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("dof", [6, 7])
+def test_xarm_link_frames_name_every_link_below_world(dof: int) -> None:
+    description = make_xarm_sim_robot_config(dof).model.load()
+
+    assert description.root_link == "world"
+    assert sorted(xarm_link_frames(dof)) == sorted(joint.child_link for joint in description.joints)
 
 
 def test_prefixed_xarm_model_config_uses_coordinator_facing_names() -> None:
