@@ -22,16 +22,14 @@ import pytest
 
 from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     offline_robot_assets,
-    require_model,
     robot_specs_or_skip,
 )
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, WorkspaceGuard
-from dimos.robot.manipulators.dual_openyam.calibration_workspace import (
-    dual_openyam_calibration_specs,
-)
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM
 
+# A table 30 mm below the bases, the fingertip 150 mm in front of them.
+DUAL_OPENYAM_TEST_BENCH = WorkspaceGuard.for_bench(floor_z_m=-0.03, min_x_m=0.15)
 # A table at the base's level, the fingertip 100 mm in front of the base.
 B601_TEST_BENCH = WorkspaceGuard.for_bench(floor_z_m=0.0, min_x_m=0.10)
 
@@ -45,9 +43,8 @@ def offline_assets() -> Iterator[None]:
 
 @pytest.fixture(scope="session")
 def dual_openyam_specs(offline_assets: None) -> list[ArmCalibrationSpec]:
-    """Both Dual OpenYAM arms with the bench guard: left, then right."""
-    require_model(DUAL_OPENYAM.gravity_model, "Dual OpenYAM")
-    return dual_openyam_calibration_specs()
+    """Both Dual OpenYAM arms on a bench, everything else from the model: left, then right."""
+    return robot_specs_or_skip(DUAL_OPENYAM, "Dual OpenYAM", workspace=DUAL_OPENYAM_TEST_BENCH)
 
 
 @pytest.fixture(scope="session")

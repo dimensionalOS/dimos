@@ -270,10 +270,7 @@ def grid_axes(
     step times ``sqrt(largest span / its span)`` of the model gravity torque over
     random poses, so joints that carry more gravity get a finer grid, and the
     base step is chosen so the grid has about ``GRID_CANDIDATES_PER_POSE *
-    count`` points. Derived steps do not reproduce a hand-set grid: on the Dual
-    OpenYAM boxes they come out near 9.6, 13.5, 30 and 50 deg for joints 2-5,
-    where the bench used 12.5, 13.5, 25 and 37.5 deg, so the bench spec sets
-    those.
+    count`` points.
     """
     budget = min(MAX_GRID_CANDIDATES, GRID_CANDIDATES_PER_POSE * max(count, 1))
     ranges = arm.spec.joint_ranges

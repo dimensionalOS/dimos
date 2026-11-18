@@ -53,7 +53,7 @@ from dimos.robot.manipulators.calibration.schema import (
     load_calibration,
     save_calibration,
 )
-from dimos.robot.manipulators.calibration.spec import model_sha256
+from dimos.robot.manipulators.calibration.spec import model_sha256, specs_from_damiao_robot
 from dimos.robot.manipulators.damiao import connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
     LocalTransport,
@@ -62,9 +62,6 @@ from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
 )
 from dimos.robot.manipulators.damiao._damiao_test_helpers import _local_test_model
 from dimos.robot.manipulators.damiao.arm import PhysicalModel
-from dimos.robot.manipulators.dual_openyam.calibration_workspace import (
-    dual_openyam_calibration_specs,
-)
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.utils.testing.cbor import roundtrip
@@ -1017,7 +1014,7 @@ def test_files_from_the_calibration_tools_load_into_dual_openyam(
 ):
     with offline_robot_assets():
         require_model(DUAL_OPENYAM.gravity_model, "Dual OpenYAM")
-        specs = dual_openyam_calibration_specs()
+        specs = specs_from_damiao_robot(DUAL_OPENYAM)
         for spec in specs:
             first, link = spec.joint_names[0], spec.gravity_links[-1]
             save_calibration(
