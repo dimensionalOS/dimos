@@ -185,6 +185,16 @@ table = localize.surfaces(frame="link_base")[0]
 print(table["height"], table["tilt_deg"], table["size"])
 ```
 
+`add_table` gives the motion planner the table as one flat box whose top is the
+measured surface, across the arm's whole reach, and cuts the table's voxel map
+cells: 1 cm cells still make a table look up to a centimetre thick, and grasps near
+it fail on that. Call it once after looking over the table; `clear_table` removes
+it, e.g. before reaching below the table top:
+
+```python skip
+print(localize.add_table(start=-30.0, duration=30.0))
+```
+
 `pick_object` generates the grasps itself, so there is no separate grasp call.
 It opens the gripper, plans to the pregrasp, servos in, closes, verifies, and
 retreats; with a learned provider it walks the ranked candidates until one is

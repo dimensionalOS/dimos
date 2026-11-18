@@ -21,6 +21,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -108,16 +109,19 @@ def test_points_outside_the_workspace_are_left_out(sent: list[PointCloud2]) -> N
     np.testing.assert_allclose(sent[-1].points_f32(), [[0.5, 0.0, 0.0], [0.0, 0.0, -0.99]])
 
 
-def test_the_workspace_rides_on_its_frame() -> None:
+def test_the_workspace_rides_on_its_frame(mocker: MockerFixture) -> None:
     module = PointCloudBoxFilter(keep_within_m=0.5, keep_within_frame="tool")
     cast("dict[str, Any]", module.__dict__)["_tf"] = MultiTBuffer()
     sent: list[PointCloud2] = []
     module.filtered_cloud.subscribe(sent.append)
     cloud = _cloud([[0.1, 0.0, 0.0], [2.1, 0.0, 0.0]])
     try:
-        # Its frame unknown, the workspace keeps every distance.
+        # Its frame unknown, the workspace keeps every distance, and says so once.
+        warning = mocker.patch("dimos.mapping.pointclouds.box_filter.logger.warning")
+        _feed(module, cloud)
         _feed(module, cloud)
         assert len(sent[-1].points_f32()) == 2
+        assert warning.call_count == 1
 
         _place_tool(module, Vector3(2.0, 0.0, 0.0), 0.0, ts=1.0)
         _feed(module, cloud)

@@ -101,6 +101,8 @@ class PointCloudBoxFilter(Module):
         self._lock = RLock()
         self._boxes: dict[str, Box] = {}
         self._last_cloud: PointCloud2 | None = None
+        # The workspace's frame is often missing for the first clouds; say so once.
+        self._workspace_warned = False
 
     @rpc
     def start(self) -> None:
@@ -172,11 +174,13 @@ class PointCloudBoxFilter(Module):
             return np.zeros(3)
         transform = self.tfbuffer.get(cloud.frame_id, frame, warn=False)
         if transform is None:
-            logger.warning(
-                "No transform from %s to %s yet; the cloud keeps every distance",
-                cloud.frame_id,
-                frame,
-            )
+            if not self._workspace_warned:
+                self._workspace_warned = True
+                logger.warning(
+                    "No transform from %s to %s yet; the cloud keeps every distance",
+                    cloud.frame_id,
+                    frame,
+                )
             return None
         return np.asarray(transform.to_matrix()[:3, 3], dtype=np.float64)
 

@@ -224,7 +224,7 @@ def test_find_surface_reports_the_table_in_the_base_frame(localizer, mocker):
     assert surface["size"] == pytest.approx([0.8, 0.5], abs=0.03)
 
 
-def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5), points=4000):
+def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5), points=4000, above=0):
     return {
         "height": center[2],
         "center": list(center),
@@ -236,6 +236,7 @@ def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5), points=4000)
         "coefficients": [0.0, 0.0, 1.0, -center[2]],
         "points": points,
         "rms_m": 0.002,
+        "points_above": above,
     }
 
 
@@ -323,13 +324,35 @@ def test_add_table_with_no_surface_in_view_adds_nothing(localizer, mocker):
     localizer._box_filter.set_box.assert_not_called()
 
 
-def test_the_table_is_the_highest_large_surface_not_the_floor_or_an_object_top():
-    # The xArm grasp sim: a small table over a floor that fills more of the view.
-    floor = _surface(center=(0.55, 0.0, 0.0), points=26390)
-    table = _surface(center=(0.52, 0.0, 0.13), points=15000)
-    object_tops = _surface(center=(0.5, 0.0, 0.2), points=2110)
+def test_the_table_is_the_widest_surface_with_objects_on_it():
+    # An arm at its table: the floor past the edge is wider in view but empty.
+    floor = _surface(center=(1.2, 0.0, -0.6), size=(1.2, 0.8), points=26000)
+    table = _surface(center=(0.5, 0.0, 0.12), size=(0.9, 0.6), points=15000, above=300)
+    tray = _surface(center=(0.45, 0.0, 0.16), size=(0.3, 0.2), points=6000, above=80)
 
-    assert pick_table([floor, table, object_tops]) is table
-    assert pick_table([floor, table, object_tops], height=0.0) is floor
-    assert pick_table([floor, table, object_tops], height=0.5) is None
+    assert pick_table([floor, table, tray]) is table
+    assert pick_table([floor, table, tray], height=-0.6) is floor
+    assert pick_table([floor, table, tray], height=0.5) is None
     assert pick_table([]) is None
+
+
+def test_with_nothing_standing_anywhere_the_widest_surface_is_the_table():
+    floor = _surface(center=(1.2, 0.0, -0.6), size=(1.2, 0.8))
+    table = _surface(center=(0.5, 0.0, 0.12), size=(0.9, 0.6))
+
+    assert pick_table([table, floor]) is floor
+
+
+def test_add_table_lists_the_surfaces_it_chose_from(localizer, mocker):
+    _ready(localizer, mocker, [])
+    floor = _surface(center=(0.5, 0.0, 0.0), size=(1.0, 0.6), points=26000)
+    mocker.patch.object(localizer, "surfaces", return_value=[floor, _surface(above=50)])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (SimpleNamespace(base_frame="world"),)
+    localizer._obstacles.add_obstacle.return_value = TABLE
+    localizer._box_filter = mocker.Mock()
+
+    answer = localizer.add_table()
+
+    assert answer.startswith("table added: top at z=0.080 m")
+    assert "Surfaces seen: 0.000 m (1.00 x 0.60), 0.080 m (0.80 x 0.50)" in answer
