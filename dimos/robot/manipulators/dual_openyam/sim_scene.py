@@ -39,8 +39,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoRobot
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoMotor, DamiaoRobot
 
 # The table's height and the overhead camera's pose are the grasp stack's: the
 # planner publishes that camera pose on tf, and the cloud has to agree with it.
@@ -84,7 +84,8 @@ _PAD_FRICTION = (1.0, 0.05, 0.0001)
 _PAD_SOLREF = (0.004, 1.0)
 _PAD_SOLIMP = (0.95, 0.99, 0.001)
 
-# The MIT torque range of each Damiao motor type, Nm.
+# The MIT torque range of each stock Damiao motor type, Nm. A motor on a
+# custom firmware profile has its own.
 _MOTOR_TORQUE = {"DM4340": 28.0, "DM4310": 10.0}
 
 # Collision bit of the world. An arm collides with the world and with the other
@@ -165,13 +166,22 @@ class ArmLayout:
         fingertips: The two finger links.
         finger_axes: The axis each finger slides along, in the frame of the
             link it hangs from. A finger the URDF fixes slides along it here.
-        finger_travel: Where both fingers stand along their axes with the jaw
-            (closed, fully open). A wrong order opens the jaw when it is told
-            to close.
+        finger_travel: Where the first finger stands along its axis with the
+            jaw (closed, fully open). The second stands where the URDF's mimic
+            tag puts it, or at the same place along its own axis. A wrong
+            order opens the jaw when it is told to close.
         pads: What grips, as (centre, half size) boxes in the frame of the
             link the fingers hang from, with the jaw closed, for the first
             finger; the second finger's mirror y.
         wrist_camera: The name of the camera on the gripper.
+        camera_above: How far the wrist camera's lens sits from the gripper
+            link's origin along ``top_along``, metres. A URDF that has the
+            camera's box puts the lens there instead.
+        camera_out: How far the lens sits along ``fingers_along``, metres;
+            negative is behind the origin.
+        armature: The motor's rotor inertia felt at each arm joint, kg m^2,
+            in bus order; empty for none. Without it, light wrist links on
+            stiff motors can shake.
     """
 
     prefix: str
@@ -183,6 +193,9 @@ class ArmLayout:
     finger_travel: tuple[float, float]
     pads: tuple[tuple[Vector, Vector], ...]
     wrist_camera: str
+    camera_above: float = _WRIST_CAMERA_ABOVE
+    camera_out: float = _WRIST_CAMERA_OUT
+    armature: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -257,13 +270,14 @@ def scene_spec(robot: DamiaoRobot, workcell: SimWorkcell) -> mujoco.MjSpec:
         robot: The robot, for its motors and MIT gains, one bus per arm.
         workcell: Where the robot's arms are in its URDF.
     """
-    spec = _robot_spec(workcell.urdf)
+    urdf = workcell.urdf.load()
+    spec = _robot_spec(urdf)
     arms = list(zip(workcell.arms, robot.buses, strict=True))
     for index, (arm, bus) in enumerate(arms):
-        _dress_arm(spec, arm, _arm_bits(index, len(arms)))
-        _add_arm_actuators(spec, bus)
+        _dress_arm(spec, arm, _arm_bits(index, len(arms)), robot.gravity)
+        _add_arm_actuators(spec, arm, bus)
     for index, (arm, bus) in enumerate(arms):
-        _add_jaw(spec, arm, bus, _arm_bits(index, len(arms)))
+        _add_jaw(spec, urdf, arm, bus, _arm_bits(index, len(arms)))
         _add_wrist_camera(spec, arm)
     root = np.asarray(workcell.root_position)
     _add_workcell(spec, root)
@@ -281,9 +295,9 @@ def _arm_bits(index: int, arms: int) -> tuple[int, int]:
     return own, _WORLD | (every_arm - own)
 
 
-def _robot_spec(model: RobotModel) -> mujoco.MjSpec:
+def _robot_spec(model: LoadedRobotModel) -> mujoco.MjSpec:
     """A URDF as MuJoCo reads it, every link and mesh kept."""
-    urdf = ET.fromstring(model.load().xml)
+    urdf = ET.fromstring(model.xml)
     # A URDF's own settings are for loading it from its folder; these replace them.
     for own in urdf.findall("mujoco"):
         urdf.remove(own)
@@ -300,17 +314,18 @@ def _robot_spec(model: RobotModel) -> mujoco.MjSpec:
     return mujoco.MjSpec.from_string(ET.tostring(urdf, encoding="unicode"))
 
 
-def _dress_arm(spec: mujoco.MjSpec, arm: ArmLayout, bits: tuple[int, int]) -> None:
-    """Make one arm's links collide and weigh nothing, as gravity compensation leaves them.
+def _dress_arm(spec: mujoco.MjSpec, arm: ArmLayout, bits: tuple[int, int], gravity: bool) -> None:
+    """Make one arm's links collide, and weigh nothing if the robot compensates gravity.
 
-    ``bits`` are the arm's MuJoCo contype and conaffinity.
+    ``bits`` are the arm's MuJoCo contype and conaffinity. Without gravity
+    compensation the arm sags under its own weight, as the robot does.
     """
     contype, conaffinity = bits
     fingertips = set(arm.fingertips)
     for body in spec.bodies:
         if body.name == "world" or not body.name.startswith(arm.prefix):
             continue
-        body.gravcomp = 1.0
+        body.gravcomp = float(gravity)
         for geom in body.geoms:
             geom.rgba = _ARM_RGBA
         for geom in _colliders(body):
@@ -336,11 +351,20 @@ def _colliders(body: Any) -> list[Any]:
     return colliders or visuals
 
 
-def _add_arm_actuators(spec: mujoco.MjSpec, bus: DamiaoBus) -> None:
-    """Drive each arm joint as its motor is: stiffness, damping and gravity torque."""
-    for motor, kp, kd in zip(bus.arm, bus.kp, bus.kd, strict=True):
-        torque = _MOTOR_TORQUE[motor.type]
+def _motor_torque(motor: DamiaoMotor) -> float:
+    """The most torque a motor's MIT command reaches, Nm."""
+    return motor.profile.t_max if motor.profile is not None else _MOTOR_TORQUE[motor.type]
+
+
+def _add_arm_actuators(spec: mujoco.MjSpec, arm: ArmLayout, bus: DamiaoBus) -> None:
+    """Drive each arm joint as its motor is: stiffness, damping, gravity torque and rotor."""
+    if arm.armature and len(arm.armature) != len(bus.arm):
+        raise ValueError(f"bus {bus.name!r} needs one armature per arm motor")
+    for index, (motor, kp, kd) in enumerate(zip(bus.arm, bus.kp, bus.kd, strict=True)):
+        torque = _motor_torque(motor)
         joint = spec.joint(motor.name)
+        if arm.armature:
+            joint.armature = arm.armature[index]
         # Gravity compensation counts as motor torque, as on the rig, so it
         # shows in the reported effort and shares the motor's torque range.
         joint.actgravcomp = True
@@ -375,38 +399,50 @@ def _add_position_actuator(
     actuator.forcerange = (-force, force)
 
 
-def _add_jaw(spec: mujoco.MjSpec, arm: ArmLayout, bus: DamiaoBus, bits: tuple[int, int]) -> None:
+def _add_jaw(
+    spec: mujoco.MjSpec,
+    urdf: LoadedRobotModel,
+    arm: ArmLayout,
+    bus: DamiaoBus,
+    bits: tuple[int, int],
+) -> None:
     """Let one gripper's two fingers slide and drive them together through its gripper joint.
 
-    ``bits`` are the arm's MuJoCo contype and conaffinity.
+    ``urdf`` is the URDF the spec was read from, for how its second finger
+    follows the first. ``bits`` are the arm's MuJoCo contype and conaffinity.
     """
     if bus.gripper is None:
         raise ValueError(f"bus {bus.name!r} has no gripper to simulate")
     contype, conaffinity = bits
     closed = arm.finger_travel[0]
-    fingers = []
-    for name, axis in zip(arm.fingertips, arm.finger_axes, strict=True):
+    fingers: list[str] = []
+    for name, axis, mirror_y in zip(arm.fingertips, arm.finger_axes, (1.0, -1.0), strict=True):
         tip = spec.body(name)
+        # The tip's frame in the frame it hangs from, turned as the URDF turns it.
+        w, x, y, z = tip.quat
+        turned = Rotation.from_quat([x, y, z, w])
         # A URDF with sliding fingers brings this joint; a fixed finger is freed.
         slides = tip.joints or [
             tip.add_joint(
                 name=f"{tip.name}_slide",
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
-                axis=axis,
+                axis=turned.inv().apply(axis),
                 range=tuple(sorted(arm.finger_travel)),
             )
         ]
+        if fingers:
+            _count_travel_as_the_first(slides[0], fingers[0], urdf)
         fingers.append(slides[0].name)
-        # The tip links are translations of the frame they hang from; the
-        # joint moves them along their axis from where the URDF puts them.
-        mirror = np.array([1.0, axis[1], 1.0])
-        closed_at = np.asarray(tip.pos) + closed * np.asarray(axis)
+        # The joint moves the tip along its axis from where the URDF puts it.
+        closed_at = np.asarray(tip.pos) + closed * turned.apply(slides[0].axis)
+        mirror = np.array([1.0, mirror_y, 1.0])
         for index, (centre, half) in enumerate(arm.pads):
             pad = tip.add_geom(
                 name=f"{tip.name}_pad{index}",
                 type=mujoco.mjtGeom.mjGEOM_BOX,
                 size=half,
-                pos=np.asarray(centre) * mirror - closed_at,
+                pos=turned.inv().apply(np.asarray(centre) * mirror - closed_at),
+                quat=_wxyz(turned.inv()),
                 contype=contype,
                 conaffinity=conaffinity,
                 group=_COLLISION_ONLY_GROUP,
@@ -443,6 +479,34 @@ def _add_jaw(spec: mujoco.MjSpec, arm: ArmLayout, bus: DamiaoBus, bits: tuple[in
     )
 
 
+def _count_travel_as_the_first(slide: Any, first: str, urdf: LoadedRobotModel) -> None:
+    """Make the second finger's joint read the same travel as the first finger's.
+
+    A URDF finger that copies the first with a multiplier of -1 slides along
+    the same axis the other way; its axis and range are turned round here, so
+    the two stand at the same travel, each along its own axis.
+
+    Raises:
+        ValueError: If the URDF has the finger copy the first in any other way.
+    """
+    joint = urdf.get_joint(slide.name)
+    if joint is None or joint.mimic is None:
+        return
+    leader, multiplier, offset = joint.mimic
+    if leader != first or abs(multiplier) != 1.0 or offset != 0.0:
+        raise ValueError(f"{slide.name!r} must copy {first!r} exactly or mirrored")
+    if multiplier < 0:
+        slide.axis = -np.asarray(slide.axis)
+        lower, upper = slide.range
+        slide.range = (-upper, -lower)
+
+
+def _wxyz(rotation: Rotation) -> list[float]:
+    """MuJoCo's wxyz quaternion for a rotation."""
+    x, y, z, w = rotation.as_quat()
+    return [w, x, y, z]
+
+
 def _camera_quat(link: Rotation) -> list[float]:
     """MuJoCo's wxyz orientation for a camera whose camera_link is turned by ``link``."""
     x, y, z, w = (link * _MUJOCO_CAMERA_IN_LINK).as_quat()
@@ -465,7 +529,7 @@ def _add_wrist_camera(spec: mujoco.MjSpec, arm: ArmLayout) -> None:
     """A D405 on top of the gripper, looking along the fingers."""
     along, top = np.asarray(arm.fingers_along), np.asarray(arm.top_along)
     forward = math.cos(_WRIST_CAMERA_TILT) * along - math.sin(_WRIST_CAMERA_TILT) * top
-    lens = _WRIST_CAMERA_ABOVE * top + _WRIST_CAMERA_OUT * along
+    lens = arm.camera_above * top + arm.camera_out * along
     box = _housing(spec, arm.wrist_camera)
     if box is not None:
         # The camera's back is flat on its bracket, the box's z face: it looks
