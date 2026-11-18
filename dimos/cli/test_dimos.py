@@ -39,7 +39,6 @@ import dimos.core.run_registry as run_registry
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
-from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.effectors.high_level.webrtc import G1HighLevelWebRtc
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.fleet_connection import Go2FleetConnection
@@ -491,7 +490,6 @@ def test_run_leaves_hosted_dependency_checks_to_the_host(
         (GO2Connection, ["--go2connection.ip", " "], "No robot IP specified"),
         (Go2FleetConnection, [], "No robot IPs specified"),
         (Go2FleetConnection, ["--go2fleetconnection.ips", "[]"], "No robot IPs specified"),
-        (G1Connection, [], "No robot IP specified"),
         (G1HighLevelWebRtc, [], "No robot IP specified"),
     ],
 )

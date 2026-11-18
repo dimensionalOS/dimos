@@ -21,7 +21,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.robot.unitree.g1.wholebody_connection import (
+from dimos.robot.unitree.g1.effectors.low_level.groot_wholebody import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
     G1WholeBodyConnection,
