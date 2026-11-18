@@ -730,6 +730,51 @@ def test_a_patch_given_as_json_is_taken_strictly(rig: Callable[..., Rig]) -> Non
     r.module.config_reset()
 
 
+class UndoFails(TunableArm):
+    """Its undo raises; its halt raises too when ``fail_halt``; it records its faults."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.fail_halt = False
+        self.faults: list[str] = []
+
+    def _config_undo(self) -> str:
+        raise RuntimeError("bus glitch")
+
+    def halt(self) -> None:
+        super().halt()
+        if self.fail_halt:
+            raise RuntimeError("bus off")
+
+    def _config_fault(self, reason: str) -> None:
+        self.faults.append(reason)
+
+
+def test_a_failed_undo_halts_the_robot(rig: Callable[..., Rig], mocker: Any) -> None:
+    r = rig(UndoFails, config_sessions=True, deadman_timeout_s=10)
+    info = mocker.spy(connection_module.logger, "info")
+    _begin(r.module)
+    r.module.config_reset()
+    assert not _live(r.module) and r.module.halts == 1 and r.module.faults == []
+    assert r.module.status().last_error == "config session end failed: RuntimeError: bus glitch"
+    ended = [line for line in _messages(info) if "ended (config_reset)" in line]
+    assert "undoing it failed: RuntimeError: bus glitch; the robot was halted" in ended[0]
+
+
+def test_a_failed_undo_and_halt_fault_the_connection(rig: Callable[..., Rig]) -> None:
+    r = rig(UndoFails, config_sessions=True, deadman_timeout_s=10)
+    r.module.fail_halt = True
+    _begin(r.module)
+    r.module.config_reset()
+    assert not _live(r.module) and r.module.halts == 1
+    assert r.module.faults == [
+        "undoing the config session failed (RuntimeError: bus glitch) and halting failed "
+        "(RuntimeError: bus off)"
+    ]
+    assert r.module.status().last_error == "halt failed: RuntimeError: bus off"
+    r.module.fail_halt = False
+
+
 def test_stopping_ends_the_session_and_undoes_it(
     rig: Callable[..., Rig], mocker: Any, quick_park: None
 ) -> None:

@@ -859,16 +859,25 @@ class DamiaoConnection(ConnectionModule):
             raise
 
     def _feedback_failed(self, error: Exception) -> None:
-        self._fault = f"feedback failed: {type(error).__name__}: {error}"
-        self._report(self._fault)
+        self._latch_fault(f"feedback failed: {type(error).__name__}: {error}")
+
+    def _config_fault(self, reason: str) -> None:
+        """Undo and halt both failed: the last frames may float a joint with stale gravity."""
+        if self._fault is None:
+            self._latch_fault(reason)
+
+    def _latch_fault(self, fault: str) -> None:
+        """Latch ``fault``: disable the motors, then end any config session. Lock held."""
+        self._fault = fault
+        self._report(fault)
         arm = self._arm
         if arm is not None:
             try:
                 arm.disable()
             except Exception as disable_error:
-                self._report(f"{self._fault}; disable failed: {disable_error}")
+                self._report(f"{fault}; disable failed: {disable_error}")
         # Disabled first, so ending it sends nothing to the failed buses.
-        self._end_config_session(self._fault)
+        self._end_config_session(fault)
 
     def _read_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz

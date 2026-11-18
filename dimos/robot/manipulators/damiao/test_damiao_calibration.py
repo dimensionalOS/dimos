@@ -706,6 +706,45 @@ def test_a_fault_ends_the_session(start, boundary):
     boundary[0].refresh_error = None
 
 
+def test_an_undo_the_bus_refused_is_followed_by_a_hold(start, boundary):
+    # The reader resends a floating joint's frame every tick; slowed, only the undo sends.
+    module = start(config_sessions=True, state_rate_hz=0.2)
+    session = _begin(module)
+    _float(module, session)
+    right = boundary[0].groups["right_arm"]
+    send = right.mit_control
+    glitches = [RuntimeError("bus glitch")]
+
+    def once(rows):
+        if glitches:
+            raise glitches.pop()
+        send(rows)
+
+    right.mit_control = once
+    module.config_reset()
+    # The undo's frame never went out; the hold after it did, with the file's gains.
+    assert module._fault is None and module._arm.floating == {}
+    np.testing.assert_equal(_rows(boundary, "right_arm")[0, :3], [20, 0.6, 0.2])
+    assert "bus glitch" in (module.status().last_error or "")
+
+
+def test_an_undo_and_a_hold_the_bus_refused_fault_the_connection(start, boundary):
+    module = start(config_sessions=True, state_rate_hz=0.2)
+    session = _begin(module)
+    _float(module, session)
+    boundary[0].groups["right_arm"].error = RuntimeError("bus glitch")
+    module.config_reset()
+    # The last frame the motor got floats joint3, and nothing resends its gravity: disabled.
+    assert _rows(boundary, "right_arm")[0, 0] == 0.0
+    assert module._fault is not None and module._fault.startswith(
+        "undoing the config session failed (RuntimeError: bus glitch) and halting failed"
+    )
+    assert boundary[0].events[-1] == "disable"
+    with pytest.raises(RuntimeError, match="undoing the config session failed"):
+        module.config_get()
+    boundary[0].groups["right_arm"].error = None
+
+
 def test_stopping_ends_the_session(start, boundary, mocker):
     # Nobody parks: the stop gives up waiting at once.
     mocker.patch.object(connection_module, "CONFIG_PARK_WAIT_S", 0.1)

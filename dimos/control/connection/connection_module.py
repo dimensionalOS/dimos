@@ -27,8 +27,8 @@ say what it can change and how its arms are driven now; with
 ``config_reset`` and ``config_command`` let one calibration tool own the arm
 in a config session and change how it is driven. A driver that can change
 something overrides the underscore hooks (``_config_keys``, ``_config_state``,
-``_config_apply``, ``_config_undo``, ``_config_parkable``); by default it can
-change nothing.
+``_config_apply``, ``_config_undo``, ``_config_parkable``, ``_config_fault``);
+by default it can change nothing.
 """
 
 from __future__ import annotations
@@ -200,9 +200,11 @@ class ConnectionModule(Module, ABC):
     (``_config_undo``), on ``config_reset``, when its lease passes without a
     call that carries its id (``config_set`` with its ``session_id``,
     ``config_command``), when the robot halts (the command deadman included),
-    when a ``config_*`` call raises, and when the module stops. A driver that
-    can fault ends it with ``_end_config_session``, and one that serves
-    sessions calls ``_await_config_park`` first in its own ``stop``.
+    when a ``config_*`` call raises, and when the module stops. When the undo
+    raises the robot is halted, and when that fails too ``_config_fault`` is
+    called. A driver that can fault ends it with ``_end_config_session``, and
+    one that serves sessions calls ``_await_config_park`` first in its own
+    ``stop``.
     """
 
     config: ConnectionConfig
@@ -658,8 +660,11 @@ class ConnectionModule(Module, ABC):
         try:
             undone = self._config_undo()
         except Exception as error:
-            undone = f"undoing it failed: {type(error).__name__}: {error}"
             self._report(f"config session end failed: {type(error).__name__}: {error}")
+            undone = (
+                f"undoing it failed: {type(error).__name__}: {error}; "
+                f"{self._halt_after_failed_undo(error)}"
+            )
         message = (
             f"{self._label}: config session {session.session_id[:8]} ended ({reason}): "
             f"{undone}; {session.dropped} position commands dropped"
@@ -669,6 +674,36 @@ class ConnectionModule(Module, ABC):
         else:
             logger.warning(message)
         return True
+
+    def _halt_after_failed_undo(self, error: Exception) -> str:
+        """After ``_config_undo`` raised: halt the robot, and fault when that fails too.
+
+        The robot may still run the session's changes, a floating joint say,
+        so it is held where it is (``halt``); when the halt raises as well,
+        ``_config_fault`` latches the driver's fault. Says what was done.
+        Call with ``_hardware_lock`` held.
+        """
+        try:
+            self.halt()
+        except Exception as halt_error:
+            halted = f"{type(halt_error).__name__}: {halt_error}"
+            self._report(f"halt failed: {halted}")
+            self._config_fault(
+                f"undoing the config session failed ({type(error).__name__}: {error}) and "
+                f"halting failed ({halted})"
+            )
+            return f"halting failed too ({halted}); the connection faulted"
+        return "the robot was halted"
+
+    def _config_fault(self, reason: str) -> None:
+        """Undoing a config session and halting the robot both failed; latch a fault.
+
+        The robot may be left running the session's changes with nothing to
+        keep them safe. A driver that can fault latches it here and makes the
+        robot safe, e.g. de-energizes it; by default the failure is only
+        reported. Called with ``_hardware_lock`` held, the session already
+        ended.
+        """
 
     def _dropped_for_config_session(self) -> bool:
         """Whether a position command is dropped for the config session; warns once per session.
