@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The autoresearch lab as a module: one session on disk, candidate programs
-run trial by trial on the simulated bench, judged from the simulator's true
-object poses, with the successful episodes saved through the collection
-recorder. The actor drives it through the skills below, over MCP."""
+"""The autoresearch module: one session on disk, candidate programs run trial
+by trial in simulation, judged from the simulator's true object poses, with
+the successful episodes saved through the collection recorder. The coding
+agent drives it through the skills below, over MCP."""
 
 from __future__ import annotations
 
@@ -122,8 +122,10 @@ def _home_preset(arm: Arm) -> JointState:
 
 class AutoresearchModuleConfig(ModuleConfig):
     """One session's settings. ``session_dir`` must not hold a session yet.
-    ``judge`` decides a trial from ``judge_body``: lifted 5 cm, or placed within
-    5 cm of ``place_body``. ``program_timeout_s`` kills a candidate run.
+    ``judge`` decides a trial from ``judge_body``, the object each reset puts
+    somewhere inside ``placement_bounds``: lifted 5 cm, or placed within 5 cm of
+    ``place_body``. The robot's blueprint names these for its scene; they have
+    no default. ``program_timeout_s`` (seconds) kills a candidate run.
     ``backend_factory`` is what the program drives, ``"package.module:function"``.
     ``model`` at ``actor_provider`` is what ``start_actor`` runs unless told
     otherwise, for at most ``actor_max_steps`` model calls in ``actor_timeout_s``.
@@ -139,9 +141,9 @@ class AutoresearchModuleConfig(ModuleConfig):
     actor_timeout_s: float = Field(default=2 * 3600.0, gt=0)
     program_timeout_s: float = DEFAULT_TIMEOUT_S
     judge: Literal["lift", "place"] = "lift"
-    judge_body: str = "cube"
-    place_body: str = "bowl"
-    placement_bounds: PlacementBounds = Field(default_factory=PlacementBounds)
+    judge_body: str
+    place_body: str
+    placement_bounds: PlacementBounds
     backend_factory: str = LIVE_BACKEND
     blueprint: str = ""
     scene_source: str = "simulator-truth"
@@ -282,11 +284,12 @@ class AutoresearchModule(Module):
         return self.get_status()
 
     @rpc
-    def export_skill(self, name: str | None = None) -> str:
+    def export_skill(self, name: str | None = None, force: bool = False) -> str:
         """Export the frozen candidate as an Agent Skill folder in the agent
         harness's user skills folder and return its path. ``name`` defaults to
-        a slug of the task; refused before a candidate is frozen."""
-        return str(export_skill(self._session, USER_SKILLS_DIR, name))
+        a slug of the task. Refused before a candidate is frozen, and while it
+        has no held-out score or passed no held-out trial unless ``force``."""
+        return str(export_skill(self._session, USER_SKILLS_DIR, name, force=force))
 
     @skill
     def task(self) -> str:
@@ -313,7 +316,7 @@ class AutoresearchModule(Module):
 
     @skill
     def scene(self) -> str:
-        """The objects on the bench now, with their box centres and sizes in
+        """The objects in the scene now, with their box centres and sizes in
         world metres, and the path of a camera frame saved just now."""
         detections = self._scene.scan_scene(None)
         objects = [

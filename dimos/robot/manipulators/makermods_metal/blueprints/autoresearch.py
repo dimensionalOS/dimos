@@ -17,10 +17,12 @@ bench, judged from the simulator's true object poses, and the successful
 episodes are recorded as a Quest-profile dataset."""
 
 from datetime import datetime
+import math
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.autoresearch.module import AutoresearchModule
 from dimos.autoresearch.truth_scene import TruthObject, TruthSceneModule
+from dimos.autoresearch.world import PlacementBounds
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -38,6 +40,12 @@ METAL_BENCH_TRUTH = {
     "bowl": TruthObject(size=(0.10, 0.10, 0.04), centre=(0.0, 0.0, 0.02)),
 }
 
+#: Where each trial's reset puts the cube: in the wrist camera's view and clear
+#: of the cylinder and the bowl.
+METAL_BENCH_PLACEMENT = PlacementBounds(
+    x=(0.18, 0.30), y=(0.08, 0.20), z=0.02, yaw=(-math.pi / 4, math.pi / 4)
+)
+
 #: A plain launch gets a timestamped session under the recordings folder and this
 #: task; a launcher passes its own session folder, task and budget.
 DEFAULT_TASK = "lift the cube"
@@ -54,7 +62,12 @@ autoresearch_metal_sim = autoconnect(
     metal_sim,
     TruthSceneModule.blueprint(objects=METAL_BENCH_TRUTH),
     AutoresearchModule.blueprint(
-        session_dir=_DEFAULT_SESSION, task=DEFAULT_TASK, blueprint="autoresearch-metal-sim"
+        session_dir=_DEFAULT_SESSION,
+        task=DEFAULT_TASK,
+        judge_body="cube",
+        place_body="bowl",
+        placement_bounds=METAL_BENCH_PLACEMENT,
+        blueprint="autoresearch-metal-sim",
     ),
     McpServer.blueprint(),
 ).remappings([("recorder", "wrist_image", "color_image")])

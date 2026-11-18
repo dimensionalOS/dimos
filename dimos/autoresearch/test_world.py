@@ -36,6 +36,7 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 
 HOME = JointState(name=["j"], position=[0.5])
+BOUNDS = PlacementBounds(x=(0.18, 0.30), y=(0.08, 0.20), z=0.02, yaw=(-0.7, 0.7))
 
 
 class Bench:
@@ -97,7 +98,7 @@ class Feeder:
 @pytest.fixture
 def world() -> Iterator[tuple[MujocoWorld, Bench, threading.Event]]:
     bench, stop = Bench(), threading.Event()
-    world = MujocoWorld(bench, bench, bench, bench, HOME, "cube", PlacementBounds(), stop)
+    world = MujocoWorld(bench, bench, bench, bench, HOME, "cube", BOUNDS, stop)
     feeder = Feeder(world)
     feeder.thread.start()
     yield world, bench, stop
@@ -122,7 +123,7 @@ def test_reset_places_the_body_then_homes_the_arm_without_the_planner_before_res
 ) -> None:
     scene, bench, _ = world
     scene.reset(seed=3)
-    assert bench.placements == [{"cube": PlacementBounds().sample(3)}]
+    assert bench.placements == [{"cube": BOUNDS.sample(3)}]
     assert bench.trajectories == [(["j"], [0.5])]
     assert bench.events == [
         "cancel",

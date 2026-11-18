@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The simulated bench as the trial loop sees it: seeded resets and snapshots
+"""The simulated scene as the trial loop sees it: seeded resets and snapshots
 of the tracked bodies, built from the simulator's pose and joint streams and
 the obstacle map."""
 
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
-import math
 import random
 import threading
 import time
@@ -65,15 +64,15 @@ class TrajectoryControlSpec(Spec, Protocol):
 
 
 class PlacementBounds(BaseModel):
-    """Where the seeded object may start: ``x`` and ``y`` ranges on the bench and
+    """Where the seeded object may start: ``x`` and ``y`` ranges (low, high) and
     its resting height ``z``, metres in the world frame, and a ``yaw`` range in
-    radians. The defaults keep the Metal bench's cube in the wrist camera's
-    view and clear of the cylinder and the bowl."""
+    radians. The robot's blueprint sets all four, so the object starts where
+    its camera sees it and clear of the other objects."""
 
-    x: tuple[float, float] = (0.18, 0.30)
-    y: tuple[float, float] = (0.08, 0.20)
-    z: float = 0.02
-    yaw: tuple[float, float] = (-math.pi / 4, math.pi / 4)
+    x: tuple[float, float]
+    y: tuple[float, float]
+    z: float
+    yaw: tuple[float, float]
 
     def sample(self, seed: int) -> BodyPlacement:
         """The placement for ``seed``; the same seed always gives the same place."""
@@ -84,7 +83,7 @@ class PlacementBounds(BaseModel):
 class MujocoWorld:
     """``reset(seed)`` puts the simulation back with ``body`` where ``bounds``
     says for that seed, drives the arm to ``home`` through the controller, waits
-    for it to hold still and for an obstacle map of the new bench, then puts
+    for it to hold still and for an obstacle map of the new scene, then puts
     back any object the last program cleared from that map and waits for poses
     taken after the reset; ``snapshot()`` stops the arm and, once it holds still,
     reports every tracked body's pose. Feed ``on_body_poses``, ``on_joint_state``
@@ -211,11 +210,11 @@ class MujocoWorld:
 
     def _wait_for_map(self) -> None:
         """Wait for RESET_MAP_FRAMES obstacle maps captured from now on, with the
-        arm at rest after the reset, so the map shows the bench as reset."""
+        arm at rest after the reset, so the map shows the scene as reset."""
         rested = time.time()
         self._wait(
             lambda: sum(stamp > rested for stamp in self._map_stamps) >= RESET_MAP_FRAMES,
-            "an obstacle map of the reset bench",
+            "an obstacle map of the reset scene",
             MESSAGE_TIMEOUT_S,
         )
 
