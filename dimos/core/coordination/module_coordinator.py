@@ -442,6 +442,7 @@ class ModuleCoordinator(Resource):
         sources); :meth:`load_blueprint` instead applies only explicitly-set
         fields.
         """
+        blueprint = blueprint.solidify()
         check_module_dependencies(blueprint, parsed_config)
         logger.info("Building the blueprint")
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
@@ -530,6 +531,7 @@ class ModuleCoordinator(Resource):
         if not self._started:
             raise RuntimeError("ModuleCoordinator not started; call start() first")
 
+        blueprint = blueprint.solidify()
         with self._modules_lock:
             self._load_blueprint(blueprint, parsed_config)
 

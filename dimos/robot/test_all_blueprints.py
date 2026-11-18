@@ -83,6 +83,8 @@ def _check_blueprint(blueprint_name: str) -> None:
     assert isinstance(blueprint, Blueprint), (
         f"Blueprint '{blueprint_name}' is not a Blueprint, got {type(blueprint)}"
     )
+    # `dimos run` resolves default choices, so every registered blueprint must resolve.
+    blueprint.solidify()
 
 
 def test_old_self_hosted_blueprints() -> None:

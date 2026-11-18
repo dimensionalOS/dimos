@@ -29,6 +29,7 @@ from dimos.cli.commands.lifecycle import _with_relay_bridge
 import dimos.cli.commands.mcp as mcp
 from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
+from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
 import dimos.core.daemon as core_daemon
@@ -403,6 +404,104 @@ def test_foreground_logs_signal_and_requests_shutdown_once(
         "Received signal, shutting down", signal=signum, run_id="test-alpha"
     )
     shutdown.assert_called_once_with()
+
+
+@pytest.fixture
+def stubbed_choices(stubbed_run, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch):
+    mapping = autoconnect(
+        ChoiceAtom(
+            name="PointClearing",
+            default="raycasting",
+            choices={
+                "raycasting": RunModuleA.blueprint(),
+                "column_carving": RunModuleB.blueprint(),
+            },
+        ),
+        ChoiceAtom(
+            name="Viewer",
+            default="off",
+            choices={"on": RunModuleA.blueprint(instance_name="viewer"), "off": autoconnect()},
+        ),
+    )
+    mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", return_value=mapping)
+    monkeypatch.setenv("TOPIC_METADATA", "false")
+    return stubbed_run
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ([], RunModuleA),
+        (["--choice", "PointClearing=column_carving"], RunModuleB),
+        (["--choice=PointClearing=column_carving"], RunModuleB),
+    ],
+)
+def test_run_resolves_choices_before_build(stubbed_choices, options, expected) -> None:
+    result = CliRunner().invoke(main, ["run", "mapping", *options])
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert stubbed_choices["blueprint"].pending == ()
+    assert [atom.module for atom in stubbed_choices["blueprint"].blueprints] == [expected]
+
+
+def test_run_supports_multiple_choices(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["run", "mapping", "--choice", "PointClearing=column_carving", "--choice", "Viewer=on"],
+    )
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert [atom.name for atom in stubbed_choices["blueprint"].blueprints] == [
+        "runmoduleb",
+        "viewer",
+    ]
+
+
+def test_run_help_uses_the_selected_branch(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main, ["run", "mapping", "--choice", "PointClearing=column_carving", "--help"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--runmoduleb.lookahead" in result.output
+    assert "--runmodulea.entity-prefix" not in result.output
+    assert stubbed_choices == {}
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (["--choice", "PointClearing"], "expected NAME=OPTION"),
+        (["--choice", "=raycasting"], "expected NAME=OPTION"),
+        (["--choice", "PointClearing="], "expected NAME=OPTION"),
+        (["--choice", "PointClearing=typo"], "Invalid option 'typo'"),
+        (["--choice", "Typo=raycasting"], "Unknown or inactive choices: Typo"),
+        (
+            ["--choice", "PointClearing=raycasting", "--choice", "PointClearing=column_carving"],
+            "Choice 'PointClearing' was specified more than once",
+        ),
+    ],
+)
+def test_run_rejects_invalid_choices_before_starting(stubbed_choices, options, message) -> None:
+    result = CliRunner().invoke(main, ["run", "mapping", *options])
+
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    assert stubbed_choices == {}
+
+
+def test_run_requires_a_selection_when_no_default_exists(
+    stubbed_run, mocker: MockerFixture
+) -> None:
+    mapping = autoconnect(ChoiceAtom(name="Required", choices={"alpha": RunModuleA.blueprint()}))
+    mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", return_value=mapping)
+
+    result = CliRunner().invoke(main, ["run", "mapping"])
+
+    assert result.exit_code == 2, result.output
+    assert "Choice 'Required' is required" in result.output
+    assert "--choice Required=<option>" in result.output
+    assert stubbed_run == {}
 
 
 @pytest.mark.parametrize("run_options", [[], ["--daemon"]])

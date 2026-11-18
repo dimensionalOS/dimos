@@ -84,6 +84,58 @@ expanded_blueprint = autoconnect(
 
 Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
 
+## Choices
+
+A `ChoiceAtom` names a set of alternative fragments. Pass it to `autoconnect()`
+like any other blueprint; the result is still a `Blueprint`:
+
+```python session=blueprint-choices
+from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
+from dimos.core.module import Module
+
+class VisModule(Module):
+    pass
+
+class RaytracerModule(Module):
+    pass
+
+class VoxelMapper(Module):
+    pass
+
+mapping = autoconnect(
+    VisModule.blueprint(),
+    ChoiceAtom(
+        name="PointClearing",
+        default="raycasting",
+        choices={
+            "raycasting": RaytracerModule.blueprint(),
+            "column_carving": VoxelMapper.blueprint(),
+        },
+    ),
+).global_config(n_workers=4)
+```
+
+Select an option at launch with `--choice`:
+
+```bash
+dimos run mapping
+dimos run mapping --choice PointClearing=column_carving
+```
+
+`dimos run` and `ModuleCoordinator.build()` use the defaults for choices you do
+not name. Call `.solidify()` only to pick other options in code, or to read the
+modules of a blueprint that has choices:
+
+```python session=blueprint-choices
+voxel_mapping = mapping.solidify(choices={"PointClearing": "column_carving"})
+```
+
+Methods such as `.global_config()`, `.remappings()`, `.namespace()` and
+`.hosted()` on a blueprint with choices apply to the selected modules of that
+fragment only. A choice without a default must be selected. Invalid options,
+unknown names, and two different choices with the same name are errors. A
+broken default selection fails when the blueprint is defined.
+
 ## Publishing external blueprints
 
 dimOS can discover runnable blueprints from installed Python packages. External
