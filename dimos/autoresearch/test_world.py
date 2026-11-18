@@ -19,12 +19,13 @@ import time
 import pytest
 
 from dimos.autoresearch.judge import BodyPose
-from dimos.autoresearch.program import RunStoppedError, program_box
 from dimos.autoresearch.world import MujocoWorld, PlacementBounds
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.manipulation.code_policy.api import RunStoppedError
+from dimos.manipulation.code_policy.backend import program_box
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

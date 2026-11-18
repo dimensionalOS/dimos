@@ -20,10 +20,7 @@ from dimos.spec.utils import Spec
 
 
 class ObjectSceneSpec(Spec, Protocol):
-    """A module that finds named objects in the scene, which the lab and its programs ask.
-
-    TruthSceneModule answers it from the simulator's true object poses.
-    """
+    """The scene a program reads: named objects with world-frame boxes."""
 
     def set_prompts(self, text: list[str] | None = None) -> None: ...
     def scan_scene(self, text: list[str] | None = None) -> Detection3DArray: ...

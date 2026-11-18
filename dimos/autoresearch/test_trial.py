@@ -22,8 +22,7 @@ from dimos.autoresearch.session import Budget, Session
 from dimos.autoresearch.trial import HELDOUT_SEED_BASE, NoEpisodes, run_trial
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand
-
-FAKE = "dimos.autoresearch._test_helpers:fake_backend"
+from dimos.manipulation.code_policy._test_helpers import FAKE_BACKEND
 
 PROGRAM = """
 def run(robot, task):
@@ -86,12 +85,14 @@ def test_success_saves_the_episode_and_records_the_trial(session: Session) -> No
     monitor = FakeMonitor()
     monitor.saved = 1
 
-    record = run_trial(session, candidate, "dev", 3, world, LiftJudge("cube"), monitor, FAKE, 60.0)
+    record = run_trial(
+        session, candidate, "dev", 3, world, LiftJudge("cube"), monitor, FAKE_BACKEND, 60.0
+    )
 
     assert (record.success, record.stage, record.status) == (True, "done", "completed")
     assert record.note == "cube rose 0.100 m"
     assert record.episode == 1
-    assert (record.start_ts, record.backend) == (0.0, FAKE)
+    assert (record.start_ts, record.backend) == (0.0, FAKE_BACKEND)
     assert monitor.events == ["start", "save"]
     assert world.seeds == [3]
     assert record.trace == session.candidate_dir(candidate) / "trials/dev-03/trace.jsonl"
@@ -100,7 +101,15 @@ def test_success_saves_the_episode_and_records_the_trial(session: Session) -> No
 
     unrecorded = FakeWorld([snapshot(0.02), snapshot(0.12)])
     record = run_trial(
-        session, candidate, "dev", 4, unrecorded, LiftJudge("cube"), NoEpisodes(), FAKE, 60.0
+        session,
+        candidate,
+        "dev",
+        4,
+        unrecorded,
+        LiftJudge("cube"),
+        NoEpisodes(),
+        FAKE_BACKEND,
+        60.0,
     )
     assert record.success and record.episode is None
 
@@ -113,7 +122,7 @@ def test_failure_discards_the_episode_and_keeps_the_program_error(session: Sessi
     monitor = FakeMonitor()
 
     record = run_trial(
-        session, candidate, "heldout", 0, world, LiftJudge("cube"), monitor, FAKE, 60.0
+        session, candidate, "heldout", 0, world, LiftJudge("cube"), monitor, FAKE_BACKEND, 60.0
     )
 
     assert (record.success, record.stage, record.status) == (False, "reach", "raised")

@@ -23,10 +23,11 @@ import threading
 from typing import Protocol
 
 from dimos.autoresearch.judge import Judge, Snapshot
-from dimos.autoresearch.program import TRACE_NAME, run_program
 from dimos.autoresearch.session import Session, Split, TrialRecord
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeControlSpec
+from dimos.manipulation.code_policy.api import TRACE_NAME
+from dimos.manipulation.code_policy.runner import run_program
 
 # Held-out seeds start here so no held-out scene repeats a dev scene.
 HELDOUT_SEED_BASE = 100_000

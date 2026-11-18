@@ -18,6 +18,7 @@ import pytest
 
 from dimos.autoresearch.session import Budget, Session, Split, TrialRecord
 from dimos.autoresearch.skill import Validation, export_skill, skill_name, validate_skill
+from dimos.manipulation.code_policy.api import API_REFERENCE, API_VERSION
 
 PROGRAM = "import math\n\ndef run(robot, task):\n    robot.arm.home()\n"
 
@@ -69,6 +70,8 @@ def test_export_writes_a_valid_skill_from_the_frozen_candidate(tmp_path: Path) -
     assert front["name"] == "lift-the-cube"
     assert front["metadata"]["heldout-pass-rate"] == "0.67"
     assert front["metadata"]["dimos-commit"] == "unknown"
+    assert front["metadata"]["code-policy-api"] == API_VERSION
+    assert (skill / "references" / "api.md").read_text().count(API_REFERENCE) == 1
     assert (skill / "scripts" / "program.py").read_bytes() == session.program_path(
         frozen
     ).read_bytes()

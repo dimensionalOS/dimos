@@ -18,44 +18,14 @@ API, and the words that mark a way around the tools."""
 from __future__ import annotations
 
 from dimos.autoresearch.session import Budget
+from dimos.manipulation.code_policy.api import API_REFERENCE
 
 # Tool calls mentioning these are denied: the ways past the lab's tools into the stack.
 EXCLUDED_KEYWORDS = ("shell", "porcelain", "sdk", "topic", "select", "pick_object", "place_at")
 
-PROGRAM_API = """\
-The program API. A candidate is a Python file defining run(robot, task); `import math` is the
-only import allowed (checked on submit, enforced when it runs). task.text is the task in
-words. The program never sees the judge or any score. Motion calls block until done and raise
-RobotCallError (with a .status) when planning or execution fails; catch it to try another way.
-  robot.arm.joints()                      joint positions, radians
-  robot.arm.pose()                        end-effector position (m) and xyzw quaternion
-  robot.arm.move_joints(positions)        planned move to joint positions
-  robot.arm.move_pose(xyz, rpy_or_quat)   planned move; orientation optional
-  robot.arm.move_linear(dx, dy, dz)       straight-line translation, metres
-  robot.arm.home()                        the home preset
-  robot.gripper.open() / .close()         fully open or closed
-  robot.gripper.set(x), .range()          the gripper joint at x; range() gives (closed, open)
-  robot.scene.objects(words)              detected objects: id, name, position (m), size (m)
-  robot.scene.clear(object_id, margin)    leave that object, plus margin (m, default 0.03) on
-                                          every side, out of the obstacle map: the map treats
-                                          every object as an obstacle, so clear each object
-                                          you will touch or put something into; clears add up
-  robot.scene.restore()                   put every cleared object back in the map
-  robot.observe()                         saves a keyframe, returns its path
-  robot.log(text)                         a line in the trace
-Example:
-  import math
-
-  def run(robot, task):
-      \"\"\"Top-down grasp at the cube's centre. May fail if the fingers land on an edge.\"\"\"
-      cube = robot.scene.objects(["cube"])[0]
-      x, y, z = cube.position
-      robot.scene.clear(cube.id)
-      robot.gripper.open()
-      robot.arm.move_pose([x, y, z + 0.10], [math.pi, 0.0, 0.0])
-      robot.arm.move_linear(dz=-0.08)
-      robot.gripper.close()
-      robot.arm.move_linear(dz=0.10)
+PROGRAM_API = f"""\
+{API_REFERENCE}Each candidate is such a program: the import rule is checked on submit and enforced
+when it runs, and the program never sees the judge or any score.
 """
 
 

@@ -29,11 +29,12 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from dimos.autoresearch.judge import BodyPose, Snapshot
-from dimos.autoresearch.program import RunStoppedError, program_box
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.manipulation.code_policy.api import RunStoppedError
+from dimos.manipulation.code_policy.backend import program_box
 from dimos.manipulation.sdk import Arm
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.sensor_msgs.JointState import JointState
