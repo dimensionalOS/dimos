@@ -19,18 +19,20 @@ The file lives at ``calibration_path(arm_id)``, i.e.
 it atomically and keeps the file it replaces in ``history/``. It records the
 fingerprint of the robot model it was made against (``ArmCalibrationSpec.
 model_sha256``), and ``load_calibration`` refuses a file made for a different
-model, since the fitted masses are corrections to that model.
+model, since the fitted masses are corrections to that model;
+``load_for_spec`` always checks both the model and the arm.
 
 A fitted link's mass and centre of mass are those of the link's pinocchio body:
 the link plus the links merged into it (``merged_links``: fixed children and
 locked fingers), centre of mass in the link frame. ``bake_into_urdf`` writes
 them back into a URDF by adjusting only the named link, so the merged links
-keep their own URDF values and the sum matches the fit.
+keep their own URDF values and the sum matches the fit. It bakes only into the
+URDF the calibration was made against.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 import json
 import os
@@ -53,7 +55,14 @@ from dimos.constants import STATE_DIR
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, merged_links
+from dimos.robot.manipulators.calibration.spec import (
+    ArmCalibrationSpec,
+    merged_links,
+    urdf_sha256,
+)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 SCHEMA_VERSION: Literal[1] = 1
 CALIBRATION_FILENAME = "calibration.json"
@@ -117,7 +126,7 @@ class ArmCalibration(BaseConfig):
         created: When the file was written, UTC.
         gravity: Fitted link masses and centres of mass, if identified.
         gains: Position and velocity gains per joint, if tuned.
-        friction_nm: Coulomb friction per joint, if measured.
+        friction_nm: Coulomb friction per joint, if measured; never negative.
         checks: Results of validation runs (float drift and the like).
         notes: Free text for the operator.
     """
@@ -128,7 +137,7 @@ class ArmCalibration(BaseConfig):
     created: datetime
     gravity: GravityCalibration | None = None
     gains: dict[str, JointGains] | None = None
-    friction_nm: dict[str, FiniteFloat] | None = None
+    friction_nm: dict[str, NonNegativeFloat] | None = None
     checks: dict[str, Any] | None = None
     notes: str | None = None
 
@@ -213,7 +222,7 @@ def load_calibration(
         raise ArmCalibrationError(f"No arm calibration at {target}.")
     try:
         raw = json.loads(target.read_text())
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:  # ValueError: bad JSON or not UTF-8
         raise ArmCalibrationError(f"The arm calibration at {target} is not valid JSON: {error}")
     if not isinstance(raw, dict):
         raise ArmCalibrationError(f"The arm calibration at {target} is not a JSON object.")
@@ -251,6 +260,20 @@ def load_calibration(
     return calibration
 
 
+def load_for_spec(spec: ArmCalibrationSpec, path: Path | None = None) -> ArmCalibration:
+    """The calibration of ``spec``'s arm, refused unless made for that arm and its model.
+
+    Args:
+        spec: The arm about to be driven.
+        path: The file or its directory; defaults to ``calibration_path(spec.arm_id)``.
+    """
+    return load_calibration(
+        calibration_path(spec.arm_id) if path is None else path,
+        expected_model_sha256=spec.model_sha256(),
+        expected_arm_id=spec.arm_id,
+    )
+
+
 def to_inertial_overrides(calibration: ArmCalibration) -> dict[str, LinkInertial]:
     """The fitted links as ``_inertial`` overrides for a pinocchio model (body semantics)."""
     if calibration.gravity is None:
@@ -276,14 +299,24 @@ def gravity_links_from_inertial(
     }
 
 
+LEGACY_NOTES = "legacy fit; model hash supplied by caller"
+
+
 def calibration_from_legacy_gravity(
-    source: Path | Mapping[str, Any], spec: ArmCalibrationSpec
+    source: Path | Mapping[str, Any], spec: ArmCalibrationSpec, *, model_sha256: str
 ) -> ArmCalibration:
     """Convert a pre-spec ``gravity_fit`` file (``{"links": ...}``) into one arm's calibration.
 
     Only the links among ``spec.gravity_links`` are taken, so one file holding
-    both arms of a rig converts into each arm's calibration in turn. The model
-    fingerprint is ``spec``'s: the legacy file recorded none.
+    both arms of a rig converts into each arm's calibration in turn.
+
+    Args:
+        source: The legacy file, or its parsed content.
+        spec: The arm the links belong to.
+        model_sha256: The fingerprint (``model_sha256``) of the model the
+            legacy fit was made against. The file recorded none, so the
+            caller vouches for it: stamping the current model's would let a
+            fit made against an older URDF load as if it were current.
     """
     data: Mapping[str, Any]
     if isinstance(source, Path):
@@ -303,9 +336,14 @@ def calibration_from_legacy_gravity(
     created = datetime.fromisoformat(str(data["created"])) if "created" in data else None
     if created is not None and created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
-    return ArmCalibration.for_spec(
-        spec,
-        created=created,
+    try:
+        model = RobotModelRef(name=spec.model_name(), sha256=model_sha256)
+    except ValidationError as error:
+        raise ArmCalibrationError(f"{model_sha256!r} is not a model fingerprint: {error}")
+    return ArmCalibration(
+        arm_id=spec.arm_id,
+        robot_model=model,
+        created=created or datetime.now(timezone.utc),
         gravity=GravityCalibration(
             links=gravity_links_from_inertial(spec, links),
             fit={
@@ -314,19 +352,61 @@ def calibration_from_legacy_gravity(
                 "merged_from": data.get("merged_from"),
             },
         ),
-        notes="converted from a legacy gravity_fit file",
+        notes=LEGACY_NOTES,
     )
 
 
-def bake_into_urdf(calibration: ArmCalibration, urdf_xml: str) -> str:
+def bake_into_urdf(
+    calibration: ArmCalibration | Sequence[ArmCalibration],
+    urdf_xml: str,
+    *,
+    skip_model_check: str | None = None,
+) -> str:
     """``urdf_xml`` with the fitted links' ``<inertial>`` mass and origin rewritten.
 
     Each fitted body is the link plus its ``merged_links``; those keep their URDF
     inertia and the link gets the rest, so a model built from the result has the
     fitted body mass and centre of mass. Rotational inertia and every other link
-    are left untouched. Raises ``ArmCalibrationError`` when a link is missing or
-    its merged links already weigh more than the fit.
+    are left untouched.
+
+    Args:
+        calibration: One arm's calibration, or several (each arm of a rig) to
+            bake into the same URDF in turn.
+        urdf_xml: The materialized URDF every calibration was made against
+            (``RobotModel.load().xml``); its fingerprint must match theirs.
+        skip_model_check: Bake into another URDF anyway, for this reason
+            (logged), e.g. "the URDF only gained a camera link".
+
+    Raises:
+        ArmCalibrationError: The URDF is not the one a calibration was made
+            against, a link is missing, or its merged links already weigh
+            more than the fit.
     """
+    calibrations = [calibration] if isinstance(calibration, ArmCalibration) else list(calibration)
+    if skip_model_check is None:
+        fingerprint = urdf_sha256(urdf_xml)
+        for item in calibrations:
+            if item.robot_model.sha256 != fingerprint:
+                raise ArmCalibrationError(
+                    f"The calibration of {item.arm_id} was made for the model "
+                    f"{item.robot_model.name!r} with fingerprint {item.robot_model.sha256[:12]}, "
+                    f"but the URDF to bake has fingerprint {fingerprint[:12]}. Bake into the "
+                    "URDF it was fitted against (RobotModel.load().xml), or pass "
+                    "skip_model_check with the reason."
+                )
+    elif not skip_model_check.strip():
+        raise ValueError("skip_model_check needs a reason")
+    else:
+        logger.warning(
+            f"Baking {[item.arm_id for item in calibrations]} without checking the model "
+            f"fingerprint: {skip_model_check}"
+        )
+    for item in calibrations:
+        urdf_xml = _bake_one(item, urdf_xml)
+    return urdf_xml
+
+
+def _bake_one(calibration: ArmCalibration, urdf_xml: str) -> str:
     if calibration.gravity is None:
         return urdf_xml
     root = ET.fromstring(urdf_xml, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))

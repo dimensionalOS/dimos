@@ -21,11 +21,15 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pinocchio as pin
+from pydantic import ValidationError
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.constants import STATE_DIR
+from dimos.robot.manipulators.calibration import schema
 from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.robot.manipulators.calibration.schema import (
+    LEGACY_NOTES,
     ArmCalibration,
     ArmCalibrationError,
     GravityCalibration,
@@ -36,10 +40,11 @@ from dimos.robot.manipulators.calibration.schema import (
     calibration_from_legacy_gravity,
     calibration_path,
     load_calibration,
+    load_for_spec,
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, urdf_sha256
 
 REFERENCE = Path(__file__).resolve().parent / "reference" / "gravity_both_2026-10-16.json"
 SHA = "a" * 64
@@ -89,6 +94,7 @@ TOY_URDF = """<?xml version="1.0"?>
   </joint>
 </robot>
 """
+TOY_MODEL = RobotModelRef(name="toy", sha256=urdf_sha256(TOY_URDF))
 
 
 def calibration(**fields: object) -> ArmCalibration:
@@ -202,10 +208,49 @@ def test_load_explains_bad_files(tmp_path: Path) -> None:
     with pytest.raises(ArmCalibrationError, match="gravity.links.arm.mass_kg") as error:
         load_calibration(broken)
     assert "surprise" in str(error.value)
+    # Not UTF-8 at all: a plain-words error too, not a UnicodeDecodeError.
+    binary = tmp_path / "binary.json"
+    binary.write_bytes(b"\xff\xfe\x00{")
+    with pytest.raises(ArmCalibrationError, match="not valid JSON"):
+        load_calibration(binary)
+
+
+def test_friction_is_never_negative(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="friction_nm.shoulder"):
+        calibration(friction_nm={"shoulder": -0.1})
+    raw = json.loads(calibration().model_dump_json())
+    raw["friction_nm"]["shoulder"] = -0.1
+    path = tmp_path / "negative.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ArmCalibrationError, match="friction_nm.shoulder"):
+        load_calibration(path)
+    assert calibration(friction_nm={"shoulder": 0.0}).friction_nm == {"shoulder": 0.0}
+
+
+def test_load_for_spec_checks_the_arm_and_its_model(
+    tmp_path: Path,
+    left_spec: ArmCalibrationSpec,
+    right_spec: ArmCalibrationSpec,
+    mocker: MockerFixture,
+) -> None:
+    stored = save_calibration(
+        tmp_path / "left", ArmCalibration.for_spec(left_spec, created=CREATED)
+    )
+    assert load_for_spec(left_spec, stored.parent).arm_id == "dual_openyam/left"
+    with pytest.raises(ArmCalibrationError, match="not 'dual_openyam/right'"):
+        load_for_spec(right_spec, stored)
+    other_model = calibration(arm_id=left_spec.arm_id)
+    save_calibration(tmp_path / "other", other_model)
+    with pytest.raises(ArmCalibrationError, match="different robot model"):
+        load_for_spec(left_spec, tmp_path / "other")
+    # Without a path, the arm's own file.
+    where = mocker.patch.object(schema, "calibration_path", return_value=stored)
+    assert load_for_spec(left_spec).arm_id == "dual_openyam/left"
+    where.assert_called_once_with("dual_openyam/left")
 
 
 def test_bake_into_urdf_changes_exactly_the_listed_links() -> None:
-    baked = bake_into_urdf(calibration(), TOY_URDF)
+    baked = bake_into_urdf(calibration(robot_model=TOY_MODEL), TOY_URDF)
     before = {link.get("name"): link for link in ET.fromstring(TOY_URDF).iter("link")}
     after = {link.get("name"): link for link in ET.fromstring(baked).iter("link")}
     assert set(before) == set(after)
@@ -239,7 +284,7 @@ def test_bake_into_urdf_changes_exactly_the_listed_links() -> None:
 
 
 def test_bake_matches_the_inertial_overrides_on_pinocchio() -> None:
-    cal = calibration()
+    cal = calibration(robot_model=TOY_MODEL)
     model = pin.buildModelFromXML(TOY_URDF)
     apply_inertial_overrides(model, to_inertial_overrides(cal))
     baked = pin.buildModelFromXML(bake_into_urdf(cal, TOY_URDF))
@@ -252,18 +297,37 @@ def test_bake_matches_the_inertial_overrides_on_pinocchio() -> None:
 
 def test_bake_refuses_impossible_or_unknown_links() -> None:
     light = calibration(
+        robot_model=TOY_MODEL,
         gravity=GravityCalibration(
             links={"arm": LinkGravity(mass_kg=0.4, com_m=(0.0, 0.0, 0.0), merged_links=["tool"])}
-        )
+        ),
     )
     with pytest.raises(ArmCalibrationError, match="lighter than its merged links"):
         bake_into_urdf(light, TOY_URDF)
     unknown = calibration(
-        gravity=GravityCalibration(links={"wing": LinkGravity(mass_kg=1.0, com_m=(0, 0, 0))})
+        robot_model=TOY_MODEL,
+        gravity=GravityCalibration(links={"wing": LinkGravity(mass_kg=1.0, com_m=(0, 0, 0))}),
     )
     with pytest.raises(ArmCalibrationError, match="no link 'wing'"):
         bake_into_urdf(unknown, TOY_URDF)
-    assert bake_into_urdf(calibration(gravity=None), TOY_URDF) == TOY_URDF
+    assert bake_into_urdf(calibration(robot_model=TOY_MODEL, gravity=None), TOY_URDF) == TOY_URDF
+
+
+def test_bake_refuses_a_urdf_the_calibration_was_not_made_against(mocker: MockerFixture) -> None:
+    # calibration() is stamped with another model's fingerprint ("aaa...").
+    with pytest.raises(ArmCalibrationError, match="aaaaaaaaaaaa.*the URDF to bake has fingerprint"):
+        bake_into_urdf(calibration(), TOY_URDF)
+    edited = TOY_URDF.replace('<mass value="0.3"/>', '<mass value="0.4"/>')
+    with pytest.raises(ArmCalibrationError, match="skip_model_check"):
+        bake_into_urdf(calibration(robot_model=TOY_MODEL), edited)
+    with pytest.raises(ValueError, match="needs a reason"):
+        bake_into_urdf(calibration(), TOY_URDF, skip_model_check=" ")
+    warning = mocker.spy(schema.logger, "warning")
+    reason = "the URDF only gained a camera link"
+    assert bake_into_urdf(calibration(), TOY_URDF, skip_model_check=reason) == bake_into_urdf(
+        calibration(robot_model=TOY_MODEL), TOY_URDF
+    )
+    assert reason in warning.call_args.args[0]
 
 
 # The bench reference fit, converted per arm
@@ -301,9 +365,11 @@ def test_reference_gravity_converts_into_each_arms_calibration(
     tmp_path: Path,
 ) -> None:
     spec = next(s for s in dual_openyam_specs if s.arm_id == f"dual_openyam/{side}")
-    converted = calibration_from_legacy_gravity(REFERENCE, spec)
+    # The legacy file names no model; the caller vouches it was this one.
+    converted = calibration_from_legacy_gravity(REFERENCE, spec, model_sha256=spec.model_sha256())
     assert converted.arm_id == f"dual_openyam/{side}"
     assert converted.robot_model == RobotModelRef(name="dual_openyam", sha256=spec.model_sha256())
+    assert converted.notes == LEGACY_NOTES == "legacy fit; model hash supplied by caller"
     assert converted.created == datetime(2026, 10, 16, 2, 46, 34, tzinfo=timezone.utc)
     assert converted.gravity is not None
     links = converted.gravity.links
@@ -327,3 +393,24 @@ def test_reference_gravity_converts_into_each_arms_calibration(
     for name, mass in masses.items():
         frame = model.frames[model.getFrameId(name, pin.FrameType.BODY)]
         assert model.inertias[frame.parentJoint].mass == pytest.approx(mass, abs=5e-4)
+    # Stamped with another model's fingerprint, it no longer loads for this arm.
+    stale = calibration_from_legacy_gravity(REFERENCE, spec, model_sha256="c" * 64)
+    with pytest.raises(ArmCalibrationError, match="different robot model"):
+        load_for_spec(spec, save_calibration(tmp_path / "stale", stale))
+    with pytest.raises(ArmCalibrationError, match="not a model fingerprint"):
+        calibration_from_legacy_gravity(REFERENCE, spec, model_sha256="current")
+
+
+def test_both_arms_bake_into_one_rig_urdf(dual_openyam_specs: list[ArmCalibrationSpec]) -> None:
+    xml = dual_openyam_specs[0].model.load().xml
+    both = [
+        calibration_from_legacy_gravity(REFERENCE, spec, model_sha256=spec.model_sha256())
+        for spec in dual_openyam_specs
+    ]
+    model = pin.buildModelFromXML(bake_into_urdf(both, xml))
+    for name, mass in (("left_link3", 1.728), ("right_link3", 1.399)):
+        frame = model.frames[model.getFrameId(name, pin.FrameType.BODY)]
+        assert model.inertias[frame.parentJoint].mass == pytest.approx(mass, abs=5e-4)
+    # One at a time, the second bake would see the first one's URDF.
+    with pytest.raises(ArmCalibrationError, match="dual_openyam/right"):
+        bake_into_urdf(both[1], bake_into_urdf(both[0], xml))

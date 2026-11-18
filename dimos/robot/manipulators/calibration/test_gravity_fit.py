@@ -37,6 +37,7 @@ from dimos.robot.manipulators.calibration.gravity_fit import (
     friction_flags,
     generate_gravity_report,
     load_gravity_recording,
+    median_friction,
     pose_windows,
     report_json_name,
 )
@@ -352,6 +353,24 @@ def test_friction_flags_mark_outliers_and_negative_values(arm: ArmModel) -> None
     # Friction of exactly kp*d/2 means the joint never moved for the dither pair.
     stuck = friction_flags([*measurements, m("f", 80.0 * math.radians(1.0) / 2.0, kp=80.0)])
     assert "did not move" in stuck[5]
+
+
+def test_median_friction_uses_only_unflagged_pairs_and_is_never_negative(arm: ArmModel) -> None:
+    q = home_pose(arm).as_targets()
+    saturated = 80.0 * math.radians(1.0) / 2.0
+
+    def m(joint: str, friction: float) -> Measurement:
+        return Measurement("p", joint, 80.0, 5.0, 1.0, q, 0.0, friction)
+
+    # Three of five left_joint3 pairs never moved: their "friction" is kp*d/2.
+    measurements = [
+        m("left_joint3", 0.40),
+        m("left_joint3", 0.42),
+        *(m("left_joint3", saturated) for _ in range(3)),
+        m("left_joint2", -0.2),
+        m("left_joint2", -0.1),
+    ]
+    assert median_friction(measurements) == {"left_joint3": pytest.approx(0.41)}
 
 
 # Recording pipeline: markers + steps -> measurements -> report

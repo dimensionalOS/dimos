@@ -32,8 +32,9 @@ positive and each COM within ``COM_BOX_M`` of the URDF COM, or the fit is
 reported as failed and no calibration file is written. A passing fit writes
 ``gravity_report/gravity_<arm>_<date>.json``, an ``ArmCalibration`` (see
 ``schema``) holding the fitted links, the fit statistics and the median
-friction per joint; ``--save`` also stores it as the arm's calibration file,
-keeping the gains and checks already there.
+friction per joint over the dither pairs that measured it; ``--save`` also
+stores it as the arm's calibration file, keeping the gains and checks already
+there.
 """
 
 from __future__ import annotations
@@ -582,11 +583,18 @@ def fit_stats(result: FitResult, recording_dir: Path | None = None) -> dict[str,
 
 
 def median_friction(measurements: Sequence[Measurement]) -> dict[str, float]:
-    """Median Coulomb friction per joint over the dither pairs."""
+    """Median Coulomb friction per joint over the dither pairs ``friction_flags`` leaves alone.
+
+    A flagged pair (the joint never moved, overshot, or stands out) measures
+    no friction, so it is left out; a joint whose pairs are all flagged gets
+    no value. The median is clamped at zero.
+    """
+    flags = friction_flags(list(measurements))
     by_joint: dict[str, list[float]] = defaultdict(list)
-    for m in measurements:
-        by_joint[m.joint].append(m.friction_nm)
-    return {joint: float(np.median(values)) for joint, values in by_joint.items()}
+    for index, m in enumerate(measurements):
+        if index not in flags:
+            by_joint[m.joint].append(m.friction_nm)
+    return {joint: max(0.0, float(np.median(values))) for joint, values in by_joint.items()}
 
 
 def calibration_from_fit(
