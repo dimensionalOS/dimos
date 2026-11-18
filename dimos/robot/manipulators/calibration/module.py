@@ -1,0 +1,457 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""The arm calibration procedure as a module, driven over RPC.
+
+A :class:`CalibrationModule` runs :class:`~dimos.robot.manipulators.
+calibration.procedure.Procedure` on one arm of a known Damiao robot
+(``robots.KNOWN_ROBOTS``). A terminal wizard or a Desktop tab drives it:
+``plan`` lists the steps and whether each can run, from what the connection
+says it can read and change (``config_keys``, asked at every ``plan``,
+``run`` and ``go_home``), ``run`` starts them, ``status`` (also streamed on
+``calibration_status``) says when a confirmation waits, and ``confirm``,
+``skip`` and ``abort`` answer it. ``dimos_run_id`` names the ``dimos run`` the
+module belongs to, so a client that started a run can tell it is talking to
+that one before it drives the arm.
+
+The arm is configured through the ``_connection`` module reference: the
+blueprint injects the robot's connection (a ``DamiaoConnection`` deployed
+with ``config_sessions=True``) and every call is an RPC to it over the bus,
+through the arm config contract (``hooks.ArmConfigHooks``). Targets go out
+on ``calibration_joint_command`` at ``ProcedureSettings.stream_hz``, 50 per
+second by default, to the control coordinator's pass-through task
+(``coordinator.CalibrationCoordinator``), which sends each one to the
+connection on its next tick, unchanged; ``hold`` reaches that task through
+the ``_coordinator`` reference. The arm is read back from the connection's
+``joint_state`` stream, of which the module keeps the latest message.
+
+Markers go out on ``gravity_events``, ``step_events`` and ``float_events``,
+the streams the offline reports (``gravity_fit``, ``step_report``,
+``float_report``) read from a recording, and all of them together on
+``calibration_events``. The fit and the gain analysis read the run's own
+``--record sqlite`` recording, ``recordings/<run-id>/memory.db``
+(``recording.SqliteRecording``); the calibration blueprints pin recording on.
+
+Stopping the module parks the arm first (``Procedure.shutdown``): any run is
+aborted and the arm backs out home within ``park_budget_s``, then the session
+ends and the connection may de-energize it. The calls to the connection time
+out by method name (``CALL_TIMEOUTS_S``) after ``CONFIG_CALL_TIMEOUT_S``, so a
+connection that stopped answering cannot stall closing a session for
+minutes; a save (``config_set`` with scope "persist") waits
+``PERSIST_CALL_TIMEOUT_S``. A ``hold`` waits ``HOLD_CALL_TIMEOUT_S``: by then
+the targets have gone stale and the coordinator sends the arm nothing anyway.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+from typing import Any, Protocol
+
+from pydantic import Field, model_validator
+from reactivex.disposable import Disposable
+from typing_extensions import Self
+
+from dimos.control.connection.arm_config import ConfigApplied, ConfigKeys, ConfigPatch
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.String import String
+from dimos.robot.manipulators.calibration.arm_session import MarkerStream
+from dimos.robot.manipulators.calibration.coordinator import CALIBRATION_PASSTHROUGH_TASK
+from dimos.robot.manipulators.calibration.gravity_poses import DEFAULT_POSE_COUNT
+from dimos.robot.manipulators.calibration.hooks import ArmConfigHooks
+from dimos.robot.manipulators.calibration.motion import (
+    DEFAULT_SPEED_DEG_S,
+    MAX_SPEED_DEG_S,
+    MAX_STEP_DEG,
+)
+from dimos.robot.manipulators.calibration.procedure import (
+    DEFAULT_DITHER_DEG,
+    DEFAULT_HOLD_S,
+    DEFAULT_KP_SCALES,
+    DEFAULT_PROMPT_TIMEOUT_S,
+    MAX_PARK_BUDGET_S,
+    MAX_PARK_SPEED_DEG_S,
+    Capabilities,
+    PlannedStep,
+    Procedure,
+    ProcedureSettings,
+    ProcedureStatus,
+)
+from dimos.robot.manipulators.calibration.recording import SqliteRecording, probe_payload
+from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS, arm_spec
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.robot.manipulators.calibration.steps import calibration_steps
+from dimos.spec.utils import Spec
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+NOT_RECORDING = "not in a dimos run, so nothing is recorded to read back"
+# A session's calls answer at once; a stuck one ends the session.
+CONFIG_CALL_TIMEOUT_S = 2.0
+# Writing and applying a calibration file.
+PERSIST_CALL_TIMEOUT_S = 10.0
+# A hold that takes longer has been overtaken by the targets going stale.
+HOLD_CALL_TIMEOUT_S = 0.5
+# Each call's timeout by method name. Without them a stuck call would block
+# the session's tick, or its close, for the module default of two minutes.
+CALL_TIMEOUTS_S: dict[str, float] = {
+    "config_set": CONFIG_CALL_TIMEOUT_S,
+    "config_get": CONFIG_CALL_TIMEOUT_S,
+    "config_reset": CONFIG_CALL_TIMEOUT_S,
+    "status": CONFIG_CALL_TIMEOUT_S,
+}
+COORDINATOR_CALL_TIMEOUTS_S: dict[str, float] = {"task_invoke": HOLD_CALL_TIMEOUT_S}
+
+
+class ArmConfigConnectionSpec(Spec, ArmConfigHooks, Protocol):
+    """The connection a calibration module drives: one deployed with ``config_sessions=True``."""
+
+
+class PassthroughCoordinatorSpec(Spec, Protocol):
+    """The coordinator that forwards the module's targets: its calibration pass-through task."""
+
+    def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any] | None = None) -> Any:
+        """Run one command of a coordinator task; ``None`` when there is no such task."""
+        ...
+
+
+class CalibrationModuleConfig(ModuleConfig):
+    """Which arm to calibrate and how.
+
+    Attributes:
+        robot: A ``robots.KNOWN_ROBOTS`` key, e.g. "dual-openyam".
+        arm: The arm ("left"), its bus ("left_arm") or its arm id; needed when
+            the robot has several.
+        floor_z_m: The table's height in the arm's workspace frame, m, for an
+            arm with no workspace guard of its own; with ``min_x_m``.
+        min_x_m: The fingertip stays in front of this x, m; with ``floor_z_m``.
+        poses: Gravity identification poses.
+        dither_deg: Dither of each measured joint at every pose.
+        hold_s: Rest at each pose.
+        speed_deg_s: Peak joint speed of every ramp.
+        float_pose_deg: One pose every joint floats at, one angle per arm joint
+            in degrees; when unset, each joint floats at the gravity poses
+            where it carries the most gravity torque.
+        sweep_pose_deg: Where the gain sweep steps the joints, one angle per
+            arm joint in degrees; when unset, the gravity pose farthest from
+            every joint limit.
+        confirm_each: Ask before every pose.
+        kp_scales: Multiples of each joint's robot kp the gain sweep tries.
+        park_budget_s: How long parking the arm on stop or a prompt timeout
+            may take.
+        park_speed_deg_s: Peak joint speed of a park.
+        prompt_timeout_s: A prompt unanswered this long aborts and parks.
+        auto_run: Start every step as soon as the module starts.
+    """
+
+    robot: str
+    arm: str | None = None
+    floor_z_m: float | None = None
+    min_x_m: float | None = None
+    poses: int = Field(default=DEFAULT_POSE_COUNT, ge=1)
+    dither_deg: float = Field(default=DEFAULT_DITHER_DEG, gt=0.0, le=MAX_STEP_DEG)
+    hold_s: float = Field(default=DEFAULT_HOLD_S, gt=0.0)
+    speed_deg_s: float = Field(default=DEFAULT_SPEED_DEG_S, gt=0.0, le=MAX_SPEED_DEG_S)
+    float_pose_deg: list[float] | None = None
+    sweep_pose_deg: list[float] | None = None
+    confirm_each: bool = True
+    kp_scales: list[float] = Field(default_factory=lambda: list(DEFAULT_KP_SCALES), min_length=1)
+    park_budget_s: float = Field(default=MAX_PARK_BUDGET_S, gt=0.0, le=MAX_PARK_BUDGET_S)
+    park_speed_deg_s: float = Field(default=MAX_PARK_SPEED_DEG_S, gt=0.0, le=MAX_PARK_SPEED_DEG_S)
+    prompt_timeout_s: float = Field(default=DEFAULT_PROMPT_TIMEOUT_S, gt=0.0)
+    auto_run: bool = False
+
+    @model_validator(mode="after")
+    def _known_arm(self) -> Self:
+        robot = KNOWN_ROBOTS.get(self.robot)
+        if robot is None:
+            raise ValueError(f"unknown robot {self.robot!r}; known: {', '.join(KNOWN_ROBOTS)}")
+        if self.arm is None and len(robot.buses) > 1:
+            arms = [bus.name.removesuffix("_arm") for bus in robot.buses]
+            raise ValueError(f"{self.robot} has several arms; set arm to one of {arms}")
+        if (self.floor_z_m is None) != (self.min_x_m is None):
+            raise ValueError("give both floor_z_m and min_x_m, or neither")
+        return self
+
+    def arm_spec(self) -> ArmCalibrationSpec:
+        """The arm's spec, on a bench guard when ``floor_z_m`` and ``min_x_m`` are given."""
+        spec = arm_spec(self.robot, self.arm)
+        if self.floor_z_m is not None and self.min_x_m is not None:
+            spec = spec.on_bench(self.floor_z_m, self.min_x_m)
+        return spec
+
+    def settings(self) -> ProcedureSettings:
+        return ProcedureSettings(
+            poses=self.poses,
+            dither_deg=self.dither_deg,
+            hold_s=self.hold_s,
+            speed_deg_s=self.speed_deg_s,
+            confirm_each=self.confirm_each,
+            float_pose_deg=None if self.float_pose_deg is None else tuple(self.float_pose_deg),
+            sweep_pose_deg=None if self.sweep_pose_deg is None else tuple(self.sweep_pose_deg),
+            kp_scales=tuple(self.kp_scales),
+            park_budget_s=self.park_budget_s,
+            park_speed_deg_s=self.park_speed_deg_s,
+            prompt_timeout_s=self.prompt_timeout_s,
+        )
+
+
+class _ModuleProcedure(Procedure):
+    """The module's procedure: a save waits ``PERSIST_CALL_TIMEOUT_S`` for the connection.
+
+    A save is a ``config_set``, whose timeout is ``CONFIG_CALL_TIMEOUT_S``;
+    for the save alone it is raised in the same per-method table, then put
+    back.
+
+    Args:
+        timeouts: The connection client's timeouts by method name, ``None``
+            for a connection without an RPC client.
+    """
+
+    def __init__(self, *args: Any, timeouts: dict[str, float] | None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._timeouts = timeouts
+
+    def persist(
+        self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+    ) -> ConfigApplied:
+        timeouts = self._timeouts
+        if timeouts is None:
+            return super().persist(patch, force=force, apply_now=apply_now)
+        timeouts["config_set"] = PERSIST_CALL_TIMEOUT_S
+        try:
+            return super().persist(patch, force=force, apply_now=apply_now)
+        finally:
+            timeouts["config_set"] = CALL_TIMEOUTS_S["config_set"]
+
+
+class _LatestJointState:
+    """The latest ``joint_state`` message: the procedure's ``StateSource``."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._msg: JointState | None = None
+
+    def put(self, msg: JointState) -> None:
+        with self._lock:
+            self._msg = msg
+
+    def latest(self) -> JointState | None:
+        with self._lock:
+            return self._msg
+
+
+class _CoordinatorDriver:
+    """Targets out on ``calibration_joint_command``; ``hold`` through the coordinator's task."""
+
+    def __init__(self, module: CalibrationModule) -> None:
+        self._module = module
+
+    def send(self, targets: JointState) -> None:
+        self._module.calibration_joint_command.publish(targets)
+
+    def hold(self) -> None:
+        self._module._coordinator.task_invoke(CALIBRATION_PASSTHROUGH_TASK, "hold")
+
+
+class _StreamSink:
+    """Publishes the procedure's markers and status on the module's streams."""
+
+    def __init__(self, module: CalibrationModule) -> None:
+        self._module = module
+
+    def marker(self, stream: MarkerStream, payload: dict[str, Any]) -> None:
+        text = json.dumps(payload)
+        outputs = {
+            "gravity_events": self._module.gravity_events,
+            "step_events": self._module.step_events,
+            "float_events": self._module.float_events,
+        }
+        outputs[stream].publish(String(text))
+        event = {"stream": stream, "marker": payload}
+        self._module.calibration_events.publish(String(json.dumps(event)))
+
+    def status(self, status: ProcedureStatus) -> None:
+        self._module.calibration_status.publish(String(json.dumps(status)))
+
+    def probe(self, token: str) -> None:
+        self._module.calibration_events.publish(String(json.dumps(probe_payload(token))))
+
+
+class CalibrationModule(Module):
+    """Calibrates one arm of a Damiao robot, step by step, as its RPCs direct.
+
+    Every RPC takes and returns plain JSON values; see ``procedure`` for the
+    status and plan shapes.
+    """
+
+    config: CalibrationModuleConfig
+    _connection: ArmConfigConnectionSpec
+    _coordinator: PassthroughCoordinatorSpec
+    joint_state: In[JointState]
+    calibration_joint_command: Out[JointState]
+    gravity_events: Out[String]
+    step_events: Out[String]
+    float_events: Out[String]
+    calibration_events: Out[String]
+    calibration_status: Out[String]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._lock = threading.Lock()
+        self._procedure: Procedure | None = None
+        self._recording: SqliteRecording | None = None
+        self._joint_states = _LatestJointState()
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        spec = self.config.arm_spec()
+        timeouts = _set_call_timeouts(self._connection, CALL_TIMEOUTS_S)
+        _set_call_timeouts(getattr(self, "_coordinator", None), COORDINATOR_CALL_TIMEOUTS_S)
+        self.register_disposable(Disposable(self.joint_state.subscribe(self._joint_states.put)))
+        self._recording = SqliteRecording.of_this_run()
+        procedure = _ModuleProcedure(
+            spec,
+            self._connection,
+            calibration_steps(),
+            driver=_CoordinatorDriver(self),
+            state=self._joint_states,
+            settings=self.config.settings(),
+            # The connection may still be starting: its keys are asked at plan and run.
+            caps=Capabilities(recording_unavailable=self._recording_unavailable()),
+            recording=self._recording,
+            events=_StreamSink(self),
+            timeouts=timeouts,
+        )
+        with self._lock:
+            self._procedure = procedure
+        if self.config.auto_run:
+            procedure.start()
+
+    @rpc
+    def stop(self) -> None:
+        """Park the arm (abort any run, back out home on the park budget), then stop."""
+        with self._lock:
+            procedure, self._procedure = self._procedure, None
+        if procedure is not None:
+            outcome = procedure.shutdown()
+            logger.info(f"{procedure.spec.arm_id}: calibration module stopping: {outcome}")
+        super().stop()
+
+    def _recording_unavailable(self) -> str | None:
+        recording = self._recording
+        return NOT_RECORDING if recording is None else recording.unavailable()
+
+    def _capabilities(self) -> Capabilities:
+        """What the connection serves (``config_keys``) and whether the run records, asked now.
+
+        A connection that does not answer leaves the keys unknown; the
+        procedure asks again when it plans or runs.
+        """
+        try:
+            keys: ConfigKeys | None = self._connection.config_keys()
+        except Exception as error:
+            logger.warning(f"the connection did not answer config_keys: {error}")
+            keys = None
+        return Capabilities(keys=keys, recording_unavailable=self._recording_unavailable())
+
+    def _require(self) -> Procedure:
+        with self._lock:
+            procedure = self._procedure
+        if procedure is None:
+            raise RuntimeError("the calibration module has not started")
+        return procedure
+
+    def _refresh(self, procedure: Procedure) -> None:
+        """Ask the connection and recheck the recording, which start after this module does.
+
+        Kept while a run is on.
+        """
+        procedure.set_capabilities(self._capabilities())
+
+    @rpc
+    def plan(self) -> list[PlannedStep]:
+        """Every step, its instructions, and whether it can run on this arm and why not."""
+        procedure = self._require()
+        self._refresh(procedure)
+        return procedure.plan()
+
+    @rpc
+    def run(self, steps: list[str] | None = None) -> ProcedureStatus:
+        """Start the steps (every step, or those named) in order; refused while a run is on."""
+        procedure = self._require()
+        self._refresh(procedure)
+        return procedure.start(steps)
+
+    @rpc
+    def go_home(self) -> ProcedureStatus:
+        """Ramp to home after a confirmation; only while idle, done, failed or aborted."""
+        procedure = self._require()
+        self._refresh(procedure)
+        return procedure.go_home()
+
+    @rpc
+    def confirm(self, prompt_id: int) -> bool:
+        """Go on at confirmation ``prompt_id`` (``status()["prompt_id"]``); False unless it waits.
+
+        Raises ``TypeError`` without a prompt id.
+        """
+        return self._require().confirm(prompt_id)
+
+    @rpc
+    def skip(self, prompt_id: int) -> bool:
+        """Skip what confirmation ``prompt_id`` asks for; False unless it waits."""
+        return self._require().skip(prompt_id)
+
+    @rpc
+    def abort(self) -> bool:
+        """Stop now and hold the arm where it is, without moving it home; False when idle."""
+        return self._require().abort()
+
+    @rpc
+    def status(self) -> ProcedureStatus:
+        """Where the procedure is, what it asks, and every step's status."""
+        return self._require().status()
+
+    @rpc
+    def results(self) -> dict[str, Any]:
+        """The data of every step done in the current or last run, by step id."""
+        return self._require().results()
+
+    @rpc
+    def dimos_run_id(self) -> str | None:
+        """The ``dimos run`` this module runs in (its ``DIMOS_RUN_ID``), ``None`` outside one."""
+        return os.environ.get(DIMOS_RUN_ID_ENV)
+
+
+def _set_call_timeouts(reference: Any, calls: dict[str, float]) -> dict[str, float] | None:
+    """Give ``calls`` their timeouts on a module reference's RPC client; returns its table.
+
+    The client resolves a call's timeout from its ``rpc_timeouts`` by method
+    name, falling back to the module default (two minutes); a fake without a
+    client is left alone (``None``).
+    """
+    client = getattr(reference, "rpc", None)
+    timeouts = getattr(client, "rpc_timeouts", None)
+    if not isinstance(timeouts, dict):
+        return None
+    timeouts.update(calls)
+    return timeouts
