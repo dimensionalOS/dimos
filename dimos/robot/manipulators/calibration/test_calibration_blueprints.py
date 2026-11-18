@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Every Damiao arm has a calibration blueprint: its connection open for tuning, no coordinator."""
+"""Every Damiao arm has a calibration blueprint: its connection open for config sessions, no coordinator."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def test_every_known_robot_has_one():
 
 
 @pytest.mark.parametrize("name", sorted(CALIBRATE))
-def test_the_blueprint_opens_the_connection_for_tuning_and_records(name):
+def test_the_blueprint_opens_the_connection_for_config_sessions_and_records(name):
     connection, robot, arm = CALIBRATE[name]
     assert name in all_blueprints
 

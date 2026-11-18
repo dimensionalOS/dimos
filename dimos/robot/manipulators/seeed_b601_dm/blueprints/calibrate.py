@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Seeed B601-DM calibration: the connection open for tuning and the calibration module.
+"""Seeed B601-DM calibration: the connection open for config sessions and the calibration module.
 
     dimos run b601-dm-calibrate --b601dmconnection.can-port can0
 

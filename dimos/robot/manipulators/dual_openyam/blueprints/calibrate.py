@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual OpenYAM calibration: the connection open for tuning and the calibration module.
+"""Dual OpenYAM calibration: the connection open for config sessions and the calibration module.
 
     dimos run dual-openyam-calibrate --dualopenyamconnection.left-can-port can0 --dualopenyamconnection.right-can-port can1
 

@@ -20,7 +20,7 @@ on one arm. ``plan`` lists them with whether each can run on this arm;
 is. A step that needs the operator stops at a confirmation
 (:meth:`StepContext.confirm`, state ``waiting_confirm``) until ``confirm``
 (go on), ``skip`` (skip what was asked: one pose, or the rest of the step) or
-``abort`` (stop everything). An arm in a tuning session keeps being streamed
+``abort`` (stop everything). An arm in a config session keeps being streamed
 its target while it waits.
 
 A step that fails stops the procedure (``failed``), with the arm held where it
@@ -36,10 +36,12 @@ last park did. Everything the calls return is plain JSON: strings, numbers,
 booleans, lists and dicts.
 
 Nothing here knows the transport: the arm is a :class:`~dimos.robot.
-manipulators.calibration.arm_session.TuningConnection` (an RPC proxy in a
-``dimos run``, a fake in tests), markers and status go to an
-:class:`EventSink`, and analyses read a :class:`~dimos.robot.manipulators.
-calibration.recording.RecordingSource`.
+manipulators.calibration.hooks.ArmConfigHooks` connection (an RPC proxy in a
+``dimos run``, a fake in tests), its readings come from a :class:`~dimos.
+robot.manipulators.calibration.arm_session.StateSource` (the connection's
+``joint_state`` stream), markers and status go to an :class:`EventSink`, and
+analyses read a :class:`~dimos.robot.manipulators.calibration.recording.
+RecordingSource`.
 """
 
 from __future__ import annotations
@@ -54,6 +56,12 @@ import time
 from typing import Any, Literal, Protocol, TypedDict
 import uuid
 
+from dimos.control.connection.arm_config import (
+    DEFAULT_CONFIG_LEASE_S,
+    MAX_CONFIG_LEASE_S,
+    ArmConfigState,
+    ConfigKeys,
+)
 from dimos.robot.manipulators.calibration.arm_session import (
     AbortRequestedError,
     ArmSession,
@@ -62,9 +70,9 @@ from dimos.robot.manipulators.calibration.arm_session import (
     ParkRefusedError,
     RealClock,
     SessionHost,
+    StateSource,
     StepFailedError,
     TrackingLog,
-    TuningConnection,
     plain_error,
 )
 from dimos.robot.manipulators.calibration.gravity_poses import (
@@ -72,7 +80,7 @@ from dimos.robot.manipulators.calibration.gravity_poses import (
     ArmModel,
     PoseSet,
 )
-from dimos.robot.manipulators.calibration.hooks import AppliedInertials
+from dimos.robot.manipulators.calibration.hooks import ArmConfigHooks
 from dimos.robot.manipulators.calibration.motion import (
     DEFAULT_SPEED_DEG_S,
     check_step,
@@ -102,8 +110,6 @@ DEFAULT_FLOAT_SETTLE_S = 1.0
 DEFAULT_FLOAT_WINDOW_S = 10.0
 DEFAULT_TRACKING_POSES = 5
 MIN_STREAM_HZ = 50.0
-DEFAULT_LEASE_S = 2.0
-MAX_LEASE_S = 30.0
 # Parking: the arm goes home on its own, so slowly-ish and within a budget that
 # fits a module's stop.
 MAX_PARK_BUDGET_S = 8.0
@@ -151,8 +157,8 @@ class ProcedureSettings:
         float_window_s: How long a floating joint is watched for drift.
         tracking_poses: At most this many held-out gravity poses for the
             tracking check.
-        stream_hz: Targets sent per second during a tuning session.
-        lease_s: The tuning session's lease.
+        stream_hz: Targets sent per second during a config session.
+        lease_s: The config session's lease, at most ``MAX_CONFIG_LEASE_S``.
         park_budget_s: How long parking may take, at most ``MAX_PARK_BUDGET_S``.
         park_speed_deg_s: Peak joint speed of a park, at most ``MAX_PARK_SPEED_DEG_S``.
         prompt_timeout_s: A prompt unanswered this long aborts the run and parks.
@@ -175,7 +181,7 @@ class ProcedureSettings:
     float_window_s: float = DEFAULT_FLOAT_WINDOW_S
     tracking_poses: int = DEFAULT_TRACKING_POSES
     stream_hz: float = MIN_STREAM_HZ
-    lease_s: float = DEFAULT_LEASE_S
+    lease_s: float = DEFAULT_CONFIG_LEASE_S
     park_budget_s: float = MAX_PARK_BUDGET_S
     park_speed_deg_s: float = MAX_PARK_SPEED_DEG_S
     prompt_timeout_s: float = DEFAULT_PROMPT_TIMEOUT_S
@@ -199,8 +205,10 @@ class ProcedureSettings:
             raise ValueError(f"float kd must not be negative, got {self.float_kd}")
         if not self.stream_hz >= MIN_STREAM_HZ:
             raise ValueError(f"stream_hz must be at least {MIN_STREAM_HZ:g}, got {self.stream_hz}")
-        if not 0.0 < self.lease_s <= MAX_LEASE_S:
-            raise ValueError(f"lease_s must be in (0, {MAX_LEASE_S:g}] s, got {self.lease_s}")
+        if not 0.0 < self.lease_s <= MAX_CONFIG_LEASE_S:
+            raise ValueError(
+                f"lease_s must be in (0, {MAX_CONFIG_LEASE_S:g}] s, got {self.lease_s}"
+            )
         if not 0.0 < self.park_budget_s <= MAX_PARK_BUDGET_S:
             raise ValueError(
                 f"park_budget_s must be in (0, {MAX_PARK_BUDGET_S:g}] s, got {self.park_budget_s}"
@@ -242,8 +250,8 @@ class RunState:
         generated_poses: The same poses generated for a later step when the
             sweep did not run.
         gravity_span: When the gravity sweep's markers start and end.
-        gravity_applied: What the arm ran during the sweep, as the connection
-            reported it (``tuning_applied_calibration``); ``None`` for its URDF.
+        gravity_applied: How the arm was driven during the sweep, as the
+            connection reported it (``config_get``): its file and link masses.
         step_span: When the gain sweep started and ended.
         baseline: Tracking with the values the arm had before this run, by pose.
     """
@@ -252,7 +260,7 @@ class RunState:
     pose_set: PoseSet | None = None
     generated_poses: PoseSet | None = None
     gravity_span: tuple[float, float] | None = None
-    gravity_applied: AppliedInertials | None = None
+    gravity_applied: ArmConfigState | None = None
     step_span: tuple[float, float] | None = None
     baseline: TrackingLog | None = None
 
@@ -402,8 +410,17 @@ class StepContext:
         return self._procedure.caps
 
     @property
-    def connection(self) -> TuningConnection:
+    def connection(self) -> ArmConfigHooks:
         return self._procedure.connection
+
+    @property
+    def state(self) -> StateSource | None:
+        """The arm's joint readings."""
+        return self._procedure.state
+
+    def keys(self) -> ConfigKeys:
+        """What the connection can read and change; see ``Procedure.keys``."""
+        return self._procedure.keys()
 
     @property
     def clock(self) -> Clock:
@@ -457,7 +474,7 @@ class StepContext:
 
     @contextmanager
     def session(self) -> Iterator[ArmSession]:
-        """A tuning session on the arm for the ``with`` block; ended however the block ends."""
+        """A config session on the arm for the ``with`` block; ended however the block ends."""
         with self._procedure.open_session() as session:
             yield session
 
@@ -469,6 +486,7 @@ class Procedure:
         spec: The arm.
         connection: Its connection.
         steps: The steps, in order (``steps.calibration_steps()``).
+        state: The arm's joint readings, the connection's ``joint_state``.
         settings: How it moves and waits.
         caps: What the arm and the run offer.
         recording: Where recorded markers and joint states are read back.
@@ -480,9 +498,10 @@ class Procedure:
     def __init__(
         self,
         spec: ArmCalibrationSpec,
-        connection: TuningConnection,
+        connection: ArmConfigHooks,
         steps: Sequence[Step],
         *,
+        state: StateSource | None = None,
         settings: ProcedureSettings | None = None,
         caps: Capabilities | None = None,
         recording: RecordingSource | None = None,
@@ -495,6 +514,7 @@ class Procedure:
             raise ValueError(f"step ids must be distinct and non-empty, got {ids}")
         self.spec = spec
         self.connection = connection
+        self.state = state
         self.settings = settings or ProcedureSettings()
         self.caps = caps or Capabilities()
         self.recording = recording
@@ -510,6 +530,8 @@ class Procedure:
         self._decided = threading.Event()
         self._decision: Literal["confirm", "skip"] | None = None
         self._session: ArmSession | None = None
+        # What the connection can read and change, once asked.
+        self._keys: ConfigKeys | None = None
         # Taken from before a session begins until after it ends.
         self._slot_taken = False
         self._state: ProcedureStateName = "idle"
@@ -548,6 +570,24 @@ class Procedure:
                 return False
             self.caps = caps
             return True
+
+    def keys(self) -> ConfigKeys:
+        """What the connection can read and change (``config_keys``), asked once and kept.
+
+        Raises ``StepFailedError`` when the connection does not answer.
+        """
+        with self._lock:
+            keys = self._keys
+        if keys is None:
+            try:
+                keys = self.connection.config_keys()
+            except Exception as error:
+                raise StepFailedError(
+                    f"the connection did not say what it serves: {plain_error(error)}"
+                )
+            with self._lock:
+                self._keys = keys
+        return keys
 
     def plan(self) -> list[PlannedStep]:
         """Every step, its instructions, and whether it can run on this arm."""
@@ -665,7 +705,7 @@ class Procedure:
             return True
 
     def abort(self) -> bool:
-        """Stop the run now: no new targets, the tuning session ends, the arm holds where it is.
+        """Stop the run now: no new targets, the config session ends, the arm holds where it is.
 
         The arm is not moved home; a park under way stops too. False when nothing runs.
         """
@@ -678,10 +718,11 @@ class Procedure:
                 self._park_cancel.set()
             self._message = "aborting"
         try:
-            # Ends the session at once, even while the run thread waits on a call.
-            self.connection.tuning_end()
+            # Ends the session at once, even while the run thread waits on a call;
+            # config_reset needs no session id, so this thread may end it.
+            self.connection.config_reset()
         except Exception as error:
-            logger.warning(f"tuning_end on abort failed: {plain_error(error)}")
+            logger.warning(f"config_reset on abort failed: {plain_error(error)}")
         return True
 
     def status(self) -> ProcedureStatus:
@@ -908,7 +949,7 @@ class Procedure:
 
     @contextmanager
     def open_session(self, host: SessionHost | None = None) -> Iterator[ArmSession]:
-        """A tuning session on the arm; one at a time, ``host`` this procedure unless given.
+        """A config session on the arm; one at a time, ``host`` this procedure unless given.
 
         Once aborted (a park asked for included), only a park opens one.
         """
@@ -916,11 +957,13 @@ class Procedure:
             if host is None:
                 self.check_abort()
             if self._slot_taken:
-                raise RuntimeError("a step already holds a tuning session")
+                raise RuntimeError("a step already holds a config session")
             self._slot_taken = True
         try:
             session = ArmSession(
                 self.connection,
+                self.state,
+                self.keys().source,
                 self.spec,
                 self.arm,
                 host or self,

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual MakerMods Metal calibration: the connection open for tuning and the calibration module.
+"""Dual MakerMods Metal calibration: the connection open for config sessions and the calibration module.
 
     dimos run dual-metal-calibrate --dualmetalconnection.left-can-port can0 --dualmetalconnection.right-can-port can1 --calibrationmodule.arm left
 

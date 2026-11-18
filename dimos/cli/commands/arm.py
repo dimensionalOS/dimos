@@ -85,7 +85,7 @@ EXIT_CODES = {"done": 0, "aborted": 130}
 ABORT_KEYS = ("q", "p")
 # The module's RPCs answer at once (status, confirm, ...): a slower answer means trouble.
 CALL_TIMEOUT_S = 2.0
-# abort ends the arm's tuning session over RPC; run and go_home join a finished thread first.
+# abort ends the arm's config session over RPC; run and go_home join a finished thread first.
 CALL_TIMEOUTS = {"abort": 5.0, "run": 10.0, "go_home": 10.0}
 WIZARD_CALLS = (
     "plan",

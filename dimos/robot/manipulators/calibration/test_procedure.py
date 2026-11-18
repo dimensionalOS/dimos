@@ -29,6 +29,8 @@ import numpy as np
 import pinocchio as pin
 import pytest
 
+from dimos.control.connection.arm_config import ConfigPatch, JointGains
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration import (
     arm_session as arm_session_module,
     procedure as procedure_module,
@@ -148,6 +150,7 @@ def make_rig(
             spec,
             arm_fake,
             calibration_steps(),
+            state=arm_fake,
             settings=ProcedureSettings(**{**FAST, **settings}, calibration_root=root),
             caps=caps,
             recording=recording,
@@ -234,8 +237,8 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert results["step_sweep"]["pose"] == "gravity pose pose_03"
     # Saved after the fit, then by the float check, the gains and the tracking check.
     assert len(list((path.parent / "history").glob("*.json"))) == 3
-    applied = rig.fake.status().calibration[left_spec.arm_id]
-    assert applied is not None and applied["path"] == str(path)
+    applied = rig.fake.config_get()[left_spec.arm_id].file
+    assert applied is not None and applied.path == str(path)
 
     fit = results["gravity_fit"]
     assert fit["saved"] == str(path) and fit["applied"] and not fit["forced"]
@@ -259,13 +262,13 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     )
 
     # Every session streamed a target at least 50 times a second and ended on
-    # tuning_end: no lease lapsed and no deadman fired while one lasted.
+    # config_reset: no lease lapsed and no deadman fired while one lasted.
     # One session each for the check, the poses, the floats, the sweep and the
     # tracking; the fit and the gains are applied at home without one.
     assert len(sent) == 5 and None not in sent
     for times in sent.values():
         assert np.diff(times).max() <= 1.0 / 50.0 + 1e-6
-    assert rig.fake.ended == ["tuning_end"] * 5
+    assert rig.fake.ended == ["config_reset"] * 5
     assert not rig.fake.session_active()
     for value in (rig.procedure.plan(), rig.procedure.status(), results):
         assert json.loads(json.dumps(value)) == value
@@ -349,12 +352,12 @@ def test_a_lost_session_fails_the_step_without_raising(make_rig: Callable[..., R
     assert rig.statuses()["gravity_poses"] == "failed"
     assert rig.statuses()["gravity_fit"] == "pending"
     assert rig.messages()["gravity_poses"] == (
-        "tuning_command failed: feedback failed: the bus went silent"
+        "config_command failed: feedback failed: the bus went silent"
     )
-    assert status["message"].startswith("Gravity poses failed: tuning_command failed")
+    assert status["message"].startswith("Gravity poses failed: config_command failed")
     assert (
         rig.fake.ended[-1]
-        == "tuning_command raised RuntimeError: feedback failed: the bus went silent"
+        == "config_command raised RuntimeError: feedback failed: the bus went silent"
     )
     assert not rig.fake.session_active()
     assert rig.labels()[-1] == "end"
@@ -472,8 +475,8 @@ def test_declining_the_forced_apply_leaves_the_old_calibration_running(
     fit = rig.procedure.results()["gravity_fit"]
     assert fit["saved"] is not None and not fit["applied"]
     assert "pass force=True" in fit["refused"]
-    applied = rig.fake.status().calibration[left_spec.arm_id]
-    assert applied is not None and applied["path"] == str(old)
+    applied = rig.fake.config_get()[left_spec.arm_id].file
+    assert applied is not None and applied.path == str(old)
 
 
 def test_a_floating_joint_that_drifts_is_held_again_and_fails(
@@ -489,7 +492,7 @@ def test_a_floating_joint_that_drifts_is_held_again_and_fails(
     shoulder = joints["left_joint2"]
     assert not shoulder["passed"]
     assert "drifted" in shoulder["reason"] or shoulder["fingertip_drift_mm"] > 2.0
-    assert rig.fake.tuning_get_gains()["left_joint2"]["floating"] is False
+    assert "left_joint2" not in rig.fake.config_get()[rig.fake.spec.arm_id].floating
     assert rig.procedure.results()["float_check"]["saved"] is None
 
 
@@ -513,43 +516,61 @@ def test_a_falling_joint_is_held_again_on_speed_or_on_drift(
     shoulder = rig.procedure.results()["float_check"]["joints"]["left_joint2"]
     first = shoulder["poses"][0]
     assert not first["passed"] and re.search(caught, first["reason"]), first["reason"]
-    assert not rig.fake.tuning_get_gains()["left_joint2"]["floating"]
+    assert "left_joint2" not in rig.fake.config_get()[rig.fake.spec.arm_id].floating
 
 
-def test_the_fake_keeps_the_tuning_session_rules(
+def test_the_fake_keeps_the_config_session_rules(
     left_spec: ArmCalibrationSpec, arm: ArmModel, tmp_path: Path
 ) -> None:
     fake = FakeTuningArm(left_spec, arm=arm, calibration_root=tmp_path)
+    arm_id = left_spec.arm_id
     home = dict(zip(left_spec.joint_names, (float(v) for v in arm.home), strict=True))
-    with pytest.raises(RuntimeError, match="no tuning session"):
-        fake.tuning_command(home)
-    fake.tuning_begin(1.0)
-    with pytest.raises(RuntimeError, match="already active"):
-        fake.tuning_begin(1.0)
+
+    def begin() -> str:
+        session = fake.config_set(ConfigPatch(arm_id=arm_id), lease_s=1.0).session_id
+        assert session is not None
+        return session
+
+    with pytest.raises(RuntimeError, match="needs the session_id"):
+        fake.config_command(home, "")
+    with pytest.raises(RuntimeError, match="no config session"):
+        fake.config_command(home, "fake-0")
+    begin()
+    with pytest.raises(RuntimeError, match="a config session is live"):
+        begin()
     assert not fake.session_active()
 
-    fake.tuning_begin(1.0)
+    session = begin()
     assert not fake.position_command({"left_joint1": 0.1})
     assert fake.dropped_position_commands == 1
     fake.advance(1.5)
-    assert not fake.session_active() and fake.ended[-1].startswith("no tuning call within")
+    assert not fake.session_active() and fake.ended[-1].startswith("no config call within")
+    with pytest.raises(RuntimeError, match=r"the config session ended \(no config call"):
+        fake.config_command(home, session)
 
-    fake.tuning_begin(1.0)
-    fake.tuning_command(home)
+    session = begin()
+    fake.config_command(home, session)
     fake.advance(0.2)
     assert not fake.session_active() and fake.ended[-1] == "the command deadman fired"
 
-    fake.tuning_begin(1.0)
-    fake.tuning_set_float("left_joint2", True, 0.5)
-    fake.tuning_set_gains("left_joint3", 40.0, 2.0)
+    session = begin()
+    floated = fake.config_set(
+        ConfigPatch(
+            arm_id=arm_id,
+            gains={
+                "left_joint2": JointGains(kp=0.0, kd=0.5),
+                "left_joint3": JointGains(kp=40.0, kd=9.0),
+            },
+        ),
+        session_id=session,
+    )
+    assert floated.clamped == ["gains.left_joint3.kd"]
+    assert fake.config_get()[arm_id].floating == {"left_joint2": 0.5}
     with pytest.raises(ValueError):
-        fake.tuning_command({"left_joint1": 10.0})
+        fake.config_command({"left_joint1": 10.0}, session)
     assert not fake.session_active()
-    gains = fake.tuning_get_gains()
-    assert not gains["left_joint2"]["floating"] and (
-        gains["left_joint3"]["kp"],
-        gains["left_joint3"]["kd"],
-    ) == (80.0, 1.0)
+    state = fake.config_get()[arm_id]
+    assert state.floating == {} and state.gains["left_joint3"] == JointGains(kp=80.0, kd=1.0)
     assert fake.position_command({"left_joint1": 0.0})
     assert math.isclose(fake.target[0], 0.0)
 
@@ -679,7 +700,7 @@ def test_shutdown_parks_an_arm_left_at_a_pose_and_ends_the_session(
     status = rig.procedure.status()
     assert status["park"] == outcome and status["state"] == "aborted"
     # One more session, the park's, ended by the park itself.
-    assert rig.fake.ended[sessions:] == ["tuning_end"] and not rig.fake.session_active()
+    assert rig.fake.ended[sessions:] == ["config_reset"] and not rig.fake.session_active()
     with pytest.raises(RuntimeError, match="shutting down"):
         rig.procedure.start(["check"])
 
@@ -752,16 +773,15 @@ def test_an_unanswered_prompt_aborts_and_parks_the_arm(make_rig: Callable[..., R
 
 def test_a_stale_reading_fails_the_tick_and_holds(make_rig: Callable[..., Rig]) -> None:
     rig = make_rig(confirm_each=False)
-    read = rig.fake.tuning_read
+    read = rig.fake.latest
 
-    def stale() -> dict[str, Any]:
-        samples = read()
+    def stale() -> JointState:
+        msg = read()
         if rig.fake.commands >= 100:
-            for sample in samples.values():
-                sample["ts"] -= 0.3
-        return dict(samples)
+            msg.ts -= 0.3
+        return msg
 
-    rig.fake.tuning_read = stale  # type: ignore[method-assign]
+    rig.fake.latest = stale  # type: ignore[method-assign]
 
     status = rig.run(["check", "gravity_poses"])
 
@@ -821,8 +841,8 @@ def test_the_fit_refuses_when_the_file_on_disk_is_not_what_the_arm_runs(
     path = calibration_path(left_spec.arm_id, tmp_path / "arms")
     save_calibration(path, _heavy_forearm(arm, left_spec, 3.0))
     rig = make_rig(confirm_each=False, fake={"applied": path})
-    c0 = rig.fake.tuning_applied_calibration()[left_spec.arm_id]
-    assert c0 is not None and c0["sha256"]
+    c0 = rig.fake.config_get()[left_spec.arm_id].file
+    assert c0 is not None and c0.sha256
 
     # Run 1 fits and saves C1, but the forced apply is declined: the arm keeps C0.
     status = rig.run(
@@ -832,7 +852,7 @@ def test_the_fit_refuses_when_the_file_on_disk_is_not_what_the_arm_runs(
     assert status["state"] == "done", status["message"]
     assert rig.procedure.results()["gravity_fit"]["applied"] is False
     c1 = load_for_spec(left_spec, path)
-    assert rig.fake.tuning_applied_calibration()[left_spec.arm_id] == c0
+    assert rig.fake.config_get()[left_spec.arm_id].file == c0
 
     # Run 2 records with C0 again; fitting against C1 on disk would be wrong.
     status = rig.run(["gravity_poses", "gravity_fit"])
@@ -840,7 +860,7 @@ def test_the_fit_refuses_when_the_file_on_disk_is_not_what_the_arm_runs(
     assert status["state"] == "done", status["message"]
     assert rig.statuses()["gravity_fit"] == "skipped"
     message = rig.messages()["gravity_fit"]
-    assert message.startswith(f"not fitted: the arm runs the calibration created {c0['created']}")
+    assert message.startswith(f"not fitted: the arm runs the calibration created {c0.created}")
     assert f"the file on disk is the one created {c1.created.isoformat()}" in message
     assert message.endswith("restart the robot or apply the file first")
     assert "gravity_fit" not in rig.procedure.results()

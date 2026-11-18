@@ -14,16 +14,16 @@
 
 """The steps of an arm calibration, in the order :func:`calibration_steps` gives them.
 
-1. ``check``: the connection answers, has no fault and drives this arm, its
-   readings are finite and inside the joint limits, the arm has an explicit
+1. ``check``: the connection answers, serves config sessions and drives this
+   arm, its readings are finite and inside the joint limits, the arm has an explicit
    workspace guard, and the recorder writes (a probe marker lands in the
    recording within 2 s); then, after a confirmation, the arm goes home.
 2. ``gravity_poses``: the bench-proven sweep. At each identification pose
    (``gravity_poses.generate_poses``) the pose is marked, the arm ramps there
    (through home when the straight ramp would dip), holds, and dithers each
    measured joint +d then -d, holding after each; an end marker closes it.
-   What the arm runs meanwhile is taken from the connection
-   (``tuning_applied_calibration``), not from the file on disk.
+   What the arm runs meanwhile is taken from the connection (``config_get``),
+   not from the file on disk.
 3. ``gravity_fit``: fits the sweep's recording (``gravity_fit``) against the
    masses the arm ran, shows the held-out error of the URDF, of the running
    file and of the fit, and saves and applies the fit when it is no worse
@@ -68,6 +68,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pinocchio as pin
 
+from dimos.control.connection.arm_config import ArmConfigState
 from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.robot.manipulators.calibration.arm_session import (
     HOME_TOLERANCE_DEG,
@@ -75,6 +76,7 @@ from dimos.robot.manipulators.calibration.arm_session import (
     JointDriftedError,
     StepFailedError,
     TrackingLog,
+    joint_reading,
     plain_error,
 )
 from dimos.robot.manipulators.calibration.float_analysis import (
@@ -97,7 +99,6 @@ from dimos.robot.manipulators.calibration.gravity_fit import (
     write_measurements_csv,
 )
 from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, Pose, generate_poses
-from dimos.robot.manipulators.calibration.hooks import AppliedInertials
 from dimos.robot.manipulators.calibration.motion import (
     MIN_JERK_PEAK_RATIO,
     joint_limits,
@@ -183,12 +184,9 @@ def _recording_unavailable(caps: Capabilities) -> bool | str:
 
 
 def _measured(ctx: StepContext) -> Vector:
-    """The arm's reading outside a tuning session."""
-    try:
-        samples = ctx.connection.tuning_read()
-    except Exception as error:
-        raise StepFailedError(f"the connection could not read the arm: {plain_error(error)}")
-    return np.asarray([samples[name]["position"] for name in ctx.spec.joint_names], dtype=float)
+    """The arm's latest reading, outside a config session too."""
+    position, _, _ = joint_reading(ctx.state, ctx.keys().source, ctx.spec.joint_names)
+    return position
 
 
 def _ensure_home(ctx: StepContext, why: str) -> None:
@@ -209,8 +207,10 @@ def _apply(ctx: StepContext, path: Path) -> dict[str, Any]:
     ctx.check_abort()
     _ensure_home(ctx, "apply the calibration")
     forced = False
+    # Until the steps save through config_set: only the test fake still applies a file.
+    apply_file: Any = ctx.connection.tuning_apply_calibration  # type: ignore[attr-defined]
     try:
-        applied = ctx.connection.tuning_apply_calibration(str(path))
+        applied = apply_file(str(path))
     except ValueError as refused:
         # The connection refuses a gravity change above its limit at this pose.
         try:
@@ -220,7 +220,7 @@ def _apply(ctx: StepContext, path: Path) -> dict[str, Any]:
             )
         except SkipRequestedError:
             return {"applied": False, "forced": False, "refused": plain_error(refused)}
-        applied = ctx.connection.tuning_apply_calibration(str(path), True)
+        applied = apply_file(str(path), True)
         forced = True
     except Exception as error:
         raise StepFailedError(f"the connection did not apply {path}: {plain_error(error)}")
@@ -249,23 +249,20 @@ def _record_check(ctx: StepContext, name: str, value: dict[str, Any]) -> str | N
     return str(path)
 
 
-def _applied_now(ctx: StepContext) -> AppliedInertials | None:
-    """What the arm runs now, as its connection says: file, sha256 and link masses."""
+def _applied_now(ctx: StepContext) -> ArmConfigState | None:
+    """How the arm is driven now, as its connection says: its file and link masses."""
     try:
-        return ctx.connection.tuning_applied_calibration().get(ctx.spec.arm_id)
+        return ctx.connection.config_get().get(ctx.spec.arm_id)
     except Exception as error:
         raise StepFailedError(f"the connection did not say what the arm runs: {plain_error(error)}")
 
 
-def _links_of(applied: AppliedInertials | None) -> dict[str, LinkInertial]:
+def _links_of(applied: ArmConfigState | None) -> dict[str, LinkInertial]:
     if applied is None:
         return {}
     return {
-        name: LinkInertial(
-            mass_kg=float(link["mass_kg"]),
-            com_m=(float(link["com_m"][0]), float(link["com_m"][1]), float(link["com_m"][2])),
-        )
-        for name, link in applied["links"].items()
+        name: LinkInertial(mass_kg=float(link.mass_kg), com_m=link.com_m)
+        for name, link in applied.links.items()
     }
 
 
@@ -283,7 +280,7 @@ def _same_links(a: Mapping[str, LinkInertial], b: Mapping[str, LinkInertial]) ->
     )
 
 
-def _disk_differs(ctx: StepContext, applied: AppliedInertials | None) -> str | None:
+def _disk_differs(ctx: StepContext, applied: ArmConfigState | None) -> str | None:
     """Why the arm's calibration file on disk holds other masses than the arm runs, or ``None``.
 
     No file on disk is no conflict: a fit then creates it.
@@ -291,10 +288,11 @@ def _disk_differs(ctx: StepContext, applied: AppliedInertials | None) -> str | N
     path, stored = _stored(ctx)
     if stored is None or _same_links(to_inertial_overrides(stored), _links_of(applied)):
         return None
+    file = None if applied is None else applied.file
     runs = (
         "its URDF masses (no calibration file)"
-        if applied is None
-        else f"the calibration created {applied['created']} ({applied['path']})"
+        if file is None
+        else f"the calibration created {file.created} ({file.path})"
     )
     return (
         f"the arm runs {runs}, the file on disk is the one created "
@@ -304,7 +302,7 @@ def _disk_differs(ctx: StepContext, applied: AppliedInertials | None) -> str | N
 
 
 def _compensation_offset(
-    ctx: StepContext, applied: AppliedInertials | None
+    ctx: StepContext, applied: ArmConfigState | None
 ) -> Callable[[Vector], NDArray[np.float64]]:
     """Gravity torque the connection compensated during the sweep minus the URDF's, by joint.
 
@@ -495,8 +493,8 @@ class CheckStep(Step):
     id = "check"
     title = "Check the arm"
     instructions = (
-        "Checks that the connection is running without a fault and drives this arm, that every "
-        "joint reads a finite position inside its limits, and that the arm has a workspace guard "
+        "Checks that the connection is running, serves calibration and drives this arm, that "
+        "every joint reads a finite position inside its limits, and that the arm has a workspace guard "
         "(the table height and the line its fingertip stays in front of), and that the recorder "
         "is writing. It reports the calibration file the arm runs now. Then the arm moves home: "
         "clear the workspace first."
@@ -506,19 +504,27 @@ class CheckStep(Step):
         spec = ctx.spec
         try:
             status = ctx.connection.status()
-            arm_ids = ctx.connection.tuning_arm_ids()
-            joints = ctx.connection.tuning_joint_names()
+            keys = ctx.connection.config_keys()
+            states = ctx.connection.config_get()
         except Exception as error:
             raise StepFailedError(
                 f"the connection does not serve calibration: {plain_error(error)}"
             )
         if not status.connected:
             raise StepFailedError("the connection is not connected to the robot")
-        if spec.arm_id not in arm_ids:
-            raise StepFailedError(f"the connection drives the arms {arm_ids}, not {spec.arm_id}")
+        if not keys.sessions:
+            raise StepFailedError(
+                "the connection does not serve config sessions: start the robot's calibration "
+                "blueprint (<robot>-calibrate), which deploys it with config_sessions=True"
+            )
+        joints = keys.arms.get(spec.arm_id)
+        if joints is None:
+            raise StepFailedError(
+                f"the connection drives the arms {list(keys.arms)}, not {spec.arm_id}"
+            )
         missing = [name for name in spec.joint_names if name not in joints]
         if missing:
-            raise StepFailedError(f"the connection cannot tune {missing}")
+            raise StepFailedError(f"the connection does not drive {missing}")
         q = _measured(ctx)
         if not np.isfinite(q).all():
             raise StepFailedError(f"joints read non-finite positions: {_deg(spec.joint_names, q)}")
@@ -535,10 +541,11 @@ class CheckStep(Step):
             spec.require_workspace_guard()
         except NoWorkspaceGuardError as error:
             raise StepFailedError(f"{error} (the calibration module's floor_z_m and min_x_m)")
-        applied = status.calibration.get(spec.arm_id)
+        state = states.get(spec.arm_id)
+        applied = None if state is None else state.file
         data: dict[str, Any] = {
             "arm_id": spec.arm_id,
-            "calibration": None if applied is None else dict(applied),
+            "calibration": None if applied is None else applied.model_dump(),
             "measured_deg": _deg(spec.joint_names, q),
             "last_error": status.last_error,
             "recording": self._check_recorder(ctx),
@@ -547,7 +554,7 @@ class CheckStep(Step):
         running = (
             "runs no calibration file (URDF masses, robot gains)"
             if applied is None
-            else f"runs {applied['path']} from {applied['created']}"
+            else f"runs {applied.path} from {applied.created}"
         )
         try:
             ctx.confirm(
@@ -656,6 +663,7 @@ class GravityPosesStep(Step):
             ctx.progress(len(poses), len(poses), "back home")
             session.retrace_home(visited)
         ctx.run.baseline = log
+        file = None if applied is None else applied.file
         data = {
             "poses": len(visited),
             "planned": len(poses),
@@ -665,8 +673,8 @@ class GravityPosesStep(Step):
             "condition_number": round(pose_set.condition_number, 2),
             "notes": list(pose_set.notes),
             "span": None if ctx.run.gravity_span is None else list(ctx.run.gravity_span),
-            "calibration": None if applied is None else applied["path"],
-            "calibration_sha256": None if applied is None else applied["sha256"],
+            "calibration": None if file is None else file.path,
+            "calibration_sha256": None if file is None else file.sha256,
         }
         return StepResult(f"visited {len(visited)} of {len(poses)} poses", data)
 
@@ -1122,9 +1130,10 @@ class SummaryStep(Step):
         path, stored = _stored(ctx)
         history = sorted(str(p) for p in (path.parent / HISTORY_DIR_NAME).glob("*.json"))
         try:
-            applied = ctx.connection.status().calibration.get(ctx.spec.arm_id)
+            state = ctx.connection.config_get().get(ctx.spec.arm_id)
         except Exception as error:
             raise StepFailedError(f"the connection did not answer: {plain_error(error)}")
+        applied = None if state is None else state.file
         steps = {state["id"]: state["status"] for state in ctx.step_states()}
         next_steps = [
             "Blueprints apply each arm's calibration file when the connection starts; restart "
@@ -1145,7 +1154,7 @@ class SummaryStep(Step):
             else {j: [g.kp, g.kd] for j, g in sorted(stored.gains.items())},
             "checks": [] if stored is None or not stored.checks else sorted(stored.checks),
             "history": history,
-            "applied": None if applied is None else dict(applied),
+            "applied": None if applied is None else applied.model_dump(),
             "steps": steps,
             "next_steps": next_steps,
         }

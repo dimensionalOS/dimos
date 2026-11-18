@@ -851,4 +851,4 @@ def test_every_forwarded_flag_parses_on_the_real_blueprint_to_the_value_given() 
         "follower_l",
         "follower_r",
     )
-    assert connection["tuning"] is True
+    assert connection["config_sessions"] is True

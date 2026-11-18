@@ -25,9 +25,11 @@ that one before it drives the arm.
 
 The arm is reached through the ``_connection`` module reference: the
 blueprint injects the robot's connection (a ``DamiaoConnection`` deployed
-with ``tuning=True``) and every call is an RPC to it over the bus. Targets are
-streamed as ``tuning_command`` calls at ``ProcedureSettings.stream_hz``, 50
-per second by default, each followed by a ``tuning_read``.
+with ``config_sessions=True``) and every call is an RPC to it over the bus,
+through the arm config contract (``hooks.ArmConfigHooks``). Targets are
+streamed as ``config_command`` calls at ``ProcedureSettings.stream_hz``, 50
+per second by default. The arm is read back from the connection's
+``joint_state`` stream, of which the module keeps the latest message.
 
 Markers go out on ``gravity_events``, ``step_events`` and ``float_events``,
 the streams the offline reports (``gravity_fit``, ``step_report``,
@@ -38,9 +40,9 @@ the streams the offline reports (``gravity_fit``, ``step_report``,
 
 Stopping the module parks the arm first (``Procedure.shutdown``): any run is
 aborted and the arm backs out home within ``park_budget_s``, then the session
-ends and the connection may de-energize it. ``tuning_command`` and
-``tuning_read`` time out after ``TUNING_CALL_TIMEOUT_S``: a call that slow has
-already let the connection's deadman hold the arm.
+ends and the connection may de-energize it. ``config_command`` times out
+after ``STREAMED_CALL_TIMEOUT_S``: a call that slow has already let the
+connection's deadman hold the arm.
 """
 
 from __future__ import annotations
@@ -51,15 +53,18 @@ import threading
 from typing import Any, Protocol
 
 from pydantic import Field, model_validator
+from reactivex.disposable import Disposable
 from typing_extensions import Self
 
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.manipulators.calibration.arm_session import MarkerStream, TuningConnection
+from dimos.robot.manipulators.calibration.arm_session import MarkerStream
 from dimos.robot.manipulators.calibration.gravity_poses import DEFAULT_POSE_COUNT
+from dimos.robot.manipulators.calibration.hooks import ArmConfigHooks
 from dimos.robot.manipulators.calibration.motion import (
     DEFAULT_SPEED_DEG_S,
     MAX_SPEED_DEG_S,
@@ -89,12 +94,14 @@ logger = setup_logger()
 
 NOT_RECORDING = "not in a dimos run, so nothing is recorded to read back"
 # The streamed calls fail fast: by then the connection's 0.1 s deadman holds the arm.
-TUNING_CALL_TIMEOUT_S = 0.5
-STREAMED_CALLS = ("tuning_command", "tuning_read")
+STREAMED_CALL_TIMEOUT_S = 0.5
+# Without the short timeout a stuck call would block the session's tick for
+# the module default of two minutes.
+STREAMED_CALLS = ("config_command",)
 
 
-class ArmTuningConnectionSpec(Spec, TuningConnection, Protocol):
-    """The connection a calibration module drives: one deployed with ``tuning=True``."""
+class ArmConfigConnectionSpec(Spec, ArmConfigHooks, Protocol):
+    """The connection a calibration module drives: one deployed with ``config_sessions=True``."""
 
 
 class CalibrationModuleConfig(ModuleConfig):
@@ -178,6 +185,22 @@ class CalibrationModuleConfig(ModuleConfig):
         )
 
 
+class _LatestJointState:
+    """The latest ``joint_state`` message: the procedure's ``StateSource``."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._msg: JointState | None = None
+
+    def put(self, msg: JointState) -> None:
+        with self._lock:
+            self._msg = msg
+
+    def latest(self) -> JointState | None:
+        with self._lock:
+            return self._msg
+
+
 class _StreamSink:
     """Publishes the procedure's markers and status on the module's streams."""
 
@@ -210,7 +233,8 @@ class CalibrationModule(Module):
     """
 
     config: CalibrationModuleConfig
-    _connection: ArmTuningConnectionSpec
+    _connection: ArmConfigConnectionSpec
+    joint_state: In[JointState]
     gravity_events: Out[String]
     step_events: Out[String]
     float_events: Out[String]
@@ -222,17 +246,20 @@ class CalibrationModule(Module):
         self._lock = threading.Lock()
         self._procedure: Procedure | None = None
         self._recording: SqliteRecording | None = None
+        self._joint_states = _LatestJointState()
 
     @rpc
     def start(self) -> None:
         super().start()
         spec = self.config.arm_spec()
         self._shorten_streamed_calls()
+        self.register_disposable(Disposable(self.joint_state.subscribe(self._joint_states.put)))
         self._recording = SqliteRecording.of_this_run()
         procedure = Procedure(
             spec,
             self._connection,
             calibration_steps(),
+            state=self._joint_states,
             settings=self.config.settings(),
             caps=self._capabilities(),
             recording=self._recording,
@@ -254,7 +281,7 @@ class CalibrationModule(Module):
         super().stop()
 
     def _shorten_streamed_calls(self) -> None:
-        """Give the calls streamed every tick a ``TUNING_CALL_TIMEOUT_S`` timeout.
+        """Give the calls streamed every tick a ``STREAMED_CALL_TIMEOUT_S`` timeout.
 
         The connection reference's RPC client resolves a call's timeout from
         its ``rpc_timeouts`` by method name, falling back to the module default
@@ -264,7 +291,7 @@ class CalibrationModule(Module):
         timeouts = getattr(client, "rpc_timeouts", None)
         if isinstance(timeouts, dict):
             for name in STREAMED_CALLS:
-                timeouts[name] = TUNING_CALL_TIMEOUT_S
+                timeouts[name] = STREAMED_CALL_TIMEOUT_S
 
     def _capabilities(self) -> Capabilities:
         robot = KNOWN_ROBOTS[self.config.robot]

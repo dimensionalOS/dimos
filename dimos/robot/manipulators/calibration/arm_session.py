@@ -12,26 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One calibration tool's hold on an arm: a tuning session streamed at a fixed rate.
+"""One calibration tool's hold on an arm: a config session streamed at a fixed rate.
 
-:class:`ArmSession` opens a tuning session on an :class:`~dimos.robot.
-manipulators.calibration.hooks.ArmTuningHooks` connection and, while it
-lasts, sends the arm's targets every tick (at least 50 Hz, well inside the
-connection's 0.1 s command deadman, and every call renews the session's
-lease). Each tick reads the arm back and stops it when the reading is older
-than ``MAX_READING_AGE_S``, when a target would leave the workspace or pass a
-joint limit, when a measured point sags out of the workspace, or when a joint
-lags its target by more than ``MAX_POSE_ERROR_DEG`` while holding, or while
-ramping by ``RAMP_LAG_LIMIT_DEG`` more than it is expected to
-(``motion.ramp_lag_limits_deg``). A floating joint is held again when it
-moves faster than ``FLOAT_SPEED_LIMIT_DEG_S`` or drifts more than
-``FLOAT_DRIFT_LIMIT_DEG``. Ramps are the minimum-jerk ramps of
+:class:`ArmSession` opens a config session on an :class:`~dimos.robot.
+manipulators.calibration.hooks.ArmConfigHooks` connection and, while it
+lasts, sends the arm's targets every tick with ``config_command`` (at least
+50 Hz, well inside the connection's 0.1 s command deadman, and every call
+renews the session's lease). Each tick reads the arm back from the latest
+``joint_state`` message (a :class:`StateSource`) and stops it when the
+reading is older than ``MAX_READING_AGE_S``, when a target would leave the
+workspace or pass a joint limit, when a measured point sags out of the
+workspace, or when a joint lags its target by more than
+``MAX_POSE_ERROR_DEG`` while holding, or while ramping by
+``RAMP_LAG_LIMIT_DEG`` more than it is expected to
+(``motion.ramp_lag_limits_deg``). A floating joint (a gain of kp 0) is held
+again when it moves faster than ``FLOAT_SPEED_LIMIT_DEG_S`` or drifts more
+than ``FLOAT_DRIFT_LIMIT_DEG``. Ramps are the minimum-jerk ramps of
 :mod:`~dimos.robot.manipulators.calibration.motion`. Leaving the session, for
-any reason, ends the tuning session: the connection then holds floating joints
-where they are, drops feed-forward torques and restores the gains, and its
-deadman holds the arm where it is. The only motion home without a
-confirmation is :meth:`ArmSession.park`, on a time budget, which the procedure
-runs when its module stops or a prompt goes unanswered.
+any reason, ends the config session (``config_reset``): the connection then
+undoes every live change (floating joints held where they are, torque
+offsets dropped, gains restored), and its deadman holds the arm where it is.
+The only motion home without a confirmation is :meth:`ArmSession.park`, on a
+time budget, which the procedure runs when its module stops or a prompt goes
+unanswered.
 
 Joint vectors are in the spec's ``joint_names`` order, radians. Times come
 from a :class:`Clock`, Unix seconds, the same clock the connection stamps its
@@ -53,9 +56,16 @@ from typing import Any, Literal, Protocol
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.control.connection.arm_config import (
+    ArmConfigState,
+    ConfigApplied,
+    ConfigPatch,
+    JointGains,
+)
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration.float_analysis import FloatEvent
 from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
-from dimos.robot.manipulators.calibration.hooks import ArmTuningHooks, JointGainsState
+from dimos.robot.manipulators.calibration.hooks import ArmConfigHooks
 from dimos.robot.manipulators.calibration.motion import (
     MAX_POSE_ERROR_DEG,
     SegmentGuard,
@@ -70,7 +80,6 @@ from dimos.robot.manipulators.calibration.motion import (
 )
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
 from dimos.robot.manipulators.calibration.step_analysis import REST_WINDOW_S, StepEvent
-from dimos.robot.manipulators.damiao.status import DamiaoConnectionStatus
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -100,7 +109,7 @@ class StepFailedError(Exception):
 
 
 class SessionLostError(StepFailedError):
-    """The connection ended the tuning session or stopped taking targets."""
+    """The connection ended the config session or stopped taking targets."""
 
 
 class JointDriftedError(StepFailedError):
@@ -111,12 +120,45 @@ class ParkRefusedError(Exception):
     """The arm cannot be parked safely; it holds where it is."""
 
 
-class TuningConnection(ArmTuningHooks, Protocol):
-    """An arm connection a calibration procedure drives: the tuning hooks and its status."""
+class StateSource(Protocol):
+    """Where the arm's joint readings come from: the connection's ``joint_state`` stream."""
 
-    def status(self) -> DamiaoConnectionStatus:
-        """The connection's state and the calibration file each arm runs."""
+    def latest(self) -> JointState | None:
+        """The latest message, ``None`` before the first."""
         ...
+
+
+def joint_reading(
+    state: StateSource | None, source: str, names: Sequence[str]
+) -> tuple[Vector, Vector, float]:
+    """The latest positions and velocities of ``names``, and when they were read.
+
+    The message names joints ``"{source}/{joint}"``, as a connection publishes
+    them. Raises ``StepFailedError`` before the first message, or when it
+    leaves out one of ``names``.
+    """
+    try:
+        msg = None if state is None else state.latest()
+    except Exception as error:
+        raise StepFailedError(f"the arm's joint states could not be read: {plain_error(error)}")
+    if msg is None:
+        raise StepFailedError(
+            "no joint state has arrived from the connection: it is not reading the arm"
+        )
+    prefix = f"{source}/"
+    index = {
+        name.removeprefix(prefix): i for i, name in enumerate(msg.name) if name.startswith(prefix)
+    }
+    missing = [name for name in names if name not in index]
+    if missing:
+        raise StepFailedError(f"the connection does not read {missing}")
+    rows = [index[name] for name in names]
+    position = np.asarray([msg.position[i] for i in rows], dtype=float)
+    if len(msg.velocity) == len(msg.name):
+        velocity = np.asarray([msg.velocity[i] for i in rows], dtype=float)
+    else:
+        velocity = np.zeros(len(rows))
+    return position, velocity, float(msg.ts)
 
 
 class Clock(Protocol):
@@ -211,22 +253,26 @@ class TrackingLog:
 
 
 class ArmSession:
-    """A tuning session on one arm, streamed every tick until the ``with`` block ends.
+    """A config session on one arm, streamed every tick until the ``with`` block ends.
 
     Args:
         connection: The arm's connection.
+        state: Its joint readings.
+        source: Its robot name, the prefix of the readings' joint names.
         spec: The arm.
         arm: Its model and workspace (``ArmModel(spec)``).
         host: Abort checks and marker publishing.
         clock: Time and waiting.
         speed_rad_s: Peak joint speed of every ramp.
         stream_hz: Ticks per second.
-        lease_s: The tuning session's lease; every tick renews it.
+        lease_s: The config session's lease; every tick renews it.
     """
 
     def __init__(
         self,
-        connection: TuningConnection,
+        connection: ArmConfigHooks,
+        state: StateSource | None,
+        source: str,
         spec: ArmCalibrationSpec,
         arm: ArmModel,
         host: SessionHost,
@@ -237,6 +283,8 @@ class ArmSession:
         lease_s: float,
     ) -> None:
         self._connection = connection
+        self._state = state
+        self._source = source
         self._spec = spec
         self._arm = arm
         self._host = host
@@ -252,7 +300,8 @@ class ArmSession:
         self._reading_ts = 0.0
         # Per joint while ramping; MAX_POSE_ERROR_DEG for every joint otherwise.
         self._lag_limits_deg: Vector | None = None
-        self._gains: dict[str, JointGainsState] = {}
+        self._session_id = ""
+        self._gains: dict[str, JointGains] = {}
         self._floating: dict[str, float] = {}
         self._guard: SegmentGuard | None = None
         self._next_tick = 0.0
@@ -261,14 +310,19 @@ class ArmSession:
     def __enter__(self) -> ArmSession:
         self._host.check_abort()
         try:
-            self._connection.tuning_begin(self._lease_s)
+            started = self._connection.config_set(
+                ConfigPatch(arm_id=self._spec.arm_id), scope="session", lease_s=self._lease_s
+            )
         except Exception as error:
-            raise SessionLostError(f"the connection refused a tuning session: {plain_error(error)}")
+            raise SessionLostError(f"the connection refused a config session: {plain_error(error)}")
+        if not started.session_id:
+            raise SessionLostError("the connection started no config session")
+        self._session_id = started.session_id
         self._open = True
         try:
             self._read()
             self._target = self._measured.copy()
-            self._gains = self._call("tuning_get_gains", self._connection.tuning_get_gains)
+            self._gains = dict(self._arm_state().gains)
             self._guard = SegmentGuard(self._arm, self._target, self._target)
             self._next_tick = self._clock.now()
             self._send()
@@ -290,10 +344,10 @@ class ArmSession:
             return
         self._open = False
         try:
-            self._connection.tuning_end()
+            self._connection.config_reset()
         except Exception as error:
             # The lease and the deadman end it anyway; say so and go on.
-            logger.warning(f"tuning_end failed, the session lapses on its own: {error}")
+            logger.warning(f"config_reset failed, the session lapses on its own: {error}")
 
     @property
     def joint_names(self) -> list[str]:
@@ -312,26 +366,48 @@ class ArmSession:
         """When the connection took the latest reading."""
         return self._reading_ts
 
+    @property
+    def session_id(self) -> str:
+        """The config session, as ``config_set`` started it."""
+        return self._session_id
+
     def gains(self, joint: str) -> tuple[float, float]:
         state = self._gains[joint]
-        return (float(state["kp"]), float(state["kd"]))
+        return (float(state.kp), float(state.kd))
 
-    def _call(self, name: str, call: Callable[..., Any], *args: Any) -> Any:
+    def _call(self, name: str, call: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:
-            return call(*args)
+            return call(*args, **kwargs)
         except Exception as error:
             raise SessionLostError(f"{name} failed: {plain_error(error)}") from error
 
+    def _arm_state(self) -> ArmConfigState:
+        states = self._call("config_get", self._connection.config_get)
+        state: ArmConfigState | None = states.get(self._spec.arm_id)
+        if state is None:
+            raise StepFailedError(f"the connection does not report {self._spec.arm_id}")
+        return state
+
+    def _set_gains(self, gains: dict[str, JointGains], what: str) -> ConfigApplied:
+        """``gains`` for the session; raises ``StepFailedError`` when the connection cannot."""
+        applied: ConfigApplied = self._call(
+            "config_set",
+            self._connection.config_set,
+            ConfigPatch(arm_id=self._spec.arm_id, gains=gains),
+            scope="session",
+            session_id=self._session_id,
+        )
+        if applied.unsupported:
+            reasons = "; ".join(
+                f"{key}: {applied.why.get(key, 'not supported')}" for key in applied.unsupported
+            )
+            raise StepFailedError(f"the connection cannot {what}: {reasons}")
+        return applied
+
     def _read(self) -> None:
-        samples = self._call("tuning_read", self._connection.tuning_read)
-        missing = [name for name in self._names if name not in samples]
-        if missing:
-            raise StepFailedError(f"the connection does not read {missing}")
-        measured = np.asarray([samples[name]["position"] for name in self._names], dtype=float)
-        velocity = np.asarray([samples[name]["velocity"] for name in self._names], dtype=float)
+        measured, velocity, reading_ts = joint_reading(self._state, self._source, self._names)
         if not np.isfinite(measured).all():
             raise StepFailedError(f"the connection reads non-finite positions: {measured.tolist()}")
-        reading_ts = float(samples[self._names[0]]["ts"])
         age = self._clock.now() - reading_ts
         if age > MAX_READING_AGE_S:
             raise StepFailedError(
@@ -347,9 +423,11 @@ class ArmSession:
         for joint in self._floating:
             commanded[self._names.index(joint)] = self._measured[self._names.index(joint)]
         targets = {name: float(value) for name, value in zip(self._names, commanded, strict=True)}
-        result = self._call("tuning_command", self._connection.tuning_command, targets)
-        if not result["ok"]:
-            raise SessionLostError(f"the connection stopped taking targets: {result['error']}")
+        result = self._call(
+            "config_command", self._connection.config_command, targets, self._session_id
+        )
+        if not result.ok:
+            raise SessionLostError(f"the connection stopped taking targets: {result.error}")
 
     def keepalive(self) -> None:
         """One tick without the wait: read, check, and send the current target."""
@@ -445,8 +523,8 @@ class ArmSession:
         follow = []
         for name in self._names:
             state = self._gains.get(name)
-            kp = 0.0 if state is None else float(state["kp"])
-            kd = 0.0 if state is None else float(state["kd"])
+            kp = 0.0 if state is None else float(state.kp)
+            kd = 0.0 if state is None else float(state.kd)
             # A joint without stiffness cannot follow: the hold limit applies once it moves.
             follow.append(kd / kp if kp > 0.0 else 1e6)
         return np.asarray(follow, dtype=np.float64)
@@ -521,15 +599,21 @@ class ArmSession:
                 log.add_rest(np.degrees(self._target - self._measured))
 
     def set_gains(self, joint: str, kp: float, kd: float) -> tuple[float, float]:
-        """Hold ``joint`` with these gains for the session; returns them as applied."""
-        state = self._call("tuning_set_gains", self._connection.tuning_set_gains, joint, kp, kd)
+        """Hold ``joint`` with these gains for the session; returns them as applied (clamped).
+
+        Raises ``StepFailedError`` when the connection cannot change them.
+        """
+        applied = self._set_gains({joint: JointGains(kp=kp, kd=kd)}, f"change {joint}'s gains")
+        state = (applied.applied.gains or {}).get(joint)
+        if state is None:
+            raise StepFailedError(f"the connection did not say which gains {joint} got")
         self._gains[joint] = state
-        return (float(state["kp"]), float(state["kd"]))
+        return (float(state.kp), float(state.kd))
 
     def reset_gains(self) -> None:
-        """Back to the calibration's gains, else the robot's."""
-        self._call("tuning_reset_gains", self._connection.tuning_reset_gains)
-        self._gains = self._call("tuning_get_gains", self._connection.tuning_get_gains)
+        """Undo every live change, keeping the session: the calibration's gains, else the robot's."""
+        self._call("config_reset", self._connection.config_reset, keep_session=True)
+        self._gains = dict(self._arm_state().gains)
 
     def step_joint(self, joint: str, delta_deg: float, hold_s: float) -> StepEvent:
         """Move ``joint``'s target by ``delta_deg`` at once, mark it, and hold ``hold_s``."""
@@ -582,21 +666,27 @@ class ArmSession:
     def floating(self, joint: str, kd: float) -> Iterator[float]:
         """Let ``joint`` float with ``kd`` damping inside the block; yields the damping as applied.
 
-        The joint's target follows its measured position meanwhile, and it is
-        held again where it is when the block ends, however it ends.
+        Floating is a gain of kp 0 (``config_set``); raises ``StepFailedError``
+        before the block when the connection cannot float the joint. The
+        joint's target follows its measured position meanwhile, and it is held
+        again where it is, with the gains it had, when the block ends, however
+        it ends.
         """
-        state = self._call(
-            "tuning_set_float", self._connection.tuning_set_float, joint, True, float(kd)
-        )
+        applied = self._set_gains({joint: JointGains(kp=0.0, kd=float(kd))}, f"float {joint}")
         index = self._names.index(joint)
         self._floating[joint] = float(self._measured[index])
         try:
-            float_kd = state["float_kd"]
-            yield float(kd if float_kd is None else float_kd)
+            floated = (applied.applied.gains or {}).get(joint)
+            yield float(kd if floated is None else floated.kd)
         finally:
             del self._floating[joint]
             try:
-                self._connection.tuning_set_float(joint, False)
+                # Its gains as this session holds it; floating never changed them.
+                self._connection.config_set(
+                    ConfigPatch(arm_id=self._spec.arm_id, gains={joint: self._gains[joint]}),
+                    scope="session",
+                    session_id=self._session_id,
+                )
             except Exception as error:
                 # Ending the session holds a floating joint too; the caller sees
                 # the session loss on its next tick.

@@ -12,20 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test helpers: a simulated arm behind the tuning hooks, its clock and its recording.
+"""Test helpers: a simulated arm behind the arm config contract, its clock and its recording.
 
-:class:`FakeTuningArm` is a ``TuningConnection`` for one arm of a spec. Each
+:class:`FakeTuningArm` is an ``ArmConfigHooks`` connection for one arm of a
+spec, and its ``StateSource``: ``latest`` is its reading now, and with
+``joint_state`` set it publishes that reading there as time advances. Each
 joint follows its PD target with first-order dynamics, ``(b + kd) dq/dt =
 kp (target - q) + g_comp(q) - g_true(q) + ff - friction``: the connection
 compensates gravity with the model it runs (the URDF, or the URDF with the
 applied calibration's masses), while the arm obeys ``truth``. Coulomb
 friction holds a joint that has stopped until the drive exceeds its stiction.
 Gravity is evaluated once every 10 ms, the period it also records joint
-states at, like the connection's 100 Hz ``joint_state``. It keeps the tuning
-session's rules: one session, a lease every call renews, a 0.1 s deadman on
-targets, the session ending on lapse, deadman or any raising call (floating
-joints then held where they are, feed-forward dropped, gains restored), and
-position commands dropped while a session lasts. Its :meth:`FakeTuningArm.stop`
+states at, like the connection's 100 Hz ``joint_state``. It keeps the config
+session's rules: one session, started by ``config_set`` and named by the id
+it returns, which ``config_set`` and ``config_command`` must then carry; a
+lease every call renews, a 0.1 s deadman on targets, the session ending on
+``config_reset``, lapse, deadman or any raising call (floating joints then
+held where they are, torque offsets dropped, gains restored), and position
+commands dropped while a session lasts. Its :meth:`FakeTuningArm.stop`
 waits for a calibration tool to park, as a connection's stop does, then
 "disables" the arm and records where.
 
@@ -57,20 +61,25 @@ import numpy as np
 from numpy.typing import NDArray
 import pinocchio as pin
 
+from dimos.control.connection.arm_config import (
+    DEFAULT_CONFIG_LEASE_S,
+    MAX_CONFIG_LEASE_S,
+    AppliedFile,
+    ArmConfigState,
+    CommandResult,
+    ConfigApplied,
+    ConfigKeys,
+    ConfigPatch,
+    ConfigScope,
+    JointGains,
+    LinkGravity,
+)
+from dimos.control.connection.connection_module import ConnectionStatus
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._inertial import apply_inertial_overrides
 from dimos.robot.manipulators.calibration.arm_session import MarkerStream
 from dimos.robot.manipulators.calibration.gravity_fit import GravityRecording, PoseMarker
 from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
-from dimos.robot.manipulators.calibration.hooks import (
-    AppliedCalibration,
-    AppliedInertials,
-    CalibrationApplied,
-    CommandResult,
-    JointGainsState,
-    JointSample,
-    LinkMass,
-    TuningSession,
-)
 from dimos.robot.manipulators.calibration.procedure import Procedure, ProcedureStatus
 from dimos.robot.manipulators.calibration.recording import RecordingUnavailableError
 from dimos.robot.manipulators.calibration.schema import (
@@ -81,11 +90,11 @@ from dimos.robot.manipulators.calibration.schema import (
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, urdf_limits
 from dimos.robot.manipulators.calibration.step_analysis import StepEvent
 from dimos.robot.manipulators.calibration.step_report import JointTrace, Recording
-from dimos.robot.manipulators.damiao.status import DamiaoConnectionStatus
 
+# The robot name the fake's joint states carry, "arm/left_joint2".
+SOURCE = "arm"
 DEADMAN_S = 0.1
 SAMPLE_PERIOD_S = 0.01
-MAX_LEASE_S = 30.0
 MAX_GRAVITY_STEP_NM = 2.0
 MAX_KP = 500.0
 MAX_KD = 5.0
@@ -97,7 +106,7 @@ STOPPED_RAD_S = 1e-3
 # How long a simulated wait lets other threads answer before time moves on.
 REAL_WAIT_S = 0.002
 START_TIME = 1_800_000_000.0
-# What the fake's stop waits for a tuning session, as a connection's does.
+# What the fake's stop waits for a config session, as a connection's does.
 PARK_WAIT_S = 10.0
 PARK_GRACE_S = 1.0
 
@@ -119,7 +128,7 @@ class MemoryRecording:
     wait for the next one.
     """
 
-    def __init__(self, source: str = "arm", directory: Path | None = None) -> None:
+    def __init__(self, source: str = SOURCE, directory: Path | None = None) -> None:
         self._source = source
         self._directory = directory
         self._lock = threading.Condition()
@@ -213,7 +222,7 @@ class MemoryRecording:
 
 
 class FakeTuningArm:
-    """One simulated arm behind the tuning hooks; see the module doc for what it simulates.
+    """One simulated arm behind the arm config contract; see the module doc for what it simulates.
 
     Args:
         spec: The arm.
@@ -272,8 +281,11 @@ class FakeTuningArm:
         self._overrides: dict[str, tuple[float, float]] = {}
         self._floating: dict[str, float] = {}
         self._feedforward: dict[str, float] = {}
-        self._applied: AppliedCalibration | None = None
-        self._inertials: AppliedInertials | None = None
+        # The calibration file it runs, and the link masses that file gave.
+        self._file: AppliedFile | None = None
+        self._links: dict[str, LinkGravity] = {}
+        # Where it publishes its reading as time advances, e.g. a module's joint_state.
+        self.joint_state: Any = None
         self._realtime = realtime
         self.now = time.time() if realtime else START_TIME
         self._next_sample = self.now
@@ -289,7 +301,7 @@ class FakeTuningArm:
         self.deadman_fired = False
         self.commands = 0
         self.dropped_position_commands = 0
-        # Fault injection: tuning_command raises once this many were taken; joints
+        # Fault injection: config_command raises once this many were taken; joints
         # in ``blocked`` cannot move.
         self.fail_after_commands: int | None = None
         self.blocked: set[str] = set()
@@ -312,6 +324,8 @@ class FakeTuningArm:
                     if self._recording is not None:
                         self._recording.add_sample(self.now, self._names, self.q, self.v)
                     self._next_sample += SAMPLE_PERIOD_S
+            if self.joint_state is not None:
+                self.joint_state.publish(self._reading())
 
     def _timeouts(self) -> None:
         if self._last_command is not None and self.now - self._last_command > DEADMAN_S:
@@ -321,7 +335,7 @@ class FakeTuningArm:
             self.target = self.q.copy()
         session = self._session
         if session is not None and self.now - session.last_call > session.lease_s:
-            self._end(f"no tuning call within its lease of {session.lease_s:g} s")
+            self._end(f"no config call within its lease of {session.lease_s:g} s")
 
     def _gravity_error(self) -> Vector:
         true = np.asarray(pin.computeGeneralizedGravity(self._truth, self._truth_data, self.q))
@@ -366,19 +380,23 @@ class FakeTuningArm:
 
     # The session rules.
 
-    def _end(self, reason: str) -> None:
-        if self._session is None:
-            return
-        self._session = None
-        self._ended_at = time.monotonic()
-        self.ended.append(reason)
+    def _undo(self) -> None:
+        """Hold floating joints where they are, drop torque offsets and gain overrides."""
         for name in self._floating:
             self.target[self._names.index(name)] = self.q[self._names.index(name)]
         self._floating.clear()
         self._feedforward.clear()
         self._overrides.clear()
 
-    def _call(self, name: str, call: Callable[[], Any], *, session: bool) -> Any:
+    def _end(self, reason: str) -> None:
+        if self._session is None:
+            return
+        self._session = None
+        self._ended_at = time.monotonic()
+        self.ended.append(reason)
+        self._undo()
+
+    def _call(self, name: str, call: Callable[[], Any]) -> Any:
         with self._lock:
             if self._realtime:
                 self.advance(max(0.0, time.time() - self.now))
@@ -387,21 +405,50 @@ class FakeTuningArm:
             try:
                 if self._session is not None:
                     self._session.last_call = self.now
-                elif session:
-                    raise RuntimeError("no tuning session is active; call tuning_begin first")
                 return call()
             except Exception as error:
                 self._end(f"{name} raised {type(error).__name__}: {error}")
                 raise
 
-    def _state(self, name: str) -> JointGainsState:
-        kp, kd = self._gains(name)
-        return JointGainsState(
-            kp=kp,
-            kd=kd,
-            floating=name in self._floating,
-            float_kd=self._floating.get(name),
-            feedforward_nm=self._feedforward.get(name, 0.0),
+    def _check(self, session_id: str | None) -> _Session | None:
+        """The live session once ``session_id`` names it; ``None`` without either."""
+        session = self._session
+        if session is not None and session_id == session.session_id:
+            return session
+        if session is not None:
+            if session_id is None:
+                raise RuntimeError(
+                    "a config session is live; pass the session_id the config_set that "
+                    "started it returned"
+                )
+            raise RuntimeError(f"{session_id!r} is not the live config session")
+        if session_id is None:
+            return None
+        raise RuntimeError(
+            f"the config session ended ({self.ended[-1]})" if self.ended else "no config session"
+        )
+
+    def _reading(self) -> JointState:
+        return JointState(
+            ts=self.now,
+            name=[f"{SOURCE}/{name}" for name in self._names],
+            position=[float(v) for v in self.q],
+            velocity=[float(v) for v in self.v],
+            effort=[0.0] * len(self._names),
+        )
+
+    def _arm_state(self) -> ArmConfigState:
+        return ArmConfigState(
+            arm_id=self.spec.arm_id,
+            gains={
+                name: JointGains(kp=self._gains(name)[0], kd=self._gains(name)[1])
+                for name in self._names
+            },
+            floating=dict(self._floating),
+            torque_offset_nm={name: tau for name, tau in self._feedforward.items() if tau},
+            links=dict(self._links),
+            file=self._file,
+            session_id=None if self._session is None else self._session.session_id,
         )
 
     def _joint(self, joint: str) -> int:
@@ -419,7 +466,7 @@ class FakeTuningArm:
             return None if self._session is None else self._session.session_id
 
     def position_command(self, targets: Mapping[str, float]) -> bool:
-        """A normal position command: dropped while a tuning session lasts."""
+        """A normal position command: dropped while a config session lasts."""
         with self._lock:
             if self._session is not None:
                 self.dropped_position_commands += 1
@@ -429,41 +476,218 @@ class FakeTuningArm:
             self._last_command = self.now
             return True
 
-    # TuningConnection.
+    # ArmConfigHooks and StateSource.
 
-    def status(self) -> DamiaoConnectionStatus:
+    def status(self) -> ConnectionStatus:
         with self._lock:
-            return DamiaoConnectionStatus(
+            return ConnectionStatus(
                 session_id="fake",
                 connected=True,
                 last_command_time=self._last_command,
                 deadman_fired=self.deadman_fired,
                 last_rejection=None,
                 last_error=None,
-                calibration={self.spec.arm_id: self._applied},
+                config_session_id=None if self._session is None else self._session.session_id,
             )
 
-    def tuning_begin(self, lease_s: float = 2.0) -> TuningSession:
-        def begin() -> TuningSession:
-            if not 0.0 < lease_s <= MAX_LEASE_S:
-                raise ValueError(f"lease_s must be in (0, {MAX_LEASE_S:g}] s, got {lease_s}")
-            if self._session is not None:
-                raise RuntimeError("a tuning session is already active")
-            self._sessions += 1
-            self._session = _Session(f"fake-{self._sessions}", float(lease_s), self.now)
-            return TuningSession(session_id=self._session.session_id, lease_s=float(lease_s))
+    def latest(self) -> JointState:
+        """The arm's reading now; not a connection call, so it renews nothing."""
+        with self._lock:
+            if self._realtime:
+                self.advance(max(0.0, time.time() - self.now))
+            return self._reading()
 
-        result: TuningSession = self._call("tuning_begin", begin, session=False)
+    def config_keys(self) -> ConfigKeys:
+        def keys() -> ConfigKeys:
+            arm_id = self.spec.arm_id
+            return ConfigKeys(
+                source=SOURCE,
+                sessions=True,
+                arms={arm_id: list(self._names)},
+                readable=["gains", "links", "torque_offset_nm"],
+                session=["gains", *(["float"] if self._gravity_comp else []), "torque_offset_nm"],
+                persist=["gains", "links", "fit", "friction_nm", "checks", "notes"],
+                persist_paths={arm_id: str(calibration_path(arm_id, self._root))},
+                gravity_compensation=self._gravity_comp,
+            )
+
+        result: ConfigKeys = self._call("config_keys", keys)
         return result
 
-    def tuning_end(self) -> None:
-        with self._lock:
-            self._end("tuning_end")
+    def config_get(self) -> dict[str, ArmConfigState]:
+        result: dict[str, ArmConfigState] = self._call(
+            "config_get", lambda: {self.spec.arm_id: self._arm_state()}
+        )
+        return result
+
+    def config_set(
+        self,
+        patch: ConfigPatch,
+        scope: ConfigScope = "session",
+        force: bool = False,
+        apply_now: bool = True,
+        session_id: str | None = None,
+        lease_s: float = DEFAULT_CONFIG_LEASE_S,
+    ) -> ConfigApplied:
+        def apply() -> ConfigApplied:
+            if not 0.0 < lease_s <= MAX_CONFIG_LEASE_S:
+                raise ValueError(f"lease_s must be in (0, {MAX_CONFIG_LEASE_S:g}] s, got {lease_s}")
+            if patch.arm_id != self.spec.arm_id:
+                raise ValueError(f"{patch.arm_id!r} is not this fake's arm")
+            session = self._check(session_id)
+            if session is None and scope == "session":
+                self._sessions += 1
+                session = _Session(f"fake-{self._sessions}", float(lease_s), self.now)
+                self._session = session
+            if scope == "persist" or session is None:
+                raise NotImplementedError("the fake does not save through config_set yet")
+            applied = self._apply_live(patch)
+            return applied.model_copy(
+                update={"session_id": session.session_id, "lease_s": session.lease_s}
+            )
+
+        result: ConfigApplied = self._call("config_set", apply)
+        return result
+
+    def _apply_live(self, patch: ConfigPatch) -> ConfigApplied:
+        """A session's change: gains (kp 0 floats the joint) and torque offsets, clamped."""
+        file_only = patch.model_copy(update={"gains": None, "torque_offset_nm": None})
+        why = dict.fromkeys(file_only.keys(), "saved with scope 'persist' only")
+        gains: dict[str, JointGains] = {}
+        clamped: list[str] = []
+        for joint, asked in (patch.gains or {}).items():
+            index = self._joint(joint)
+            keys = [f"gains.{joint}.kp", f"gains.{joint}.kd"]
+            if asked.kp == 0.0:
+                if not self._gravity_comp:
+                    why.update(dict.fromkeys(keys, "the robot does not compensate gravity"))
+                    continue
+                self._floating[joint] = min(asked.kd, MAX_KD)
+                gains[joint] = JointGains(kp=0.0, kd=self._floating[joint])
+            else:
+                if joint in self._floating:
+                    # Held again where it is, then with these gains.
+                    del self._floating[joint]
+                    self.target[index] = self.q[index]
+                self._overrides[joint] = (min(asked.kp, MAX_KP), min(asked.kd, MAX_KD))
+                gains[joint] = JointGains(
+                    kp=self._overrides[joint][0], kd=self._overrides[joint][1]
+                )
+            clamped += [
+                key
+                for key, want, got in zip(
+                    keys, (asked.kp, asked.kd), (gains[joint].kp, gains[joint].kd), strict=True
+                )
+                if want != got
+            ]
+        offsets: dict[str, float] = {}
+        for joint, tau in (patch.torque_offset_nm or {}).items():
+            self._joint(joint)
+            if tau:
+                self._feedforward[joint] = float(tau)
+            else:
+                self._feedforward.pop(joint, None)
+            offsets[joint] = float(tau)
+        return ConfigApplied(
+            arm_id=patch.arm_id,
+            scope="session",
+            applied=ConfigPatch(
+                arm_id=patch.arm_id, gains=gains or None, torque_offset_nm=offsets or None
+            ),
+            clamped=clamped,
+            unsupported=list(why),
+            why=why,
+        )
+
+    def config_reset(self, keep_session: bool = False) -> None:
+        if not keep_session:
+            with self._lock:
+                self._end("config_reset")
+            return
+        self._call("config_reset", self._undo)
+
+    def config_command(self, targets: dict[str, float], session_id: str) -> CommandResult:
+        def command() -> CommandResult:
+            if not session_id:
+                raise RuntimeError("config_command needs the session_id config_set returned")
+            if self._check(session_id) is None:
+                raise RuntimeError("no config session is live")
+            for joint, value in targets.items():
+                low, high = self._limits[self._names[self._joint(joint)]]
+                if not low <= value <= high:
+                    raise ValueError(f"{joint} target {value} is outside {low}..{high}")
+            if self.fail_after_commands is not None and self.commands >= self.fail_after_commands:
+                raise RuntimeError("feedback failed: the bus went silent")
+            for joint, value in targets.items():
+                if joint not in self._floating:
+                    self.target[self._names.index(joint)] = value
+            self.commands += 1
+            self._last_command = self.now
+            if self.on_command is not None:
+                self.on_command(self)
+            return CommandResult(ok=True)
+
+        result: CommandResult = self._call("config_command", command)
+        return result
+
+    def tuning_apply_calibration(
+        self, path: str | None = None, force: bool = False
+    ) -> dict[str, Any]:
+        """Temporary, until the save steps save through ``config_set``: apply one file."""
+        result: dict[str, Any] = self._call(
+            "tuning_apply_calibration", lambda: self._apply_checked(path, force)
+        )
+        return result
+
+    def _apply_checked(self, path: str | None, force: bool) -> dict[str, Any]:
+        file = None if path is None else Path(path)
+        before = np.asarray(pin.computeGeneralizedGravity(self._comp, self._comp_data, self.q))
+        comp = self._model(file)
+        after = np.asarray(pin.computeGeneralizedGravity(comp, comp.createData(), self.q))
+        step = {name: float(after[i] - before[i]) for i, name in enumerate(self._names)}
+        large = {
+            joint: round(value, 2)
+            for joint, value in step.items()
+            if abs(value) > MAX_GRAVITY_STEP_NM
+        }
+        if large and not force:
+            raise ValueError(
+                f"applying {path} would change the gravity torque at this pose by more than "
+                f"{MAX_GRAVITY_STEP_NM:g} N m: {large} (N m); apply calibrations near home, or "
+                "pass force=True"
+            )
+        self._apply(file)
+        return {"gravity_step_nm": step}
+
+    def _model(self, file: Path | None) -> pin.Model:
+        model = self.arm.model.copy()
+        if file is not None:
+            apply_inertial_overrides(model, to_inertial_overrides(load_for_spec(self.spec, file)))
+        return model
+
+    def _apply(self, file: Path | None) -> None:
+        self._comp = self._model(file)
+        self._comp_data = self._comp.createData()
+        if file is None:
+            self._calibrated = {}
+            self._file = None
+            self._links = {}
+            return
+        calibration = load_for_spec(self.spec, file)
+        self._calibrated = {
+            name: (gains.kp, gains.kd) for name, gains in (calibration.gains or {}).items()
+        }
+        self._file = AppliedFile(
+            path=str(file),
+            created=calibration.created.isoformat(),
+            sha256=hashlib.sha256(file.read_bytes()).hexdigest(),
+        )
+        self._links = {} if calibration.gravity is None else dict(calibration.gravity.links)
 
     def stop(self) -> None:
         """Stop as a connection does: wait for a calibration tool to park, then disable.
 
-        Waits while a tuning session lasts, and ``PARK_GRACE_S`` after the stop
+        Waits while a config session lasts, and ``PARK_GRACE_S`` after the stop
         began or the last session ended for one about to begin, at most
         ``PARK_WAIT_S``; then records where the arm was "disabled".
         """
@@ -485,177 +709,6 @@ class FakeTuningArm:
             self._end("the connection stopped")
             self.disabled_at = self.q.copy()
         self.stop_log.append("disabled")
-
-    def tuning_arm_ids(self) -> list[str]:
-        return [self.spec.arm_id]
-
-    def tuning_joint_names(self) -> list[str]:
-        return list(self._names)
-
-    def tuning_get_gains(self) -> dict[str, JointGainsState]:
-        result: dict[str, JointGainsState] = self._call(
-            "tuning_get_gains", lambda: {n: self._state(n) for n in self._names}, session=False
-        )
-        return result
-
-    def tuning_set_gains(self, joint: str, kp: float, kd: float) -> JointGainsState:
-        def set_gains() -> JointGainsState:
-            self._joint(joint)
-            if not (math.isfinite(kp) and math.isfinite(kd)):
-                raise ValueError("gains must be finite")
-            self._overrides[joint] = (min(max(kp, 0.0), MAX_KP), min(max(kd, 0.0), MAX_KD))
-            return self._state(joint)
-
-        result: JointGainsState = self._call("tuning_set_gains", set_gains, session=True)
-        return result
-
-    def tuning_reset_gains(self) -> None:
-        self._call("tuning_reset_gains", self._overrides.clear, session=False)
-
-    def tuning_set_float(self, joint: str, on: bool, kd: float | None = None) -> JointGainsState:
-        def set_float() -> JointGainsState:
-            index = self._joint(joint)
-            if on and not self._gravity_comp:
-                raise ValueError(f"{joint} cannot float: the robot does not compensate gravity")
-            if on:
-                self._floating[joint] = self._gains(joint)[1] if kd is None else float(kd)
-            elif joint in self._floating:
-                del self._floating[joint]
-                self.target[index] = self.q[index]
-            return self._state(joint)
-
-        result: JointGainsState = self._call("tuning_set_float", set_float, session=True)
-        return result
-
-    def tuning_set_feedforward(self, joint: str, tau_nm: float) -> JointGainsState:
-        def set_feedforward() -> JointGainsState:
-            self._joint(joint)
-            self._feedforward[joint] = float(tau_nm)
-            return self._state(joint)
-
-        result: JointGainsState = self._call(
-            "tuning_set_feedforward", set_feedforward, session=True
-        )
-        return result
-
-    def tuning_reset_all(self) -> None:
-        def reset() -> None:
-            for name in self._floating:
-                self.target[self._names.index(name)] = self.q[self._names.index(name)]
-            self._floating.clear()
-            self._feedforward.clear()
-            self._overrides.clear()
-
-        self._call("tuning_reset_all", reset, session=False)
-
-    def tuning_read(self) -> dict[str, JointSample]:
-        def read() -> dict[str, JointSample]:
-            return {
-                name: JointSample(
-                    position=float(self.q[i]), velocity=float(self.v[i]), effort=0.0, ts=self.now
-                )
-                for i, name in enumerate(self._names)
-            }
-
-        result: dict[str, JointSample] = self._call("tuning_read", read, session=False)
-        return result
-
-    def tuning_command(self, targets: dict[str, float]) -> CommandResult:
-        def command() -> CommandResult:
-            for joint, value in targets.items():
-                low, high = self._limits[self._names[self._joint(joint)]]
-                if not low <= value <= high:
-                    raise ValueError(f"{joint} target {value} is outside {low}..{high}")
-            if self.fail_after_commands is not None and self.commands >= self.fail_after_commands:
-                raise RuntimeError("feedback failed: the bus went silent")
-            for joint, value in targets.items():
-                if joint not in self._floating:
-                    self.target[self._names.index(joint)] = value
-            self.commands += 1
-            self._last_command = self.now
-            if self.on_command is not None:
-                self.on_command(self)
-            return CommandResult(ok=True, error=None)
-
-        result: CommandResult = self._call("tuning_command", command, session=True)
-        return result
-
-    def tuning_apply_calibration(
-        self, path: str | None = None, force: bool = False
-    ) -> CalibrationApplied:
-        result: CalibrationApplied = self._call(
-            "tuning_apply_calibration", lambda: self._apply_checked(path, force), session=False
-        )
-        return result
-
-    def tuning_applied_calibration(self) -> dict[str, AppliedInertials | None]:
-        result: dict[str, AppliedInertials | None] = self._call(
-            "tuning_applied_calibration",
-            lambda: {self.spec.arm_id: self._inertials},
-            session=False,
-        )
-        return result
-
-    def _apply_checked(self, path: str | None, force: bool) -> CalibrationApplied:
-        if path == "off":
-            file: Path | None = None
-        elif path is None:
-            stored = calibration_path(self.spec.arm_id, self._root)
-            file = stored if stored.exists() else None
-        else:
-            file = Path(path)
-        before = np.asarray(pin.computeGeneralizedGravity(self._comp, self._comp_data, self.q))
-        comp = self._model(file)
-        after = np.asarray(pin.computeGeneralizedGravity(comp, comp.createData(), self.q))
-        step = {name: float(after[i] - before[i]) for i, name in enumerate(self._names)}
-        large = {
-            joint: round(value, 2)
-            for joint, value in step.items()
-            if abs(value) > MAX_GRAVITY_STEP_NM
-        }
-        if large and not force:
-            raise ValueError(
-                f"applying {path} would change the gravity torque at this pose by more than "
-                f"{MAX_GRAVITY_STEP_NM:g} N m: {large} (N m); apply calibrations near home, or "
-                "pass force=True"
-            )
-        self._apply(file)
-        return CalibrationApplied(arms={self.spec.arm_id: self._applied}, gravity_step_nm=step)
-
-    def _model(self, file: Path | None) -> pin.Model:
-        model = self.arm.model.copy()
-        if file is not None:
-            apply_inertial_overrides(model, to_inertial_overrides(load_for_spec(self.spec, file)))
-        return model
-
-    def _apply(self, file: Path | None) -> None:
-        self._comp = self._model(file)
-        self._comp_data = self._comp.createData()
-        if file is None:
-            self._calibrated = {}
-            self._applied = None
-            self._inertials = None
-            return
-        calibration = load_for_spec(self.spec, file)
-        links = to_inertial_overrides(calibration)
-        self._calibrated = {
-            name: (gains.kp, gains.kd) for name, gains in (calibration.gains or {}).items()
-        }
-        self._applied = AppliedCalibration(
-            path=str(file),
-            created=calibration.created.isoformat(),
-            gains=sorted(self._calibrated),
-            links=sorted(links),
-        )
-        self._inertials = AppliedInertials(
-            path=str(file),
-            created=calibration.created.isoformat(),
-            sha256=hashlib.sha256(file.read_bytes()).hexdigest(),
-            links={
-                name: LinkMass(mass_kg=link.mass_kg, com_m=list(link.com_m))
-                for name, link in sorted(links.items())
-            },
-        )
 
 
 class SimClock:

@@ -34,8 +34,8 @@ from dimos.robot.manipulators.calibration._fake_tuning_arm import FakeTuningArm
 from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, generate_poses
 from dimos.robot.manipulators.calibration.module import (
     NOT_RECORDING,
+    STREAMED_CALL_TIMEOUT_S,
     STREAMED_CALLS,
-    TUNING_CALL_TIMEOUT_S,
     CalibrationModule,
     CalibrationModuleConfig,
 )
@@ -78,6 +78,11 @@ def make_module(
             module.set_transport(name, transport)
         if connection is None:
             connection = FakeTuningArm(left_spec, calibration_root=tmp_path, realtime=True)
+        # The arm's readings reach the module on its joint_state input, as a
+        # connection's joint_state output does in a blueprint.
+        readings = LocalTransport()
+        module.set_transport("joint_state", readings)
+        connection.joint_state = readings
         module.set_module_ref("_connection", connection)
         made.append(module)
         module.start()
@@ -183,10 +188,11 @@ def test_the_streamed_calls_time_out_in_half_a_second(make_module, left_spec, tm
     make_module(connection=fake)
 
     timeouts = fake.rpc.rpc_timeouts
+    assert STREAMED_CALLS == ("config_command",)
     assert {name: timeouts[name] for name in STREAMED_CALLS} == dict.fromkeys(
-        STREAMED_CALLS, TUNING_CALL_TIMEOUT_S
+        STREAMED_CALLS, STREAMED_CALL_TIMEOUT_S
     )
-    assert TUNING_CALL_TIMEOUT_S == 0.5 and timeouts["start"] == 1200.0
+    assert STREAMED_CALL_TIMEOUT_S == 0.5 and timeouts["start"] == 1200.0
 
 
 def test_stopping_parks_the_arm_before_the_connection_lets_it_go(make_module, left_spec, tmp_path):
@@ -210,7 +216,7 @@ def test_stopping_parks_the_arm_before_the_connection_lets_it_go(make_module, le
 
     # The connection waited for the park's session, and let go only at home.
     assert fake.stop_log == ["stop", "waiting", "disabled"]
-    assert fake.ended == ["tuning_end"]
+    assert fake.ended == ["config_reset"]
     assert fake.disabled_at is not None
     assert np.degrees(np.abs(fake.disabled_at - arm.home)).max() < 3.0
 

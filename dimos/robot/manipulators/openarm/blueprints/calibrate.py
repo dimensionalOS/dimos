@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm calibration: the connection open for tuning and the calibration module.
+"""OpenArm calibration: the connection open for config sessions and the calibration module.
 
     dimos run openarm-calibrate --openarmconnection.left-can-port can0 --openarmconnection.right-can-port can1 --calibrationmodule.arm left
 
