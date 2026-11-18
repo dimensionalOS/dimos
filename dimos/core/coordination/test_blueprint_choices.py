@@ -26,6 +26,7 @@ from dimos.core.coordination.blueprints import (
 from dimos.core.module import Module
 from dimos.core.stream import In, Out, Transport, TransportSpec
 from dimos.core.transport import LCMTransport
+from dimos.protocol.encode import cbor
 from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 
@@ -359,6 +360,12 @@ def test_rejects_invalid_choice_definitions(
         ChoiceAtom(name=name, choices=choices, default=default)
 
 
-def test_cbor_encode_refuses_unresolved_choices(clearing: ChoiceAtom) -> None:
-    with pytest.raises(ValueError, match="solidify"):
-        autoconnect(clearing).cbor_encode()
+def test_unsolidified_blueprint_round_trips_through_cbor(clearing: ChoiceAtom) -> None:
+    mapping = autoconnect(VisModule.blueprint(), clearing).namespace("robot")
+
+    decoded = cbor.decode(cbor.encode(mapping))
+
+    assert decoded == mapping
+    assert decoded.solidify(choices={"PointClearing": "column_carving"}) == mapping.solidify(
+        choices={"PointClearing": "column_carving"}
+    )

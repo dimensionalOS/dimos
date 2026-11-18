@@ -30,6 +30,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+import uuid
 
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
@@ -212,7 +213,7 @@ class Blueprint:
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
     hosted_placements: tuple[HostedPlacement, ...] = field(default_factory=tuple)
     # Only solidify() reads these; the atoms of every option are already in `blueprints`.
-    choices: "tuple[ChoiceAtom, ...]" = field(default_factory=tuple)
+    choices: "tuple[BlueprintChoice, ...]" = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         module_names = {atom.name for atom in self.blueprints}
@@ -228,8 +229,6 @@ class Blueprint:
             raise ValueError(f"Hosted placement references unknown modules: {', '.join(unknown)}")
 
     def cbor_encode(self) -> dict[str, Any]:
-        if self.choices:
-            raise ValueError("Call solidify() before sending a blueprint that has choices")
         state = {f.name: getattr(self, f.name) for f in fields(self)}
         for name in _PROXY_FIELDS:
             state[name] = dict(state[name])
@@ -458,10 +457,10 @@ class Blueprint:
         for name, option in (choices or {}).items():
             if name not in by_name:
                 raise ChoiceResolutionError(f"Unknown or inactive choices: {name}")
-            if option not in by_name[name].choices:
+            if option not in by_name[name].options:
                 raise ChoiceResolutionError(
                     f"Invalid option {option!r} for choice {name!r}. "
-                    f"Available options: {', '.join(by_name[name].choices)}"
+                    f"Available options: {', '.join(by_name[name].options)}"
                 )
             selected[name] = option
 
@@ -500,6 +499,19 @@ class ChoiceResolutionError(ValueError):
 
 
 @dataclass(frozen=True)
+class BlueprintChoice:
+    """What solidify() needs from a ChoiceAtom; plain data, so blueprints serialize unsolidified."""
+
+    name: str
+    options: tuple[str, ...]
+    default: str
+    # The outer (choice, option) pairs under which this choice is reachable.
+    conditions: tuple[tuple[str, str], ...]
+    # Shared by every copy of one ChoiceAtom; two separate ChoiceAtoms may not share a name.
+    origin: str
+
+
+@dataclass(frozen=True)
 class ChoiceAtom:
     """Alternative blueprints; autoconnect() flattens them into conditional atoms."""
 
@@ -507,10 +519,7 @@ class ChoiceAtom:
     choices: Mapping[str, Blueprint]
     # None means the first option.
     default: str | None = None
-    # The outer (choice, option) pairs under which this choice is reachable.
-    conditions: tuple[tuple[str, str], ...] = ()
-    # Kept by copies, so a reused ChoiceAtom is one choice but two separate ones may not share a name.
-    origin: object = field(default_factory=object, compare=False, repr=False)
+    origin: str = field(default_factory=lambda: uuid.uuid4().hex, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.name or "=" in self.name:
@@ -556,7 +565,10 @@ class ChoiceAtom:
             )
 
         options = autoconnect(*(conditioned(o, b) for o, b in self.choices.items()))
-        return replace(options, choices=(*options.choices, self))
+        choice = BlueprintChoice(
+            self.name, tuple(self.choices), cast("str", self.default), (), self.origin
+        )
+        return replace(options, choices=(*options.choices, choice))
 
 
 def transport_config_name(cls: type) -> str:
@@ -574,10 +586,10 @@ def autoconnect(*parts: "Blueprint | ChoiceAtom") -> Blueprint:
                 "and outside one; give each copy its own instance_name"
             )
     # A reused ChoiceAtom may be reachable under several conditions; distinct ones may not share a name.
-    all_choices: list[ChoiceAtom] = []
-    origins: dict[str, object] = {}
+    all_choices: list[BlueprintChoice] = []
+    origins: dict[str, str] = {}
     for choice in (c for blueprint in blueprints for c in blueprint.choices):
-        if origins.setdefault(choice.name, choice.origin) is not choice.origin:
+        if origins.setdefault(choice.name, choice.origin) != choice.origin:
             raise ChoiceResolutionError(f"Duplicate choice name: {choice.name!r}")
         if choice not in all_choices:
             all_choices.append(choice)
