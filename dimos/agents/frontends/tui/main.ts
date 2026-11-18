@@ -209,9 +209,9 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     tui,
     cwd,
     () => (showing === null ? null : { rows: rows(), omitted: showing.conversation.transcript.value.omitted }),
-    (gallery, index, inline) => {
+    (gallery, index) => {
       gallery.select(index);
-      if (!inline || gallery.interactive)
+      if (gallery.interactive)
         fullScreen(gallery.details.views[index - 1]?.label ?? "Overview", gallery, true, () => gallery.select(0));
     },
   );

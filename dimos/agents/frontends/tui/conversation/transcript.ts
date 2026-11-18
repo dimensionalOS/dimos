@@ -152,10 +152,10 @@ export class TranscriptView implements Component {
   private readonly tui: TUI;
   private readonly cwd: () => string;
   private readonly source: () => TranscriptSource | null;
-  private readonly openPanel: (gallery: Gallery, index: number, inline: boolean) => void;
+  private readonly openPanel: (gallery: Gallery, index: number) => void;
   private readonly views = new Map<string, RowView>();
   private notes: Note[] = [];
-  /** Renderings available to `/panel`, including previews hidden from the transcript. */
+  /** Every rendering shown, oldest first, for `/panel`. */
   private galleries: Gallery[] = [];
   private lines: string[] = [];
   /** The last layout: each part's key, component and height in order, for scrolling to a message and routing clicks. */
@@ -487,12 +487,8 @@ export class TranscriptView implements Component {
   /** An input by its source: the user's text, "⚡ module: text", "⏰ job: text", "⇢ text", or only its runtime change. */
   private input(block: Container, input: DimosInput, images: readonly string[], galleries: Gallery[]): void {
     const source = input.source;
-    if (source.kind === "background") {
-      block.addChild(backgroundLine(source.tool, source.end));
-      if (input.render !== null) galleries.push(this.gallery(null, input.render));
-      return;
-    }
-    if (input.change !== null) block.addChild(line(muted(` ↻ runtime: ${clean(input.change.summary)}`)));
+    if (source.kind !== "background" && input.change !== null)
+      block.addChild(line(muted(` ↻ runtime: ${clean(input.change.summary)}`)));
     switch (source.kind) {
       case "user":
         block.addChild(userBlock(cleanMultiline(input.text)));
@@ -503,6 +499,9 @@ export class TranscriptView implements Component {
       case "job":
         block.addChild(line(accent(" ⏰ ") + clean(`${source.job}: ${input.text}`)));
         break;
+      case "background":
+        block.addChild(backgroundLine(source.tool, source.end));
+        break;
       case "runtime":
         return;
     }
@@ -510,14 +509,14 @@ export class TranscriptView implements Component {
     else for (const mimeType of images) block.addChild(line(muted(`   [image ${mimeType}]`)));
   }
 
-  private gallery(block: Container | null, details: RenderDetails): Gallery {
+  private gallery(block: Container, details: RenderDetails): Gallery {
     const gallery = new Gallery(
       details,
       () => this.tui.requestRender(),
-      (index) => this.openPanel(gallery, index, block !== null),
+      (index) => this.openPanel(gallery, index),
     );
     this.galleries.push(gallery);
-    block?.addChild(gallery);
+    block.addChild(gallery);
     return gallery;
   }
 }
