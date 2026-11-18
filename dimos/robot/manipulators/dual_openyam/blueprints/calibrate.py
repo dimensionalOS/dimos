@@ -17,8 +17,9 @@
     dimos run dual-openyam-calibrate --dualopenyamconnection.left-can-port can0 --dualopenyamconnection.right-can-port can1
 
 The left arm is calibrated unless ``--calibrationmodule.arm right``; the other arm
-is held where it is by the coordinator meanwhile. The bench guard of
-``calibration_workspace`` keeps each arm on its own half of the table.
+is held where it is by the coordinator meanwhile. Poses need the table height and
+the front line (``--calibrationmodule.floor-z-m``, ``--calibrationmodule.min-x-m``);
+the midline between the two bases in the URDF keeps each arm on its own half.
 See ``dimos.robot.manipulators.calibration.blueprints``.
 """
 

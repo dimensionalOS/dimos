@@ -6,7 +6,7 @@ It works with `openyam`, `dual-openyam`, `metal`, `dual-metal`, `b601-dm` and `o
 ## Run it
 
 ```bash
-dimos arm calibrate dual-openyam --arm left \
+dimos arm calibrate dual-openyam --arm left --floor-z-m F --min-x-m X \
     --dualopenyamconnection.left-can-port follower_l \
     --dualopenyamconnection.right-can-port follower_r
 ```
@@ -26,7 +26,7 @@ Before you start:
 - OpenYAM arms start folded on their supports. The poses lift them off.
 - Know the CAN port of every arm on the robot, including the one you are not calibrating.
 - No other dimos run is active (`dimos status`).
-- Arms other than the dual OpenYAM bench need `--floor-z-m` and `--min-x-m` (metres from the base).
+- Every arm needs `--floor-z-m` and `--min-x-m` (metres from the base). On a two-arm robot each arm also stays on its side of the midline between the two bases in the URDF.
 
 Other robots:
 
