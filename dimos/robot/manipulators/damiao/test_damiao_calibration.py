@@ -18,10 +18,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+import hashlib
 import importlib
 import json
 import math
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
@@ -105,6 +107,8 @@ def rig_class(connection_class):
 def start(rig_class, boundary, mocker):
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    # No calibration tool parks here; a stop need not wait a second for one.
+    mocker.patch.object(common, "TUNING_PARK_GRACE_S", 0.02)
     made = []
 
     def make(connection_type=None, *, commands=None, **kwargs):
@@ -405,6 +409,7 @@ TUNING_CALLS: dict[str, tuple[Any, ...]] = {
     "tuning_read": (),
     "tuning_command": ({"joint1": 0.1},),
     "tuning_apply_calibration": ("off",),
+    "tuning_applied_calibration": (),
 }
 
 
@@ -739,3 +744,90 @@ def test_files_from_the_calibration_tools_load_into_dual_openyam(
     module.command({"arm/left_joint1/position": 0.0})
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 4])
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [60, 4])
+
+
+def test_the_applied_calibration_reports_the_masses_and_file_hash_it_runs(
+    start, boundary, calibration_root
+):
+    path = save_calibration(calibration_root / "rig/left", _calibration(masses={"link2": 2.0}))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    module = start(tuning=True)
+
+    applied = module.tuning_applied_calibration()
+
+    assert applied == {
+        "rig/left": {
+            "path": str(path),
+            "created": "2026-11-17T09:30:00+00:00",
+            "sha256": sha,
+            "links": {"link2": {"mass_kg": 2.0, "com_m": [0.1, 0.0, 0.0]}},
+        },
+        "rig/right": None,
+    }
+    # A file rewritten on disk changes nothing the arm runs until it is applied.
+    save_calibration(path, _calibration(masses={"link2": 2.5}))
+    assert module.tuning_applied_calibration() == applied
+    assert json.loads(json.dumps(applied)) == applied
+
+
+def _park_while_stopping(module, order: list[str], stream_s: float) -> threading.Thread:
+    """Stop ``module`` on a thread while this one parks, as a calibration tool does."""
+
+    def stop() -> None:
+        module.stop()
+        order.append("stopped")
+
+    stopper = threading.Thread(target=stop)
+    stopper.start()
+    time.sleep(0.05)
+    module.tuning_begin()
+    order.append("park began")
+    deadline = time.monotonic() + stream_s
+    try:
+        while time.monotonic() < deadline:
+            module.tuning_command({"joint1": 0.2})
+            time.sleep(0.02)
+    except RuntimeError:
+        order.append("cut off")
+    else:
+        order.append("parked")
+        module.tuning_end()
+    return stopper
+
+
+def test_stopping_waits_for_the_calibration_tool_to_park_before_disabling(start, boundary, mocker):
+    module = start(tuning=True)
+    mocker.patch.object(common, "TUNING_PARK_GRACE_S", 0.3)
+    order: list[str] = []
+    disable = module._arm.disable
+
+    def disabled() -> None:
+        order.append("disabled")
+        disable()
+
+    mocker.patch.object(module._arm, "disable", disabled)
+    warning = mocker.spy(common.logger, "warning")
+
+    stopper = _park_while_stopping(module, order, stream_s=0.5)
+    stopper.join(timeout=5.0)
+
+    assert order == ["park began", "parked", "disabled", "stopped"]
+    assert any(
+        "waiting up to 10 s for the calibration tool to park the arm" in line
+        for line in _messages(warning)
+    )
+
+
+def test_a_park_that_overruns_the_wait_is_cut_off_and_the_arm_disabled(start, boundary, mocker):
+    module = start(tuning=True)
+    mocker.patch.object(common, "TUNING_PARK_GRACE_S", 0.2)
+    mocker.patch.object(common, "TUNING_PARK_WAIT_S", 0.3)
+    error = mocker.spy(common.logger, "error")
+    order: list[str] = []
+
+    stopper = _park_while_stopping(module, order, stream_s=2.0)
+    stopper.join(timeout=5.0)
+
+    assert order == ["park began", "stopped", "cut off"]
+    assert any("did not end its tuning session within 0.3 s" in line for line in _messages(error))
+    assert module._tuning_ended == "the connection halted"

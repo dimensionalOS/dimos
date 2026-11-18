@@ -27,6 +27,10 @@ A connection deployed with ``tuning=True`` (calibration blueprints only)
 serves the ``tuning_*`` RPCs of :class:`~dimos.robot.manipulators.
 calibration.hooks.ArmTuningHooks`: one calibration tool owns the arm inside a
 tuning session (:meth:`DamiaoConnection.tuning_begin`) and changes gains live.
+Stopping such a connection first gives the calibration tool, stopping at the
+same time, up to ``TUNING_PARK_WAIT_S`` to park the arm and end its session
+(:meth:`DamiaoConnection.stop`): the modules of a run stop in parallel, so
+nothing else orders the two.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
 import functools
+import hashlib
 import numbers
 from pathlib import Path
 import threading
@@ -65,10 +70,12 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
 from dimos.robot.manipulators.calibration.hooks import (
     AppliedCalibration,
+    AppliedInertials,
     CalibrationApplied,
     CommandResult,
     JointGainsState,
     JointSample,
+    LinkMass,
     TuningSession,
 )
 from dimos.robot.manipulators.calibration.schema import (
@@ -92,6 +99,8 @@ __all__ = [
     "CALIBRATION_ROOT",
     "MAX_GRAVITY_STEP_NM",
     "MAX_TUNING_LEASE_S",
+    "TUNING_PARK_GRACE_S",
+    "TUNING_PARK_WAIT_S",
     "DamiaoConnection",
     "DamiaoConnectionConfig",
     "DamiaoConnectionStatus",
@@ -106,6 +115,12 @@ MAX_TUNING_LEASE_S = 30.0
 #: The most any joint's gravity torque at the measured pose may change when a
 #: calibration is applied live without ``force``, N m.
 MAX_GRAVITY_STEP_NM = 2.0
+#: How long ``stop`` waits for the calibration tool to park the arm and end its
+#: tuning session before it halts and disables the motors, seconds.
+TUNING_PARK_WAIT_S = 10.0
+#: How long ``stop`` waits for a calibration tool that is about to park (no
+#: session yet, or one that just ended) to begin its park session, seconds.
+TUNING_PARK_GRACE_S = 1.0
 
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
@@ -166,6 +181,7 @@ class _ArmFile:
     calibration: ArmCalibration
     gains: dict[str, tuple[float, float]]
     links: dict[str, LinkInertial]
+    sha256: str
 
     def summary(self) -> AppliedCalibration:
         return AppliedCalibration(
@@ -173,6 +189,17 @@ class _ArmFile:
             created=self.calibration.created.isoformat(),
             gains=sorted(self.gains),
             links=sorted(self.links),
+        )
+
+    def inertials(self) -> AppliedInertials:
+        return AppliedInertials(
+            path=str(self.path),
+            created=self.calibration.created.isoformat(),
+            sha256=self.sha256,
+            links={
+                name: LinkMass(mass_kg=link.mass_kg, com_m=list(link.com_m))
+                for name, link in sorted(self.links.items())
+            },
         )
 
 
@@ -282,6 +309,8 @@ class DamiaoConnection(ConnectionModule):
         # the tuning session, and why the last one ended.
         self._tuning_session: _TuningSession | None = None
         self._tuning_ended = ""
+        # When the last session ended, time.monotonic(); None before the first.
+        self._tuning_ended_at: float | None = None
         # Set on the thread inside tuning_command: write() lets it through a
         # tuning session and records what became of it.
         self._tuning_writer = threading.local()
@@ -362,6 +391,8 @@ class DamiaoConnection(ConnectionModule):
 
     @rpc
     def stop(self) -> None:
+        if self.config.tuning:
+            self._await_tuning_park()
         self._stop_reading.set()
         if (
             self._reader is not None
@@ -392,6 +423,45 @@ class DamiaoConnection(ConnectionModule):
                     error = f"{self.config.source} reader did not stop before the shutdown timeout"
                     self._report(error)
                     raise RuntimeError(error)
+
+    def _await_tuning_park(self) -> None:
+        """Before stopping, let the calibration tool park the arm and end its session.
+
+        The modules of a run stop in parallel, so the calibration module may
+        still be backing the arm out home when this connection is told to
+        stop, and disabling the motors then would drop the arm where it is.
+        Waits while a tuning session lasts, and for ``TUNING_PARK_GRACE_S``
+        after the stop began or the last session ended for one about to
+        begin, at most ``TUNING_PARK_WAIT_S`` in all. Readings, the deadman
+        and the session lease run as usual meanwhile.
+        """
+        started = time.monotonic()
+        deadline = started + TUNING_PARK_WAIT_S
+        logged = False
+        while True:
+            with self._lock:
+                active = self._tuning_session is not None
+                ended_at = self._tuning_ended_at
+            if not self._connected or self._fault is not None or self._arm is None:
+                return
+            now = time.monotonic()
+            if not active:
+                since = max(started, ended_at if ended_at is not None else started)
+                if now - since >= TUNING_PARK_GRACE_S:
+                    return
+            elif not logged:
+                logger.warning(
+                    f"{self._label}: stopping; waiting up to {TUNING_PARK_WAIT_S:g} s for the "
+                    "calibration tool to park the arm and end its tuning session"
+                )
+                logged = True
+            if now >= deadline:
+                logger.error(
+                    f"{self._label}: the calibration tool did not end its tuning session within "
+                    f"{TUNING_PARK_WAIT_S:g} s; halting and disabling the arm where it is"
+                )
+                return
+            time.sleep(0.02)
 
     @rpc
     def status(self) -> DamiaoConnectionStatus:
@@ -635,6 +705,22 @@ class DamiaoConnection(ConnectionModule):
             arms = self._apply_calibrations(arm, files, always=True)
         return CalibrationApplied(arms=arms, gravity_step_nm=step)
 
+    @rpc
+    @_tuning_rpc
+    def tuning_applied_calibration(self) -> dict[str, AppliedInertials | None]:
+        """What each arm runs, by arm id: its file, the file's sha256 and the link masses.
+
+        ``None`` for an arm on its URDF masses and bus gains. The masses are
+        those read when the file was applied; the file may have changed on
+        disk since. For calibration tools only.
+        """
+        self._renew(required=False)
+        with self._lock:
+            applied = dict(self._applied)
+        return {
+            arm_id: None if item is None else item.inertials() for arm_id, item in applied.items()
+        }
+
     def _tuning_arm(self) -> DamiaoArm:
         """The connected arm, for a tuning call made under the hardware lock."""
         if self._fault is not None:
@@ -677,6 +763,7 @@ class DamiaoConnection(ConnectionModule):
                 reason = f"{reason} of {session.lease_s:g} s"
             self._tuning_session = None
             self._tuning_ended = reason
+            self._tuning_ended_at = time.monotonic()
         undone = "nothing undone"
         arm = self._arm
         if arm is not None:
@@ -786,16 +873,22 @@ class DamiaoConnection(ConnectionModule):
         calibration = load_calibration(
             path, expected_model_sha256=self._robot_model_sha256(), expected_arm_id=arm_id
         )
+        sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         arms = self._arm_joints_by_id()
         if calibration.arm_id not in arms:
             raise ArmCalibrationError(
                 f"The arm calibration at {path} is for arm {calibration.arm_id!r}; "
                 f"this robot's arms are {list(arms)}."
             )
-        return self._check_calibration(arm, path, calibration, arms[calibration.arm_id])
+        return self._check_calibration(arm, path, calibration, arms[calibration.arm_id], sha256)
 
     def _check_calibration(
-        self, arm: DamiaoArm, path: Path, calibration: ArmCalibration, joints: list[str]
+        self,
+        arm: DamiaoArm,
+        path: Path,
+        calibration: ArmCalibration,
+        joints: list[str],
+        sha256: str,
     ) -> _ArmFile:
         """The file's gains and masses, once they are safe for the arm that ``joints`` move.
 
@@ -823,7 +916,7 @@ class DamiaoConnection(ConnectionModule):
         # TODO(calibration): calibration.friction_nm is read but not applied;
         # apply it through DamiaoArm.set_feedforward once friction compensation
         # (direction from velocity, a dead band near zero) is designed.
-        return _ArmFile(path=path, calibration=calibration, gains=gains, links=links)
+        return _ArmFile(path=path, calibration=calibration, gains=gains, links=links, sha256=sha256)
 
     def _links_moved_by(self, joints: Sequence[str]) -> set[str]:
         """The links ``joints`` move directly: each one's child link in the gravity model."""

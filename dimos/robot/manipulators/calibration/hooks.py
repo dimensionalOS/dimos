@@ -95,6 +95,35 @@ class AppliedCalibration(TypedDict):
     links: list[str]
 
 
+class LinkMass(TypedDict):
+    """One link's mass and centre of mass as an arm runs it.
+
+    Attributes:
+        mass_kg: Its mass.
+        com_m: Its centre of mass in the link frame, m.
+    """
+
+    mass_kg: float
+    com_m: list[float]
+
+
+class AppliedInertials(TypedDict):
+    """The calibration file one arm runs and the link masses it gave the arm.
+
+    Attributes:
+        path: The file, as it was read.
+        created: When it was written, ISO 8601, UTC.
+        sha256: The file's bytes as read, hex; a file rewritten since reads
+            differently.
+        links: The masses the arm runs, by link; only the links the file set.
+    """
+
+    path: str
+    created: str
+    sha256: str
+    links: dict[str, LinkMass]
+
+
 class TuningSession(TypedDict):
     """A tuning session that has just begun.
 
@@ -220,5 +249,13 @@ class ArmTuningHooks(Protocol):
         One file changes only the arm it names. Apply near home: a change of
         more than 2 N m in any joint's gravity torque is refused unless
         ``force``.
+        """
+        ...
+
+    def tuning_applied_calibration(self) -> dict[str, AppliedInertials | None]:
+        """What each arm runs now, by arm id: its file and link masses, ``None`` for the URDF.
+
+        The masses are those the connection compensates gravity with, read
+        when the file was applied; the file on disk may have changed since.
         """
         ...
