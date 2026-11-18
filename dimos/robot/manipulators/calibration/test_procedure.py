@@ -40,7 +40,11 @@ from dimos.robot.manipulators.calibration._fake_tuning_arm import (
     drive,
 )
 from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, body_joint_id
+from dimos.robot.manipulators.calibration.gravity_poses import (
+    ArmModel,
+    body_joint_id,
+    generate_poses,
+)
 from dimos.robot.manipulators.calibration.procedure import (
     Capabilities,
     Procedure,
@@ -502,3 +506,90 @@ def test_the_fake_keeps_the_tuning_session_rules(
     ) == (80.0, 5.0)
     assert fake.position_command({"left_joint1": 0.0})
     assert math.isclose(fake.target[0], 0.0)
+
+
+def _far_from_home(rig: Rig) -> float:
+    return float(np.degrees(np.abs(rig.fake.q - rig.fake.arm.home)).max())
+
+
+def test_the_float_check_floats_at_the_first_gravity_pose_not_at_home(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig(float_window_s=1.0)
+    prompts: list[str] = []
+
+    def answer(prompt: str) -> str:
+        prompts.append(prompt)
+        return "confirm"
+
+    status = rig.run(["float_check"], answer)
+
+    assert status["state"] == "done", status["message"]
+    assert prompts[0].startswith("The arm will move to gravity pose pose_01 [")
+    result = rig.procedure.results()["float_check"]
+    assert result["pose"] == "gravity pose pose_01"
+    first = generate_poses(rig.procedure.arm, count=8).identification[0]
+    assert np.allclose(result["pose_deg"], first.joints_deg, atol=1e-2)
+    assert len(prompts) == 1 + len(LEFT_MEASURED)
+    # It ends holding at the float pose, far from the folded home.
+    assert _far_from_home(rig) > 20.0
+    assert np.degrees(np.abs(rig.fake.q - np.asarray(first.joints_rad))).max() < 5.0
+    assert not rig.fake.session_active()
+
+
+def test_the_float_pose_can_be_set_and_must_be_valid(make_rig: Callable[..., Rig]) -> None:
+    arm = make_rig().procedure.arm
+    chosen = generate_poses(arm, count=8).identification[2]
+    rig = make_rig(float_window_s=1.0, float_pose_deg=tuple(chosen.joints_deg))
+
+    status = rig.run(["float_check"])
+
+    assert status["state"] == "done", status["message"]
+    assert rig.procedure.results()["float_check"]["pose"] == "the configured float pose"
+    assert np.degrees(np.abs(rig.fake.q - np.asarray(chosen.joints_rad))).max() < 5.0
+
+    short = make_rig(float_pose_deg=(0.0, 1.0))
+    status = short.run(["float_check"])
+    assert status["state"] == "failed" and "needs 6 angles" in status["message"]
+
+
+def test_go_home_confirms_first_and_works_after_an_abort(make_rig: Callable[..., Rig]) -> None:
+    rig = make_rig()
+    status = rig.run(
+        ["check", "gravity_poses"], lambda p: "abort" if p.startswith("Pose 2/") else "confirm"
+    )
+    assert status["state"] == "aborted" and _far_from_home(rig) > 30.0
+    prompts: list[str] = []
+
+    def answer(prompt: str) -> str:
+        prompts.append(prompt)
+        return "confirm"
+
+    rig.procedure.go_home()
+    status = drive(rig.procedure, rig.recording, answer)
+
+    assert rig.procedure.join(timeout=10.0)
+    assert status["state"] == "done" and status["message"] == "the arm is at home"
+    assert len(prompts) == 1 and prompts[0].startswith("The arm will ramp to home at 30 deg/s")
+    assert _far_from_home(rig) < 3.0
+    assert not rig.fake.session_active()
+
+
+def test_go_home_can_be_skipped_aborted_and_not_started_while_running(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig()
+    rig.procedure.go_home()
+    status = drive(rig.procedure, rig.recording, lambda p: "skip")
+    assert status["state"] == "done" and "not moved home" in status["message"]
+    rig.procedure.join(timeout=10.0)
+
+    rig.procedure.go_home()
+    status = drive(rig.procedure, rig.recording, lambda p: "abort")
+    assert status["state"] == "aborted" and "going home" in status["message"]
+    rig.procedure.join(timeout=10.0)
+
+    rig.procedure.start(["check"])
+    with pytest.raises(RuntimeError, match="already"):
+        rig.procedure.go_home()
+    drive(rig.procedure, rig.recording)

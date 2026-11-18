@@ -24,7 +24,8 @@
 3. ``gravity_fit``: fits the sweep's recording (``gravity_fit``), shows the
    held-out error before and after, and saves and applies the fit when it
    passes the save gate and the operator agrees.
-4. ``float_check``: floats one measured joint at a time at home and measures
+4. ``float_check``: floats one measured joint at a time at a float pose (the first
+   gravity pose, or ``float_pose_deg``) and measures
    how far the fingertip drifts (``float_analysis``); robots that do not
    compensate gravity cannot float.
 5. ``step_sweep``: steps every joint +1, -1, +3, -3 deg at each kp scale of
@@ -543,10 +544,11 @@ class FloatCheckStep(Step):
     id = "float_check"
     title = "Float check"
     instructions = (
-        "At home, each joint that carries gravity goes limp in turn, held up by gravity "
-        "compensation alone, and the fingertip's drift is measured; a good gravity model keeps "
-        f"it under {DRIFT_LIMIT_MM:g} mm. Be ready to support the arm: a joint that drifts too "
-        "far is held again at once."
+        "The arm moves to the float pose (the first gravity pose, where gravity acts on every "
+        "joint, unless one is set), each joint that carries gravity goes limp in turn, held up "
+        "by gravity compensation alone, and the fingertip's drift is measured; a good gravity "
+        f"model keeps it under {DRIFT_LIMIT_MM:g} mm. Be ready to support the arm: a joint that "
+        "drifts too far is held again at once."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -554,16 +556,46 @@ class FloatCheckStep(Step):
             return "the robot does not compensate gravity, so a floating joint would fall"
         return True
 
+    @staticmethod
+    def float_pose(ctx: StepContext) -> tuple[Vector, str]:
+        """Where the joints float and why there: the configured pose, else the first gravity pose."""
+        arm, configured = ctx.arm, ctx.settings.float_pose_deg
+        if configured is not None:
+            if len(configured) != len(arm.joint_names):
+                raise StepFailedError(
+                    f"float_pose_deg needs {len(arm.joint_names)} angles for "
+                    f"{', '.join(arm.joint_names)}, got {len(configured)}"
+                )
+            pose = np.radians(np.asarray(configured, dtype=np.float64))
+            if not arm.pose_ok(pose):
+                raise StepFailedError(
+                    f"the float pose [{_angles(pose)}] deg is outside the workspace guard"
+                )
+            return pose, "the configured float pose"
+        pose_set = ctx.run.pose_set
+        if pose_set is None:
+            try:
+                pose_set = generate_poses(arm, count=ctx.settings.poses)
+            except NoWorkspaceGuardError:
+                return np.asarray(arm.home, dtype=np.float64), "home (there is no workspace guard)"
+        if not pose_set.identification:
+            return np.asarray(arm.home, dtype=np.float64), "home (no gravity pose was found)"
+        first = pose_set.identification[0]
+        return np.asarray(first.joints_rad, dtype=np.float64), f"gravity pose {first.name}"
+
     def run(self, ctx: StepContext) -> StepResult:
         settings, arm = ctx.settings, ctx.arm
         fingertip = FingertipModel(arm)
+        pose, where = self.float_pose(ctx)
         ctx.confirm(
-            f"Each of {', '.join(arm.measured_joints)} will float for "
-            f"{settings.float_settle_s + settings.float_window_s:g} s at home. Enter to start"
+            f"The arm will move to {where} [{_angles(pose)}] deg at {settings.speed_deg_s:g} "
+            f"deg/s, then each of {', '.join(arm.measured_joints)} will float for "
+            f"{settings.float_settle_s + settings.float_window_s:g} s. Clear the workspace. "
+            "Enter to start"
         )
         joints: dict[str, dict[str, Any]] = {}
         with ctx.session() as session:
-            session.move_to(arm.home)
+            session.move_to(pose)
             for index, joint in enumerate(arm.measured_joints, 1):
                 ctx.progress(index - 1, len(arm.measured_joints), f"float {joint}")
                 try:
@@ -574,7 +606,8 @@ class FloatCheckStep(Step):
                     joints[joint] = {"skipped": True}
                     continue
                 joints[joint] = self._float(ctx, session, fingertip, joint, index)
-                session.move_to(arm.home)
+                # Holds the joint again at the float pose before the next one goes limp.
+                session.move_to(pose)
         tried = {joint: row for joint, row in joints.items() if "passed" in row}
         passed = [joint for joint, row in tried.items() if row["passed"]]
         check = {
@@ -582,10 +615,19 @@ class FloatCheckStep(Step):
             "limit_mm": DRIFT_LIMIT_MM,
             "kd": settings.float_kd,
             "window_s": settings.float_window_s,
+            "pose_deg": [round(math.degrees(float(v)), 3) for v in pose],
             "joints": joints,
         }
-        data = {"joints": joints, "saved": _record_check(ctx, "float", check)}
-        return StepResult(f"{len(passed)} of {len(tried)} joints held within the limit", data)
+        data = {
+            "joints": joints,
+            "pose": where,
+            "pose_deg": check["pose_deg"],
+            "saved": _record_check(ctx, "float", check),
+        }
+        return StepResult(
+            f"{len(passed)} of {len(tried)} joints held within the limit; arm holds at {where}",
+            data,
+        )
 
     @staticmethod
     def _float(

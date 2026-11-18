@@ -92,6 +92,8 @@ class CalibrationModuleConfig(ModuleConfig):
         dither_deg: Dither of each measured joint at every pose.
         hold_s: Rest at each pose.
         speed_deg_s: Peak joint speed of every ramp.
+        float_pose_deg: Where the float check floats the joints, one angle per
+            arm joint in degrees; the first gravity pose when unset.
         confirm_each: Ask before every pose.
         kp_scales: Multiples of each joint's robot kp the gain sweep tries.
         auto_run: Start every step as soon as the module starts.
@@ -105,6 +107,7 @@ class CalibrationModuleConfig(ModuleConfig):
     dither_deg: float = Field(default=DEFAULT_DITHER_DEG, gt=0.0, le=MAX_STEP_DEG)
     hold_s: float = Field(default=DEFAULT_HOLD_S, gt=0.0)
     speed_deg_s: float = Field(default=DEFAULT_SPEED_DEG_S, gt=0.0, le=MAX_SPEED_DEG_S)
+    float_pose_deg: list[float] | None = None
     confirm_each: bool = True
     kp_scales: list[float] = Field(default_factory=lambda: list(DEFAULT_KP_SCALES), min_length=1)
     auto_run: bool = False
@@ -135,6 +138,7 @@ class CalibrationModuleConfig(ModuleConfig):
             hold_s=self.hold_s,
             speed_deg_s=self.speed_deg_s,
             confirm_each=self.confirm_each,
+            float_pose_deg=None if self.float_pose_deg is None else tuple(self.float_pose_deg),
             kp_scales=tuple(self.kp_scales),
         )
 
@@ -242,6 +246,13 @@ class CalibrationModule(Module):
         procedure = self._require()
         self._refresh(procedure)
         return procedure.start(steps)
+
+    @rpc
+    def go_home(self) -> ProcedureStatus:
+        """Ramp to home after a confirmation; only while idle, done, failed or aborted."""
+        procedure = self._require()
+        self._refresh(procedure)
+        return procedure.go_home()
 
     @rpc
     def confirm(self, prompt_id: int | None = None) -> bool:

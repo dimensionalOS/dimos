@@ -112,6 +112,20 @@ def test_a_run_answers_over_rpc_and_reports_plain_json(make_module):
         module.run(["nope"])
 
 
+def test_go_home_is_an_rpc_that_confirms_first_and_float_pose_reaches_the_settings(make_module):
+    module, _ = make_module(float_pose_deg=[0.0, 10.0, 20.0, 0.0, 0.0, 0.0])
+
+    assert module.config.settings().float_pose_deg == (0.0, 10.0, 20.0, 0.0, 0.0, 0.0)
+    started = _plain(module.go_home())
+    assert started["state"] == "running" and started["step"] == "home"
+    wait_until(lambda: module.status()["state"] == "waiting_confirm", timeout=10.0)
+    waiting = _plain(module.status())
+    assert waiting["prompt"].startswith("The arm will ramp to home at 10 deg/s")
+    assert module.skip(waiting["prompt_id"]) is True
+    wait_until(lambda: module.status()["state"] == "done", timeout=10.0)
+    assert "not moved home" in module.status()["message"]
+
+
 def test_markers_go_out_on_the_streams_the_reports_read(make_module, mocker, tmp_path):
     with SqliteStore(path=str(tmp_path / "memory.db")):
         pass

@@ -92,6 +92,8 @@ DEFAULT_TRACKING_POSES = 5
 MIN_STREAM_HZ = 50.0
 DEFAULT_LEASE_S = 2.0
 MAX_LEASE_S = 30.0
+# What ``status()["step"]`` names while the arm goes home, which is no step.
+HOME_ACTION = "home"
 _FINISHED: tuple[ProcedureStateName, ...] = ("idle", "done", "failed", "aborted")
 
 
@@ -117,6 +119,8 @@ class ProcedureSettings:
         confirm_each: Ask before every pose (and every joint of the gain sweep).
         kp_scales: Multiples of each joint's robot kp the gain sweep tries.
         step_deltas_deg: The sweep's steps, in order; they sum to zero.
+        float_pose_deg: The pose the joints float at, one angle per arm joint in
+            degrees; ``None`` means the first generated gravity pose.
         float_kd: Damping a floating joint keeps, N m s/rad.
         float_settle_s: Wait after a joint starts floating before its window.
         float_window_s: How long a floating joint is watched for drift.
@@ -136,6 +140,7 @@ class ProcedureSettings:
     confirm_each: bool = True
     kp_scales: tuple[float, ...] = DEFAULT_KP_SCALES
     step_deltas_deg: tuple[float, ...] = DEFAULT_STEP_DELTAS_DEG
+    float_pose_deg: tuple[float, ...] | None = None
     float_kd: float = DEFAULT_FLOAT_KD
     float_settle_s: float = DEFAULT_FLOAT_SETTLE_S
     float_window_s: float = DEFAULT_FLOAT_WINDOW_S
@@ -504,6 +509,34 @@ class Procedure:
             self._thread.start()
             return self._status_locked()
 
+    def go_home(self) -> ProcedureStatus:
+        """Ramp to the spec's home after a confirmation; only while no run is on.
+
+        Ends ``done`` (or ``aborted`` when the operator aborts, ``failed`` when
+        the move fails); a skipped confirmation leaves the arm where it is.
+        """
+        with self._lock:
+            if self._state not in _FINISHED:
+                raise RuntimeError(f"the procedure is already {self._state}")
+            previous = self._thread
+        if previous is not None:
+            previous.join()
+        with self._lock:
+            if self._state not in _FINISHED or self._thread is not previous:
+                raise RuntimeError("the procedure was started meanwhile")
+            self._abort.clear()
+            self._decided.clear()
+            self._decision = None
+            self._progress = None
+            self._prompt = None
+            self._current = HOME_ACTION
+            self._set_state("running", "going home")
+            self._thread = threading.Thread(
+                target=self._run_home, name=f"calibration-home-{self.spec.arm_id}", daemon=True
+            )
+            self._thread.start()
+            return self._status_locked()
+
     def confirm(self, prompt_id: int | None = None) -> bool:
         """Answer the waiting prompt (``prompt_id``, if given) with "go on"; False when none waits."""
         return self._decide("confirm", prompt_id)
@@ -673,6 +706,37 @@ class Procedure:
                     "aborted",
                     f"aborted{where}: the arm holds where it is; it was not moved home",
                 )
+
+    def _run_home(self) -> None:
+        try:
+            self._home()
+        except AbortRequestedError:
+            self._end_home("aborted", "aborted going home: the arm holds where it is")
+        except SkipRequestedError:
+            self._end_home("done", "not moved home: the arm holds where it is")
+        except Exception as error:
+            if self._abort.is_set():
+                self._end_home("aborted", "aborted going home: the arm holds where it is")
+                return
+            logger.exception("going home raised")
+            self._end_home("failed", f"going home failed: {plain_error(error)}")
+        else:
+            self._end_home("done", "the arm is at home")
+
+    def _home(self) -> None:
+        speed = self.settings.speed_deg_s
+        self.wait_for_operator(
+            f"The arm will ramp to home at {speed:g} deg/s from wherever it is. Clear the "
+            "workspace. Enter to continue"
+        )
+        with self.open_session() as session:
+            session.move_to(self.arm.home)
+
+    def _end_home(self, state: ProcedureStateName, message: str) -> None:
+        with self._lock:
+            self._current = None
+            self._progress = None
+            self._set_state(state, message)
 
     def _run_step(self, step: Step, ctx: StepContext) -> bool:
         """Run one step; whether the procedure goes on. ``AbortRequestedError`` propagates."""
