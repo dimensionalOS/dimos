@@ -58,6 +58,7 @@ import numpy as np
 from scipy.optimize import least_squares
 import typer
 
+from dimos.control.connection.arm_config import ConfigPatch
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.robot.manipulators.calibration._inertial import LinkInertial, load_inertial_overrides
 from dimos.robot.manipulators.calibration.gravity_poses import (
@@ -73,6 +74,7 @@ from dimos.robot.manipulators.calibration.schema import (
     gravity_links_from_inertial,
     load_calibration,
     load_for_spec,
+    merge_patch,
     save_calibration,
     to_inertial_overrides,
 )
@@ -1020,29 +1022,25 @@ def generate_gravity_report(
 
 
 def merge_with_stored(path: Path, new: ArmCalibration, spec: ArmCalibrationSpec) -> ArmCalibration:
-    """``new`` plus the gains and notes of a stored calibration for the same arm and model.
+    """``new``'s fit and friction merged into a stored calibration for the same arm and model.
 
-    Its checks (float drift and the like) ran with the old masses, so they are
-    kept only when the fitted links are unchanged; the file they were in stays
-    in ``history/``.
+    The stored gains and notes stay. Its checks (float drift and the like)
+    ran with the old masses, so they are kept only when the fitted links are
+    unchanged; the file they were in stays in ``history/``. See
+    ``schema.merge_patch``.
     """
     try:
         existing = load_for_spec(spec, path)
     except ArmCalibrationError:
         return new
-    same_gravity = (
-        existing.gravity is not None
-        and new.gravity is not None
-        and existing.gravity.links == new.gravity.links
+    gravity = new.gravity
+    patch = ConfigPatch(
+        arm_id=new.arm_id,
+        links=None if gravity is None else gravity.links,
+        fit=None if gravity is None else gravity.fit,
+        friction_nm=new.friction_nm,
     )
-    return existing.model_copy(
-        update={
-            "created": new.created,
-            "gravity": new.gravity,
-            "friction_nm": new.friction_nm,
-            "checks": existing.checks if same_gravity else None,
-        }
-    )
+    return merge_patch(existing, patch, created=new.created)
 
 
 app = typer.Typer(add_completion=False)

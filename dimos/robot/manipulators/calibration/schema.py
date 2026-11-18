@@ -20,7 +20,9 @@ it atomically and keeps the file it replaces in ``history/``. It records the
 fingerprint of the robot model it was made against (``ArmCalibrationSpec.
 model_sha256``), and ``load_calibration`` refuses a file made for a different
 model, since the fitted masses are corrections to that model;
-``load_for_spec`` always checks both the model and the arm.
+``load_for_spec`` always checks both the model and the arm. ``merge_patch``
+changes a stored calibration by a ``ConfigPatch`` of the arm config contract
+(``dimos.control.connection.arm_config``).
 
 A fitted link's mass and centre of mass are those of the link's pinocchio body:
 the link plus the links merged into it (``merged_links``: fixed children and
@@ -40,7 +42,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 import xml.etree.ElementTree as ET
 
 if sys.version_info >= (3, 11):
@@ -52,6 +54,14 @@ import numpy as np
 from pydantic import Field, ValidationError, field_validator
 
 from dimos.constants import STATE_DIR
+from dimos.control.connection.arm_config import (
+    ConfigPatch,
+    FiniteFloat as FiniteFloat,
+    JointGains as JointGains,
+    LinkGravity as LinkGravity,
+    NonNegativeFloat as NonNegativeFloat,
+    PositiveFloat as PositiveFloat,
+)
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
@@ -68,10 +78,6 @@ SCHEMA_VERSION: Literal[1] = 1
 CALIBRATION_FILENAME = "calibration.json"
 HISTORY_DIR_NAME = "history"
 ARMS_STATE_DIR = STATE_DIR / "arms"
-
-PositiveFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
-NonNegativeFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
-FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 
 
 class ArmCalibrationError(RuntimeError):
@@ -90,30 +96,11 @@ class RobotModelRef(BaseConfig):
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-class LinkGravity(BaseConfig):
-    """Fitted mass and centre of mass of one link's body, centre of mass in the link frame.
-
-    Attributes:
-        mass_kg: The body's mass, including ``merged_links``.
-        com_m: The body's centre of mass, link frame, metres.
-        merged_links: Links whose URDF inertia the body includes.
-    """
-
-    mass_kg: PositiveFloat
-    com_m: tuple[FiniteFloat, FiniteFloat, FiniteFloat]
-    merged_links: list[str] = Field(default_factory=list)
-
-
 class GravityCalibration(BaseConfig):
     """The fitted links and the fit's statistics (see ``gravity_fit``)."""
 
     links: dict[str, LinkGravity]
     fit: dict[str, Any] = Field(default_factory=dict)
-
-
-class JointGains(BaseConfig):
-    kp: NonNegativeFloat
-    kd: NonNegativeFloat
 
 
 class ArmCalibration(BaseConfig):
@@ -271,6 +258,58 @@ def load_for_spec(spec: ArmCalibrationSpec, path: Path | None = None) -> ArmCali
         calibration_path(spec.arm_id) if path is None else path,
         expected_model_sha256=spec.model_sha256(),
         expected_arm_id=spec.arm_id,
+    )
+
+
+def merge_patch(stored: ArmCalibration, patch: ConfigPatch, *, created: datetime) -> ArmCalibration:
+    """``stored`` with what ``patch`` gives changed, written at ``created``.
+
+    Gains merge by joint. Links replace the stored set as a whole, with the
+    patch's fit, else none; the stored checks ran with the old masses, so
+    they are kept only when the links are unchanged (the file they were in
+    stays in ``history/``). Fit alone replaces the stored fit; friction
+    replaces the stored friction; checks merge by name; notes replace the
+    stored notes. The arm and its model stay those of ``stored``.
+
+    Raises:
+        ValueError: The patch is for another arm, gives a torque offset (a
+            live change a file has no place for), or a fit without links to
+            go with it.
+    """
+    if patch.arm_id != stored.arm_id:
+        raise ValueError(
+            f"the patch is for arm {patch.arm_id!r}, the calibration for {stored.arm_id!r}"
+        )
+    if patch.torque_offset_nm is not None:
+        raise ValueError(
+            "torque_offset_nm is a live change only; a calibration file does not hold it"
+        )
+    gains = stored.gains if patch.gains is None else {**(stored.gains or {}), **patch.gains}
+    gravity, checks = stored.gravity, stored.checks
+    if patch.links is not None:
+        same = stored.gravity is not None and stored.gravity.links == patch.links
+        if patch.fit is not None:
+            fit = dict(patch.fit)
+        else:
+            fit = dict(stored.gravity.fit) if same and stored.gravity is not None else {}
+        gravity = GravityCalibration(links=dict(patch.links), fit=fit)
+        if not same:
+            checks = None
+    elif patch.fit is not None:
+        if stored.gravity is None:
+            raise ValueError(f"{stored.arm_id}: a fit needs its fitted links; give links with it")
+        gravity = GravityCalibration(links=dict(stored.gravity.links), fit=dict(patch.fit))
+    if patch.checks is not None:
+        checks = {**(checks or {}), **patch.checks}
+    return ArmCalibration(
+        arm_id=stored.arm_id,
+        robot_model=stored.robot_model,
+        created=created,
+        gravity=gravity,
+        gains=gains,
+        friction_nm=stored.friction_nm if patch.friction_nm is None else dict(patch.friction_nm),
+        checks=checks,
+        notes=stored.notes if patch.notes is None else patch.notes,
     )
 
 
