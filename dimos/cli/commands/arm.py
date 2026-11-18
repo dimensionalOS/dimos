@@ -448,8 +448,38 @@ def _check_robot(robot: str) -> None:
         raise typer.Exit(2)
 
 
+def _arm_ids(robot: str, arm: str | None) -> list[str]:
+    """The robot's arm ids ``arm`` names: "left", its bus "left_arm" or its id; all when None."""
+    from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS
+    from dimos.robot.manipulators.calibration.spec import arm_name
+
+    machine = KNOWN_ROBOTS[robot]
+    ids = machine.arm_ids()
+    if arm is None:
+        return ids
+    return [
+        arm_id
+        for arm_id, bus in zip(ids, machine.buses, strict=True)
+        if arm in (arm_id, arm_id.rsplit("/", 1)[-1], bus.name, arm_name(bus.name))
+    ]
+
+
+def _one_arm_id(robot: str, arm: str) -> str:
+    ids = _arm_ids(robot, arm)
+    if len(ids) != 1:
+        names = [i.rsplit("/", 1)[-1] for i in _arm_ids(robot, None)]
+        echo(f"{robot} has no arm {arm!r}; choose one of {names}", err=True)
+        raise typer.Exit(2)
+    return ids[0]
+
+
 def _precheck(
-    robot: str, arm: str | None, floor_z_m: float | None, min_x_m: float | None
+    robot: str,
+    arm: str | None,
+    floor_z_m: float | None,
+    min_x_m: float | None,
+    poses: int | None = None,
+    speed_deg_s: float | None = None,
 ) -> tuple[Any, list[dict[str, Any]] | None]:
     """The module's own config check and workspace-guard rule, before anything starts.
 
@@ -464,10 +494,20 @@ def _precheck(
     from dimos.robot.manipulators.calibration.spec import NoWorkspaceGuardError
     from dimos.robot.manipulators.calibration.steps import calibration_steps
 
+    given: dict[str, Any] = {"poses": poses, "speed_deg_s": speed_deg_s}
     try:
-        config = CalibrationModuleConfig(robot=robot, arm=arm, floor_z_m=floor_z_m, min_x_m=min_x_m)
+        config = CalibrationModuleConfig(
+            robot=robot,
+            arm=arm,
+            floor_z_m=floor_z_m,
+            min_x_m=min_x_m,
+            **{name: value for name, value in given.items() if value is not None},
+        )
     except ValidationError as error:
-        echo(f"Error: {error.errors()[0]['msg'].removeprefix('Value error, ')}", err=True)
+        first = error.errors()[0]
+        where = "".join(f"--{part}".replace("_", "-") for part in first["loc"])
+        message = first["msg"].removeprefix("Value error, ")
+        echo(f"Error: {where + ': ' if where else ''}{message}", err=True)
         raise typer.Exit(2) from error
     try:
         spec = config.arm_spec()
@@ -516,12 +556,14 @@ def calibrate_cmd(
     min_x_m: float | None = typer.Option(
         None, "--min-x-m", help="Fingertip stays in front of this x, m (arms with no guard)"
     ),
-    poses: int | None = typer.Option(None, "--poses", min=1, help="Gravity poses to visit"),
+    poses: int | None = typer.Option(None, "--poses", help="Gravity poses to visit, at least 1"),
     confirm_each: bool = typer.Option(
         True, "--confirm-each/--no-confirm-each", help="Ask before every pose (default: ask)"
     ),
     steps: str | None = typer.Option(None, "--steps", help="Comma-separated steps to run"),
-    speed_deg_s: float | None = typer.Option(None, "--speed-deg-s", help="Peak joint speed"),
+    speed_deg_s: float | None = typer.Option(
+        None, "--speed-deg-s", help="Peak joint speed, deg/s, at most 30"
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print the command and plan, start nothing"
     ),
@@ -537,6 +579,8 @@ def calibrate_cmd(
     known = [step.id for step in calibration_steps()]
     selected = _split_steps(steps, known)
     arm = arm or BLUEPRINT_DEFAULT_ARM.get(robot)
+    if arm is not None:
+        _one_arm_id(robot, arm)
     blueprint = f"{robot}-calibrate"
     flags: list[str] = []
     if arm is not None:
@@ -553,7 +597,7 @@ def calibrate_cmd(
         flags += ["--calibrationmodule.confirm-each=false"]
     argv = [*dimos_command(), "run", blueprint, "--daemon", *flags, *ctx.args]
 
-    spec, plan = _precheck(robot, arm, floor_z_m, min_x_m)
+    spec, plan = _precheck(robot, arm, floor_z_m, min_x_m, poses, speed_deg_s)
     if dry_run:
         echo("Would run:")
         echo("  " + " ".join(argv))
@@ -694,19 +738,13 @@ def _check_line(name: str, check: Any) -> str:
 @arm_app.command("show")
 def show_cmd(
     robot: str = typer.Argument(..., help="Robot: openyam, dual-openyam, ..."),
-    arm: str | None = typer.Option(None, "--arm", help="Only this arm, e.g. left"),
+    arm: str | None = typer.Option(
+        None, "--arm", help="Only this arm: left, its bus left_arm, or its id"
+    ),
 ) -> None:
     """Print the saved calibration of a robot's arms."""
-    from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS
-
     _check_robot(robot)
-    ids = KNOWN_ROBOTS[robot].arm_ids()
-    if arm is not None:
-        ids = [i for i in ids if arm in (i, i.rsplit("/", 1)[-1])]
-        if not ids:
-            names = [i.rsplit("/", 1)[-1] for i in KNOWN_ROBOTS[robot].arm_ids()]
-            echo(f"{robot} has no arm {arm!r}; choose one of {names}", err=True)
-            raise typer.Exit(2)
+    ids = _arm_ids(robot, None) if arm is None else [_one_arm_id(robot, arm)]
     for arm_id in ids:
         print_calibration(arm_id, arms_root())
 
@@ -714,12 +752,11 @@ def show_cmd(
 @arm_app.command("bake")
 def bake_cmd(
     robot: str = typer.Argument(..., help="Robot: openyam, dual-openyam, ..."),
-    arm: str = typer.Option(..., "--arm", help="Which arm, e.g. left"),
+    arm: str = typer.Option(..., "--arm", help="Which arm: left, its bus left_arm, or its id"),
     urdf: Path = typer.Option(..., "--urdf", exists=True, dir_okay=False, help="URDF to read"),
     out: Path = typer.Option(..., "--out", help="URDF to write"),
 ) -> None:
     """Write a URDF with the arm's fitted link masses and centres of mass."""
-    from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS
     from dimos.robot.manipulators.calibration.schema import (
         ArmCalibrationError,
         bake_into_urdf,
@@ -728,16 +765,12 @@ def bake_cmd(
     )
 
     _check_robot(robot)
-    ids = [i for i in KNOWN_ROBOTS[robot].arm_ids() if arm in (i, i.rsplit("/", 1)[-1])]
-    if len(ids) != 1:
-        names = [i.rsplit("/", 1)[-1] for i in KNOWN_ROBOTS[robot].arm_ids()]
-        echo(f"{robot} has no arm {arm!r}; choose one of {names}", err=True)
-        raise typer.Exit(2)
+    arm_id = _one_arm_id(robot, arm)
     try:
-        calibration = load_calibration(calibration_path(ids[0], arms_root()))
+        calibration = load_calibration(calibration_path(arm_id, arms_root()))
         baked = bake_into_urdf(calibration, urdf.read_text())
     except ArmCalibrationError as error:
         echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     out.write_text(baked)
-    echo(f"Wrote {out} with the fitted masses of {ids[0]}.")
+    echo(f"Wrote {out} with the fitted masses of {arm_id}.")

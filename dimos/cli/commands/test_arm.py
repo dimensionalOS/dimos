@@ -344,6 +344,26 @@ def test_a_bad_robot_lists_the_known_ones_and_a_guardless_arm_needs_the_bench_nu
     assert "--floor-z-m" in result.output
     unknown = invoke("calibrate", "dual-openyam", "--steps", "nope")
     assert unknown.exit_code == 2 and "Unknown steps" in unknown.output
+    no_arm = invoke("calibrate", "dual-openyam", "--arm", "up", "--dry-run")
+    assert no_arm.exit_code == 2 and "has no arm 'up'" in no_arm.output
+    assert rig.launched == []
+
+
+@pytest.mark.parametrize(
+    "flags,said",
+    [
+        (["--poses", "0"], "--poses: Input should be greater than or equal to 1"),
+        (["--speed-deg-s", "0"], "--speed-deg-s: Input should be greater than 0"),
+        (["--speed-deg-s", "45"], "--speed-deg-s: Input should be less than or equal to 30"),
+    ],
+)
+def test_poses_and_speed_are_checked_before_anything_starts(
+    rig: Rig, flags: list[str], said: str
+) -> None:
+    result = invoke("calibrate", "dual-openyam", *flags)
+
+    assert result.exit_code == 2, result.output
+    assert said in result.output
     assert rig.launched == []
 
 
@@ -380,8 +400,10 @@ def test_show_prints_the_saved_file_or_none(rig: Rig, tmp_path: Path) -> None:
     assert "shoulder  80  5" in out and "arm" in out and "2.000" in out
     assert "check float" in out and "1 earlier file(s)" in out
     assert "dual_openyam/right" in out and "  none" in out
-    only = invoke("show", "dual-openyam", "--arm", "left")
-    assert "dual_openyam/right" not in only.output
+    for spelling in ("left", "left_arm", ARM_ID):
+        only = invoke("show", "dual-openyam", "--arm", spelling)
+        assert only.exit_code == 0 and ARM_ID in only.output
+        assert "dual_openyam/right" not in only.output
     assert invoke("show", "dual-openyam", "--arm", "up").exit_code == 2
 
 
@@ -396,7 +418,7 @@ def test_bake_writes_the_urdf_with_the_fitted_masses_and_refuses_a_foreign_urdf(
     source.write_text(TOY_URDF)
 
     result = invoke(
-        "bake", "dual-openyam", "--arm", "left", "--urdf", str(source), "--out", str(out)
+        "bake", "dual-openyam", "--arm", "left_arm", "--urdf", str(source), "--out", str(out)
     )
 
     assert result.exit_code == 0, result.output
@@ -406,7 +428,7 @@ def test_bake_writes_the_urdf_with_the_fitted_masses_and_refuses_a_foreign_urdf(
         "bake",
         "dual-openyam",
         "--arm",
-        "left",
+        ARM_ID,
         "--urdf",
         str(source),
         "--out",
