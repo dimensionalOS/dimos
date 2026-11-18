@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import math
@@ -20,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import pinocchio as pin
 import pytest
+from typer.testing import CliRunner
 
 from dimos.robot.manipulators.calibration import gravity_fit
 from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
@@ -40,6 +42,7 @@ from dimos.robot.manipulators.calibration.gravity_fit import (
     median_friction,
     pose_windows,
     report_json_name,
+    save_refusals,
 )
 from dimos.robot.manipulators.calibration.gravity_poses import (
     ArmModel,
@@ -466,7 +469,11 @@ def test_report_pipeline_writes_the_calibration_and_keeps_stored_gains(
     stored = tmp_path / "state" / "dual_openyam" / "left"
     save_calibration(
         stored,
-        ArmCalibration.for_spec(left_spec, gains={"left_joint2": JointGains(kp=90.0, kd=4.0)}),
+        ArmCalibration.for_spec(
+            left_spec,
+            gains={"left_joint2": JointGains(kp=90.0, kd=4.0)},
+            checks={"float": {"passed": True}},
+        ),
     )
     run = tmp_path / "20261118-run"
     run.mkdir()
@@ -487,10 +494,103 @@ def test_report_pipeline_writes_the_calibration_and_keeps_stored_gains(
     saved = load_calibration(stored)
     assert saved.gravity == calibration.gravity and saved.created == now
     assert saved.gains == {"left_joint2": JointGains(kp=90.0, kd=4.0)}
+    # The float check ran with the old masses; the new ones drop it.
+    assert saved.checks is None
     assert saved.friction_nm == pytest.approx(
         dict.fromkeys(LEFT_MEASURED, 80.0 * math.radians(0.1)), rel=1e-6
     )
     assert len(list((stored / "history").iterdir())) == 1
+
+
+def test_save_needs_a_held_out_pose_and_no_worse_held_out_error(
+    tmp_path: Path,
+    arm: ArmModel,
+    pose_set: PoseSet,
+    left_spec: ArmCalibrationSpec,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    truth = perturbed_model(arm, PERTURBATION)
+    recording = _synthetic_recording(arm, [home_pose(arm), *pose_set.identification], "", truth)
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: recording)
+    stored = tmp_path / "left"
+    run = tmp_path / "run"
+    run.mkdir()
+    # Nothing held out: the fit was never scored on poses it did not see.
+    result, out_dir, calibration = generate_gravity_report(
+        run, left_spec, arm=arm, holdout=[], save_to=stored
+    )
+    assert result.bounds_ok and calibration is not None and not result.holdout_poses
+    assert save_refusals(result) == [
+        "no pose was held out, so the fit was never scored on poses it did not see"
+    ]
+    assert not (stored / "calibration.json").exists()
+    assert "Not saved as the arm's calibration (save anyway with --force)" in (
+        (out_dir / "report.md").read_text()
+    )
+    generate_gravity_report(run, left_spec, arm=arm, holdout=[], save_to=stored, force=True)
+    assert load_calibration(stored).gravity == calibration.gravity
+    # A held-out error that rises on one joint is refused too.
+    fitted = fit_gravity(arm, extract_measurements(recording, left_spec))
+    assert save_refusals(fitted) == []
+    worse = fitted.residual_after.copy()
+    rows = [
+        i
+        for i, (m, held) in enumerate(zip(fitted.measurements, fitted.is_holdout, strict=True))
+        if held and m.joint == "left_joint4"
+    ]
+    worse[rows] = 10.0 * fitted.residual_before[rows] + 0.1
+    (reason,) = save_refusals(replace(fitted, residual_after=worse))
+    assert reason.startswith("left_joint4 held-out RMS rose from")
+    missing = [m for m in fitted.measurements if not (m.joint == "left_joint5")]
+    assert "left_joint5 has no held-out measurement" in save_refusals(fit_gravity(arm, missing))
+
+
+def test_save_cli_refuses_without_force_and_shows_the_bounds(
+    tmp_path: Path,
+    arm: ArmModel,
+    pose_set: PoseSet,
+    left_spec: ArmCalibrationSpec,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    truth = perturbed_model(arm, {"left_gripper": (2.0, np.array([0.0, 0.0, -0.4]))})
+    recording = _synthetic_recording(arm, [home_pose(arm), *pose_set.identification], "", truth)
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: recording)
+    target = tmp_path / "state" / "calibration.json"
+    monkeypatch.setattr(gravity_fit, "calibration_path", lambda arm_id: target)
+    run = tmp_path / "run"
+    run.mkdir()
+    args = [str(run), "--robot", "dual-openyam", "--arm", "left", "--save"]
+    saved = CliRunner().invoke(gravity_fit.app, args)
+    # Every fifth pose held out and the error down: saved, the bounds it hit shown.
+    assert saved.exit_code == 0, saved.output
+    assert "Saved the calibration of dual_openyam/left" in saved.output
+    (bounds,) = [line for line in saved.output.splitlines() if line.startswith("  at bounds: ")]
+    assert "left_gripper mass sits at its bound (upper)" in bounds
+    target.unlink()
+    labels = ",".join(p.name for p in pose_set.identification[:1])
+    monkeypatch.setattr(gravity_fit, "save_refusals", lambda result: ["made up"])
+    refused = CliRunner().invoke(gravity_fit.app, [*args, "--holdout", labels])
+    assert refused.exit_code == 1
+    assert "Did not save the calibration of dual_openyam/left: made up" in refused.output
+    assert not target.exists()
+    forced = CliRunner().invoke(gravity_fit.app, [*args, "--holdout", labels, "--force"])
+    assert forced.exit_code == 0, forced.output
+    assert "despite (--force): made up" in forced.output and target.exists()
+
+
+def test_stored_checks_survive_a_refit_with_the_same_masses(
+    tmp_path: Path, arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec
+) -> None:
+    truth = perturbed_model(arm, PERTURBATION)
+    measurements = synthetic_measurements(
+        arm, truth, [home_pose(arm), *pose_set.identification], noise_nm=0.0, friction_nm=0.3
+    )
+    new = calibration_from_fit(fit_gravity(arm, measurements), left_spec)
+    stored = save_calibration(
+        tmp_path, new.model_copy(update={"checks": {"float": {"passed": True}}, "notes": "x"})
+    )
+    kept = gravity_fit._keep_existing(stored, new, left_spec)
+    assert kept.checks == {"float": {"passed": True}} and kept.notes == "x"
 
 
 def test_report_compares_with_a_previous_calibration(

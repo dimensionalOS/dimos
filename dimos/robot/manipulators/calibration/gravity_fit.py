@@ -33,8 +33,11 @@ reported as failed and no calibration file is written. A passing fit writes
 ``gravity_report/gravity_<arm>_<date>.json``, an ``ArmCalibration`` (see
 ``schema``) holding the fitted links, the fit statistics and the median
 friction per joint over the dither pairs that measured it; ``--save`` also
-stores it as the arm's calibration file, keeping the gains and checks already
-there.
+stores it as the arm's calibration file, keeping the gains already there (and
+the checks, while the fitted masses stay the same). The hard bounds keep a fit
+physical, not right, so ``--save`` also needs at least one held-out pose and a
+held-out error no worse after the fit on every measured joint; ``--force``
+saves without that.
 """
 
 from __future__ import annotations
@@ -69,6 +72,7 @@ from dimos.robot.manipulators.calibration.schema import (
     calibration_path,
     gravity_links_from_inertial,
     load_calibration,
+    load_for_spec,
     save_calibration,
     to_inertial_overrides,
 )
@@ -618,6 +622,29 @@ def calibration_from_fit(
     )
 
 
+def save_refusals(result: FitResult) -> list[str]:
+    """Why a fit should not become the arm's calibration file; empty when it may.
+
+    The solver's hard bounds keep every fit physical, so passing them says
+    nothing about whether the fit is right: it must improve, or at least not
+    worsen, the resting error at poses it never saw, on every measured joint.
+    A fit pressed against a bound (``at_bounds``) is not refused for that alone.
+    """
+    if not result.holdout_poses:
+        return ["no pose was held out, so the fit was never scored on poses it did not see"]
+    before = result.rms_by_joint(holdout=True, after=False)
+    after = result.rms_by_joint(holdout=True, after=True)
+    reasons: list[str] = []
+    for joint in result.measured_joints:
+        if joint not in before:
+            reasons.append(f"{joint} has no held-out measurement")
+        elif after[joint] > before[joint]:
+            reasons.append(
+                f"{joint} held-out RMS rose from {before[joint]:.3f} to {after[joint]:.3f} Nm"
+            )
+    return reasons
+
+
 def report_json_name(arm_id: str, created: datetime) -> str:
     """``gravity_<arm>_<date>.json``, the arm id's slashes as underscores."""
     return f"gravity_{arm_id.replace('/', '_')}_{created.date().isoformat()}.json"
@@ -682,7 +709,13 @@ def _rms_table(result: FitResult, *, holdout: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-def format_report(result: FitResult, previous: Path | None, json_path: Path | None) -> str:
+def format_report(
+    result: FitResult,
+    previous: Path | None,
+    json_path: Path | None,
+    *,
+    not_saved: Sequence[str] = (),
+) -> str:
     out = [f"# Gravity-model fit: {result.arm_id}", ""]
     if result.bounds_ok:
         out.append(
@@ -691,6 +724,10 @@ def format_report(result: FitResult, previous: Path | None, json_path: Path | No
     else:
         out.append("Result: FAILED physical bounds; no parameters written.")
         out.extend(f"- {v}" for v in result.bound_violations)
+    if not_saved:
+        out.append("")
+        out.append("Not saved as the arm's calibration (save anyway with --force):")
+        out.extend(f"- {reason}" for reason in not_saved)
     if result.at_bounds:
         out.append("")
         out.append(
@@ -895,12 +932,15 @@ def generate_gravity_report(
     arm: ArmModel | None = None,
     now: datetime | None = None,
     save_to: Path | None = None,
+    force: bool = False,
 ) -> tuple[FitResult, Path, ArmCalibration | None]:
     """Fit one arm's recording and write ``gravity_report/`` inside it.
 
     A passing fit also writes ``gravity_<arm>_<date>.json``, an
     ``ArmCalibration``; with ``save_to`` it is saved there too, keeping the
-    gains, checks and notes of a calibration already there for the same model.
+    gains and notes of a calibration already there for the same model (see
+    ``_keep_existing``), unless ``save_refusals`` objects and ``force`` is
+    not given.
     """
     arm = arm or ArmModel(spec)
     if arm.arm_id != spec.arm_id:
@@ -920,29 +960,47 @@ def generate_gravity_report(
             else find_previous_json([recording_dir.parent], spec.arm_id, exclude=json_path)
         )
     calibration: ArmCalibration | None = None
+    not_saved: list[str] = []
     if result.bounds_ok and json_path is not None:
         calibration = calibration_from_fit(result, spec, recording_dir=recording_dir, created=now)
         json_path.write_text(calibration.model_dump_json(indent=2) + "\n")
         if save_to is not None:
-            save_calibration(save_to, _keep_existing(save_to, calibration, spec))
+            not_saved = [] if force else save_refusals(result)
+            if not not_saved:
+                save_calibration(save_to, _keep_existing(save_to, calibration, spec))
     else:
         json_path = None
-    (out_dir / "report.md").write_text(format_report(result, previous, json_path))
+    (out_dir / "report.md").write_text(
+        format_report(result, previous, json_path, not_saved=not_saved)
+    )
     write_measurements_csv(result, out_dir / "measurements.csv")
     plot_resting_torque(result, out_dir / "resting_torque.png")
     return result, out_dir, calibration
 
 
 def _keep_existing(path: Path, new: ArmCalibration, spec: ArmCalibrationSpec) -> ArmCalibration:
-    """``new`` plus the gains, checks and notes of a stored calibration for the same model."""
+    """``new`` plus the gains and notes of a stored calibration for the same arm and model.
+
+    Its checks (float drift and the like) ran with the old masses, so they are
+    kept only when the fitted links are unchanged; the file they were in stays
+    in ``history/``.
+    """
     try:
-        existing = load_calibration(
-            path, expected_model_sha256=spec.model_sha256(), expected_arm_id=spec.arm_id
-        )
+        existing = load_for_spec(spec, path)
     except ArmCalibrationError:
         return new
+    same_gravity = (
+        existing.gravity is not None
+        and new.gravity is not None
+        and existing.gravity.links == new.gravity.links
+    )
     return existing.model_copy(
-        update={"created": new.created, "gravity": new.gravity, "friction_nm": new.friction_nm}
+        update={
+            "created": new.created,
+            "gravity": new.gravity,
+            "friction_nm": new.friction_nm,
+            "checks": existing.checks if same_gravity else None,
+        }
     )
 
 
@@ -965,7 +1023,12 @@ def main(
         None, help="Earlier calibration or gravity json to compare with"
     ),
     save: bool = typer.Option(
-        False, "--save", help="Also store a passing fit as the arm's calibration file"
+        False,
+        "--save",
+        help="Also store the fit as the arm's calibration file, if it improves the held-out error",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="With --save: store the fit even if its held-out check fails"
     ),
 ) -> None:
     """Fit the gravity model from a recording and write gravity_report/ next to it."""
@@ -976,14 +1039,32 @@ def main(
         raise typer.BadParameter(str(error)) from None
     target = calibration_path(spec.arm_id) if save else None
     result, out_dir, calibration = generate_gravity_report(
-        recording_dir, spec, ridge_nm=ridge_nm, holdout=labels, previous=previous, save_to=target
+        recording_dir,
+        spec,
+        ridge_nm=ridge_nm,
+        holdout=labels,
+        previous=previous,
+        save_to=target,
+        force=force,
     )
     typer.echo((out_dir / "report.md").read_text())
     typer.echo(f"Wrote {out_dir}")
-    if target is not None and calibration is not None:
-        typer.echo(f"Saved the calibration of {spec.arm_id} to {target}")
     if not result.bounds_ok:
         raise typer.Exit(1)
+    if target is None or calibration is None:
+        return
+    refusals = save_refusals(result)
+    if refusals and not force:
+        typer.echo(
+            f"Did not save the calibration of {spec.arm_id}: {'; '.join(refusals)}. "
+            "Re-run with --force to save it anyway."
+        )
+        raise typer.Exit(1)
+    typer.echo(f"Saved the calibration of {spec.arm_id} to {target}")
+    if refusals:
+        typer.echo(f"  despite (--force): {'; '.join(refusals)}")
+    if result.at_bounds:
+        typer.echo(f"  at bounds: {'; '.join(result.at_bounds)}")
 
 
 if __name__ == "__main__":
