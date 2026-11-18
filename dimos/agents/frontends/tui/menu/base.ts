@@ -1,5 +1,3 @@
-import type { Ref } from "@earendil-works/chord";
-import { InventoryContract } from "#dimos/agents/shared/protocol/inventory/contract.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
@@ -28,8 +26,6 @@ export type MenuRow = {
 export type TabContext = {
   readonly ui: Ui;
   readonly now: EpochMs;
-  /** The inventory object held by the terminal. */
-  readonly inventory: Ref<typeof InventoryContract> | null;
   /** The conversation the chat shows, to mark it. */
   readonly current: ConversationId | null;
   /** Shows a conversation in the chat and closes /menu. */

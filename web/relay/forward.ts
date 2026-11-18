@@ -8,8 +8,10 @@ import {
   type FrameHeader,
   frameHeaderFromUnknown,
   MAX_CONTROL_PAYLOAD_BYTES,
+  MAX_TOPIC_PAYLOAD_BYTES,
   peekDataFrameLengths,
   RESERVED_CHANNEL_PREFIX,
+  topicRouteOk,
 } from "@dimos/shared";
 
 // Reliable channels: a viewer this far behind is dead weight; kick it so it
@@ -539,6 +541,8 @@ export class ControlPayloadTooLargeError extends Error {
  */
 export async function readRobotFrame(
   rs: ReadableStream<Uint8Array>,
+  allowTopics = false,
+  retain?: (bytes: number) => void,
 ): Promise<{ header: FrameHeader | null; bytes: Uint8Array; reserved: boolean }> {
   const reader = rs.getReader({ mode: "byob" });
   const chunks: Uint8Array[] = [];
@@ -549,8 +553,18 @@ export async function readRobotFrame(
   let reserved = false;
   try {
     while (lens === null || size < lens.total) {
-      const { value, done } = await reader.read(new Uint8Array(64 * 1024));
+      // Never consume bytes of the next frame: topic reliable routes keep
+      // many frames on this stream. Read header before allocating payload.
+      const needed = lens === null
+        ? 8 - size
+        : !headerParsed
+        ? 8 + lens.headerLen - size
+        : lens.total - size;
+      const { value, done } = await reader.read(new Uint8Array(Math.min(64 * 1024, needed)));
       if (value && value.byteLength) {
+        // Charge retained chunks before accepting another partial frame.
+        // The session releases the charge after forwarding or stream reset.
+        retain?.(value.byteLength);
         chunks.push(value);
         size += value.byteLength;
         if (lens === null && size >= 8) {
@@ -571,7 +585,11 @@ export async function readRobotFrame(
             ? (raw as Record<string, unknown>).ch
             : undefined;
           reserved = typeof ch === "string" && ch.startsWith(RESERVED_CHANNEL_PREFIX);
-          if (reserved && lens.payloadLen > MAX_CONTROL_PAYLOAD_BYTES) {
+          const topic = allowTopics && topicRouteOk(ch);
+          if (topic && lens.payloadLen > MAX_TOPIC_PAYLOAD_BYTES) {
+            throw new Error("topic payload exceeds byte bound");
+          }
+          if (reserved && !topic && lens.payloadLen > MAX_CONTROL_PAYLOAD_BYTES) {
             throw new ControlPayloadTooLargeError(
               `control frame claims a ${lens.payloadLen} B payload ` +
                 `(cap ${MAX_CONTROL_PAYLOAD_BYTES})`,

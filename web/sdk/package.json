@@ -1,8 +1,28 @@
 {
   "name": "@dimos/sdk",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": ["dist"],
+  "types": "./dist/package/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/package/index.d.ts",
+      "import": "./dist/package/index.js"
+    },
+    "./react": {
+      "types": "./dist/package/react.d.ts",
+      "import": "./dist/package/react.js"
+    },
+    "./internal/teleop": {
+      "types": "./dist/package/internal/teleop.d.ts",
+      "import": "./dist/package/internal/teleop.js"
+    },
+    "./internal/topics": {
+      "types": "./dist/package/internal/topics.d.ts",
+      "import": "./dist/package/internal/topics.js"
+    }
+  },
   "peerDependencies": {
     "react": "^19.0.0"
   },
@@ -18,6 +38,8 @@
     "happy-dom": "^20.11.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "rollup": "^4.60.2",
+    "rollup-plugin-dts": "6.3.0",
     "typescript": "~5.9.2",
     "vite": "^7.1.0",
     "vitest": "^3.2.4"

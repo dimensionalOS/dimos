@@ -165,6 +165,7 @@ class SecurityModule(Module):
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+        self._planner_cleanup_pending = threading.Event()
         self._goal_reached_event = threading.Event()
         self._main_thread: threading.Thread | None = None
         self._state: State = "IDLE"
@@ -185,7 +186,8 @@ class SecurityModule(Module):
 
     @rpc
     def stop(self) -> None:
-        self._stop_security_patrol_internal()
+        if self._main_thread is not None or self._planner_cleanup_pending.is_set():
+            self._stop_security_patrol_internal()
         self._depth_estimator.stop()
         self._detector.stop()
         self._tracker.stop()
@@ -207,6 +209,8 @@ class SecurityModule(Module):
 
         self._router.reset()
 
+        # A timed-out RPC may already have changed the planner.
+        self._planner_cleanup_pending.set()
         self._planner_spec.set_replanning_enabled(False)
         self._planner_spec.set_safe_goal_clearance(
             self.config.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
@@ -392,6 +396,7 @@ class SecurityModule(Module):
 
         self._planner_spec.set_replanning_enabled(True)
         self._planner_spec.reset_safe_goal_clearance()
+        self._planner_cleanup_pending.clear()
 
         self._cancel_current_goal()
 

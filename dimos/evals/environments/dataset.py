@@ -68,7 +68,7 @@ class Dataset(Environment):
             for select in self.config.select:
                 select(store)
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         mcp_url = self.config.mcp_url
         if modules:
             proc = DimosCliCall()

@@ -27,6 +27,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.seeed_b601_dm.config import (
@@ -52,7 +53,7 @@ def seeed_b601_dm_control_blueprint() -> Blueprint:
     return autoconnect(
         SeeedB601DMCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=B601_DM_PLANNING_MODEL.model,
+            connections=[arm_declaration(B601DMConnection)],
             tasks=_tasks(),
             zero_stiffness_joints=[],
         ),

@@ -142,8 +142,8 @@ def install_signal_handlers(
 ) -> None:
     """Install SIGTERM/SIGINT handlers that request shutdown through the main loop.
 
-    When `sigint` is False, only SIGTERM is wired. This is useful for foreground
-    mode where the default SIGINT behavior (`KeyboardInterrupt`) is preserved.
+    When `sigint` is False, only SIGTERM is wired, preserving the caller's
+    existing SIGINT handler. CLI runs handle both signals in all modes.
 
     The watchdog sweeps strays after exit. Sweeping here would kill and reap
     multiprocessing's resource tracker before its owning interpreter cleans up.
@@ -176,6 +176,9 @@ def run_coordinator(
     from dimos.memory.tap import recording
 
     os.environ[DIMOS_RUN_ID_ENV] = run_id
+    # Build can launch detached viewers before a module fails to start. Arm the
+    # sweep first so startup failures receive the same cleanup as normal exits.
+    spawn_watchdog(run_id, log_dir=log_dir)
     coordinator = ModuleCoordinator.build(blueprint, config, remote_module_refs=remote_module_refs)
     try:
         if not coordinator.health_check():
@@ -184,7 +187,6 @@ def run_coordinator(
     except BaseException:
         coordinator.stop()
         raise
-    spawn_watchdog(run_id, log_dir=log_dir)
     install_signal_handlers(run_id, coordinator, sigint=sigint)
     try:
         if on_ready is not None:

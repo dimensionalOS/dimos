@@ -138,7 +138,7 @@ img = app.peek_stream("color_image", 1.0)
 
 # Display it in a window.
 import cv2
-cv2.imshow("color_image", img.data)
+cv2.imshow("color_image", img.to_opencv())
 cv2.waitKey(0)
 ```
 

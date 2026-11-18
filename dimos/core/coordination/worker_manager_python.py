@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
+from dimos.core.resource_monitor.logger import RESOURCE_STATS_TOPIC
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
@@ -60,6 +61,7 @@ class WorkerManagerPython:
 
             self._stats_monitor = StatsMonitor(self)
             self._stats_monitor.start()
+            logger.info("Resource monitor started", topic=RESOURCE_STATS_TOPIC)
 
     def add_workers(self, n: int) -> None:
         """Spawn *n* additional worker processes into the pool."""
@@ -253,7 +255,7 @@ class WorkerManagerPython:
         total_workers = len(self._workers)
         if total_dedicated * 2 > total_workers:
             n_to_add = total_dedicated * 2 - total_workers
-            logger.warning(
+            logger.info(
                 "Auto-scaling worker pool for dedicated modules.",
                 dedicated=total_dedicated,
                 before=total_workers,

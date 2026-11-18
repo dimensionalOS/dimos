@@ -151,7 +151,7 @@ def test_connect_does_not_enable_or_accept_commands(connection_class, boundary):
 
 def test_topology_mismatch_fails_before_bus(connection_class, boundary):
     module = connection_class(model=connection_class.robot.model.with_fixed_joints("left_finger"))
-    with pytest.raises(ValueError, match="topology"):
+    with pytest.raises(ValueError, match="declares joints absent from its model"):
         module.start()
     boundary[1].assert_not_called()
 
@@ -328,10 +328,12 @@ def test_connection_config_accepts_position_commands_only():
 
     with pytest.raises(ValueError, match="position commands only"):
         common.DamiaoConnectionConfig(
-            source="arm", joint_commands=(Interface.POSITION, Interface.VELOCITY)
+            source="arm", joint_commands={"joint1": (Interface.POSITION, Interface.VELOCITY)}
         )
-    with pytest.raises(ValueError, match="position commands only"):
-        common.DamiaoConnectionConfig(source="arm", pd=True)
+    with pytest.raises(ValueError, match="dict"):
+        common.DamiaoConnectionConfig.model_validate(
+            {"source": "arm", "joint_commands": (Interface.POSITION,)}
+        )
 
 
 def test_can_selectors_must_match_the_robot_buses(connection_class):

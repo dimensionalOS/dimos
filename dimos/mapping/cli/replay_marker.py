@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from dimos.utils.executable import find_executable
+
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
 
@@ -61,7 +63,11 @@ def main(
         7.5, "--smoothing-window", help="Buffer window for averaged-track pass (s); 0 disables"
     ),
 ) -> None:
-    """Dump an AprilTag detection replay to .rrd and open it in rerun."""
+    """Dump an AprilTag detection replay to .rrd and open it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
     from dimos.memory.cli.dataset import open_store, resolve_dataset
@@ -234,11 +240,12 @@ def main(
                 n_updates += 1
             print(f"tracks: {len(seen_tracks)} unique, {n_updates} updates")
 
+    rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")
     else:
-        subprocess.Popen(["rerun", str(out)])
+        subprocess.Popen([find_executable("rerun") or "rerun", str(out)])
 
 
 if __name__ == "__main__":

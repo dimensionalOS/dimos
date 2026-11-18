@@ -29,6 +29,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     DamiaoTeleopCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
@@ -56,7 +57,7 @@ def _rollout_control(
     return autoconnect(
         coordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_MODEL.model,
+            connections=[arm_declaration(OpenYamConnection)],
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),

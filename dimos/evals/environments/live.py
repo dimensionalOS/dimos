@@ -32,13 +32,15 @@ from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.constants import RAW_ENDPOINT
+from dimos.evals.constants import MCP_SERVER, RAW_ENDPOINT
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.environments.lib.launch import (
-    default_mcp_url,
-    launched_mcp_url,
+    attached_mcp_url,
+    launched_run,
     validate_blueprints,
+    wait_connectable,
 )
+from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.evals.types import RunningEnvironment
 from dimos.utils.logging_config import setup_logger
 
@@ -92,18 +94,33 @@ class LiveEnvironment(Environment):
     def raw_guide(self) -> str | None:
         return self.config.raw_guide
 
+    @property
+    def serves_mcp(self) -> bool:
+        """Whether the blueprint itself offers agents MCP tools."""
+        return MCP_SERVER in self.config.blueprint
+
+    @property
+    def python_guide(self) -> str | None:
+        """DIMOS.md, when agents drive the robot through the Python API."""
+        return None if self.serves_mcp else PYTHON_API_GUIDE
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._recording: Store | None = None
         self._raw_endpoint = RAW_ENDPOINT  # an attached dimos runs its bridge on the default
-        self._mcp_url: str | None = None
+
+    def _launch_modules(self, modules: Sequence[str], requires_mcp: bool) -> tuple[str, ...]:
+        """``modules``, plus McpServer for an agent that needs one the blueprint leaves out."""
+        if requires_mcp and not self.serves_mcp and MCP_SERVER not in modules:
+            return (*modules, MCP_SERVER)
+        return tuple(modules)
 
     @abstractmethod
     def configure_launch(self, proc: DimosCliCall) -> None:
         """Set launch flags/environment on the owned process before launch."""
 
     def setup_scene(self) -> None:
-        """Apply optional scene setup after MCP is ready, before recording discovery."""
+        """Apply optional scene setup once dimos is up, before recording discovery."""
 
     def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
         """Wait for first observations and return extra artifacts, if needed."""
@@ -122,13 +139,20 @@ class LiveEnvironment(Environment):
                     f"{type(self).__name__} attaches to an existing dimos; "
                     f"{type(agent).__name__} also adds modules {agent.config.modules!r}"
                 )
-            mcp_url = default_mcp_url()
-            if not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
-                raise RuntimeError(f"attach needs a running dimos at {mcp_url}")
+            if self.serves_mcp or agent.requires_mcp:
+                mcp_url = attached_mcp_url()
+                if not mcp_url or not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
+                    raise RuntimeError(f"attach needs a running dimos serving MCP at {mcp_url!r}")
+                return
+            try:
+                wait_connectable(time.monotonic() + 2.0)
+            except TimeoutError as e:
+                raise RuntimeError("attach needs a running dimos") from e
             return
-        validate_blueprints((*self.config.blueprint, *agent.config.modules, *self.config.disable))
+        modules = self._launch_modules(agent.config.modules, agent.requires_mcp)
+        validate_blueprints((*self.config.blueprint, *modules, *self.config.disable))
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         # SQLite memory codecs are only needed for a running robot.
         from dimos.memory.store.sqlite import SqliteStore
 
@@ -140,6 +164,7 @@ class LiveEnvironment(Environment):
                 f"attach with raw_bridge needs a running raw-robot-bridge at {self._raw_endpoint}"
             )
         if not self.config.attach:
+            modules = self._launch_modules(modules, requires_mcp)
             proc = DimosCliCall()
             self.configure_launch(proc)
             proc.global_args.append("--record")
@@ -152,23 +177,20 @@ class LiveEnvironment(Environment):
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
-            mcp_url = launched_mcp_url(proc.process, deadline)
+            entry = launched_run(proc.process, deadline)
+            if MCP_SERVER in (*self.config.blueprint, *modules) and entry.mcp_url is None:
+                raise RuntimeError(f"dimos run {entry.run_id} has no McpServer in its blueprint")
+            mcp_url = entry.mcp_url or ""
+            if not mcp_url:
+                wait_connectable(deadline, proc.process)
         else:
-            mcp_url = default_mcp_url()
-        adapter = McpAdapter(mcp_url)
-        if proc is not None:
-            process = proc.process
-            assert process is not None
-            while not adapter.wait_for_ready(
-                timeout=min(1.0, max(0.0, deadline - time.monotonic()))
-            ):
-                if process.poll() is not None:
-                    raise RuntimeError(f"Eval dimos process exited with code {process.returncode}")
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"MCP at {mcp_url} not ready before the launch deadline")
-        elif not adapter.wait_for_ready(timeout=self.config.launch_timeout_s, interval=2.0):
-            raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
-        self._mcp_url = mcp_url
+            mcp_url = attached_mcp_url()
+            if (self.serves_mcp or requires_mcp) and not mcp_url:
+                raise RuntimeError("the attached dimos serves no McpServer")
+            if not mcp_url:
+                wait_connectable(time.monotonic() + self.config.launch_timeout_s)
+        if mcp_url:
+            self._wait_mcp(mcp_url, proc, deadline)
         self.setup_scene()
         path = self._wait_recording(deadline, pid)
         self._recording = SqliteStore(path=str(path), must_exist=True)
@@ -181,7 +203,22 @@ class LiveEnvironment(Environment):
             artifacts=artifacts,
             raw_endpoint=self._raw_endpoint if self.config.raw_bridge else None,
             raw_guide=self.config.raw_guide,
+            python_guide=self.python_guide,
         )
+
+    def _wait_mcp(self, mcp_url: str, proc: DimosCliCall | None, deadline: float) -> None:
+        """Wait for the McpServer of a blueprint that has one."""
+        adapter = McpAdapter(mcp_url)
+        process = proc.process if proc is not None else None
+        if process is None:
+            if not adapter.wait_for_ready(timeout=self.config.launch_timeout_s, interval=2.0):
+                raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
+            return
+        while not adapter.wait_for_ready(timeout=min(1.0, max(0.0, deadline - time.monotonic()))):
+            if process.poll() is not None:
+                raise RuntimeError(f"Eval dimos process exited with code {process.returncode}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"MCP at {mcp_url} not ready before the launch deadline")
 
     def _wait_recording(self, deadline: float, pid: int | None) -> Path:
         """Find the recording of the launched process, or the attached dimos."""
@@ -263,7 +300,6 @@ class LiveEnvironment(Environment):
             super().stop()
         finally:
             self._recording = None
-            self._mcp_url = None
 
 
 def _free_port() -> int:

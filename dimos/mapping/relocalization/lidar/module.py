@@ -29,12 +29,15 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     LidarRelocalizer,
     RelocalizeConfig,
 )
-from dimos.mapping.relocalization.module import Config, RelocalizationModule
+from dimos.mapping.relocalization.module import Config, PremapModule
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
+
+_SPARSE_CLOUD_GRACE_S = 10.0
+_SKIP_LOG_INTERVAL_S = 5.0
 
 
 def window(
@@ -58,7 +61,7 @@ class LidarConfig(Config):
     relocalize: RelocalizeConfig = MID360
 
 
-class CloudRelocalization(RelocalizationModule):
+class CloudRelocalization(PremapModule):
     """Coarse FPFH+RANSAC then ICP of a windowed live cloud against a pointcloud premap.
 
     Subclasses supply :meth:`clouds`.
@@ -69,7 +72,8 @@ class CloudRelocalization(RelocalizationModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._relocalizer: LidarRelocalizer | None = None
-        self._last_skip_log = 0.0
+        self._first_sparse_cloud: float | None = None
+        self._last_skip_log: float | None = None
 
     def clouds(self) -> Observable[PointCloud2]:
         """The windowed live cloud to match, at most one every ``reloc_interval``."""
@@ -94,12 +98,22 @@ class CloudRelocalization(RelocalizationModule):
 
     def _maybe_log_skip(self, msg: PointCloud2) -> None:
         if self._has_enough_points(msg):
+            self._first_sparse_cloud = None
+            self._last_skip_log = None
             return
         now = time.monotonic()
-        if now - self._last_skip_log > 5.0:
-            logger.warning(
-                f"relocalize skipped: n_pts={len(msg)} "
-                f"< min_local_points={self.config.min_local_points}"
+        if self._first_sparse_cloud is None:
+            self._first_sparse_cloud = now
+        if self._last_skip_log is None or now - self._last_skip_log >= _SKIP_LOG_INTERVAL_S:
+            log = (
+                logger.info
+                if now - self._first_sparse_cloud < _SPARSE_CLOUD_GRACE_S
+                else logger.warning
+            )
+            log(
+                "relocalize skipped: not enough local points",
+                n_pts=len(msg),
+                min_local_points=self.config.min_local_points,
             )
             self._last_skip_log = now
 
@@ -111,7 +125,7 @@ class CloudRelocalization(RelocalizationModule):
         t0 = time.monotonic()
         try:
             tf = self._relocalizer.relocalize(
-                msg.pointcloud, self.config.world_frame, self.config.map_frame
+                msg.pointcloud, self.config.world_frame, self.map_frame
             )
         except Exception:
             logger.exception("relocalize() failed")

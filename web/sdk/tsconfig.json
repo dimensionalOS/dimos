@@ -18,7 +18,6 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
       "@dimos/sdk": ["./src/index.ts"],
       "@dimos/sdk/react": ["./src/react.ts"],

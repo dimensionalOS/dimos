@@ -16,21 +16,33 @@
 
 from __future__ import annotations
 
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.module import ModuleBase
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators._modeling import joint_names
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
+    XARM_ARMS,
+    XArmType,
     lite6_hardware,
     make_dual_xarm6_model_config,
     make_lite6_model_config,
-    make_xarm7_model_config,
     make_xarm_hardware,
+    make_xarm_model_config,
     xarm6_hardware,
     xarm7_hardware,
+    xarm_model,
 )
+from dimos.robot.manipulators.xarm.connection import XArmConnection
 
 _dual_xarm6_model = make_dual_xarm6_model_config()
 _mock_left_xarm6_hw = make_xarm_hardware(
@@ -51,8 +63,6 @@ dual_xarm6_planner_coordinator = autoconnect(
     ),
 )
 
-_xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
-
 
 def _gripper_task() -> TaskConfig:
     return TaskConfig(
@@ -63,18 +73,80 @@ def _gripper_task() -> TaskConfig:
     )
 
 
-xarm7_planner_coordinator = autoconnect(
-    planner(
-        gripper_tasks={"manipulator": "arm_gripper"},
-        model=make_xarm7_model_config(
-            add_gripper=True,
+class XArmCoordinator(ControlCoordinator):
+    """Joint targets out to one xArm named "arm", and its joints in, through
+    ``XArmConnection``."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+# The connection module's ports, onto the coordinator's ports for the robot named "arm".
+XARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
+    (XArmConnection, "position_command", "arm_position_command"),
+    (XArmCoordinator, "arm_joint_state", "joint_state"),
+]
+
+
+def xarm_coordinator(arm: XArmType) -> Blueprint:
+    """Run planned joint trajectories on an xArm and open and close its xArm
+    Gripper, through ``XArmConnection``.
+
+    The coordinator names the joints ``arm/joint1`` ... and ``arm/drive_joint``;
+    a planner driving it uses the model from ``make_xarm_model_config(...,
+    robot="arm")``, whose joints are named the same, and
+    ``gripper_tasks={"manipulator": "arm_gripper"}``.
+    Wire it up with ``.remappings(XARM_REMAPS)``. The arm's address is given at
+    run time, after the blueprint name (``--xarmconnection.ip 192.168.1.185``)
+    or as ``XARMCONNECTION__IP``.
+
+    Args:
+        arm: Which arm, e.g. "xarm7".
+    """
+    dof = XARM_ARMS[arm][0]
+    model = xarm_model(arm, gripper="xarm", robot="arm")
+    return autoconnect(
+        XArmCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[
+                ConnectionConfig(
+                    source="arm",
+                    model=model,
+                    joint_commands={j.name: (Interface.POSITION,) for j in movable_joints(model)},
+                )
+            ],
+            tasks=[
+                joint_trajectory_task(joint_names(dof, prefix="arm/joint")),
+                # drive_joint is open at 0 rad.
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/drive_joint"],
+                    priority=20,
+                    params={"open_at": "lower"},
+                ),
+            ],
         ),
-    ),
-    coordinator(
-        hardware=[_xarm7_hw],
-        tasks=[trajectory_task(_xarm7_hw), _gripper_task()],
-    ),
-)
+        XArmConnection.blueprint(arm=arm, gripper="xarm"),
+    )
+
+
+def _planner_coordinator(arm: XArmType) -> Blueprint:
+    """Plan and run motions of an xArm with the xArm Gripper. Wire it up with
+    ``.remappings(XARM_REMAPS)``; see ``xarm_coordinator``."""
+    dof, robot_type = XARM_ARMS[arm]
+    return autoconnect(
+        planner(
+            model=make_xarm_model_config(dof, robot_type=robot_type, robot="arm"),
+            gripper_tasks={"manipulator": "arm_gripper"},
+        ),
+        xarm_coordinator(arm),
+    )
+
+
+# The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
+xarm7_planner_coordinator = _planner_coordinator("xarm7").remappings(XARM_REMAPS)
+xarm6_planner_coordinator = _planner_coordinator("xarm6").remappings(XARM_REMAPS)
 
 _coordinator_xarm7_hw = xarm7_hardware("arm")
 
@@ -93,7 +165,7 @@ coordinator_xarm6 = autoconnect(
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 _coordinator_lite6_hw = lite6_hardware("arm", gripper=True)
