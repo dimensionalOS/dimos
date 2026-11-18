@@ -5,7 +5,7 @@ FROM ubuntu:24.04
 # Keep in sync with dimos/utils/deno.py (DENO_VERSION) and
 # dimos/simulation/dimsim/deno_utils.py (playwright version).
 ARG DENO_VERSION=v2.9.8
-ARG PLAYWRIGHT_VERSION=1.58.2
+ARG PLAYWRIGHT_VERSION=1.61.0
 ARG PYTHON_VERSION=3.12
 
 ENV DEBIAN_FRONTEND=noninteractive
