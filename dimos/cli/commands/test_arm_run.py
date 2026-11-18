@@ -122,13 +122,15 @@ def _register(registry: Path, run_id: str, pid: int) -> None:
 
 
 def test_launch_returns_at_once_though_the_daemon_holds_the_launchers_stdout(
-    registry: Path, launcher: Path
+    registry: Path, launcher: Path, tmp_path: Path
 ) -> None:
     token = "dual-openyam-calibrate:test-fast"
     started = time.monotonic()
 
     run = launch_run(
-        [sys.executable, str(launcher), str(registry), RUN_ID, "yes", "fork"], token=token
+        [sys.executable, str(launcher), str(registry), RUN_ID, "yes", "fork"],
+        token=token,
+        output_dir=tmp_path,
     )
 
     elapsed = time.monotonic() - started
@@ -144,7 +146,7 @@ def test_launch_returns_at_once_though_the_daemon_holds_the_launchers_stdout(
 
 
 def test_a_launcher_that_never_says_its_run_id_is_never_adopted(
-    registry: Path, launcher: Path, spawned: list[subprocess.Popen[bytes]]
+    registry: Path, launcher: Path, spawned: list[subprocess.Popen[bytes]], tmp_path: Path
 ) -> None:
     token = "dual-openyam-calibrate:test-silent"
     foreign = _foreign_sleeper(spawned)
@@ -152,7 +154,9 @@ def test_a_launcher_that_never_says_its_run_id_is_never_adopted(
 
     with pytest.raises(LaunchError, match="without saying which run it started") as raised:
         launch_run(
-            [sys.executable, str(launcher), str(registry), RUN_ID, "no", "fork"], token=token
+            [sys.executable, str(launcher), str(registry), RUN_ID, "no", "fork"],
+            token=token,
+            output_dir=tmp_path,
         )
 
     assert "something went wrong" in str(raised.value)
@@ -163,7 +167,7 @@ def test_a_launcher_that_never_says_its_run_id_is_never_adopted(
 
 
 def test_a_launch_that_hangs_times_out_and_leaves_nothing_behind(
-    registry: Path, launcher: Path
+    registry: Path, launcher: Path, tmp_path: Path
 ) -> None:
     token = "dual-openyam-calibrate:test-hang"
     started = time.monotonic()
@@ -173,6 +177,7 @@ def test_a_launch_that_hangs_times_out_and_leaves_nothing_behind(
             [sys.executable, str(launcher), str(registry), RUN_ID, "yes", "hang"],
             token=token,
             timeout_s=0.5,
+            output_dir=tmp_path,
         )
 
     assert time.monotonic() - started < 10.0
@@ -180,7 +185,7 @@ def test_a_launch_that_hangs_times_out_and_leaves_nothing_behind(
 
 
 def test_an_interrupted_launch_stops_what_it_started(
-    registry: Path, launcher: Path, monkeypatch: pytest.MonkeyPatch
+    registry: Path, launcher: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     token = "dual-openyam-calibrate:test-interrupt"
     reads = {"n": 0}
@@ -196,7 +201,9 @@ def test_an_interrupted_launch_stops_what_it_started(
 
     with pytest.raises(LaunchInterruptedError, match="interrupted while the run was starting"):
         launch_run(
-            [sys.executable, str(launcher), str(registry), RUN_ID, "yes", "hang"], token=token
+            [sys.executable, str(launcher), str(registry), RUN_ID, "yes", "hang"],
+            token=token,
+            output_dir=tmp_path,
         )
 
     assert _token_processes(token) == []

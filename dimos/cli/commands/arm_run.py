@@ -185,7 +185,13 @@ def _abandon(launcher: subprocess.Popen[bytes], token: str, launched_at: float, 
     return f"{why}; {cleaned}"
 
 
-def launch_run(argv: list[str], *, token: str, timeout_s: float = LAUNCH_TIMEOUT_S) -> OurRun:
+def launch_run(
+    argv: list[str],
+    *,
+    token: str,
+    timeout_s: float = LAUNCH_TIMEOUT_S,
+    output_dir: Path | None = None,
+) -> OurRun:
     """Start ``argv`` (a ``dimos run ... --daemon``) and return the run it reports.
 
     The launcher writes to a file, not a pipe: the daemon's forkserver and
@@ -194,11 +200,14 @@ def launch_run(argv: list[str], *, token: str, timeout_s: float = LAUNCH_TIMEOUT
     line. On a timeout, an interrupt or a launcher that ends without that line,
     whatever the launch left running is stopped (only processes carrying
     ``token``) and ``LaunchError`` says so; a run is never adopted otherwise.
+    The file goes to ``output_dir``, the system's temp directory by default.
     """
     from dimos.core.run_registry import list_runs
 
     launched_at = time.time()
-    descriptor, name = tempfile.mkstemp(prefix="dimos-arm-calibrate-", suffix=".log")
+    descriptor, name = tempfile.mkstemp(
+        prefix="dimos-arm-calibrate-", suffix=".log", dir=output_dir
+    )
     output = Path(name)
     with os.fdopen(descriptor, "wb") as sink:
         launcher = subprocess.Popen(
