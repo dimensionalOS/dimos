@@ -1,7 +1,7 @@
 # Calibrate a Damiao arm
 
 `dimos arm calibrate` is a guided calibration of one Damiao arm. It fits a gravity model and kp/kd gains, and saves one file per arm that the arm loads at start.
-It works with `openyam`, `dual-openyam`, `metal`, `dual-metal`, `b601-dm` and `openarm`.
+It works with `openyam`, `dual-openyam`, `metal`, `dual-metal`, `b601-dm` and `openarm`. A step the arm's connection cannot do is skipped, and the plan says why.
 
 ## Run it
 
@@ -51,6 +51,7 @@ dimos arm bake dual-openyam --arm left --urdf in.urdf --out calibrated.urdf
 
 The arm's connection reads the file at every start. Its `calibration` setting is `auto`, `off` or a path. For example, `--dualopenyamconnection.calibration off` runs without it.
 If the file was made for a different arm or URDF (the URDF hash does not match), the connection refuses it. `bake` refuses such a URDF too.
+Saving goes through the connection, which always writes `~/.local/state/dimos/arms/<arm id>/calibration.json`, even when it was started with `off` or a path.
 
 ## Options you may need
 
@@ -82,6 +83,8 @@ The command starts the robot in the background, talks to it, brings the arm home
 7. **confirm_tracking.** Revisit the held-out poses and compare rests before and after.
 8. **summary.** Lists the file, the files it replaced and what to do next.
 
+Saves happen with the arm at home. If applying a save would change a joint's gravity torque by more than 2 N m, the connection writes nothing and the wizard asks again: Enter forces it, s saves the file without applying it.
+
 The method:
 
 - Each joint is nudged up and down at every pose. The pair cancels friction, so what is left is gravity.
@@ -97,3 +100,17 @@ Safety:
 - An abort never moves the arm. It holds in place and offers to go home.
 - A joint that lags its target by more than 10 degrees stops the step. So does a fingertip that would cross the guard.
 - `dimos stop` from another terminal gives the run about 5 seconds before it kills it. That is too short to park the arm, so finish through the wizard.
+
+## How the wizard drives the arm
+
+The calibration module talks to the arm's connection through the arm config contract, five calls every connection has:
+
+| Call | What it does |
+|------|--------------|
+| `config_keys` | Says what the connection can read and change. Steps it cannot do are skipped |
+| `config_get` | How each arm is driven now: gains, floating joints, link masses and the file it runs |
+| `config_set` | Changes gains or floats a joint for the session, or saves to the arm's file (`persist`) |
+| `config_command` | Sends the arm's targets, 50 times a second |
+| `config_reset` | Undoes every live change and ends the session |
+
+Only a connection started by a `<robot>-calibrate` blueprint changes anything (`config_sessions`). While the wizard's session lasts, the connection drops every other position command. The session has a 2 second lease that every call renews. When it ends, because the wizard finished, aborted or stopped calling, or the robot halted or stopped, the connection undoes every live change: floating joints hold where they are and the gains go back to the file's. The joint readings come from the connection's `joint_state` stream.

@@ -96,6 +96,14 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     `status().last_error`. Check gains copied from a vendor SDK against these ranges, and check the largest gravity
     torque over the joint range (for example with `PhysicalModel(...).gravity(q)`) against the motor's torque limit.
 
+    Your arm's calibration needs no code: `DamiaoConnection` serves the arm config contract
+    (`dimos/control/connection/arm_config.py`) that `dimos arm calibrate` drives. A connection that is not a Damiao
+    one serves it by overriding four methods of `ConnectionModule`, each called with the hardware lock held:
+    `_config_keys` (what it can read, change live and save), `_config_state` (each arm's gains, floating joints,
+    link masses and file), `_config_apply` (apply a patch for the session, or save it; list what it cannot change
+    as unsupported) and `_config_undo` (undo every live change when the session ends). The public `config_*`
+    calls, the session, its lease and the dropping of other position commands come from the base class.
+
 6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel)`. `joint` is the
     URDF finger joint (a second finger must be a mimic or fixed joint, see `RobotModel.with_mimic_joint`; if the
     URDF has no driven finger joint, add one as `dual_openyam/config.py` does), and the jaw is read and commanded in

@@ -10,6 +10,26 @@ one owner and one gain declaration.
 Direct-connection coordinators communicate through
 `position_command` and `joint_state` streams.
 
+## Calibration sessions
+
+Every Damiao connection serves the arm config contract
+(`dimos/control/connection/arm_config.py`). Reading it (`config_keys`,
+`config_get`) always works. Changing how the energized arm is driven
+(`config_set`, `config_reset`, `config_command`) needs `config_sessions=True`,
+which only the `<robot>-calibrate` blueprints set; see
+[Calibrate a Damiao arm](/docs/capabilities/manipulation/arm_calibration.md).
+
+- Gains are those of the MIT frame: kp is clamped to 0 to 500 N m/rad and kd
+  to 0 to 5 N m s/rad.
+- kp 0 floats a joint, with kd as its damping and gravity still compensated.
+  A robot without gravity compensation refuses it.
+- A torque offset is added to a joint's gravity torque for the session only,
+  clamped to a fifth of the motor's rated torque.
+- A save (scope `persist`) merges into the arm's
+  `~/.local/state/dimos/arms/<arm id>/calibration.json` and applies it. It
+  writes nothing when applying it would change a joint's gravity torque at the
+  measured pose by more than 2 N m, unless forced.
+
 ## Run software tests first
 
 From a current checkout, run:
