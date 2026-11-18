@@ -95,6 +95,17 @@ class ConnectionConfig(ModuleConfig):
     @model_validator(mode="after")
     def validate_connection(self) -> Self:
         self.validate_ip()
+        mode = connection_type(replay=self.g.replay, simulation=self.g.simulation).lower()
+        # make_connection gives these offline IP aliases precedence over simulation.
+        if (
+            mode == "dimsim"
+            and self.ip not in ("fake", "mock", "replay", "mujoco")
+            and self.g.transport != "lcm"
+        ):
+            raise ValueError(
+                "DimSim publishes over LCM only; the transport is "
+                f"{self.g.transport!r}. Use --transport lcm with --simulation dimsim."
+            )
         return self
 
     def validate_ip(self) -> None:

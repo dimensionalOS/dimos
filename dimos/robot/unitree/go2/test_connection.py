@@ -81,7 +81,12 @@ def test_config_rejects_missing_and_blank_hardware_ips(ip: str | None) -> None:
 
 @pytest.mark.parametrize(
     "defaults",
-    [{"replay": True}, {"simulation": "mujoco"}, {"simulation": "dimsim"}, {"simulation": "true"}],
+    [
+        {"replay": True},
+        {"simulation": "mujoco"},
+        {"simulation": "dimsim", "transport": "lcm"},
+        {"simulation": "true"},
+    ],
 )
 def test_blueprint_offline_defaults_allow_no_ip(defaults, monkeypatch) -> None:
     monkeypatch.setattr(global_config, "robot_ip", None)
@@ -100,8 +105,11 @@ def test_blueprint_offline_defaults_allow_no_ip(defaults, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("ip", ["replay", "mock", "fake", "mujoco"])
-def test_config_preserves_offline_ip_aliases(ip: str) -> None:
-    cfg = ConnectionConfig(ip=ip, g=GlobalConfig(replay=False, simulation=""))
+@pytest.mark.parametrize("simulation", ["", "dimsim"])
+def test_config_preserves_offline_ip_aliases(ip: str, simulation: str) -> None:
+    cfg = ConnectionConfig(
+        ip=ip, g=GlobalConfig(replay=False, simulation=simulation, transport="zenoh")
+    )
     assert cfg.ip == ip
 
 
@@ -169,6 +177,34 @@ def test_python_build_rejects_missing_ip_before_starting_resources(monkeypatch, 
 
     materialize.assert_not_called()
     start.assert_not_called()
+
+
+@pytest.mark.parametrize("headless", [True, False])
+def test_dimsim_rejects_zenoh_before_starting_resources(headless, monkeypatch, mocker) -> None:
+    for field, value in {"simulation": "dimsim", "replay": False, "transport": "zenoh"}.items():
+        monkeypatch.setattr(global_config, field, value)
+    materialize = mocker.patch("dimos.core.coordination.module_coordinator._materialize_transports")
+    start = mocker.patch.object(ModuleCoordinator, "start")
+
+    with pytest.raises(
+        BlueprintConfigError, match="DimSim publishes over LCM only.*--transport lcm"
+    ):
+        ModuleCoordinator.build(GO2Connection.blueprint(dimsim={"headless": headless}))
+
+    materialize.assert_not_called()
+    start.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"transport": "lcm"}, {"transport": "zenoh", "replay": True}],
+)
+def test_dimsim_allows_lcm_or_replay(overrides) -> None:
+    parsed = BlueprintConfigParser(GO2Connection.blueprint()).parse(
+        environ={}, global_overrides={"simulation": "dimsim", **overrides}
+    )
+
+    assert parsed.global_config_values()["transport"] == overrides["transport"]
 
 
 def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:

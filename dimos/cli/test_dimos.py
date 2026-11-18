@@ -406,6 +406,29 @@ def test_foreground_logs_signal_and_requests_shutdown_once(
 
 
 @pytest.mark.parametrize("run_options", [[], ["--daemon"]])
+def test_dimsim_default_transport_fails_before_run_registration(
+    stubbed_run, mocker, run_options
+) -> None:
+    mocker.patch.object(
+        get_all_blueprints, "get_by_name_or_exit", return_value=GO2Connection.blueprint()
+    )
+    fork = mocker.patch.object(
+        lifecycle, "fork_daemon", side_effect=AssertionError("started daemon")
+    )
+
+    result = CliRunner().invoke(
+        main, ["--simulation", "dimsim", "run", "unitree-go2", *run_options]
+    )
+
+    assert result.exit_code == 2, result.output
+    fork.assert_not_called()
+    assert "DimSim publishes over LCM only" in result.output
+    assert "--transport lcm" in result.output
+    assert "entry" not in stubbed_run
+    assert "parsed_config" not in stubbed_run
+
+
+@pytest.mark.parametrize("run_options", [[], ["--daemon"]])
 @pytest.mark.parametrize(
     "import_error",
     ["No module named roboplan", "libroboplan_core.so: undefined symbol: example"],
