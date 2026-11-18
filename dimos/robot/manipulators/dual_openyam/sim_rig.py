@@ -26,7 +26,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import math
+from pathlib import Path
 import queue
+import tempfile
 import threading
 import time
 from typing import Any
@@ -185,15 +187,21 @@ class DamiaoSimRig:
             width, height = self._camera_size
             model.vis.global_.offwidth = max(model.vis.global_.offwidth, width)
             model.vis.global_.offheight = max(model.vis.global_.offheight, height)
-        source = self._workcell.urdf.load().source_path
-        assert source is not None, "the workcell's URDF is a file"
-        engine = MujocoEngine(
-            config_path=source,
-            headless=self._headless,
-            model=model,
-            # The jaws keep the model's zero, which is closed.
-            reset_joint_positions=robot.home_joints,
-        )
+        urdf = self._workcell.urdf.load()
+        # The engine only checks that its model's file exists. A URDF assembled
+        # in code has none, so it is written out for that check.
+        with tempfile.TemporaryDirectory() as folder:
+            source = urdf.source_path
+            if source is None:
+                source = Path(folder) / "workcell.urdf"
+                source.write_text(urdf.xml)
+            engine = MujocoEngine(
+                config_path=source,
+                headless=self._headless,
+                model=model,
+                # The jaws keep the model's zero, which is closed.
+                reset_joint_positions=robot.home_joints,
+            )
         if engine.joint_names != robot.joint_names:
             raise ValueError("the workcell's actuators do not match the robot's joints")
         self._index = {name: index for index, name in enumerate(engine.joint_names)}

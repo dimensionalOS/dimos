@@ -34,6 +34,7 @@ from dimos.robot.manipulators.dual_makermods_metal.config import (
     dual_metal_model_config,
 )
 from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 DUAL_METAL_WEBXR_TASK_NAME = "teleop_dual_metal"
@@ -110,6 +111,8 @@ def dual_metal_teleop_control(tasks: list[TaskConfig]) -> Blueprint:
     ).remappings(arm_remaps(DualMetalConnection, DamiaoTeleopCoordinator))
 
 
+# UrdfManager serves the URDF to web 3D views. The planner already puts every
+# link on tf, so the manager leaves joint tf off (on, links would get two parents).
 teleop_webxr_dual_metal = autoconnect(
     ArmTeleopModule.blueprint(zero_button="X"),
     dual_metal_teleop_control(dual_metal_quest_tasks()),
@@ -120,6 +123,7 @@ teleop_webxr_dual_metal = autoconnect(
         visualization={"backend": "viser"},
         default_speed_scale=0.2,
     ),
+    UrdfManager.blueprint(model=DUAL_METAL_QUEST_MODEL.model, publish_joint_tf=False),
 ).remappings(
     [
         (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
