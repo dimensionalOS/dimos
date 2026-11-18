@@ -96,3 +96,19 @@ def test_async_spec_proxy_roundtrip_keeps_its_async_methods() -> None:
     assert type(restored) is AsyncSpecProxy
     assert object.__getattribute__(restored, "_async_methods") == frozenset({"foo"})
     assert isinstance(object.__getattribute__(restored, "_inner"), DisabledModuleProxy)
+
+
+def test_a_completed_sync_call_keeps_no_unsubscribe_closure(proxy) -> None:
+    client, transport = proxy
+    released: list[int] = []
+    transport.call_sync.side_effect = lambda name, args: (
+        "pong",
+        lambda: released.append(1),
+    )
+
+    for _ in range(100):
+        assert client.echo("ping") == "pong"
+
+    # Each call released its callback when it returned; nothing waits for stop.
+    assert client._unsub_fns == []
+    assert len(released) == 100
