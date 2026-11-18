@@ -612,6 +612,33 @@ def test_a_lapsed_lease_undoes_every_live_change_and_logs_one_line(start, bounda
         _left(module, session, gains={"joint1": JointGains(kp=60.0, kd=3.0)})
 
 
+def test_a_lapsed_lease_holds_a_softly_held_joint_where_the_hand_pushed_it(start, boundary):
+    module = start(config_sessions=True)
+    session = _begin(module, lease_s=0.2)
+    _left(module, session, gains={"joint1": JointGains(kp=0.5, kd=0.1)})
+    # A hand pushes the softly held joint1 far from its target of 0.2.
+    boundary[0].groups["left_arm"].q[:] = [0.9, 0.2]
+    wait_until(lambda: not _active(module), timeout=2)
+    # Its file gains are back, holding it where it is, not pulling it back to 0.2.
+    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :3], [80, 5, 0.9])
+
+
+def test_a_reset_after_a_command_holds_the_arm_where_it_is(start, boundary):
+    module = start(config_sessions=True)
+    session = _begin(module)
+    _left(module, session, gains={"joint1": JointGains(kp=0.5, kd=0.1)})
+    assert module.config_command({"joint1": 0.3}, session).ok
+    # joint1 never reached 0.3: it is at 1.0.
+    boundary[0].groups["left_arm"].q[:] = [1.0, 0.2]
+    module.config_reset()
+    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :3], [80, 5, 1.0])
+    # The same with no live change to undo: the commanded target goes too.
+    session = _begin(module)
+    assert module.config_command({"joint1": 0.3}, session).ok
+    module.config_reset()
+    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :3], [80, 5, 1.0])
+
+
 def test_every_config_call_renews_the_lease(start, boundary):
     module = start(config_sessions=True)
     session = _begin(module, lease_s=0.3)

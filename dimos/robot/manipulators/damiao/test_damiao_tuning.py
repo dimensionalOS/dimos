@@ -260,9 +260,11 @@ def test_reset_tuning_undoes_every_live_change_and_keeps_the_calibration(boundar
     np.testing.assert_equal(_rows(boundary, "left_arm"), [[80, 5, 0.2, 0, 1], [10, 1.5, 0.7, 0, 2]])
     np.testing.assert_equal(_rows(boundary, "right_arm"), [[60, 3, 0.2, 0, 3]])
     assert arm.floating == {} and arm.feedforward == {}
-    # Nothing left to undo: nothing is sent.
+    # Nothing left to undo, and still every joint is held where it is now.
+    arm.command({"joint1": 0.5})
     assert not arm.reset_tuning().changed
-    assert len(boundary[0].groups["left_arm"].commands) == sent + 1
+    assert len(boundary[0].groups["left_arm"].commands) == sent + 3
+    np.testing.assert_equal(_rows(boundary, "left_arm")[:, 2], [0.2, 0.7])
 
 
 def test_gravity_is_reported_for_any_masses_and_pose(boundary):

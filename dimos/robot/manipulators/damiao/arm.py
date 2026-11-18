@@ -464,10 +464,13 @@ class DamiaoArm:
     def reset_tuning(self) -> TuningReset:
         """Undo every live change; the calibration stays.
 
-        Floating joints are held where they are now, feed-forward torques and
-        gain overrides are dropped, so each joint is held with the
-        calibration's gains, else the bus defaults. The state is reset first,
-        then sent at once when enabled and anything changed.
+        Feed-forward torques and gain overrides are dropped and floating
+        joints held again, so each joint is held with the calibration's
+        gains, else the bus defaults, and every arm joint is held where it
+        is now: a joint pushed off its target while it was held softly, or
+        commanded somewhere it never reached, is not pulled back there with
+        the restored gains. The state is reset first, then sent at once when
+        enabled.
         """
         reset = TuningReset(
             released=sorted(self._floating),
@@ -477,13 +480,10 @@ class DamiaoArm:
         self._floating.clear()
         self._feedforward.clear()
         self._gain_overrides.clear()
-        if reset.changed and self._native is not None and self._active:
-            # Each send while floating moved the target to the measured
-            # position; refresh it once more, then hold there.
+        if self._native is not None and self._active:
             measured = self._arm_positions()
-            names = self._robot.arm_joint_names
-            for joint in reset.released:
-                self._targets[joint] = float(measured[names.index(joint)])
+            for joint, position in zip(self._robot.arm_joint_names, measured, strict=True):
+                self._targets[joint] = float(position)
             self._send()
         return reset
 

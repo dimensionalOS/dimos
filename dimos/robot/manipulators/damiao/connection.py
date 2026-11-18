@@ -196,7 +196,7 @@ def _undone(reset: TuningReset) -> str:
         parts.append(f"dropped the feed-forward of {reset.feedforward}")
     if reset.gains:
         parts.append(f"gains of {reset.gains} back to the calibration")
-    return "; ".join(parts) or "nothing to undo"
+    return f"{'; '.join(parts) or 'nothing to undo'}; every joint holds where it is"
 
 
 class DamiaoConnection(ConnectionModule):
@@ -570,7 +570,7 @@ class DamiaoConnection(ConnectionModule):
         )
 
     def _config_undo(self) -> str:
-        """Hold floating joints where they are and drop offsets and gain overrides."""
+        """Drop offsets, gain overrides and floating, and hold every joint where it is."""
         arm = self._arm
         if arm is None:
             return "nothing undone"
