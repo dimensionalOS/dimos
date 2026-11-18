@@ -24,7 +24,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.eef_trajectory_task.eef_trajectory_task import eef_trajectory_task
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
@@ -45,6 +45,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.dual_makermods_metal.config import (
@@ -90,7 +91,7 @@ def build_metal_learning(
     model: RobotModelConfig | None = None,
     tcp_transforms: Mapping[ArmSide, ToolTransform] | None = None,
     checkpoint: str = "dreamlabs/dream-1-beta",
-) -> Blueprint:
+) -> MetaBlueprint:
     """Compose one station with model-defined TCPs and configurable rig geometry.
 
     Single Metal uses the right-hand protocol slot and right Quest controller.
@@ -188,11 +189,11 @@ def build_metal_learning(
             )
         )
     connection = DualMetalConnection if dual else MetalConnection
-    parts = [
+    parts: list[Blueprint | MetaBlueprint] = [
         autoconnect(
             DamiaoTeleopCoordinator.blueprint(
                 instance_name="ControlCoordinator",
-                model=model.model,
+                connections=[arm_declaration(connection)],
                 tasks=tasks,
                 zero_stiffness_joints=[],
             ),

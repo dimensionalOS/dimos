@@ -17,11 +17,12 @@
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.dual_makermods_metal.blueprints.basic import (
@@ -94,7 +95,7 @@ def dual_metal_quest_tasks() -> list[TaskConfig]:
     ]
 
 
-def dual_metal_teleop_control(tasks: list[TaskConfig]) -> Blueprint:
+def dual_metal_teleop_control(tasks: list[TaskConfig]) -> MetaBlueprint:
     """The WebXR coordinator, named ControlCoordinator, over the two-bus Metal connection.
 
     Under ``--simulation`` the connection is the echo mock instead.
@@ -102,7 +103,7 @@ def dual_metal_teleop_control(tasks: list[TaskConfig]) -> Blueprint:
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=DUAL_METAL_QUEST_MODEL.model,
+            connections=[arm_declaration(DualMetalConnection)],
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),
@@ -110,7 +111,7 @@ def dual_metal_teleop_control(tasks: list[TaskConfig]) -> Blueprint:
     ).remappings(arm_remaps(DualMetalConnection, DamiaoTeleopCoordinator))
 
 
-def build_dual_metal_webxr() -> Blueprint:
+def build_dual_metal_webxr() -> MetaBlueprint:
     """Compose two Metals' Quest teleop, one controller per arm.
 
     A function rather than a bare expression so a deployment can rebuild the

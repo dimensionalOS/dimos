@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.policy.module import PolicyModule
@@ -44,7 +44,7 @@ def build_metal_rollout(
     camera_device: int | str = 0,
     device: str | None = None,
     quest_control: bool = False,
-) -> Blueprint:
+) -> MetaBlueprint:
     """Build the stack that lets a trained LeRobot policy drive one Metal arm.
 
     Args:
