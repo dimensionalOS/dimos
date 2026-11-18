@@ -20,8 +20,8 @@ report for any arm. A step passes when its whole hold was recorded, every
 metric is finite, and it settles within 0.5 s to within 0.1 deg, overshoots
 less than 20 % and leaves the joint quiet at rest. ``propose_gains`` picks,
 per joint, the stiffest tried gains whose steps all pass in both directions
-and below which, at the same kd, every tried kp passed too; it says why the
-others did not.
+and below which every tried candidate (every lower kp scale, whatever its kd)
+passed too; it says why the others did not.
 """
 
 from __future__ import annotations
@@ -307,11 +307,13 @@ def propose_gains(
     negative step on the joint and every one of its steps passes (whole hold
     recorded, finite metrics, settles under 0.5 s to 0.1 deg, overshoots under
     20 %, rests on target and does not buzz). It is accepted only when every
-    kp tried at the same kd below it passed too, so a lucky stiff run above a
-    failing softer one is not chosen. Among accepted candidates the highest kp
-    wins; when several kd values are accepted at that kp, the one with the
-    shortest worst settle time wins, then the lower kd. ``rejected`` explains
-    every candidate that failed, was not tried or was not accepted.
+    tried candidate with a lower kp passed too, whatever its kd: the sweep
+    scales kd with the square root of the kp scale, so the candidates are
+    ordered by kp alone, and a lucky stiff run above a failing softer one is
+    not chosen. Among accepted candidates the highest kp wins; when several
+    kd values are accepted at that kp, the one with the shortest worst settle
+    time wins, then the lower kd. ``rejected`` explains every candidate that
+    failed, was not tried or was not accepted.
     """
     by_joint: dict[str, dict[tuple[float, float], list[StepMetrics]]] = defaultdict(
         lambda: defaultdict(list)
@@ -335,16 +337,10 @@ def propose_gains(
             if (kp, kd) in failed:
                 rejected.append((kp, kd, failed[(kp, kd)]))
                 continue
-            softer = sorted(
-                other_kp for other_kp, other_kd in failed if other_kd == kd and other_kp < kp
-            )
+            softer = sorted(pair for pair in failed if pair[0] < kp)
             if softer:
                 rejected.append(
-                    (
-                        kp,
-                        kd,
-                        f"its steps pass, but {gain_label(softer[-1], kd)} below it failed",
-                    )
+                    (kp, kd, f"its steps pass, but {gain_label(*softer[-1])} below it failed")
                 )
                 continue
             worst_settle = max(step.settle_time_s or 0.0 for step in steps)
@@ -365,7 +361,7 @@ def propose_gains(
         steps = by_gains[(kp, kd)]
         reason = (
             f"{gain_label(kp, kd)}: highest kp whose {len(steps)} step(s) all pass, both ways, "
-            f"with every softer kp at kd={kd:g} passing (worst settle {settle:.2f} s, "
+            f"with every softer kp tried passing (worst settle {settle:.2f} s, "
             f"overshoot {max(s.overshoot_pct for s in steps):.0f} %, "
             f"buzz {max(s.buzz_rms_deg_s for s in steps):.2f} deg/s)"
         )

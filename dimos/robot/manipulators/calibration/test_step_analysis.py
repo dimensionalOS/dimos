@@ -164,23 +164,28 @@ def _sweep_step(joint: str, kp: float, kd: float, delta: float) -> StepMetrics:
 
 
 def test_propose_gains_picks_the_highest_passing_kp_and_explains_the_rest() -> None:
-    candidates = [(40.0, 2.0), (80.0, 5.0), (120.0, 5.0), (160.0, 5.0), (200.0, 5.0)]
+    candidates = [(80.0, 5.0), (120.0, 5.0), (160.0, 5.0), (200.0, 5.0)]
     steps = [
         _sweep_step("arm/joint2", kp, kd, delta)
-        for kp, kd in candidates[:4]
+        for kp, kd in candidates[:3]
         for delta in (1.0, -1.0, 3.0, -3.0)
     ]
     proposal = propose_gains(steps, candidates)["arm/joint2"]
     assert proposal.gains == (120.0, 5.0)
     assert "highest kp" in proposal.reason and "4 step(s) all pass" in proposal.reason
-    assert set(proposal.rejected) == {"kp=40 kd=2", "kp=160 kd=5", "kp=200 kd=5"}
-    assert "settled in" in proposal.rejected["kp=40 kd=2"]
+    assert set(proposal.rejected) == {"kp=160 kd=5", "kp=200 kd=5"}
     assert "overshot" in proposal.rejected["kp=160 kd=5"]
     assert proposal.rejected["kp=200 kd=5"] == "not tested"
     # Without explicit candidates every tested pair counts.
     assert propose_gains(steps)["arm/joint2"].gains == (120.0, 5.0)
     text = format_proposals(propose_gains(steps))
     assert "arm/joint2: kp=120 kd=5" in text and "kp=160 kd=5 rejected" in text
+    # A softer scale that fails (too slow) blocks every stiffer one, whatever its kd.
+    soft = [_sweep_step("arm/joint2", 40.0, 2.0, delta) for delta in (1.0, -1.0)]
+    blocked = propose_gains([*soft, *steps])["arm/joint2"]
+    assert blocked.gains is None
+    assert "settled in" in blocked.rejected["kp=40 kd=2"]
+    assert blocked.rejected["kp=120 kd=5"] == "its steps pass, but kp=40 kd=2 below it failed"
 
 
 def test_propose_gains_needs_every_step_to_pass() -> None:
@@ -262,10 +267,15 @@ def test_propose_gains_does_not_pick_a_stiff_pass_above_a_failing_softer_kp() ->
     assert proposal.gains == (80.0, 5.0)
     assert "settled in" in proposal.rejected["kp=120 kd=5"]
     assert proposal.rejected["kp=200 kd=5"] == ("its steps pass, but kp=120 kd=5 below it failed")
-    # The rule holds per kd: at kd 2 the failing kp 40 blocks kp 200 too ...
-    other_kd = propose_gains([*results, *steps(40.0, 0.3, kd=2.0), *steps(200.0, 0.04, kd=2.0)])
-    assert other_kd["j"].gains == (80.0, 5.0)
-    assert "kp=40 kd=2" in other_kd["j"].rejected["kp=200 kd=2"]
-    # ... and with nothing failing at kd 2, its kp 200 is chosen.
-    clean = propose_gains([*steps(80.0, 0.05), *steps(200.0, 0.04, kd=2.0)])
-    assert clean["j"].gains == (200.0, 2.0)
+    # The sweep scales kd with the kp scale, so the rule holds whatever the kd:
+    # a failing kp 120 at kd 3.67 blocks kp 200 at kd 4.24 ...
+    scaled = propose_gains(
+        [*steps(80.0, 0.05, kd=3.0), *steps(120.0, 0.3, kd=3.67), *steps(200.0, 0.04, kd=4.24)]
+    )
+    assert scaled["j"].gains == (80.0, 3.0)
+    assert scaled["j"].rejected["kp=200 kd=4.24"] == (
+        "its steps pass, but kp=120 kd=3.67 below it failed"
+    )
+    # ... and with every softer scale passing, the stiffest is chosen.
+    clean = propose_gains([*steps(80.0, 0.05, kd=3.0), *steps(200.0, 0.04, kd=4.24)])
+    assert clean["j"].gains == (200.0, 4.24)
