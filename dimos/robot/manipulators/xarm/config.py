@@ -190,30 +190,47 @@ def xarm_model(
 
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
+# Each arm's ready pose in its sim scene, joint angles in radians: the gripper tip
+# 0.40 m in front of the base and 0.23 m above it, pointing down.
+XARM6_SIM_HOME = [0.0, -0.264, -0.922, 0.0, 1.186, 0.0]
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
-# The sim scene stands the arm on a pedestal: xarm7.xml mounts link_base at
-# z=0.12. Place the planning model to match, or the planner solves poses 12cm
-# below the arm it is driving and every grasp closes on air.
-XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
+_XARM_SIM_HOMES = {6: XARM6_SIM_HOME, 7: XARM7_SIM_HOME}
+# The sim scenes stand the arm on a pedestal: xarm6.xml and xarm7.xml mount
+# link_base at z=0.12. Place the planning model to match, or the planner solves
+# poses 12cm below the arm it is driving and every grasp closes on air.
+XARM_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
+
+
+def make_xarm_sim_robot_config(
+    dof: int,
+    base_pose: PoseStamped | None = None,
+    tf_extra_links: list[str] | None = None,
+) -> RobotModelConfig:
+    """The planning model of the xArm and its gripper in the MuJoCo scene.
+
+    Args:
+        dof: The arm's joint count: 6 for the xArm6, 7 for the xArm7.
+        base_pose: Where the scene mounts ``link_base``, for a scene other than
+            the pedestal ``data/xarm6`` and ``data/xarm7`` use.
+        tf_extra_links: Links the planner puts on tf besides the gripper tip;
+            the last arm link when not given.
+    """
+    return make_xarm_model_config(
+        dof,
+        add_gripper=True,
+        base_pose=XARM_SIM_BASE_POSE if base_pose is None else base_pose,
+        tf_extra_links=[f"link{dof}"] if tf_extra_links is None else tf_extra_links,
+        home_joints=_XARM_SIM_HOMES[dof],
+        pre_grasp_offset=0.05,
+    )
 
 
 def make_xarm7_sim_robot_config(
     base_pose: PoseStamped | None = None,
     tf_extra_links: list[str] | None = None,
 ) -> RobotModelConfig:
-    """Build the sim planning model.
-
-    Pass ``base_pose`` for a scene that mounts ``link_base`` somewhere other than
-    the pedestal ``data/xarm7`` uses, and ``tf_extra_links`` when a consumer needs
-    more than the tip transform.
-    """
-    return make_xarm7_model_config(
-        add_gripper=True,
-        base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
-        tf_extra_links=["link7"] if tf_extra_links is None else tf_extra_links,
-        home_joints=XARM7_SIM_HOME,
-        pre_grasp_offset=0.05,
-    )
+    """The xArm7's ``make_xarm_sim_robot_config``."""
+    return make_xarm_sim_robot_config(7, base_pose, tf_extra_links)
 
 
 def make_dual_xarm6_model_config() -> RobotModelConfig:
@@ -266,30 +283,47 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
     )
 
 
-def make_xarm7_sim_hardware(
-    address: str | Path | None = None, *, home_joints: list[float] | None = None
+def make_xarm_sim_hardware(
+    dof: int, address: str | Path | None = None, *, home_joints: list[float] | None = None
 ) -> HardwareComponent:
-    """The simulated xArm7; without ``address`` it attaches to the blueprint's MujocoSimModule."""
-    selected_home = XARM7_SIM_HOME if home_joints is None else home_joints
+    """The simulated xArm "arm" with ``dof`` joints (6 or 7) and its gripper.
+
+    Without ``address`` it attaches to the blueprint's MujocoSimModule.
+    ``home_joints`` (radians) is where it starts, the scene's ready pose by default.
+    """
     return make_xarm_hardware(
         "arm",
-        7,
+        dof,
         adapter_type="sim_mujoco",
         address=address,
         gripper=True,
-        home_joints=selected_home,
+        home_joints=_XARM_SIM_HOMES[dof] if home_joints is None else home_joints,
     )
 
 
-def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
+def make_xarm7_sim_hardware(
+    address: str | Path | None = None, *, home_joints: list[float] | None = None
+) -> HardwareComponent:
+    """The xArm7's ``make_xarm_sim_hardware``."""
+    return make_xarm_sim_hardware(7, address, home_joints=home_joints)
+
+
+def make_xarm_sim_module_kwargs(dof: int, address: str | Path) -> dict[str, Any]:
+    """MujocoSimModule settings for the xArm with ``dof`` joints in the scene file ``address``."""
     return {
         "address": address,
         "headless": False,
-        "dof": 7,
+        "dof": dof,
         "camera_name": "wrist_camera",
-        "base_frame_id": "link7",
-        "reset_joint_positions": XARM7_SIM_HOME,
+        # Both scenes hang the wrist camera on the last arm link.
+        "base_frame_id": f"link{dof}",
+        "reset_joint_positions": _XARM_SIM_HOMES[dof],
     }
+
+
+def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
+    """The xArm7's ``make_xarm_sim_module_kwargs``."""
+    return make_xarm_sim_module_kwargs(7, address)
 
 
 def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
