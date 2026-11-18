@@ -72,7 +72,7 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
   --allow "" --set model=gpt-6-astra
 ```
 
-`no_dimos` is a field of the shared `AgentConfig`. Agents that are dimOS, dimcode, the dimOS agent and the MCP client, reject it; tool-less agents satisfy it as they are. For Pi it does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
+`no_dimos` is a field of the shared `SubjectConfig`. Agents that are dimOS, dimcode, the dimOS agent and the native `Agent`, reject it; tool-less agents satisfy it as they are. For Pi it does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
 venv, no `PYTHONPATH` and no `DIMOS_*` variables, so `import dimos` and `dimos` fail. A robot
 is exposed as live topics through `raw-robot-bridge` (below) and nothing else: no recording,
 no MCP tool listing, no `dimos mcp call` guidance. `excluded_keywords` defaults to
@@ -97,7 +97,7 @@ graders or reference data.
 
 ### Keyword guard
 
-`excluded_keywords` is shared `AgentConfig`; set it with `--exclude dimos,dimensionalos` or
+`excluded_keywords` is shared `SubjectConfig`; set it with `--exclude dimos,dimensionalos` or
 `--set excluded_keywords=[...]`. Before a tool runs, the shared Pi extension matches the call's
 arguments, lowercased, against each keyword as a whole token: `import dimos`, `/opt/dimos/x`,
 `dimos_lcm` and `github.com/dimensionalOS/dimos` hit; `dimosaurus` does not. The run's own
@@ -186,7 +186,7 @@ each case and retain failed trials before interpreting the comparison.
 
 ### Tool selection
 
-`allowed_tools` belongs to the shared `AgentConfig`. Use `--allow bash,grep`
+`allowed_tools` belongs to the shared `SubjectConfig`. Use `--allow bash,grep`
 on `dimos evals run` or `PiAdapter(allowed_tools=("bash", "grep"))` in Python.
 Omit the option to keep the adapter's native defaults; `--allow ""` disables all
 tools. Exact tool names are required. Unknown names, duplicates and conflicting
@@ -341,7 +341,7 @@ stays with the grader. Pass `agent_artifacts=(...)` to the environment to
 change it.
 
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
-subsequent motion settling. `McpClientAdapter` returns what it has when its
+subsequent motion settling. `AgentAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
 model provider's timeout. Environment startup has a separate
 `launch_timeout_s`. Pi, dimcode and the dimOS agent bound model HTTP requests with `max_steps`
@@ -445,7 +445,7 @@ go_to_bed = EvalCase(
 ```
 
 ```bash
-dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client_adapter --set 'modules=["unitree-go2-agentic"]'
+dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.agent_adapter --set 'modules=["unitree-go2-agentic"]'
 ```
 
 The recording holds the whole history, so "never left the zone" is `min` over

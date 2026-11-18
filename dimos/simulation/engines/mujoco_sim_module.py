@@ -66,6 +66,7 @@ from dimos.simulation.engines.mujoco_shm import (
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
+from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
 
@@ -416,6 +417,8 @@ class MujocoSimModule(
 
     @rpc
     def start(self) -> None:
+        # Composed scenes compile before the engine is constructed.
+        configure_mujoco_logging()
         if not self.config.address and not self.config.robot_mjcf:
             raise RuntimeError(
                 "MujocoSimModule: either config.address (legacy MJCF path) "
