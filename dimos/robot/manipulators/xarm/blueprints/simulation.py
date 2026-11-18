@@ -35,15 +35,19 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
+    xarm_link_frames,
 )
 from dimos.robot.raw_robot_bridge import RawRobotBridge
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-_xarm7_sim_model = make_xarm7_sim_robot_config()
+_xarm7_sim_model = make_xarm7_sim_robot_config(tf_extra_links=xarm_link_frames(7))
 _xarm7_sim_hw = make_xarm7_sim_hardware()
 _xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)
 
+# UrdfManager serves the URDF to web 3D views. The planner already puts every
+# link on tf, so the manager leaves joint tf off (on, links would get two parents).
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
         gripper_tasks={"manipulator": "arm_gripper"},
@@ -68,6 +72,7 @@ xarm_perception_sim = autoconnect(
             ),
         ],
     ),
+    UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
     RerunBridgeModule.blueprint(),
 )
 
