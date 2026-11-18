@@ -221,8 +221,8 @@ def _needs(
 
 
 def _measured(ctx: StepContext) -> Vector:
-    """The arm's latest reading, outside a config session too."""
-    position, _, _ = joint_reading(ctx.state, ctx.keys().source, ctx.spec.joint_names)
+    """The arm's latest reading, outside a config session too; a stale one fails the step."""
+    position, _, _ = joint_reading(ctx.state, ctx.keys().source, ctx.spec.joint_names, ctx.clock)
     return position
 
 

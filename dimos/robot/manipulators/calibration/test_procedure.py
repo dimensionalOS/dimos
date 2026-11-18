@@ -869,6 +869,28 @@ def test_a_stale_reading_fails_the_tick_and_holds(make_rig: Callable[..., Rig]) 
     assert rig.fake.commands == 100 and not rig.fake.session_active()
 
 
+def test_a_stale_reading_fails_the_check_before_any_motion(make_rig: Callable[..., Rig]) -> None:
+    # The connection stopped publishing: its last joint state is a second old.
+    rig = make_rig()
+    read = rig.fake.latest
+
+    def stale() -> JointState:
+        msg = read()
+        msg.ts -= 1.0
+        return msg
+
+    rig.fake.latest = stale  # type: ignore[method-assign]
+
+    status = rig.run(["check"])
+
+    assert status["state"] == "failed"
+    assert rig.messages()["check"] == (
+        "the latest reading is 1.00 s old (limit 0.25 s), so the connection is not "
+        "publishing the arm's joint states"
+    )
+    assert rig.fake.commands == 0 and not rig.fake.session_active()
+
+
 def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
     make_rig: Callable[..., Rig], b601_spec: ArmCalibrationSpec
 ) -> None:

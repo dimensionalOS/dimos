@@ -112,6 +112,10 @@ class SessionLostError(StepFailedError):
     """The connection ended the config session or stopped taking targets."""
 
 
+class StaleReadingError(StepFailedError):
+    """The latest joint state is older than ``MAX_READING_AGE_S``: the connection is not publishing."""
+
+
 class JointDriftedError(StepFailedError):
     """A floating joint moved too far or too fast; it was held again."""
 
@@ -129,13 +133,14 @@ class StateSource(Protocol):
 
 
 def joint_reading(
-    state: StateSource | None, source: str, names: Sequence[str]
+    state: StateSource | None, source: str, names: Sequence[str], clock: Clock
 ) -> tuple[Vector, Vector, float]:
     """The latest positions and velocities of ``names``, and when they were read.
 
     The message names joints ``"{source}/{joint}"``, as a connection publishes
     them. Raises ``StepFailedError`` before the first message, or when it
-    leaves out one of ``names``.
+    leaves out one of ``names``, and ``StaleReadingError`` when it is older
+    than ``MAX_READING_AGE_S`` by ``clock``, inside a config session or not.
     """
     try:
         msg = None if state is None else state.latest()
@@ -152,6 +157,12 @@ def joint_reading(
     missing = [name for name in names if name not in index]
     if missing:
         raise StepFailedError(f"the connection does not read {missing}")
+    age = clock.now() - float(msg.ts)
+    if age > MAX_READING_AGE_S:
+        raise StaleReadingError(
+            f"the latest reading is {age:.2f} s old (limit {MAX_READING_AGE_S:g} s), so the "
+            "connection is not publishing the arm's joint states"
+        )
     rows = [index[name] for name in names]
     position = np.asarray([msg.position[i] for i in rows], dtype=float)
     if len(msg.velocity) == len(msg.name):
@@ -405,15 +416,14 @@ class ArmSession:
         return applied
 
     def _read(self) -> None:
-        measured, velocity, reading_ts = joint_reading(self._state, self._source, self._names)
+        try:
+            measured, velocity, reading_ts = joint_reading(
+                self._state, self._source, self._names, self._clock
+            )
+        except StaleReadingError as stale:
+            raise StepFailedError(f"stopped: {stale}; the arm holds where it is") from stale
         if not np.isfinite(measured).all():
             raise StepFailedError(f"the connection reads non-finite positions: {measured.tolist()}")
-        age = self._clock.now() - reading_ts
-        if age > MAX_READING_AGE_S:
-            raise StepFailedError(
-                f"stopped: the latest reading is {age:.2f} s old (limit {MAX_READING_AGE_S:g} s), "
-                "so the connection is not reading the arm; the arm holds where it is"
-            )
         self._measured = measured
         self._velocity = np.where(np.isfinite(velocity), velocity, 0.0)
         self._reading_ts = reading_ts
