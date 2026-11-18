@@ -152,10 +152,10 @@ export class TranscriptView implements Component {
   private readonly tui: TUI;
   private readonly cwd: () => string;
   private readonly source: () => TranscriptSource | null;
-  private readonly openPanel: (gallery: Gallery, index: number) => void;
+  private readonly openPanel: (gallery: Gallery, index: number, inline: boolean) => void;
   private readonly views = new Map<string, RowView>();
   private notes: Note[] = [];
-  /** Every rendering shown, oldest first, for `/panel`. */
+  /** Renderings available to `/panel`, including previews hidden from the transcript. */
   private galleries: Gallery[] = [];
   private lines: string[] = [];
   /** The last layout: each part's key, component and height in order, for scrolling to a message and routing clicks. */
@@ -170,7 +170,7 @@ export class TranscriptView implements Component {
     tui: TUI,
     cwd: () => string,
     source: () => TranscriptSource | null,
-    openPanel: (gallery: Gallery, index: number) => void,
+    openPanel: TranscriptView["openPanel"],
   ) {
     this.tui = tui;
     this.cwd = cwd;
@@ -489,6 +489,7 @@ export class TranscriptView implements Component {
     const source = input.source;
     if (source.kind === "background") {
       block.addChild(backgroundLine(source.tool, source.end));
+      if (input.render !== null) galleries.push(this.gallery(null, input.render));
       return;
     }
     if (input.change !== null) block.addChild(line(muted(` ↻ runtime: ${clean(input.change.summary)}`)));
@@ -509,14 +510,14 @@ export class TranscriptView implements Component {
     else for (const mimeType of images) block.addChild(line(muted(`   [image ${mimeType}]`)));
   }
 
-  private gallery(block: Container, details: RenderDetails): Gallery {
+  private gallery(block: Container | null, details: RenderDetails): Gallery {
     const gallery = new Gallery(
       details,
       () => this.tui.requestRender(),
-      (index) => this.openPanel(gallery, index),
+      (index) => this.openPanel(gallery, index, block !== null),
     );
     this.galleries.push(gallery);
-    block.addChild(gallery);
+    block?.addChild(gallery);
     return gallery;
   }
 }
