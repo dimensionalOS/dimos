@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -37,6 +37,7 @@ PLANE_SEED = 0  # so one window always fits the same plane
 MIN_SURFACE_SIDE = 0.10  # m - a narrower plane, such as a block's top, is not a surface
 PIECE_CELL = 0.02  # m - inliers this close in the plane are one patch
 DEDUPE_CELL = 0.01  # m - find_surfaces counts points closer than this once
+STANDING_LOW, STANDING_HIGH = 0.01, 0.30  # m - over a surface, what stands on it
 
 
 @dataclass
@@ -142,6 +143,8 @@ class Surface:
     downhill_deg: float
     points: int
     rms_m: float
+    # Points standing on it: inside its outline, STANDING_LOW to STANDING_HIGH over it.
+    points_above: int = 0
 
     @property
     def normal(self) -> tuple[float, float, float]:
@@ -160,6 +163,7 @@ class Surface:
             "coefficients": list(self.plane.coefficients),
             "points": self.points,
             "rms_m": self.rms_m,
+            "points_above": self.points_above,
         }
 
 
@@ -273,4 +277,26 @@ def find_surfaces(
             surface = describe_surface(model, piece, level)
             if surface.size[1] >= MIN_SURFACE_SIDE:
                 surfaces.append(surface)
+    if to_frame is not None and not level:
+        points = points @ to_frame[:3, :3].T + to_frame[:3, 3]
+    surfaces = [replace(surface, points_above=standing_on(surface, points)) for surface in surfaces]
     return sorted(surfaces, key=lambda surface: -surface.points)
+
+
+def standing_on(surface: Surface, points: np.ndarray) -> int:
+    """How many of ``points`` stand on a surface: inside its outline, between
+    ``STANDING_LOW`` and ``STANDING_HIGH`` over it."""
+    normal = np.asarray(surface.normal, dtype=np.float64)
+    axes = _plane_axes(normal)
+    above = surface.plane.height_above(points)
+    near = (above > STANDING_LOW) & (above < STANDING_HIGH)
+    if not near.any():
+        return 0
+    uv = (points[near] - np.asarray(surface.center)) @ axes.T
+    yaw = np.radians(surface.yaw_deg)
+    long_uv = axes @ np.array([np.cos(yaw), np.sin(yaw), 0.0])
+    long_uv /= max(float(np.linalg.norm(long_uv)), 1e-9)
+    along = uv @ long_uv
+    across = uv @ np.array([-long_uv[1], long_uv[0]])
+    length, width = surface.size
+    return int(np.count_nonzero((np.abs(along) <= length / 2) & (np.abs(across) <= width / 2)))

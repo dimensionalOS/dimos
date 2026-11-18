@@ -164,7 +164,8 @@ class ManipulationLocalize(PerceptionLocalize):
 
         Each is a dict: ``height``, ``center``, ``size``, ``yaw_deg``, ``normal``,
         ``tilt_deg``, ``downhill_deg``, ``coefficients`` (a, b, c, d of ax+by+cz+d=0),
-        ``points`` and ``rms_m``, in ``frame``. Empty when localize is not ready, the
+        ``points``, ``rms_m`` and ``points_above`` (what stands on it, 1 to 30 cm over
+        it inside its outline), in ``frame``. Empty when localize is not ready, the
         window has no geometry, or ``frame`` has no transform from the world frame.
         """
         if not self._ready.is_set():
@@ -242,7 +243,8 @@ class ManipulationLocalize(PerceptionLocalize):
                 f"surface {i}: height {surface['height']:.3f} m under the origin of {name}, "
                 f"centre ({x:.3f}, {y:.3f}, {z:.3f}), {length:.2f} x {width:.2f} m, "
                 f"long side at {round(surface['yaw_deg'])} deg, {slope}, "
-                f"{surface['points']} points, rms {surface['rms_m'] * 1000:.1f} mm"
+                f"{surface['points']} points, rms {surface['rms_m'] * 1000:.1f} mm, "
+                f"{surface['points_above']} points standing on it"
             )
         return "\n".join(lines)
 

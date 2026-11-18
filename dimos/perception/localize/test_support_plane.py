@@ -174,3 +174,21 @@ def test_a_surface_seen_twice_is_not_bigger(rng):
 
     assert [s.points for s in twice] == [s.points for s in once]
     assert [round(s.height, 1) for s in twice] == [-0.5, 0.1]
+
+
+@pytest.mark.parametrize("level", [True, False])
+def test_what_stands_on_a_surface_is_counted(rng, level):
+    table = _slab(0.8, 0.5, 0.0, 0.0, 0.0, (0.5, 0.0, 0.12), rng)
+    floor = _slab(1.0, 0.6, 0.0, 0.0, 0.0, (1.4, 0.0, -0.5), rng)
+    blocks = [_block((x, 0.0, 0.12), (0.05, 0.05, 0.05), rng) for x in (0.35, 0.6)]
+    # Past the table's edge: not standing on it.
+    beside = _block((1.0, 0.0, 0.12), (0.05, 0.05, 0.05), rng)
+
+    surfaces = find_surfaces(np.concatenate([table, floor, *blocks, beside]), level=level)
+
+    table_surface = next(s for s in surfaces if s.height > 0)
+    floor_surface = next(s for s in surfaces if s.height < 0)
+    assert table_surface.points_above > 0
+    assert floor_surface.points_above == 0
+    on_table_only = find_surfaces(np.concatenate([table, *blocks]), level=level)[0].points_above
+    assert table_surface.points_above == pytest.approx(on_table_only, rel=0.05)
