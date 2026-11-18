@@ -95,3 +95,35 @@ def test_reported_in_another_frame(rng):
     assert surface.height == pytest.approx(0.3, abs=0.004)
     assert surface.center == pytest.approx((0.0, -0.5, 0.3), abs=0.01)
     assert abs(surface.yaw_deg) == pytest.approx(90.0, abs=1.5)
+
+
+def test_level_mode_finds_heights_with_blocks_on_the_table(rng):
+    table = _slab(0.8, 0.5, 30.0, 0.0, 0.0, (0.5, 0.1, 0.02), rng)
+    floor = _slab(0.6, 0.3, 0.0, 0.0, 0.0, (1.2, 0.0, -0.7), rng)
+    blocks = [_block((x, 0.0, 0.02), (0.05, 0.05, 0.05), rng) for x in (0.3, 0.45, 0.6)]
+    surfaces = find_surfaces(np.concatenate([table, floor, *blocks]), level=True)
+
+    assert [round(s.height, 2) for s in surfaces] == [0.02, -0.7]
+    table_surface = surfaces[0]
+    assert table_surface.tilt_deg == 0.0
+    assert table_surface.size == pytest.approx((0.8, 0.5), abs=0.03)
+    assert table_surface.yaw_deg == pytest.approx(30.0, abs=1.5)
+
+
+def test_level_mode_is_parallel_to_the_reporting_frame(rng):
+    """A base tilted 3 degrees under a level table sees the table level to itself."""
+    tilt = np.radians(3.0)
+    to_base = np.eye(4)
+    to_base[:3, :3] = [
+        [np.cos(tilt), 0.0, -np.sin(tilt)],
+        [0.0, 1.0, 0.0],
+        [np.sin(tilt), 0.0, np.cos(tilt)],
+    ]
+    # Points that are level in the base frame, handed over in the world frame.
+    in_base = _slab(0.8, 0.5, 0.0, 0.0, 0.0, (0.5, 0.0, 0.1), rng)
+    in_world = in_base @ to_base[:3, :3]
+
+    (surface,) = find_surfaces(in_world, to_frame=to_base, level=True)
+
+    assert surface.tilt_deg == 0.0
+    assert surface.height == pytest.approx(0.1, abs=0.004)

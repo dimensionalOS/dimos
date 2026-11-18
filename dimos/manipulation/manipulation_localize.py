@@ -39,6 +39,9 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     scene_depth_trunc_m: float = 2.0
     # find_surface: keyframes merged per camera, so a sweep over a table counts
     surface_frames: int = 10
+    # find_surface: surfaces are parallel to the reporting frame's xy plane, as a
+    # table is to the arm's base; False fits their tilt too.
+    surface_parallel_to_frame: bool = True
 
 
 class ManipulationLocalize(PerceptionLocalize):
@@ -185,7 +188,12 @@ class ManipulationLocalize(PerceptionLocalize):
             to_frame = transform.to_matrix()
         return [
             surface.as_dict()
-            for surface in find_surfaces(np.concatenate(clouds), max_tilt_deg, to_frame)
+            for surface in find_surfaces(
+                np.concatenate(clouds),
+                max_tilt_deg,
+                to_frame,
+                level=self.config.surface_parallel_to_frame,
+            )
         ]
 
     @skill
@@ -206,8 +214,10 @@ class ManipulationLocalize(PerceptionLocalize):
 
         ``start`` and ``duration`` name the window as in ``localize``. ``frame``
         is the frame to report in, e.g. the arm's base link; empty means the
-        world frame. Level is level to the world frame. ``max_tilt_deg`` drops
-        surfaces tilted more than that from level.
+        world frame. By default (``surface_parallel_to_frame``) every surface is
+        taken as parallel to that frame's xy plane, so the tilt reads 0; with it
+        off, the tilt is fitted, level is level to the world frame, and
+        ``max_tilt_deg`` drops surfaces tilted more than that.
         """
         if not self._ready.is_set():
             return (
@@ -216,7 +226,7 @@ class ManipulationLocalize(PerceptionLocalize):
         name = frame or self.rig.world_frame
         found = self.surfaces(start, duration, frame, max_tilt_deg)
         if not found:
-            return f"no flat surface tilted at most {max_tilt_deg:.0f} deg in the window, in {name}"
+            return f"no flat surface in the window, in {name}"
         lines = []
         for i, surface in enumerate(found, 1):
             x, y, z = surface["center"]

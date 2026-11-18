@@ -195,22 +195,59 @@ def describe_surface(model: np.ndarray, inliers: np.ndarray) -> Surface:
     )
 
 
-def find_surfaces(
-    points: np.ndarray, max_tilt_deg: float = 25.0, to_frame: np.ndarray | None = None
-) -> list[Surface]:
-    """Every flat surface tilted at most ``max_tilt_deg`` from level and at least
-    ``MIN_SURFACE_SIDE`` wide among up to four RANSAC peels of ``points``, the biggest first.
+def level_planes(points: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Up to four planes parallel to the points' xy plane, densest first, each as
+    (0, 0, 1, -z) and its inliers: the heights where most points sit within
+    ``PLANE_DISTANCE``, peeled off one after another."""
+    found: list[tuple[np.ndarray, np.ndarray]] = []
+    remaining = np.asarray(points, dtype=np.float64)
+    for _ in range(4):
+        if len(remaining) < 500:
+            break
+        z = remaining[:, 2]
+        edges = np.arange(z.min(), z.max() + 2 * PLANE_DISTANCE, PLANE_DISTANCE)
+        counts, edges = np.histogram(z, edges)
+        # Two neighbouring bins: one slab PLANE_DISTANCE either side of their shared edge.
+        pairs = counts[:-1] + counts[1:] if len(counts) > 1 else counts
+        best = int(np.argmax(pairs))
+        height = float(edges[best + 1] if len(counts) > 1 else edges[0])
+        inside = np.abs(z - height) <= PLANE_DISTANCE
+        height = float(np.median(z[inside]))
+        inside = np.abs(z - height) <= PLANE_DISTANCE
+        found.append((np.array([0.0, 0.0, 1.0, -height]), remaining[inside]))
+        remaining = remaining[~inside]
+    return found
 
-    ``points`` are world-frame, so level means level to gravity. ``to_frame``, a 4x4
-    matrix from the world frame to another, describes each surface in that frame.
+
+def find_surfaces(
+    points: np.ndarray,
+    max_tilt_deg: float = 25.0,
+    to_frame: np.ndarray | None = None,
+    level: bool = False,
+) -> list[Surface]:
+    """Every flat surface at least ``MIN_SURFACE_SIDE`` wide among up to four peels of
+    ``points``, the biggest first.
+
+    ``points`` are world-frame. ``to_frame``, a 4x4 matrix from the world frame to
+    another, describes each surface in that frame.
+
+    ``level`` takes every surface as parallel to that frame's xy plane, such as a
+    table top square to the arm's base: only heights are fitted, so a few points
+    off the plane cannot tilt it, and ``max_tilt_deg`` does not apply. Otherwise a
+    RANSAC fit takes surfaces tilted at most ``max_tilt_deg`` from level to the
+    world frame.
     """
-    min_up_dot = float(np.cos(np.radians(max_tilt_deg)))
-    surfaces = []
-    for model, inliers in peel_planes(points, min_up_dot):
+    if level:
         if to_frame is not None:
-            model = np.append(to_frame[:3, :3] @ model[:3], 0.0)
-            inliers = inliers @ to_frame[:3, :3].T + to_frame[:3, 3]
-        surface = describe_surface(model, inliers)
-        if surface.size[1] >= MIN_SURFACE_SIDE:
-            surfaces.append(surface)
+            points = points @ to_frame[:3, :3].T + to_frame[:3, 3]
+        planes = level_planes(points)
+    else:
+        planes = []
+        for model, inliers in peel_planes(points, float(np.cos(np.radians(max_tilt_deg)))):
+            if to_frame is not None:
+                model = np.append(to_frame[:3, :3] @ model[:3], 0.0)
+                inliers = inliers @ to_frame[:3, :3].T + to_frame[:3, 3]
+            planes.append((model, inliers))
+    surfaces = [describe_surface(model, inliers) for model, inliers in planes]
+    surfaces = [surface for surface in surfaces if surface.size[1] >= MIN_SURFACE_SIDE]
     return sorted(surfaces, key=lambda surface: -surface.points)
