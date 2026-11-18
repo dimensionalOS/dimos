@@ -35,6 +35,7 @@ from dimos.robot.manipulators.dual_makermods_metal.config import (
     dual_metal_model_config,
 )
 from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
+from dimos.robot.urdf_manager import UrdfManager
 
 _MODEL = dual_metal_model_config(robot="arm")
 
@@ -89,6 +90,8 @@ def dual_metal_control() -> Blueprint:
     ).remappings(arm_remaps(DualMetalConnection, DamiaoCoordinator))
 
 
+# UrdfManager serves the URDF to web 3D views. The planner already puts every
+# link on tf, so the manager leaves joint tf off (on, links would get two parents).
 dual_makermods_metal_planner_coordinator = autoconnect(
     dual_metal_control(),
     DualMetalManipulationModule.blueprint(
@@ -97,4 +100,5 @@ dual_makermods_metal_planner_coordinator = autoconnect(
         visualization={"backend": "viser"},
         default_speed_scale=0.2,
     ),
+    UrdfManager.blueprint(model=_MODEL.model, publish_joint_tf=False),
 )
