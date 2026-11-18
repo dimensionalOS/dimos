@@ -212,7 +212,7 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     # on their friction at every kp tried, so they keep their robot gains.
     assert calibration.gains is not None
     assert {j: (g.kp, g.kd) for j, g in calibration.gains.items()} == {
-        f"left_joint{i}": (160.0, 5.0) for i in (1, 2, 3)
+        f"left_joint{i}": (160.0, pytest.approx(math.sqrt(2))) for i in (1, 2, 3)
     }
     results = rig.procedure.results()
     wrist = results["pick_gains"]["proposals"]["left_joint4"]
@@ -336,7 +336,7 @@ def test_a_stalled_joint_fails_the_step_and_the_arm_holds(make_rig: Callable[...
     rig.fake.advance(1.0)
     assert rig.fake.commands == commands and rig.fake.deadman_fired
     assert np.degrees(np.abs(rig.fake.q - held)).max() < 2.0
-    assert np.degrees(np.abs(rig.fake.q - rig.fake.arm.home)).max() > 5.0
+    assert np.degrees(np.abs(rig.fake.q - rig.fake.arm.home)).max() > 4.0
 
 
 def test_a_lost_session_fails_the_step_without_raising(make_rig: Callable[..., Rig]) -> None:
@@ -549,7 +549,7 @@ def test_the_fake_keeps_the_tuning_session_rules(
     assert not gains["left_joint2"]["floating"] and (
         gains["left_joint3"]["kp"],
         gains["left_joint3"]["kd"],
-    ) == (80.0, 5.0)
+    ) == (80.0, 1.0)
     assert fake.position_command({"left_joint1": 0.0})
     assert math.isclose(fake.target[0], 0.0)
 

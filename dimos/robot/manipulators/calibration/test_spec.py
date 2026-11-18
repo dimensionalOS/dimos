@@ -99,7 +99,7 @@ def test_dual_openyam_bench_specs(dual_openyam_specs: list[ArmCalibrationSpec]) 
         )
         assert spec.joint_ranges[f"{side}_joint1"] == (0.0, 0.0)
         assert spec.home_joints[f"{side}_joint2"] == pytest.approx(1.047)
-        assert spec.gains[f"{side}_joint2"] == (80.0, 5.0)
+        assert spec.gains[f"{side}_joint2"] == (80.0, 1.0)
         assert_ranges_inside_urdf_limits(spec)
         guard = spec.workspace
         assert guard.explicit
