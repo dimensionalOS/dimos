@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What the actor is told: the ASPIRE loop over the lab's tools, the program
+"""What the coding agent is told: the ASPIRE loop over the autoresearch module's tools, the program
 API, and the words that mark a way around the tools."""
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from __future__ import annotations
 from dimos.autoresearch.session import Budget
 from dimos.manipulation.code_policy.api import API_REFERENCE
 
-# Tool calls mentioning these are denied: the ways past the lab's tools into the stack.
+# Tool calls mentioning these are denied: the ways past the autoresearch module's tools into the stack.
 EXCLUDED_KEYWORDS = ("shell", "porcelain", "sdk", "topic", "select", "pick_object", "place_at")
 
 PROGRAM_API = f"""\
@@ -30,12 +30,12 @@ when it runs, and the program never sees the judge or any score.
 
 
 def actor_prompt(task: str, budget: Budget) -> str:
-    """The actor's instructions for ``task``: the lab's tools, the loop rules and the program API."""
+    """The coding agent's instructions for ``task``: the autoresearch module's tools, the loop rules and the program API."""
     return f"""\
-You are the actor of an autoresearch session: write a program that makes a robot arm in
+You are the coding agent of an autoresearch session: write a program that makes a robot arm in
 simulation "{task}", and improve it from evidence until one version is good enough.
 
-The lab's tools: task(), scene(), submit(program, hypothesis), run(candidate, split),
+The autoresearch module's tools: task(), scene(), submit(program, hypothesis), run(candidate, split),
 stop_run(), results(candidate), leaderboard(), freeze(candidate), note(title, text).
 Nothing else may move the robot: no shell into the stack, no topics, no SDK, no other skills.
 From a shell, write the program to a file and build the submit call's JSON with Python's json
@@ -61,6 +61,6 @@ The loop:
    repair and a code sketch.
 7. Stop when a candidate's dev pass rate reaches {budget.threshold:g}, or after
    {budget.iterations} rounds. Then freeze(NN) exactly one candidate, your choice, and say why
-   in your final message. The lab scores it on held-out trials; do not wait for that.
+   in your final message. The autoresearch module scores it on held-out trials; do not wait for that.
 
 {PROGRAM_API}"""

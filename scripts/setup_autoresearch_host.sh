@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Set up this PC to host the Metal autoresearch lab and its Desktop UI.
+# Set up this PC to host the Metal autoresearch blueprint and its Desktop UI.
 #
 # Needs DimOS Desktop installed and running, plus git, uv, nix and npm, and about 15 GB free.
 # Usage: bash setup_autoresearch_host.sh [dimos folder, default ~/dimos-autoresearch]

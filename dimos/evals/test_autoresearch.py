@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The autoresearch driver without a lab: launch settings, settling, the
+"""The autoresearch driver without an autoresearch module: launch settings, settling, the
 prompt and the grader over a session directory built with the session API."""
 
 from __future__ import annotations
@@ -159,7 +159,7 @@ def test_grade_reads_the_frozen_candidates_heldout_rate_and_reports(tmp_path: Pa
     for index in range(5):
         session.record_trial(second, trial("heldout", index, index < 4))
     session.freeze(second)
-    # The lab appends the held-out score once its trials are done.
+    # The autoresearch module appends the held-out score once its trials are done.
     info = json.loads((session.dir / "session.json").read_text())
     info.update(status="scored", heldout_rate=0.8)
     (session.dir / "session.json").write_text(json.dumps(info))
