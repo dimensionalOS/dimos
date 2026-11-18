@@ -932,7 +932,6 @@ def cockpit(
         raise RuntimeError(
             "the cockpit blueprint needs the web extra: `uv sync --extra web --inexact`"
         ) from e
-    from dimos.core.coordination.blueprints import autoconnect
     from dimos.web.codecs import resolve_decoder, resolve_encoder
 
     layout = _default_preset() if layout is None and not declared else layout
@@ -1043,7 +1042,7 @@ def cockpit(
     # Generated classes carry only the custom ports; the built-ins are
     # inherited. No custom streams means the plain static class.
     module_class = make_relay_bridge_class(ports) if ports else RelayBridgeModule
-    blueprint = autoconnect(module_class.blueprint(manifest=data, channels=tuple(specs))).solidify()
+    blueprint = module_class.blueprint(manifest=data, channels=tuple(specs))
     if any(isinstance(p, Stats) for p in (*_panels(layout), *_panels(tuple(pages)))):
         # Blueprint-level config is the lowest-precedence source, applied by
         # ModuleCoordinator.build before the worker pool (and its

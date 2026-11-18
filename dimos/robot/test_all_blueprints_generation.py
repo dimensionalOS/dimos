@@ -37,7 +37,6 @@ IGNORED_FILES: set[str] = {
 # override needed) is still discovered as a runnable blueprint.
 BLUEPRINT_METHODS = {
     "blueprint",
-    "solidify",
     "transports",
     "global_config",
     "remappings",
@@ -309,7 +308,7 @@ def _find_blueprints_in_file(
                 if var_name.startswith("_"):
                     continue
 
-                # Check if it's a blueprint (ModuleBlueprintSet instance)
+                # Check if it's a blueprint
                 if _is_autoconnect_call(node.value) or _ends_with_blueprint_method(node.value):
                     blueprint_vars.append(var_name)
 
