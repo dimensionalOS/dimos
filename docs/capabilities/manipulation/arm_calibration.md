@@ -48,7 +48,7 @@ Add `--dry-run` first: it prints the exact `dimos run` command and the steps and
 starts nothing.
 
 Options: `--arm` (left or right on a two-arm robot), `--floor-z-m` and
-`--min-x-m`, `--poses N` (default 8), `--steps a,b,c` (run only these),
+`--min-x-m`, `--poses N` (default 15), `--steps a,b,c` (run only these),
 `--speed-deg-s S` (peak joint speed, at most 30), `--no-confirm-each` (stop
 asking before every single pose and every joint of the sweep; not recommended
 for a first run). Everything the command does not know is passed on to
