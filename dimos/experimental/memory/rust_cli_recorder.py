@@ -29,15 +29,18 @@ from typing import IO, Any
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.core.transport_factory import session_config
+from dimos.core.transport_factory import make_transport, session_config
 from dimos.experimental.memory.rust_recorder import (
     RustContinuousMode,
+    RustEventConfig,
     RustRecorderConfig,
+    RustRecordingMode,
     RustStreamSpec,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.std_msgs.String import String
 from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES
 from dimos.utils.logging_config import setup_logger
 
@@ -57,6 +60,7 @@ class RustRecordingPlan:
     streams: list[RustStreamSpec]
     payload_types: dict[str, type[Any]]
     path: Path
+    mode: RustRecordingMode
     lcm_url: str | None = None
 
 
@@ -96,8 +100,18 @@ def prepare_rust_recorder() -> Path:
 
 
 def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
-    """Resolve and validate the stream plan the standalone recorder will receive."""
+    """Resolve and validate the stream plan the standalone recorder will receive.
+
+    With ``--record-events`` the trigger stream is always recorded, on its own topic
+    when no module publishes it, so ``dimos topic send`` can start a clip.
+    """
+    events = RustEventConfig() if global_config.record_events else None
+    transports = dict(transports)
     selected = matching(global_config.record_topics, (name for name, _ in transports))
+    if events is not None:
+        if not any(name == events.trigger for name, _ in transports):
+            transports[(events.trigger, String)] = make_transport(events.trigger, String)
+        selected.add(events.trigger)
     unsupported_transports: list[str] = []
     streams: list[RustStreamSpec] = []
     topics: dict[str, str] = {}
@@ -167,13 +181,15 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
         raise ValueError("The Rust recorder cannot record conflicting LCM URLs in one artifact")
 
     suffix = "db" if global_config.record == "sqlite" else "mcap"
+    path = recording_dir() / f"memory.{suffix}"
     return RustRecordingPlan(
         backend=backends.pop(),
         lcm_url=next(iter(lcm_urls), None),
         topics=topics,
         streams=streams,
         payload_types=payload_types,
-        path=recording_dir() / f"memory.{suffix}",
+        path=path,
+        mode=RustContinuousMode() if events is None else events.resolve(streams, path),
     )
 
 
@@ -210,7 +226,7 @@ class RustRecordingSession:
                 "encoding_threads": global_config.record_encoding_threads
                 or _DEFAULT_ENCODING_THREADS,
                 "streams": [stream.model_dump(exclude_none=True) for stream in self.plan.streams],
-                "mode": RustContinuousMode().model_dump(),
+                "mode": self.plan.mode.model_dump(),
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }

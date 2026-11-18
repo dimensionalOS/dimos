@@ -28,7 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingPlan, RustRecordingSession
-from dimos.experimental.memory.rust_recorder import RustStreamSpec
+from dimos.experimental.memory.rust_recorder import RustContinuousMode, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -189,6 +189,7 @@ def _plan(tmp_path: Path) -> RustRecordingPlan:
         ],
         payload_types={"odom": PoseStamped},
         path=tmp_path / "memory.db",
+        mode=RustContinuousMode(),
     )
 
 
