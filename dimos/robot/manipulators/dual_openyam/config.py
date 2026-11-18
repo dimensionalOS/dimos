@@ -53,6 +53,7 @@ DUAL_OPENYAM_KD = [1.0, 1.0, 1.0, 1.5, 1.5, 1.5]
 # which is where web 3D views draw that link's meshes.
 DUAL_OPENYAM_LINKS = [
     "dual_openyam_base",
+    "workcell",
     *[
         f"{side}_{link}"
         for side in DUAL_OPENYAM_SIDES
