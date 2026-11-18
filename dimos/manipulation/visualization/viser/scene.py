@@ -101,6 +101,8 @@ OBSTACLE_DEFAULT_RGBA = DEFAULT_OBSTACLE_RGBA
 OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
 OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)
+# A mapped workspace's cells by height, lowest first: blue, cyan, green, yellow, red.
+HEIGHT_RAMP = ((40, 70, 220), (30, 190, 220), (60, 200, 80), (240, 210, 40), (220, 50, 40))
 GRASP_PROPOSAL_NAMESPACE = "/manipulation/grasp-proposals"
 # Best rank green through worst orange, so the ordering reads at a glance.
 GRASP_PROPOSAL_BEST_COLOR = (60, 220, 60)
@@ -474,6 +476,21 @@ class ViserManipulationScene:
         ), float(color[3])
 
     @staticmethod
+    def _height_colors(heights: NDArray[np.float32]) -> NDArray[np.uint8]:
+        """One colour per cell by its height: blue at the lowest cells, red at the highest.
+
+        The ramp spans the 2nd to 98th percentile, so a few stray cells do not
+        flatten everything else into one colour.
+        """
+        low, high = np.percentile(heights, [2, 98])
+        t = np.clip((heights - low) / max(float(high - low), 1e-6), 0.0, 1.0)
+        stops = np.linspace(0.0, 1.0, len(HEIGHT_RAMP))
+        ramp = np.asarray(HEIGHT_RAMP, dtype=np.float64)
+        return np.stack([np.interp(t, stops, ramp[:, c]) for c in range(3)], axis=1).astype(
+            np.uint8
+        )
+
+    @staticmethod
     def _add_octree(
         scene: SceneApi,
         path: str,
@@ -492,7 +509,10 @@ class ViserManipulationScene:
         points = np.asarray(obstacle.points, dtype=np.float32).reshape(-1, 3)
         if not len(points):
             raise ValueError("octree obstacle carries no occupied cells")
-        colors = np.tile(np.asarray(color, dtype=np.uint8), (len(points), 1))
+        if obstacle.color == OBSTACLE_DEFAULT_RGBA:
+            colors = ViserManipulationScene._height_colors(points[:, 2] + position[2])
+        else:
+            colors = np.tile(np.asarray(color, dtype=np.uint8), (len(points), 1))
         return scene.add_point_cloud(
             path,
             points=points,
