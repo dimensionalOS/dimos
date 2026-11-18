@@ -100,6 +100,10 @@ dimos run learning-collect-leader-dual-openyam --config workcell.json \
   --left-can-port follower_l --right-can-port follower_r
 ```
 
+`learning-collect-joycon-leader-dual-openyam` records the same on the Joy-Con
+leaders: Joy-Con B starts and saves an episode, Y discards it.
+`learning-collect-joycon-leader-dual-openyam-nocam` records without cameras.
+
 The recorder refuses an existing recording directory, so give every run a
 new name. `observation.state` is the coordinator's measured joint state and
 `action` is `arm_position_command`, the coordinator's command stream to the
