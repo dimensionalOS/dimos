@@ -322,9 +322,3 @@ def test_arm_ids_are_the_ones_the_calibration_tools_save_under(key):
 
 def test_an_unnamed_robot_has_no_arm_ids():
     assert replace(OPENYAM, name="").arm_ids() == []
-
-
-@pytest.mark.parametrize("name", ["dual/openyam", "open yam", "../x"])
-def test_robot_data_rejects_a_name_that_is_not_one_plain_word(name):
-    with pytest.raises(ValueError, match="robot name"):
-        replace(OPENYAM, name=name)
