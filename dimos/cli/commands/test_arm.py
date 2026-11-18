@@ -34,6 +34,7 @@ from dimos.robot.manipulators.calibration.schema import calibration_path, save_c
 from dimos.robot.manipulators.calibration.test_schema import TOY_MODEL, TOY_URDF, calibration
 
 ARM_ID = "dual_openyam/left"
+BENCH = ("--floor-z-m", "-0.03", "--min-x-m", "0.15")
 RUN_ID = "20261118-101010-abcd-dual-openyam-calibrate"
 STEPS = [
     {"id": "check", "title": "Check the arm"},
@@ -269,7 +270,7 @@ def test_calibrate_answers_the_right_prompts_goes_home_and_only_then_stops_its_r
     # Move to home?, Save and apply? (skip), the final offer (Enter: go home), its confirmation.
     rig.keys = ["", "s", "", ""]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     out = result.output
     assert result.exit_code == 0, out
@@ -298,6 +299,10 @@ def test_calibrate_answers_the_right_prompts_goes_home_and_only_then_stops_its_r
         "--daemon",
         "--calibrationmodule.arm",
         "left",
+        "--calibrationmodule.floor-z-m",
+        "-0.03",
+        "--calibrationmodule.min-x-m",
+        "0.15",
     ]
     # The run's global options were resolved for the walk-through's own connection too.
     assert rig.globals == [([], {})]
@@ -307,7 +312,7 @@ def test_q_at_a_prompt_aborts_once_then_the_arm_goes_home_before_the_stop(rig: R
     rig.module.script = happy_script()
     rig.keys = ["q", "", ""]
 
-    result = invoke("calibrate", "dual-openyam", "--steps", "check,float_check")
+    result = invoke("calibrate", "dual-openyam", *BENCH, "--steps", "check,float_check")
 
     assert result.exit_code == 130, result.output
     assert ("run", ["check", "float_check"]) in rig.module.calls
@@ -326,7 +331,7 @@ def test_q_or_p_while_the_arm_moves_aborts_without_waiting_for_a_prompt(rig: Rig
     rig.module.script = happy_script()
     rig.keys = [f"!{key}", "", ""]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 130, result.output
     assert rig.module.named("abort", "confirm")[0] == ("abort", None)
@@ -341,7 +346,7 @@ def test_eof_at_a_prompt_aborts_exactly_once_and_leaves_the_run_up_without_a_yes
     rig.module.script = happy_script()
     rig.keys = []
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 130, result.output
     assert rig.module.named("abort", "go_home", "confirm", "skip") == [("abort", None)]
@@ -356,7 +361,7 @@ def test_keeping_the_arm_away_from_home_needs_an_explicit_yes(rig: Rig) -> None:
     # Abort; keep the arm where it is; Enter (No) at the stop prompt; k again; yes.
     rig.keys = ["q", "k", "", "k", "yes"]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 130, result.output
     assert rig.module.named("go_home") == []
@@ -372,7 +377,7 @@ def test_a_failed_run_exits_non_zero_and_h_goes_home_after_its_own_confirmation(
     ]
     rig.keys = ["h", ""]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1, result.output
     assert "Run failed: Gravity poses failed: stalled" in result.output
@@ -386,7 +391,7 @@ def test_going_home_that_fails_needs_a_yes_and_exits_1(rig: Rig) -> None:
     rig.module.home_script = home_script("failed", "going home failed: stalled")
     rig.keys = ["", "", "", "", "yes"]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1, result.output
     assert "Not at home: going home failed: stalled" in result.output
@@ -402,7 +407,7 @@ def test_go_home_raising_is_handled_and_already_running_is_retried(rig: Rig) -> 
     # Prompts 7 and 8; go home: busy, settles, refused; then yes.
     rig.keys = ["", "", "", "yes"]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1, result.output
     assert rig.module.named("go_home") == [("go_home", None), ("go_home", None)]
@@ -427,7 +432,7 @@ def test_an_rpc_error_mid_poll_aborts_then_goes_home_then_stops(
 
     monkeypatch.setattr(rig.module, "status", flaky)
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1, result.output
     assert "lost touch with the calibration module (TimeoutError" in result.output
@@ -445,7 +450,7 @@ def test_an_abort_the_engine_never_confirms_is_not_reported_as_aborted(
     rig.module.abort_holds = True
     rig.keys = ["!q"]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1, result.output
     assert "did not confirm the abort" in result.output
@@ -471,7 +476,7 @@ def test_ctrl_c_aborts_waits_for_the_engine_and_goes_home_before_the_stop(
 
     monkeypatch.setattr(rig.module, "status", interrupted)
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 130, result.output
     assert [c[0] for c in rig.module.calls if c[0] in ("abort", "go_home")] == [
@@ -500,7 +505,7 @@ def test_a_closed_terminal_sighup_takes_the_abort_path(
     monkeypatch.setattr(rig.module, "status", hangup)
     before = signal.getsignal(signal.SIGHUP)
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 130, result.output
     assert "SIGHUP (the terminal closed): aborting" in result.output
@@ -524,7 +529,7 @@ def test_a_module_of_another_run_or_arm_is_refused_and_never_driven(
     rig.module.script = happy_script()
     rig.keys = ["yes"]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1, result.output
     assert "connected to a different run" in result.output and said in result.output
@@ -539,7 +544,7 @@ def test_ctrl_c_while_connecting_is_a_clean_message_and_the_stop_still_asks(rig:
     rig.connect = interrupt
     rig.keys = []
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 130, result.output
     assert "Ctrl-C while connecting; the calibration has not moved the arm." in result.output
@@ -554,7 +559,7 @@ def test_a_run_whose_process_is_gone_is_cleaned_up_without_asking(rig: Rig) -> N
 
     rig.connect = gone
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1, result.output
     assert "Stop anyway" not in result.output and rig.stopped == [RUN_ID]
@@ -562,7 +567,7 @@ def test_a_run_whose_process_is_gone_is_cleaned_up_without_asking(rig: Rig) -> N
 
 def test_the_lock_keeps_a_second_walk_through_of_the_robot_out(rig: Rig, tmp_path: Path) -> None:
     with calibrate_lock(tmp_path / "arms" / "dual-openyam.calibrate.lock"):
-        result = invoke("calibrate", "dual-openyam")
+        result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1
     assert "another `dimos arm calibrate` of this robot is running" in result.output
@@ -573,7 +578,7 @@ def test_the_lock_keeps_a_second_walk_through_of_the_robot_out(rig: Rig, tmp_pat
 def test_a_coordinator_on_the_bus_is_refused_even_without_a_registry_entry(rig: Rig) -> None:
     rig.bus_busy = True
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1
     assert "already answers on the" in result.output and "still starting" in result.output
@@ -584,6 +589,7 @@ def test_dry_run_prints_the_command_and_plan_and_launches_nothing(rig: Rig) -> N
     result = invoke(
         "calibrate",
         "dual-openyam",
+        *BENCH,
         "--dry-run",
         "--poses",
         "6",
@@ -595,6 +601,7 @@ def test_dry_run_prints_the_command_and_plan_and_launches_nothing(rig: Rig) -> N
     assert result.exit_code == 0, result.output
     assert (
         "dimos run dual-openyam-calibrate --daemon --calibrationmodule.arm left "
+        "--calibrationmodule.floor-z-m -0.03 --calibrationmodule.min-x-m 0.15 "
         "--calibrationmodule.poses 6 --calibrationmodule.confirm-each=false "
         "--dualopenyamconnection.left-can-port follower_l"
     ) in result.output
@@ -615,6 +622,7 @@ def test_global_options_reach_the_run_and_the_walk_through_connection(rig: Rig) 
             "arm",
             "calibrate",
             "dual-openyam",
+            *BENCH,
             "--zenoh-connect",
             "tcp/127.0.0.1:7447",
         ],
@@ -655,7 +663,7 @@ def test_a_foreign_active_run_is_refused_with_its_id_and_owner(rig: Rig) -> None
         )
     ]
 
-    result = invoke("calibrate", "dual-openyam")
+    result = invoke("calibrate", "dual-openyam", *BENCH)
 
     assert result.exit_code == 1
     assert "20261118-090000-ffff-xarm" in result.output and "tom" in result.output
@@ -668,12 +676,13 @@ def test_a_bad_robot_lists_the_known_ones_and_a_guardless_arm_needs_the_bench_nu
     bad = invoke("calibrate", "nope")
     assert bad.exit_code == 2 and "dual-openyam" in bad.output and "openarm" in bad.output
 
-    result = invoke("calibrate", "openyam", "--dry-run")
-    assert result.exit_code == 2
-    assert "--floor-z-m" in result.output
-    unknown = invoke("calibrate", "dual-openyam", "--steps", "nope")
+    for robot in ("openyam", "dual-openyam"):
+        result = invoke("calibrate", robot, "--dry-run")
+        assert result.exit_code == 2
+        assert "--floor-z-m" in result.output
+    unknown = invoke("calibrate", "dual-openyam", *BENCH, "--steps", "nope")
     assert unknown.exit_code == 2 and "Unknown steps" in unknown.output
-    no_arm = invoke("calibrate", "dual-openyam", "--arm", "up", "--dry-run")
+    no_arm = invoke("calibrate", "dual-openyam", *BENCH, "--arm", "up", "--dry-run")
     assert no_arm.exit_code == 2 and "has no arm 'up'" in no_arm.output
     assert rig.launched == []
 
@@ -689,7 +698,7 @@ def test_a_bad_robot_lists_the_known_ones_and_a_guardless_arm_needs_the_bench_nu
 def test_poses_and_speed_are_checked_before_anything_starts(
     rig: Rig, flags: list[str], said: str
 ) -> None:
-    result = invoke("calibrate", "dual-openyam", *flags)
+    result = invoke("calibrate", "dual-openyam", *BENCH, *flags)
 
     assert result.exit_code == 2, result.output
     assert said in result.output

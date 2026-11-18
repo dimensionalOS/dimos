@@ -54,12 +54,6 @@ from dimos.robot.manipulators.calibration.spec import (
 )
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
-from dimos.robot.manipulators.dual_openyam.calibration_workspace import (
-    DUAL_OPENYAM_BENCH_BASE_SPACING_M,
-    DUAL_OPENYAM_MIDLINE_MARGIN_M,
-    DUAL_OPENYAM_TABLE_Z_M,
-    DUAL_OPENYAM_URDF_BASE_SPACING_M,
-)
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.makermods_metal.config import METAL
 from dimos.robot.manipulators.openarm.config import OPENARM
@@ -77,9 +71,15 @@ def assert_ranges_inside_urdf_limits(spec: ArmCalibrationSpec) -> None:
         assert lower <= low <= high <= upper, name
 
 
-def test_dual_openyam_bench_specs(dual_openyam_specs: list[ArmCalibrationSpec]) -> None:
+def half_base_spacing_m(left: ArmCalibrationSpec, right: ArmCalibrationSpec) -> float:
+    """Half the distance between two arms' base frames in their model, at neutral."""
+    return float(np.linalg.norm(ArmModel(left).origin - ArmModel(right).origin)) / 2.0
+
+
+def test_dual_openyam_specs_on_a_bench(dual_openyam_specs: list[ArmCalibrationSpec]) -> None:
     left, right = dual_openyam_specs
     assert [left.arm_id, right.arm_id] == ["dual_openyam/left", "dual_openyam/right"]
+    half_spacing = half_base_spacing_m(left, right)
     for spec, side in ((left, "left"), (right, "right")):
         assert spec.joint_names == [f"{side}_joint{i}" for i in range(1, 7)]
         assert spec.base_frame == f"{side}_base" and spec.tip_frame == f"{side}_grasp_frame"
@@ -94,36 +94,25 @@ def test_dual_openyam_bench_specs(dual_openyam_specs: list[ArmCalibrationSpec]) 
             **{f"{side}_joint{i}": pytest.approx(DM4310) for i in (4, 5, 6)},
         }
         assert spec.max_torque_nm[f"{side}_joint2"] == pytest.approx(10.0)
-        assert spec.joint_ranges[f"{side}_joint2"] == pytest.approx(
-            (math.radians(25.0), math.radians(150.0))
-        )
-        assert spec.joint_ranges[f"{side}_joint1"] == (0.0, 0.0)
         assert spec.home_joints[f"{side}_joint2"] == pytest.approx(1.047)
         assert spec.gains[f"{side}_joint2"] == (80.0, 1.0)
         assert_ranges_inside_urdf_limits(spec)
         guard = spec.workspace
         assert guard.explicit
-        assert guard.floor_z_m == DUAL_OPENYAM_TABLE_Z_M
+        assert guard.floor_z_m == -0.03 and guard.min_x_m == 0.15
         assert guard.min_pose_z_m == pytest.approx(0.12)
         assert guard.min_transition_z_m == pytest.approx(0.08)
-        assert guard.min_x_m == 0.15 and guard.point_offset_m == (0.0, 0.0, -0.046)
-        # The bench midline, then the looser one halfway between the URDF's bases.
-        midline, model_midline = guard.keep_out
-        toward_other = (0.0, -1.0 if side == "left" else 1.0, 0.0)
-        assert midline.name == "rig midline" and midline.normal == toward_other
-        assert midline.offset_m == pytest.approx(
-            DUAL_OPENYAM_BENCH_BASE_SPACING_M / 2 + DUAL_OPENYAM_MIDLINE_MARGIN_M
-        )
-        assert model_midline.normal == pytest.approx(toward_other)
-        assert model_midline.offset_m == pytest.approx(DUAL_OPENYAM_URDF_BASE_SPACING_M / 2)
-        assert model_midline.offset_m > midline.offset_m
-        # The bench's hand-set pose grid.
-        assert spec.grid_step_rad == pytest.approx(
-            {
-                f"{side}_joint{number}": math.radians(step)
-                for number, step in {2: 12.5, 3: 13.5, 4: 25.0, 5: 37.5}.items()
-            }
-        )
+        assert guard.point_offset_m == (0.0, 0.0, 0.0)
+        # The only keep-out: the midline halfway between the URDF's bases.
+        (midline,) = guard.keep_out
+        other = right if spec is left else left
+        assert midline.name == f"midline to {other.arm_id}"
+        assert midline.normal == pytest.approx((0.0, -1.0 if side == "left" else 1.0, 0.0))
+        assert midline.offset_m == pytest.approx(half_spacing)
+        default = arm_spec("dual-openyam", side)
+        assert default.on_bench(-0.03, 0.15) == spec
+        assert replace(spec, workspace=default.workspace) == default
+        assert spec.grid_step_rad is None
         # Every frame the old filter checked is still checked, plus the elbow and
         # the grasp frame; the shoulder, which cannot move, is not.
         assert guard.clearance_frames is not None
@@ -156,7 +145,7 @@ def test_dual_openyam_default_spec_derives_everything_from_the_model() -> None:
         assert spec.workspace.min_x_m is None and spec.grid_step_rad is None
         (midline,) = spec.workspace.keep_out
         assert midline.normal == pytest.approx(toward_other)
-        assert midline.offset_m == pytest.approx(DUAL_OPENYAM_URDF_BASE_SPACING_M / 2)
+        assert midline.offset_m == pytest.approx(half_base_spacing_m(left, right))
 
 
 def test_openyam_spec() -> None:

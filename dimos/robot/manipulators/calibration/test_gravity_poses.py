@@ -31,27 +31,11 @@ from dimos.robot.manipulators.calibration.gravity_poses import (
     home_pose,
 )
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, HalfSpace
-from dimos.robot.manipulators.dual_openyam.calibration_workspace import (
-    DUAL_OPENYAM_BENCH_BASE_SPACING_M,
-    DUAL_OPENYAM_CALIBRATION_RANGES_DEG,
-    DUAL_OPENYAM_MIDLINE_MARGIN_M,
-)
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_LEFT_ARM_JOINTS,
     DUAL_OPENYAM_RIGHT_ARM_JOINTS,
 )
-from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 
-# The checks the bench pose filter applied before the spec existed, on the full
-# 12-joint model, kept here to show the spec-driven poses still pass them.
-OLD_MIN_POSE_Z_M = 0.12
-OLD_MIN_POSE_X_M = 0.15
-OLD_MIN_TRANSITION_Z_M = 0.08
-OLD_MAX_MODEL_TORQUE_NM = 10.0
-OLD_FINGERTIP_OFFSET_M = 0.046
-OLD_CLEARANCE_SUFFIXES = ("tip_left", "tip_right", "gripper", "link5", "link4")
-OLD_RIG_HALF_SPACING_M = 0.430 / 2.0
-OLD_MAX_MIDLINE_CROSSING_M = 0.05
 LEFT_FITTED_LINKS = ("left_link2", "left_link3", "left_link4", "left_link5", "left_gripper")
 
 
@@ -73,58 +57,6 @@ def right_arm(right_spec: ArmCalibrationSpec) -> ArmModel:
 @pytest.fixture(scope="module")
 def right_pose_set(right_arm: ArmModel) -> PoseSet:
     return generate_poses(right_arm)
-
-
-class OldBenchChecks:
-    """The pre-spec pose and transition checks, on the full two-arm model."""
-
-    def __init__(self, side: str) -> None:
-        self.model = pin.buildModelFromXML(DUAL_OPENYAM_MODEL.load().xml)
-        self.data = self.model.createData()
-        self.side = side
-        self.offset = 0 if side == "left" else 6
-        self.grasp = self.model.getFrameId(f"{side}_grasp_frame")
-        self.others = [self.model.getFrameId(f"{side}_{s}") for s in OLD_CLEARANCE_SUFFIXES]
-        self.base_y = float(
-            self.model.frames[self.model.getFrameId(f"{side}_base")].placement.translation[1]
-        )
-        self.toward = -1.0 if side == "left" else 1.0
-
-    def full_q(self, joints: tuple[float, ...] | np.ndarray) -> np.ndarray:
-        q = np.zeros(self.model.nq)
-        q[self.offset : self.offset + 6] = joints
-        return q
-
-    def points(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        pin.framesForwardKinematics(self.model, self.data, q)
-        tip = self.data.oMf[self.grasp].act(np.array([0.0, 0.0, -OLD_FINGERTIP_OFFSET_M]))
-        return tip, np.stack([self.data.oMf[f].translation for f in self.others])
-
-    def midline_ok(self, tip: np.ndarray) -> bool:
-        toward = self.toward * (float(tip[1]) - self.base_y)
-        return toward <= OLD_RIG_HALF_SPACING_M + OLD_MAX_MIDLINE_CROSSING_M
-
-    def pose_ok(self, joints: tuple[float, ...]) -> bool:
-        q = self.full_q(joints)
-        tip, others = self.points(q)
-        gravity = pin.computeGeneralizedGravity(self.model, self.data, q)
-        return bool(
-            tip[2] > OLD_MIN_POSE_Z_M
-            and (others[:, 2] > OLD_MIN_POSE_Z_M).all()
-            and tip[0] > OLD_MIN_POSE_X_M
-            and self.midline_ok(tip)
-            and np.abs(gravity).max() <= OLD_MAX_MODEL_TORQUE_NM
-        )
-
-    def transition_ok(self, a: tuple[float, ...], b: tuple[float, ...], samples: int) -> bool:
-        start, end = np.asarray(a), np.asarray(b)
-        for s in np.linspace(0.0, 1.0, samples + 1):
-            tip, others = self.points(self.full_q(start + s * (end - start)))
-            if tip[2] <= OLD_MIN_TRANSITION_Z_M or (others[:, 2] <= OLD_MIN_TRANSITION_Z_M).any():
-                return False
-            if not self.midline_ok(tip):
-                return False
-        return True
 
 
 def test_regressor_reproduces_pinocchio_gravity(arm: ArmModel) -> None:
@@ -157,25 +89,23 @@ def test_generates_the_requested_number_of_poses(pose_set: PoseSet) -> None:
     assert set(pose_set.grid_step_deg) == {f"left_joint{i}" for i in (2, 3, 4, 5)}
 
 
-def test_bench_poses_come_from_the_bench_grid(arm: ArmModel, pose_set: PoseSet) -> None:
-    # The hand-set bench grid, not the derived one (about 9.6, 13.5, 30, 50 deg).
-    assert pose_set.grid_step_deg == pytest.approx(
-        {"left_joint2": 12.5, "left_joint3": 13.5, "left_joint4": 25.0, "left_joint5": 37.5}
-    )
-    axes, _ = grid_axes(arm)
-    assert [len(axis) for axis in axes] == [1, 11, 11, 7, 5, 1]
-    for number, axis in enumerate(axes[1:5], 2):
-        low, high = DUAL_OPENYAM_CALIBRATION_RANGES_DEG[number]
-        assert np.degrees(axis) == pytest.approx(np.arange(low, high + 1e-9, axis_step(number)))
+def test_poses_lie_on_the_grid_derived_from_the_joint_ranges(
+    arm: ArmModel, pose_set: PoseSet
+) -> None:
+    assert arm.spec.grid_step_rad is None
+    axes, steps = grid_axes(arm)
+    assert steps == pose_set.grid_step_deg
+    home = home_pose(arm).joints_rad
+    for index, (joint, axis) in enumerate(zip(arm.joint_names, axes, strict=True)):
+        if joint not in arm.measured_joints:
+            assert axis == pytest.approx([home[index]])
+            continue
+        low, high = arm.spec.joint_ranges[joint]
+        assert len(axis) > 2 and axis[0] == pytest.approx(low) and axis[-1] == pytest.approx(high)
+        assert np.diff(axis) == pytest.approx(math.radians(steps[joint]), rel=1e-6)
     for pose in pose_set.identification:
-        for number, value in enumerate(pose.joints_deg[1:5], 2):
-            low = DUAL_OPENYAM_CALIBRATION_RANGES_DEG[number][0]
-            steps = (value - low) / axis_step(number)
-            assert steps == pytest.approx(round(steps), abs=1e-9), (pose.name, number)
-
-
-def axis_step(number: int) -> float:
-    return {2: 12.5, 3: 13.5, 4: 25.0, 5: 37.5}[number]
+        for value, axis in zip(pose.joints_rad, axes, strict=True):
+            assert np.isclose(axis, value, atol=1e-9).any(), pose.name
 
 
 def test_given_grid_steps_replace_only_their_joints_derived_steps(
@@ -198,36 +128,23 @@ def test_given_grid_steps_replace_only_their_joints_derived_steps(
 def test_poses_stay_inside_the_joint_ranges(arm: ArmModel, pose_set: PoseSet) -> None:
     for pose in pose_set.identification:
         assert pose.joint_names == tuple(DUAL_OPENYAM_LEFT_ARM_JOINTS)
-        for number, (joint, value) in enumerate(
-            zip(pose.joint_names, pose.joints_deg, strict=True), 1
-        ):
-            low, high = DUAL_OPENYAM_CALIBRATION_RANGES_DEG[number]
-            assert low - 1e-9 <= value <= high + 1e-9, (pose.name, joint, value)
+        for joint in pose.joint_names:
             lo_rad, hi_rad = arm.spec.joint_ranges[joint]
             assert lo_rad - 1e-12 <= pose.as_targets()[joint] <= hi_rad + 1e-12
         # The yaw and the wrist roll carry no gravity signal and stay at home.
-        assert pose.joints_deg[0] == 0.0 and pose.joints_deg[5] == 0.0
-
-
-def test_poses_pass_the_old_bench_checks(arm: ArmModel, pose_set: PoseSet) -> None:
-    old = OldBenchChecks("left")
-    previous = home_pose(arm).joints_rad
-    for pose in pose_set.identification:
-        assert old.pose_ok(pose.joints_rad), pose.name
-        assert old.transition_ok(previous, pose.joints_rad, samples=100), pose.name
-        previous = pose.joints_rad
-    for found in pose_set.gravity_free.values():
-        assert old.pose_ok(found.pose.joints_rad), found.pose.name
+        home = home_pose(arm).joints_deg
+        assert pose.joints_deg[0] == home[0] and pose.joints_deg[5] == home[5]
 
 
 def test_poses_clear_the_table_and_sit_in_front(arm: ArmModel, pose_set: PoseSet) -> None:
     guard = arm.workspace
-    assert guard.min_pose_z_m == pytest.approx(OLD_MIN_POSE_Z_M)
-    assert guard.min_transition_z_m == pytest.approx(OLD_MIN_TRANSITION_Z_M)
+    assert guard.min_pose_z_m == pytest.approx(0.12)
+    assert guard.min_transition_z_m == pytest.approx(0.08)
+    assert guard.min_x_m is not None
     for pose in pose_set.identification:
         q = arm.q(pose.joints_rad)
         tip, others = arm.points(q)
-        assert tip[2] > guard.min_pose_z_m and tip[0] > OLD_MIN_POSE_X_M, pose.name
+        assert tip[2] > guard.min_pose_z_m and tip[0] > guard.min_x_m, pose.name
         assert (others[:, 2] > guard.min_pose_z_m).all(), pose.name
         assert (np.abs(arm.gravity(q)) <= arm.max_torque).all(), pose.name
 
@@ -326,15 +243,13 @@ def test_right_arm_poses_match_the_left_and_stay_on_their_side(
         p.joints_deg for p in pose_set.identification
     ]
     assert right_pose_set.condition_number == pytest.approx(pose_set.condition_number)
-    old = OldBenchChecks("right")
-    limit = DUAL_OPENYAM_BENCH_BASE_SPACING_M / 2.0 + DUAL_OPENYAM_MIDLINE_MARGIN_M
+    (midline,) = right_arm.workspace.keep_out
     for pose in right_pose_set.identification:
         assert set(pose.as_targets()) == set(DUAL_OPENYAM_RIGHT_ARM_JOINTS)
         tip = right_arm.fingertip(pose.joints_rad)
-        # y toward the midline from the right base, never past it by more than the margin.
-        assert tip[1] <= limit
+        # y toward the midline from the right base, never past it.
+        assert tip[1] <= midline.offset_m
         assert right_arm.pose_ok(pose.joints_rad)
-        assert old.pose_ok(pose.joints_rad), pose.name
     for joint, found in right_pose_set.gravity_free.items():
         assert joint.startswith("right_")
         row = right_arm.joint_names.index(joint)
@@ -344,11 +259,10 @@ def test_right_arm_poses_match_the_left_and_stay_on_their_side(
 
 
 def test_midline_keep_out_faces_the_other_arm(arm: ArmModel, right_arm: ArmModel) -> None:
-    # The bench midline; the second keep-out, halfway between the URDF's bases, is looser.
-    left_midline, left_model_midline = arm.workspace.keep_out
-    right_midline, right_model_midline = right_arm.workspace.keep_out
-    assert left_model_midline.offset_m == right_model_midline.offset_m > left_midline.offset_m
-    limit = DUAL_OPENYAM_BENCH_BASE_SPACING_M / 2.0 + DUAL_OPENYAM_MIDLINE_MARGIN_M
+    # Halfway between the two bases in the URDF.
+    (left_midline,) = arm.workspace.keep_out
+    (right_midline,) = right_arm.workspace.keep_out
+    limit = float(np.linalg.norm(arm.origin - right_arm.origin)) / 2.0
     assert left_midline.offset_m == right_midline.offset_m == pytest.approx(limit)
     assert not left_midline.violated_by(np.array([0.3, -limit + 0.01, 0.3]))
     assert left_midline.violated_by(np.array([0.3, -limit - 0.01, 0.3]))

@@ -14,15 +14,13 @@
 
 """The Damiao robots the calibration tools know by name, e.g. ``--robot dual-openyam --arm left``.
 
-``robot_specs`` applies a robot's own calibration setup where it has one (the
-Dual OpenYAM bench guard, pose boxes and grid); every other robot gets the
-defaults derived from its model, whose implicit workspace guard lets its poses
-be fitted but not generated. Arm ids are the robot's ``arm_ids()``.
+``robot_specs`` derives every robot's specs from its model; their implicit
+workspace guard lets poses be fitted but not generated until the table height
+and the front line are given (``ArmCalibrationSpec.on_bench``). Arm ids are the
+robot's ``arm_ids()``.
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable
 
 from dimos.robot.manipulators.calibration.spec import (
     ArmCalibrationSpec,
@@ -32,9 +30,6 @@ from dimos.robot.manipulators.calibration.spec import (
 )
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
-from dimos.robot.manipulators.dual_openyam.calibration_workspace import (
-    dual_openyam_calibration_specs,
-)
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.makermods_metal.config import METAL
 from dimos.robot.manipulators.openarm.config import OPENARM
@@ -50,11 +45,6 @@ KNOWN_ROBOTS: dict[str, DamiaoRobot] = {
     "openarm": OPENARM,
 }
 
-# Robots whose calibration setup is more than the model-derived defaults.
-_CUSTOM_SPECS: dict[str, Callable[[], list[ArmCalibrationSpec]]] = {
-    "dual-openyam": dual_openyam_calibration_specs,
-}
-
 
 def robot_id(robot: str) -> str:
     """The robot part of its arm ids, its ``DamiaoRobot.name``: ``dual-openyam`` -> ``dual_openyam``."""
@@ -65,9 +55,6 @@ def robot_specs(robot: str) -> list[ArmCalibrationSpec]:
     """Every arm of a known robot, in bus order."""
     if robot not in KNOWN_ROBOTS:
         raise ValueError(f"unknown robot {robot!r}; known: {', '.join(sorted(KNOWN_ROBOTS))}")
-    custom = _CUSTOM_SPECS.get(robot)
-    if custom is not None:
-        return custom()
     return specs_from_damiao_robot(KNOWN_ROBOTS[robot])
 
 

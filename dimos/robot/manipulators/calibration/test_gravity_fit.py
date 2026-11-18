@@ -689,10 +689,6 @@ def test_the_bench_recordings_reproduce_the_october_fit(
     recording = _bench_recording(side)
     spec = next(s for s in dual_openyam_specs if s.arm_id == f"dual_openyam/{side}")
     grec = load_gravity_recording(recording)
-    # The bench spec generates exactly the poses the October run visited.
-    visited = [m.data["targets_deg"] for m in grec.markers if m.label.startswith("pose_")]
-    generated = [list(pose.joints_deg) for pose in generate_poses(spec).identification]
-    assert np.allclose(visited, generated, atol=1e-6)
     measurements = extract_measurements(grec, spec)
     assert len(measurements) == 60  # 15 poses, 4 measured joints
     result = fit_gravity(ArmModel(spec), measurements)

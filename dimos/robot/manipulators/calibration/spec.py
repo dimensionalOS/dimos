@@ -44,7 +44,7 @@ move it. Everything else is derived from the model unless given:
   moves when the measured joints do. On a robot with several arms, each arm's
   guard also keeps out of the other arms' halves, split halfway between the
   bases in the model; a torso or other bodies need keep-out half-spaces of
-  their own (see ``dual_openyam.calibration_workspace``).
+  their own.
 - ``grid_step_rad``: the pose grid steps of the measured joints, derived from
   the gravity torque spans unless given (see ``gravity_poses.grid_axes``).
 

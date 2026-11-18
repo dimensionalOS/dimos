@@ -173,4 +173,4 @@ def test_the_segment_guard_keeps_the_arm_on_its_side_of_the_midline(arm: ArmMode
     across = home.copy()
     across[0] = math.radians(-90.0)  # the left arm's base yaw toward the right arm
     refused = guard.check_target(across)
-    assert refused is not None and "rig midline" in refused
+    assert refused is not None and "midline to dual_openyam/right" in refused
