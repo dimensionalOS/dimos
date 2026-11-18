@@ -20,7 +20,7 @@ from dimos.spec.utils import Spec
 
 
 class ObjectSceneRegistrationSpec(Spec, Protocol):
-    """The scene the autoresearch module reads: named objects with world-frame boxes."""
+    """The scene a program reads: named objects with world-frame boxes."""
 
     def set_prompts(self, text: list[str] | None = None) -> None: ...
     def scan_scene(self, text: list[str] | None = None) -> Detection3DArray: ...

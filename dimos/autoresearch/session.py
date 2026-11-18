@@ -27,8 +27,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from dimos.autoresearch.program import ProgramStatus, validate_program
 from dimos.constants import STATE_DIR
+from dimos.manipulation.code_policy.runner import ProgramStatus, validate_program
 
 SESSIONS_DIR = STATE_DIR / "autoresearch"
 

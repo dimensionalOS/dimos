@@ -35,10 +35,6 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.autoresearch.actor import provider_key, run_actor
 from dimos.autoresearch.judge import Judge, LiftJudge, PlaceAtJudge
-from dimos.autoresearch.program import RunStoppedError
-from dimos.autoresearch.scene_spec import (
-    ObjectSceneRegistrationSpec,
-)
 from dimos.autoresearch.session import Budget, Session, SessionStatus, Split
 from dimos.autoresearch.skill import USER_SKILLS_DIR, export_skill
 from dimos.autoresearch.status import ActorState, AutoresearchStatus
@@ -50,6 +46,9 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode_monitor import EpisodeControlSpec
+from dimos.manipulation.code_policy.api import API_REFERENCE, RunStoppedError
+from dimos.manipulation.code_policy.runner import DEFAULT_TIMEOUT_S, LIVE_BACKEND
+from dimos.manipulation.code_policy.scene_spec import ObjectSceneRegistrationSpec
 from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.manipulation.sdk import Arm
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
@@ -81,19 +80,6 @@ _ZENOH_FIELDS = (
     "zenoh_connect_timeout",
     "zenoh_domain",
 )
-
-API_REFERENCE = """\
-def run(robot, task): ...     # task.text is the task in words; import nothing but math
-robot.arm.joints() -> list[float] (radians); robot.arm.pose() -> Pose(position xyz m, orientation xyzw)
-robot.arm.move_pose(xyz, orientation=None)   # orientation: roll, pitch, yaw or xyzw; None keeps the current one
-robot.arm.move_linear(dx=0, dy=0, dz=0)      # straight line, metres
-robot.arm.move_joints(positions); robot.arm.home()
-robot.gripper.open(); robot.gripper.close(); robot.gripper.set(value); robot.gripper.range() -> (closed, open)
-robot.scene.objects(["cube", "bowl"]) -> [SceneObject(id, name, position, size)]   # world metres, box centre
-robot.observe() -> keyframe path; robot.log(text)
-Motion calls block and raise RobotCallError (status PLANNING_FAILED, EXECUTION_FAILED or TIMEOUT).
-Every call goes to the trial's trace.jsonl, with a keyframe before and after each motion call.
-"""
 
 
 def bus_env(g: GlobalConfig) -> dict[str, str]:
@@ -151,12 +137,12 @@ class AutoresearchModuleConfig(ModuleConfig):
     actor_provider: str = "anthropic"
     actor_max_steps: int = Field(default=600, gt=0)
     actor_timeout_s: float = Field(default=2 * 3600.0, gt=0)
-    program_timeout_s: float = 120.0
+    program_timeout_s: float = DEFAULT_TIMEOUT_S
     judge: Literal["lift", "place"] = "lift"
     judge_body: str = "cube"
     place_body: str = "bowl"
     placement_bounds: PlacementBounds = Field(default_factory=PlacementBounds)
-    backend_factory: str = "dimos.autoresearch.live:backend"
+    backend_factory: str = LIVE_BACKEND
     blueprint: str = ""
     scene_source: str = "simulator-truth"
 

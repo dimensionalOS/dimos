@@ -19,24 +19,17 @@ from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D
 import pytest
 
-from dimos.autoresearch import program
-from dimos.autoresearch.program import (
-    DimosBackend,
-    GripperRange,
-    MapStamps,
-    RobotCallError,
-    TraceLine,
-    program_box,
-    run_program,
-)
+from dimos.manipulation.code_policy import backend
+from dimos.manipulation.code_policy._test_helpers import FAKE_BACKEND
+from dimos.manipulation.code_policy.api import RobotCallError, TraceLine
+from dimos.manipulation.code_policy.backend import DimosBackend, MapStamps, program_box
+from dimos.manipulation.code_policy.runner import run_program
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-
-FAKE = "dimos.autoresearch._test_helpers:fake_backend"
 
 LIFT = """
 import math
@@ -62,7 +55,7 @@ def run(robot, task):
 def run(tmp_path: Path, program: str, timeout_s: float = 60.0) -> tuple[Path, list[TraceLine]]:
     path = tmp_path / "program.py"
     path.write_text(program)
-    run_program(path, tmp_path / "trial", "lift the cube", timeout_s, FAKE)
+    run_program(path, tmp_path / "trial", "lift the cube", timeout_s, FAKE_BACKEND)
     trace = (tmp_path / "trial" / "trace.jsonl").read_text()
     return tmp_path / "trial", [TraceLine.model_validate_json(line) for line in trace.splitlines()]
 
@@ -109,13 +102,13 @@ def test_a_raising_program_reports_its_traceback(tmp_path: Path) -> None:
     path.write_text(
         "def run(robot, task):\n    robot.arm.joints()\n    raise ValueError(task.text)\n"
     )
-    outcome = run_program(path, tmp_path / "trial", "lift the cube", 60.0, FAKE)
+    outcome = run_program(path, tmp_path / "trial", "lift the cube", 60.0, FAKE_BACKEND)
     assert outcome.status == "raised"
     assert outcome.error.rstrip().endswith("ValueError: lift the cube")
     assert len(trace.read_text().splitlines()) == 1
 
     path.write_text("os = __import__('os')\n\n\ndef run(robot, task):\n    pass\n")
-    outcome = run_program(path, tmp_path / "trial", "lift the cube", 60.0, FAKE)
+    outcome = run_program(path, tmp_path / "trial", "lift the cube", 60.0, FAKE_BACKEND)
     assert outcome.status == "raised"
     assert outcome.error.rstrip().endswith(
         "ImportError: program imports 'os'; only math may be imported"
@@ -126,7 +119,7 @@ def test_a_raising_program_reports_its_traceback(tmp_path: Path) -> None:
 def test_a_program_is_killed_at_the_timeout(tmp_path: Path) -> None:
     path = tmp_path / "program.py"
     path.write_text("def run(robot, task):\n    while True:\n        pass\n")
-    outcome = run_program(path, tmp_path / "trial", "lift the cube", 1.0, FAKE)
+    outcome = run_program(path, tmp_path / "trial", "lift the cube", 1.0, FAKE_BACKEND)
     assert outcome.status == "timeout"
     assert outcome.duration_s >= 1.0
     assert not (tmp_path / "trial" / "outcome.json").exists()
@@ -173,25 +166,21 @@ class Bench:
 
 def test_cleared_objects_stay_out_of_the_map_together_until_restore() -> None:
     bench = Bench()
-    backend = DimosBackend(
-        bench, bench, bench, bench, GripperRange(closed=0.0, open=-0.05), bench.maps
-    )
-    backend.clear_object("cube", 0.03)
-    backend.clear_object("bowl", 0.03)
+    live = DimosBackend(bench, bench, bench, bench, bench.maps)
+    live.clear_object("cube", 0.03)
+    live.clear_object("bowl", 0.03)
     assert bench.boxes == {program_box("cube"), program_box("bowl")}
-    backend.restore()
+    live.restore()
     assert bench.boxes == set()
 
 
 def test_clearing_an_object_times_out_when_no_newer_map_arrives(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(program, "MAP_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(backend, "MAP_TIMEOUT_S", 0.0)
     bench = Bench()
     bench.mapping = False
-    backend = DimosBackend(
-        bench, bench, bench, bench, GripperRange(closed=0.0, open=-0.05), bench.maps
-    )
+    live = DimosBackend(bench, bench, bench, bench, bench.maps)
     with pytest.raises(RobotCallError) as raised:
-        backend.clear_object("cube", 0.03)
+        live.clear_object("cube", 0.03)
     assert raised.value.status == "TIMEOUT"

@@ -40,6 +40,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand
+from dimos.manipulation.code_policy._test_helpers import FAKE_BACKEND
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
     CommandStatus,
@@ -66,7 +67,6 @@ from dimos.robot.manipulators.damiao._damiao_test_helpers import LocalTransport
 from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 from dimos.utils.testing.waiting import wait_until
 
-FAKE = "dimos.autoresearch._test_helpers:fake_backend"
 JOINTS = [f"arm/joint{i}" for i in range(1, 8)]
 HOME = [0.0, -1.87, 2.15, -1.85, 0.0, 0.0]
 PROGRAM = "def run(robot, task):\n    robot.arm.home()\n"
@@ -230,7 +230,7 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
             iterations=1, candidates_per_round=2, dev_trials=2, heldout_trials=1, threshold=0.8
         ),
         program_timeout_s=60.0,
-        backend_factory=FAKE,
+        backend_factory=FAKE_BACKEND,
     )
     module._sim = bench
     module._arm = FakeArm(bench)

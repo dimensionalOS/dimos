@@ -15,7 +15,7 @@
 """A robot backend for tests, with no stack behind it.
 
 Not named ``test_*`` so pytest does not collect it; the program subprocess
-imports ``fake_backend`` from here by its dotted path.
+imports ``fake_backend`` from here by its dotted path, ``FAKE_BACKEND``.
 """
 
 from __future__ import annotations
@@ -23,7 +23,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from dimos.autoresearch.program import Pose, RobotBackend, RobotCallError, SceneObject
+from dimos.manipulation.code_policy.api import (
+    GRIPPER_CLOSED,
+    GRIPPER_OPEN,
+    Pose,
+    RobotBackend,
+    RobotCallError,
+    SceneObject,
+)
+
+FAKE_BACKEND = "dimos.manipulation.code_policy._test_helpers:fake_backend"
 
 # A one-pixel PNG, written wherever a camera frame would go.
 _BLANK_PNG = bytes.fromhex(
@@ -41,7 +50,7 @@ class FakeBackend:
     _pose: Pose
 
     def __init__(self) -> None:
-        self.gripper = 0.0
+        self.gripper = GRIPPER_OPEN
         # Each cleared object's id and its margin, metres.
         self.cleared: dict[str, float] = {}
         self.home()
@@ -73,16 +82,13 @@ class FakeBackend:
         self._pose = Pose((0.3, 0.0, 0.3), (0.0, 0.0, 0.0, 1.0))
 
     def open_gripper(self) -> None:
-        self.gripper = 0.0
+        self.gripper = GRIPPER_OPEN
 
     def close_gripper(self) -> None:
-        self.gripper = -0.05
+        self.gripper = GRIPPER_CLOSED
 
-    def set_gripper(self, joint_value: float) -> None:
-        self.gripper = joint_value
-
-    def gripper_range(self) -> tuple[float, float]:
-        return (-0.05, 0.0)
+    def set_gripper(self, travel: float) -> None:
+        self.gripper = travel
 
     def objects(self, words: Sequence[str]) -> list[SceneObject]:
         return [
@@ -102,6 +108,6 @@ class FakeBackend:
         path.write_bytes(_BLANK_PNG)
 
 
-def fake_backend(trial_dir: Path) -> RobotBackend:
+def fake_backend(run_dir: Path) -> RobotBackend:
     """The backend factory tests name in ``run_program``."""
     return FakeBackend()

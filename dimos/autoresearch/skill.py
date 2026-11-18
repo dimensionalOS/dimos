@@ -14,8 +14,8 @@
 
 """Turn a session's frozen program into an Agent Skill folder (the
 agentskills.io format): SKILL.md, the program and a runner under scripts/,
-the hypothesis and notes under references/, the validation record and a few
-keyframes under assets/."""
+the program API, hypothesis and notes under references/, the validation
+record and a few keyframes under assets/."""
 
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ from typing import Any
 from pydantic import BaseModel
 import yaml
 
-from dimos.autoresearch import skill_runner
 from dimos.autoresearch.session import Session, TrialRecord
+from dimos.manipulation.code_policy.api import API_REFERENCE, API_VERSION
 
 # The agent harness's user skills folder (userSkillsDir in dimos/agents/gateway/config/paths.ts).
 USER_SKILLS_DIR = (
@@ -51,6 +51,28 @@ FAILURE_LINES = 5
 _NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 _FRONTMATTER = re.compile(r"---\n(.*?)\n---\n(.*)", re.DOTALL)
 _FIELDS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
+# The metadata key naming the program API version the program was written against.
+API_KEY = "code-policy-api"
+
+# scripts/run.py: runs the program next to it with the task from assets/validation.json.
+_RUN_PY = '''\
+"""Run this skill's program once on the DimOS stack running on this machine.
+
+Use the DimOS environment's Python. Options are those of
+python -m dimos.manipulation.code_policy.runner; --task defaults to the
+validated task.
+"""
+
+import json
+from pathlib import Path
+import sys
+
+from dimos.manipulation.code_policy.runner import main
+
+skill = Path(__file__).resolve().parent.parent
+task = json.loads((skill / "assets" / "validation.json").read_text())["task"]
+sys.exit(main([str(skill / "scripts" / "program.py"), "--task", task, *sys.argv[1:]]))
+'''
 
 
 class SplitTally(BaseModel):
@@ -139,7 +161,8 @@ def export_skill(session: Session, root: Path, name: str | None = None) -> Path:
             (skill / folder).mkdir(parents=True)
         (skill / "SKILL.md").write_text(_skill_md(name, validation, records, bool(notes)))
         shutil.copyfile(session.program_path(candidate), skill / "scripts" / "program.py")
-        shutil.copyfile(skill_runner.__file__, skill / "scripts" / "run.py")
+        (skill / "scripts" / "run.py").write_text(_RUN_PY)
+        (skill / "references" / "api.md").write_text(_api_md())
         (skill / "references" / "hypothesis.md").write_text(session.hypothesis(candidate))
         if notes:
             (skill / "references" / "findings.md").write_text(_findings(notes))
@@ -155,7 +178,8 @@ def export_skill(session: Session, root: Path, name: str | None = None) -> Path:
 
 def validate_skill(directory: Path) -> dict[str, Any]:
     """Check ``directory/SKILL.md`` against the agentskills.io naming and length
-    rules and return its frontmatter; raises ``ValueError`` on the first violation."""
+    rules, and that its metadata names the program API version; return its
+    frontmatter. Raises ``ValueError`` on the first violation."""
     match = _FRONTMATTER.fullmatch((directory / "SKILL.md").read_text())
     if match is None:
         raise ValueError(f"{directory}/SKILL.md does not start with a --- frontmatter block")
@@ -181,6 +205,8 @@ def validate_skill(directory: Path) -> dict[str, Any]:
         isinstance(key, str) and isinstance(value, str) for key, value in metadata.items()
     ):
         raise ValueError("metadata must map string keys to string values")
+    if API_KEY not in metadata:
+        raise ValueError(f"metadata has no {API_KEY!r}, the program API version")
     if len(body.splitlines()) >= BODY_MAX_LINES:
         raise ValueError(f"the body must be under {BODY_MAX_LINES} lines")
     return dict(front)
@@ -202,9 +228,10 @@ def _skill_md(name: str, v: Validation, records: list[TrialRecord], has_findings
             placeholder="...",
         ),
         "compatibility": textwrap.shorten(
-            f"DimOS with a running stack that has the manipulation planner, the scene module "
-            f"and the obstacle map (validated on blueprint: {robot}). Run with the DimOS "
-            f"environment's Python.",
+            f"DimOS with program API {API_VERSION} (dimos.manipulation.code_policy) and a "
+            f"running stack that has the manipulation planner, the scene module and the "
+            f"obstacle map (validated on blueprint: {robot}). Run with the DimOS environment's "
+            f"Python.",
             COMPATIBILITY_MAX,
             placeholder="...",
         ),
@@ -218,6 +245,7 @@ def _skill_md(name: str, v: Validation, records: list[TrialRecord], has_findings
             "session": v.session,
             "dimos-commit": v.dimos_commit,
             "scene-source": v.scene_source,
+            API_KEY: API_VERSION,
         },
     }
     failures = Counter((r.stage, r.note) for r in records if not r.success)
@@ -243,7 +271,7 @@ def _skill_md(name: str, v: Validation, records: list[TrialRecord], has_findings
         "on this machine's bus. From this folder, with the DimOS environment's Python:",
         "",
         "```bash",
-        'python scripts/run.py [--task "..."] [--out DIR]',
+        'python scripts/run.py [--task "..."] [--out DIR] [--timeout S]',
         "```",
         "",
         "It prints how the program ended (completed, raised or timeout) and the trace path. "
@@ -265,6 +293,7 @@ def _skill_md(name: str, v: Validation, records: list[TrialRecord], has_findings
         "",
         "- `scripts/program.py`: the program, `run(robot, task)`.",
         "- `scripts/run.py`: runs it once on the running stack.",
+        f"- `references/api.md`: the program API, version {API_VERSION}.",
         "- `references/hypothesis.md`: what the program was meant to fix and where it may fail.",
         *findings,
         "- `assets/validation.json`: the task, the success rule and every held-out trial.",
@@ -272,6 +301,10 @@ def _skill_md(name: str, v: Validation, records: list[TrialRecord], has_findings
     ]
     dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=1_000_000)
     return f"---\n{dumped}---\n" + "\n".join(body) + "\n"
+
+
+def _api_md() -> str:
+    return f"# Program API {API_VERSION}\n\n```text\n{API_REFERENCE}```\n"
 
 
 def _findings(notes: list[str]) -> str:
