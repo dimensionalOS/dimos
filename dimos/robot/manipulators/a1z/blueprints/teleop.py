@@ -31,7 +31,7 @@ from dimos.robot.manipulators.a1z.config import (
 from dimos.robot.manipulators.a1z.connection import A1ZConnection
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
@@ -109,7 +109,7 @@ def _teleop(
     *inputs: Blueprint,
 ) -> Blueprint:
     """Move an A1Z's end and open and close its gripper, through ``A1ZConnection``.
-    ``UrdfManager`` serves the A1Z's URDF and puts its joints on tf, so it can be drawn.
+    ``UsdManager`` serves the A1Z's URDF and puts its joints on tf, so it can be drawn.
 
     Wire it up with ``.remappings(_remaps(coordinator))``. The CAN port is given
     at run time (``--a1zconnection.can-port a1zcan``) or as ``A1ZCONNECTION__CAN_PORT``.
@@ -139,7 +139,7 @@ def _teleop(
             ],
         ),
         A1ZConnection.blueprint(),
-        UrdfManager.blueprint(model=model),
+        UsdManager.blueprint(model=model),
     )
 
 

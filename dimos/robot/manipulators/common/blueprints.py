@@ -35,7 +35,7 @@ from dimos.robot.manipulators.common.topics import (
     COORDINATOR_FRAME_ID,
     EEF_TWIST_TASK_NAME,
 )
-from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
 
 
 class TeleopBinding(TypedDict):
@@ -213,7 +213,7 @@ def manipulation_mapping(
         world_frame: Fixed frame the map is built and published in.
     """
     return autoconnect(
-        UrdfManagerPointClearing.blueprint(
+        UsdManagerPointClearing.blueprint(
             # ManipulationModule already publishes the arm's frames.
             publish_joint_tf=False,
             model=self_filter_model,
