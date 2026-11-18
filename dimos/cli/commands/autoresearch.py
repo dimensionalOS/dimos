@@ -20,7 +20,7 @@ from pathlib import Path
 
 import typer
 
-autoresearch_app = typer.Typer(help="Autoresearch lab sessions", no_args_is_help=True)
+autoresearch_app = typer.Typer(help="Autoresearch sessions", no_args_is_help=True)
 
 
 @autoresearch_app.command()
@@ -36,7 +36,7 @@ def export(
 ) -> None:
     """Export a session's frozen program as an Agent Skill folder. Needs no running stack.
     Refused while the program has no held-out score or passed no held-out trial, unless --force."""
-    # Imported here so `dimos --help` does not load the lab's robot API.
+    # Imported here so `dimos --help` does not load the robot API.
     from dimos.autoresearch.session import Session
     from dimos.autoresearch.skill import USER_SKILLS_DIR, export_skill
 

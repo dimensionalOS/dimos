@@ -181,7 +181,7 @@ system prompt and its stderr land under `<session>/actor/`.
 
 ## Export a skill
 
-A frozen candidate can leave the lab as an Agent Skill folder in the
+A frozen candidate can leave the autoresearch module as an Agent Skill folder in the
 [agentskills.io](https://agentskills.io) format (`skill.py`):
 
 ```
