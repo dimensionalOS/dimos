@@ -16,7 +16,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, autoconnect
+from dimos.core.coordination.blueprints import BlueprintAtom, MetaBlueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -43,7 +43,7 @@ def test_namespaced_local_frames_are_prefixed_and_global_frames_are_not() -> Non
     blueprint = autoconnect(
         Odom.blueprint().namespace("robot0"),
         Odom.blueprint(tf_frames_local={"body": "torso"}).namespace("inner").namespace("robot1"),
-    )
+    ).solidify()
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
@@ -86,8 +86,8 @@ class LegacyTfPublisher(Module):
     tf: Out[TFMessage]
 
 
-def _verify(blueprint: Blueprint) -> None:
-    TfModule.blueprint_checks(list(blueprint.active_blueprints))
+def _verify(blueprint: MetaBlueprint) -> None:
+    TfModule.blueprint_checks(list(blueprint.solidify().active_blueprints))
 
 
 def test_one_tree_passes() -> None:
@@ -142,7 +142,7 @@ def test_build_checks_the_namespaced_tree() -> None:
         Odom.blueprint().namespace("robot1"),
         Odom.blueprint(),
         BackupOdom.blueprint(tf_frames_global={"world": "map"}),
-    )
+    ).solidify()
     with pytest.raises(ValueError, match="'base_link' has several parents"):
         ModuleCoordinator.build(
             blueprint,
@@ -165,7 +165,7 @@ class CountedCheckChild(CountedCheck):
 
 def test_a_shared_blueprint_check_runs_once() -> None:
     calls.clear()
-    blueprint = autoconnect(CountedCheck.blueprint(), CountedCheckChild.blueprint())
+    blueprint = autoconnect(CountedCheck.blueprint(), CountedCheckChild.blueprint()).solidify()
     coordinator = ModuleCoordinator.build(
         blueprint,
         BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),
