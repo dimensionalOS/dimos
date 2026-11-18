@@ -50,7 +50,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DUAL_OPENYAM_GRIPPER_TASKS,
     dual_openyam_control,
 )
-from dimos.robot.manipulators.dual_openyam.blueprints.teleop import DUAL_OPENYAM_PINK
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_FINGER_JOINTS,
     DUAL_OPENYAM_SIDES,
@@ -274,7 +273,8 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         planner(
             model=model,
             gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS,
-            kinematics=DUAL_OPENYAM_PINK,
+            # Pink's default settings, the ones the pick's contact check judges reach with.
+            # The teleop settings (gain 1.0) stop short of some fingers-down poses from home.
             default_speed_scale=0.25,
             voxel_map_resolution=DUAL_OPENYAM_VOXEL_SIZE,
             static_transforms=[DUAL_OPENYAM_CAMERA_TRANSFORM],
