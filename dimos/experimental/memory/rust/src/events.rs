@@ -14,6 +14,7 @@
 
 //! Event mode: thinned background recording with full-rate clips around triggers.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -25,69 +26,67 @@ use anyhow::{anyhow, ensure, Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use tracing::info;
+use validator::{Validate, ValidationError};
 
 use crate::store::{Observation, RecordingStore, RecordingStoreConfig};
 use crate::window::{
-    sync_dir, ClosedSegment, DoneMarker, SegmentReader, SegmentWriter, Syncer, WindowManifest,
+    sync_dir, ClosedSegment, Done, SegmentReader, SegmentWriter, Syncer, WindowManifest,
 };
 use crate::{StreamConfig, WRITE_BATCH_SIZE};
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Validate)]
 #[serde(deny_unknown_fields)]
+#[validate(schema(function = "clip_covers_window"))]
 pub struct EventConfig {
     pub window_dir: PathBuf,
+    #[validate(range(min = 0.0))]
     pub pre_s: f64,
+    #[validate(range(min = 0.0))]
     pub post_s: f64,
+    #[validate(range(exclusive_min = 0.0))]
     pub segment_s: f64,
+    #[validate(range(exclusive_min = 0.0))]
     pub sync_s: f64,
+    #[validate(range(exclusive_min = 0.0))]
     pub max_clip_s: f64,
     pub trigger: String,
+    #[validate(custom(function = "nonnegative_periods"))]
     pub periods: HashMap<String, f64>,
 }
 
 impl EventConfig {
-    pub(crate) fn validate(&self, streams: &[StreamConfig]) -> Result<()> {
-        for (name, value) in [("pre_s", self.pre_s), ("post_s", self.post_s)] {
-            ensure!(
-                value.is_finite() && value >= 0.0,
-                "{name} must be nonnegative"
-            );
+    /// The trigger must be a recorded stream, and `periods` must name exactly the recorded streams.
+    pub(crate) fn check_streams(&self, streams: &[StreamConfig]) -> Result<(), ValidationError> {
+        if !streams.iter().any(|stream| stream.name == self.trigger) {
+            return Err(invalid(format!(
+                "trigger stream {:?} is not recorded",
+                self.trigger
+            )));
         }
-        for (name, value) in [
-            ("segment_s", self.segment_s),
-            ("sync_s", self.sync_s),
-            ("max_clip_s", self.max_clip_s),
-        ] {
-            ensure!(value.is_finite() && value > 0.0, "{name} must be positive");
-        }
-        ensure!(
-            self.max_clip_s >= self.pre_s + self.post_s,
-            "max_clip_s must cover pre_s + post_s"
-        );
-        ensure!(
-            streams.len() <= usize::from(u16::MAX),
-            "event mode supports at most {} streams",
-            u16::MAX
-        );
-        ensure!(
-            streams.iter().any(|stream| stream.name == self.trigger),
-            "trigger stream {:?} is not recorded",
-            self.trigger
-        );
         let names: HashSet<&str> = streams.iter().map(|stream| stream.name.as_str()).collect();
-        let periods: HashSet<&str> = self.periods.keys().map(String::as_str).collect();
-        ensure!(
-            names == periods,
-            "periods must name exactly the recorded streams"
-        );
-        for (name, period) in &self.periods {
-            ensure!(
-                period.is_finite() && *period >= 0.0,
-                "period for {name:?} must be nonnegative"
-            );
+        if names != self.periods.keys().map(String::as_str).collect() {
+            return Err(invalid("periods must name exactly the recorded streams"));
         }
         Ok(())
     }
+}
+
+fn clip_covers_window(config: &EventConfig) -> Result<(), ValidationError> {
+    if config.max_clip_s < config.pre_s + config.post_s {
+        return Err(invalid("max_clip_s must cover pre_s + post_s"));
+    }
+    Ok(())
+}
+
+fn nonnegative_periods(periods: &HashMap<String, f64>) -> Result<(), ValidationError> {
+    if periods.values().any(|period| *period < 0.0) {
+        return Err(invalid("periods must be nonnegative"));
+    }
+    Ok(())
+}
+
+fn invalid(message: impl Into<Cow<'static, str>>) -> ValidationError {
+    ValidationError::new("event_config").with_message(message.into())
 }
 
 /// Messages from the writer thread to the store thread, in arrival order.
@@ -109,7 +108,7 @@ pub(crate) struct EventWriter {
     segment: SegmentWriter,
     syncer: Syncer,
     events: Option<Sender<WindowEvent>>,
-    store_thread: Option<JoinHandle<Result<u64>>>,
+    store_thread: Option<JoinHandle<Result<()>>>,
     clock: f64,
 }
 
@@ -136,7 +135,6 @@ impl EventWriter {
             streams: streams.to_vec(),
         }
         .write(&dir)?;
-        let marker = DoneMarker::create(&dir)?;
         let segment = SegmentWriter::create(&dir, 0)?;
         let syncer = Syncer::start(
             segment.sync_handle()?,
@@ -155,9 +153,7 @@ impl EventWriter {
             stored: vec![0; streams.len()],
             clips: Clips::new(config.pre_s, config.post_s, config.max_clip_s),
             pre_s: config.pre_s,
-            marker,
             dir: dir.clone(),
-            written: 0,
         };
         let store_thread = thread::Builder::new()
             .name("mem2-store".to_string())
@@ -181,17 +177,6 @@ impl EventWriter {
         })
     }
 
-    /// Reports triggers to the store thread and appends every observation to the window.
-    pub fn write_batch(&mut self, observations: &[Observation]) -> Result<()> {
-        for observation in observations {
-            if observation.stream.name == self.trigger {
-                self.send_to_store(WindowEvent::Trigger(observation.monotonic_ts))?;
-            }
-            self.append(observation)?;
-        }
-        self.segment.flush()
-    }
-
     /// Appends one observation to the open segment, handing the segment off first if it timed out.
     fn append(&mut self, observation: &Observation) -> Result<()> {
         if self.segment_timed_out(observation.monotonic_ts) {
@@ -206,52 +191,15 @@ impl EventWriter {
         Ok(())
     }
 
-    /// Runs after each write batch: checks the helper threads and advances the aging clock.
-    /// The clock moves to `now` only when `idle`, meaning no observation is still being encoded.
-    pub fn tick(&mut self, now: f64, idle: bool) -> Result<()> {
-        if self.syncer.is_finished() {
-            return Err(self
-                .syncer
-                .stop()
-                .err()
-                .unwrap_or_else(|| anyhow!("sync thread stopped")));
-        }
-        if self
-            .store_thread
-            .as_ref()
-            .is_none_or(JoinHandle::is_finished)
-        {
-            return Err(self.store_thread_error());
-        }
-        if idle {
-            self.clock = self.clock.max(now);
-        }
-        if self.segment_timed_out(self.clock) {
-            self.hand_off_segment()?;
-        }
-        self.send_to_store(WindowEvent::Clock(self.clock))
-    }
-
-    /// Hands over the last segment and waits for the store thread to drain the window.
-    /// Returns how many observations it stored.
-    pub fn finish(mut self) -> Result<u64> {
-        self.send_open_segment()?;
-        self.syncer.stop()?;
-        self.events.take();
-        let written = join_store_thread(self.store_thread.take())?;
-        info!(window_dir = %self.dir.display(), "event window drained");
-        Ok(written)
-    }
-
     /// Whether `segment_s` has passed between the open segment's first record and `time`.
     fn segment_timed_out(&self, time: f64) -> bool {
-        !self.segment.is_empty() && time >= self.segment.first_ts() + self.segment_s
+        self.segment.records > 0 && time >= self.segment.first_ts + self.segment_s
     }
 
     /// Hands the current segment to the store thread and opens the next one.
     fn hand_off_segment(&mut self) -> Result<()> {
         self.send_open_segment()?;
-        self.segment = SegmentWriter::create(&self.dir, self.segment.index() + 1)?;
+        self.segment = SegmentWriter::create(&self.dir, self.segment.index + 1)?;
         self.syncer.switch(self.segment.sync_handle()?)
     }
 
@@ -266,33 +214,62 @@ impl EventWriter {
 
     /// Sends `event` to the store thread, or returns the store thread's error if it has stopped.
     fn send_to_store(&mut self, event: WindowEvent) -> Result<()> {
-        let sent = self
-            .events
-            .as_ref()
-            .is_some_and(|events| events.send(event).is_ok());
-        if sent {
-            Ok(())
-        } else {
-            Err(self.store_thread_error())
+        match &self.events {
+            Some(events) if events.send(event).is_ok() => Ok(()),
+            _ => self
+                .join_store_thread()
+                .and(Err(anyhow!("store thread stopped early"))),
         }
     }
 
-    /// Joins the stopped store thread and returns why it stopped.
-    fn store_thread_error(&mut self) -> anyhow::Error {
+    fn join_store_thread(&mut self) -> Result<()> {
         self.events.take();
-        match join_store_thread(self.store_thread.take()) {
-            Ok(_) => anyhow!("store thread stopped early"),
-            Err(error) => error,
-        }
+        self.store_thread
+            .take()
+            .context("store thread already stopped")?
+            .join()
+            .map_err(|_| anyhow!("store thread panicked"))?
+            .context("store thread failed")
     }
 }
 
-fn join_store_thread(thread: Option<JoinHandle<Result<u64>>>) -> Result<u64> {
-    thread
-        .context("store thread already stopped")?
-        .join()
-        .map_err(|_| anyhow!("store thread panicked"))?
-        .context("store thread failed")
+impl RecordingStore for EventWriter {
+    /// Reports triggers to the store thread and appends every observation to the window.
+    fn write_batch(&mut self, observations: &[Observation]) -> Result<()> {
+        for observation in observations {
+            if observation.stream.name == self.trigger {
+                self.send_to_store(WindowEvent::Trigger(observation.monotonic_ts))?;
+            }
+            self.append(observation)?;
+        }
+        self.segment.flush()
+    }
+
+    fn sync(&mut self) -> Result<()> {
+        self.segment.flush()?;
+        self.segment.sync_handle()?.sync_data()?;
+        Ok(())
+    }
+
+    /// Advances the aging clock, to `now` only when `idle`, and hands off a timed-out segment.
+    fn tick(&mut self, now: f64, idle: bool) -> Result<()> {
+        if idle {
+            self.clock = self.clock.max(now);
+        }
+        if self.segment_timed_out(self.clock) {
+            self.hand_off_segment()?;
+        }
+        self.send_to_store(WindowEvent::Clock(self.clock))
+    }
+
+    /// Hands over the last segment and waits for the store thread to drain the window.
+    fn finish(&mut self) -> Result<()> {
+        self.send_open_segment()?;
+        self.syncer.stop()?;
+        self.join_store_thread()?;
+        info!(window_dir = %self.dir.display(), "event window drained");
+        Ok(())
+    }
 }
 
 /// Merged full-rate time ranges on the monotonic clock, in start order.
@@ -350,14 +327,12 @@ struct StoreWriter {
     stored: Vec<u64>,
     clips: Clips,
     pre_s: f64,
-    marker: DoneMarker,
     dir: PathBuf,
-    written: u64,
 }
 
 impl StoreWriter {
     /// Stores each segment once no trigger can still reach it, then drains the rest on shutdown.
-    fn run(mut self, events: Receiver<WindowEvent>) -> Result<u64> {
+    fn run(mut self, events: Receiver<WindowEvent>) -> Result<()> {
         let mut segments = VecDeque::new();
         let mut clock = f64::NEG_INFINITY;
         for event in events {
@@ -380,8 +355,7 @@ impl StoreWriter {
         }
         self.store.finish()?;
         fs::remove_dir_all(&self.dir)
-            .with_context(|| format!("failed to remove {}", self.dir.display()))?;
-        Ok(self.written)
+            .with_context(|| format!("failed to remove {}", self.dir.display()))
     }
 
     /// Writes the segment's kept observations, makes them durable, then deletes the segment.
@@ -393,15 +367,15 @@ impl StoreWriter {
             records += 1;
             let stream = usize::from(record.stream);
             let time = record.monotonic_ts;
-            let in_clip = self.clips.contains(time);
-            if !in_clip && time - self.last_kept[stream] < self.periods[stream] {
+            if !self.clips.contains(time) && time - self.last_kept[stream] < self.periods[stream] {
                 continue;
             }
             self.last_kept[stream] = time;
             self.stored[stream] += 1;
             batch.push(record.into_observation(Arc::clone(&self.streams[stream])));
             if batch.len() >= WRITE_BATCH_SIZE {
-                self.flush_batch(&mut batch)?;
+                self.store.write_batch(&batch)?;
+                batch.clear();
             }
         }
         ensure!(
@@ -410,21 +384,15 @@ impl StoreWriter {
             segment.index,
             segment.records
         );
-        self.flush_batch(&mut batch)?;
+        self.store.write_batch(&batch)?;
         self.store.sync()?;
-        self.marker.write(segment.index, &self.stored)?;
+        Done {
+            segment: segment.index,
+            stored: self.stored.clone(),
+        }
+        .write(&self.dir)?;
         fs::remove_file(&segment.path)
             .with_context(|| format!("failed to delete {}", segment.path.display()))
-    }
-
-    fn flush_batch(&mut self, batch: &mut Vec<Observation>) -> Result<()> {
-        if batch.is_empty() {
-            return Ok(());
-        }
-        self.store.write_batch(batch)?;
-        self.written += batch.len() as u64;
-        batch.clear();
-        Ok(())
     }
 }
 
@@ -525,7 +493,7 @@ mod tests {
         }
 
         drop(sender);
-        let stats = writer.join().unwrap().unwrap();
+        writer.join().unwrap().unwrap();
         assert!(!window.exists());
 
         let connection = Connection::open(&database).unwrap();
@@ -553,6 +521,5 @@ mod tests {
         };
         assert_eq!(count("odom"), 3200);
         assert_eq!(count("clip"), 1);
-        assert_eq!(stats.written as usize, expected.len() + 3201);
     }
 }

@@ -15,8 +15,7 @@
 //! On-disk window segments that hold recent observations before the main file.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write};
-use std::os::unix::fs::FileExt;
+use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -29,11 +28,10 @@ use serde::{Deserialize, Serialize};
 use crate::store::{Observation, RecordingStoreConfig};
 use crate::StreamConfig;
 
-const LENGTH_SIZE: usize = 4;
-const HEADER_SIZE: usize = LENGTH_SIZE + 2 + 3 * 8;
+const HEADER_SIZE: usize = 4 + 2 + 3 * 8;
 const CRC_SIZE: usize = 4;
 const MANIFEST_FILE: &str = "recording.json";
-const DONE_FILE: &str = "done";
+const DONE_FILE: &str = "done.json";
 
 /// One observation read back from a segment.
 pub(crate) struct Record {
@@ -95,12 +93,12 @@ pub(crate) fn sync_dir(dir: &Path) -> Result<()> {
 
 /// Appends framed records to one segment file.
 pub(crate) struct SegmentWriter {
-    index: u64,
+    pub index: u64,
+    pub records: u64,
+    pub first_ts: f64,
+    newest_ts: f64,
     path: PathBuf,
     file: BufWriter<File>,
-    records: u64,
-    first_ts: f64,
-    newest_ts: f64,
 }
 
 impl SegmentWriter {
@@ -115,27 +113,15 @@ impl SegmentWriter {
         sync_dir(dir)?;
         Ok(Self {
             index,
-            path,
-            file: BufWriter::new(file),
             records: 0,
             first_ts: f64::NEG_INFINITY,
             newest_ts: f64::NEG_INFINITY,
+            path,
+            file: BufWriter::new(file),
         })
     }
 
-    pub fn index(&self) -> u64 {
-        self.index
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.records == 0
-    }
-
-    pub fn first_ts(&self) -> f64 {
-        self.first_ts
-    }
-
-    /// A second handle to the file, for the sync thread.
+    /// A second handle to the file, for syncing it off the writer thread.
     pub fn sync_handle(&self) -> Result<File> {
         self.file
             .get_ref()
@@ -203,15 +189,15 @@ impl SegmentReader {
     }
 
     fn read_record(&mut self) -> Result<Option<Record>> {
-        if self.remaining < HEADER_SIZE as u64 {
-            return Ok(None);
-        }
         let mut header = [0; HEADER_SIZE];
+        if self.remaining < HEADER_SIZE as u64 {
+            return Ok(self.stop());
+        }
         self.file.read_exact(&mut header)?;
         let length = u32::from_le_bytes(header[..4].try_into()?) as usize;
         let record_size = (HEADER_SIZE + length + CRC_SIZE) as u64;
         if self.remaining < record_size {
-            return Ok(None);
+            return Ok(self.stop());
         }
         let mut data = vec![0; length];
         self.file.read_exact(&mut data)?;
@@ -221,7 +207,7 @@ impl SegmentReader {
         crc.update(&header);
         crc.update(&data);
         if crc.finalize() != u32::from_le_bytes(stored_crc) {
-            return Ok(None);
+            return Ok(self.stop());
         }
         self.remaining -= record_size;
         Ok(Some(Record {
@@ -232,23 +218,19 @@ impl SegmentReader {
             data,
         }))
     }
+
+    /// Ends iteration at a torn or corrupt record.
+    fn stop(&mut self) -> Option<Record> {
+        self.remaining = 0;
+        None
+    }
 }
 
 impl Iterator for SegmentReader {
     type Item = Result<Record>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.read_record() {
-            Ok(Some(record)) => Some(Ok(record)),
-            Ok(None) => {
-                self.remaining = 0;
-                None
-            }
-            Err(error) => {
-                self.remaining = 0;
-                Some(Err(error))
-            }
-        }
+        self.read_record().transpose()
     }
 }
 
@@ -282,72 +264,35 @@ impl WindowManifest {
 }
 
 /// The newest segment durable in the store file, and how many observations of each stream it holds.
+#[derive(Deserialize, Serialize)]
 pub(crate) struct Done {
     pub segment: u64,
     pub stored: Vec<u64>,
 }
 
-/// Records `Done` in two crc-checked slots, written alternately so a torn write leaves the other intact.
-pub(crate) struct DoneMarker {
-    file: File,
-}
-
-impl DoneMarker {
-    /// Creates the empty marker file and syncs the directory.
-    pub fn create(dir: &Path) -> Result<Self> {
-        let path = dir.join(DONE_FILE);
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .with_context(|| format!("failed to create {}", path.display()))?;
-        sync_dir(dir)?;
-        Ok(Self { file })
+impl Done {
+    /// Replaces the marker through a rename, so a crash leaves either the old or the new one.
+    pub fn write(&self, dir: &Path) -> Result<()> {
+        let temporary = dir.join(format!("{DONE_FILE}.tmp"));
+        let file = File::create(&temporary)
+            .with_context(|| format!("failed to create {}", temporary.display()))?;
+        serde_json::to_writer(&file, self)?;
+        file.sync_data().context("failed to sync the done marker")?;
+        fs::rename(&temporary, dir.join(DONE_FILE)).context("failed to replace the done marker")?;
+        sync_dir(dir)
     }
 
-    /// Records that `segment` is stored and the store file holds `stored` observations per stream.
-    pub fn write(&mut self, segment: u64, stored: &[u64]) -> Result<()> {
-        let mut slot = Vec::with_capacity(slot_size(stored.len()));
-        slot.extend_from_slice(&segment.to_le_bytes());
-        for count in stored {
-            slot.extend_from_slice(&count.to_le_bytes());
+    /// Reads the marker, or `None` before any segment was stored.
+    pub fn read(dir: &Path) -> Result<Option<Self>> {
+        let path = dir.join(DONE_FILE);
+        match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .with_context(|| format!("invalid {}", path.display())),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
         }
-        slot.extend_from_slice(&crc32fast::hash(&slot).to_le_bytes());
-        self.file
-            .write_all_at(&slot, segment % 2 * slot.len() as u64)?;
-        self.file
-            .sync_data()
-            .context("failed to sync the window done marker")
     }
-
-    /// Reads the newest intact slot, or `None` before any segment was stored.
-    pub fn read(dir: &Path, streams: usize) -> Result<Option<Done>> {
-        let path = dir.join(DONE_FILE);
-        let bytes =
-            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
-        Ok(bytes
-            .chunks_exact(slot_size(streams))
-            .filter_map(|slot| {
-                let (body, crc) = slot.split_at(slot.len() - CRC_SIZE);
-                if crc32fast::hash(body) != u32::from_le_bytes(crc.try_into().ok()?) {
-                    return None;
-                }
-                let mut values = body
-                    .as_chunks::<8>()
-                    .0
-                    .iter()
-                    .map(|value| u64::from_le_bytes(*value));
-                Some(Done {
-                    segment: values.next()?,
-                    stored: values.collect(),
-                })
-            })
-            .max_by_key(|done| done.segment))
-    }
-}
-
-fn slot_size(streams: usize) -> usize {
-    8 * (streams + 1) + CRC_SIZE
 }
 
 /// Background thread that syncs the open segment every interval.
@@ -387,22 +332,10 @@ impl Syncer {
 
     /// Syncs the previous segment once more, then follows `next`.
     pub fn switch(&mut self, next: File) -> Result<()> {
-        let sent = self
-            .handles
-            .as_ref()
-            .is_some_and(|handles| handles.send(next).is_ok());
-        if sent {
-            Ok(())
-        } else {
-            Err(self
-                .stop()
-                .err()
-                .unwrap_or_else(|| anyhow!("sync thread stopped")))
+        match &self.handles {
+            Some(handles) if handles.send(next).is_ok() => Ok(()),
+            _ => self.stop().and(Err(anyhow!("sync thread stopped"))),
         }
-    }
-
-    pub fn is_finished(&self) -> bool {
-        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
     /// Syncs the current segment one last time and joins the thread.

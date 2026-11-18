@@ -68,6 +68,11 @@ pub trait RecordingStore: Send {
     /// Make everything written so far survive a power loss.
     fn sync(&mut self) -> Result<()>;
 
+    /// Runs after each write batch with the monotonic time, and whether nothing is still being encoded.
+    fn tick(&mut self, _now: f64, _idle: bool) -> Result<()> {
+        Ok(())
+    }
+
     /// Finalize indexes, summaries, and buffered data before shutdown returns.
     fn finish(&mut self) -> Result<()>;
 }

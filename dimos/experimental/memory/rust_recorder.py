@@ -191,14 +191,9 @@ class RustEventConfig(BaseModel):
         return self.model_copy(
             update={
                 "periods": periods | self.period_overrides,
-                "window_dir": self.window_dir or str(default_window_dir(artifact)),
+                "window_dir": self.window_dir or str(artifact.parent / "window"),
             }
         )
-
-
-def default_window_dir(artifact: Path) -> Path:
-    """Where event mode keeps its window segments unless configured otherwise."""
-    return artifact.parent / "window"
 
 
 RustRecordingMode: TypeAlias = Annotated[
@@ -258,7 +253,7 @@ class RustRecorderConfig(NativeModuleConfig):
         ge=1,
         description="CPU workers for transport decoding and storage encoding.",
     )
-    mode: RustRecordingMode = Field(
+    mode: RustContinuousMode = Field(
         default_factory=RustContinuousMode,
         description="How observations reach the artifact.",
     )
@@ -303,7 +298,6 @@ class RustRecorder(NativeModule):
 
     config: RustRecorderConfig
     tf: In[TFMessage]
-    clip: In[String]
 
     @rpc
     def build(self) -> None:
@@ -327,10 +321,6 @@ class RustRecorder(NativeModule):
             Module.start(self)
             return
 
-        artifact = Path(self.config.store.path)
-        if isinstance(self.config.mode, RustEventConfig):
-            self.config.mode = self.config.mode.resolve(specs, artifact)
-        self._refuse_crashed_window(artifact)
         self._prepare_store(specs)
         self.config.streams = specs
         super().start()
@@ -404,22 +394,6 @@ class RustRecorder(NativeModule):
             raise TypeError(
                 f"Native codec {codec!r} requires an LCM-backed type, "
                 f"got {payload_type.__qualname__}"
-            )
-
-    def _refuse_crashed_window(self, artifact: Path) -> None:
-        """Fail before ``on_existing`` can move or delete a crashed recording."""
-        mode = self.config.mode
-        window = (
-            Path(mode.window_dir)
-            if isinstance(mode, RustEventConfig) and mode.window_dir is not None
-            else default_window_dir(artifact)
-        )
-        if window.exists():
-            _, executable = self.config.resolve_paths()
-            recover = Path(executable).with_name("dimos-memory-recover")
-            raise FileExistsError(
-                f"A crashed recording left its window at {window}. Recover it first: "
-                f"{recover} {window}"
             )
 
     def _prepare_store(self, specs: list[RustStreamSpec]) -> None:

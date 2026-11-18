@@ -23,14 +23,14 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use crate::store;
-use crate::window::{segment_indexes, segment_path, DoneMarker, SegmentReader, WindowManifest};
+use crate::window::{segment_indexes, segment_path, Done, SegmentReader, WindowManifest};
 use crate::WRITE_BATCH_SIZE;
 
 /// Stores every segment the crashed run had not stored, in full, then removes the window.
 /// Returns how many observations it added. Safe to rerun if it fails partway.
 pub fn recover(window_dir: &Path) -> Result<u64> {
     let manifest = WindowManifest::read(window_dir)?;
-    let done = DoneMarker::read(window_dir, manifest.streams.len())?;
+    let done = Done::read(window_dir)?;
     let stored = done.as_ref().map_or_else(
         || vec![0; manifest.streams.len()],
         |done| done.stored.clone(),
@@ -73,8 +73,6 @@ mod tests {
     use std::fs::OpenOptions;
     use std::io::Write;
 
-    use rusqlite::Connection;
-
     use super::*;
     use crate::store::{Observation, RecordingStoreConfig};
     use crate::window::SegmentWriter;
@@ -91,50 +89,15 @@ mod tests {
         }
     }
 
-    fn append_garbage(path: &Path) {
-        OpenOptions::new()
-            .append(true)
-            .open(path)
-            .unwrap()
-            .write_all(&[0xab; 37])
-            .unwrap();
-    }
-
-    /// Reception times per stream, in stored order.
-    fn stored_times(config: &RecordingStoreConfig) -> BTreeMap<String, Vec<f64>> {
-        let mut times = BTreeMap::<String, Vec<f64>>::new();
-        match config {
-            RecordingStoreConfig::Sqlite { path } => {
-                let connection = Connection::open(path).unwrap();
-                for name in ["a", "b"] {
-                    let values = connection
-                        .prepare(&format!(
-                            "SELECT json_extract(tags, '$.reception_ts') FROM {name} ORDER BY id"
-                        ))
-                        .unwrap()
-                        .query_map([], |row| row.get(0))
-                        .unwrap()
-                        .collect::<rusqlite::Result<_>>()
-                        .unwrap();
-                    times.insert(name.to_string(), values);
-                }
-            }
-            RecordingStoreConfig::Mcap { path, .. } => {
-                let bytes = fs::read(path).unwrap();
-                for message in mcap::MessageStream::new(&bytes).unwrap() {
-                    let message = message.unwrap();
-                    times
-                        .entry(message.channel.topic.clone())
-                        .or_default()
-                        .push(message.log_time as f64 / 1e9);
-                }
-            }
-        }
-        times
-    }
-
     #[test]
     fn recovery_appends_unstored_segments_without_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let window = dir.path().join("window");
+        let path = dir.path().join("memory.mcap");
+        let config = RecordingStoreConfig::Mcap {
+            path: path.to_string_lossy().into_owned(),
+            attachments: vec![],
+        };
         let streams = vec![stream("a"), stream("b")];
         let shared: Vec<_> = streams.iter().cloned().map(Arc::new).collect();
         // Thirty observations at 1..=30 s, alternating streams, ten per segment.
@@ -149,81 +112,74 @@ mod tests {
             .collect();
         let segments: Vec<&[Observation]> = observations.chunks(10).collect();
 
-        for sqlite in [true, false] {
-            let dir = tempfile::tempdir().unwrap();
-            let window = dir.path().join("window");
-            let config = if sqlite {
-                RecordingStoreConfig::Sqlite {
-                    path: dir.path().join("memory.db").to_string_lossy().into_owned(),
-                }
-            } else {
-                RecordingStoreConfig::Mcap {
-                    path: dir
-                        .path()
-                        .join("memory.mcap")
-                        .to_string_lossy()
-                        .into_owned(),
-                    attachments: vec![],
-                }
-            };
-
-            // The crashed run stored segment 0, then wrote part of segment 1 before the crash.
-            let mut recording = store::open(&config, &streams, 1).unwrap();
-            recording.write_batch(segments[0]).unwrap();
-            recording.sync().unwrap();
-            recording.write_batch(&segments[1][..4]).unwrap();
-            recording.sync().unwrap();
-            std::mem::forget(recording);
-            if !sqlite {
-                append_garbage(Path::new(config.path()));
-            }
-
-            fs::create_dir(&window).unwrap();
-            WindowManifest {
-                store: config.clone(),
-                streams: streams.clone(),
-            }
-            .write(&window)
+        // The crashed run stored segment 0, then wrote part of segment 1 and a torn tail.
+        let mut recording = store::open(&config, &streams, 1).unwrap();
+        recording.write_batch(segments[0]).unwrap();
+        recording.sync().unwrap();
+        recording.write_batch(&segments[1][..4]).unwrap();
+        recording.sync().unwrap();
+        std::mem::forget(recording);
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&[0xab; 37])
             .unwrap();
-            DoneMarker::create(&window)
-                .unwrap()
-                .write(0, &[5, 5])
-                .unwrap();
-            for (index, segment) in segments.iter().enumerate().skip(1) {
-                let mut writer = SegmentWriter::create(&window, index as u64).unwrap();
-                for observation in *segment {
-                    let stream = if observation.stream.name == "a" { 0 } else { 1 };
-                    writer.write(stream, observation).unwrap();
-                }
-                writer.seal().unwrap();
-            }
-            let last = segment_path(&window, 2);
-            let length = fs::metadata(&last).unwrap().len();
-            OpenOptions::new()
-                .write(true)
-                .open(&last)
-                .unwrap()
-                .set_len(length - 1)
-                .unwrap();
 
-            let written = recover(&window).unwrap();
-
-            assert_eq!(written, 19, "sqlite: {sqlite}");
-            assert!(!window.exists());
-            let expected = |parity: usize| -> Vec<f64> {
-                (1..30)
-                    .filter(|second| second % 2 == parity)
-                    .map(|second| second as f64)
-                    .collect()
-            };
-            assert_eq!(
-                stored_times(&config),
-                BTreeMap::from([
-                    ("a".to_string(), expected(0)),
-                    ("b".to_string(), expected(1))
-                ]),
-                "sqlite: {sqlite}"
-            );
+        fs::create_dir(&window).unwrap();
+        WindowManifest {
+            store: config,
+            streams,
         }
+        .write(&window)
+        .unwrap();
+        Done {
+            segment: 0,
+            stored: vec![5, 5],
+        }
+        .write(&window)
+        .unwrap();
+        for (index, segment) in segments.iter().enumerate().skip(1) {
+            let mut writer = SegmentWriter::create(&window, index as u64).unwrap();
+            for observation in *segment {
+                let stream = if observation.stream.name == "a" { 0 } else { 1 };
+                writer.write(stream, observation).unwrap();
+            }
+            writer.seal().unwrap();
+        }
+        let last = segment_path(&window, 2);
+        let length = fs::metadata(&last).unwrap().len();
+        OpenOptions::new()
+            .write(true)
+            .open(&last)
+            .unwrap()
+            .set_len(length - 1)
+            .unwrap();
+
+        assert_eq!(recover(&window).unwrap(), 19);
+
+        assert!(!window.exists());
+        let bytes = fs::read(&path).unwrap();
+        let mut times = BTreeMap::<String, Vec<f64>>::new();
+        for message in mcap::MessageStream::new(&bytes).unwrap() {
+            let message = message.unwrap();
+            times
+                .entry(message.channel.topic.clone())
+                .or_default()
+                .push(message.log_time as f64 / 1e9);
+        }
+        let expected = |parity: usize| -> Vec<f64> {
+            (1..30)
+                .filter(|second| second % 2 == parity)
+                .map(|second| second as f64)
+                .collect()
+        };
+        assert_eq!(
+            times,
+            BTreeMap::from([
+                ("a".to_string(), expected(0)),
+                ("b".to_string(), expected(1))
+            ])
+        );
     }
 }

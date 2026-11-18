@@ -26,6 +26,7 @@ use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 use tracing::{debug, info};
+use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::encoding::StoredObservation;
 use crate::events::{EventConfig, EventWriter};
@@ -91,14 +92,33 @@ pub enum RecordingMode {
     Events(EventConfig),
 }
 
+impl Validate for RecordingMode {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        match self {
+            Self::Continuous => Ok(()),
+            Self::Events(events) => events.validate(),
+        }
+    }
+}
+
 #[dimos_module::native_config]
 #[derive(Clone)]
+#[validate(schema(function = "mode_matches_streams"))]
 pub struct RecorderConfig {
     pub store: store::RecordingStoreConfig,
     #[validate(range(min = 1))]
     pub encoding_threads: usize,
+    #[validate(length(max = 65535))]
     pub streams: Vec<StreamConfig>,
+    #[validate(nested)]
     pub mode: RecordingMode,
+}
+
+fn mode_matches_streams(config: &RecorderConfig) -> Result<(), ValidationError> {
+    match &config.mode {
+        RecordingMode::Continuous => Ok(()),
+        RecordingMode::Events(events) => events.check_streams(&config.streams),
+    }
 }
 
 #[derive(Clone)]
@@ -179,9 +199,6 @@ impl RecorderEngine {
                     || (stream.timestamp_field.is_none() && stream.json_schema.is_none()),
                 "JSON options require the json codec"
             );
-        }
-        if let RecordingMode::Events(events) = &config.mode {
-            events.validate(&config.streams)?;
         }
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
@@ -386,57 +403,18 @@ impl Module for MemoryRecorder {
     }
 }
 
-/// Where ordered observations go: the store directly, or the event window first.
-enum Sink {
-    Direct(Box<dyn RecordingStore>),
-    Events(Box<EventWriter>),
-}
-
-impl Sink {
-    fn open(config: &RecorderConfig) -> Result<Self> {
-        let store = store::open(&config.store, &config.streams, config.encoding_threads)?;
-        Ok(match &config.mode {
-            RecordingMode::Continuous => Self::Direct(store),
-            RecordingMode::Events(events) => Self::Events(Box::new(EventWriter::start(
-                events,
-                &config.store,
-                &config.streams,
-                store,
-            )?)),
-        })
-    }
-
-    /// Returns how many observations reached the main file.
-    fn write(&mut self, observations: &[Observation]) -> Result<u64> {
-        match self {
-            Self::Direct(store) => {
-                store.write_batch(observations)?;
-                Ok(observations.len() as u64)
-            }
-            Self::Events(events) => {
-                events.write_batch(observations)?;
-                Ok(0)
-            }
-        }
-    }
-
-    fn tick(&mut self, now: f64, idle: bool) -> Result<()> {
-        match self {
-            Self::Direct(_) => Ok(()),
-            Self::Events(events) => events.tick(now, idle),
-        }
-    }
-
-    /// Returns how many further observations reached the main file.
-    fn finish(self) -> Result<u64> {
-        match self {
-            Self::Direct(mut store) => {
-                store.finish()?;
-                Ok(0)
-            }
-            Self::Events(events) => events.finish(),
-        }
-    }
+/// Opens the recording, behind the event window in event mode.
+fn open_store(config: &RecorderConfig) -> Result<Box<dyn RecordingStore>> {
+    let store = store::open(&config.store, &config.streams, config.encoding_threads)?;
+    Ok(match &config.mode {
+        RecordingMode::Continuous => store,
+        RecordingMode::Events(events) => Box::new(EventWriter::start(
+            events,
+            &config.store,
+            &config.streams,
+            store,
+        )?),
+    })
 }
 
 fn writer_loop(
@@ -445,7 +423,7 @@ fn writer_loop(
     permits: Receiver<()>,
     origin: Instant,
 ) -> Result<WriterStats> {
-    let mut sink = Sink::open(&config)?;
+    let mut store = open_store(&config)?;
 
     let mut pending = BTreeMap::new();
     let mut ready = Vec::with_capacity(WRITE_BATCH_SIZE);
@@ -473,8 +451,8 @@ fn writer_loop(
                 if !pending.is_empty() {
                     return Err(anyhow!("encoder results ended with a sequence gap"));
                 }
-                write_ready(&mut sink, &mut ready, &mut stats, &permits)?;
-                stats.written += sink.finish()?;
+                write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
+                store.finish()?;
                 info!(
                     received = stats.received,
                     written = stats.written,
@@ -485,17 +463,17 @@ fn writer_loop(
             }
         };
         if flush {
-            write_ready(&mut sink, &mut ready, &mut stats, &permits)?;
+            write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
             // Clock before permits, so a job submitted after the check is stamped later.
             let now = monotonic_since(origin);
-            sink.tick(now, permits.is_empty())?;
+            store.tick(now, permits.is_empty())?;
             last_write = Instant::now();
         }
     }
 }
 
 fn write_ready(
-    sink: &mut Sink,
+    store: &mut dyn RecordingStore,
     ready: &mut Vec<EncodedBatch>,
     stats: &mut WriterStats,
     permits: &Receiver<()>,
@@ -528,7 +506,8 @@ fn write_ready(
             }
         }
     }
-    stats.written += sink.write(&stored_observations)?;
+    store.write_batch(&stored_observations)?;
+    stats.written += stored_observations.len() as u64;
     debug!(
         jobs = completed_jobs,
         observations = stored_observations.len(),

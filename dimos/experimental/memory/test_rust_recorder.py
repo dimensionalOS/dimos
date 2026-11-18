@@ -244,26 +244,6 @@ def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder
         assert store.stream("odometry").count() == 0
 
 
-def test_crashed_window_blocks_start_before_the_artifact_is_touched(
-    tmp_path: Path, make_recorder: Any
-) -> None:
-    artifact = tmp_path / "recording.mcap"
-    artifact.write_bytes(b"crashed")
-    (tmp_path / "window").mkdir()
-    recorder = make_recorder(
-        SampleRustRecorder,
-        store=RustMcapStoreConfig(path=str(artifact)),
-        record_tf=False,
-        on_existing=OnExisting.OVERWRITE,
-    )
-    connect(recorder, odometry="/odom")
-
-    with pytest.raises(FileExistsError, match="dimos-memory-recover"):
-        recorder.start()
-
-    assert artifact.read_bytes() == b"crashed"
-
-
 def test_unsupported_python_payload_fails_before_native_process_starts(
     tmp_path: Path, make_recorder: Any
 ) -> None:
