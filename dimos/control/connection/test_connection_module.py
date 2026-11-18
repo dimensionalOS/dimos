@@ -563,18 +563,33 @@ def test_a_lapsed_lease_undoes_every_live_change_and_logs_one_line(
         r.module.config_set(ConfigPatch(arm_id=ARM), session_id=session)
 
 
-def test_every_config_call_renews_the_lease(rig: Callable[..., Rig]) -> None:
+def test_only_calls_with_the_session_id_renew_the_lease(rig: Callable[..., Rig]) -> None:
     r = rig(TunableArm, config_sessions=True, deadman_timeout_s=10)
+    gains = ConfigPatch(arm_id=ARM, gains={"joint1": JointGains(kp=60.0, kd=2.0)})
     session = _begin(r.module, lease_s=0.3)
-    calls = [r.module.config_get, r.module.config_keys]
+    calls = [
+        lambda: r.module.config_command({"joint1": 0.1}, session),
+        lambda: r.module.config_set(gains, session_id=session),
+    ]
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
         calls[0]()
         calls.reverse()
         time.sleep(0.05)
     assert _live(r.module)
-    r.module.config_command({"joint1": 0.1}, session)
-    r.module.config_reset()
+    # Calls that carry no id read or reset, and the lease runs out meanwhile.
+    calls = [
+        r.module.config_get,
+        r.module.config_keys,
+        lambda: r.module.config_reset(keep_session=True),
+    ]
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and _live(r.module):
+        calls[0]()
+        calls.append(calls.pop(0))
+        time.sleep(0.05)
+    assert not _live(r.module)
+    assert "no config call within its lease" in r.module._config_ended
 
 
 def test_a_config_session_drops_position_commands_and_says_so_once(

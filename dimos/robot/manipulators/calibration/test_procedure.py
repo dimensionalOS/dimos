@@ -616,7 +616,11 @@ def test_the_fake_keeps_the_config_session_rules(
     session = begin()
     assert not fake.position_command({"left_joint1": 0.1})
     assert fake.dropped_position_commands == 1
-    fake.advance(1.5)
+    # Reading carries no session id, so it renews nothing.
+    fake.advance(0.75)
+    fake.config_get()
+    fake.config_keys()
+    fake.advance(0.75)
     assert not fake.session_active() and fake.ended[-1].startswith("no config call within")
     with pytest.raises(RuntimeError, match=r"the config session ended \(no config call"):
         fake.config_command(home, session)

@@ -21,8 +21,10 @@ read and change, ``config_get`` how each arm is driven now. With
 ``config_sessions`` on (calibration blueprints only), ``config_set`` with
 scope "session" starts the one config session: while it lasts the
 connection drops every other position command and the tool moves the arm
-with ``config_command``; every ``config_*`` call renews its lease. When it
-ends, for any reason, every live change is undone. ``config_set`` with
+with ``config_command``; each call that carries the session's id
+(``config_set``, ``config_command``) renews its lease, reading and
+``config_reset`` do not. When it ends, for any reason, every live change is
+undone. ``config_set`` with
 scope "persist" saves a calibration to the arm's file and applies it.
 
 The arm's joint readings are not part of the contract: the tool reads them

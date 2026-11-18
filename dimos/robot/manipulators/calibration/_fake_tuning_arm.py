@@ -26,10 +26,10 @@ Gravity is evaluated once every 10 ms, the period it also records joint
 states at, like the connection's 100 Hz ``joint_state``. It keeps the config
 session's rules: one session, started by ``config_set`` and named by the id
 it returns, which ``config_set`` and ``config_command`` must then carry; a
-lease every call renews, a 0.1 s deadman on targets, the session ending on
-``config_reset``, lapse, deadman or any raising call (floating joints then
-held where they are, torque offsets dropped, gains restored), and position
-commands dropped while a session lasts. Its :meth:`FakeTuningArm.stop`
+lease only calls carrying that id renew, a 0.1 s deadman on targets, the
+session ending on ``config_reset``, lapse, deadman or any raising call
+(floating joints then held where they are, torque offsets dropped, gains
+restored), and position commands dropped while a session lasts. Its :meth:`FakeTuningArm.stop`
 waits for a calibration tool to park, as a connection's stop does, then
 "disables" the arm and records where.
 
@@ -416,17 +416,19 @@ class FakeTuningArm:
             if self.disabled_at is not None:
                 raise RuntimeError("the connection stopped")
             try:
-                if self._session is not None:
-                    self._session.last_call = self.now
                 return call()
             except Exception as error:
                 self._end(f"{name} raised {type(error).__name__}: {error}")
                 raise
 
     def _check(self, session_id: str | None) -> _Session | None:
-        """The live session once ``session_id`` names it; ``None`` without either."""
+        """The live session, renewed, once ``session_id`` names it; ``None`` without either.
+
+        Only a call that carries the live session's id renews its lease.
+        """
         session = self._session
         if session is not None and session_id == session.session_id:
+            session.last_call = self.now
             return session
         if session is not None:
             if session_id is None:

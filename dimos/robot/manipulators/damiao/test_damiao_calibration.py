@@ -654,15 +654,24 @@ def test_a_reset_after_a_command_holds_the_arm_where_it_is(start, boundary):
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :3], [80, 5, 1.0])
 
 
-def test_every_config_call_renews_the_lease(start, boundary):
+def test_only_calls_with_the_session_id_renew_the_lease(start, boundary):
     module = start(config_sessions=True)
     session = _begin(module, lease_s=0.3)
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
-        module.config_get()
+        assert module.config_command({"joint1": 0.2}, session).ok
         time.sleep(0.05)
     assert _active(module)
     _left(module, session, gains={"joint1": JointGains(kp=60.0, kd=3.0)})
+    # Reading and resetting carry no id: the lease runs out meanwhile.
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and _active(module):
+        module.config_get()
+        module.config_keys()
+        module.config_reset(keep_session=True)
+        time.sleep(0.05)
+    assert not _active(module)
+    assert module._config_ended.startswith("no config call within its lease")
 
 
 def test_the_deadman_halting_the_arm_ends_the_session(start, boundary):

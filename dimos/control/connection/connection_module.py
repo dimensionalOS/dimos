@@ -198,7 +198,8 @@ class ConnectionModule(Module, ABC):
     "session") belongs to one calibration tool: while it lasts every other
     position command is dropped, and it ends, undoing its live changes
     (``_config_undo``), on ``config_reset``, when its lease passes without a
-    ``config_*`` call, when the robot halts (the command deadman included),
+    call that carries its id (``config_set`` with its ``session_id``,
+    ``config_command``), when the robot halts (the command deadman included),
     when a ``config_*`` call raises, and when the module stops. A driver that
     can fault ends it with ``_end_config_session``, and one that serves
     sessions calls ``_await_config_park`` first in its own ``stop``.
@@ -383,12 +384,11 @@ class ConnectionModule(Module, ABC):
     def config_keys(self) -> ConfigKeys:
         """What this connection lets a calibration tool read and change. See ``ConfigKeys``.
 
-        Answers whether or not config sessions are served, and renews a live
-        session's lease.
+        Answers whether or not config sessions are served. It carries no
+        session id, so it renews no session's lease.
         """
         with self._config_call("config_keys", gated=False):
             with self._hardware_lock:
-                self._renew_config_session()
                 keys = self._config_keys()
             return keys.model_copy(
                 update={
@@ -403,12 +403,13 @@ class ConnectionModule(Module, ABC):
     def config_get(self) -> dict[str, ArmConfigState]:
         """How each arm is driven now, by arm id. See ``ArmConfigState``.
 
-        Answers whether or not config sessions are served, and renews a live
-        session's lease.
+        Answers whether or not config sessions are served. It carries no
+        session id, so it renews no session's lease.
         """
         with self._config_call("config_get", gated=False):
             with self._hardware_lock:
-                session = self._renew_config_session()
+                with self._lock:
+                    session = self._config_session
                 states = self._config_state()
             session_id = None if session is None else session.session_id
             return {
@@ -479,8 +480,9 @@ class ConnectionModule(Module, ABC):
         """Undo every live change and end the config session, unless ``keep_session``.
 
         Needs no session id, so any thread may end the session; without one
-        it does nothing. A saved calibration stays as the arm runs it: no
-        file is read again. Refused unless ``config_sessions``.
+        it does nothing. For the same reason it renews no session's lease. A
+        saved calibration stays as the arm runs it: no file is read again.
+        Refused unless ``config_sessions``.
         """
         with self._config_call("config_reset"):
             keep = _flag("keep_session", keep_session)
@@ -488,7 +490,6 @@ class ConnectionModule(Module, ABC):
                 if not keep:
                     self._end_config_session("config_reset", expected=True)
                     return
-                self._renew_config_session()
                 undone = self._config_undo()
             logger.info(f"{self._label}: config reset, the session goes on: {undone}")
 
@@ -585,18 +586,12 @@ class ConnectionModule(Module, ABC):
                 self._end_config_session(f"{name} raised {type(error).__name__}: {error}")
             raise
 
-    def _renew_config_session(self) -> _ConfigSession | None:
-        """Renew the live config session's lease, if there is one, and return it."""
-        with self._lock:
-            session = self._config_session
-            if session is not None:
-                session.deadline = time.monotonic() + session.lease_s
-            return session
-
     def _check_config_session(self, session_id: str | None) -> _ConfigSession | None:
         """The live config session, renewed, once ``session_id`` names it.
 
-        ``None`` without one and without an id. A missing or foreign id for
+        The one place a lease is renewed: only a call that carries the live
+        session's id keeps it. ``None`` without one and without an id. A
+        missing or foreign id for
         a live session raises, and so does an id once its session ended.
         Call with ``_hardware_lock`` held.
         """

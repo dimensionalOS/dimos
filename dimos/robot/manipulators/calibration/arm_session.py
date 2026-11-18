@@ -17,8 +17,8 @@
 :class:`ArmSession` opens a config session on an :class:`~dimos.robot.
 manipulators.calibration.hooks.ArmConfigHooks` connection and, while it
 lasts, sends the arm's targets every tick with ``config_command`` (at least
-50 Hz, well inside the connection's 0.1 s command deadman, and every call
-renews the session's lease). Each tick reads the arm back from the latest
+50 Hz, well inside the connection's 0.1 s command deadman, and each call
+carries the session's id, so it renews the session's lease). Each tick reads the arm back from the latest
 ``joint_state`` message (a :class:`StateSource`) and stops it when the
 reading is older than ``MAX_READING_AGE_S``, when a target would leave the
 workspace or pass a joint limit, when a measured point sags out of the
