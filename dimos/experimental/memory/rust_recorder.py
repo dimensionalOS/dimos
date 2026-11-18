@@ -116,12 +116,18 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 ]
 
 
+class RustContinuousMode(BaseModel):
+    """Write every observation straight to the artifact."""
+
+    kind: Literal["continuous"] = "continuous"
+
+
 class RustRecorderConfig(NativeModuleConfig):
     """Configuration for :class:`RustRecorder`.
 
     Python owns artifact lifecycle and stream registration. The native process
-    receives only ``store``, ``encoding_threads``, and the internally resolved
-    ``streams`` list over stdin.
+    receives only ``store``, ``encoding_threads``, ``mode``, and the internally
+    resolved ``streams`` list over stdin.
     """
 
     executable: str = "result/bin/dimos-memory-recorder"
@@ -166,6 +172,10 @@ class RustRecorderConfig(NativeModuleConfig):
         default=4,
         ge=1,
         description="CPU workers for transport decoding and storage encoding.",
+    )
+    mode: RustContinuousMode = Field(
+        default_factory=RustContinuousMode,
+        description="How observations reach the artifact.",
     )
     streams: list[RustStreamSpec] = Field(
         default_factory=list,

@@ -690,6 +690,7 @@ name = "dimos-memory-recorder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "crc32fast",
  "crossbeam-channel",
  "crossbeam-utils",
  "dimos-module",

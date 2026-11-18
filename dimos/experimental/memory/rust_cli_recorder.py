@@ -30,7 +30,11 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
-from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
+from dimos.experimental.memory.rust_recorder import (
+    RustContinuousMode,
+    RustRecorderConfig,
+    RustStreamSpec,
+)
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
@@ -206,6 +210,7 @@ class RustRecordingSession:
                 "encoding_threads": global_config.record_encoding_threads
                 or _DEFAULT_ENCODING_THREADS,
                 "streams": [stream.model_dump(exclude_none=True) for stream in self.plan.streams],
+                "mode": RustContinuousMode().model_dump(),
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }

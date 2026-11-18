@@ -56,6 +56,7 @@ pub struct Observation {
     pub stream: Arc<StreamConfig>,
     pub source_ts: f64,
     pub reception_ts: f64,
+    pub monotonic_ts: f64,
     pub data: Vec<u8>,
 }
 
@@ -63,6 +64,9 @@ pub struct Observation {
 pub trait RecordingStore: Send {
     /// Persist one arrival-ordered batch atomically where the format supports it.
     fn write_batch(&mut self, observations: &[Observation]) -> Result<()>;
+
+    /// Make everything written so far survive a power loss.
+    fn sync(&mut self) -> Result<()>;
 
     /// Finalize indexes, summaries, and buffered data before shutdown returns.
     fn finish(&mut self) -> Result<()>;

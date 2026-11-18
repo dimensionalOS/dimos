@@ -45,6 +45,12 @@ impl RecordingStore for SqliteRecordingStore {
         Ok(())
     }
 
+    fn sync(&mut self) -> Result<()> {
+        self.connection
+            .execute_batch("PRAGMA wal_checkpoint(FULL)")?;
+        Ok(())
+    }
+
     fn finish(&mut self) -> Result<()> {
         self.connection
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;

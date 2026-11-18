@@ -112,6 +112,7 @@ class CollectionModuleConfig(RustRecorderConfig):
             "store": self.store.model_dump(),
             "encoding_threads": self.encoding_threads,
             "streams": [stream.model_dump() for stream in self.streams],
+            "mode": self.mode.model_dump(),
         }
 
 

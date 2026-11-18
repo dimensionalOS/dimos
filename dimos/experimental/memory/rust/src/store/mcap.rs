@@ -26,6 +26,7 @@ use crate::StreamConfig;
 
 pub struct McapRecordingStore {
     writer: Writer<BufWriter<File>>,
+    file: File,
     channels: HashMap<String, u16>,
     sequences: HashMap<String, u32>,
 }
@@ -55,6 +56,7 @@ impl McapRecordingStore {
             })
             .collect::<Result<Vec<_>>>()?;
         let file = File::create(path).with_context(|| format!("failed to create {path}"))?;
+        let sync_handle = file.try_clone()?;
         let options = WriteOptions::new()
             .profile("dimos")
             .library("dimos-memory-recorder")
@@ -91,6 +93,7 @@ impl McapRecordingStore {
         }
         Ok(Self {
             writer,
+            file: sync_handle,
             channels,
             sequences: HashMap::new(),
         })
@@ -128,6 +131,12 @@ impl RecordingStore for McapRecordingStore {
             )?;
             *sequence = sequence.wrapping_add(1);
         }
+        Ok(())
+    }
+
+    fn sync(&mut self) -> Result<()> {
+        self.writer.flush().context("failed to flush MCAP chunk")?;
+        self.file.sync_data().context("failed to sync MCAP")?;
         Ok(())
     }
 
@@ -186,6 +195,7 @@ mod tests {
             stream,
             source_ts: -12.5,
             reception_ts: 100.0,
+            monotonic_ts: 0.0,
             data: br#"{"ts":-12.5}"#.to_vec(),
         };
         assert!(store
@@ -231,6 +241,7 @@ mod tests {
             stream,
             source_ts: 0.0,
             reception_ts: -1.0,
+            monotonic_ts: 0.0,
             data: br#"{"ts":0}"#.to_vec(),
         };
         assert!(store

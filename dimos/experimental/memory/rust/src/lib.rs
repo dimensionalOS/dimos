@@ -14,10 +14,9 @@
 
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
@@ -29,11 +28,14 @@ use tokio::task::JoinSet;
 use tracing::{debug, info};
 
 use crate::encoding::StoredObservation;
+use crate::events::{EventConfig, EventWriter};
 use crate::store::{Observation, RecordingStore};
 
 mod decoding;
 mod encoding;
+pub mod events;
 pub mod store;
+mod window;
 
 const TF_PAYLOAD_TYPE: &str = "dimos.msgs.tf2_msgs.TFMessage.TFMessage";
 const IMAGE_PAYLOAD_TYPE: &str = "dimos.msgs.sensor_msgs.Image.Image";
@@ -81,6 +83,13 @@ impl StreamConfig {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum RecordingMode {
+    Continuous,
+    Events(EventConfig),
+}
+
 #[dimos_module::native_config]
 #[derive(Clone)]
 pub struct RecorderConfig {
@@ -88,13 +97,15 @@ pub struct RecorderConfig {
     #[validate(range(min = 1))]
     pub encoding_threads: usize,
     pub streams: Vec<StreamConfig>,
+    pub mode: RecordingMode,
 }
 
 #[derive(Clone)]
 pub struct RecorderHandle {
     submission: Arc<Mutex<Option<Submission>>>,
     permits: Sender<()>,
-    sequence: Arc<AtomicU64>,
+    sequence: Arc<Mutex<u64>>,
+    origin: Instant,
 }
 
 #[derive(Clone)]
@@ -125,7 +136,16 @@ impl RecorderHandle {
         if self.permits.send(()).is_err() {
             return;
         }
-        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+        // Stamped together so arrival order and monotonic time agree.
+        let (sequence, monotonic_ts) = {
+            let mut next = self
+                .sequence
+                .lock()
+                .expect("recorder sequence lock poisoned");
+            let sequence = *next;
+            *next += 1;
+            (sequence, monotonic_since(self.origin))
+        };
         let reception_ts = wall_time();
         pool.spawn_fifo(move || {
             let observations =
@@ -136,6 +156,7 @@ impl RecorderHandle {
                 sequence,
                 stream,
                 reception_ts,
+                monotonic_ts,
                 observations,
             });
             drop(pending);
@@ -158,6 +179,9 @@ impl RecorderEngine {
                 "JSON options require the json codec"
             );
         }
+        if let RecordingMode::Events(events) = &config.mode {
+            events.validate(&config.streams)?;
+        }
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
         let (failure_tx, failure_rx) = bounded(1);
@@ -169,17 +193,19 @@ impl RecorderEngine {
             sender: write_tx,
             pending: WaitGroup::new(),
         })));
+        let origin = Instant::now();
         let handle = RecorderHandle {
             submission,
             permits: permit_tx,
-            sequence: Arc::new(AtomicU64::new(0)),
+            sequence: Arc::new(Mutex::new(0)),
+            origin,
         };
 
         let writer_config = config.clone();
         let writer = thread::Builder::new()
             .name("mem2-writer".to_string())
             .spawn(move || {
-                let result = writer_loop(writer_config, write_rx, permit_rx);
+                let result = writer_loop(writer_config, write_rx, permit_rx, origin);
                 if let Err(error) = &result {
                     let _ = failure_tx.send(format!("{error:#}"));
                 }
@@ -231,6 +257,7 @@ struct EncodedBatch {
     sequence: u64,
     stream: Arc<StreamConfig>,
     reception_ts: f64,
+    monotonic_ts: f64,
     observations: Result<Vec<StoredObservation>, String>,
 }
 
@@ -257,6 +284,10 @@ fn wall_time() -> f64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+}
+
+fn monotonic_since(origin: Instant) -> f64 {
+    origin.elapsed().as_secs_f64()
 }
 
 struct RecorderInput {
@@ -354,20 +385,74 @@ impl Module for MemoryRecorder {
     }
 }
 
+/// Where ordered observations go: the store directly, or the event window first.
+enum Sink {
+    Direct(Box<dyn RecordingStore>),
+    Events(Box<EventWriter>),
+}
+
+impl Sink {
+    fn open(config: &RecorderConfig) -> Result<Self> {
+        let store = store::open(&config.store, &config.streams, config.encoding_threads)?;
+        Ok(match &config.mode {
+            RecordingMode::Continuous => Self::Direct(store),
+            RecordingMode::Events(events) => Self::Events(Box::new(EventWriter::start(
+                events,
+                &config.streams,
+                store,
+            )?)),
+        })
+    }
+
+    /// Returns how many observations reached the main file.
+    fn write(&mut self, observations: &[Observation]) -> Result<u64> {
+        match self {
+            Self::Direct(store) => {
+                store.write_batch(observations)?;
+                Ok(observations.len() as u64)
+            }
+            Self::Events(events) => {
+                events.write_batch(observations)?;
+                Ok(0)
+            }
+        }
+    }
+
+    fn tick(&mut self, now: f64, idle: bool) -> Result<()> {
+        match self {
+            Self::Direct(_) => Ok(()),
+            Self::Events(events) => events.tick(now, idle),
+        }
+    }
+
+    /// Returns how many further observations reached the main file.
+    fn finish(self) -> Result<u64> {
+        match self {
+            Self::Direct(mut store) => {
+                store.finish()?;
+                Ok(0)
+            }
+            Self::Events(events) => events.finish(),
+        }
+    }
+}
+
 fn writer_loop(
     config: RecorderConfig,
     receiver: Receiver<EncodedBatch>,
     permits: Receiver<()>,
+    origin: Instant,
 ) -> Result<WriterStats> {
-    let mut store = store::open(&config.store, &config.streams, config.encoding_threads)?;
+    let mut sink = Sink::open(&config)?;
 
     let mut pending = BTreeMap::new();
     let mut ready = Vec::with_capacity(WRITE_BATCH_SIZE);
     let mut next_sequence = 0;
     let mut stats = WriterStats::default();
+    let mut last_write = Instant::now();
 
     loop {
-        match receiver.recv_timeout(FLUSH_INTERVAL) {
+        let flush = match receiver.recv_timeout(FLUSH_INTERVAL) {
             Ok(batch) => {
                 stats.received += 1;
                 pending.insert(batch.sequence, batch);
@@ -375,13 +460,9 @@ fn writer_loop(
                     ready.push(batch);
                     next_sequence += 1;
                 }
-                if ready.len() >= WRITE_BATCH_SIZE {
-                    write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
-                }
+                ready.len() >= WRITE_BATCH_SIZE || last_write.elapsed() >= FLUSH_INTERVAL
             }
-            Err(RecvTimeoutError::Timeout) => {
-                write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
-            }
+            Err(RecvTimeoutError::Timeout) => true,
             Err(RecvTimeoutError::Disconnected) => {
                 while let Some(batch) = pending.remove(&next_sequence) {
                     ready.push(batch);
@@ -390,8 +471,8 @@ fn writer_loop(
                 if !pending.is_empty() {
                     return Err(anyhow!("encoder results ended with a sequence gap"));
                 }
-                write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
-                store.finish()?;
+                write_ready(&mut sink, &mut ready, &mut stats, &permits)?;
+                stats.written += sink.finish()?;
                 info!(
                     received = stats.received,
                     written = stats.written,
@@ -400,12 +481,19 @@ fn writer_loop(
                 );
                 return Ok(stats);
             }
+        };
+        if flush {
+            write_ready(&mut sink, &mut ready, &mut stats, &permits)?;
+            // Clock before permits, so a job submitted after the check is stamped later.
+            let now = monotonic_since(origin);
+            sink.tick(now, permits.is_empty())?;
+            last_write = Instant::now();
         }
     }
 }
 
 fn write_ready(
-    store: &mut dyn RecordingStore,
+    sink: &mut Sink,
     ready: &mut Vec<EncodedBatch>,
     stats: &mut WriterStats,
     permits: &Receiver<()>,
@@ -423,6 +511,7 @@ fn write_ready(
                         stream: Arc::clone(&batch.stream),
                         source_ts: observation.ts,
                         reception_ts: batch.reception_ts,
+                        monotonic_ts: batch.monotonic_ts,
                         data: observation.data,
                     });
                 }
@@ -437,8 +526,7 @@ fn write_ready(
             }
         }
     }
-    store.write_batch(&stored_observations)?;
-    stats.written += stored_observations.len() as u64;
+    stats.written += sink.write(&stored_observations)?;
     debug!(
         jobs = completed_jobs,
         observations = stored_observations.len(),
@@ -606,11 +694,14 @@ mod tests {
             },
             encoding_threads: 2,
             streams: vec![(*stream("samples", Codec::Lcm, false)).clone()],
+            mode: RecordingMode::Continuous,
         };
         let (sender, receiver) = bounded(8);
         let (permit_sender, permit_receiver) = bounded(8);
         let writer_config = config.clone();
-        let writer = thread::spawn(move || writer_loop(writer_config, receiver, permit_receiver));
+        let writer = thread::spawn(move || {
+            writer_loop(writer_config, receiver, permit_receiver, Instant::now())
+        });
         for sequence in [1, 0, 2] {
             permit_sender.send(()).unwrap();
             sender
@@ -618,6 +709,7 @@ mod tests {
                     sequence,
                     stream: stream("samples", Codec::Lcm, false),
                     reception_ts: sequence as f64,
+                    monotonic_ts: 0.0,
                     observations: Ok(vec![StoredObservation {
                         ts: sequence as f64,
                         data: vec![sequence as u8],
@@ -683,6 +775,7 @@ mod tests {
                 stream: Arc::clone(&tf),
                 source_ts: 1.0,
                 reception_ts: 100.0,
+                monotonic_ts: 0.0,
                 data: vec![1, 2, 3],
             }])
             .unwrap();
@@ -726,6 +819,7 @@ mod tests {
                 stream: Arc::clone(&samples),
                 source_ts: 12.5,
                 reception_ts: 13.0,
+                monotonic_ts: 0.0,
                 data: encoded.clone(),
             }])
             .unwrap();
@@ -765,6 +859,7 @@ mod tests {
             },
             encoding_threads: 3,
             streams: vec![(*raw).clone()],
+            mode: RecordingMode::Continuous,
         };
         let engine = RecorderEngine::start(config).unwrap();
         let submission = engine.handle.submission.lock().unwrap();
@@ -788,6 +883,7 @@ mod tests {
             },
             encoding_threads: 1,
             streams: vec![(*image).clone()],
+            mode: RecordingMode::Continuous,
         };
         let engine = RecorderEngine::start(config).unwrap();
         engine.handle().record(image, b"not an lcm image");
@@ -808,6 +904,7 @@ mod tests {
             },
             encoding_threads: 0,
             streams: vec![],
+            mode: RecordingMode::Continuous,
         };
 
         assert!(validator::Validate::validate(&config).is_err());
@@ -832,6 +929,7 @@ mod tests {
             stream: Arc::clone(&stream),
             source_ts: stored.ts,
             reception_ts: 13.0,
+            monotonic_ts: 0.0,
             data: stored.data,
         }];
         for sqlite in [true, false] {

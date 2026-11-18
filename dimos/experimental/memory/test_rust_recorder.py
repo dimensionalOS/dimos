@@ -114,7 +114,8 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
             "codec": "lcm",
         },
     ]
-    assert set(config) == {"encoding_threads", "store", "streams"}
+    assert config["mode"] == {"kind": "continuous"}
+    assert set(config) == {"encoding_threads", "store", "streams", "mode"}
 
 
 def test_json_options_cross_the_native_boundary_only_when_configured() -> None:
