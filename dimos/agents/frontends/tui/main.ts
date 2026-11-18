@@ -276,7 +276,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
           (candidate) => candidate.call === call,
         );
         fullScreen(
-          clean(row?.label ?? call),
+          clean(row?.label ?? "Background output"),
           movedOutput(showing.id, call),
           true,
           () => {
@@ -289,7 +289,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         if (showing === null) return;
         const { conversation } = showing;
         try {
-          void ui.actions.observe(`stop call ${call}`, owner(conversation).stopBackground({ call })).catch(note);
+          void ui.actions.observe("stop background call", owner(conversation).stopBackground({ call })).catch(note);
         } catch (error) {
           note(error);
         }

@@ -7,11 +7,12 @@ import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
 import type { TimelineRow } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
 import type { ToolCard } from "#dimos/agents/frontends/tui/cards/base.ts";
 import { AssistantMessageComponent, UserMessageComponent, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { Gallery } from "#dimos/agents/frontends/tui/views/gallery.ts";
 import { accent, amber, muted } from "#dimos/agents/frontends/tui/style.ts";
 import { cardFor } from "#dimos/agents/frontends/tui/cards/choose.ts";
 import { clean, cleanMultiline } from "#dimos/agents/shared/view-models/text.ts";
+import { movedToBackground } from "#dimos/agents/shared/view-models/conversation/tools.ts";
 
 /** What the chat shows now: the conversation's timeline and how many older items the transfer budget left out. */
 export type TranscriptSource = { readonly rows: readonly TimelineRow[]; readonly omitted: number };
@@ -126,14 +127,11 @@ const FROM_LABELS: { readonly [F in QueuedRow["from"]]: string } = {
   runtime: "↻",
 };
 
-/** A background call's result as the chat shows it; the model got all of it. */
-const BACKGROUND_LINES = 3;
+function backgroundLine(tool: string, status: string): TruncatedText {
+  return new TruncatedText(muted(` ⇢ ${clean(tool)} ${status}`));
+}
 
 const SELECTED_GUTTER = "┃ ";
-
-const BACKGROUND_ENDS: {
-  readonly [E in Extract<DimosInput["source"], { readonly kind: "background" }>["end"]]: string;
-} = { finished: "finished", failed: "failed", stopped: "was stopped", interrupted: "was interrupted" };
 
 function queuedLine(row: QueuedRow): string {
   const label = row.from === "you" ? (row.mode === "steer" ? "steer" : "follow") : FROM_LABELS[row.from];
@@ -189,7 +187,11 @@ export class TranscriptView implements Component {
 
   /** Reconciles to `source` and lays it out at `width`; returns each part's key and height in order. */
   show(source: TranscriptSource, width: number): readonly { readonly key: string; readonly height: number }[] {
-    const { rows, omitted } = source;
+    const { omitted } = source;
+    const rows = source.rows.filter((row) => {
+      if (row.kind === "tool") return row.call.arguments.run_in_background !== true;
+      return row.kind !== "queued" || row.row.from !== "background";
+    });
     const parts: { readonly key: string; readonly component: Component }[] = [];
     if (rows.length === 0 && omitted === 0) parts.push({ key: "banner", component: this.banner });
     if (omitted > 0) {
@@ -422,6 +424,10 @@ export class TranscriptView implements Component {
         block.addChild(new AssistantMessageComponent(cleanAssistant(item.message), true));
         break;
       case "tool_result": {
+        if (movedToBackground(item.result)) {
+          block.addChild(backgroundLine(item.result.toolName, "sent to background"));
+          break;
+        }
         const tools = new ToolBlock();
         block.addChild(tools);
         const card = cardFor(callOf(rows, item.result), this.tui, this.cwd());
@@ -480,8 +486,12 @@ export class TranscriptView implements Component {
 
   /** An input by its source: the user's text, "⚡ module: text", "⏰ job: text", "⇢ text", or only its runtime change. */
   private input(block: Container, input: DimosInput, images: readonly string[], galleries: Gallery[]): void {
-    if (input.change !== null) block.addChild(line(muted(` ↻ runtime: ${clean(input.change.summary)}`)));
     const source = input.source;
+    if (source.kind === "background") {
+      block.addChild(backgroundLine(source.tool, source.end));
+      return;
+    }
+    if (input.change !== null) block.addChild(line(muted(` ↻ runtime: ${clean(input.change.summary)}`)));
     switch (source.kind) {
       case "user":
         block.addChild(userBlock(cleanMultiline(input.text)));
@@ -491,11 +501,6 @@ export class TranscriptView implements Component {
         break;
       case "job":
         block.addChild(line(accent(" ⏰ ") + clean(`${source.job}: ${input.text}`)));
-        break;
-      case "background":
-        block.addChild(line(muted(" ⇢ ") + clean(`${source.tool} ${BACKGROUND_ENDS[source.end]} in the background`)));
-        for (const text of input.text.split("\n").slice(0, BACKGROUND_LINES))
-          block.addChild(line(muted(`   ${clean(text)}`)));
         break;
       case "runtime":
         return;
