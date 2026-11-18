@@ -65,6 +65,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pinocchio as pin
 
+from dimos.control.connection.arm_config import ConfigKeys
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoMotor, DamiaoRobot
 from dimos.utils.logging_config import setup_logger
@@ -568,6 +569,34 @@ def specs_from_damiao_robot(
         )
         offset += len(joints)
     return with_midline_keep_outs(specs) if len(specs) > 1 else specs
+
+
+def calibration_keys(robot: DamiaoRobot, source: str = "arm") -> ConfigKeys:
+    """What a ``DamiaoConnection`` of ``robot`` serves to a calibration tool, but its paths.
+
+    The one source: the connection's ``config_keys`` is this plus where each
+    arm's file is saved (``persist_paths``), and a plan made before anything
+    runs (``dimos arm calibrate --dry-run``) reads it without a connection.
+    It floats a joint only when the robot compensates gravity.
+    """
+    ids = robot.arm_ids()
+    arms = (
+        {
+            arm_id: [motor.name for motor in bus.arm]
+            for arm_id, bus in zip(ids, robot.buses, strict=True)
+        }
+        if ids
+        else {}
+    )
+    return ConfigKeys(
+        source=source,
+        sessions=True,
+        arms=arms,
+        readable=["gains", "links", "torque_offset_nm"],
+        session=["gains", *(["float"] if robot.gravity else []), "torque_offset_nm"],
+        persist=["gains", "links", "fit", "friction_nm", "checks", "notes"],
+        gravity_compensation=robot.gravity,
+    )
 
 
 def with_midline_keep_outs(specs: Sequence[ArmCalibrationSpec]) -> list[ArmCalibrationSpec]:

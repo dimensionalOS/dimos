@@ -453,11 +453,19 @@ def test_the_config_contract_round_trip(start, boundary, calibration_root):
     module.config_reset()
 
 
-def test_a_plan_made_before_the_run_expects_what_the_connection_reports(start, boundary):
+@pytest.mark.parametrize("gravity", [True, False], ids=["gravity", "no-gravity"])
+def test_a_plan_made_before_the_run_expects_what_the_connection_reports(
+    start, boundary, rig_class, gravity
+):
+    class Robot(rig_class):
+        robot = replace(RIG, gravity=gravity)
+
     # dimos arm calibrate --dry-run plans from calibration_keys, asking no connection.
-    expected = calibration_keys(RIG)
-    keys = start(config_sessions=True).config_keys()
+    expected = calibration_keys(Robot.robot)
+    keys = start(Robot, config_sessions=True).config_keys()
     assert keys.model_copy(update={"persist_paths": {}}) == expected
+    assert ("float" in keys.session) is gravity and keys.gravity_compensation is gravity
+    assert set(keys.persist_paths) == set(keys.arms) == {"rig/left", "rig/right"}
 
 
 def test_the_calls_that_change_the_arm_are_refused_unless_deployed_for_calibration(start, boundary):

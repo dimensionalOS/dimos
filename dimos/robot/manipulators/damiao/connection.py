@@ -90,7 +90,7 @@ from dimos.robot.manipulators.calibration.schema import (
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import model_name, model_sha256
+from dimos.robot.manipulators.calibration.spec import calibration_keys, model_name, model_sha256
 from dimos.robot.manipulators.damiao.arm import (
     MIT_KD_MAX,
     MIT_KP_MAX,
@@ -347,20 +347,15 @@ class DamiaoConnection(ConnectionModule):
                     raise RuntimeError(error)
 
     def _config_keys(self) -> ConfigKeys:
-        """Each arm's joints, and what a session and a save change; "float" needs gravity."""
-        arms = self._arm_joints_by_id()
-        gravity = self.robot.gravity
-        return ConfigKeys(
-            source=self.config.source,
-            sessions=self.config.config_sessions,
-            arms=arms,
-            readable=["gains", "links", "torque_offset_nm"],
-            session=["gains", *(["float"] if gravity else []), "torque_offset_nm"],
-            persist=["gains", "links", "fit", "friction_nm", "checks", "notes"],
-            persist_paths={
-                arm_id: str(calibration_path(arm_id, CALIBRATION_ROOT)) for arm_id in arms
-            },
-            gravity_compensation=gravity,
+        """``calibration_keys`` of the robot, and where each arm's file is saved."""
+        keys = calibration_keys(self.robot, self.config.source)
+        return keys.model_copy(
+            update={
+                "sessions": self.config.config_sessions,
+                "persist_paths": {
+                    arm_id: str(calibration_path(arm_id, CALIBRATION_ROOT)) for arm_id in keys.arms
+                },
+            }
         )
 
     def _config_state(self) -> dict[str, ArmConfigState]:

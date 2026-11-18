@@ -24,10 +24,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from dimos.control.connection.arm_config import ConfigKeys
 from dimos.robot.manipulators.calibration.spec import (
     ArmCalibrationSpec,
     arm_name,
+    calibration_keys as calibration_keys,
     specs_from_damiao_robot,
 )
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
@@ -59,34 +59,6 @@ _CUSTOM_SPECS: dict[str, Callable[[], list[ArmCalibrationSpec]]] = {
 def robot_id(robot: str) -> str:
     """The robot part of its arm ids, its ``DamiaoRobot.name``: ``dual-openyam`` -> ``dual_openyam``."""
     return robot.replace("-", "_")
-
-
-def calibration_keys(robot: DamiaoRobot, source: str = "arm") -> ConfigKeys:
-    """What the connection of ``robot``'s calibration blueprint says it serves, but its paths.
-
-    For a plan made before anything runs (``dimos arm calibrate --dry-run``);
-    a running connection says it itself (``config_keys``). This is what a
-    ``DamiaoConnection`` deployed with ``config_sessions=True`` reports: it
-    floats a joint only when the robot compensates gravity.
-    """
-    ids = robot.arm_ids()
-    arms = (
-        {
-            arm_id: [motor.name for motor in bus.arm]
-            for arm_id, bus in zip(ids, robot.buses, strict=True)
-        }
-        if ids
-        else {}
-    )
-    return ConfigKeys(
-        source=source,
-        sessions=True,
-        arms=arms,
-        readable=["gains", "links", "torque_offset_nm"],
-        session=["gains", *(["float"] if robot.gravity else []), "torque_offset_nm"],
-        persist=["gains", "links", "fit", "friction_nm", "checks", "notes"],
-        gravity_compensation=robot.gravity,
-    )
 
 
 def robot_specs(robot: str) -> list[ArmCalibrationSpec]:
