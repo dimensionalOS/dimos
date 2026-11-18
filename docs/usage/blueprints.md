@@ -117,22 +117,32 @@ default_mapping = mapping.solidify()
 voxel_mapping = mapping.solidify(choices={"PointClearing": "column_carving"})
 ```
 
-`mapping` is still a `Blueprint`. Methods such as `.global_config()`, `.namespace()`,
-`.remappings()` and `.hosted()` apply right away to its own modules and to every
-option, so a mistake raises where it is written, whichever option is later picked.
-A blueprint without choices is already solid: `solidify()` returns it unchanged.
-`ModuleCoordinator.build()` solidifies with the default choices; select others at launch:
+`mapping` is still a flat `Blueprint`: `autoconnect()` puts every option's modules
+in it, each marked with the option it belongs to, and `solidify()` keeps only the
+modules of the selected options. Methods such as `.global_config()`, `.namespace()`,
+`.remappings()` and `.hosted()` therefore see every option's modules, so a mistake
+raises where it is written. A blueprint without choices is already solid:
+`solidify()` returns it unchanged. `ModuleCoordinator.build()` solidifies with the
+default choices; select others at launch:
 
 ```bash
 dimos run mapping --choice PointClearing=column_carving
 ```
 
 Repeat `--choice NAME=OPTION` for multiple choices. A choice without a default
-uses its first option, so every blueprint runs without selections. Invalid options, unknown or inactive names, and repeated
-selections are errors. Nested choices are resolved only inside the picked option.
-Each choice name belongs to one `ChoiceAtom`; reusing that same atom in several
-places is fine, and one selection picks for all of them. The picked option is merged after the blueprint's
-own modules, so a module in both takes the option's arguments.
+uses its first option, so every blueprint runs without selections. Invalid
+options, unknown or inactive names, and repeated selections are errors. Nested
+choices are inactive unless their outer option is picked. Each choice name
+belongs to one `ChoiceAtom`; reusing that same atom in several places is fine,
+and one selection picks for all of them.
+
+Two rules keep options apart:
+
+- A module may sit under only one option, and not also outside the choice. Give
+  each copy its own `instance_name` instead.
+- An option may not set `global_config`, transports, requirements, configurators
+  or `disabled_modules`; set them on the blueprint around the choice. Remappings
+  and `.hosted()` inside an option are fine.
 
 ## Publishing external blueprints
 

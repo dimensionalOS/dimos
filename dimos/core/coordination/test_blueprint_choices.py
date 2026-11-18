@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import pytest
 from pytest_mock import MockerFixture
 
@@ -22,7 +24,7 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import In, Out, Transport, TransportSpec
 from dimos.core.transport import LCMTransport
 from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
@@ -189,24 +191,41 @@ def test_shared_choice_can_be_reused_in_compositions(clearing: ChoiceAtom) -> No
     )
 
 
-def test_selected_branch_preserves_concrete_blueprint_behavior() -> None:
-    base = autoconnect(
-        VisModule.blueprint(), RaytracerModule.blueprint(tick_rate=1).hosted(host="old")
-    ).solidify()
+def test_option_keeps_its_own_remappings_and_placement() -> None:
     selected = (
         RaytracerModule.blueprint(tick_rate=2)
         .hosted(host="selected")
-        .global_config(n_workers=2)
-        .transports({("points", int): LCMTransport.spec("/selected", int)})
         .remappings([(RaytracerModule, "points", "cleared")])
     )
-    unselected = VoxelMapper.blueprint().global_config(n_workers=99).hosted(host="unused")
+    unselected = VoxelMapper.blueprint().hosted(host="unused")
     mapping = autoconnect(
-        base,
-        ChoiceAtom(name="Clearing", choices={"ray": selected, "voxel": unselected}, default="ray"),
+        VisModule.blueprint(),
+        ChoiceAtom(name="Clearing", choices={"ray": selected, "voxel": unselected}),
     )
 
-    assert mapping.solidify() == autoconnect(base, selected).solidify()
+    assert mapping.solidify() == autoconnect(VisModule.blueprint(), selected)
+    assert mapping.solidify(choices={"Clearing": "voxel"}) == autoconnect(
+        VisModule.blueprint(), unselected
+    )
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [
+        [ChoiceAtom(name="C", choices={"a": VisModule.blueprint(), "b": VisModule.blueprint()})],
+        [VisModule.blueprint(), ChoiceAtom(name="C", choices={"a": VisModule.blueprint()})],
+    ],
+)
+def test_rejects_a_module_under_two_conditions(parts: list[Blueprint | ChoiceAtom]) -> None:
+    with pytest.raises(ChoiceResolutionError, match="'vismodule'.*own instance_name"):
+        autoconnect(*parts)
+
+
+def test_rejects_blueprint_wide_settings_inside_an_option() -> None:
+    option = VoxelMapper.blueprint().global_config(n_workers=8)
+
+    with pytest.raises(ChoiceResolutionError, match="'voxel'.*outside the choice"):
+        autoconnect(ChoiceAtom(name="C", choices={"voxel": option}))
 
 
 @pytest.mark.parametrize(
@@ -296,8 +315,10 @@ def test_expose_may_name_a_stream_that_only_an_option_has() -> None:
     assert mapping.solidify().remapping_map == {}
 
 
-def test_deferred_arguments_are_snapshotted_and_reusable(clearing: ChoiceAtom) -> None:
-    transports = {("points", int): LCMTransport.spec("/points", int)}
+def test_arguments_are_snapshotted_and_reusable(clearing: ChoiceAtom) -> None:
+    transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
+        ("points", int): LCMTransport.spec("/points", int)
+    }
     remappings = [(VisModule, "points", "cleared")]
     tags = {"gpu": True}
     minimum = {"gpu_mem": 4.0}
