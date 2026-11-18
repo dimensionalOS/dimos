@@ -55,6 +55,9 @@ def _name(model: mujoco.MjModel, kind: mujoco.mjtObj, index: int) -> str:
 
 
 def test_checked_in_mjcf_is_the_generated_one(tmp_path: Path) -> None:
+    # MuJoCo's asset cache keeps each mesh file's type from earlier compiles in
+    # this process, and the written MJCF would carry it; a fresh run has none.
+    mujoco.mj_clearCache(mujoco.mj_getCache())
     write_metal_mjcf(tmp_path / "metal.xml")
     assert (tmp_path / "metal.xml").read_text() == METAL_MJCF_PATH.read_text()
 
