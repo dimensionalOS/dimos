@@ -20,8 +20,11 @@ import pytest
 from dimos.robot.manipulators.calibration.step_analysis import (
     SETTLE_BAND_DEG,
     StepEvent,
+    StepMetrics,
     analyze_step,
+    format_proposals,
     format_table,
+    propose_gains,
     segment_steps,
 )
 
@@ -143,3 +146,62 @@ def test_table_lists_every_step_with_a_verdict() -> None:
     assert table.count("| left_joint1 |") == 2
     assert "| ok |" in table
     assert "| FAIL |" in table  # the -1 step evaluated against a +1 response never settles
+
+
+# Gain proposal
+
+
+def _sweep_step(joint: str, kp: float, kd: float, delta: float) -> StepMetrics:
+    """A step whose response stiffens with kp: overdamped low, ringing high."""
+    if kp <= 40.0:
+        t, y, dy = _first_order(delta, tau=0.3)  # too soft: settles in about 0.7 s
+    elif kp <= 120.0:
+        t, y, dy = _first_order(delta, tau=0.05)
+    else:
+        t, y, dy = _second_order(delta, wn=60.0, zeta=0.25)  # rings: ~44 % overshoot
+    return analyze_step(_event(delta, joint=joint, kp=kp, kd=kd), t, y, dy)
+
+
+def test_propose_gains_picks_the_highest_passing_kp_and_explains_the_rest() -> None:
+    candidates = [(40.0, 2.0), (80.0, 5.0), (120.0, 5.0), (160.0, 5.0), (200.0, 5.0)]
+    steps = [
+        _sweep_step("arm/joint2", kp, kd, delta)
+        for kp, kd in candidates[:4]
+        for delta in (1.0, -1.0, 3.0, -3.0)
+    ]
+    proposal = propose_gains(steps, candidates)["arm/joint2"]
+    assert proposal.gains == (120.0, 5.0)
+    assert "highest kp" in proposal.reason and "4 step(s) all pass" in proposal.reason
+    assert set(proposal.rejected) == {"kp=160 kd=5", "kp=200 kd=5"}
+    assert "overshot" in proposal.rejected["kp=160 kd=5"]
+    assert proposal.rejected["kp=200 kd=5"] == "not tested"
+    # Without explicit candidates every tested pair counts.
+    assert propose_gains(steps)["arm/joint2"].gains == (120.0, 5.0)
+    text = format_proposals(propose_gains(steps))
+    assert "arm/joint2: kp=120 kd=5" in text and "kp=160 kd=5 rejected" in text
+
+
+def test_propose_gains_needs_every_step_to_pass() -> None:
+    good = _sweep_step("j", 80.0, 5.0, 1.0)
+    t, y, dy = _first_order(1.0, 0.05)
+    stuck = analyze_step(_event(-1.0, joint="j", kp=120.0, kd=5.0), t, 10.0 - (y - 10.0) + 0.3, -dy)
+    fine = analyze_step(_event(1.0, joint="j", kp=120.0, kd=5.0), t, y, dy)
+    proposal = propose_gains([good, stuck, fine])["j"]
+    assert proposal.gains == (80.0, 5.0)
+    assert "off target" in proposal.rejected["kp=120 kd=5"]
+
+
+def test_propose_gains_prefers_the_faster_kd_at_equal_kp_and_reports_none_passing() -> None:
+    t = np.arange(0.0, HOLD_S, DT)
+    slow = _first_order(1.0, 0.08)
+    fast = _first_order(1.0, 0.04)
+    steps = [
+        analyze_step(_event(1.0, joint="j", kp=80.0, kd=2.0), t, slow[1], slow[2]),
+        analyze_step(_event(1.0, joint="j", kp=80.0, kd=5.0), t, fast[1], fast[2]),
+    ]
+    assert propose_gains(steps)["j"].gains == (80.0, 5.0)
+    ringing = _second_order(1.0, wn=60.0, zeta=0.2)
+    failing = [analyze_step(_event(1.0, joint="k", kp=300.0, kd=1.0), t, ringing[1], ringing[2])]
+    none = propose_gains(failing)["k"]
+    assert none.gains is None and none.kp is None
+    assert "no candidate passed" in none.reason and "kp=300 kd=1" in none.rejected

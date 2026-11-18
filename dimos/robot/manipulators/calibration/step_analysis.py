@@ -12,17 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step-response metrics for one joint (END-310).
+"""Step-response metrics for one joint, and the gains they argue for.
 
-Everything here works on plain arrays in degrees and seconds so it can be
-tested on synthetic responses and reused by the offline report. A step passes
-when a 1 deg command settles within 0.5 s to within 0.1 deg, overshoots less
-than 20 % and leaves the joint quiet at rest.
+Everything here works on plain arrays in degrees and seconds, keyed by joint
+name, so it can be tested on synthetic responses and reused by the offline
+report for any arm. A step passes when it settles within 0.5 s to within
+0.1 deg, overshoots less than 20 % and leaves the joint quiet at rest.
+``propose_gains`` picks, per joint, the stiffest tried gains whose steps all
+pass, and says why the stiffer ones did not.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
+from dataclasses import asdict, dataclass, field
 import json
 import math
 from typing import Any
@@ -78,13 +82,33 @@ class StepMetrics:
 
     @property
     def passed(self) -> bool:
-        return (
-            self.settle_time_s is not None
-            and self.settle_time_s <= SETTLE_TIME_LIMIT_S
-            and self.overshoot_pct < OVERSHOOT_LIMIT_PCT
-            and abs(self.steady_state_error_deg) <= SETTLE_BAND_DEG
-            and self.buzz_rms_deg_s < BUZZ_RMS_LIMIT_DEG_S
-        )
+        return not self.failures()
+
+    def failures(self) -> list[str]:
+        """Why this step fails the pass criteria, in plain words; empty when it passes."""
+        reasons: list[str] = []
+        step = f"{self.delta_deg:+g} deg step"
+        if self.settle_time_s is None:
+            reasons.append(f"{step} never settled within {SETTLE_BAND_DEG:g} deg")
+        elif self.settle_time_s > SETTLE_TIME_LIMIT_S:
+            reasons.append(
+                f"{step} settled in {self.settle_time_s:.2f} s (limit {SETTLE_TIME_LIMIT_S:g} s)"
+            )
+        if self.overshoot_pct >= OVERSHOOT_LIMIT_PCT:
+            reasons.append(
+                f"{step} overshot {self.overshoot_pct:.0f} % (limit {OVERSHOOT_LIMIT_PCT:g} %)"
+            )
+        if abs(self.steady_state_error_deg) > SETTLE_BAND_DEG:
+            reasons.append(
+                f"{step} rests {self.steady_state_error_deg:+.2f} deg off target "
+                f"(limit {SETTLE_BAND_DEG:g} deg)"
+            )
+        if self.buzz_rms_deg_s >= BUZZ_RMS_LIMIT_DEG_S:
+            reasons.append(
+                f"{step} buzzes at {self.buzz_rms_deg_s:.1f} deg/s RMS "
+                f"(limit {BUZZ_RMS_LIMIT_DEG_S:g} deg/s)"
+            )
+        return reasons
 
     def as_row(self) -> dict[str, Any]:
         row = asdict(self)
@@ -212,3 +236,106 @@ def format_table(metrics: list[StepMetrics]) -> str:
 
 def _fmt(value: float | None) -> str:
     return "never" if value is None else f"{value:.3f}"
+
+
+@dataclass(frozen=True)
+class GainProposal:
+    """The gains ``propose_gains`` picked for one joint, and why.
+
+    Attributes:
+        joint: The joint.
+        kp: The chosen position gain, or ``None`` when no candidate passed.
+        kd: The chosen velocity gain, or ``None`` when no candidate passed.
+        reason: One line on the choice.
+        rejected: Why each stiffer (or every) candidate was not chosen, by
+            ``gain_label``.
+    """
+
+    joint: str
+    kp: float | None
+    kd: float | None
+    reason: str
+    rejected: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def gains(self) -> tuple[float, float] | None:
+        if self.kp is None or self.kd is None:
+            return None
+        return (self.kp, self.kd)
+
+
+def propose_gains(
+    step_results: Iterable[StepMetrics],
+    candidates: Sequence[tuple[float, float]] | None = None,
+) -> dict[str, GainProposal]:
+    """Per joint, the highest kp (with its kd) among ``candidates`` whose steps all pass.
+
+    Candidates are ``(kp, kd)`` pairs; by default every pair with a recorded
+    step. A candidate qualifies when it has at least one step on the joint and
+    every one of them passes (settles under 0.5 s to 0.1 deg, overshoots under
+    20 %, rests on target and does not buzz). Among qualifying candidates the
+    highest kp wins; when several kd values qualify at that kp, the one with the
+    shortest worst settle time wins, then the lower kd.
+    """
+    by_joint: dict[str, dict[tuple[float, float], list[StepMetrics]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for metrics in step_results:
+        by_joint[metrics.joint][(metrics.kp, metrics.kd)].append(metrics)
+    proposals: dict[str, GainProposal] = {}
+    for joint, by_gains in by_joint.items():
+        pairs = sorted(
+            set(by_gains) if candidates is None else {(float(p), float(d)) for p, d in candidates}
+        )
+        rejected: list[tuple[float, float, str]] = []
+        passing: list[tuple[float, float, float]] = []
+        for kp, kd in pairs:
+            steps = by_gains.get((kp, kd), [])
+            if not steps:
+                rejected.append((kp, kd, "not tested"))
+                continue
+            failures = [reason for step in steps for reason in step.failures()]
+            if failures:
+                rejected.append((kp, kd, "; ".join(failures)))
+                continue
+            worst_settle = max(step.settle_time_s or 0.0 for step in steps)
+            passing.append((kp, kd, worst_settle))
+        if not passing:
+            proposals[joint] = GainProposal(
+                joint,
+                None,
+                None,
+                "no candidate passed every step",
+                {gain_label(kp, kd): why for kp, kd, why in rejected},
+            )
+            continue
+        best_kp = max(kp for kp, _, _ in passing)
+        kp, kd, settle = min(
+            (entry for entry in passing if entry[0] == best_kp), key=lambda e: (e[2], e[1])
+        )
+        steps = by_gains[(kp, kd)]
+        reason = (
+            f"{gain_label(kp, kd)}: highest kp whose {len(steps)} step(s) all pass "
+            f"(worst settle {settle:.2f} s, overshoot {max(s.overshoot_pct for s in steps):.0f} %, "
+            f"buzz {max(s.buzz_rms_deg_s for s in steps):.2f} deg/s)"
+        )
+        stiffer = {
+            gain_label(other_kp, other_kd): why
+            for other_kp, other_kd, why in rejected
+            if other_kp >= kp
+        }
+        proposals[joint] = GainProposal(joint, kp, kd, reason, stiffer)
+    return proposals
+
+
+def format_proposals(proposals: dict[str, GainProposal]) -> str:
+    """Markdown list: the chosen gains per joint and why stiffer candidates lost."""
+    if not proposals:
+        return "(no steps)"
+    lines: list[str] = []
+    for joint in sorted(proposals):
+        proposal = proposals[joint]
+        lines.append(f"- {joint}: {proposal.reason}")
+        for label, why in proposal.rejected.items():
+            lines.append(f"  - {label} rejected: {why}")
+    return "\n".join(lines)
