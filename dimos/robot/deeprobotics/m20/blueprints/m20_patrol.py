@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20 undocking, walking away, returning and docking again, driven by the Orchestrator."""
+"""The M20 patrolling the premap's named locations and docking from each in turn, driven by the Orchestrator."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.orchestration.orchestrator import Orchestrator
 from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
 
-m20_dock_cycle = autoconnect(
+m20_patrol = autoconnect(
     m20,
-    Orchestrator.blueprint(),
+    Orchestrator.blueprint(file=Path(__file__).parent / "m20_patrol.toml"),
 )

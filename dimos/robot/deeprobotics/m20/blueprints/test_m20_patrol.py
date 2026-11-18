@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The dock cycle file fits the modules it drives, and walks five cycles off and back on the dock."""
+"""The patrol file fits the modules it drives, and docks once from every goal before it finishes."""
 
 from collections import deque
 from collections.abc import Sequence
-import math
 from pathlib import Path
 
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
+from dimos_lcm.sensor_msgs import BatteryState as LCMBatteryState
 from dimos_lcm.std_msgs import Time
 
 from dimos.core.introspection.module.info import extract_rpc_info
+from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind
@@ -44,8 +46,19 @@ from dimos.orchestration.loader import load_and_check
 from dimos.orchestration.plain import field_to_plain, to_plain
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 
-DOCK_CYCLE = Path(__file__).parent / "m20_dock_cycle.toml"
-MODULES = (MLSPlannerNative, M20Connection)
+PATROL = Path(__file__).parent / "m20_patrol.toml"
+MODULES = (MLSPlannerNative, M20Connection, LocalMapRelocalization)
+GOALS = [
+    "couches",
+    "workshop",
+    "lobby",
+    "common_area",
+    "side_entrance",
+    "bathroom",
+    "garage",
+    "flag",
+    "robot_area",
+]
 
 
 def _checked() -> CheckedDefinition:
@@ -56,61 +69,46 @@ def _checked() -> CheckedDefinition:
             for module in MODULES
             for name, fn in module.rpcs.items()
         },
-        streams={"MLSPlannerNative.nav_status": GoalStatus, "M20Connection.odom": PoseStamped},
+        streams={
+            "MLSPlannerNative.nav_status": GoalStatus,
+            "M20Connection.battery": BatteryState,
+        },
     )
-    return bind(load_and_check(DOCK_CYCLE), deployed)
+    return bind(load_and_check(PATROL), deployed)
 
 
-def test_the_dock_cycle_file_fits_the_planner_and_the_connection() -> None:
+def test_the_patrol_file_fits_the_planner_the_connection_and_the_relocalizer() -> None:
     assert _checked().problems == ()
 
 
-def _pose(x: float, y: float, z: float, yaw_deg: float) -> PoseStamped:
-    half_yaw = math.radians(yaw_deg) / 2
-    return PoseStamped(
-        frame_id="map",
-        position=[x, y, z],
-        orientation=[0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw)],
-    )
-
-
-# On the dock at (2, 1) facing 30 degrees. The undock leaves the robot 1.2 m back along the
-# dock's axis, 0.4 m to its left and turned to 40 degrees.
-DOCKED = _pose(2.0, 1.0, 0.2, 30.0)
-UNDOCKED = _pose(0.7608, 0.7464, 0.48, 40.0)
-
-
-def _odom(pose: PoseStamped) -> StreamItem:
+def _battery(status: int) -> StreamItem:
+    state = BatteryState(voltage=80.0, percentage=1.0, power_supply_status=status)
     values = {
-        "odom_header": field_to_plain(pose, "header"),
-        "odom_pose": field_to_plain(pose, "pose"),
+        "battery": field_to_plain(state, "percentage"),
+        "power": field_to_plain(state, "power_supply_status"),
     }
-    return StreamItem("M20Connection.odom", values)
+    return StreamItem("M20Connection.battery", values)
 
 
-def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], list[FaultReport]]:
+def _walk() -> tuple[list[str], list[TransitionRecord], list[FaultReport]]:
+    """Run the file from the charger with every goal, dock and undock succeeding."""
     checked = _checked()
     calls: list[str] = []
     records: list[TransitionRecord] = []
     faults: list[FaultReport] = []
-    queue: deque[QueueItem] = deque()
+    queue: deque[QueueItem] = deque([_battery(LCMBatteryState.POWER_SUPPLY_STATUS_CHARGING)])
 
     def perform(effects: Sequence[Effect]) -> None:
-        nonlocal docks_that_raise
         for effect in effects:
             match effect:
-                case TransitionRecord(goto=goto):
+                case TransitionRecord():
                     records.append(effect)
-                    if goto == "OnDock":
-                        queue.append(_odom(DOCKED))
+                case SendStart(call) if call.rpc == "LocalMapRelocalization.location":
+                    name = str(call.args["name"])
+                    calls.append(name)
+                    pose = PoseStamped(frame_id="premap", position=[len(calls), 0.0, 0.0])
+                    queue.append(ReturnItem(call, to_plain(pose)))
                 case SendStart(call) if call.rpc == "MLSPlannerNative.go_to":
-                    goal = call.args["pose"]
-                    position = goal["pose"]["position"]
-                    calls.append(
-                        f"go_to({goal['header']['frame_id']}, {position['x']:.2f}, "
-                        f"{position['y']:.2f}, {position['z']:.2f})"
-                    )
-                    # Each goal's stamp is its place in the calls made, and every goal is reached.
                     stamp = Time(len(calls), 0)
                     queue.append(ReturnItem(call, to_plain(stamp)))
                     status = GoalStatus(goal_id=GoalID(stamp=stamp), status=GoalStatus.SUCCEEDED)
@@ -121,21 +119,19 @@ def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], lis
                     queue.append(StreamItem("MLSPlannerNative.nav_status", reached))
                 case SendStart(call) if call.rpc == "M20Connection.undock":
                     calls.append("undock")
-                    queue.append(_odom(UNDOCKED))
+                    queue.append(_battery(LCMBatteryState.POWER_SUPPLY_STATUS_DISCHARGING))
                     queue.append(ReturnItem(call))
                 case SendStart(call) if call.rpc == "M20Connection.dock":
                     calls.append("dock")
-                    queue.append(ReturnItem(call, raised=docks_that_raise > 0))
-                    docks_that_raise -= 1
+                    queue.append(_battery(LCMBatteryState.POWER_SUPPLY_STATUS_CHARGING))
+                    queue.append(ReturnItem(call))
                 case SendStart(call) | SendCancel(call):
-                    calls.append(call.rpc.split(".")[1])
                     queue.append(ReturnItem(call))
                 case SetTimer(timer):
                     queue.append(TimerItem(timer))
                 case FaultReport():
                     faults.append(effect)
 
-    queue.append(_odom(DOCKED))
     runtime, effects = engine.start(checked, 0.0)
     perform(effects)
     while queue:
@@ -144,39 +140,26 @@ def _walk(docks_that_raise: int) -> tuple[list[str], list[TransitionRecord], lis
     return calls, records, faults
 
 
-# All three spots sit on the dock's axis, the predock spot level with the undock spot and
-# positions A and B 4 m and 8 m behind it.
-GOING_OUT = [
-    "go_to(map, -2.50, -1.60, 0.00)",
-    "stop_navigation",
-    "go_to(map, -5.97, -3.60, 0.00)",
-    "stop_navigation",
-]
-COMING_BACK = [
-    "go_to(map, -2.50, -1.60, 0.00)",
-    "stop_navigation",
-    "go_to(map, 0.96, 0.40, 0.00)",
-    "stop_navigation",
-    "dock",
-]
-
-
-def test_the_robot_docks_five_times_and_the_mission_ends() -> None:
-    calls, records, faults = _walk(docks_that_raise=0)
+def test_the_robot_docks_once_from_every_goal_then_stays_on_the_charger() -> None:
+    calls, records, faults = _walk()
 
     assert faults == []
-    assert calls == ["undock", *GOING_OUT, *COMING_BACK] * 5
-    assert records[-1] == TransitionRecord("NextCycle", None, "done")
+    # Each cycle walks the loop plus one goal, so cycle n docks from goal n.
+    expected = []
+    for cycle in range(len(GOALS)):
+        loop = [
+            GOALS[(cycle * (len(GOALS) + 1) + step) % len(GOALS)] for step in range(len(GOALS) + 1)
+        ]
+        expected += ["undock", *loop, "dock_approach", "predock", "dock"]
+    assert calls == expected
+    assert [loop[-4] for loop in _cycles(calls)] == GOALS
+    assert records[-1] == TransitionRecord("TopUp", "if cycle.count >= size(goals)", "Finished")
 
 
-def test_a_dock_that_keeps_failing_is_tried_three_times_then_faults() -> None:
-    calls, records, faults = _walk(docks_that_raise=3)
-
-    # Each failed dock approaches again from position A.
-    assert calls[: 1 + len(GOING_OUT) + 3 * len(COMING_BACK)] == [
-        "undock",
-        *GOING_OUT,
-        *COMING_BACK * 3,
-    ]
-    assert [record.node for record in records].count("Docking") == 3
-    assert len(faults) == 1
+def _cycles(calls: list[str]) -> list[list[str]]:
+    cycles: list[list[str]] = []
+    for call in calls:
+        if call == "undock":
+            cycles.append([])
+        cycles[-1].append(call)
+    return cycles
