@@ -23,6 +23,7 @@ from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop import (
+    dual_openyam_joycon_leader_teleop,
     dual_openyam_leader_teleop,
 )
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
@@ -51,7 +52,9 @@ def dual_openyam_collection_camera(name: str) -> Blueprint:
     )
 
 
-def dual_openyam_leader_collection_profile() -> CollectionProfile:
+def dual_openyam_leader_collection_profile(
+    cameras: tuple[str, ...] = DUAL_OPENYAM_CAMERAS,
+) -> CollectionProfile:
     state = FeatureSpec(
         stream="coordinator_joint_state",
         message_type=JointState,
@@ -71,7 +74,7 @@ def dual_openyam_leader_collection_profile() -> CollectionProfile:
                     shape=(480, 640, 3),
                     names=["height", "width", "channels"],
                 )
-                for camera in DUAL_OPENYAM_CAMERAS
+                for camera in cameras
             },
             "observation.state": state,
         },
@@ -90,10 +93,26 @@ def dual_openyam_leader_collection_profile() -> CollectionProfile:
     )
 
 
+def _collection_parts(cameras: tuple[str, ...]) -> tuple[Blueprint, ...]:
+    """The recorder, episode monitor and cameras every collection blueprint shares."""
+    return (
+        collect(profile=dual_openyam_leader_collection_profile(cameras)),
+        EpisodeMonitorModule.blueprint(instance_name="episodes"),
+        *[dual_openyam_collection_camera(name) for name in cameras],
+    )
+
+
 # The leaders have no buttons; episodes are marked with dimos imitation control.
 learning_collect_leader_dual_openyam = autoconnect(
-    collect(profile=dual_openyam_leader_collection_profile()),
-    EpisodeMonitorModule.blueprint(instance_name="episodes"),
-    dual_openyam_leader_teleop,
-    *[dual_openyam_collection_camera(name) for name in DUAL_OPENYAM_CAMERAS],
+    *_collection_parts(DUAL_OPENYAM_CAMERAS), dual_openyam_leader_teleop
+)
+
+# Joy-Con B starts and saves an episode, Y discards it.
+learning_collect_joycon_leader_dual_openyam = autoconnect(
+    *_collection_parts(DUAL_OPENYAM_CAMERAS), dual_openyam_joycon_leader_teleop
+)
+
+# The same without cameras, for a PC or sim.
+learning_collect_joycon_leader_dual_openyam_nocam = autoconnect(
+    *_collection_parts(()), dual_openyam_joycon_leader_teleop
 )

@@ -66,7 +66,10 @@ joint_1 to joint_6 per leader (`DualOpenYamLeaderArmConnection`) and a Joy-Con
 per side drives the jaws and a pause. The buttons, the pause behaviour and the
 Bluetooth pairing are the same as for the
 [OpenArm Mini](/docs/capabilities/manipulation/openarm_mini_teleop.md#joy-cons-in-place-of-the-triggers):
-ZL / ZR held close the left / right jaw, plus pauses and resumes following.
+plus pauses and resumes following. Unlike the OpenArm Mini, the jaw is held in place
+unless a button is down: ZL / ZR held close the left / right jaw, L / R held open
+it, and releasing both keeps the opening, so a partial grip stays (both held also
+holds). A button already held when a Joy-Con connects is ignored until pressed again.
 Pair each Joy-Con once with `dimos/hardware/controllers/joycon/pair_joycon.sh L` (then `R`).
 
 Each calibration file must list only joint_1 to joint_6. To reuse files that
@@ -96,6 +99,10 @@ dimos run learning-collect-leader-dual-openyam --config workcell.json \
   --left-serial-port /dev/ttyACM1 --right-serial-port /dev/ttyACM0 \
   --left-can-port follower_l --right-can-port follower_r
 ```
+
+`learning-collect-joycon-leader-dual-openyam` records the same on the Joy-Con
+leaders: Joy-Con B starts and saves an episode, Y discards it.
+`learning-collect-joycon-leader-dual-openyam-nocam` records without cameras.
 
 The recorder refuses an existing recording directory, so give every run a
 new name. `observation.state` is the coordinator's measured joint state and
