@@ -55,6 +55,7 @@ OUTPUTS = (
     "calibration_status",
 )
 RECORDED_STEPS = ("gravity_poses", "gravity_fit", "step_sweep", "pick_gains")
+BENCH = {"floor_z_m": -0.03, "min_x_m": 0.15}
 
 
 def _plain(value: Any) -> Any:
@@ -75,7 +76,7 @@ def make_module(
     def make(
         connection: Any = None, **config: Any
     ) -> tuple[CalibrationModule, dict[str, LocalTransport]]:
-        module = CalibrationModule(robot="dual-openyam", arm="left", **config)
+        module = CalibrationModule(robot="dual-openyam", arm="left", **{**BENCH, **config})
         outputs = {name: LocalTransport() for name in OUTPUTS}
         for name, transport in outputs.items():
             module.set_transport(name, transport)
