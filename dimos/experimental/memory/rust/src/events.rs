@@ -26,8 +26,10 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::store::{Observation, RecordingStore};
-use crate::window::{sync_dir, ClosedSegment, DoneMarker, SegmentReader, SegmentWriter, Syncer};
+use crate::store::{Observation, RecordingStore, RecordingStoreConfig};
+use crate::window::{
+    sync_dir, ClosedSegment, DoneMarker, SegmentReader, SegmentWriter, Syncer, WindowManifest,
+};
 use crate::{StreamConfig, WRITE_BATCH_SIZE};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -115,6 +117,7 @@ impl EventWriter {
     /// Creates the window directory and starts the sync and store threads.
     pub fn start(
         config: &EventConfig,
+        store_config: &RecordingStoreConfig,
         streams: &[StreamConfig],
         store: Box<dyn RecordingStore>,
     ) -> Result<Self> {
@@ -128,6 +131,11 @@ impl EventWriter {
         fs::create_dir(&dir)
             .with_context(|| format!("failed to create window directory {}", dir.display()))?;
         sync_dir(&parent)?;
+        WindowManifest {
+            store: store_config.clone(),
+            streams: streams.to_vec(),
+        }
+        .write(&dir)?;
         let marker = DoneMarker::create(&dir)?;
         let segment = SegmentWriter::create(&dir, 0)?;
         let syncer = Syncer::start(
@@ -144,6 +152,7 @@ impl EventWriter {
                 .map(|stream| config.periods[&stream.name])
                 .collect(),
             last_kept: vec![f64::NEG_INFINITY; streams.len()],
+            stored: vec![0; streams.len()],
             clips: Clips::new(config.pre_s, config.post_s, config.max_clip_s),
             pre_s: config.pre_s,
             marker,
@@ -338,6 +347,7 @@ struct StoreWriter {
     streams: Vec<Arc<StreamConfig>>,
     periods: Vec<f64>,
     last_kept: Vec<f64>,
+    stored: Vec<u64>,
     clips: Clips,
     pre_s: f64,
     marker: DoneMarker,
@@ -388,13 +398,8 @@ impl StoreWriter {
                 continue;
             }
             self.last_kept[stream] = time;
-            batch.push(Observation {
-                stream: Arc::clone(&self.streams[stream]),
-                source_ts: record.source_ts,
-                reception_ts: record.reception_ts,
-                monotonic_ts: time,
-                data: record.data,
-            });
+            self.stored[stream] += 1;
+            batch.push(record.into_observation(Arc::clone(&self.streams[stream])));
             if batch.len() >= WRITE_BATCH_SIZE {
                 self.flush_batch(&mut batch)?;
             }
@@ -407,7 +412,7 @@ impl StoreWriter {
         );
         self.flush_batch(&mut batch)?;
         self.store.sync()?;
-        self.marker.write(segment.index)?;
+        self.marker.write(segment.index, &self.stored)?;
         fs::remove_file(&segment.path)
             .with_context(|| format!("failed to delete {}", segment.path.display()))
     }

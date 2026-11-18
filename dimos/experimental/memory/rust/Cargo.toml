@@ -14,6 +14,7 @@ dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 lz4_flex = "0.14.0"
 mcap = { version = "0.25.0", default-features = false, features = ["zstd"] }
+memmap2 = "0.9"
 rayon = "1"
 rusqlite = "0.40.2"
 serde = { version = "1", features = ["derive"] }

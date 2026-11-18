@@ -14,21 +14,26 @@
 
 //! On-disk window segments that hold recent observations before the main file.
 
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{unbounded, RecvTimeoutError, Sender};
+use serde::{Deserialize, Serialize};
 
-use crate::store::Observation;
+use crate::store::{Observation, RecordingStoreConfig};
+use crate::StreamConfig;
 
 const LENGTH_SIZE: usize = 4;
 const HEADER_SIZE: usize = LENGTH_SIZE + 2 + 3 * 8;
 const CRC_SIZE: usize = 4;
+const MANIFEST_FILE: &str = "recording.json";
+const DONE_FILE: &str = "done";
 
 /// One observation read back from a segment.
 pub(crate) struct Record {
@@ -37,6 +42,18 @@ pub(crate) struct Record {
     pub reception_ts: f64,
     pub monotonic_ts: f64,
     pub data: Vec<u8>,
+}
+
+impl Record {
+    pub fn into_observation(self, stream: Arc<StreamConfig>) -> Observation {
+        Observation {
+            stream,
+            source_ts: self.source_ts,
+            reception_ts: self.reception_ts,
+            monotonic_ts: self.monotonic_ts,
+            data: self.data,
+        }
+    }
 }
 
 /// A finished segment handed to the store thread.
@@ -50,6 +67,24 @@ pub(crate) struct ClosedSegment {
 
 pub(crate) fn segment_path(dir: &Path, index: u64) -> PathBuf {
     dir.join(format!("{index}.seg"))
+}
+
+/// Indexes of the segment files in `dir`, oldest first.
+pub(crate) fn segment_indexes(dir: &Path) -> Result<Vec<u64>> {
+    let mut indexes = Vec::new();
+    for entry in fs::read_dir(dir).with_context(|| format!("failed to list {}", dir.display()))? {
+        let path = entry?.path();
+        if path.extension() == Some("seg".as_ref()) {
+            if let Some(index) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str()?.parse().ok())
+            {
+                indexes.push(index);
+            }
+        }
+    }
+    indexes.sort_unstable();
+    Ok(indexes)
 }
 
 pub(crate) fn sync_dir(dir: &Path) -> Result<()> {
@@ -217,7 +252,42 @@ impl Iterator for SegmentReader {
     }
 }
 
-/// Index of the newest segment already durable in the main file.
+/// What recovery needs to reopen the recording: its store and its streams in segment index order.
+#[derive(Deserialize, Serialize)]
+pub(crate) struct WindowManifest {
+    pub store: RecordingStoreConfig,
+    pub streams: Vec<StreamConfig>,
+}
+
+impl WindowManifest {
+    pub fn write(&self, dir: &Path) -> Result<()> {
+        let path = dir.join(MANIFEST_FILE);
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("failed to create {}", path.display()))?;
+        serde_json::to_writer(&file, self)?;
+        file.sync_data()
+            .with_context(|| format!("failed to sync {}", path.display()))?;
+        sync_dir(dir)
+    }
+
+    pub fn read(dir: &Path) -> Result<Self> {
+        let path = dir.join(MANIFEST_FILE);
+        let bytes =
+            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        serde_json::from_slice(&bytes).with_context(|| format!("invalid {}", path.display()))
+    }
+}
+
+/// The newest segment durable in the store file, and how many observations of each stream it holds.
+pub(crate) struct Done {
+    pub segment: u64,
+    pub stored: Vec<u64>,
+}
+
+/// Records `Done` in two crc-checked slots, written alternately so a torn write leaves the other intact.
 pub(crate) struct DoneMarker {
     file: File,
 }
@@ -225,7 +295,7 @@ pub(crate) struct DoneMarker {
 impl DoneMarker {
     /// Creates the empty marker file and syncs the directory.
     pub fn create(dir: &Path) -> Result<Self> {
-        let path = dir.join("done");
+        let path = dir.join(DONE_FILE);
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -235,13 +305,49 @@ impl DoneMarker {
         Ok(Self { file })
     }
 
-    /// Records `index` as done, overwriting the previous index in place.
-    pub fn write(&mut self, index: u64) -> Result<()> {
-        self.file.write_all_at(&index.to_le_bytes(), 0)?;
+    /// Records that `segment` is stored and the store file holds `stored` observations per stream.
+    pub fn write(&mut self, segment: u64, stored: &[u64]) -> Result<()> {
+        let mut slot = Vec::with_capacity(slot_size(stored.len()));
+        slot.extend_from_slice(&segment.to_le_bytes());
+        for count in stored {
+            slot.extend_from_slice(&count.to_le_bytes());
+        }
+        slot.extend_from_slice(&crc32fast::hash(&slot).to_le_bytes());
+        self.file
+            .write_all_at(&slot, segment % 2 * slot.len() as u64)?;
         self.file
             .sync_data()
             .context("failed to sync the window done marker")
     }
+
+    /// Reads the newest intact slot, or `None` before any segment was stored.
+    pub fn read(dir: &Path, streams: usize) -> Result<Option<Done>> {
+        let path = dir.join(DONE_FILE);
+        let bytes =
+            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        Ok(bytes
+            .chunks_exact(slot_size(streams))
+            .filter_map(|slot| {
+                let (body, crc) = slot.split_at(slot.len() - CRC_SIZE);
+                if crc32fast::hash(body) != u32::from_le_bytes(crc.try_into().ok()?) {
+                    return None;
+                }
+                let mut values = body
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .map(|value| u64::from_le_bytes(*value));
+                Some(Done {
+                    segment: values.next()?,
+                    stored: values.collect(),
+                })
+            })
+            .max_by_key(|done| done.segment))
+    }
+}
+
+fn slot_size(streams: usize) -> usize {
+    8 * (streams + 1) + CRC_SIZE
 }
 
 /// Background thread that syncs the open segment every interval.

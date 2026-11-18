@@ -15,11 +15,14 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::BufWriter;
+use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use mcap::records::MessageHeader;
+use anyhow::{ensure, Context, Result};
+use mcap::read::{ChunkFlattener, Options};
+use mcap::records::{MessageHeader, Record};
 use mcap::{Attachment, Compression, WriteOptions, Writer};
+use memmap2::Mmap;
 
 use super::{McapAttachmentConfig, Observation, RecordingStore};
 use crate::StreamConfig;
@@ -29,6 +32,7 @@ pub struct McapRecordingStore {
     file: File,
     channels: HashMap<String, u16>,
     sequences: HashMap<String, u32>,
+    crashed: Option<PathBuf>,
 }
 
 impl McapRecordingStore {
@@ -55,6 +59,84 @@ impl McapRecordingStore {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        Self::create(path, streams, compression_threads, &attachments)
+    }
+
+    /// Rewrites a crashed recording, keeping only the first `stored` messages of each stream.
+    /// The crashed file stays at `<path>.crashed` until `finish`, so a failed recovery can rerun.
+    pub fn recover(
+        path: &str,
+        streams: &[StreamConfig],
+        compression_threads: usize,
+        stored: &[u64],
+    ) -> Result<Self> {
+        let crashed = PathBuf::from(format!("{path}.crashed"));
+        if !crashed.exists() {
+            fs::rename(path, &crashed)
+                .with_context(|| format!("failed to move aside crashed {path}"))?;
+        }
+        let source = File::open(&crashed)
+            .with_context(|| format!("failed to open {}", crashed.display()))?;
+        // SAFETY: nothing else writes the crashed copy while it is mapped.
+        let bytes = unsafe { Mmap::map(&source) }
+            .with_context(|| format!("failed to map {}", crashed.display()))?;
+
+        let mut store = Self::create(path, streams, compression_threads, &[])?;
+        let mut channel_streams = HashMap::new();
+        let mut copied = vec![0; streams.len()];
+        for record in ChunkFlattener::new_with_options(&bytes, Options::IgnoreEndMagic.into())? {
+            let Ok(record) = record else {
+                break;
+            };
+            match record {
+                Record::Channel(channel) => {
+                    if let Some(index) = streams
+                        .iter()
+                        .position(|stream| stream.name == channel.topic)
+                    {
+                        channel_streams.insert(channel.id, index);
+                    }
+                }
+                Record::Attachment { header, data, .. } => {
+                    store.writer.attach(&Attachment {
+                        log_time: header.log_time,
+                        create_time: header.create_time,
+                        name: header.name,
+                        media_type: header.media_type,
+                        data,
+                    })?;
+                }
+                Record::Message { header, data } => {
+                    let Some(&index) = channel_streams.get(&header.channel_id) else {
+                        continue;
+                    };
+                    if copied[index] < stored[index] {
+                        store.write_message(
+                            &streams[index].name,
+                            header.log_time,
+                            header.publish_time,
+                            &data,
+                        )?;
+                        copied[index] += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        ensure!(
+            copied == stored,
+            "crashed MCAP holds {copied:?} of the {stored:?} stored messages"
+        );
+        store.crashed = Some(crashed);
+        Ok(store)
+    }
+
+    fn create(
+        path: &str,
+        streams: &[StreamConfig],
+        compression_threads: usize,
+        attachments: &[Attachment],
+    ) -> Result<Self> {
         let file = File::create(path).with_context(|| format!("failed to create {path}"))?;
         let sync_handle = file.try_clone()?;
         let options = WriteOptions::new()
@@ -64,7 +146,7 @@ impl McapRecordingStore {
             .compression_threads(compression_threads.try_into().unwrap_or(u32::MAX));
         let mut writer = Writer::with_options(BufWriter::new(file), options)?;
         for attachment in attachments {
-            writer.attach(&attachment).with_context(|| {
+            writer.attach(attachment).with_context(|| {
                 format!("failed to write MCAP attachment {:?}", attachment.name)
             })?;
         }
@@ -96,7 +178,30 @@ impl McapRecordingStore {
             file: sync_handle,
             channels,
             sequences: HashMap::new(),
+            crashed: None,
         })
+    }
+
+    fn write_message(
+        &mut self,
+        stream: &str,
+        log_time: u64,
+        publish_time: u64,
+        data: &[u8],
+    ) -> Result<()> {
+        let channel_id = self.channels[stream];
+        let sequence = self.sequences.entry(stream.to_string()).or_default();
+        self.writer.write_to_known_channel(
+            &MessageHeader {
+                channel_id,
+                sequence: *sequence,
+                log_time,
+                publish_time,
+            },
+            data,
+        )?;
+        *sequence = sequence.wrapping_add(1);
+        Ok(())
     }
 }
 
@@ -115,21 +220,12 @@ impl RecordingStore for McapRecordingStore {
                     observation.stream.name
                 )
             })?;
-            let channel_id = self.channels[&observation.stream.name];
-            let sequence = self
-                .sequences
-                .entry(observation.stream.name.clone())
-                .or_default();
-            self.writer.write_to_known_channel(
-                &MessageHeader {
-                    channel_id,
-                    sequence: *sequence,
-                    log_time,
-                    publish_time,
-                },
+            self.write_message(
+                &observation.stream.name,
+                log_time,
+                publish_time,
                 &observation.data,
             )?;
-            *sequence = sequence.wrapping_add(1);
         }
         Ok(())
     }
@@ -142,6 +238,11 @@ impl RecordingStore for McapRecordingStore {
 
     fn finish(&mut self) -> Result<()> {
         self.writer.finish().context("failed to finalize MCAP")?;
+        self.file.sync_data().context("failed to sync MCAP")?;
+        if let Some(crashed) = self.crashed.take() {
+            fs::remove_file(&crashed)
+                .with_context(|| format!("failed to delete {}", crashed.display()))?;
+        }
         Ok(())
     }
 }

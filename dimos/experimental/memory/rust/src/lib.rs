@@ -34,6 +34,7 @@ use crate::store::{Observation, RecordingStore};
 mod decoding;
 mod encoding;
 pub mod events;
+pub mod recovery;
 pub mod store;
 mod window;
 
@@ -398,6 +399,7 @@ impl Sink {
             RecordingMode::Continuous => Self::Direct(store),
             RecordingMode::Events(events) => Self::Events(Box::new(EventWriter::start(
                 events,
+                &config.store,
                 &config.streams,
                 store,
             )?)),
