@@ -12,25 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Offline float-test report from a ``dual_openyam_step_test`` recording.
+"""Offline float-test report from a recording of any known robot.
 
-    python -m dimos.robot.manipulators.calibration.float_report recordings/<run-id> [--plot]
+    python -m dimos.robot.manipulators.calibration.float_report recordings/<run-id> \
+        --robot dual-openyam [--plot]
 
 Reads ``memory.db``, cuts the joint stream at each ``float_events`` marker and
 prints, per pose, the fingertip drift over the window (mm, pass below 2 mm),
-the largest joint drift (deg) and which joint it was. Writes ``float_report/``
+the largest joint drift (deg) and which joint it was. Each marker's ``side``
+names the arm (``robots.arm_spec(robot, side)``). Writes ``float_report/``
 next to the database with ``poses.csv`` and ``report.md``; ``--plot`` adds one
-PNG per side of fingertip drift against time, one line per pose.
+PNG per arm of fingertip drift against time, one line per pose.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 import csv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import matplotlib
 import numpy as np
 import typer
 
@@ -46,8 +50,12 @@ from dimos.robot.manipulators.calibration.float_analysis import (
     format_table,
     segment_windows,
 )
-from dimos.robot.manipulators.calibration.gravity_poses import arm_joint_names
 from dimos.robot.manipulators.calibration.progress import ProgressBar
+from dimos.robot.manipulators.calibration.robots import arm_spec
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 JOINT_STATE_STREAM = "joint_state"
 FLOAT_EVENTS_STREAM = "float_events"
@@ -72,7 +80,7 @@ class FloatRecording:
 class WindowRecord:
     event: FloatEvent
     t: np.ndarray  # seconds since the marker
-    q_rad: np.ndarray  # (n, 6) in joint order 1..6
+    q_rad: np.ndarray  # (n, dof) in the arm's joint order
     metrics: DriftMetrics
 
 
@@ -90,7 +98,8 @@ def load_recording(recording_dir: Path) -> FloatRecording:
         stamps: list[float] = []
         positions: list[list[float]] = []
         joint_names: list[str] | None = None
-        for obs in store.stream(JOINT_STATE_STREAM):
+        state_stream: Any = store.stream(JOINT_STATE_STREAM)
+        for obs in state_stream:
             msg = obs.data
             if joint_names is None:
                 joint_names = list(msg.name)
@@ -101,7 +110,8 @@ def load_recording(recording_dir: Path) -> FloatRecording:
         t = np.asarray(stamps)
         order = np.argsort(t, kind="stable")
         q = np.asarray(positions)[order]
-        events = [FloatEvent.from_json(obs.data.data) for obs in store.stream(FLOAT_EVENTS_STREAM)]
+        event_stream: Any = store.stream(FLOAT_EVENTS_STREAM)
+        events = [FloatEvent.from_json(obs.data.data) for obs in event_stream]
     finally:
         store.stop()
     return FloatRecording(
@@ -110,24 +120,46 @@ def load_recording(recording_dir: Path) -> FloatRecording:
 
 
 def extract_windows(
-    recording: FloatRecording, models: dict[str, FingertipModel] | None = None
+    recording: FloatRecording,
+    models: dict[str, FingertipModel] | None = None,
+    resolve: Callable[[str], ArmCalibrationSpec] | None = None,
 ) -> list[WindowRecord]:
-    """One record per marker that has at least two samples inside its window."""
+    """One record per marker that has at least two samples inside its window.
+
+    ``models`` holds a fingertip model per marker ``side``; one missing is built
+    from ``resolve(side)``.
+    """
     models = {} if models is None else models
     records: list[WindowRecord] = []
     for event, start, stop in segment_windows(recording.events, float(recording.t[-1])):
         mask = (recording.t >= start) & (recording.t <= stop)
         if mask.sum() < 2:
             continue
-        names = arm_joint_names(event.side)
-        q = np.stack([recording.q_rad[name][mask] for name in names], axis=1)
-        t = recording.t[mask]
         model = models.get(event.side)
         if model is None:
-            model = models[event.side] = FingertipModel(event.side)
+            if resolve is None:
+                raise ValueError(f"no arm model for float markers on {event.side!r}")
+            model = models[event.side] = FingertipModel(resolve(event.side))
+        names = _recorded_names(recording, model.joint_names)
+        q = np.stack([recording.q_rad[name][mask] for name in names], axis=1)
+        t = recording.t[mask]
         metrics = analyze_window(model, event, t, q)
         records.append(WindowRecord(event=event, t=t - start, q_rad=q, metrics=metrics))
     return records
+
+
+def _recorded_names(recording: FloatRecording, joint_names: list[str]) -> list[str]:
+    """Recorded joint per arm joint: the same name, or one ``robot/`` prefix on it."""
+    names = []
+    for name in joint_names:
+        if name in recording.q_rad:
+            names.append(name)
+            continue
+        prefixed = [key for key in recording.q_rad if key.rsplit("/", 1)[-1] == name]
+        if len(prefixed) != 1:
+            raise ValueError(f"the recording has no single joint for {name!r}")
+        names.append(prefixed[0])
+    return names
 
 
 def write_tables(records: list[WindowRecord], out_dir: Path) -> tuple[Path, Path]:
@@ -141,7 +173,7 @@ def write_tables(records: list[WindowRecord], out_dir: Path) -> tuple[Path, Path
     passed = sum(m.passed for m in metrics)
     md_path = out_dir / "report.md"
     md_path.write_text(
-        "# Dual OpenYAM float (hand-teaching) test\n\n"
+        "# Float (hand-teaching) test\n\n"
         f"{len(metrics)} window(s); {passed} within {DRIFT_LIMIT_MM:g} mm at the fingertip.\n\n"
         + format_table(metrics)
         + "\n"
@@ -161,11 +193,6 @@ def _style(ax: Any) -> None:
 
 def plot_side(side: str, records: list[WindowRecord], model: FingertipModel, path: Path) -> None:
     """Fingertip drift against time for every window on ``side``, one line per pose."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     fig, ax = plt.subplots(figsize=(7.0, 3.8))
     fig.patch.set_facecolor(_SURFACE)
     _style(ax)
@@ -183,7 +210,7 @@ def plot_side(side: str, records: list[WindowRecord], model: FingertipModel, pat
     ax.set_ylabel("fingertip drift from start (mm)", fontsize=8, color=_INK)
     ax.legend(fontsize=8, frameon=False, loc="upper left")
     fig.suptitle(
-        f"{side} arm floating: fingertip drift (dotted: {DRIFT_LIMIT_MM:g} mm limit)",
+        f"{model.arm_id} floating: fingertip drift (dotted: {DRIFT_LIMIT_MM:g} mm limit)",
         fontsize=10,
         color=_INK,
         x=0.02,
@@ -194,8 +221,11 @@ def plot_side(side: str, records: list[WindowRecord], model: FingertipModel, pat
     plt.close(fig)
 
 
-def generate_report(recording_dir: Path, *, plot: bool = False) -> Path:
-    """Analyse a recording directory and write ``float_report/`` inside it."""
+def generate_report(recording_dir: Path, *, robot: str, plot: bool = False) -> Path:
+    """Analyse a recording directory and write ``float_report/`` inside it.
+
+    Each marker's ``side`` is an arm of ``robot`` (a ``robots.KNOWN_ROBOTS`` key).
+    """
     print(f"reading {recording_dir / 'memory.db'} ...", flush=True)
     recording = load_recording(recording_dir)
     if not recording.events:
@@ -205,7 +235,7 @@ def generate_report(recording_dir: Path, *, plot: bool = False) -> Path:
     models: dict[str, FingertipModel] = {}
     for side in sides:
         bar.update(text=f"load {side} arm model")
-        models[side] = FingertipModel(side)
+        models[side] = FingertipModel(arm_spec(robot, side))
     records = extract_windows(recording, models)
     if not records:
         bar.close()
@@ -230,10 +260,11 @@ def generate_report(recording_dir: Path, *, plot: bool = False) -> Path:
 @app.command()
 def main(
     recording_dir: Path = typer.Argument(..., help="recordings/<run-id> with a memory.db"),
-    plot: bool = typer.Option(False, "--plot", help="Also write a drift-vs-time PNG per side"),
+    robot: str = typer.Option(..., help="The robot that floated, e.g. dual-openyam"),
+    plot: bool = typer.Option(False, "--plot", help="Also write a drift-vs-time PNG per arm"),
 ) -> None:
     """Report the fingertip drift of each float window in a recording."""
-    out_dir = generate_report(recording_dir, plot=plot)
+    out_dir = generate_report(recording_dir, robot=robot, plot=plot)
     typer.echo((out_dir / "report.md").read_text())
     typer.echo(f"Wrote {out_dir}")
 

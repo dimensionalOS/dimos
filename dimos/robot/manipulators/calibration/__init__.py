@@ -12,4 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Arm calibration: gravity identification and gain analysis (ported from the OpenYAM bench)."""
+"""Arm calibration for any arm described by a robot model and an ``ArmCalibrationSpec``.
+
+``spec`` describes one arm, ``robots`` names the known Damiao robots,
+``gravity_poses`` and ``gravity_fit`` identify its link masses, ``step_analysis``
+and ``float_analysis`` judge its gains, and ``schema`` stores the result as one
+versioned calibration file per arm.
+"""

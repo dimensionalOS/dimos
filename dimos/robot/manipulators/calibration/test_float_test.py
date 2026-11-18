@@ -24,32 +24,21 @@ from dimos.robot.manipulators.calibration.float_analysis import (
     analyze_window,
     segment_windows,
 )
-from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_HOME_JOINTS
-from dimos.robot.manipulators.dual_openyam.joints import (
-    DUAL_OPENYAM_ARM_JOINTS,
-    DUAL_OPENYAM_LEFT_ARM_JOINTS,
-    DUAL_OPENYAM_RIGHT_ARM_JOINTS,
-)
-
-HOME = dict(zip(DUAL_OPENYAM_ARM_JOINTS, DUAL_OPENYAM_HOME_JOINTS, strict=True))
-LOOP_HZ = 200.0
-LEFT = [DUAL_OPENYAM_ARM_JOINTS.index(n) for n in DUAL_OPENYAM_LEFT_ARM_JOINTS]
-RIGHT = [DUAL_OPENYAM_ARM_JOINTS.index(n) for n in DUAL_OPENYAM_RIGHT_ARM_JOINTS]
+from dimos.robot.manipulators.calibration.float_report import FloatRecording, extract_windows
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_HOME_PER_ARM
 
 
 @pytest.fixture(scope="module")
-def left_model() -> FingertipModel:
-    return FingertipModel("left")
-
-
-# float_arm / hold_arm
+def left_model(left_spec: ArmCalibrationSpec) -> FingertipModel:
+    return FingertipModel(left_spec)
 
 
 # Analysis
 
 
 def test_fingertip_model_moves_with_the_shoulder(left_model: FingertipModel) -> None:
-    home = list(DUAL_OPENYAM_HOME_JOINTS[:6])
+    home = list(DUAL_OPENYAM_HOME_PER_ARM)
     tip = left_model.fingertip_m(home)
     assert np.isfinite(tip).all() and tip[2] > 0.0
     moved = list(home)
@@ -58,12 +47,10 @@ def test_fingertip_model_moves_with_the_shoulder(left_model: FingertipModel) -> 
     assert 3.0 < np.linalg.norm(left_model.fingertip_m(moved) - tip) * 1000.0 < 15.0
     with pytest.raises(ValueError):
         left_model.fingertip_m(home[:5])
-    with pytest.raises(ValueError):
-        FingertipModel("middle")
 
 
 def test_analyze_window_reports_drift_and_the_busiest_joint(left_model: FingertipModel) -> None:
-    home = np.asarray(DUAL_OPENYAM_HOME_JOINTS[:6])
+    home = np.asarray(DUAL_OPENYAM_HOME_PER_ARM)
     t = np.linspace(0.0, 10.0, 201)
     q = np.tile(home, (t.size, 1))
     q[:, 2] += np.radians(0.02) * t  # 0.2 deg over 10 s on joint 3, nothing else
@@ -87,4 +74,28 @@ def test_segment_windows_cut_at_the_next_marker() -> None:
     assert segment_windows([b, a], t_end=112.0) == [(a, 100.0, 105.0), (b, 105.0, 112.0)]
 
 
-# Pipeline: module with a drifting mock -> memory.db -> report
+def test_extract_windows_reads_each_arm_by_joint_name(
+    left_spec: ArmCalibrationSpec, right_spec: ArmCalibrationSpec
+) -> None:
+    t = np.linspace(0.0, 4.0, 401)
+    home = np.asarray(DUAL_OPENYAM_HOME_PER_ARM)
+    q_rad = {}
+    for spec in (left_spec, right_spec):
+        for index, name in enumerate(spec.joint_names):
+            # Recorded under a robot prefix; the right arm's joint 3 creeps.
+            values = np.full(t.size, home[index])
+            if spec is right_spec and index == 2:
+                values = values + np.radians(0.05) * t
+            q_rad[f"arm/{name}"] = values
+    events = [
+        FloatEvent(side="left", index=1, t0=0.0, duration_s=2.0),
+        FloatEvent(side="right", index=1, t0=2.0, duration_s=2.0),
+    ]
+    specs = {"left": left_spec, "right": right_spec}
+    records = extract_windows(
+        FloatRecording(t=t, q_rad=q_rad, events=events), resolve=specs.__getitem__
+    )
+    by_side = {record.event.side: record.metrics for record in records}
+    assert by_side["left"].fingertip_drift_mm == 0.0
+    assert by_side["right"].max_joint == "right_joint3"
+    assert by_side["right"].fingertip_drift_mm > 0.0

@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Offline step-response report from a ``dual_openyam_step_test`` recording.
+"""Offline step-response report from a joint step-test recording of any arm.
 
     python -m dimos.robot.manipulators.calibration.step_report recordings/<run-id>
 
 Reads ``memory.db``, cuts the joint stream at each ``step_events`` marker and
-writes ``step_report/`` next to it: ``steps.csv``, ``report.md``, one PNG per
-joint (a panel per gain set, the steps overlaid) and two summary PNGs (settle
-time and overshoot against kp, a panel per joint).
+writes ``step_report/`` next to it: ``steps.csv``, ``report.md`` (with the gains
+``propose_gains`` picks per joint), one PNG per joint (a panel per gain set,
+the steps overlaid) and two summary PNGs (settle time and overshoot against kp,
+a panel per joint). Joints are taken by name from the recorded joint states.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ import sys
 from typing import Any
 
 import matplotlib
+from matplotlib.lines import Line2D
 import numpy as np
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -44,11 +46,12 @@ from dimos.robot.manipulators.calibration.step_analysis import (
     StepEvent,
     StepMetrics,
     analyze_step,
+    format_proposals,
     format_table,
     gain_label,
+    propose_gains,
     segment_steps,
 )
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -77,7 +80,7 @@ class JointTrace:
 
 @dataclass(frozen=True)
 class Recording:
-    traces: dict[str, JointTrace]
+    traces: dict[str, JointTrace]  # by recorded joint name, in joint-state order
     events: list[StepEvent]
     t_end: float
 
@@ -92,7 +95,7 @@ class StepRecord:
 
 
 def load_recording(recording_dir: Path) -> Recording:
-    """Read the joint and event streams of a step-test recording."""
+    """Read the joint and event streams of a step-test recording (every recorded joint)."""
     path = recording_dir / "memory.db"
     if not path.exists():
         raise FileNotFoundError(f"no memory.db in {recording_dir}")
@@ -107,7 +110,8 @@ def load_recording(recording_dir: Path) -> Recording:
         positions: list[list[float]] = []
         velocities: list[list[float]] = []
         joint_names: list[str] | None = None
-        for obs in store.stream(JOINT_STATE_STREAM):
+        state_stream: Any = store.stream(JOINT_STATE_STREAM)
+        for obs in state_stream:
             msg = obs.data
             if joint_names is None:
                 joint_names = list(msg.name)
@@ -124,9 +128,9 @@ def load_recording(recording_dir: Path) -> Recording:
         traces = {
             name: JointTrace(t=t, q_deg=q[:, i], dq_deg_s=dq[:, i])
             for i, name in enumerate(joint_names)
-            if name in DUAL_OPENYAM_ARM_JOINTS
         }
-        events = [StepEvent.from_json(obs.data.data) for obs in store.stream(STEP_EVENTS_STREAM)]
+        event_stream: Any = store.stream(STEP_EVENTS_STREAM)
+        events = [StepEvent.from_json(obs.data.data) for obs in event_stream]
     finally:
         store.stop()
     return Recording(traces=traces, events=events, t_end=float(t[-1]))
@@ -173,9 +177,11 @@ def write_tables(records: list[StepRecord], out_dir: Path) -> tuple[Path, Path]:
         writer.writerows(rows)
     md_path = out_dir / "report.md"
     md_path.write_text(
-        "# Dual OpenYAM joint step response\n\n"
+        "# Joint step response\n\n"
         f"{len(records)} steps over {len({m.joint for m in metrics})} joints.\n\n"
         + format_table(metrics)
+        + "\n\n## Proposed gains\n\n"
+        + format_proposals(propose_gains(metrics))
         + "\n"
     )
     return csv_path, md_path
@@ -209,7 +215,7 @@ def _step_color(delta_deg: float) -> str:
 def _step_handles(deltas: set[float], marker: str = "") -> list[Any]:
     """Legend entries in the fixed step order, one per step size seen."""
     return [
-        plt.Line2D(
+        Line2D(
             [],
             [],
             marker=marker or None,
@@ -262,7 +268,7 @@ def plot_joint(
 def plot_summary(
     records: list[StepRecord], path: Path, *, metric: str, label: str, limit: float
 ) -> None:
-    joints = [j for j in DUAL_OPENYAM_ARM_JOINTS if any(r.event.joint == j for r in records)]
+    joints = list(dict.fromkeys(record.event.joint for record in records))
     if not joints:
         return
     cols = min(6, len(joints))

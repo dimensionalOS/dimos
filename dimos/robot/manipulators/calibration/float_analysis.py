@@ -14,10 +14,10 @@
 
 """Drift of a floating arm: how far the fingertip wanders once the hand lets go.
 
-Shared by the live driver (``demo_float_test``) and the offline report
-(``float_report``). A window is the ``float_events`` marker plus the joint
-samples recorded during it; the drift is the fingertip motion between the
-start and the end of the window, computed through the arm model so a joint
+Shared by a live driver and the offline report (``float_report``). A window is
+the ``float_events`` marker plus the joint samples recorded during it; the drift
+is the fingertip motion between the start and the end of the window, computed
+through the arm's model (its spec's tip frame and fingertip offset) so a joint
 error far from the base counts for what it does at the fingers.
 """
 
@@ -31,8 +31,8 @@ from typing import Any
 
 import numpy as np
 
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, check_side
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_DOF_PER_ARM
+from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
 
 # Milestone: a floated arm, let go, stays within this at the fingertip over 10 s.
 DRIFT_LIMIT_MM = 2.0
@@ -43,7 +43,11 @@ EDGE_WINDOW_S = 0.25
 
 @dataclass(frozen=True)
 class FloatEvent:
-    """The ``float_events`` marker ``mark_float`` publishes when a window starts."""
+    """The ``float_events`` marker a driver publishes when a window starts.
+
+    ``side`` names the arm that floats (e.g. "left"), as the robot's arms are
+    named in ``robots.arm_spec``.
+    """
 
     side: str
     index: int
@@ -105,22 +109,21 @@ class DriftMetrics:
 
 
 class FingertipModel:
-    """Fingertip position of one arm from its six joint angles, base frame, metres.
+    """Fingertip position of one arm from its joint angles, workspace frame, metres.
 
-    The fingertip is ``{side}_grasp_frame`` moved 46 mm along the gripper's -z
-    (``gravity_poses.FINGERTIP_OFFSET_M``), the same point the pose filter uses.
+    The fingertip is the spec's tip frame moved by the workspace's
+    ``point_offset_m``, the same point the pose filter checks.
     """
 
-    def __init__(self, side: str) -> None:
-        self.side = check_side(side)
-        self._arm = ArmModel(side=side)
+    def __init__(self, spec: ArmCalibrationSpec | ArmModel) -> None:
+        self._arm = spec if isinstance(spec, ArmModel) else ArmModel(spec)
+        self.arm_id = self._arm.arm_id
         self.joint_names = list(self._arm.joint_names)
 
-    def fingertip_m(self, joints_rad: Sequence[float]) -> np.ndarray:
-        if len(joints_rad) != DUAL_OPENYAM_DOF_PER_ARM:
-            raise ValueError(f"expected {DUAL_OPENYAM_DOF_PER_ARM} angles, got {len(joints_rad)}")
-        tip, _ = self._arm.points(self._arm.full_q(np.asarray(joints_rad, dtype=np.float64)))
-        return np.asarray(tip, dtype=np.float64)
+    def fingertip_m(self, joints_rad: Sequence[float] | np.ndarray) -> np.ndarray:
+        if len(joints_rad) != len(self.joint_names):
+            raise ValueError(f"expected {len(self.joint_names)} angles, got {len(joints_rad)}")
+        return self._arm.fingertip(np.asarray(joints_rad, dtype=np.float64))
 
 
 def edge_pose(t: np.ndarray, q: np.ndarray, *, start: bool) -> np.ndarray:
@@ -129,7 +132,7 @@ def edge_pose(t: np.ndarray, q: np.ndarray, *, start: bool) -> np.ndarray:
         mask = t <= t[0] + EDGE_WINDOW_S
     else:
         mask = t >= t[-1] - EDGE_WINDOW_S
-    return np.median(q[mask], axis=0)
+    return np.asarray(np.median(q[mask], axis=0), dtype=np.float64)
 
 
 def analyze_window(
@@ -138,14 +141,15 @@ def analyze_window(
     t: np.ndarray,
     q_rad: np.ndarray,
 ) -> DriftMetrics:
-    """Drift over one window from its samples (``t`` seconds, ``q_rad`` rows in joint order 1..6).
+    """Drift over one window from its samples (``t`` seconds, ``q_rad`` rows in arm joint order).
 
     ``t`` must be sorted. Raises ``ValueError`` on fewer than two samples.
     """
     t = np.asarray(t, dtype=np.float64)
     q_rad = np.asarray(q_rad, dtype=np.float64)
-    if t.ndim != 1 or q_rad.shape != (t.size, DUAL_OPENYAM_DOF_PER_ARM):
-        raise ValueError(f"need (n,) times and (n, 6) angles, got {t.shape} and {q_rad.shape}")
+    dof = len(model.joint_names)
+    if t.ndim != 1 or q_rad.shape != (t.size, dof):
+        raise ValueError(f"need (n,) times and (n, {dof}) angles, got {t.shape} and {q_rad.shape}")
     if t.size < 2:
         raise ValueError(f"window {event.index} on {event.side} has {t.size} sample(s)")
     q_start = edge_pose(t, q_rad, start=True)

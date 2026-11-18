@@ -12,36 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Gravity-model identification from a ``dual_openyam_step_test`` recording.
+"""Gravity-model identification of one arm from a step-test recording.
 
-    python -m dimos.robot.manipulators.calibration.gravity_fit recordings/<run-id>
-    python -m ...gravity_fit recordings/<right-run> --side right --merge <left gravity json>
+    python -m dimos.robot.manipulators.calibration.gravity_fit recordings/<run-id> \
+        --robot dual-openyam --arm left [--save]
 
-At every pose the driver (``demo_gravity_id``) dithers each measured joint by
-+d and -d degrees. At rest the motor torque is ``g_model(q) + kp (q_target -
-q)`` plus friction, so the PD torque averaged over the two dithers is the
+At every pose the driver dithers each of the spec's measured joints by +d and
+-d degrees. At rest the motor torque is ``g_model(q) + kp (q_target - q)``
+plus friction, so the PD torque averaged over the two dithers is the
 gravity-model error (friction, which flips sign with the approach direction,
-cancels) and half their difference is the Coulomb friction. The error is fitted
-with pinocchio's torque regressor to corrections of the mass and first moment
-``(m, m*c)`` of the moving arm's links (``--side``), ridge-regularised toward
+cancels) and half their difference is the Coulomb friction. The error is
+fitted with pinocchio's torque regressor to corrections of the mass and first
+moment ``(m, m*c)`` of the spec's ``gravity_links``, ridge-regularised toward
 the URDF values, so directions the poses cannot determine stay at the URDF.
 
 The report leads with the held-out error: by default every fifth pose is kept
 out of the fit and the corrected model is scored on it. Masses must stay
 positive and each COM within ``COM_BOX_M`` of the URDF COM, or the fit is
-reported as failed and no JSON is written. The result
-``gravity_<side>_<date>.json`` is what ``DamiaoRuntimeConfig.inertial_overrides``
-consumes; ``--merge`` joins it with the other arm's file into
-``gravity_both_<date>.json`` so one override file covers both arms.
+reported as failed and no calibration file is written. A passing fit writes
+``gravity_report/gravity_<arm>_<date>.json``, an ``ArmCalibration`` (see
+``schema``) holding the fitted links, the fit statistics and the median
+friction per joint; ``--save`` also stores it as the arm's calibration file,
+keeping the gains and checks already there.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import csv
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
@@ -58,9 +59,19 @@ from dimos.robot.manipulators.calibration._inertial import LinkInertial, load_in
 from dimos.robot.manipulators.calibration.gravity_poses import (
     GRAVITY_PARAMS_PER_BODY,
     ArmModel,
-    check_side,
-    measured_joints,
 )
+from dimos.robot.manipulators.calibration.robots import arm_spec
+from dimos.robot.manipulators.calibration.schema import (
+    ArmCalibration,
+    ArmCalibrationError,
+    GravityCalibration,
+    calibration_path,
+    gravity_links_from_inertial,
+    load_calibration,
+    save_calibration,
+    to_inertial_overrides,
+)
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
 from dimos.robot.manipulators.calibration.step_analysis import (
     REST_WINDOW_S,
     rest_window,
@@ -70,7 +81,6 @@ from dimos.robot.manipulators.calibration.step_report import (
     Recording,
     load_recording,
 )
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -136,13 +146,13 @@ class Measurement:
     kp: float
     kd: float
     dither_deg: float
-    q_rad: tuple[float, ...]  # all arm joints, mean of the two rest windows
+    q_rad: dict[str, float]  # every arm joint by name, mean of the two rest windows
     tau_pd_nm: float  # kp (q_target - q) averaged over the pair: gravity-model error
     friction_nm: float  # half the difference: Coulomb friction (>= 0 when the joint settles)
 
     def as_row(self) -> dict[str, Any]:
         row = asdict(self)
-        row["q_deg"] = " ".join(f"{math.degrees(v):.2f}" for v in self.q_rad)
+        row["q_deg"] = " ".join(f"{name}={math.degrees(v):.2f}" for name, v in self.q_rad.items())
         del row["q_rad"]
         return row
 
@@ -180,7 +190,8 @@ class FitResult:
     bound_violations: list[str] = field(default_factory=list)
     at_bounds: list[str] = field(default_factory=list)
     ridge_cv_nm: dict[float, float] = field(default_factory=dict)
-    side: str = "left"
+    arm_id: str = ""
+    measured_joints: tuple[str, ...] = ()
 
     @property
     def bounds_ok(self) -> bool:
@@ -189,7 +200,7 @@ class FitResult:
     def rms_by_joint(self, *, holdout: bool, after: bool) -> dict[str, float]:
         values = self.residual_after if after else self.residual_before
         out: dict[str, float] = {}
-        for joint in measured_joints(self.side):
+        for joint in self.measured_joints:
             mask = np.asarray(
                 [
                     m.joint == joint and bool(h) == holdout
@@ -231,43 +242,61 @@ def pose_windows(markers: list[PoseMarker], t_end: float) -> list[tuple[str, flo
     return windows
 
 
-def _rest_q_rad(recording: Recording, start: float, stop: float) -> np.ndarray | None:
+def trace_names(recording: Recording, joint_names: Sequence[str]) -> dict[str, str]:
+    """Recorded trace per arm joint: the same name, or one ``robot/`` prefix on it."""
+    found: dict[str, str] = {}
+    for name in joint_names:
+        if name in recording.traces:
+            found[name] = name
+            continue
+        prefixed = [trace for trace in recording.traces if trace.rsplit("/", 1)[-1] == name]
+        if len(prefixed) != 1:
+            raise ValueError(
+                f"the recording has no single joint trace for {name!r}; "
+                f"it has {sorted(recording.traces)}"
+            )
+        found[name] = prefixed[0]
+    return found
+
+
+def _rest_q_rad(
+    recording: Recording, traces: Mapping[str, str], start: float, stop: float
+) -> dict[str, float] | None:
     """Mean of every arm joint over the last ``REST_WINDOW_S`` of ``[start, stop]``, radians."""
-    first = recording.traces[DUAL_OPENYAM_ARM_JOINTS[0]]
+    first = recording.traces[next(iter(traces.values()))]
     mask = (first.t >= start) & (first.t <= stop)
     if mask.sum() < 2:
         return None
     t = first.t[mask]
     rest = rest_window(t, REST_WINDOW_S)
-    return np.asarray(
-        [
-            math.radians(float(recording.traces[name].q_deg[mask][rest].mean()))
-            for name in DUAL_OPENYAM_ARM_JOINTS
-        ]
-    )
+    return {
+        name: math.radians(float(recording.traces[trace].q_deg[mask][rest].mean()))
+        for name, trace in traces.items()
+    }
 
 
-def extract_measurements(grec: GravityRecording, side: str = "left") -> list[Measurement]:
-    """Pair the +d and -d dithers of each measured joint of ``side`` at each pose."""
+def extract_measurements(grec: GravityRecording, spec: ArmCalibrationSpec) -> list[Measurement]:
+    """Pair the +d and -d dithers of each of ``spec``'s measured joints at each pose."""
     recording = grec.recording
-    joints = measured_joints(side)
+    traces = trace_names(recording, spec.joint_names)
+    measured = set(spec.measured_joints)
     windows = pose_windows(grec.markers, recording.t_end)
     # (pose, joint, kp, kd, |delta|) -> sign -> [(tau_pd, q)]
     groups: dict[
-        tuple[str, str, float, float, float], dict[int, list[tuple[float, np.ndarray]]]
+        tuple[str, str, float, float, float], dict[int, list[tuple[float, dict[str, float]]]]
     ] = defaultdict(lambda: defaultdict(list))
     for event, start, stop in segment_steps(recording.events, recording.t_end):
-        if event.joint not in joints:
-            continue  # the other arm, or joints 1 and 6 (no usable gravity signal)
+        joint = event.joint.rsplit("/", 1)[-1] if event.joint not in measured else event.joint
+        if joint not in measured:
+            continue  # another arm, or a joint without a usable gravity signal
         pose = next((label for label, a, b in windows if a <= event.t0 < b), None)
         if pose is None:
             continue
-        q = _rest_q_rad(recording, start, stop)
+        q = _rest_q_rad(recording, traces, start, stop)
         if q is None:
             continue
-        index = DUAL_OPENYAM_ARM_JOINTS.index(event.joint)
-        tau_pd = event.kp * (math.radians(event.target_after_deg) - q[index])
-        key = (pose, event.joint, event.kp, event.kd, abs(event.delta_deg))
+        tau_pd = event.kp * (math.radians(event.target_after_deg) - q[joint])
+        key = (pose, joint, event.kp, event.kd, abs(event.delta_deg))
         groups[key][int(math.copysign(1, event.delta_deg))].append((tau_pd, q))
     measurements = []
     for (pose, joint, kp, kd, dither), signs in groups.items():
@@ -279,7 +308,7 @@ def extract_measurements(grec: GravityRecording, side: str = "left") -> list[Mea
                     kp=kp,
                     kd=kd,
                     dither_deg=dither,
-                    q_rad=tuple(float(v) for v in 0.5 * (q_plus + q_minus)),
+                    q_rad={name: 0.5 * (q_plus[name] + q_minus[name]) for name in q_plus},
                     tau_pd_nm=0.5 * (tau_plus + tau_minus),
                     friction_nm=0.5 * (tau_plus - tau_minus),
                 )
@@ -337,9 +366,9 @@ def fit_gravity(
     for m in measurements:
         if m.joint not in arm.measured_joints:
             raise ValueError(
-                f"{m.joint} is not one of the {arm.side} measured joints {arm.measured_joints}"
+                f"{m.joint} is not one of the {arm.arm_id} measured joints {arm.measured_joints}"
             )
-        full = arm.scaled_regressor(np.asarray(m.q_rad))
+        full = arm.scaled_regressor(arm.q(m.q_rad))
         rows.append(full[arm.measured_joints.index(m.joint)])
     a_scaled = np.vstack(rows)
     b = np.asarray([m.tau_pd_nm for m in measurements])
@@ -356,8 +385,8 @@ def fit_gravity(
 
     # Physical parameters: per link (d_mass, com_shift) with hard bounds, so the
     # solution is physical by construction instead of being checked afterwards.
-    mass0 = np.array([float(arm.model.inertias[j].mass) for j in arm.fitted_joint_ids])
-    com0 = np.array(
+    masses0 = np.array([float(arm.model.inertias[j].mass) for j in arm.fitted_joint_ids])
+    coms0 = np.array(
         [np.asarray(arm.model.inertias[j].lever, dtype=np.float64) for j in arm.fitted_joint_ids]
     )
     a_phys = a_scaled / arm.column_scale  # torque per unit (m, m*c) correction
@@ -365,14 +394,14 @@ def fit_gravity(
     def to_delta_phi(x: np.ndarray) -> np.ndarray:
         d_mass = x[0::4]
         shift = x.reshape(-1, 4)[:, 1:]
-        moment = d_mass[:, None] * com0 + (mass0 + d_mass)[:, None] * shift
-        return np.concatenate([np.column_stack([d_mass, moment])[k] for k in range(len(mass0))])
+        moment = d_mass[:, None] * coms0 + (masses0 + d_mass)[:, None] * shift
+        return np.concatenate([np.column_stack([d_mass, moment])[k] for k in range(len(masses0))])
 
     lower = np.concatenate(
-        [[(MASS_RATIO_BOUNDS[0] - 1.0) * m, -COM_BOX_M, -COM_BOX_M, -COM_BOX_M] for m in mass0]
+        [[(MASS_RATIO_BOUNDS[0] - 1.0) * m, -COM_BOX_M, -COM_BOX_M, -COM_BOX_M] for m in masses0]
     )
     upper = np.concatenate(
-        [[(MASS_RATIO_BOUNDS[1] - 1.0) * m, COM_BOX_M, COM_BOX_M, COM_BOX_M] for m in mass0]
+        [[(MASS_RATIO_BOUNDS[1] - 1.0) * m, COM_BOX_M, COM_BOX_M, COM_BOX_M] for m in masses0]
     )
     train_poses_arr = np.asarray([m.pose for m in measurements])[~is_holdout]
     a_phys_train = a_phys[~is_holdout]
@@ -382,9 +411,10 @@ def fit_gravity(
             dphi = to_delta_phi(x)
             return np.concatenate([a @ dphi - b_, ridge * dphi / arm.column_scale])
 
-        return least_squares(
+        solution: np.ndarray = least_squares(
             residual, np.zeros(lower.size), bounds=(lower, upper), xtol=1e-12, ftol=1e-12
         ).x
+        return solution
 
     ridge_cv: dict[float, float] = {}
     if ridge_nm is None:
@@ -475,7 +505,8 @@ def fit_gravity(
         bound_violations=violations,
         at_bounds=at_bounds,
         ridge_cv_nm=ridge_cv,
-        side=arm.side,
+        arm_id=arm.arm_id,
+        measured_joints=arm.measured_joints,
     )
 
 
@@ -513,104 +544,104 @@ def friction_flags(measurements: list[Measurement]) -> dict[int, str]:
 # Output
 
 
-def result_json(result: FitResult, recording_dir: Path, created: datetime) -> dict[str, Any]:
+def fit_stats(result: FitResult, recording_dir: Path | None = None) -> dict[str, Any]:
+    """The fit's statistics as stored in ``ArmCalibration.gravity.fit``."""
+    holdout_before = result.rms_by_joint(holdout=True, after=False)
+    holdout_after = result.rms_by_joint(holdout=True, after=True)
+    train_before = result.rms_by_joint(holdout=False, after=False)
+    train_after = result.rms_by_joint(holdout=False, after=True)
     return {
-        "created": created.isoformat(timespec="seconds"),
-        "recording": recording_dir.name,
-        "side": result.side,
         "source": "dimos.robot.manipulators.calibration.gravity_fit",
-        "links": {
-            name: {"mass_kg": link.mass_kg, "com_m": list(link.com_m)}
-            for name, link in result.links.items()
+        "recording": recording_dir.name if recording_dir is not None else None,
+        "ridge_nm": result.ridge_nm,
+        "rank": result.rank,
+        "condition_number": result.condition_number,
+        "singular_values": list(result.singular_values),
+        "train_poses": result.train_poses,
+        "holdout_poses": result.holdout_poses,
+        "measurements": len(result.measurements),
+        "measured_joints": list(result.measured_joints),
+        "holdout_rms_nm": {
+            joint: {"before": holdout_before[joint], "after": holdout_after[joint]}
+            for joint in holdout_before
         },
+        "train_rms_nm": {
+            joint: {"before": train_before[joint], "after": train_after[joint]}
+            for joint in train_before
+        },
+        "parameters": [asdict(p) for p in result.parameters],
         "urdf_links": {
             name: {"mass_kg": link.mass_kg, "com_m": list(link.com_m)}
             for name, link in result.urdf_links.items()
         },
-        "fit": {
-            "ridge_nm": result.ridge_nm,
-            "rank": result.rank,
-            "condition_number": result.condition_number,
-            "singular_values": list(result.singular_values),
-            "train_poses": result.train_poses,
-            "holdout_poses": result.holdout_poses,
-            "measurements": len(result.measurements),
-            "holdout_rms_nm": {
-                joint: {
-                    "before": result.rms_by_joint(holdout=True, after=False)[joint],
-                    "after": result.rms_by_joint(holdout=True, after=True)[joint],
-                }
-                for joint in result.rms_by_joint(holdout=True, after=False)
-            },
-            "train_rms_nm": {
-                joint: {
-                    "before": result.rms_by_joint(holdout=False, after=False)[joint],
-                    "after": result.rms_by_joint(holdout=False, after=True)[joint],
-                }
-                for joint in result.rms_by_joint(holdout=False, after=False)
-            },
-            "parameters": [asdict(p) for p in result.parameters],
-            "bounds_ok": result.bounds_ok,
-            "bound_violations": result.bound_violations,
-            "at_bounds": result.at_bounds,
-            "ridge_cv_nm": {str(k): v for k, v in result.ridge_cv_nm.items()},
-        },
+        "bounds_ok": result.bounds_ok,
+        "bound_violations": result.bound_violations,
+        "at_bounds": result.at_bounds,
+        "ridge_cv_nm": {str(k): v for k, v in result.ridge_cv_nm.items()},
     }
 
 
-def find_previous_json(
-    search_dirs: list[Path], exclude: Path | None = None, side: str = "left"
-) -> Path | None:
-    """Newest ``gravity_<side>_*.json`` under the given directories (and ``*/gravity_report``).
+def median_friction(measurements: Sequence[Measurement]) -> dict[str, float]:
+    """Median Coulomb friction per joint over the dither pairs."""
+    by_joint: dict[str, list[float]] = defaultdict(list)
+    for m in measurements:
+        by_joint[m.joint].append(m.friction_nm)
+    return {joint: float(np.median(values)) for joint, values in by_joint.items()}
 
-    Files named ``gravity_<date>.json`` predate the side suffix and are left-arm fits.
-    """
-    patterns = [f"gravity_{check_side(side)}_*.json"]
-    if side == "left":
-        patterns.append("gravity_[0-9]*.json")
+
+def calibration_from_fit(
+    result: FitResult,
+    spec: ArmCalibrationSpec,
+    *,
+    recording_dir: Path | None = None,
+    created: datetime | None = None,
+) -> ArmCalibration:
+    """The arm calibration a passing fit produces; raises ``ValueError`` for a failed fit."""
+    if not result.bounds_ok:
+        raise ValueError(f"{spec.arm_id}: the fit failed its physical bounds; nothing to store")
+    return ArmCalibration.for_spec(
+        spec,
+        created=created,
+        gravity=GravityCalibration(
+            links=gravity_links_from_inertial(spec, result.links),
+            fit=fit_stats(result, recording_dir),
+        ),
+        friction_nm=median_friction(result.measurements),
+    )
+
+
+def report_json_name(arm_id: str, created: datetime) -> str:
+    """``gravity_<arm>_<date>.json``, the arm id's slashes as underscores."""
+    return f"gravity_{arm_id.replace('/', '_')}_{created.date().isoformat()}.json"
+
+
+def find_previous_json(
+    search_dirs: list[Path], arm_id: str, exclude: Path | None = None
+) -> Path | None:
+    """Newest ``gravity_<arm>_*.json`` under the given directories (and ``*/gravity_report``)."""
+    pattern = f"gravity_{arm_id.replace('/', '_')}_*.json"
     found: list[Path] = []
     for base in search_dirs:
         if not base.is_dir():
             continue
-        for pattern in patterns:
-            found.extend(base.glob(pattern))
-            found.extend(base.glob(f"*/gravity_report/{pattern}"))
+        found.extend(base.glob(pattern))
+        found.extend(base.glob(f"*/gravity_report/{pattern}"))
     found = [p for p in found if exclude is None or p.resolve() != exclude.resolve()]
     if not found:
         return None
     return max(found, key=lambda p: p.stat().st_mtime)
 
 
-def merge_inertial_json(paths: Sequence[Path], created: datetime) -> dict[str, Any]:
-    """One override file from several fits; later files win on a link named twice.
-
-    Each input is a ``gravity_fit`` JSON (or any ``{"links": ...}`` / flat file);
-    the result carries every link plus where each input came from.
-    """
-    links: dict[str, dict[str, Any]] = {}
-    sources: list[dict[str, Any]] = []
-    for path in paths:
-        for name, link in load_inertial_overrides(path).items():
-            links[name] = {"mass_kg": link.mass_kg, "com_m": list(link.com_m)}
-        raw = json.loads(path.read_text())
-        sources.append(
-            {
-                "path": str(path),
-                "side": raw.get("side") if isinstance(raw, dict) else None,
-                "created": raw.get("created") if isinstance(raw, dict) else None,
-            }
-        )
-    return {
-        "created": created.isoformat(timespec="seconds"),
-        "side": "both",
-        "source": "dimos.robot.manipulators.calibration.gravity_fit (merge)",
-        "merged_from": sources,
-        "links": links,
-    }
+def previous_links(path: Path) -> dict[str, LinkInertial]:
+    """Fitted links of an arm calibration file, or of a legacy ``{"links": ...}`` file."""
+    try:
+        return to_inertial_overrides(load_calibration(path))
+    except ArmCalibrationError:
+        return load_inertial_overrides(path)
 
 
 def compare_with_previous(result: FitResult, previous: Path) -> str:
-    previous_links = load_inertial_overrides(previous)
+    links_before = previous_links(previous)
     lines = [
         f"## Compared with {previous}",
         "",
@@ -618,7 +649,7 @@ def compare_with_previous(result: FitResult, previous: Path) -> str:
         "|---|---|---|---|",
     ]
     for name, link in result.links.items():
-        old = previous_links.get(name)
+        old = links_before.get(name)
         if old is None:
             lines.append(f"| {name} | - | {link.mass_kg:.3f} | - |")
             continue
@@ -644,7 +675,7 @@ def _rms_table(result: FitResult, *, holdout: bool) -> str:
 
 
 def format_report(result: FitResult, previous: Path | None, json_path: Path | None) -> str:
-    out = [f"# Dual OpenYAM gravity-model fit ({result.side} arm)", ""]
+    out = [f"# Gravity-model fit: {result.arm_id}", ""]
     if result.bounds_ok:
         out.append(
             f"Result: OK, parameters written to `{json_path}`." if json_path else "Result: OK."
@@ -762,9 +793,7 @@ def _style(ax: Any) -> None:
 def plot_resting_torque(result: FitResult, path: Path) -> None:
     """One panel per joint: resting torque error per pose before and after the fit."""
     poses = ordered_poses(result.measurements)
-    joints = [
-        j for j in measured_joints(result.side) if any(m.joint == j for m in result.measurements)
-    ]
+    joints = [j for j in result.measured_joints if any(m.joint == j for m in result.measurements)]
     fig, axes = plt.subplots(
         len(joints),
         1,
@@ -817,7 +846,7 @@ def plot_resting_torque(result: FitResult, path: Path) -> None:
     axes[-1, 0].set_xticklabels(poses, rotation=45, ha="right", fontsize=7)
     axes[0, 0].legend(loc="upper right", fontsize=8, frameon=False)
     fig.suptitle(
-        f"{result.side} arm: resting gravity torque error per pose (hatched: held out)",
+        f"{result.arm_id}: resting gravity torque error per pose (hatched: held out)",
         fontsize=10,
         color=_INK,
         x=0.02,
@@ -850,48 +879,63 @@ def write_measurements_csv(result: FitResult, path: Path) -> None:
 
 def generate_gravity_report(
     recording_dir: Path,
+    spec: ArmCalibrationSpec,
     *,
     ridge_nm: float | None = None,
     holdout: list[str] | None = None,
     previous: Path | None = None,
     arm: ArmModel | None = None,
     now: datetime | None = None,
-    side: str = "left",
-    merge: Path | None = None,
-) -> tuple[FitResult, Path]:
+    save_to: Path | None = None,
+) -> tuple[FitResult, Path, ArmCalibration | None]:
     """Fit one arm's recording and write ``gravity_report/`` inside it.
 
-    ``merge`` is the other arm's ``gravity_<side>_<date>.json``; when given and
-    the fit passes its bounds, ``gravity_both_<date>.json`` is written too, with
-    this fit's links overriding any same-named links in ``merge``.
+    A passing fit also writes ``gravity_<arm>_<date>.json``, an
+    ``ArmCalibration``; with ``save_to`` it is saved there too, keeping the
+    gains, checks and notes of a calibration already there for the same model.
     """
-    arm = arm or ArmModel(side=side)
-    if arm.side != side:
-        raise ValueError(f"arm model is for the {arm.side} side, not {side}")
-    now = now or datetime.now().astimezone()
+    arm = arm or ArmModel(spec)
+    if arm.arm_id != spec.arm_id:
+        raise ValueError(f"arm model is for {arm.arm_id}, not {spec.arm_id}")
+    now = now or datetime.now(timezone.utc)
     grec = load_gravity_recording(recording_dir)
-    measurements = extract_measurements(grec, side)
+    measurements = extract_measurements(grec, spec)
     result = fit_gravity(arm, measurements, ridge_nm=ridge_nm, holdout=holdout)
     out_dir = recording_dir / REPORT_DIR_NAME
     out_dir.mkdir(exist_ok=True)
-    json_path = out_dir / f"gravity_{side}_{now.date().isoformat()}.json"
+    json_path: Path | None = out_dir / report_json_name(spec.arm_id, now)
     if previous is None:
-        previous = find_previous_json(
-            [recording_dir.parent, Path(__file__).resolve().parent], exclude=json_path, side=side
+        stored = calibration_path(spec.arm_id)
+        previous = (
+            stored
+            if stored.exists()
+            else find_previous_json([recording_dir.parent], spec.arm_id, exclude=json_path)
         )
-    if result.bounds_ok:
-        json_path.write_text(json.dumps(result_json(result, recording_dir, now), indent=2) + "\n")
-        if merge is not None:
-            merged = merge_inertial_json([merge, json_path], now)
-            (out_dir / f"gravity_both_{now.date().isoformat()}.json").write_text(
-                json.dumps(merged, indent=2) + "\n"
-            )
+    calibration: ArmCalibration | None = None
+    if result.bounds_ok and json_path is not None:
+        calibration = calibration_from_fit(result, spec, recording_dir=recording_dir, created=now)
+        json_path.write_text(calibration.model_dump_json(indent=2) + "\n")
+        if save_to is not None:
+            save_calibration(save_to, _keep_existing(save_to, calibration, spec))
     else:
-        json_path = None  # type: ignore[assignment]
+        json_path = None
     (out_dir / "report.md").write_text(format_report(result, previous, json_path))
     write_measurements_csv(result, out_dir / "measurements.csv")
     plot_resting_torque(result, out_dir / "resting_torque.png")
-    return result, out_dir
+    return result, out_dir, calibration
+
+
+def _keep_existing(path: Path, new: ArmCalibration, spec: ArmCalibrationSpec) -> ArmCalibration:
+    """``new`` plus the gains, checks and notes of a stored calibration for the same model."""
+    try:
+        existing = load_calibration(
+            path, expected_model_sha256=spec.model_sha256(), expected_arm_id=spec.arm_id
+        )
+    except ArmCalibrationError:
+        return new
+    return existing.model_copy(
+        update={"created": new.created, "gravity": new.gravity, "friction_nm": new.friction_nm}
+    )
 
 
 app = typer.Typer(add_completion=False)
@@ -900,6 +944,8 @@ app = typer.Typer(add_completion=False)
 @app.command()
 def main(
     recording_dir: Path = typer.Argument(..., help="recordings/<run-id> with memory.db"),
+    robot: str = typer.Option(..., help="A known robot, e.g. dual-openyam or b601-dm"),
+    arm: str | None = typer.Option(None, help="Which arm the recording moved, e.g. left"),
     ridge_nm: float | None = typer.Option(
         None, help="Ridge weight toward the URDF, Nm; default: chosen by leave-one-pose-out CV"
     ),
@@ -908,27 +954,26 @@ def main(
         help="Comma-separated pose labels to hold out; default every 5th pose",
     ),
     previous: Path | None = typer.Option(
-        None, help="Earlier gravity_<side>_<date>.json to compare with"
+        None, help="Earlier calibration or gravity json to compare with"
     ),
-    side: str = typer.Option("left", help="Which arm the recording moved: left or right"),
-    merge: Path | None = typer.Option(
-        None,
-        help="The other arm's gravity_<side>_<date>.json; also writes gravity_both_<date>.json",
+    save: bool = typer.Option(
+        False, "--save", help="Also store a passing fit as the arm's calibration file"
     ),
 ) -> None:
     """Fit the gravity model from a recording and write gravity_report/ next to it."""
     labels = [p.strip() for p in holdout.split(",") if p.strip()] or None
     try:
-        check_side(side)
+        spec = arm_spec(robot, arm)
     except ValueError as error:
         raise typer.BadParameter(str(error)) from None
-    result, out_dir = generate_gravity_report(
-        recording_dir, ridge_nm=ridge_nm, holdout=labels, previous=previous, side=side, merge=merge
+    target = calibration_path(spec.arm_id) if save else None
+    result, out_dir, calibration = generate_gravity_report(
+        recording_dir, spec, ridge_nm=ridge_nm, holdout=labels, previous=previous, save_to=target
     )
     typer.echo((out_dir / "report.md").read_text())
     typer.echo(f"Wrote {out_dir}")
-    if merge is not None and result.bounds_ok:
-        typer.echo(f"Merged with {merge} into gravity_both_<date>.json for --inertial-overrides")
+    if target is not None and calibration is not None:
+        typer.echo(f"Saved the calibration of {spec.arm_id} to {target}")
     if not result.bounds_ok:
         raise typer.Exit(1)
 

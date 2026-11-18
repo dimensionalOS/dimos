@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
@@ -21,38 +21,49 @@ import numpy as np
 import pinocchio as pin
 import pytest
 
-from dimos.robot.manipulators.calibration._inertial import (
-    LinkInertial,
-    apply_inertial_overrides,
-    load_inertial_overrides,
-)
+from dimos.robot.manipulators.calibration import gravity_fit
+from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.robot.manipulators.calibration.gravity_fit import (
     COM_BOX_M,
+    GravityRecording,
     Measurement,
     PoseMarker,
+    calibration_from_fit,
     default_holdout,
     extract_measurements,
     find_previous_json,
     fit_gravity,
+    format_report,
     friction_flags,
+    generate_gravity_report,
     load_gravity_recording,
-    merge_inertial_json,
     pose_windows,
+    report_json_name,
 )
 from dimos.robot.manipulators.calibration.gravity_poses import (
-    MEASURED_JOINTS,
     ArmModel,
     Pose,
     PoseSet,
     generate_poses,
     home_pose,
 )
+from dimos.robot.manipulators.calibration.schema import (
+    ArmCalibration,
+    JointGains,
+    bake_into_urdf,
+    load_calibration,
+    save_calibration,
+)
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.robot.manipulators.calibration.step_analysis import StepEvent
+from dimos.robot.manipulators.calibration.step_report import JointTrace, Recording
 
 OLD_RECORDING = (
     Path(__file__).resolve().parents[5]
     / "recordings"
     / "20261015-235349-091c-dual-openyam-step-test"
 )
+LEFT_MEASURED = tuple(f"left_joint{i}" for i in (2, 3, 4, 5))
 # A camera and bracket on the gripper, a heavier forearm: what the rig likely has.
 PERTURBATION = {
     "left_gripper": (0.25, np.array([-0.02, 0.0, -0.01])),  # d mass (kg), d(m*c) (kg m)
@@ -61,8 +72,8 @@ PERTURBATION = {
 
 
 @pytest.fixture(scope="module")
-def arm() -> ArmModel:
-    return ArmModel()
+def arm(left_spec: ArmCalibrationSpec) -> ArmModel:
+    return ArmModel(left_spec)
 
 
 @pytest.fixture(scope="module")
@@ -71,8 +82,8 @@ def pose_set(arm: ArmModel) -> PoseSet:
 
 
 @pytest.fixture(scope="module")
-def right_arm() -> ArmModel:
-    return ArmModel(side="right")
+def right_arm(right_spec: ArmCalibrationSpec) -> ArmModel:
+    return ArmModel(right_spec)
 
 
 @pytest.fixture(scope="module")
@@ -80,11 +91,15 @@ def right_pose_set(right_arm: ArmModel) -> PoseSet:
     return generate_poses(right_arm)
 
 
+@pytest.fixture(scope="module")
+def b601_arm(b601_spec: ArmCalibrationSpec) -> ArmModel:
+    return ArmModel(b601_spec)
+
+
 def perturbed_model(arm: ArmModel, perturbation: dict[str, tuple[float, np.ndarray]]) -> pin.Model:
     model = arm.model.copy()
     for link, (d_mass, d_moment) in perturbation.items():
-        joint_id = model.getFrameId(link)
-        joint_id = int(model.frames[joint_id].parentJoint)
+        joint_id = int(model.frames[model.getFrameId(link, pin.FrameType.BODY)].parentJoint)
         inertia = model.inertias[joint_id]
         mass = inertia.mass + d_mass
         com = (inertia.mass * inertia.lever + d_moment) / mass
@@ -106,7 +121,7 @@ def synthetic_measurements(
     data = truth.createData()
     out = []
     for pose in poses:
-        q = arm.full_q(pose.joints_rad)
+        q = arm.q(pose.joints_rad)
         error = np.asarray(pin.computeGeneralizedGravity(truth, data, q)) - arm.gravity(q)
         for joint, row in zip(arm.measured_joints, arm.measured_rows, strict=True):
             out.append(
@@ -116,7 +131,7 @@ def synthetic_measurements(
                     kp=80.0,
                     kd=5.0,
                     dither_deg=1.0,
-                    q_rad=tuple(float(v) for v in q),
+                    q_rad=pose.as_targets(),
                     tau_pd_nm=float(error[row] + rng.normal(0.0, noise_nm)),
                     friction_nm=float(friction_nm * (1.0 + 0.1 * rng.normal())),
                 )
@@ -130,6 +145,33 @@ def corrected_gravity(arm: ArmModel, links: dict[str, LinkInertial], q: np.ndarr
     return np.asarray(pin.computeGeneralizedGravity(model, model.createData(), q))
 
 
+def assert_recovers(
+    arm: ArmModel, truth: pin.Model, pose_set: PoseSet, *, tolerance_nm: float
+) -> None:
+    """Fit synthetic data with friction, then check the held-out error and the true torque."""
+    poses = [home_pose(arm), *pose_set.identification]
+    measurements = synthetic_measurements(arm, truth, poses, noise_nm=0.02, friction_nm=0.4)
+    result = fit_gravity(arm, measurements)
+    assert result.bounds_ok and result.arm_id == arm.arm_id
+    assert set(result.links) == set(arm.fitted_links)
+    before = result.rms_by_joint(holdout=True, after=False)
+    after = result.rms_by_joint(holdout=True, after=True)
+    assert set(before) == set(arm.measured_joints)
+    assert max(before.values()) > 0.5
+    for joint in arm.measured_joints:
+        assert after[joint] < tolerance_nm, (joint, after[joint])
+        assert after[joint] < 0.5 * before[joint] or before[joint] < 0.1
+    rows = list(arm.measured_rows)
+    truth_data = truth.createData()
+    for pose in pose_set.identification:
+        if pose.name not in result.holdout_poses:
+            continue
+        q = arm.q(pose.joints_rad)
+        expected = np.asarray(pin.computeGeneralizedGravity(truth, truth_data, q))[rows]
+        got = corrected_gravity(arm, result.links, q)[rows]
+        assert np.abs(got - expected).max() < tolerance_nm + 0.02
+
+
 # Fit on synthetic data
 
 
@@ -137,30 +179,22 @@ def test_fit_recovers_an_injected_perturbation_on_held_out_poses(
     arm: ArmModel, pose_set: PoseSet
 ) -> None:
     truth = perturbed_model(arm, PERTURBATION)
-    poses = [home_pose(), *pose_set.identification]
+    poses = [home_pose(arm), *pose_set.identification]
     measurements = synthetic_measurements(arm, truth, poses, noise_nm=0.02, friction_nm=0.4)
     result = fit_gravity(arm, measurements)
 
     assert result.holdout_poses == ["pose_04", "pose_09", "pose_14"]
     assert len(result.train_poses) == 13
     assert result.bounds_ok
-    before = result.rms_by_joint(holdout=True, after=False)
-    after = result.rms_by_joint(holdout=True, after=True)
-    assert set(before) == set(MEASURED_JOINTS)
-    assert max(before["left_joint2"], before["left_joint3"]) > 0.5
-    for joint in MEASURED_JOINTS:
-        assert after[joint] < 0.06, (joint, after[joint])
-        assert after[joint] < 0.5 * before[joint] or before[joint] < 0.1
-    # The corrected model predicts the true gravity torque at poses it never saw.
-    rows = list(arm.measured_rows)
-    truth_data = truth.createData()
-    for pose in pose_set.identification:
-        if pose.name not in result.holdout_poses:
-            continue
-        q = arm.full_q(pose.joints_rad)
-        expected = np.asarray(pin.computeGeneralizedGravity(truth, truth_data, q))[rows]
-        got = corrected_gravity(arm, result.links, q)[rows]
-        assert np.abs(got - expected).max() < 0.08
+    assert result.measured_joints == LEFT_MEASURED
+    assert (
+        max(
+            result.rms_by_joint(holdout=True, after=False)[j]
+            for j in ("left_joint2", "left_joint3")
+        )
+        > 0.5
+    )
+    assert_recovers(arm, truth, pose_set, tolerance_nm=0.06)
     assert result.rank >= 6 and result.condition_number < 50.0
     determined = [p for p in result.parameters if p.determined]
     assert determined and all(p.std_err > 0.0 for p in determined)
@@ -177,11 +211,11 @@ def test_right_arm_fit_recovers_a_right_side_perturbation(
             "right_link3": (0.15, np.array([0.0, 0.0, -0.02])),
         },
     )
-    poses = [home_pose("right"), *right_pose_set.identification]
+    poses = [home_pose(right_arm), *right_pose_set.identification]
     measurements = synthetic_measurements(right_arm, truth, poses, noise_nm=0.02, friction_nm=0.4)
     assert {m.joint for m in measurements} == {f"right_joint{i}" for i in (2, 3, 4, 5)}
     result = fit_gravity(right_arm, measurements)
-    assert result.side == "right" and result.bounds_ok
+    assert result.arm_id == "dual_openyam/right" and result.bounds_ok
     assert set(result.links) == {
         "right_link2",
         "right_link3",
@@ -189,54 +223,62 @@ def test_right_arm_fit_recovers_a_right_side_perturbation(
         "right_link5",
         "right_gripper",
     }
-    before = result.rms_by_joint(holdout=True, after=False)
-    after = result.rms_by_joint(holdout=True, after=True)
-    assert set(after) == {f"right_joint{i}" for i in (2, 3, 4, 5)}
-    assert max(before.values()) > 0.5
-    assert max(after.values()) < 0.06
-    # The left arm, held at home, is untouched by the correction.
-    q = right_arm.full_q(right_pose_set.identification[0].joints_rad)
-    assert np.allclose(corrected_gravity(right_arm, result.links, q)[:6], right_arm.gravity(q)[:6])
+    assert_recovers(right_arm, truth, right_pose_set, tolerance_nm=0.06)
     # Left-arm measurements do not fit a right-arm model.
-    left_measurement = Measurement("x", "left_joint2", 80.0, 5.0, 1.0, tuple(q), 0.0, 0.3)
-    with pytest.raises(ValueError, match="right measured joints"):
+    left_measurement = Measurement(
+        "x", "left_joint2", 80.0, 5.0, 1.0, home_pose(right_arm).as_targets(), 0.0, 0.3
+    )
+    with pytest.raises(ValueError, match="dual_openyam/right measured joints"):
         fit_gravity(right_arm, [left_measurement])
 
 
-def test_merge_joins_both_arms_into_one_override_file(tmp_path: Path) -> None:
-    left = tmp_path / "gravity_left_2026-10-16.json"
-    right = tmp_path / "gravity_right_2026-10-17.json"
-    left.write_text(
-        json.dumps(
-            {
-                "created": "2026-10-16T10:00:00",
-                "side": "left",
-                "links": {
-                    "left_gripper": {"mass_kg": 0.9, "com_m": [0.0, 0.0, -0.04]},
-                    "right_link3": {"mass_kg": 9.0, "com_m": [0.0, 0.0, 0.0]},  # stale, overridden
-                },
-            }
-        )
+def test_fit_recovers_a_perturbation_on_a_second_robot(b601_arm: ArmModel) -> None:
+    # The Seeed B601-DM with model-derived defaults: a heavier tool on the wrist
+    # and an extra mass on the forearm.
+    truth = perturbed_model(
+        b601_arm,
+        {
+            "link6": (0.3, np.array([0.01, 0.0, 0.015])),
+            "link3": (0.2, np.array([0.02, 0.0, 0.0])),
+        },
     )
-    right.write_text(
-        json.dumps(
-            {
-                "created": "2026-10-17T10:00:00",
-                "side": "right",
-                "links": {"right_link3": {"mass_kg": 1.1, "com_m": [-0.05, -0.03, -0.12]}},
-            }
-        )
+    assert b601_arm.measured_joints == tuple(f"joint{i}" for i in (2, 3, 4, 5))
+    assert_recovers(b601_arm, truth, generate_poses(b601_arm), tolerance_nm=0.08)
+
+
+def test_bake_into_urdf_reproduces_the_fitted_gravity(
+    arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec
+) -> None:
+    truth = perturbed_model(arm, PERTURBATION)
+    measurements = synthetic_measurements(
+        arm, truth, [home_pose(arm), *pose_set.identification], noise_nm=0.0, friction_nm=0.3
     )
-    merged = merge_inertial_json([left, right], datetime(2026, 10, 17, 12, 0))
-    assert merged["side"] == "both" and merged["created"] == "2026-10-17T12:00:00"
-    assert merged["links"] == {
-        "left_gripper": {"mass_kg": 0.9, "com_m": [0.0, 0.0, -0.04]},
-        "right_link3": {"mass_kg": 1.1, "com_m": [-0.05, -0.03, -0.12]},
-    }
-    assert [s["side"] for s in merged["merged_from"]] == ["left", "right"]
-    out = tmp_path / "gravity_both.json"
-    out.write_text(json.dumps(merged))
-    assert set(load_inertial_overrides(out)) == {"left_gripper", "right_link3"}
+    result = fit_gravity(arm, measurements)
+    calibration = calibration_from_fit(
+        result, left_spec, created=datetime(2026, 11, 18, tzinfo=timezone.utc)
+    )
+    assert calibration.gravity is not None
+    assert calibration.gravity.links["left_gripper"].merged_links == [
+        "left_tip_left",
+        "left_tip_right",
+        "left_grasp_frame",
+    ]
+    assert calibration.friction_nm is not None and set(calibration.friction_nm) == set(
+        LEFT_MEASURED
+    )
+    baked = ArmModel(
+        left_spec,
+        model=_reduced_from_xml(bake_into_urdf(calibration, left_spec.model.load().xml), arm),
+    )
+    for pose in pose_set.identification:
+        q = arm.q(pose.joints_rad)
+        assert np.allclose(baked.gravity(q), corrected_gravity(arm, result.links, q), atol=1e-9)
+
+
+def _reduced_from_xml(xml: str, arm: ArmModel) -> pin.Model:
+    full = pin.buildModelFromXML(xml)
+    locked = [i for i, n in enumerate(full.names) if i and str(n) not in arm.joint_names]
+    return pin.buildReducedModel(full, locked, pin.neutral(full))
 
 
 def test_fit_stays_physical_and_flags_the_bound_when_the_data_want_more(
@@ -246,7 +288,7 @@ def test_fit_stays_physical_and_flags_the_bound_when_the_data_want_more(
     # the solution sits on a bound, says so, and the error it cannot explain remains.
     truth = perturbed_model(arm, {"left_gripper": (2.0, np.array([0.0, 0.0, -0.4]))})
     measurements = synthetic_measurements(
-        arm, truth, [home_pose(), *pose_set.identification], noise_nm=0.0, friction_nm=0.3
+        arm, truth, [home_pose(arm), *pose_set.identification], noise_nm=0.0, friction_nm=0.3
     )
     result = fit_gravity(arm, measurements, ridge_nm=0.05)
     assert result.bounds_ok
@@ -259,11 +301,28 @@ def test_fit_stays_physical_and_flags_the_bound_when_the_data_want_more(
     assert max(after.values()) > 0.5
 
 
+def test_a_failed_fit_produces_no_calibration(
+    arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec
+) -> None:
+    truth = perturbed_model(arm, PERTURBATION)
+    measurements = synthetic_measurements(
+        arm, truth, [home_pose(arm), *pose_set.identification], noise_nm=0.0, friction_nm=0.3
+    )
+    result = fit_gravity(arm, measurements)
+    failed = type(result)(**{**result.__dict__, "bound_violations": ["left_link2: made up"]})
+    with pytest.raises(ValueError, match="failed its physical bounds"):
+        calibration_from_fit(failed, left_spec)
+
+
 def test_fit_rejects_unknown_holdout_and_everything_held_out(
     arm: ArmModel, pose_set: PoseSet
 ) -> None:
     measurements = synthetic_measurements(
-        arm, arm.model, [home_pose(), *pose_set.identification[:2]], noise_nm=0.0, friction_nm=0.3
+        arm,
+        arm.model,
+        [home_pose(arm), *pose_set.identification[:2]],
+        noise_nm=0.0,
+        friction_nm=0.3,
     )
     with pytest.raises(ValueError, match="not in the recording"):
         fit_gravity(arm, measurements, holdout=["pose_99"])
@@ -281,7 +340,7 @@ def test_default_holdout_is_every_fifth_pose_when_there_are_enough() -> None:
 
 
 def test_friction_flags_mark_outliers_and_negative_values(arm: ArmModel) -> None:
-    q = tuple(arm.full_q(home_pose().joints_rad))
+    q = home_pose(arm).as_targets()
 
     def m(pose: str, friction: float, kp: float = 400.0) -> Measurement:
         return Measurement(pose, "left_joint3", kp, 5.0, 1.0, q, 0.0, friction)
@@ -295,31 +354,170 @@ def test_friction_flags_mark_outliers_and_negative_values(arm: ArmModel) -> None
     assert "did not move" in stuck[5]
 
 
-# Recording pipeline: markers + steps -> memory.db -> report
+# Recording pipeline: markers + steps -> measurements -> report
 
 
-def test_report_compares_with_a_previous_json(
-    tmp_path: Path, arm: ArmModel, pose_set: PoseSet
-) -> None:
-    previous = tmp_path / "gravity_2026-10-01.json"
-    previous.write_text(
-        json.dumps({"links": {"left_gripper": {"mass_kg": 0.9, "com_m": [0.0, 0.0, -0.05]}}})
+def _synthetic_recording(
+    arm: ArmModel, poses: list[Pose], prefix: str, truth: pin.Model | None = None
+) -> GravityRecording:
+    """A +1/-1 deg dither of each measured joint at each pose, settling short of its target.
+
+    Friction leaves each dither 0.1 deg short; a ``truth`` model heavier than the
+    arm's model sags each rest by the extra gravity torque over kp.
+    """
+    dt, hold, kp = 0.01, 1.0, 80.0
+    truth_data = truth.createData() if truth is not None else None
+    t_all: list[float] = []
+    q_all: list[np.ndarray] = []
+    events: list[StepEvent] = []
+    markers: list[PoseMarker] = []
+    t = 0.0
+    for pose in poses:
+        markers.append(PoseMarker(pose.name, t, {}, {}))
+        q_pose = np.degrees(np.asarray(pose.joints_rad))
+        error = np.zeros(arm.dof)
+        if truth is not None:
+            q = arm.q(pose.joints_rad)
+            error = pin.computeGeneralizedGravity(truth, truth_data, q) - arm.gravity(q)
+        for joint in arm.measured_joints:
+            index = arm.joint_names.index(joint)
+            sag_deg = math.degrees(error[index] / kp)
+            for delta in (1.0, -1.0):
+                target = q_pose.copy()
+                target[index] += delta
+                events.append(
+                    StepEvent(
+                        joint=f"{prefix}{joint}",
+                        delta_deg=delta,
+                        kp=kp,
+                        kd=5.0,
+                        t0=t,
+                        # End the window before the next step's first sample.
+                        hold_s=hold - 2 * dt,
+                        target_before_deg=float(q_pose[index]),
+                        target_after_deg=float(target[index]),
+                    )
+                )
+                # The joint stops 0.1 deg short of each target: friction 80 * 0.1 deg.
+                reached = target.copy()
+                reached[index] -= 0.1 * delta + sag_deg
+                for k in range(int(hold / dt)):
+                    t_all.append(t + k * dt)
+                    q_all.append(reached)
+                t += hold
+    times = np.asarray(t_all)
+    angles = np.asarray(q_all)
+    traces = {
+        f"{prefix}{name}": JointTrace(t=times, q_deg=angles[:, i], dq_deg_s=np.zeros(times.size))
+        for i, name in enumerate(arm.joint_names)
+    }
+    return GravityRecording(
+        recording=Recording(traces=traces, events=events, t_end=float(times[-1])),
+        markers=markers,
     )
-    assert find_previous_json([tmp_path]) == previous
-    assert find_previous_json([tmp_path], exclude=previous) is None
-    assert find_previous_json([tmp_path / "missing"]) is None
+
+
+@pytest.mark.parametrize("prefix", ["", "arm/"])
+def test_extract_measurements_pairs_dithers_by_joint_name(
+    arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec, prefix: str
+) -> None:
+    poses = pose_set.identification[:3]
+    measurements = extract_measurements(_synthetic_recording(arm, poses, prefix), left_spec)
+    assert len(measurements) == len(poses) * len(LEFT_MEASURED)
+    assert {m.joint for m in measurements} == set(LEFT_MEASURED)
+    for m in measurements:
+        assert set(m.q_rad) == set(left_spec.joint_names)
+        pose = next(p for p in poses if p.name == m.pose)
+        # The dither average sits at the pose; the friction is kp * 0.1 deg.
+        assert m.q_rad[m.joint] == pytest.approx(pose.as_targets()[m.joint], abs=1e-9)
+        assert m.friction_nm == pytest.approx(80.0 * math.radians(0.1), rel=1e-6)
+        assert m.tau_pd_nm == pytest.approx(0.0, abs=1e-9)
+
+
+def test_report_pipeline_writes_the_calibration_and_keeps_stored_gains(
+    tmp_path: Path,
+    arm: ArmModel,
+    pose_set: PoseSet,
+    left_spec: ArmCalibrationSpec,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    truth = perturbed_model(arm, PERTURBATION)
+    recording = _synthetic_recording(arm, [home_pose(arm), *pose_set.identification], "", truth)
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: recording)
+    stored = tmp_path / "state" / "dual_openyam" / "left"
+    save_calibration(
+        stored,
+        ArmCalibration.for_spec(left_spec, gains={"left_joint2": JointGains(kp=90.0, kd=4.0)}),
+    )
+    run = tmp_path / "20261118-run"
+    run.mkdir()
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    result, out_dir, calibration = generate_gravity_report(
+        run, left_spec, arm=arm, now=now, previous=stored / "calibration.json", save_to=stored
+    )
+    assert result.bounds_ok and calibration is not None
+    before = result.rms_by_joint(holdout=True, after=False)
+    after = result.rms_by_joint(holdout=True, after=True)
+    assert max(after.values()) < 0.1 < max(before.values())
+    written = out_dir / "gravity_dual_openyam_left_2026-11-18.json"
+    assert load_calibration(written, expected_model_sha256=left_spec.model_sha256()) == calibration
+    assert {"report.md", "measurements.csv", "resting_torque.png"} <= {
+        p.name for p in out_dir.iterdir()
+    }
+    assert "Compared with" in (out_dir / "report.md").read_text()
+    saved = load_calibration(stored)
+    assert saved.gravity == calibration.gravity and saved.created == now
+    assert saved.gains == {"left_joint2": JointGains(kp=90.0, kd=4.0)}
+    assert saved.friction_nm == pytest.approx(
+        dict.fromkeys(LEFT_MEASURED, 80.0 * math.radians(0.1)), rel=1e-6
+    )
+    assert len(list((stored / "history").iterdir())) == 1
+
+
+def test_report_compares_with_a_previous_calibration(
+    tmp_path: Path, arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec
+) -> None:
     truth = perturbed_model(arm, PERTURBATION)
     measurements = synthetic_measurements(
-        arm, truth, [home_pose(), *pose_set.identification], noise_nm=0.0, friction_nm=0.3
+        arm, truth, [home_pose(arm), *pose_set.identification], noise_nm=0.0, friction_nm=0.3
     )
     result = fit_gravity(arm, measurements)
-    from dimos.robot.manipulators.calibration.gravity_fit import (
-        format_report,
+    created = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+    previous = tmp_path / report_json_name(left_spec.arm_id, created)
+    assert previous.name == "gravity_dual_openyam_left_2026-10-01.json"
+    previous.write_text(
+        calibration_from_fit(result, left_spec, created=created).model_dump_json(indent=2)
     )
-
+    assert find_previous_json([tmp_path], left_spec.arm_id) == previous
+    assert find_previous_json([tmp_path], left_spec.arm_id, exclude=previous) is None
+    assert find_previous_json([tmp_path], "dual_openyam/right") is None
+    assert find_previous_json([tmp_path / "missing"], left_spec.arm_id) is None
     text = format_report(result, previous, None)
     assert f"## Compared with {previous}" in text
-    assert "| left_gripper | 0.900 |" in text
+    assert text.startswith("# Gravity-model fit: dual_openyam/left")
+    # A legacy {"links": ...} file still compares.
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(
+        json.dumps({"links": {"left_gripper": {"mass_kg": 0.9, "com_m": [0.0, 0.0, -0.05]}}})
+    )
+    assert "| left_gripper | 0.900 |" in format_report(result, legacy, None)
+
+
+def test_saved_calibration_round_trips_with_the_fit(
+    tmp_path: Path, arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec
+) -> None:
+    truth = perturbed_model(arm, PERTURBATION)
+    measurements = synthetic_measurements(
+        arm, truth, [home_pose(arm), *pose_set.identification], noise_nm=0.0, friction_nm=0.3
+    )
+    result = fit_gravity(arm, measurements)
+    calibration = calibration_from_fit(result, left_spec)
+    path = save_calibration(tmp_path / "dual_openyam" / "left", calibration)
+    loaded = load_calibration(path, expected_model_sha256=left_spec.model_sha256())
+    assert isinstance(loaded, ArmCalibration) and loaded == calibration
+    assert loaded.gravity is not None
+    assert loaded.gravity.fit["source"] == "dimos.robot.manipulators.calibration.gravity_fit"
+    assert loaded.gravity.fit["holdout_poses"] == result.holdout_poses
 
 
 def test_pose_windows_without_markers_cover_everything() -> None:
@@ -329,12 +527,14 @@ def test_pose_windows_without_markers_cover_everything() -> None:
 
 
 @pytest.mark.skipif(not OLD_RECORDING.exists(), reason="rig recording not present")
-def test_fit_runs_on_the_single_pose_step_test_recording(arm: ArmModel, tmp_path: Path) -> None:
+def test_fit_runs_on_the_single_pose_step_test_recording(
+    arm: ArmModel, left_spec: ArmCalibrationSpec
+) -> None:
     # Rank deficient by construction (one pose): it must still run and say so.
     grec = load_gravity_recording(OLD_RECORDING)
     assert not grec.markers
-    measurements = extract_measurements(grec)
-    assert {m.joint for m in measurements} == set(MEASURED_JOINTS)
+    measurements = extract_measurements(grec, left_spec)
+    assert {m.joint for m in measurements} == set(LEFT_MEASURED)
     result = fit_gravity(arm, measurements)
     assert result.train_poses == ["all"] and not result.holdout_poses
     assert result.rank < len(result.parameters)
