@@ -86,19 +86,34 @@ def arm_declaration(connection: type[DamiaoConnection]) -> ConnectionConfig:
     )
 
 
-def arm_connection(connection: type[DamiaoConnection], *, teach: bool = False) -> Blueprint:
+def arm_connection(
+    connection: type[DamiaoConnection], *, teach: bool = False, tuning: bool = False
+) -> Blueprint:
     """The deployed connection, or an independent mock when ``--simulation`` is on.
 
     Blueprints call this at the point they compose their modules, so the
     simulation swap is visible next to the coordinator it feeds instead of
     hiding inside a general-purpose composer.
+
+    Args:
+        connection: The robot's connection.
+        teach: Drive every arm joint with zero stiffness.
+        tuning: Serve the ``tuning_*`` RPCs, for calibration blueprints only.
+            The mock has none, so this refuses ``--simulation``.
     """
     declaration = arm_declaration(connection)
     if global_config.simulation:
+        if tuning:
+            raise ValueError(
+                "calibration drives the real arm: the simulated connection has no tuning "
+                "session; run the calibration blueprint without --simulation"
+            )
         return MockJointConnection.blueprint(
             **declaration.model_dump(),
             initial_positions=mock_initial_positions(connection.robot),
         )
+    if tuning:
+        return connection.blueprint(**declaration.model_dump(), teach=teach, tuning=True)
     return connection.blueprint(**declaration.model_dump(), teach=teach)
 
 
