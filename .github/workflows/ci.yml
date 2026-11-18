@@ -1036,6 +1036,10 @@ jobs:
             echo "ROS_VERSION=$ROS_VERSION"
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
+          # The skipif_no_ros tests skip when rclpy does not import, so an image
+          # whose ROS is built for another Python than the venv's would pass
+          # without running them.
+          uv run python -c "import rclpy"
       - name: Install Nix (with Cachix substituter)
         if: contains(matrix.markers, 'skipif_no_ros')
         # /nix is bind-mounted from the self-hosted runner's host filesystem
