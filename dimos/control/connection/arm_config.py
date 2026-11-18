@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from dimos.protocol.service.spec import BaseConfig
 
@@ -73,6 +73,11 @@ class JointGains(BaseConfig):
     kd: NonNegativeFloat
 
 
+def _tuple_of(value: Any) -> Any:
+    """A JSON array as a tuple, so strict validation takes it; anything else as given."""
+    return tuple(value) if isinstance(value, list) else value
+
+
 class LinkGravity(BaseConfig):
     """Fitted mass and centre of mass of one link's body, centre of mass in the link frame.
 
@@ -83,7 +88,8 @@ class LinkGravity(BaseConfig):
     """
 
     mass_kg: PositiveFloat
-    com_m: tuple[FiniteFloat, FiniteFloat, FiniteFloat]
+    # A list too, as JSON gives it: a connection validates patches strictly.
+    com_m: Annotated[tuple[FiniteFloat, FiniteFloat, FiniteFloat], BeforeValidator(_tuple_of)]
     merged_links: list[str] = Field(default_factory=list)
 
 

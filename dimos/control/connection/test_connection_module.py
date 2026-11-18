@@ -681,6 +681,27 @@ def test_bad_arguments_are_refused_and_end_the_session(rig: Callable[..., Rig]) 
     assert writes(r) == []
 
 
+def test_a_patch_given_as_json_is_taken_strictly(rig: Callable[..., Rig]) -> None:
+    link = {"mass_kg": 1.0, "com_m": [0, 0.1, 0.2]}
+    checked = connection_module._patch_of({"arm_id": ARM, "links": {"link2": link}})
+    assert checked.links is not None and checked.links["link2"].com_m == (0.0, 0.1, 0.2)
+    # A JSON array for com_m does not end the session; a string for a number still does.
+    r = rig(TunableArm, config_sessions=True, deadman_timeout_s=10)
+    session = _begin(r.module)
+    applied = r.module.config_set({"arm_id": ARM, "links": {"link2": link}}, session_id=session)
+    assert applied.unsupported == ["links.link2"] and _live(r.module)
+    for bad in (
+        {**link, "com_m": ["0", 0.1, 0.2]},
+        {**link, "com_m": [0.0, 0.1]},
+        {**link, "mass_kg": True},
+    ):
+        with pytest.raises(ValidationError):
+            r.module.config_set({"arm_id": ARM, "links": {"link2": bad}}, session_id=session)
+        assert not _live(r.module)
+        session = _begin(r.module)
+    r.module.config_reset()
+
+
 def test_stopping_ends_the_session_and_undoes_it(
     rig: Callable[..., Rig], mocker: Any, quick_park: None
 ) -> None:
