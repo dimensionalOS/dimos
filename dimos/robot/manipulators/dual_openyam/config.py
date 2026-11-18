@@ -220,9 +220,11 @@ DUAL_OPENYAM = DamiaoRobot(
     home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
 )
 
-# dual_openyam.urdf position limits for joint1 to joint6; both arms share them.
+# dual_openyam.urdf position limits for joint1 to joint6, in radians; both arms
+# share them. Leader targets are clamped into them: the follower refuses a whole
+# command with one joint outside its limit.
 DUAL_OPENYAM_JOINT_LIMITS = (
-    (-2.618, 3.1416),
+    (-3.92699, 1.5708),
     (0.0, 3.6652),
     (0.0, 3.1416),
     (-1.693, 1.5708),
