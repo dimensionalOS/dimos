@@ -517,10 +517,7 @@ class Blueprint:
             picked = []
             for choice in blueprint.choice_atoms:
                 previous = active_choices.setdefault(choice.name, choice)
-                if (previous.choices.keys(), previous.default) != (
-                    choice.choices.keys(),
-                    choice.default,
-                ):
+                if previous.origin is not choice.origin:
                     raise ChoiceResolutionError(f"Duplicate choice name: {choice.name!r}")
                 option = selections.get(choice.name, choice.default)
                 available = f"Available options: {', '.join(choice.choices)}"
@@ -564,6 +561,8 @@ class ChoiceAtom:
     name: str
     choices: Mapping[str, Blueprint]
     default: str | None = None
+    # Kept by the copies that fluent operations make, so only one ChoiceAtom may use a name.
+    origin: object = field(default_factory=object, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.name or "=" in self.name:

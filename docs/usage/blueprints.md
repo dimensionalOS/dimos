@@ -130,8 +130,8 @@ dimos run mapping --choice PointClearing=column_carving
 Repeat `--choice NAME=OPTION` for multiple choices. A choice without a default
 requires a selection. Invalid options, unknown or inactive names, and repeated
 selections are errors. Nested choices are resolved only inside the picked option.
-Two choices may share a name only if they have the same options and default; one
-selection then picks for both. The picked option is merged after the blueprint's
+Each choice name belongs to one `ChoiceAtom`; reusing that same atom in several
+places is fine, and one selection picks for all of them. The picked option is merged after the blueprint's
 own modules, so a module in both takes the option's arguments.
 
 ## Publishing external blueprints

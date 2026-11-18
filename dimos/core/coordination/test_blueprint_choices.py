@@ -164,6 +164,18 @@ def test_rejects_distinct_active_choices_with_the_same_name(clearing: ChoiceAtom
 
     with pytest.raises(ChoiceResolutionError, match="Duplicate choice name: 'PointClearing'"):
         autoconnect(clearing, autoconnect(other)).solidify()
+    with pytest.raises(ChoiceResolutionError, match="Duplicate choice name: 'PointClearing'"):
+        autoconnect(clearing, _clearing()).solidify()
+
+
+def test_shared_choice_stays_one_choice_through_operations(clearing: ChoiceAtom) -> None:
+    mapping = autoconnect(
+        autoconnect(clearing).namespace("left"), autoconnect(clearing).global_config(n_workers=2)
+    )
+
+    resolved = mapping.solidify(choices={"PointClearing": "column_carving"})
+
+    assert [atom.name for atom in resolved.blueprints] == ["left/voxelmapper", "voxelmapper"]
 
 
 def test_shared_choice_can_be_reused_in_compositions(clearing: ChoiceAtom) -> None:
