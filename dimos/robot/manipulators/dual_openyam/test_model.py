@@ -18,6 +18,10 @@ import xml.etree.ElementTree as ET
 import pinocchio
 import pytest
 
+from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM_FINGER_JOINTS,
+    DUAL_OPENYAM_FINGER_OPEN,
+)
 from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_ARTIFACT,
     DUAL_OPENYAM_MODEL_PATH,
@@ -103,20 +107,30 @@ def test_both_arm_chains_are_symmetric_and_use_two_rad_s_limits() -> None:
         assert float(limit.attrib["velocity"]) == 2.0
 
 
-def test_model_exposes_twelve_arm_joints_and_fixed_finger_geometry() -> None:
+def test_model_has_six_arm_joints_and_two_sliding_fingers_per_side() -> None:
     model = pinocchio.buildModelFromUrdf(str(DUAL_OPENYAM_MODEL_PATH))
-    expected = tuple(f"{side}_joint{index}" for side in ("left", "right") for index in range(1, 7))
-    assert model.nq == 12
-    assert model.nv == 12
+    expected = tuple(
+        name
+        for side in ("left", "right")
+        for name in (
+            *(f"{side}_joint{index}" for index in range(1, 7)),
+            f"{side}_finger_left_joint",
+            f"{side}_finger_right_joint",
+        )
+    )
     assert tuple(str(name) for name in model.names[1:]) == expected
+    assert model.nq == model.nv == 16
 
     root = _tree()
+    for name in DUAL_OPENYAM_FINGER_JOINTS:
+        joint = _joint(root, name)
+        assert joint.attrib["type"] == "prismatic"
+        limit = joint.find("limit")
+        assert limit is not None
+        # Zero is closed; the gripper config opens each finger to DUAL_OPENYAM_FINGER_OPEN.
+        assert float(limit.attrib["lower"]) == DUAL_OPENYAM_FINGER_OPEN
+        assert float(limit.attrib["upper"]) == 0.0
     for side in ("left", "right"):
-        for index in (7, 8):
-            joint = _joint(root, f"{side}_joint{index}")
-            assert joint.attrib["type"] == "fixed"
-            assert joint.find("axis") is None
-            assert joint.find("limit") is None
         assert _joint(root, f"{side}_grasp_frame_joint").attrib["type"] == "fixed"
 
 
