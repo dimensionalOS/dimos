@@ -543,7 +543,8 @@ def test_a_set_value_is_handled_like_a_stream_value(tmp_path: Path, build: Build
     # No status FakeBase publishes ever matches, so only the injected one can take Going to Arrived.
     job = JOB.replace("SUCCEEDED = 3", "SUCCEEDED = 99")
     orchestrator = build(_blueprint(_written(tmp_path, job))).get_instance(Orchestrator)
-    _journal_until(orchestrator, lambda found: any("job.goal" in e["changed"] for e in found))
+    # Once FakeBase has reported reaching the goal, only the status is still wrong.
+    _journal_until(orchestrator, lambda found: any("reached" in e["changed"] for e in found))
     orchestrator.set_value("status", 99)
     entries = _journal_until(
         orchestrator, lambda found: ("Going", "Arrived") in _transitions(found)

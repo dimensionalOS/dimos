@@ -1,5 +1,5 @@
 # Patrol a route and go charge when the battery runs low.
-# Shows events (`battery_low`, `charged`), an outer transition that interrupts everything inside it, `after`
+# Shows conditions on a stream value (`battery_level`), an outer transition that interrupts everything inside it, `after`
 # timers, and a list read through a var (`route[index]`).
 root = "Mission"
 resources = ["base"]
@@ -13,18 +13,10 @@ pause_s = 1.5
 [vars]
 index = 0
 
-[[signal]]
+[[stream_value]]
 name = "battery_level"
 stream = "ToyRobot.battery"
 field = "percentage"
-
-[[event]]
-name = "battery_low"
-when = "battery_level < low_battery"
-
-[[event]]
-name = "charged"
-when = "battery_level >= full_battery"
 
 [[activity]]
 name = "drive"
@@ -48,7 +40,7 @@ children = ["NextWaypoint", "Driving", "Pausing"]
 initial = "NextWaypoint"
 
 [[node.transition]]
-if = "battery_low"
+if = "battery_level < low_battery"
 goto = "Charging"
 
 [[node]]
@@ -68,12 +60,12 @@ activity = "drive"
 args = { place = "route[index]" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "Pausing"
 set = { index = "index + 1" }
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "Pausing"
 set = { index = "index + 1" }
 
@@ -91,7 +83,7 @@ initial = "GoingHome"
 outcomes = ["done"]
 
 [[node.transition]]
-if = "done"
+on = "done"
 goto = "Patrolling"
 
 [[node]]
@@ -100,7 +92,7 @@ activity = "drive"
 args = { place = "'charger'" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "OnCharger"
 
 [[node]]
@@ -108,5 +100,5 @@ name = "OnCharger"
 activity = "charge"
 
 [[node.transition]]
-if = "charged"
+if = "battery_level >= full_battery"
 goto = "done"

@@ -44,11 +44,11 @@ initial = "GoToShelf"
 outcomes = ["done", "failed"]
 
 [[node.transition]]
-if = "done"
+on = "done"
 goto = "AwaitApproval"
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "GaveUp"
 
 [[node]]
@@ -57,7 +57,7 @@ activity = "drive"
 args = { place = "'shelf'" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "Picking"
 
 [[node]]
@@ -67,16 +67,17 @@ args = { item = "'parcel'" }
 result = "held_item"
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "done"
 
 [[node.transition]]
-if = "failed && attempts + 1 < max_attempts"
+on = "failed"
+if = "attempts + 1 < max_attempts"
 goto = "PickRetry"
 set = { attempts = "attempts + 1" }
 
 [[node.transition]]
-if = "failed"
+on = "failed"
 goto = "failed"
 
 [[node]]
@@ -102,7 +103,7 @@ initial = "GoToDesk"
 outcomes = ["done"]
 
 [[node.transition]]
-if = "done"
+on = "done"
 goto = "Delivered"
 
 [[node]]
@@ -111,7 +112,7 @@ activity = "drive"
 args = { place = "'desk'" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "HandingOver"
 
 [[node]]
@@ -120,7 +121,7 @@ activity = "place"
 args = { item = "held_item" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "done"
 
 [[node]]

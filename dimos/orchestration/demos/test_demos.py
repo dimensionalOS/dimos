@@ -34,6 +34,8 @@ DEPLOYED = Deployed(
 )
 
 
-@pytest.mark.parametrize("name", ["delivery", "inspection", "shift", "safety", "jam", "patrol"])
+@pytest.mark.parametrize(
+    "name", ["delivery", "inspection", "shift", "safety", "jam", "patrol", "warehouse"]
+)
 def test_each_demo_fits_the_toy_robot(name: str) -> None:
     assert bind(load_and_check(HERE / f"{name}.toml"), DEPLOYED).problems == ()

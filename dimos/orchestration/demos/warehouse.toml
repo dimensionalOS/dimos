@@ -1,0 +1,208 @@
+# Get ready, then fetch and carry crates, with an e-stop over everything.
+# Shows a `parallel` node (calibrate and scan at once), a `requires` check with a fallback (no carrying without a good
+# grip), a `goto = "failed"` that throws out of Shift after too many failed picks for its parent to catch, and an
+# `immediate` (non-graceful) transition: the e-stop leaves Operating at once, cancelling whatever is under way.
+root = "Robot"
+resources = ["base", "arm", "camera"]
+
+[constants]
+max_attempts = 3
+
+[vars]
+calibrated = false
+scanned = false
+attempts = 0
+crates = 0
+
+[[stream_value]]
+name = "estop"
+stream = "ToyRobot.estop"
+field = "data"
+
+[[stream_value]]
+name = "gripper_ok"
+stream = "ToyRobot.gripper_ok"
+field = "data"
+
+[[activity]]
+name = "drive"
+start = "ToyRobot.drive_to"
+cancel = "ToyRobot.stop_driving"
+uses = ["base"]
+
+[[activity]]
+name = "pick"
+start = "ToyRobot.pick"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[activity]]
+name = "place"
+start = "ToyRobot.place_item"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[activity]]
+name = "calibrate"
+start = "ToyRobot.calibrate"
+
+[[activity]]
+name = "scan"
+start = "ToyRobot.scan"
+cancel = "ToyRobot.stop_scan"
+uses = ["camera"]
+
+[[activity]]
+name = "speak"
+start = "ToyRobot.speak"
+
+[[node]]
+name = "Robot"
+children = ["Operating", "EStopped"]
+initial = "Operating"
+
+[[node]]
+name = "Operating"
+children = ["Prep", "Shift", "Recover"]
+initial = "Prep"
+
+[[node.transition]]
+on = "ToyRobot.estop"
+if = "estop"
+goto = "EStopped"
+mode = "immediate"
+
+[[node]]
+name = "EStopped"
+
+[[node.transition]]
+on = "ToyRobot.estop"
+if = "!estop"
+goto = "Operating"
+set = { calibrated = false, scanned = false, attempts = 0 }
+
+# Prep: calibrate the arm and scan the bay at the same time, then start the shift once both are done.
+[[node]]
+name = "Prep"
+parallel = ["ArmPrep", "BayPrep"]
+
+[[node.transition]]
+if = "calibrated && scanned"
+goto = "Shift"
+set = { attempts = 0 }
+
+[[node]]
+name = "ArmPrep"
+children = ["Calibrating", "ArmReady"]
+initial = "Calibrating"
+
+[[node]]
+name = "Calibrating"
+activity = "calibrate"
+
+[[node.transition]]
+on = "succeeded"
+goto = "ArmReady"
+set = { calibrated = true }
+
+[[node]]
+name = "ArmReady"
+
+[[node]]
+name = "BayPrep"
+children = ["Scanning", "BayReady"]
+initial = "Scanning"
+
+[[node]]
+name = "Scanning"
+activity = "scan"
+args = { area = "'bay 4'" }
+result = "found"
+
+[[node.transition]]
+on = "succeeded"
+goto = "BayReady"
+set = { scanned = true }
+
+[[node]]
+name = "BayReady"
+
+# Shift: pick a crate, carry it, drop it. Too many failed picks throw `failed` up to Operating.
+[[node]]
+name = "Shift"
+children = ["Picking", "PickRetry", "Carrying", "Regrip", "Dropping"]
+initial = "Picking"
+outcomes = ["done", "failed"]
+
+[[node.transition]]
+on = "done"
+goto = "Prep"
+set = { calibrated = false, scanned = false }
+
+[[node.transition]]
+on = "failed"
+goto = "Recover"
+
+[[node]]
+name = "Picking"
+activity = "pick"
+args = { item = "'crate'" }
+result = "crate"
+
+[[node.transition]]
+on = "succeeded"
+goto = "Carrying"
+
+[[node.transition]]
+on = "failed"
+goto = "PickRetry"
+set = { attempts = "attempts + 1" }
+
+[[node]]
+name = "PickRetry"
+
+[[node.transition]]
+if = "attempts >= max_attempts"
+goto = "failed"
+
+[[node.transition]]
+after = 1.0
+goto = "Picking"
+
+[[node]]
+name = "Carrying"
+activity = "drive"
+args = { place = "'dock'" }
+requires = [{ expect = ["gripper_ok"], fallback = "Regrip" }]
+
+[[node.transition]]
+on = "succeeded"
+goto = "Dropping"
+
+[[node]]
+name = "Regrip"
+activity = "calibrate"
+
+[[node.transition]]
+on = "succeeded"
+goto = "Carrying"
+
+[[node]]
+name = "Dropping"
+activity = "place"
+args = { item = "crate" }
+
+[[node.transition]]
+on = "succeeded"
+goto = "done"
+set = { crates = "crates + 1" }
+
+[[node]]
+name = "Recover"
+activity = "speak"
+args = { text = "'Could not pick a crate after ' + string(attempts) + ' tries'" }
+
+[[node.transition]]
+after = 3.0
+goto = "Prep"
+set = { calibrated = false, scanned = false, attempts = 0 }

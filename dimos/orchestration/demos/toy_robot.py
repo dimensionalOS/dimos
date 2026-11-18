@@ -37,6 +37,8 @@ class ToyRobotConfig(ModuleConfig):
     drive_failures: int = 0
     pick_failures: int = 0
     scan_failures: int = 0
+    # Picks fail again in a run of `pick_failures` every this many picks (0: only the first run).
+    pick_failures_every: int = 0
     battery_start_pct: float = 80.0
     drain_per_s: float = 1.0
     charge_per_s: float = 12.0
@@ -118,7 +120,10 @@ class ToyRobot(Module):
     def pick(self, item: str) -> str:
         """Pick up an item. Returns the item once it is held."""
         self._work("arm", self.config.pick_s)
-        if self._count("pick") <= self.config.pick_failures:
+        picks = self._count("pick") - 1
+        if self.config.pick_failures_every:
+            picks %= self.config.pick_failures_every
+        if picks < self.config.pick_failures:
             raise RuntimeError(f"{item} slipped")
         return item
 

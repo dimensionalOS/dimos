@@ -186,5 +186,4 @@ class Journal:
             "active": sorted(runtime.active),
             "calls": [_call(call) for call in runtime.calls],
             "timers": [_timer(timer, self._wall_offset) for timer in runtime.timers],
-            "outcomes": sorted([node, outcome] for node, outcome in runtime.outcomes),
         }

@@ -33,7 +33,7 @@ activity = "pick"
 args = { item = "'gear'" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "Placing"
 
 [[node.transition]]
@@ -46,6 +46,6 @@ activity = "place"
 args = { item = "'gear'" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "Picking"
 set = { gears = "gears + 1" }

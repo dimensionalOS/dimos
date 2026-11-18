@@ -7,12 +7,12 @@ resources = ["base", "arm"]
 [vars]
 carrying = false
 
-[[signal]]
+[[stream_value]]
 name = "obstacle"
 stream = "ToyRobot.obstacle"
 field = "data"
 
-[[signal]]
+[[stream_value]]
 name = "estop"
 stream = "ToyRobot.estop"
 field = "data"
@@ -47,13 +47,13 @@ initial = "Fetching"
 ensures = [{ expect = ["!carrying"], fallback = "Stowing" }]
 
 [[node.transition]]
-on = "estop"
+on = "ToyRobot.estop"
 if = "estop"
 goto = "EStopped"
 mode = "immediate"
 
 [[node.transition]]
-on = "obstacle"
+on = "ToyRobot.obstacle"
 if = "obstacle"
 goto = "Paused"
 
@@ -63,7 +63,7 @@ activity = "pick"
 args = { item = "'crate'" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "Carrying"
 set = { carrying = true }
 
@@ -73,7 +73,7 @@ activity = "drive"
 args = { place = "'loading dock'" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "Fetching"
 set = { carrying = false }
 
@@ -83,7 +83,7 @@ activity = "place"
 args = { item = "'crate'" }
 
 [[node.transition]]
-if = "succeeded"
+on = "succeeded"
 goto = "Paused"
 set = { carrying = false }
 
@@ -91,7 +91,7 @@ set = { carrying = false }
 name = "Paused"
 
 [[node.transition]]
-on = "obstacle"
+on = "ToyRobot.obstacle"
 if = "!obstacle"
 goto = "Working"
 
@@ -99,6 +99,6 @@ goto = "Working"
 name = "EStopped"
 
 [[node.transition]]
-on = "estop"
+on = "ToyRobot.estop"
 if = "!estop"
 goto = "Working"

@@ -58,3 +58,24 @@ orchestration_demo_patrol = autoconnect(
     ),
     Orchestrator.blueprint(file=HERE / "patrol.toml"),
 )
+orchestration_demo_warehouse = autoconnect(
+    ToyRobot.blueprint(
+        pick_failures=3,
+        pick_failures_every=8,
+        script=[
+            (0.2, "estop", False),
+            (0.2, "gripper_ok", True),
+            *[
+                event
+                for cycle in range(60)
+                for event in (
+                    (cycle * 90.0 + 17.0, "gripper_ok", False),
+                    (cycle * 90.0 + 23.0, "gripper_ok", True),
+                    (cycle * 90.0 + 50.0, "estop", True),
+                    (cycle * 90.0 + 56.0, "estop", False),
+                )
+            ],
+        ],
+    ),
+    Orchestrator.blueprint(file=HERE / "warehouse.toml"),
+)

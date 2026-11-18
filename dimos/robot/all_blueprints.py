@@ -134,6 +134,7 @@ all_blueprints = {
     "orchestration-demo-patrol": "dimos.orchestration.demos.blueprints:orchestration_demo_patrol",
     "orchestration-demo-safety": "dimos.orchestration.demos.blueprints:orchestration_demo_safety",
     "orchestration-demo-shift": "dimos.orchestration.demos.blueprints:orchestration_demo_shift",
+    "orchestration-demo-warehouse": "dimos.orchestration.demos.blueprints:orchestration_demo_warehouse",
     "piper-teleop": "dimos.robot.manipulators.piper.blueprints.teleop:piper_teleop",
     "r1pro-coordinator": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator:r1pro_coordinator",
     "r1pro-manipulation": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_manipulation:r1pro_manipulation",
