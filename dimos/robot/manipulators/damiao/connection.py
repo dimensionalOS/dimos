@@ -18,11 +18,17 @@ The motor layer lives in :mod:`dimos.robot.manipulators.damiao.arm` and the
 robot's data in :mod:`dimos.robot.manipulators.damiao.robot`. This module only
 translates streams into targets, publishes readings at a fixed rate, and
 latches a fault when feedback breaks.
+
+At start it applies each arm's saved calibration file, if there is one
+(``DamiaoConnectionConfig.calibration``): the file's gains and fitted link
+masses. Without a file the arm runs exactly its URDF and bus defaults.
 """
 
 from __future__ import annotations
 
 from abc import abstractmethod
+from dataclasses import dataclass, field, fields
+from pathlib import Path
 import threading
 import time
 from typing import Any, ClassVar
@@ -33,7 +39,12 @@ from reactivex.disposable import Disposable
 from typing_extensions import Self
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule, Values
+from dimos.control.connection.connection_module import (
+    ConnectionConfig,
+    ConnectionModule,
+    ConnectionStatus,
+    Values,
+)
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import limits as limits_of, movable_joints
@@ -41,11 +52,27 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.calibration._inertial import LinkInertial
+from dimos.robot.manipulators.calibration.hooks import AppliedCalibration
+from dimos.robot.manipulators.calibration.schema import (
+    ARMS_STATE_DIR,
+    ArmCalibration,
+    ArmCalibrationError,
+    calibration_file,
+    calibration_path,
+    load_calibration,
+    to_inertial_overrides,
+)
+from dimos.robot.manipulators.calibration.spec import model_sha256
 from dimos.robot.manipulators.damiao.arm import ArmReading, DamiaoArm
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+#: Where "auto" looks for each arm's calibration, ``<root>/<arm_id>/calibration.json``.
+#: Read at every load, so tests can point it at a scratch directory.
+CALIBRATION_ROOT: Path = ARMS_STATE_DIR
 
 
 def zero_stiffness_joints(robot: DamiaoRobot, *, teach: bool, source: str = "arm") -> list[str]:
@@ -65,15 +92,52 @@ def zero_stiffness_joints(robot: DamiaoRobot, *, teach: bool, source: str = "arm
 
 
 class DamiaoConnectionConfig(ConnectionConfig):
+    """Settings of a Damiao connection.
+
+    Attributes:
+        teach: Drive every arm joint with zero stiffness so an operator can
+            guide it by hand.
+        state_rate_hz: How often the joints are read and published.
+        deadman_timeout_s: How long without a command before the arm holds.
+        calibration: Which calibration to apply at start. "auto" applies each
+            arm's saved file (``calibration_path(arm_id)``) when there is one;
+            "off" applies none; anything else is the path of one calibration
+            file, applied to the arm it names. An arm without a file, or whose
+            file does not fit this robot, runs its URDF masses and bus gains.
+    """
+
     teach: bool = False
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
     deadman_timeout_s: float = Field(default=0.1, gt=0, allow_inf_nan=False)
+    calibration: str = Field(default="auto", min_length=1)
 
     @model_validator(mode="after")
     def _position_only(self) -> Self:
         if any(interfaces != (Interface.POSITION,) for interfaces in self.joint_commands.values()):
             raise ValueError("Damiao connections accept position commands only")
         return self
+
+
+@dataclass(frozen=True, slots=True)
+class DamiaoConnectionStatus(ConnectionStatus):
+    """``ConnectionStatus`` plus the calibration each arm runs.
+
+    Attributes:
+        calibration: By arm id, the file that arm runs, or ``None`` for its
+            URDF masses and bus gains.
+    """
+
+    calibration: dict[str, AppliedCalibration | None] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class _ArmFile:
+    """One arm's calibration file, read and checked against the robot."""
+
+    path: Path
+    calibration: ArmCalibration
+    gains: dict[str, tuple[float, float]]
+    links: dict[str, LinkInertial]
 
 
 class DamiaoConnection(ConnectionModule):
@@ -95,6 +159,9 @@ class DamiaoConnection(ConnectionModule):
         self._state_frame = ""
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
+        # Guarded by _lock: the calibration each arm runs, for status().
+        self._calibration: dict[str, AppliedCalibration | None] = {}
+        self._model_hash: str | None = None
 
     @property
     def joint_names(self) -> list[str]:
@@ -127,6 +194,9 @@ class DamiaoConnection(ConnectionModule):
         arm.connect()
         self._arm = arm
         self._read_state()
+        # Before enable, so the first torque the motors get is the calibrated one.
+        files = self._read_calibrations(arm, self.config.calibration, strict=False)
+        self._apply_calibrations(arm, files, always=False)
 
     @rpc
     def start(self) -> None:
@@ -198,6 +268,138 @@ class DamiaoConnection(ConnectionModule):
                     error = f"{self.config.source} reader did not stop before the shutdown timeout"
                     self._report(error)
                     raise RuntimeError(error)
+
+    @rpc
+    def status(self) -> DamiaoConnectionStatus:
+        """A snapshot of the connection and the calibration each arm runs."""
+        base = super().status()
+        with self._lock:
+            calibration = dict(self._calibration)
+        return DamiaoConnectionStatus(
+            **{item.name: getattr(base, item.name) for item in fields(ConnectionStatus)},
+            calibration=calibration,
+        )
+
+    def _arm_joints_by_id(self) -> dict[str, list[str]]:
+        ids = self.robot.arm_ids()
+        if not ids:
+            return {}
+        return {
+            arm_id: [motor.name for motor in bus.arm]
+            for arm_id, bus in zip(ids, self.robot.buses, strict=True)
+        }
+
+    def _robot_model_sha256(self) -> str:
+        if self._model_hash is None:
+            self._model_hash = model_sha256(self.robot.gravity_model)
+        return self._model_hash
+
+    def _read_calibrations(
+        self, arm: DamiaoArm, source: str, *, strict: bool
+    ) -> dict[str, _ArmFile | None]:
+        """Each arm's calibration from ``source`` ("auto", "off" or a file), checked.
+
+        A file that does not fit is logged as a warning and that arm gets its
+        defaults, or, when ``strict``, raised.
+        """
+        arms = self._arm_joints_by_id()
+        files: dict[str, _ArmFile | None] = dict.fromkeys(arms)
+        if source == "off":
+            logger.info(f"{self._label}: calibration is off, using URDF defaults for {list(arms)}")
+            return files
+        if source == "auto":
+            if not arms:
+                logger.debug(f"{self._label}: the robot has no name, so no calibration is applied")
+            for arm_id, joints in arms.items():
+                path = calibration_path(arm_id, CALIBRATION_ROOT)
+                if not path.exists():
+                    logger.info(f"No calibration for {arm_id}, using URDF defaults")
+                    continue
+                try:
+                    calibration = load_calibration(
+                        path,
+                        expected_model_sha256=self._robot_model_sha256(),
+                        expected_arm_id=arm_id,
+                    )
+                    files[arm_id] = self._check_calibration(arm, path, calibration, joints)
+                except (ArmCalibrationError, ValueError) as error:
+                    logger.warning(
+                        f"Ignoring the calibration for {arm_id}, using URDF defaults: {error}"
+                    )
+            return files
+        path = calibration_file(Path(source).expanduser())
+        try:
+            calibration = load_calibration(path, expected_model_sha256=self._robot_model_sha256())
+            if calibration.arm_id not in arms:
+                raise ArmCalibrationError(
+                    f"The arm calibration at {path} is for arm {calibration.arm_id!r}; "
+                    f"this robot's arms are {list(arms)}."
+                )
+            files[calibration.arm_id] = self._check_calibration(
+                arm, path, calibration, arms[calibration.arm_id]
+            )
+        except (ArmCalibrationError, ValueError) as error:
+            if strict:
+                raise
+            logger.warning(f"Ignoring the calibration {path}, using URDF defaults: {error}")
+        for arm_id, found in files.items():
+            if found is None:
+                logger.info(f"No calibration for {arm_id}, using URDF defaults")
+        return files
+
+    def _check_calibration(
+        self, arm: DamiaoArm, path: Path, calibration: ArmCalibration, joints: list[str]
+    ) -> _ArmFile:
+        """The file's gains and masses, once the arm would accept them for ``joints``' arm."""
+        gains = {name: (item.kp, item.kd) for name, item in (calibration.gains or {}).items()}
+        foreign = sorted(set(gains) - set(joints))
+        if foreign:
+            raise ArmCalibrationError(
+                f"The arm calibration at {path} gives gains to joints of no arm "
+                f"{calibration.arm_id!r} drives: {foreign}."
+            )
+        links = to_inertial_overrides(calibration)
+        arm.check_calibration(gains, links)
+        # TODO(calibration): calibration.friction_nm is read but not applied;
+        # apply it through DamiaoArm.set_feedforward once friction compensation
+        # (direction from velocity, a dead band near zero) is designed.
+        return _ArmFile(path=path, calibration=calibration, gains=gains, links=links)
+
+    def _apply_calibrations(
+        self, arm: DamiaoArm, files: dict[str, _ArmFile | None], *, always: bool
+    ) -> dict[str, AppliedCalibration | None]:
+        """Put the files' gains and masses in place, log one line per arm, and record them.
+
+        Without ``always`` and without a file, the arm is left untouched.
+        """
+        found = {arm_id: item for arm_id, item in files.items() if item is not None}
+        if found or always:
+            gains: dict[str, tuple[float, float]] = {}
+            links: dict[str, LinkInertial] = {}
+            for item in found.values():
+                gains.update(item.gains)
+                links.update(item.links)
+            arm.apply_calibration(gains, links)
+        applied: dict[str, AppliedCalibration | None] = dict.fromkeys(files)
+        for arm_id, item in found.items():
+            created = item.calibration.created
+            applied[arm_id] = AppliedCalibration(
+                path=str(item.path),
+                created=created.isoformat(),
+                gains=sorted(item.gains),
+                links=sorted(item.links),
+            )
+            notes = "" if self.robot.gravity else " (gravity compensation is off, masses unused)"
+            if item.calibration.friction_nm:
+                notes += " (its friction is not applied yet)"
+            logger.info(
+                f"Calibration for {arm_id} from {item.path}, created "
+                f"{created:%Y-%m-%d %H:%M} UTC: gains for {sorted(item.gains) or 'no joints'}, "
+                f"masses for {sorted(item.links) or 'no links'}{notes}"
+            )
+        with self._lock:
+            self._calibration = applied
+        return applied
 
     def _on_position(self, msg: JointState) -> None:
         try:
