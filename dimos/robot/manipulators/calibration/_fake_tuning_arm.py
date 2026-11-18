@@ -47,7 +47,7 @@ memory and reads them back as the sqlite recording would.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -238,6 +238,10 @@ class FakeTuningArm:
         calibration_root: Where it saves the arm's calibration file, as a
             connection's ``persist`` does: ``calibration_path(arm_id, root)``.
         applied: A calibration file applied at start, as a connection's "auto" would.
+        sessions: What ``config_keys`` says of config sessions; the fake serves
+            them either way.
+        persist: What ``config_keys`` says can be saved; a save of anything
+            else is refused as unsupported.
         start: Initial joint positions; home when ``None``.
         realtime: Simulated time follows the wall clock: each call first
             advances the arm to ``time.time()``.
@@ -254,6 +258,8 @@ class FakeTuningArm:
         recording: MemoryRecording | None = None,
         calibration_root: Path,
         applied: Path | None = None,
+        sessions: bool = True,
+        persist: Sequence[str] = ("gains", "links", "fit", "friction_nm", "checks", "notes"),
         start: Vector | None = None,
         realtime: bool = False,
     ) -> None:
@@ -268,6 +274,8 @@ class FakeTuningArm:
         self._gravity_comp = gravity_compensation
         self._recording = recording
         self._root = calibration_root
+        self._serves_sessions = sessions
+        self._persist = list(persist)
         if isinstance(friction_nm, Mapping):
             self._friction = np.asarray([friction_nm[name] for name in self._names])
         else:
@@ -507,11 +515,11 @@ class FakeTuningArm:
             arm_id = self.spec.arm_id
             return ConfigKeys(
                 source=SOURCE,
-                sessions=True,
+                sessions=self._serves_sessions,
                 arms={arm_id: list(self._names)},
                 readable=["gains", "links", "torque_offset_nm"],
                 session=["gains", *(["float"] if self._gravity_comp else []), "torque_offset_nm"],
-                persist=["gains", "links", "fit", "friction_nm", "checks", "notes"],
+                persist=list(self._persist),
                 persist_paths={arm_id: str(calibration_path(arm_id, self._root))},
                 gravity_compensation=self._gravity_comp,
             )
@@ -661,6 +669,17 @@ class FakeTuningArm:
         )
         kept = {joint: gains for joint, gains in (patch.gains or {}).items() if gains.kp != 0.0}
         saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
+        refused = [key for key in saved.keys() if key.split(".")[0] not in self._persist]
+        if refused:
+            why.update(dict.fromkeys(refused, "this fake saves none of it"))
+            return ConfigApplied(
+                arm_id=arm_id,
+                scope="persist",
+                applied=ConfigPatch(arm_id=arm_id),
+                unsupported=list(why),
+                why=why,
+                applied_now=False,
+            )
         path = calibration_path(arm_id, self._root)
         now = datetime.now(timezone.utc)
         stored = (

@@ -45,6 +45,13 @@
    own rests at the same poses.
 8. ``summary``: the calibration file, its history and what the arm runs.
 
+Every step but ``check`` and ``summary`` needs a connection that serves
+config sessions, and each what it changes (``config_keys``): the gravity
+poses read the gains, the fit saves links, the float check floats joints
+live, the gain sweep changes gains live and picking saves them. A step the
+connection cannot do is listed unsupported with the reason and skipped; a
+check is recorded only where the connection saves checks.
+
 A step that needs a recording reads it from the run's recording
 (``recording.RecordingSource``), cut to the time it ran. Calibrations are saved
 through the connection (``config_set`` with scope "persist"), with the arm at
@@ -183,6 +190,35 @@ def _recording_unavailable(caps: Capabilities) -> bool | str:
     return True if caps.recording_unavailable is None else caps.recording_unavailable
 
 
+def _needs(
+    caps: Capabilities,
+    *,
+    readable: str | None = None,
+    session: str | None = None,
+    persist: str | None = None,
+) -> bool | str:
+    """True when the connection serves config sessions and what is named, else why not.
+
+    ``readable``, ``session`` and ``persist`` name an entry of the
+    connection's ``config_keys`` lists, e.g. ``session="float"``.
+    """
+    keys = caps.keys
+    if keys is None:
+        return "the connection has not said what it can change (config_keys)"
+    if not keys.sessions:
+        return (
+            "the connection does not serve config sessions: it was not started from the "
+            "robot's calibration blueprint"
+        )
+    if readable is not None and readable not in keys.readable:
+        return f"the connection does not report the arm's {readable}"
+    if session is not None and session not in keys.session:
+        return f"the connection cannot change {session} live"
+    if persist is not None and persist not in keys.persist:
+        return f"the connection cannot save {persist}"
+    return True
+
+
 def _measured(ctx: StepContext) -> Vector:
     """The arm's latest reading, outside a config session too."""
     position, _, _ = joint_reading(ctx.state, ctx.keys().source, ctx.spec.joint_names)
@@ -285,8 +321,11 @@ def _stored(ctx: StepContext) -> tuple[Path, ArmCalibration | None]:
 def _record_check(ctx: StepContext, name: str, value: dict[str, Any]) -> str | None:
     """Save ``value`` as ``checks[name]`` in the arm's calibration file, if it has one.
 
-    A check changes nothing the arm runs, so the connection does not apply it.
+    Nothing is saved when the connection cannot save checks. A check changes
+    nothing the arm runs, so the connection does not apply it.
     """
+    if "checks" not in ctx.keys().persist:
+        return None
     _, stored = _stored(ctx)
     if stored is None:
         return None
@@ -356,7 +395,7 @@ def _compensation_offset(
     that ran a file.
     """
     arm = ctx.arm
-    if not ctx.caps.gravity_compensation:
+    if not ctx.keys().gravity_compensation:
         return lambda q: -arm.gravity(q)
     links = _links_of(applied)
     if not links:
@@ -639,9 +678,8 @@ class GravityPosesStep(Step):
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
-        if not caps.torque_readback:
-            return "needs the motors' torque readback"
-        return _recording_unavailable(caps)
+        needs = _needs(caps, readable="gains")
+        return _recording_unavailable(caps) if needs is True else needs
 
     def run(self, ctx: StepContext) -> StepResult:
         ctx.require_recording()
@@ -735,7 +773,8 @@ class GravityFitStep(Step):
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
-        return _recording_unavailable(caps)
+        needs = _needs(caps, persist="links")
+        return _recording_unavailable(caps) if needs is True else needs
 
     def run(self, ctx: StepContext) -> StepResult:
         recording = ctx.require_recording()
@@ -842,9 +881,9 @@ class FloatCheckStep(Step):
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
-        if not caps.gravity_compensation:
+        if caps.keys is not None and not caps.keys.gravity_compensation:
             return "the robot does not compensate gravity, so a floating joint would fall"
-        return True
+        return _needs(caps, session="float")
 
     def run(self, ctx: StepContext) -> StepResult:
         settings, arm = ctx.settings, ctx.arm
@@ -968,9 +1007,8 @@ class StepSweepStep(Step):
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
-        if not caps.set_gains:
-            return "the connection cannot change gains live"
-        return _recording_unavailable(caps)
+        needs = _needs(caps, session="gains")
+        return _recording_unavailable(caps) if needs is True else needs
 
     def run(self, ctx: StepContext) -> StepResult:
         ctx.require_recording()
@@ -1040,7 +1078,8 @@ class PickGainsStep(Step):
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
-        return _recording_unavailable(caps)
+        needs = _needs(caps, persist="gains")
+        return _recording_unavailable(caps) if needs is True else needs
 
     def run(self, ctx: StepContext) -> StepResult:
         recording = ctx.require_recording()
@@ -1092,6 +1131,9 @@ class ConfirmTrackingStep(Step):
         "measure at the same poses from this run's gravity sweep, taken before any new values "
         "were applied."
     )
+
+    def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
+        return _needs(caps)
 
     @staticmethod
     def poses(ctx: StepContext) -> tuple[list[Pose], bool]:

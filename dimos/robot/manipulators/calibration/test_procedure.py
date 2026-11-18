@@ -370,7 +370,8 @@ def test_steps_the_robot_cannot_run_are_listed_unsupported_and_skipped(
     [spec] = robot_specs_or_skip(
         METAL, "MakerMods Metal", workspace=WorkspaceGuard.for_bench(floor_z_m=0.0, min_x_m=0.1)
     )
-    caps = Capabilities(gravity_compensation=False, recording_unavailable="nothing is recorded")
+    # What the connection cannot do it says in config_keys; the fake's lists no float.
+    caps = Capabilities(recording_unavailable="nothing is recorded")
     rig = make_rig(spec=spec, model=ArmModel(spec), caps=caps, fake={"gravity_compensation": False})
 
     reasons = {step["id"]: step["reason"] for step in rig.procedure.plan() if not step["supported"]}
@@ -389,6 +390,40 @@ def test_steps_the_robot_cannot_run_are_listed_unsupported_and_skipped(
     assert rig.messages()["float_check"] == float_reason
     assert rig.statuses()["check"] == rig.statuses()["summary"] == "done"
     assert "float_events" not in rig.recording.markers
+
+
+def test_steps_the_connection_cannot_save_or_serve_are_skipped_with_why(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    # A connection that saves nothing: no fit, no picked gains, no checks recorded.
+    rig = make_rig(fake={"persist": []}, float_window_s=1.0, float_settle_s=0.0)
+    path = save_calibration(rig.root / left_spec.arm_id, ArmCalibration.for_spec(left_spec))
+
+    reasons = {step["id"]: step["reason"] for step in rig.procedure.plan() if not step["supported"]}
+
+    assert reasons == {
+        "gravity_fit": "the connection cannot save links",
+        "pick_gains": "the connection cannot save gains",
+    }
+    status = rig.run(["float_check"])
+    assert status["state"] == "done", status["message"]
+    assert rig.procedure.results()["float_check"]["saved"] is None
+    assert load_for_spec(left_spec, path).checks is None
+
+    # One deployed without config sessions: only the check and the summary may run,
+    # and the check refuses it before anything moves.
+    closed = make_rig(fake={"sessions": False})
+    reasons = {
+        step["id"]: step["reason"] for step in closed.procedure.plan() if not step["supported"]
+    }
+    assert set(reasons) == set(STEP_IDS) - {"check", "summary"}
+    assert all("does not serve config sessions" in reason for reason in reasons.values())
+    status = closed.run(["check"])
+    assert status["state"] == "failed"
+    assert closed.messages()["check"].startswith(
+        "the connection does not serve config sessions: start the robot's calibration blueprint"
+    )
+    assert closed.fake.commands == 0
 
 
 def test_a_workspace_without_a_guard_fails_the_check_before_any_motion(

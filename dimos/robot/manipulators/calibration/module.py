@@ -17,7 +17,9 @@
 A :class:`CalibrationModule` runs :class:`~dimos.robot.manipulators.
 calibration.procedure.Procedure` on one arm of a known Damiao robot
 (``robots.KNOWN_ROBOTS``). A terminal wizard or a Desktop tab drives it:
-``plan`` lists the steps, ``run`` starts them, ``status`` (also streamed on
+``plan`` lists the steps and whether each can run, from what the connection
+says it can read and change (``config_keys``, asked at every ``plan``,
+``run`` and ``go_home``), ``run`` starts them, ``status`` (also streamed on
 ``calibration_status``) says when a confirmation waits, and ``confirm``,
 ``skip`` and ``abort`` answer it. ``dimos_run_id`` names the ``dimos run`` the
 module belongs to, so a client that started a run can tell it is talking to
@@ -56,6 +58,7 @@ from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
 
+from dimos.control.connection.arm_config import ConfigKeys
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -261,7 +264,8 @@ class CalibrationModule(Module):
             calibration_steps(),
             state=self._joint_states,
             settings=self.config.settings(),
-            caps=self._capabilities(),
+            # The connection may still be starting: its keys are asked at plan and run.
+            caps=Capabilities(recording_unavailable=self._recording_unavailable()),
             recording=self._recording,
             events=_StreamSink(self),
         )
@@ -293,15 +297,22 @@ class CalibrationModule(Module):
             for name in STREAMED_CALLS:
                 timeouts[name] = STREAMED_CALL_TIMEOUT_S
 
-    def _capabilities(self) -> Capabilities:
-        robot = KNOWN_ROBOTS[self.config.robot]
+    def _recording_unavailable(self) -> str | None:
         recording = self._recording
-        return Capabilities(
-            torque_readback=True,
-            gravity_compensation=robot.gravity,
-            set_gains=True,
-            recording_unavailable=NOT_RECORDING if recording is None else recording.unavailable(),
-        )
+        return NOT_RECORDING if recording is None else recording.unavailable()
+
+    def _capabilities(self) -> Capabilities:
+        """What the connection serves (``config_keys``) and whether the run records, asked now.
+
+        A connection that does not answer leaves the keys unknown; the
+        procedure asks again when it plans or runs.
+        """
+        try:
+            keys: ConfigKeys | None = self._connection.config_keys()
+        except Exception as error:
+            logger.warning(f"the connection did not answer config_keys: {error}")
+            keys = None
+        return Capabilities(keys=keys, recording_unavailable=self._recording_unavailable())
 
     def _require(self) -> Procedure:
         with self._lock:
@@ -311,7 +322,10 @@ class CalibrationModule(Module):
         return procedure
 
     def _refresh(self, procedure: Procedure) -> None:
-        """Recheck the recording, which starts after the modules do; kept while a run is on."""
+        """Ask the connection and recheck the recording, which start after this module does.
+
+        Kept while a run is on.
+        """
         procedure.set_capabilities(self._capabilities())
 
     @rpc

@@ -40,6 +40,7 @@ from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     require_model,
 )
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
+from dimos.robot.manipulators.calibration.robots import calibration_keys
 from dimos.robot.manipulators.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
@@ -428,6 +429,13 @@ def test_the_config_contract_round_trip(start, boundary, calibration_root):
     assert not _active(module)
     # Ending a session that is not there does nothing.
     module.config_reset()
+
+
+def test_a_plan_made_before_the_run_expects_what_the_connection_reports(start, boundary):
+    # dimos arm calibrate --dry-run plans from calibration_keys, asking no connection.
+    expected = calibration_keys(RIG)
+    keys = start(config_sessions=True).config_keys()
+    assert keys.model_copy(update={"persist_paths": {}}) == expected
 
 
 def test_the_calls_that_change_the_arm_are_refused_unless_deployed_for_calibration(start, boundary):

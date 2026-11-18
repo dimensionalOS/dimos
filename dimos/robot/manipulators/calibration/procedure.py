@@ -15,13 +15,15 @@
 """The arm calibration procedure: steps run in order on a worker thread, driven by calls.
 
 A :class:`Procedure` runs a list of :class:`Step` (``steps.calibration_steps``)
-on one arm. ``plan`` lists them with whether each can run on this arm;
-``start`` runs them in order on a thread of its own; ``status`` says where it
-is. A step that needs the operator stops at a confirmation
-(:meth:`StepContext.confirm`, state ``waiting_confirm``) until ``confirm``
-(go on), ``skip`` (skip what was asked: one pose, or the rest of the step) or
-``abort`` (stop everything). An arm in a config session keeps being streamed
-its target while it waits.
+on one arm. ``plan`` lists them with whether each can run on this arm, from
+what the connection says it can read and change (``config_keys``, in
+:class:`Capabilities`) and whether the run records; a step it cannot do is
+skipped with the reason. ``start`` runs them in order on a thread of its
+own; ``status`` says where it is. A step that needs the operator stops at a
+confirmation (:meth:`StepContext.confirm`, state ``waiting_confirm``) until
+``confirm`` (go on), ``skip`` (skip what was asked: one pose, or the rest of
+the step) or ``abort`` (stop everything). An arm in a config session keeps
+being streamed its target while it waits.
 
 A step that fails stops the procedure (``failed``), with the arm held where it
 is; so does ``abort`` (``aborted``). Neither moves the arm home. Two things do,
@@ -222,19 +224,17 @@ class ProcedureSettings:
 
 @dataclass(frozen=True)
 class Capabilities:
-    """What the arm and the run offer the steps.
+    """What the connection and the run offer the steps.
 
     Attributes:
-        torque_readback: The motors report the torque they produce.
-        gravity_compensation: The connection adds each joint's gravity torque.
-        set_gains: Gains can be changed live.
+        keys: What the connection can read and change (``config_keys``);
+            ``None`` until asked: the procedure asks the connection when it
+            plans or runs, and keeps the answer.
         recording_unavailable: Why nothing recorded can be read back, or
             ``None`` when it can.
     """
 
-    torque_readback: bool = True
-    gravity_compensation: bool = True
-    set_gains: bool = True
+    keys: ConfigKeys | None = None
     recording_unavailable: str | None = None
 
 
@@ -534,8 +534,6 @@ class Procedure:
         self._decided = threading.Event()
         self._decision: Literal["confirm", "skip"] | None = None
         self._session: ArmSession | None = None
-        # What the connection can read and change, once asked.
-        self._keys: ConfigKeys | None = None
         # Taken from before a session begins until after it ends.
         self._slot_taken = False
         self._state: ProcedureStateName = "idle"
@@ -565,7 +563,7 @@ class Procedure:
         }
 
     def set_capabilities(self, caps: Capabilities) -> bool:
-        """Replace what the arm and the run offer, e.g. once the recording has started.
+        """Replace what the connection and the run offer, e.g. once the recording has started.
 
         Nothing changes while a run is in progress; returns whether it changed.
         """
@@ -576,12 +574,12 @@ class Procedure:
             return True
 
     def keys(self) -> ConfigKeys:
-        """What the connection can read and change (``config_keys``), asked once and kept.
+        """What the connection can read and change: ``caps.keys``, asked for when not known yet.
 
         Raises ``StepFailedError`` when the connection does not answer.
         """
         with self._lock:
-            keys = self._keys
+            keys = self.caps.keys
         if keys is None:
             try:
                 keys = self.connection.config_keys()
@@ -590,8 +588,19 @@ class Procedure:
                     f"the connection did not say what it serves: {plain_error(error)}"
                 )
             with self._lock:
-                self._keys = keys
+                self.caps = replace(self.caps, keys=keys)
         return keys
+
+    def _ask_keys(self) -> None:
+        """Ask for the keys before the steps say whether they can run; a failure is only logged.
+
+        Without them every step but ``check`` and ``summary`` says it cannot
+        run, and ``check`` fails with the reason.
+        """
+        try:
+            self.keys()
+        except StepFailedError as error:
+            logger.warning(f"{self.spec.arm_id}: {error}")
 
     def persist(
         self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
@@ -614,6 +623,7 @@ class Procedure:
 
     def plan(self) -> list[PlannedStep]:
         """Every step, its instructions, and whether it can run on this arm."""
+        self._ask_keys()
         planned: list[PlannedStep] = []
         for step in self._steps:
             support = step.supported(self.spec, self.caps)
@@ -1019,6 +1029,7 @@ class Procedure:
 
     def _run_steps(self, run: RunState, selected: set[str]) -> None:
         ctx = StepContext(self, run)
+        self._ask_keys()
         try:
             for step in self._steps:
                 if step.id not in selected:

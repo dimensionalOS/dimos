@@ -876,7 +876,7 @@ def _precheck(
 
     from dimos.robot.manipulators.calibration.module import CalibrationModuleConfig
     from dimos.robot.manipulators.calibration.procedure import Capabilities, Procedure
-    from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS
+    from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS, calibration_keys
     from dimos.robot.manipulators.calibration.spec import NoWorkspaceGuardError
     from dimos.robot.manipulators.calibration.steps import calibration_steps
 
@@ -906,7 +906,8 @@ def _precheck(
         echo(f"Error: {error}", err=True)
         echo("Give the table height and the front line: --floor-z-m F --min-x-m X", err=True)
         raise typer.Exit(2) from error
-    caps = Capabilities(gravity_compensation=KNOWN_ROBOTS[robot].gravity)
+    # What the robot's calibration connection will say it serves, asked of no connection.
+    caps = Capabilities(keys=calibration_keys(KNOWN_ROBOTS[robot]))
     # Never reaches an arm: only the plan, which needs no connection, is asked.
     plan = Procedure(spec, None, calibration_steps(), caps=caps).plan()  # type: ignore[arg-type]
     return spec, [dict(step) for step in plan]
