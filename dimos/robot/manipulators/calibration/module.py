@@ -19,7 +19,9 @@ calibration.procedure.Procedure` on one arm of a known Damiao robot
 (``robots.KNOWN_ROBOTS``). A terminal wizard or a Desktop tab drives it:
 ``plan`` lists the steps, ``run`` starts them, ``status`` (also streamed on
 ``calibration_status``) says when a confirmation waits, and ``confirm``,
-``skip`` and ``abort`` answer it.
+``skip`` and ``abort`` answer it. ``dimos_run_id`` names the ``dimos run`` the
+module belongs to, so a client that started a run can tell it is talking to
+that one before it drives the arm.
 
 The arm is reached through the ``_connection`` module reference: the
 blueprint injects the robot's connection (a ``DamiaoConnection`` deployed
@@ -44,12 +46,14 @@ already let the connection's deadman hold the arm.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from typing import Any, Protocol
 
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -331,3 +335,8 @@ class CalibrationModule(Module):
     def results(self) -> dict[str, Any]:
         """The data of every step done in the current or last run, by step id."""
         return self._require().results()
+
+    @rpc
+    def dimos_run_id(self) -> str | None:
+        """The ``dimos run`` this module runs in (its ``DIMOS_RUN_ID``), ``None`` outside one."""
+        return os.environ.get(DIMOS_RUN_ID_ENV)

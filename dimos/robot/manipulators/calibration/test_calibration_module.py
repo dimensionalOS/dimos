@@ -142,6 +142,16 @@ def test_go_home_is_an_rpc_that_confirms_first_and_float_pose_reaches_the_settin
     assert "not moved home" in module.status()["message"]
 
 
+def test_the_module_names_the_dimos_run_it_runs_in(make_module, monkeypatch):
+    module, _ = make_module()
+    assert module.dimos_run_id() is None
+
+    monkeypatch.setenv(DIMOS_RUN_ID_ENV, "20261118-101010-abcd-dual-openyam-calibrate")
+
+    assert module.dimos_run_id() == "20261118-101010-abcd-dual-openyam-calibrate"
+    assert "dimos_run_id" in CalibrationModule.rpcs
+
+
 def test_markers_go_out_on_the_streams_the_reports_read(make_module, mocker, tmp_path):
     with SqliteStore(path=str(tmp_path / "memory.db")):
         pass
