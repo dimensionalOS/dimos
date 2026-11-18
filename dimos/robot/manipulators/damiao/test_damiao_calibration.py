@@ -26,8 +26,10 @@ from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     require_model,
 )
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
+from dimos.robot.manipulators.calibration.hooks import ArmTuningHooks
 from dimos.robot.manipulators.calibration.schema import (
     ArmCalibration,
+    ArmCalibrationError,
     GravityCalibration,
     JointGains,
     LinkGravity,
@@ -325,6 +327,7 @@ def test_an_unnamed_robot_reads_no_calibration(make_rig, mocker):
     module, _, _ = make_rig()
     load.assert_not_called()
     assert module.status().calibration == {}
+    assert module.tuning_arm_ids() == []
 
 
 def test_friction_in_a_file_is_not_applied_yet(start, boundary, calibration_root, mocker):
@@ -336,6 +339,102 @@ def test_friction_in_a_file_is_not_applied_yet(start, boundary, calibration_root
     module = start()
     assert module._arm.feedforward == {}
     assert any("friction is not applied yet" in line for line in _messages(info))
+
+
+def test_tuning_hooks_round_trip(start, boundary, mocker):
+    module = start()
+    native = boundary[0]
+    assert isinstance(module, ArmTuningHooks)
+    assert module.tuning_arm_ids() == ["rig/left", "rig/right"]
+    assert module.tuning_joint_names() == ["joint1", "joint2", "joint3"]
+
+    module.tuning_set_gains("joint2", 900, 2)
+    np.testing.assert_equal(_rows(boundary, "left_arm")[1, :2], [500, 2])
+    module.tuning_set_float("joint3", True, kd=0.4)
+    module.tuning_set_feedforward("joint1", 0.5)
+    gains = module.tuning_get_gains()
+    assert gains["joint2"] == {
+        "kp": 500.0,
+        "kd": 2.0,
+        "floating": False,
+        "float_kd": None,
+        "feedforward_nm": 0.0,
+    }
+    assert gains["joint3"]["floating"] and gains["joint3"]["float_kd"] == 0.4
+    assert gains["joint1"]["feedforward_nm"] == 0.5
+    np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [0, 0.4])
+    module.tuning_set_float("joint3", False)
+    module.tuning_set_feedforward("joint1", 0.0)
+    module.tuning_reset_gains()
+    assert module.tuning_get_gains()["joint2"]["kp"] == 10.0
+    np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [20, 0.6])
+
+    native.groups["left_arm"].tau[:] = [0.7, -0.3]
+    wait_until(lambda: module.tuning_read()["joint1"]["effort"] == 0.7, timeout=2)
+    sample = module.tuning_read()
+    assert list(sample) == ["joint1", "joint2", "joint3", "left_finger", "right_finger"]
+    assert sample["joint2"]["effort"] == -0.3 and sample["joint2"]["position"] == 0.2
+    assert sample["joint1"]["ts"] > 0
+
+    module.tuning_command({"joint1": 0.3, "left_finger": 0.02})
+    assert _rows(boundary, "left_arm")[0, 2] == 0.3
+    assert native.groups["left_gripper"].commands[-1] == pytest.approx(0.5)
+    assert module.status().last_command_time is not None
+    with pytest.raises(ValueError, match="limit"):
+        module.tuning_command({"joint1": 4.0})
+    with pytest.raises(ValueError, match="not joints"):
+        module.tuning_command({"nope": 0.0})
+    with pytest.raises(ValueError, match="not an arm joint"):
+        module.tuning_set_gains("left_finger", 1.0, 1.0)
+    assert _rows(boundary, "left_arm")[0, 2] == 0.3
+
+
+def test_tuning_refuses_a_faulted_or_stopped_connection(start, boundary):
+    module = start()
+    boundary[0].refresh_error = RuntimeError("lost feedback")
+    wait_until(lambda: module._fault is not None, timeout=2)
+    with pytest.raises(RuntimeError, match="lost feedback"):
+        module.tuning_set_gains("joint1", 1.0, 1.0)
+    boundary[0].refresh_error = None
+    module.stop()
+    for call in (
+        module.tuning_get_gains,
+        module.tuning_read,
+        lambda: module.tuning_command({"joint1": 0.1}),
+    ):
+        with pytest.raises(RuntimeError, match="disconnected"):
+            call()
+
+
+def test_tuning_applies_a_calibration_live_and_off_restores_the_defaults(
+    start, boundary, calibration_root, tmp_path
+):
+    module = start()
+    trial = save_calibration(
+        tmp_path / "trial.json", _calibration(gains={"joint1": (60.0, 3.0)}, masses={"link2": 2.0})
+    )
+    applied = module.tuning_apply_calibration(str(trial))
+    assert applied["rig/left"]["links"] == ["link2"] and applied["rig/right"] is None
+    # Sent at once, without a command.
+    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 3])
+    assert module.status().calibration == applied
+
+    mismatched = save_calibration(tmp_path / "bad.json", _calibration(sha256="0" * 64))
+    with pytest.raises(ArmCalibrationError, match="different robot model"):
+        module.tuning_apply_calibration(str(mismatched))
+    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 3])
+    assert module.status().calibration == applied
+
+    assert module.tuning_apply_calibration("off") == {"rig/left": None, "rig/right": None}
+    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [80, 5])
+    assert module._arm.inertial_overrides == {}
+
+    saved = save_calibration(
+        calibration_root / "rig/right", _calibration("rig/right", gains={"joint3": (30.0, 1.0)})
+    )
+    applied = module.tuning_apply_calibration()
+    assert applied["rig/right"]["path"] == str(saved) and applied["rig/left"] is None
+    np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [30, 1])
 
 
 def test_files_from_the_calibration_tools_load_into_dual_openyam(

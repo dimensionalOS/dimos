@@ -21,7 +21,10 @@ latches a fault when feedback breaks.
 
 At start it applies each arm's saved calibration file, if there is one
 (``DamiaoConnectionConfig.calibration``): the file's gains and fitted link
-masses. Without a file the arm runs exactly its URDF and bus defaults.
+masses. Without a file the arm runs exactly its URDF and bus defaults. The
+``tuning_*`` RPCs (:class:`~dimos.robot.manipulators.calibration.hooks.
+ArmTuningHooks`) let a calibration tool change gains live; they are for
+calibration tools only.
 """
 
 from __future__ import annotations
@@ -48,12 +51,17 @@ from dimos.control.connection.connection_module import (
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import limits as limits_of, movable_joints
+from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
-from dimos.robot.manipulators.calibration.hooks import AppliedCalibration
+from dimos.robot.manipulators.calibration.hooks import (
+    AppliedCalibration,
+    JointGainsState,
+    JointSample,
+)
 from dimos.robot.manipulators.calibration.schema import (
     ARMS_STATE_DIR,
     ArmCalibration,
@@ -141,7 +149,13 @@ class _ArmFile:
 
 
 class DamiaoConnection(ConnectionModule):
-    """Own one Damiao robot, its measured states and position targets."""
+    """Own one Damiao robot, its measured states and position targets.
+
+    The ``tuning_*`` RPCs implement
+    :class:`~dimos.robot.manipulators.calibration.hooks.ArmTuningHooks`. They
+    change motor gains and torques of the energized arm live and are for
+    calibration tools only.
+    """
 
     #: The robot this connection deploys: motors, gains, grippers and models.
     robot: ClassVar[DamiaoRobot]
@@ -162,6 +176,8 @@ class DamiaoConnection(ConnectionModule):
         # Guarded by _lock: the calibration each arm runs, for status().
         self._calibration: dict[str, AppliedCalibration | None] = {}
         self._model_hash: str | None = None
+        # The latest reading and when it was taken, for tuning_read().
+        self._latest: tuple[float, ArmReading] | None = None
 
     @property
     def joint_names(self) -> list[str]:
@@ -279,6 +295,135 @@ class DamiaoConnection(ConnectionModule):
             **{item.name: getattr(base, item.name) for item in fields(ConnectionStatus)},
             calibration=calibration,
         )
+
+    @rpc
+    def tuning_arm_ids(self) -> list[str]:
+        """The calibration ids of this robot's arms, in bus order. For calibration tools only."""
+        return self.robot.arm_ids()
+
+    @rpc
+    def tuning_joint_names(self) -> list[str]:
+        """The arm joints whose gains can be tuned, in motor order. For calibration tools only."""
+        return self.robot.arm_joint_names
+
+    @rpc
+    def tuning_get_gains(self) -> dict[str, JointGainsState]:
+        """How each arm joint is driven now. For calibration tools only."""
+        with self._hardware_lock:
+            arm = self._tuning_arm()
+            gains, floating, feedforward = arm.get_gains(), arm.floating, arm.feedforward
+        return {
+            joint: JointGainsState(
+                kp=kp,
+                kd=kd,
+                floating=joint in floating,
+                float_kd=floating.get(joint),
+                feedforward_nm=feedforward.get(joint, 0.0),
+            )
+            for joint, (kp, kd) in gains.items()
+        }
+
+    @rpc
+    def tuning_set_gains(self, joint: str, kp: float, kd: float) -> None:
+        """Hold ``joint`` with these gains now, clamped to kp 0..500 and kd 0..5.
+
+        Changes the energized motor's gains at once; for calibration tools only.
+        """
+        with self._hardware_lock:
+            self._tuning_arm().set_gains(joint, float(kp), float(kd))
+
+    @rpc
+    def tuning_reset_gains(self) -> None:
+        """Back to the calibration's gains, else the bus defaults. For calibration tools only."""
+        with self._hardware_lock:
+            self._tuning_arm().reset_gains()
+
+    @rpc
+    def tuning_set_float(self, joint: str, on: bool, kd: float | None = None) -> None:
+        """Let ``joint`` float with zero stiffness, or hold it again where it is.
+
+        Gravity stays compensated. Changes the energized motor's gains at
+        once; for calibration tools only.
+        """
+        with self._hardware_lock:
+            self._tuning_arm().set_float(joint, bool(on), None if kd is None else float(kd))
+
+    @rpc
+    def tuning_set_feedforward(self, joint: str, tau_nm: float) -> None:
+        """Add ``tau_nm`` to ``joint``'s gravity torque, clamped to the motor's peak.
+
+        Changes the energized motor's torque at once; for calibration tools only.
+        """
+        with self._hardware_lock:
+            self._tuning_arm().set_feedforward(joint, float(tau_nm))
+
+    @rpc
+    def tuning_read(self) -> dict[str, JointSample]:
+        """The latest reading of every joint, as published. For calibration tools only."""
+        with self._hardware_lock:
+            self._tuning_arm()
+            latest = self._latest
+        if latest is None:
+            raise RuntimeError("the Damiao robot has not been read yet")
+        ts, reading = latest
+        return {
+            name: JointSample(position=position, velocity=velocity, effort=effort, ts=ts)
+            for name, position, velocity, effort in zip(
+                self.joint_names, reading.position, reading.velocity, reading.effort, strict=True
+            )
+        }
+
+    @rpc
+    def tuning_command(self, targets: dict[str, float]) -> None:
+        """Send position targets by joint name, exactly as a ``position_command`` would.
+
+        The targets are checked against the joint limits and restart the
+        deadman; stop sending and the arm holds. A refused command raises
+        ``ValueError``. Nothing limits how far one command jumps, so step the
+        targets at the rate the arm may move. For calibration tools only.
+        """
+        unknown = sorted(set(targets) - set(self.joint_names))
+        if unknown:
+            raise ValueError(f"not joints of this Damiao robot: {unknown}")
+        values = {
+            f"{self.config.source}/{name}/{Interface.POSITION.value}": float(value)
+            for name, value in targets.items()
+        }
+        result = validate_command(values, self.limits)
+        if isinstance(result, Rejected):
+            raise ValueError(f"{result.reason}: {result.detail}")
+        with self._hardware_lock:
+            self._tuning_arm()
+            if not self._connected:
+                raise RuntimeError("the Damiao connection is not running")
+        self.command(values)
+
+    @rpc
+    def tuning_apply_calibration(
+        self, path: str | None = None
+    ) -> dict[str, AppliedCalibration | None]:
+        """Apply a calibration now and return what each arm runs, by arm id.
+
+        ``None`` applies each arm's saved file, as "auto" does at start; "off"
+        returns every arm to its URDF masses and bus gains; any other value is
+        one file, applied to the arm it names, and a file that does not fit
+        raises ``ArmCalibrationError`` with nothing changed. Changes the
+        energized motors' gains and gravity torques at once; for calibration
+        tools only.
+        """
+        source = "auto" if path is None else path
+        with self._hardware_lock:
+            arm = self._tuning_arm()
+            files = self._read_calibrations(arm, source, strict=source not in ("auto", "off"))
+            return self._apply_calibrations(arm, files, always=True)
+
+    def _tuning_arm(self) -> DamiaoArm:
+        """The connected arm, for a tuning call made under the hardware lock."""
+        if self._fault is not None:
+            raise RuntimeError(self._fault)
+        if self._arm is None:
+            raise RuntimeError("Damiao robot is disconnected")
+        return self._arm
 
     def _arm_joints_by_id(self) -> dict[str, list[str]]:
         ids = self.robot.arm_ids()
@@ -433,7 +578,9 @@ class DamiaoConnection(ConnectionModule):
             arm = self._arm
             if arm is None:
                 raise RuntimeError("Damiao robot is disconnected")
-            return arm.read()
+            reading = arm.read()
+            self._latest = (time.time(), reading)
+            return reading
         except Exception as error:
             if self._fault is None:
                 self._feedback_failed(error)
