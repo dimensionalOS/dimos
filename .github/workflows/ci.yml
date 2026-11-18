@@ -775,7 +775,7 @@ jobs:
         os: ["macos-latest", "ubuntu-latest"]
         experimental: [false]
         include:
-          - os: "ubuntu-24.04-arm"
+          - os: "ubuntu-26.04-arm"
             pyver: "3.12"
             experimental: false
       fail-fast: true
