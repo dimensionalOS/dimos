@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The lab module over a fake bench: the sim, the arm, the recorder and the
+"""The autoresearch module over a fake bench: the sim, the arm, the recorder and the
 scene are fakes, the candidate programs run in a real subprocess on the fake
 backend, and a feeder thread plays the bench's pose and joint streams."""
 
@@ -79,7 +79,7 @@ BOUNDS = PlacementBounds(x=(0.18, 0.30), y=(0.08, 0.20), z=0.02, yaw=(-0.7, 0.7)
 
 
 class FakeBench:
-    """The bench's state: where the cube is, the arm's joints, and what the lab
+    """The bench's state: where the cube is, the arm's joints, and what the autoresearch module
     asked of the sim, the arm and the controller. A reset puts the arm at home.
     The cube rises 10 cm at the after-snapshot (the second cancel) of every
     reset whose number is in ``lift_on``."""
@@ -112,7 +112,7 @@ class FakeBench:
 
 
 class FakeArm:
-    """The planner as the lab's Arm SDK sees it: its state, presets and gripper."""
+    """The planner as the autoresearch module's Arm SDK sees it: its state, presets and gripper."""
 
     def __init__(self, bench: FakeBench) -> None:
         self.bench = bench
@@ -149,7 +149,7 @@ class FakeArm:
 
 
 class FakeControl:
-    """The controller as the lab sees it: a trajectory lands at once."""
+    """The controller as the autoresearch module sees it: a trajectory lands at once."""
 
     def __init__(self, bench: FakeBench) -> None:
         self.bench = bench
@@ -180,7 +180,7 @@ class FakeMonitor:
 
 class FakeMcp:
     def mcp_url(self) -> str:
-        return "http://lab/mcp"
+        return "http://autoresearch/mcp"
 
 
 class FakeBoxFilter:
@@ -208,7 +208,7 @@ class FakeScene:
 
 
 @dataclass
-class Lab:
+class Autoresearch:
     module: AutoresearchModule
     bench: FakeBench
     monitor: FakeMonitor
@@ -224,7 +224,7 @@ class Lab:
 
 
 @pytest.fixture
-def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
+def autoresearch(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Autoresearch]:
     bench, monitor = FakeBench(), FakeMonitor()
     module = AutoresearchModule(
         session_dir=tmp_path / "lift",
@@ -255,9 +255,9 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
     module.coordinator_joint_state.transport = joints
     module.voxel_map.transport = maps
     module.color_image.transport = frames
-    lab = Lab(module, bench, monitor, tmp_path / "lift")
+    autoresearch = Autoresearch(module, bench, monitor, tmp_path / "lift")
     module.autoresearch_status.subscribe(
-        lambda msg: lab.statuses.append(AutoresearchStatus.model_validate_json(msg.data))
+        lambda msg: autoresearch.statuses.append(AutoresearchStatus.model_validate_json(msg.data))
     )
     stop = threading.Event()
 
@@ -278,107 +278,117 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
     feeder = threading.Thread(target=feed, daemon=True)
     feeder.start()
     module.start()
-    yield lab
+    yield autoresearch
     module.stop()
     stop.set()
     feeder.join()
 
 
-def test_start_homes_the_arm_and_opens_the_session(lab: Lab) -> None:
-    assert lab.session.info().status == "idle" and lab.session.info().task == "lift the cube"
-    assert (lab.bench.homes, lab.bench.grippers) == (1, [1.0])
-    assert [status.state for status in lab.statuses] == ["idle"]
-    task = json.loads(lab.module.task())
+def test_start_homes_the_arm_and_opens_the_session(autoresearch: Autoresearch) -> None:
+    assert (
+        autoresearch.session.info().status == "idle"
+        and autoresearch.session.info().task == "lift the cube"
+    )
+    assert (autoresearch.bench.homes, autoresearch.bench.grippers) == (1, [1.0])
+    assert [status.state for status in autoresearch.statuses] == ["idle"]
+    task = json.loads(autoresearch.module.task())
     assert task["budget"]["candidates_left"] == 2 and "robot.arm.move_pose" in task["api"]
-    scene = json.loads(lab.module.scene())
+    scene = json.loads(autoresearch.module.scene())
     assert scene["objects"] == [{"name": "cube", "position": [0.2, 0.1, 0.02], "size": [0.04] * 3}]
     assert Path(scene["keyframe"]).is_file()
 
 
-def test_run_returns_at_once_then_records_every_dev_trial_and_releases_the_tool(lab: Lab) -> None:
-    lab.bench.lift_on = {2}
-    candidate = lab.module.submit(PROGRAM, "home is enough")
+def test_run_returns_at_once_then_records_every_dev_trial_and_releases_the_tool(
+    autoresearch: Autoresearch,
+) -> None:
+    autoresearch.bench.lift_on = {2}
+    candidate = autoresearch.module.submit(PROGRAM, "home is enough")
     started = time.monotonic()
-    assert lab.module.run(candidate).startswith("started candidate 1 on 2 dev trials")
+    assert autoresearch.module.run(candidate).startswith("started candidate 1 on 2 dev trials")
     assert time.monotonic() - started < 1.0
-    assert lab.module.start_tool.call_args_list == [call("run")]  # type: ignore[attr-defined]
+    assert autoresearch.module.start_tool.call_args_list == [call("run")]  # type: ignore[attr-defined]
     assert (
-        lab.module.run(candidate)
+        autoresearch.module.run(candidate)
         == "a run is in progress; wait for its results or call stop_run first"
     )
-    assert lab.session.info().status == "running"
-    wait_until(lab.done, timeout=60.0)
+    assert autoresearch.session.info().status == "running"
+    wait_until(autoresearch.done, timeout=60.0)
 
-    records = lab.session.results(candidate)
+    records = autoresearch.session.results(candidate)
     assert [(r.split, r.index, r.success, r.stage) for r in records] == [
         ("dev", 0, False, "reach"),
         ("dev", 1, True, "done"),
     ]
-    assert (records[1].episode, records[1].start_ts) == (0, lab.monitor.ts)
-    assert lab.monitor.events == ["start", "discard", "start", "save"]
-    assert lab.module.stop_tool.call_args_list == [call("run")]  # type: ignore[attr-defined]
-    assert lab.session.info().status == "idle"
-    assert [(s.state, s.busy, s.trial) for s in lab.statuses[1:]] == [
+    assert (records[1].episode, records[1].start_ts) == (0, autoresearch.monitor.ts)
+    assert autoresearch.monitor.events == ["start", "discard", "start", "save"]
+    assert autoresearch.module.stop_tool.call_args_list == [call("run")]  # type: ignore[attr-defined]
+    assert autoresearch.session.info().status == "idle"
+    assert [(s.state, s.busy, s.trial) for s in autoresearch.statuses[1:]] == [
         ("running", True, 0),
         ("running", True, 1),
         ("idle", False, None),
     ]
-    assert (lab.statuses[-1].dev_passed, lab.statuses[-1].dev_trials) == (1, 2)
+    assert (autoresearch.statuses[-1].dev_passed, autoresearch.statuses[-1].dev_trials) == (1, 2)
     # Each dev trial starts from its own seeded placement, with the arm sent home after it.
-    assert [placement["cube"][:2] for placement in lab.bench.resets] == [
-        lab.module.config.placement_bounds.sample(0)[:2],
-        lab.module.config.placement_bounds.sample(1)[:2],
+    assert [placement["cube"][:2] for placement in autoresearch.bench.resets] == [
+        autoresearch.module.config.placement_bounds.sample(0)[:2],
+        autoresearch.module.config.placement_bounds.sample(1)[:2],
     ]
-    assert lab.bench.homes == 3
-    results = json.loads(lab.module.results(candidate))
+    assert autoresearch.bench.homes == 3
+    results = json.loads(autoresearch.module.results(candidate))
     assert results["dev"] == {"dev_passed": 1, "dev_trials": 2} and not results["running"]
     assert Path(results["trials"][1]["trace"]).is_file()
-    assert json.loads(lab.module.leaderboard())[0]["dev_rate"] == 0.5
-    assert lab.module.run(candidate) == "candidate 1 has already run every dev trial"
+    assert json.loads(autoresearch.module.leaderboard())[0]["dev_rate"] == 0.5
+    assert autoresearch.module.run(candidate) == "candidate 1 has already run every dev trial"
     with pytest.raises(RuntimeError, match="freeze"):
-        lab.module.run(candidate, "heldout")
+        autoresearch.module.run(candidate, "heldout")
 
 
 @pytest.mark.parametrize("stopper", ["stop_run", "stop"])
 def test_stopping_kills_the_program_cancels_the_arm_and_discards_the_trial(
-    lab: Lab, stopper: str
+    autoresearch: Autoresearch, stopper: str
 ) -> None:
-    candidate = lab.module.submit(ENDLESS, "never ends")
-    lab.module.run(candidate)
-    trace = lab.session.candidate_dir(candidate) / "trials" / "dev-00" / "trace.jsonl"
+    candidate = autoresearch.module.submit(ENDLESS, "never ends")
+    autoresearch.module.run(candidate)
+    trace = autoresearch.session.candidate_dir(candidate) / "trials" / "dev-00" / "trace.jsonl"
     wait_until(lambda: trace.is_file() and trace.read_text() != "", timeout=60.0)
-    cancels = lab.bench.cancels
+    cancels = autoresearch.bench.cancels
 
-    getattr(lab.module, stopper)()
+    getattr(autoresearch.module, stopper)()
 
-    assert lab.module._thread is None
-    assert lab.bench.cancels > cancels
-    assert lab.session.results(candidate) == []
-    assert lab.monitor.events == ["start", "discard"]
-    assert lab.session.info().status == "idle"
-    assert lab.module.stop_tool.call_args_list[0] == call("run")  # type: ignore[attr-defined]
-    assert not lab.module.status().busy and lab.module.status().error is None
+    assert autoresearch.module._thread is None
+    assert autoresearch.bench.cancels > cancels
+    assert autoresearch.session.results(candidate) == []
+    assert autoresearch.monitor.events == ["start", "discard"]
+    assert autoresearch.session.info().status == "idle"
+    assert autoresearch.module.stop_tool.call_args_list[0] == call("run")  # type: ignore[attr-defined]
+    assert not autoresearch.module.status().busy and autoresearch.module.status().error is None
 
 
-def test_freeze_runs_the_heldout_trials_and_scores_the_session(lab: Lab) -> None:
-    lab.bench.lift_on = {1}
-    candidate = lab.module.submit(PROGRAM, "home is enough")
-    assert lab.module.freeze(candidate).startswith("frozen candidate 1; running 1 held-out trials")
-    wait_until(lambda: lab.session.info().status == "scored", timeout=60.0)
+def test_freeze_runs_the_heldout_trials_and_scores_the_session(autoresearch: Autoresearch) -> None:
+    autoresearch.bench.lift_on = {1}
+    candidate = autoresearch.module.submit(PROGRAM, "home is enough")
+    assert autoresearch.module.freeze(candidate).startswith(
+        "frozen candidate 1; running 1 held-out trials"
+    )
+    wait_until(lambda: autoresearch.session.info().status == "scored", timeout=60.0)
 
-    info = lab.session.info()
-    assert (info.status, info.heldout_rate, lab.session.frozen()) == ("scored", 1.0, 1)
-    [record] = lab.session.results(candidate)
+    info = autoresearch.session.info()
+    assert (info.status, info.heldout_rate, autoresearch.session.frozen()) == ("scored", 1.0, 1)
+    [record] = autoresearch.session.results(candidate)
     assert (record.split, record.index, record.success) == ("heldout", 0, True)
-    wait_until(lab.done, timeout=5.0)
-    assert (lab.statuses[-1].state, lab.statuses[-1].heldout_rate) == ("scored", 1.0)
-    assert lab.module.stop_tool.call_args_list == [call("run")]  # type: ignore[attr-defined]
+    wait_until(autoresearch.done, timeout=5.0)
+    assert (autoresearch.statuses[-1].state, autoresearch.statuses[-1].heldout_rate) == (
+        "scored",
+        1.0,
+    )
+    assert autoresearch.module.stop_tool.call_args_list == [call("run")]  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="scored"):
-        lab.module.submit(PROGRAM, "too late")
+        autoresearch.module.submit(PROGRAM, "too late")
 
 
 def test_start_actor_runs_it_on_a_thread_and_reports_how_it_ended(
-    lab: Lab, mocker: pytest_mock.MockerFixture
+    autoresearch: Autoresearch, mocker: pytest_mock.MockerFixture
 ) -> None:
     seen: dict[str, object] = {}
 
@@ -397,56 +407,58 @@ def test_start_actor_runs_it_on_a_thread_and_reports_how_it_ended(
         return TrajectoryBuilder("go", name="t", model=model).build("answer")
 
     mocker.patch("dimos.autoresearch.module.run_actor", fake)
-    status = AutoresearchStatus.model_validate_json(lab.module.start_actor())
+    status = AutoresearchStatus.model_validate_json(autoresearch.module.start_actor())
     assert (status.actor, status.actor_model, status.actor_provider) == (
         "running",
         "claude-sonnet-4-5",
         "anthropic",
     )
-    wait_until(lambda: lab.module.status().actor == "done", timeout=5.0)
+    wait_until(lambda: autoresearch.module.status().actor == "done", timeout=5.0)
     assert seen == {
-        "mcp_url": "http://lab/mcp",
+        "mcp_url": "http://autoresearch/mcp",
         "model": "claude-sonnet-4-5",
         "provider": "anthropic",
-        "run_dir": lab.dir / "actor",
+        "run_dir": autoresearch.dir / "actor",
     }
-    assert [(s.actor, s.actor_error) for s in lab.statuses[1:]] == [
+    assert [(s.actor, s.actor_error) for s in autoresearch.statuses[1:]] == [
         ("running", None),
         ("done", None),
     ]
-    assert lab.session.info().status == "idle"
+    assert autoresearch.session.info().status == "idle"
 
     mocker.patch(
         "dimos.autoresearch.module.run_actor",
         side_effect=RuntimeError("OPENAI_API_KEY is not set"),
     )
-    lab.module.start_actor("gpt-5.6-luna", "openai")
-    wait_until(lambda: lab.module.status().actor == "failed", timeout=5.0)
-    status = lab.module.status()
+    autoresearch.module.start_actor("gpt-5.6-luna", "openai")
+    wait_until(lambda: autoresearch.module.status().actor == "failed", timeout=5.0)
+    status = autoresearch.module.status()
     assert (status.actor_model, status.actor_provider, status.actor_error) == (
         "gpt-5.6-luna",
         "openai",
         "RuntimeError: OPENAI_API_KEY is not set",
     )
     with pytest.raises(ValueError, match="provider"):
-        lab.module.start_actor(provider="mistral")
+        autoresearch.module.start_actor(provider="mistral")
 
 
-def test_stop_actor_ends_a_running_actor(lab: Lab, mocker: pytest_mock.MockerFixture) -> None:
+def test_stop_actor_ends_a_running_actor(
+    autoresearch: Autoresearch, mocker: pytest_mock.MockerFixture
+) -> None:
     def fake(*args: object, stop: threading.Event, **kwargs: object) -> object:
         stop.wait(10.0)
         return TrajectoryBuilder("go", name="t", model="m").build("error", error="killed")
 
     mocker.patch("dimos.autoresearch.module.run_actor", fake)
-    lab.module.start_actor()
+    autoresearch.module.start_actor()
     with pytest.raises(RuntimeError, match="running"):
-        lab.module.start_actor()
+        autoresearch.module.start_actor()
 
-    status = AutoresearchStatus.model_validate_json(lab.module.stop_actor())
+    status = AutoresearchStatus.model_validate_json(autoresearch.module.stop_actor())
 
     assert (status.actor, status.actor_error) == ("idle", None)
-    assert lab.module._actor_thread is None
-    assert AutoresearchStatus.model_validate_json(lab.module.stop_actor()).actor == "idle"
+    assert autoresearch.module._actor_thread is None
+    assert AutoresearchStatus.model_validate_json(autoresearch.module.stop_actor()).actor == "idle"
 
 
 def test_a_blueprint_without_the_scene_settings_fails_at_build(tmp_path: Path) -> None:

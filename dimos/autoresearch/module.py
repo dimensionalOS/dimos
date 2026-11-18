@@ -156,8 +156,8 @@ class AutoresearchModuleConfig(ModuleConfig):
 
 
 class AutoresearchModule(Module):
-    """The lab. ``start`` opens the session and homes the arm; the skills are
-    the actor's tools. ``run`` and ``freeze`` move the arm on a background
+    """The autoresearch module. ``start`` opens the session and homes the arm; the skills are
+    the coding agent's tools. ``run`` and ``freeze`` move the arm on a background
     thread and return at once; ``stop_run`` ends that thread. ``start_actor``
     runs the coding agent itself, on a thread, against this stack's MCP
     server. The status stream and ``get_status`` carry an ``AutoresearchStatus``."""
@@ -244,20 +244,20 @@ class AutoresearchModule(Module):
             super().stop()
 
     def status(self) -> AutoresearchStatus:
-        """The lab's current status document."""
+        """The autoresearch module's current status document."""
         with self._status_lock:
             return self._status
 
     @rpc
     def get_status(self) -> str:
-        """The lab's current status as JSON text, the document the status stream carries."""
+        """The autoresearch module's current status as JSON text, the document the status stream carries."""
         return self.status().to_json()
 
     @rpc
     def start_actor(self, model: str | None = None, provider: str | None = None) -> str:
-        """Start the coding agent that drives this lab over MCP, on a thread,
+        """Start the coding agent that drives this module over MCP, on a thread,
         and return the status at once; ``model`` and ``provider`` override the
-        config. Refused while an actor runs or once the session is scored."""
+        config. Refused while a coding agent runs or once the session is scored."""
         model = model or self.config.model
         provider = provider or self.config.actor_provider
         provider_key(provider)
@@ -265,7 +265,9 @@ class AutoresearchModule(Module):
             if self._actor_thread is not None:
                 raise RuntimeError("an actor is running; call stop_actor first")
             if self._session.info().status == "scored":
-                raise RuntimeError("the session is scored; there is nothing left for an actor")
+                raise RuntimeError(
+                    "the session is scored; there is nothing left for a coding agent"
+                )
             self._actor_stop.clear()
             self._actor_thread = threading.Thread(
                 target=self._actor, args=(model, provider), name="autoresearch-actor"
@@ -278,8 +280,8 @@ class AutoresearchModule(Module):
 
     @rpc
     def stop_actor(self) -> str:
-        """Stop the actor: its Pi process is killed and the status goes idle.
-        The session stays as it is; a trial loop the actor started runs on."""
+        """Stop the coding agent: its Pi process is killed and the status goes idle.
+        The session stays as it is; a trial loop the coding agent started runs on."""
         self._stop_actor()
         return self.get_status()
 
@@ -565,11 +567,11 @@ class AutoresearchModule(Module):
                 run_dir=self.config.session_dir / "actor",
                 stop=self._actor_stop,
             )
-            logger.info("autoresearch: actor ended", ended_by=trajectory.extra.ended_by)
+            logger.info("autoresearch: coding agent ended", ended_by=trajectory.extra.ended_by)
             if trajectory.extra.ended_by == "error":
                 actor, error = "failed", trajectory.extra.error
         except Exception as exc:
-            logger.exception("autoresearch: actor failed", model=model, provider=provider)
+            logger.exception("autoresearch: coding agent failed", model=model, provider=provider)
             actor, error = "failed", f"{type(exc).__name__}: {exc}"
         finally:
             if self._actor_stop.is_set():
@@ -614,7 +616,7 @@ class AutoresearchModule(Module):
         return True
 
     def _success_rule(self) -> str:
-        """How a trial is scored, in words, so the actor aims at what the judge checks."""
+        """How a trial is scored, in words, so the coding agent aims at what the judge checks."""
         if self.config.judge == "lift":
             return f"the {self.config.judge_body} ends at least 5 cm higher than it started"
         return (

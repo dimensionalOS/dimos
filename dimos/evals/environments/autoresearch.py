@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The autoresearch lab in MuJoCo as an eval environment: one launch is one session."""
+"""The autoresearch module in MuJoCo as an eval environment: one launch is one session."""
 
 from __future__ import annotations
 
@@ -34,9 +34,9 @@ if TYPE_CHECKING:
 
 class AutoresearchEnvironmentConfig(MujocoEnvironmentConfig):
     task: str
-    """The task in words, handed to the lab and the episode recorder."""
+    """The task in words, handed to the autoresearch module and the episode recorder."""
     budget: Budget
-    """How much searching the session may do; the lab reads it from its config."""
+    """How much searching the session may do; the module reads it from its config."""
     session_root: Path = STATE_DIR / "autoresearch"
     """Every launch makes a fresh session directory under here."""
     blueprint: list[str] = ["autoresearch-metal-sim"]
@@ -47,8 +47,8 @@ class AutoresearchEnvironmentConfig(MujocoEnvironmentConfig):
 
 
 class AutoresearchEnvironment(MujocoEnvironment):
-    """Launch the lab blueprint on a fresh session directory and hand that
-    directory to the actor. Settling waits for the lab to score the frozen
+    """Launch the autoresearch blueprint on a fresh session directory and hand that
+    directory to the coding agent. Settling waits for the autoresearch module to score the frozen
     candidate on the held-out trials, so the grader finds ``session.json``
     at ``status: "scored"``."""
 
@@ -61,7 +61,9 @@ class AutoresearchEnvironment(MujocoEnvironment):
     @property
     def session_dir(self) -> Path:
         if self._session_dir is None:
-            raise RuntimeError("no session directory: the lab has not been launched")
+            raise RuntimeError(
+                "no session directory: the autoresearch blueprint has not been launched"
+            )
         return self._session_dir
 
     def configure_launch(self, proc: DimosCliCall) -> None:
@@ -91,7 +93,7 @@ class AutoresearchEnvironment(MujocoEnvironment):
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"session {self.session_dir} is {status or 'missing'} after the "
-                    f"{budget_s:.0f} s settle budget; the lab never reached scored"
+                    f"{budget_s:.0f} s settle budget; the autoresearch module never reached scored"
                 )
             time.sleep(self.config.settle_poll_s)
 

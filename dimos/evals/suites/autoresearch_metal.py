@@ -14,13 +14,13 @@
 
 """One unattended autoresearch session per task on the Metal arm in MuJoCo.
 
-The case prompt is the ASPIRE actor loop: read the task and scene, submit
+The case prompt is the ASPIRE coding agent loop: read the task and scene, submit
 immutable candidate programs, run them on dev trials, read the traces and
 keyframes, repair by failure mode, search with several candidates when
-stuck, freeze one. The lab scores the frozen candidate on held-out trials
+stuck, freeze one. The autoresearch module scores the frozen candidate on held-out trials
 and the grader reads that rate from ``session.json``. The run needs
 ``ANTHROPIC_API_KEY`` and Pi on PATH; the keyword guard denies every way
-around the lab's tools:
+around the autoresearch module's tools:
 
     dimos evals run dimos.evals.suites.autoresearch_metal --agent dimos.evals.agents.pi \\
         --set provider=anthropic --set model=<model> --set max_steps=600 \\
@@ -104,7 +104,7 @@ def iterations(trajectory: Trajectory) -> list[dict[str, Any]]:
 
 
 def calls_tool(step: Step, tool: str) -> bool:
-    """Whether the step called the lab tool natively or as ``dimos mcp call <tool>`` from a shell."""
+    """Whether the step called the autoresearch tool natively or as ``dimos mcp call <tool>`` from a shell."""
     pattern = re.compile(rf"\bmcp call {re.escape(tool)}\b")
     return any(
         call.function_name == tool or bool(pattern.search(json.dumps(call.arguments)))

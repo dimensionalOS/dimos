@@ -1,6 +1,6 @@
 # Autoresearch
 
-A coding agent writes a program against a fixed robot API; the lab runs it on
+A coding agent writes a program against a fixed robot API; the autoresearch module runs it on
 fixed trials, logs every call, and the agent repairs or replaces it until it
 freezes one candidate. This package is the loop's core: the session on disk,
 the judges and the recorder hook. The program API, its live backend and the
@@ -90,7 +90,7 @@ after.
 `run_program(program_path, run_dir, task, timeout_s, backend_factory, env)`
 runs the candidate in a fresh `python -I` process (no `PYTHONPATH`, no current
 directory on the path; only the DimOS checkout is added) and kills it at the
-timeout. `env`, when given, is the child's whole environment, so the lab can
+timeout. `env`, when given, is the child's whole environment, so the autoresearch module can
 hand it the bus settings `Dimos.connect()` needs. The child gets four
 arguments: the program path, the trial directory, the task text and
 `backend_factory`, a `"package.module:function"` string. It imports that
@@ -133,7 +133,7 @@ at the robot. A `Snapshot` is each tracked body's pose, which is what the
 MuJoCo sim publishes for its tracked bodies. `NoEpisodes` stands in for the
 recorder on a stack without one.
 
-## The lab module
+## The autoresearch module
 
 `AutoresearchModule` (`module.py`) puts a robot behind the loop. Its config
 names the session directory, the task, the budget and the judge; `start()`
@@ -141,7 +141,7 @@ creates the session and homes the arm. The scene settings have no default:
 the robot's blueprint names `judge_body` (the object each reset places and
 the judge scores), `place_body` (the place judge's target) and
 `placement_bounds` (where the object may start), and a blueprint without
-them fails at build. The actor's tools are its skills,
+them fails at build. The coding agent's tools are its skills,
 served over MCP: `task`, `scene`, `submit`, `run`, `stop_run`, `results`,
 `leaderboard`, `freeze` and `note`. `run` and `freeze` run the trials on a
 background thread and return at once; `results` is polled. The world is
@@ -151,30 +151,30 @@ background thread and return at once; `results` is polled. The world is
 obstacle map of the new scene, then puts back whatever the last program
 cleared from that map and waits for fresh poses; a snapshot stops the arm and
 waits for it to hold still. Programs run on `LIVE_BACKEND`. `TruthSceneModule` (`truth_scene.py`) answers scene scans from the
-simulator's true poses so no detector is needed. The lab publishes an
+simulator's true poses so no detector is needed. The autoresearch module publishes an
 `AutoresearchStatus` document (`status.py`) on `autoresearch_status`, and
 `session.json` goes idle, running, frozen, scored with the held-out rate.
 The blueprint is `autoresearch-metal-sim`.
 
-## Run the actor from the lab
+## Run the coding agent from the autoresearch module
 
-`start_actor(model=None, provider=None)` is an RPC on the lab, not a skill, so
-the actor never sees it: it runs the coding agent on a thread of the lab
+`start_actor(model=None, provider=None)` is an RPC on the autoresearch module, not a skill, so
+the coding agent never sees it: it runs the coding agent on a thread of the autoresearch module
 itself, and a Desktop app button can run a whole session with no terminal.
 The agent is Pi (`dimos.evals.agents.pi`) with the prompt in `prompt.py`,
 pointed at this stack's MCP server, on the config's `model` and
 `actor_provider` unless the call names others; `actor_max_steps` and
-`actor_timeout_s` bound the run. The provider's key must be in the lab's
+`actor_timeout_s` bound the run. The provider's key must be in the autoresearch module's
 environment: put it in the `.env` of the dimos directory, which `dimos run`
 loads. `anthropic` reads `ANTHROPIC_API_KEY`, `openai` reads
 `OPENAI_API_KEY`, `google` reads `GEMINI_API_KEY`. The Pi process gets the
-lab interpreter's `bin` directory first on its PATH, so a stack launched by
+autoresearch module interpreter's `bin` directory first on its PATH, so a stack launched by
 Desktop, whose service environment has no venv on PATH, still lets Pi run
 `dimos mcp call`. Without the key, without `pi` on PATH, or without `dimos`
-there or on PATH, the actor fails at once and the status says why.
+there or on PATH, the coding agent fails at once and the status says why.
 `stop_actor()` kills the Pi process; the session stays as it is, so a
-trial loop the actor started runs on. In the status document `actor` goes
-idle, running, then done (the actor returned; freeze from the app if it did
+trial loop the coding agent started runs on. In the status document `actor` goes
+idle, running, then done (the coding agent returned; freeze from the app if it did
 not) or failed with `actor_error`, beside `actor_model` and `actor_provider`.
 The trajectory (`trajectory.json`, the ATIF document), Pi's raw requests, its
 system prompt and its stderr land under `<session>/actor/`.

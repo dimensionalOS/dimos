@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What the lab is doing, as one versioned JSON document on its status stream."""
+"""What the autoresearch module is doing, as one versioned JSON document on its status stream."""
 
 from __future__ import annotations
 
@@ -28,11 +28,11 @@ ActorState = Literal["idle", "running", "done", "failed"]
 
 
 class AutoresearchStatus(BaseModel):
-    """Version 1 of the lab's status. ``state`` follows session.json. ``busy``
+    """Version 1 of the autoresearch module's status. ``state`` follows session.json. ``busy``
     says a trial loop is active, on ``candidate``, ``split`` and ``trial``;
     ``dev_passed`` of ``dev_trials`` are that candidate's dev tallies so far.
     ``error`` is what ended the last loop early, if anything did. ``actor``
-    is the lab's own coding agent, on ``actor_model`` at ``actor_provider``;
+    is the module's own coding agent, on ``actor_model`` at ``actor_provider``;
     ``actor_error`` is what it failed with."""
 
     ts: float

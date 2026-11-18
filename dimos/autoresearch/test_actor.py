@@ -35,7 +35,7 @@ def test_run_actor_names_the_missing_key_before_launching_anything(
     for provider, key in (("anthropic", "ANTHROPIC_API_KEY"), ("google", "GEMINI_API_KEY")):
         with pytest.raises(RuntimeError, match=key):
             run_actor(
-                "http://lab/mcp",
+                "http://autoresearch/mcp",
                 session,
                 "m",
                 provider,

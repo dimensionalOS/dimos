@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The actor run by the lab itself: Pi (``dimos.evals.agents.pi``) driving
-the lab's tools over MCP with the autoresearch prompt."""
+"""The coding agent run by the autoresearch module itself: Pi (``dimos.evals.agents.pi``) driving
+the module's tools over MCP with the autoresearch prompt."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def run_actor(
     run_dir: Path,
     stop: threading.Event,
 ) -> Trajectory:
-    """Run Pi on the session's task against the lab at ``mcp_url``, with at
+    """Run Pi on the session's task against the autoresearch module at ``mcp_url``, with at
     most ``max_steps`` model calls in ``timeout_s`` seconds, and return its
     trajectory, also written to ``run_dir/trajectory.json``. Setting ``stop``
     kills the Pi process, and the run returns what it has. Raises before
@@ -95,7 +95,7 @@ def run_actor(
         )
     if shutil.which("dimos", path=_pi_path()) is None:
         raise RuntimeError(
-            f"Pi reaches the lab through the dimos CLI, which is on neither PATH nor {INTERPRETER_BIN}"
+            f"Pi reaches the autoresearch module through the dimos CLI, which is on neither PATH nor {INTERPRETER_BIN}"
         )
     info = session.info()
     env = RunningEnvironment(mcp_url=mcp_url, streams=(), artifacts={"session": session.dir})

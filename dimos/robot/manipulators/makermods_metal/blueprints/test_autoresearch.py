@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The lab blueprint takes its session at launch and hands the actor no movement tool."""
+"""The autoresearch blueprint takes its session at launch and hands the coding agent no movement tool."""
 
 import inspect
 from pathlib import Path

@@ -530,16 +530,16 @@ package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
 ### Autoresearch
 
-`AutoresearchEnvironment` launches the `autoresearch-metal-sim` lab (the Metal arm on a
+`AutoresearchEnvironment` launches the `autoresearch-metal-sim` blueprint (the Metal arm on a
 bench in MuJoCo, a truth scene, the collection recorder, the episode monitor, the
 `AutoresearchModule` and `McpServer`) on a fresh session directory and hands that directory
-to the agent instead of the recording. The case prompt is the actor loop
+to the agent instead of the recording. The case prompt is the coding agent loop
 (`dimos.evals.suites.autoresearch_metal`): read the task and the scene, `submit` immutable
 candidate programs, `run` them on dev trials, read the traces and keyframes, repair by
 failure mode, search with several candidates when stuck, `freeze` one. Settling waits until
-the lab has scored the frozen candidate on the held-out trials, and the grade is that
+the autoresearch module has scored the frozen candidate on the held-out trials, and the grade is that
 held-out pass rate, passed at the budget's threshold. The keyword guard denies every way
-around the lab's tools:
+around the autoresearch module's tools:
 
 ```bash skip
 dimos evals run dimos.evals.suites.autoresearch_metal --agent dimos.evals.agents.pi \
@@ -563,7 +563,7 @@ recording/            the collection recorder's dataset of the saved episodes
 report.json           written by the grader: leaderboard, iterations, tokens and seconds per candidate
 ```
 
-The run's own `results.jsonl` and `trajectory.json` carry the actor's totals; `report.json`
+The run's own `results.jsonl` and `trajectory.json` carry the coding agent's totals; `report.json`
 splits them per submitted candidate.
 
 ### Hardware

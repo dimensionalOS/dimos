@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The autoresearch lab on one Metal in MuJoCo: an agent's programs run on the
+"""The autoresearch blueprint on one Metal in MuJoCo: an agent's programs run on the
 bench, judged from the simulator's true object poses, and the successful
 episodes are recorded as a Quest-profile dataset."""
 
@@ -52,8 +52,8 @@ DEFAULT_TASK = "lift the cube"
 _DEFAULT_SESSION = RECORDINGS_DIR / f"autoresearch_metal_{datetime.now():%Y%m%d_%H%M%S}"
 
 # The recorder comes first so it stops after the producers it records, and the
-# lab after the arm so its stop can still cancel motion. No ManipulationSkills
-# and no PickAndPlaceModule: McpServer lists every @skill, and the actor must
+# autoresearch module after the arm so its stop can still cancel motion. No ManipulationSkills
+# and no PickAndPlaceModule: McpServer lists every @skill, and the coding agent must
 # have no movement tool of its own. The recorder's wrist image is the sim camera,
 # and it writes into the session folder itself.
 autoresearch_metal_sim = autoconnect(
