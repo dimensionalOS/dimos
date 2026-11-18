@@ -95,6 +95,8 @@ def dual_metal_control() -> Blueprint:
 dual_makermods_metal_planner_coordinator = autoconnect(
     dual_metal_control(),
     DualMetalManipulationModule.blueprint(
+        # The Controller app calls the planner by this name, not the subclass's.
+        rpc_name="ManipulationModule",
         gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
         model=_MODEL,
         visualization={"backend": "viser"},
