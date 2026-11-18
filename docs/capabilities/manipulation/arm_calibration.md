@@ -103,14 +103,19 @@ Safety:
 
 ## How the wizard drives the arm
 
-The calibration module talks to the arm's connection through the arm config contract, five calls every connection has:
+A `<robot>-calibrate` blueprint runs three modules: the arm's connection, a control coordinator and the calibration module.
+
+The calibration module publishes the arm's targets 50 times a second on `calibration_joint_command`. The coordinator's pass-through task sends each one to the connection's `position_command` on its next tick, unchanged: nothing limits, interpolates or smooths it, so a step stays a step. When no target has come for 0.1 s, or the wizard asks it to `hold`, the coordinator sends the arm nothing, and 0.1 s later the connection's deadman holds the arm where it is. If the wizard stops, the arm is held within about 0.2 s.
+
+The wizard changes how the arm is driven through the arm config contract, four calls every connection has:
 
 | Call | What it does |
 |------|--------------|
 | `config_keys` | Says what the connection can read and change. Steps it cannot do are skipped |
 | `config_get` | How each arm is driven now: gains, floating joints, link masses and the file it runs |
-| `config_set` | Changes gains or floats a joint for the session, or saves to the arm's file (`persist`) |
-| `config_command` | Sends the arm's targets, 50 times a second |
+| `config_set` | Changes gains or floats a joint for the session, or saves to the arm's file (`persist`). An empty patch only renews the session's lease |
 | `config_reset` | Undoes every live change and ends the session |
 
-Only a connection started by a `<robot>-calibrate` blueprint changes anything (`config_sessions`). While the wizard's session lasts, the connection drops every other position command. The session has a 2 second lease that every call carrying its id renews (each target the wizard streams does; reading the arm's state does not). When it ends, because the wizard finished, aborted or stopped calling, or the robot halted or stopped, the connection undoes every live change: floating joints hold where they are and the gains go back to the file's. The joint readings come from the connection's `joint_state` stream.
+Only a connection started by a `<robot>-calibrate` blueprint changes anything (`config_sessions`). It takes position commands during a session as at any other time. The session has a 2 second lease, which the wizard renews twice a second with an empty `config_set` carrying its id; reading the arm's state does not renew it. When the session ends, because the wizard finished, aborted or stopped, or the robot halted or stopped, the connection undoes every live change: floating joints hold where they are and the gains go back to the file's. The wizard has the coordinator hold the arm first, so the last target does not pull it back.
+
+The joint readings come from the connection's `joint_state` stream. The commands the arm was sent are recorded as `arm_position_command`, and each step is timed from the first command that carries its target.

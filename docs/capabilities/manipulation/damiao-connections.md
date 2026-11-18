@@ -15,9 +15,14 @@ Direct-connection coordinators communicate through
 Every Damiao connection serves the arm config contract
 (`dimos/control/connection/arm_config.py`). Reading it (`config_keys`,
 `config_get`) always works. Changing how the energized arm is driven
-(`config_set`, `config_reset`, `config_command`) needs `config_sessions=True`,
-which only the `<robot>-calibrate` blueprints set; see
+(`config_set`, `config_reset`) needs `config_sessions=True`, which only the
+`<robot>-calibrate` blueprints set; see
 [Calibrate a Damiao arm](/docs/capabilities/manipulation/arm_calibration.md).
+
+- A session does not stop position commands. The calibration blueprint moves
+  the arm through its control coordinator, whose pass-through task sends the
+  wizard's targets to `position_command` unchanged. The command deadman runs
+  as usual, and a halt ends the session.
 
 - Gains are those of the MIT frame: kp is clamped to 0 to 500 N m/rad and kd
   to 0 to 5 N m s/rad, live and in a save alike. A calibration file with kp 0

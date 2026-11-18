@@ -106,8 +106,11 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     it; by default while connected) and `_config_fault` (undoing a session and halting both failed: latch a fault
     and make the arm safe). It also calls `self._await_config_park()` first in its own `stop()`, before its
     readings stop, so a calibration tool stopping at the same time can bring the arm home, and
-    `self._end_config_session(reason)` with the hardware lock held when it faults. The public `config_*` calls,
-    the session, its lease and the dropping of other position commands come from the base class.
+    `self._end_config_session(reason)` with the hardware lock held when it faults. The four public calls
+    (`config_keys`, `config_get`, `config_set`, `config_reset`), the session and its lease come from the base
+    class. A session does not drop position commands: `dimos arm calibrate` moves the arm with targets the
+    calibration blueprint's control coordinator sends through its pass-through task, unchanged, to your
+    connection's `position_command`.
 
 6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel)`. `joint` is the
     URDF finger joint (a second finger must be a mimic or fixed joint, see `RobotModel.with_mimic_joint`; if the
