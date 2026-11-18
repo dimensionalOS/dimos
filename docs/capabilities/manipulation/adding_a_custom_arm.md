@@ -96,6 +96,22 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     `status().last_error`. Check gains copied from a vendor SDK against these ranges, and check the largest gravity
     torque over the joint range (for example with `PhysicalModel(...).gravity(q)`) against the motor's torque limit.
 
+    Your arm's calibration needs no code: `DamiaoConnection` serves the arm config contract
+    (`dimos/control/connection/arm_config.py`) that `dimos arm calibrate` drives. A connection that is not a Damiao
+    one serves it by overriding these methods of `ConnectionModule`, each called with the hardware lock held:
+    `_config_keys` (what it can read, change live and save), `_config_state` (each arm's gains, floating joints,
+    link masses and file), `_config_apply` (apply a patch for the session, or save it; list what it cannot change
+    as unsupported), `_config_undo` (undo every live change when the session ends, holding every joint where it
+    is), `_config_parkable` (whether the arm can still be parked, so a stop waits for the calibration tool to park
+    it; by default while connected) and `_config_fault` (undoing a session and halting both failed: latch a fault
+    and make the arm safe). It also calls `self._await_config_park()` first in its own `stop()`, before its
+    readings stop, so a calibration tool stopping at the same time can bring the arm home, and
+    `self._end_config_session(reason)` with the hardware lock held when it faults. The four public calls
+    (`config_keys`, `config_get`, `config_set`, `config_reset`), the session and its lease come from the base
+    class. A session does not drop position commands: `dimos arm calibrate` moves the arm with targets the
+    calibration blueprint's control coordinator sends through its pass-through task, unchanged, to your
+    connection's `position_command`.
+
 6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel)`. `joint` is the
     URDF finger joint (a second finger must be a mimic or fixed joint, see `RobotModel.with_mimic_joint`; if the
     URDF has no driven finger joint, add one as `dual_openyam/config.py` does), and the jaw is read and commanded in
