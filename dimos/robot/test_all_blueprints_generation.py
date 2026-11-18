@@ -37,6 +37,7 @@ IGNORED_FILES: set[str] = {
 # override needed) is still discovered as a runnable blueprint.
 BLUEPRINT_METHODS = {
     "blueprint",
+    "solidify",
     "transports",
     "global_config",
     "remappings",
@@ -325,11 +326,13 @@ def _find_blueprints_in_file(
 def _is_autoconnect_call(node: ast.expr) -> bool:
     if isinstance(node, ast.Call):
         func = node.func
-        # Direct call: autoconnect(...)
-        if isinstance(func, ast.Name) and func.id == "autoconnect":
+        # Both composition helpers define runnable blueprints.
+        if isinstance(func, ast.Name) and func.id in {"autoconnect", "autoconnect_with_choices"}:
             return True
-        # Attribute call: module.autoconnect(...)
-        if isinstance(func, ast.Attribute) and func.attr == "autoconnect":
+        if isinstance(func, ast.Attribute) and func.attr in {
+            "autoconnect",
+            "autoconnect_with_choices",
+        }:
             return True
     return False
 
@@ -340,6 +343,22 @@ def _ends_with_blueprint_method(node: ast.expr) -> bool:
         if isinstance(func, ast.Attribute) and func.attr in BLUEPRINT_METHODS:
             return True
     return False
+
+
+def test_discovers_meta_blueprints_and_solidified_blueprints(tmp_path: Path) -> None:
+    source = tmp_path / "choices.py"
+    source.write_text(
+        "_helper = autoconnect_with_choices()\n"
+        "mapping = autoconnect_with_choices(_helper)\n"
+        "qualified = meta_blueprints.autoconnect_with_choices(_helper)\n"
+        "default_mapping = mapping.solidify()\n"
+        "voxel_mapping = mapping.solidify(choices={'PointClearing': 'voxel'})\n"
+    )
+
+    blueprints, modules = _find_blueprints_in_file(source)
+
+    assert blueprints == ["mapping", "qualified", "default_mapping", "voxel_mapping"]
+    assert modules == []
 
 
 def test_nested_projects_do_not_contribute_modules_or_blueprints(tmp_path: Path) -> None:

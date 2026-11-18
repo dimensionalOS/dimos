@@ -20,9 +20,10 @@ from typing import Any
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.meta_blueprints import ChoiceAtom, autoconnect_with_choices
 from dimos.core.module import Module
 from dimos.robot import external_blueprints as external
-from dimos.robot.get_all_blueprints import get_by_name
+from dimos.robot.get_all_blueprints import get_by_name, get_by_name_or_exit
 
 
 class ExternalTestModule(Module):
@@ -143,6 +144,26 @@ def test_resolve_external_module_class(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert isinstance(blueprint, Blueprint)
     assert blueprint.blueprints[0].module is ExternalTestModule
+
+
+def test_external_meta_blueprints_preserve_choices_for_cli_and_resolve_defaults(
+    monkeypatch,
+) -> None:
+    selected = ExternalTestModule.blueprint()
+    mapping = autoconnect_with_choices(
+        ChoiceAtom(name="Mapping", choices={"on": selected, "off": autoconnect()}, default="on")
+    )
+    patch_distributions(
+        monkeypatch,
+        FakeDistribution(
+            "My-Test-Stack",
+            (FakeEntryPoint("demo", "external_stack.demo:mapping", mapping),),
+        ),
+    )
+
+    assert external.resolve_external_blueprint_by_name("my-test-stack.demo") is mapping
+    assert get_by_name_or_exit("my-test-stack.demo") is mapping
+    assert get_by_name("my-test-stack.demo") == selected
 
 
 @pytest.mark.parametrize("target", [lambda: ExternalTestModule.blueprint(), 42, object()])

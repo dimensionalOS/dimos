@@ -19,6 +19,7 @@ from typing import NoReturn
 import typer
 
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.meta_blueprints import MetaBlueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.external_blueprints import (
     ExternalBlueprintError,
@@ -58,12 +59,18 @@ def _raise_unknown(name: str, candidates: list[str]) -> NoReturn:
     raise ValueError(msg)
 
 
-def get_blueprint_by_name(name: str) -> Blueprint:
+def _import_blueprint(name: str) -> Blueprint | MetaBlueprint:
     if name not in all_blueprints:
         _raise_unknown(name, list(all_blueprints.keys()))
     module_path, attr = all_blueprints[name].split(":")
     module = __import__(module_path, fromlist=[attr])
     return getattr(module, attr)  # type: ignore[no-any-return]
+
+
+def get_blueprint_by_name(name: str) -> Blueprint:
+    """Load a built-in blueprint, resolving any choices with their defaults."""
+    blueprint = _import_blueprint(name)
+    return blueprint.solidify() if isinstance(blueprint, MetaBlueprint) else blueprint
 
 
 def load_blueprint(name: str) -> Blueprint:
@@ -95,7 +102,8 @@ def get_by_name(name: str) -> Blueprint:
     elif name in all_modules:
         return get_module_by_name(name)
     elif is_namespaced_blueprint_name(name):
-        return resolve_external_blueprint_by_name(name)
+        blueprint = resolve_external_blueprint_by_name(name)
+        return blueprint.solidify() if isinstance(blueprint, MetaBlueprint) else blueprint
     else:
         _raise_unknown(name, all_names)
 
@@ -115,9 +123,10 @@ def _exit_with_error(message: str) -> NoReturn:
     raise typer.Exit(1)
 
 
-def get_by_name_or_exit(name: str) -> Blueprint:
+def get_by_name_or_exit(name: str) -> Blueprint | MetaBlueprint:
+    """Load a runnable definition; the CLI resolves choices after composing all names."""
     if name in all_blueprints:
-        return get_blueprint_by_name(name)
+        return _import_blueprint(name)
     elif name in all_modules:
         return get_module_by_name(name)
     elif is_namespaced_blueprint_name(name):

@@ -14,9 +14,22 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
-from dimos.robot.get_all_blueprints import get_by_name, get_by_name_or_exit
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.meta_blueprints import (
+    ChoiceAtom,
+    autoconnect_with_choices,
+)
+from dimos.robot.get_all_blueprints import (
+    all_blueprints,
+    get_blueprint_by_name,
+    get_by_name,
+    get_by_name_or_exit,
+    load_blueprint,
+)
 
 
 def test_resolve_string_blueprint():
@@ -42,3 +55,16 @@ def test_resolve_string_module_or_exit():
 def test_resolve_unknown_name():
     with pytest.raises(ValueError, match="Unknown blueprint or module"):
         get_by_name("nonexistent-blueprint-xyz")
+
+
+@pytest.mark.parametrize("loader", [get_blueprint_by_name, get_by_name, load_blueprint])
+def test_loaders_resolve_defaults_and_cli_preserves_choices(monkeypatch, loader) -> None:
+    selected = autoconnect().global_config(n_workers=2)
+    mapping = autoconnect_with_choices(
+        ChoiceAtom(name="Mapping", choices={"on": selected}, default="on")
+    )
+    monkeypatch.setattr(sys.modules[__name__], "registered_choices", mapping, raising=False)
+    monkeypatch.setitem(all_blueprints, "mapping", f"{__name__}:registered_choices")
+
+    assert get_by_name_or_exit("mapping") is mapping
+    assert loader("mapping") == selected

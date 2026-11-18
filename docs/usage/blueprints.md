@@ -84,6 +84,64 @@ expanded_blueprint = autoconnect(
 
 Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
 
+## Choosing blueprint alternatives
+
+`autoconnect_with_choices()` creates a `MetaBlueprint` containing ordinary
+blueprints and named `ChoiceAtom` alternatives. Its only operation is
+`.solidify(choices=...)`, which selects fragments and returns a normal `Blueprint`.
+`autoconnect()` continues to accept and return ordinary blueprints.
+
+```python session=blueprint-choices
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.meta_blueprints import ChoiceAtom, autoconnect_with_choices
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+
+class VisModule(Module):
+    points: In[int]
+
+class RaytracerModule(Module):
+    points: Out[int]
+
+class VoxelMapper(Module):
+    points: Out[int]
+
+mapping = autoconnect_with_choices(
+    VisModule.blueprint(),
+    ChoiceAtom(
+        name="PointClearing",
+        default="raycasting",
+        choices={
+            "raycasting": RaytracerModule.blueprint(),
+            "column_carving": VoxelMapper.blueprint(),
+        },
+    ),
+)
+
+assert mapping.solidify() == autoconnect(VisModule.blueprint(), RaytracerModule.blueprint())
+assert mapping.solidify(choices={"PointClearing": "column_carving"}) == autoconnect(
+    VisModule.blueprint(), VoxelMapper.blueprint()
+)
+```
+
+Export `mapping` as a runnable blueprint using the built-in registry or a package
+entry point. `dimos run mapping` uses its default; select the alternative with
+`dimos run mapping --choice PointClearing=column_carving`. Repeat `--choice`
+for multiple choices, including choices from different blueprints in the same run.
+Module flags and `--help` describe the selected modules.
+
+Omitting `default` makes a choice required at solidification or startup. Invalid
+options, unknown choice names, and duplicate CLI selections raise errors.
+Choice names and options are case-sensitive. Nested `MetaBlueprint`s are supported
+both as fragments and as alternatives; only selected alternatives need their
+required choices supplied. Overrides for inactive choices are rejected. Distinct
+active choices must have unique names, though the same `ChoiceAtom` can be reused.
+
+Apply `.hosted()`, `.transports()`, `.remappings()`, and other blueprint operations
+to concrete fragments before composing, or to the result of `.solidify()`.
+Solidification preserves normal composition rules, including later-module overrides.
+When building from Python, pass the solidified blueprint to `ModuleCoordinator.build()`.
+
 ## Publishing external blueprints
 
 dimOS can discover runnable blueprints from installed Python packages. External
@@ -116,7 +174,7 @@ External names are always `<canonical-distribution-namespace>.<external-local-bl
 
 Entry point targets may be either:
 
-- a `Blueprint` object, such as a module-level `go2_blueprint`; or
+- a `Blueprint` or `MetaBlueprint` object, such as a module-level `go2_blueprint`; or
 - a dimOS `Module` class, such as `KeyboardTeleop`, which dimOS converts with
   `.blueprint()`.
 
