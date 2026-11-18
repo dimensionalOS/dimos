@@ -43,7 +43,6 @@ from typing import Any, Literal
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
-import numpy as np
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
@@ -67,13 +66,11 @@ from dimos.perception.localize.memento import Memento
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
     EMBED_HZ,
-    TF_TOLERANCE,
     WALK_EMBED_HZ,
     Rig,
     RigCamera,
     camera_hz,
 )
-from dimos.perception.localize.support_plane import find_surfaces, window_points
 from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
@@ -85,7 +82,6 @@ GEOMETRY_STREAM = "geometry_memory"
 COLOR_CODEC = "jpeg"
 GEOMETRY_CODEC = "lz4+lcm"
 LIDAR_TOLERANCE = 0.2  # s - an embedded frame to its lidar scan
-SURFACE_FRAMES = 10  # keyframes find_surface merges, so a sweep over a table counts
 
 
 class PerceptionLocalizeConfig(ModuleConfig):
@@ -309,92 +305,6 @@ class PerceptionLocalize(Module):
                     f"seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago, "
                     f"first {max(0.0, head - hit.first_seen_timestamp):.0f}s ago"
                 )
-        return "\n".join(lines)
-
-    @rpc
-    def surfaces(
-        self,
-        start: float = -10.0,
-        duration: float = 10.0,
-        frame: str = "",
-        max_tilt_deg: float = 25.0,
-    ) -> list[dict[str, Any]]:
-        """The flat surfaces seen in a window of memory, biggest first, as in ``find_surface``.
-
-        Each is a dict: ``height``, ``center``, ``size``, ``yaw_deg``, ``normal``,
-        ``tilt_deg``, ``downhill_deg``, ``coefficients`` (a, b, c, d of ax+by+cz+d=0),
-        ``points`` and ``rms_m``, in ``frame``. Empty when localize is not ready, the
-        window has no geometry, or ``frame`` has no transform from the world frame.
-        """
-        if not self._ready.is_set():
-            return []
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        keyframes = list(self.index.time_range(lo, lo + duration))
-        views = (
-            window_points(self.rig, keyframes, camera, SURFACE_FRAMES)
-            for camera in self.rig.cameras
-        )
-        clouds = [cloud for cloud in views if cloud is not None]
-        if not clouds:
-            return []
-        to_frame = None
-        if frame and frame != self.rig.world_frame:
-            transform = self.rig.tf.get(frame, self.rig.world_frame, head, TF_TOLERANCE)
-            if transform is None:
-                logger.warning(f"find_surface: no transform from {self.rig.world_frame} to {frame}")
-                return []
-            to_frame = transform.to_matrix()
-        return [
-            surface.as_dict()
-            for surface in find_surfaces(np.concatenate(clouds), max_tilt_deg, to_frame)
-        ]
-
-    @skill
-    def find_surface(
-        self,
-        start: float = -10.0,
-        duration: float = 10.0,
-        frame: str = "",
-        max_tilt_deg: float = 25.0,
-    ) -> str:
-        """Find flat surfaces, such as a table top or the floor, in a window of memory.
-
-        Gives each surface's height under the origin of ``frame``, its centre, its
-        size (long side x short side) and the long side's heading, and how far it
-        tilts from level and towards which heading it goes down. The biggest
-        surface comes first. Look at the surface from the robot before calling:
-        only what the camera saw inside the window counts.
-
-        ``start`` and ``duration`` name the window as in ``localize``. ``frame``
-        is the frame to report in, e.g. the robot's base link; empty means the
-        world frame. ``max_tilt_deg`` drops surfaces tilted more than that from
-        level.
-        """
-        if not self._ready.is_set():
-            return (
-                f"find_surface cannot answer yet: {self._stage}. Poll state() until it reads ready."
-            )
-        name = frame or self.rig.world_frame
-        found = self.surfaces(start, duration, frame, max_tilt_deg)
-        if not found:
-            return f"no flat surface tilted at most {max_tilt_deg:.0f} deg in the window, in {name}"
-        lines = []
-        for i, surface in enumerate(found, 1):
-            x, y, z = surface["center"]
-            length, width = surface["size"]
-            tilt = surface["tilt_deg"]
-            slope = (
-                f"tilted {tilt:.1f} deg, down towards {round(surface['downhill_deg'])} deg"
-                if tilt >= 0.5
-                else "level"
-            )
-            lines.append(
-                f"surface {i}: height {surface['height']:.3f} m under the origin of {name}, "
-                f"centre ({x:.3f}, {y:.3f}, {z:.3f}), {length:.2f} x {width:.2f} m, "
-                f"long side at {round(surface['yaw_deg'])} deg, {slope}, "
-                f"{surface['points']} points, rms {surface['rms_m'] * 1000:.1f} mm"
-            )
         return "\n".join(lines)
 
     def _localize(

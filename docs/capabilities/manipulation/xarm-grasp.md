@@ -172,6 +172,16 @@ print(pick)
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 ```
 
+`find_surface` measures the table from the same memory: one line per flat surface,
+biggest first, with its height, centre, size, heading and tilt in any tf frame.
+`surfaces` returns the same as data, with the plane's coefficients and normal:
+
+```python skip
+print(localize.find_surface(frame="link_base"))
+table = localize.surfaces(frame="link_base")[0]
+print(table["height"], table["tilt_deg"], table["size"])
+```
+
 `pick_object` generates the grasps itself, so there is no separate grasp call.
 It opens the gripper, plans to the pregrasp, servos in, closes, verifies, and
 retreats; with a learned provider it walks the ranked candidates until one is

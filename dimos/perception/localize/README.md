@@ -3,12 +3,8 @@
 Text queries in, verified 3D object instances out, from calibrated cameras posed by tf,
 lifted through aligned depth or, for a camera without it, a lidar.
 `PerceptionLocalize` (`module.py`) runs it live on a robot's ports;
-`tools/tool_localize.py` runs it offline on a recording. Agents calling `state`,
-`localize` and `find_surface` over MCP: [`SKILL.md`](SKILL.md).
-
-`find_surface` (and the `surfaces` RPC) reuses the support-plane fit outside a localize
-call: `support_plane.find_surfaces` peels the window's flat surfaces off its depth, or the
-lidar map, and reports each one's height, centre, size, heading and tilt in any tf frame.
+`tools/tool_localize.py` runs it offline on a recording. Agents calling `state` and
+`localize` over MCP: [`SKILL.md`](SKILL.md).
 
 ## Pipeline
 

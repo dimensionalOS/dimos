@@ -12,15 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.localize.module import PerceptionLocalize
 from dimos.perception.localize.support_plane import find_surfaces
 
 
@@ -101,38 +95,3 @@ def test_reported_in_another_frame(rng):
     assert surface.height == pytest.approx(0.3, abs=0.004)
     assert surface.center == pytest.approx((0.0, -0.5, 0.3), abs=0.01)
     assert abs(surface.yaw_deg) == pytest.approx(90.0, abs=1.5)
-
-
-@pytest.fixture
-def module():
-    module = PerceptionLocalize()
-    yield module
-    module.stop()
-
-
-def test_find_surface_skill_reports_in_the_base_frame(module, rng, mocker):
-    module._ready = threading.Event()
-    module._ready.set()
-    module.index = mocker.Mock()
-    module.index.get_time_range.return_value = (0.0, 10.0)
-    module.index.time_range.return_value = [mocker.Mock(ts=float(t)) for t in range(5)]
-    table = PointCloud2.from_numpy(
-        _slab(0.8, 0.5, 0.0, 0.0, 0.0, (0.5, 0.0, 0.0), rng).astype(np.float32),
-        frame_id="world",
-        timestamp=1.0,
-    )
-    module.rig = mocker.Mock(cameras={"camera": None}, world_frame="world")
-    module.rig.backdrop.return_value = table
-    # The base stands 0.3 m above the world origin: world to base lowers every point.
-    module.rig.tf.get.return_value = Transform(
-        translation=Vector3(0.0, 0.0, -0.3), frame_id="link_base", child_frame_id="world"
-    )
-
-    answer = module.find_surface(frame="link_base")
-
-    module.rig.tf.get.assert_called_once_with("link_base", "world", 10.0, mocker.ANY)
-    assert answer.startswith("surface 1: height -0.30")
-    assert "under the origin of link_base" in answer
-    assert "long side at 0 deg, level" in answer
-    (surface,) = module.surfaces()
-    assert surface["height"] == pytest.approx(0.0, abs=0.004)
