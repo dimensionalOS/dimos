@@ -182,7 +182,8 @@ class RPCClient:
         return cls(None, None, data["remote_name"], data["rpcs"])
 
     def __dir__(self) -> list[str]:
-        return sorted(set(super().__dir__()) | set(self.rpcs))
+        """Expose the module's RPCs for interactive discovery."""
+        return sorted(self.rpcs)
 
     def get_stream(self, name: str) -> RemoteOut[Any]:
         """Get a subscription handle for a stream in a connected remote system."""

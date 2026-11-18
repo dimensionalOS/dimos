@@ -415,9 +415,7 @@ def run(
             # forked image.
             os._exit(1)
     else:
-        # Foreground: SIGINT stays at default so Ctrl+C raises KeyboardInterrupt with a
-        # visible traceback.
-        _run_registered(blueprint, parsed_config, entry, sigint=False)
+        _run_registered(blueprint, parsed_config, entry)
 
 
 def status() -> None:

@@ -15,6 +15,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 import re
+import signal
 import sys
 from typing import Any
 
@@ -31,6 +32,7 @@ import dimos.cli.spy.run_spy as run_spy
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
 import dimos.core.daemon as core_daemon
+from dimos.core.daemon import install_signal_handlers
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 import dimos.core.run_registry as run_registry
@@ -137,6 +139,17 @@ def test_mcp_malformed_argument_rejected_before_adapter(monkeypatch: pytest.Monk
     result = CliRunner().invoke(main, ["mcp", "call", "inspect", "--arg", "invalid"])
     assert result.exit_code == 2, result.output + repr(result.exception)
     assert "expected KEY=VALUE" in result.output
+
+
+def test_global_help_explains_dtop() -> None:
+    result = CliRunner().invoke(main, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    output_plain = " ".join(output_plain.replace("│", "").split())
+    assert "--dtop" in output_plain
+    assert "Publish live resource stats for dtop" in output_plain
+    assert "Override dtop in GlobalConfig" not in output_plain
 
 
 def test_global_config_flag_applies_before_subcommand():
@@ -363,6 +376,56 @@ def stubbed_run(
         yield recorded
     finally:
         global_config.update(**original_global_config)
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_foreground_logs_signal_and_requests_shutdown_once(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    signum: signal.Signals,
+) -> None:
+    handlers = {}
+    monkeypatch.setattr(core_daemon, "install_signal_handlers", install_signal_handlers)
+    mocker.patch("signal.signal", side_effect=lambda sig, handler: handlers.update({sig: handler}))
+    shutdown = mocker.patch.object(module_coordinator.ModuleCoordinator, "shutdown", create=True)
+    mocker.patch.object(
+        module_coordinator.ModuleCoordinator,
+        "loop",
+        side_effect=lambda: handlers[signum](signum, None),
+    )
+    log = mocker.patch.object(core_daemon.logger, "info")
+
+    result = CliRunner().invoke(main, ["run", "alpha"])
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    log.assert_called_once_with(
+        "Received signal, shutting down", signal=signum, run_id="test-alpha"
+    )
+    shutdown.assert_called_once_with()
+
+
+@pytest.mark.parametrize("run_options", [[], ["--daemon"]])
+def test_dimsim_default_transport_fails_before_run_registration(
+    stubbed_run, mocker, run_options
+) -> None:
+    mocker.patch.object(
+        get_all_blueprints, "get_by_name_or_exit", return_value=GO2Connection.blueprint()
+    )
+    fork = mocker.patch.object(
+        lifecycle, "fork_daemon", side_effect=AssertionError("started daemon")
+    )
+
+    result = CliRunner().invoke(
+        main, ["--simulation", "dimsim", "run", "unitree-go2", *run_options]
+    )
+
+    assert result.exit_code == 2, result.output
+    fork.assert_not_called()
+    assert "DimSim publishes over LCM only" in result.output
+    assert "--transport lcm" in result.output
+    assert "entry" not in stubbed_run
+    assert "parsed_config" not in stubbed_run
 
 
 @pytest.mark.parametrize("run_options", [[], ["--daemon"]])
@@ -665,6 +728,7 @@ def test_run_help_lists_dynamic_flags_without_starting(
     assert "--map-file" in output_plain
     assert "--runmodulea.daemon" in output_plain
     assert output_plain.count("--daemon") == 1
+    assert "Publish live resource stats for dtop" in output_plain
     assert "parsed_config" not in stubbed_run
     assert "entry" not in stubbed_run
 

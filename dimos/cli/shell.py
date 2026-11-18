@@ -25,9 +25,10 @@ import typer
 
 from dimos.cli import theme
 from dimos.core.introspection.module.info import ModuleInfo, RpcInfo
+from dimos.core.rpc_client import RPCClient
 from dimos.core.run_registry import get_most_recent
 from dimos.porcelain.dimos import DescribeTarget, Dimos
-from dimos.porcelain.module_handle import ModuleHandle
+from dimos.porcelain.module_handle import ModuleHandle, RemoteModuleProxy
 
 QUICK_START = """\
 [bold]Quick start[/bold]
@@ -50,6 +51,18 @@ class ShellNamespace(TypedDict):
 
 def _is_interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _register_module_completions() -> None:
+    # Keep IPython's heavy imports confined to shell startup.
+    from IPython.utils import generics
+
+    def complete_module(module: RPCClient | RemoteModuleProxy, words: list[str]) -> list[str]:
+        # IPython's non-Jedi completer adds class attributes even with a custom __dir__.
+        return dir(module)
+
+    generics.complete_object.register(RPCClient, complete_module)
+    generics.complete_object.register(RemoteModuleProxy, complete_module)
 
 
 def _rpc_signature(rpc: RpcInfo) -> str:
@@ -173,6 +186,7 @@ def shell() -> None:
     from IPython import start_ipython
 
     try:
+        _register_module_completions()
         _print_shell_banner()
         start_ipython(  # type: ignore[no-untyped-call]
             argv=["--no-banner"],

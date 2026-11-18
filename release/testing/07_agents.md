@@ -137,7 +137,7 @@ The live case needs the DimSim assets from the [DimSim check](02_replay-and-simu
 ```bash
 uv run dimos evals list
 uv run dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.question_answer
-DIMOS_TRANSPORT=lcm uv run dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client_adapter --set 'modules=["unitree-go2-agentic"]'
+DIMOS_TRANSPORT=lcm uv run dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.agent_adapter --set 'modules=["unitree-go2-agentic"]'
 ```
 
 Expected result: `list` prints the suites. The examples run prints `PASS` for both cases and a summary line that ends in the run directory, which holds `results.jsonl` and `summary.json`. In the live run the robot tours the apartment and drives to the bed, and `dimsim_go_to_bed` passes.
