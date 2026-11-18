@@ -222,6 +222,7 @@ all_blueprints = {
     "xarm6-grasp": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm6_grasp",
     "xarm6-grasp-graspgenx": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm6_grasp_graspgenx",
     "xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm6_planner_coordinator",
+    "xarm6-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm6_sim",
     "xarm6-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm6_teleop",
     "xarm6-worldbelief": "dimos.experimental.world_belief.xarm6_blueprint:xarm6_worldbelief",
     "xarm7-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm7_planner_coordinator",
