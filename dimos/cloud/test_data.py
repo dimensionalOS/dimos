@@ -17,11 +17,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import tarfile
 import tempfile
 import time
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import typer
@@ -170,30 +171,82 @@ def test_roundtrip_with_resume_and_manifest(env: tuple[CloudData, FakeTransport,
     )
 
 
+@pytest.mark.parametrize("mode", ["default", "configured", "in_tree", "symlink_root"])
 def test_directory_upload(
-    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     cloud, transport, db = env
     tree = db.parent / "dataset"
     scratch = tree / "tmp"
     scratch.mkdir(parents=True)
     (tree / ".hidden").write_bytes(b"data")
-    (tree / "link").symlink_to(db)
-    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    (tree / "link").symlink_to("tmp", target_is_directory=True)
+    source = tree
+    if mode == "symlink_root":
+        source = db.parent / "alias"
+        source.symlink_to(tree, target_is_directory=True)
+    staging = db.parent / "staging" if mode == "configured" else db.parent
+    if mode in ("configured", "in_tree"):
+        cloud.backend.staging_dir = staging if mode == "configured" else scratch
+    if mode == "in_tree":
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    mtimes = [p.stat().st_mtime_ns for p in (tree, scratch)]
+    tar_paths: list[Path] = []
+    real_open = tarfile.open
 
-    result = cloud.upload(tree, robot_id="go2", kind="dataset", chunk_mb=1)
-    uploaded = transport.uploads[result["upload_id"]]
+    def track_tar(name: Path, mode: Literal["w", "r:"]) -> tarfile.TarFile:
+        if mode == "w":
+            tar_paths.append(name)
+            return real_open(name, "w")
+        return real_open(name, "r:")
+
+    monkeypatch.setattr(tarfile, "open", track_tar)
+    result = cloud.upload(source, robot_id="go2", kind="dataset", chunk_mb=1)
+    uid = result["upload_id"]
+    uploaded = transport.uploads[uid]
     assert uploaded["robot_id"] == "go2"
     assert uploaded["kind"] == "dataset"
     assert uploaded["part_size"] == 2**20
-    assert not list(scratch.iterdir())
-    pulled = cloud.pull(result["upload_id"])
-    assert pulled.name.endswith("dataset.tar")
-    with tarfile.open(pulled, "r:") as tar:
-        assert tar.getnames() == ["dataset", "dataset/.hidden", "dataset/link", "dataset/tmp"]
-        assert tar.getmember("dataset/link").issym()
-        hidden = tar.extractfile("dataset/.hidden")
-        assert hidden is not None and hidden.read() == b"data"
+    name = source.name
+    assert uploaded["filename"].startswith(f"{name}.tar")
+    if mode != "in_tree":  # Pull still uses the configured staging directory.
+        pulled = cloud.pull(uid)
+        assert pulled.name.endswith(f"{name}.tar")
+        with tarfile.open(pulled, "r:") as tar:
+            assert tar.getnames() == [name, f"{name}/.hidden", f"{name}/link", f"{name}/tmp"]
+            link = tar.getmember(f"{name}/link")
+            assert link.issym() and link.linkname == "tmp"
+            hidden = tar.extractfile(f"{name}/.hidden")
+            assert hidden is not None and hidden.read() == b"data"
+    retry = cloud.upload(source)
+    assert retry["skipped"] and retry["upload_id"] == uid  # FakeTransport dedupes by SHA-256.
+    assert [p.stat().st_mtime_ns for p in (tree, scratch)] == mtimes
+    assert all(p.parent.parent == staging and not p.parent.exists() for p in tar_paths)
+    assert len(tar_paths) == 2 and not list(scratch.iterdir())
+
+
+def test_directory_upload_checks_space_before_opening_tar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "file").write_bytes(b"data")
+    staging = tmp_path / "staging"
+    transport = FakeTransport()
+    cloud = CloudData(MultipartBackend(DataApi(transport), "", staging, retries=0))
+
+    def disk_usage(path: Path) -> Any:
+        assert path.is_relative_to(staging)
+        return shutil._ntuple_diskusage(10, 6, 4)  # type: ignore[attr-defined]
+
+    def unexpected_tar(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("opened the tar before checking space")
+
+    monkeypatch.setattr(shutil, "disk_usage", disk_usage)
+    monkeypatch.setattr(tarfile, "open", unexpected_tar)
+    with pytest.raises(RuntimeError, match="free, need"):
+        cloud.upload(tree)
+    assert not transport.uploads and not list(staging.iterdir())
 
 
 def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -384,7 +437,6 @@ def test_upload_refuses_when_staging_partition_is_full(
     env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cloud, _, db = env
-    import shutil
 
     monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="free, need"):
@@ -396,7 +448,6 @@ def test_pull_refuses_when_disk_is_full(
 ) -> None:
     cloud, _, db = env
     uid = cloud.upload(db)["upload_id"]
-    import shutil
 
     monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="free, need"):

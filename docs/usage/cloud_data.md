@@ -73,7 +73,7 @@ These fields belong to [`CloudConfig`](/dimos/cloud/config.py). Prefix the upper
 | `upload_retries` | `2` | Per-part retries for transfers |
 | `upload_quiet_s` | `30.0` | Discovery skips files modified this recently |
 | `http_timeout` | `60.0` | Seconds per API request |
-| `staging_dir` | `None` | Compression/decode staging dir; default is beside the file |
+| `staging_dir` | `None` | Archive, compression, and decode staging; defaults beside the source or destination. Directory uploads fall back to the source directory's parent if the configured location is inside the source tree. |
 
 Implementation: [`dimos/cloud/data.py`](/dimos/cloud/data.py); codec table in [`dimos/constants.py`](/dimos/constants.py).
 

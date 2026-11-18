@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import stat
 import sys
 import tarfile
 import tempfile
@@ -111,10 +112,18 @@ class MultipartBackend:
                     raise RuntimeError(f"{what} failed after {attempt} attempts: {e}") from e
                 time.sleep(attempt)
 
-    def _staging(self, beside: Path) -> tempfile.TemporaryDirectory[str]:
+    def _staging(
+        self, beside: Path, *, outside: Path | None = None
+    ) -> tempfile.TemporaryDirectory[str]:
         parent = self.staging_dir or beside.parent
+        if outside is not None:
+            parent = parent.resolve()
+            if parent.is_relative_to(outside):
+                parent = outside.parent
+            if parent.is_relative_to(outside):
+                raise RuntimeError("directory upload needs staging outside the source tree")
         parent.mkdir(parents=True, exist_ok=True)
-        _reap_stale(parent)
+        _reap_stale(parent, keep=outside)
         return tempfile.TemporaryDirectory(prefix=".dimos-staging-", dir=parent)
 
     def upload(
@@ -127,10 +136,17 @@ class MultipartBackend:
         progress: Progress | None,
     ) -> dict[str, Any]:
         tick = progress or (lambda phase, done, total: None)
-        manifest = _manifest(path)
-        if bp := _blueprint(path):
-            manifest = dict(manifest or {}, blueprint=bp)
-        with self._staging(path) as tmp:
+        root = path.resolve() if path.is_dir() else None
+        with self._staging(root or path, outside=root) as tmp:
+            if root is not None:
+                name = path.name if path.name not in ("", "..") else root.name or "root"
+                path = Path(tmp) / f"{name}.tar"
+                _require_space(Path(tmp), _tar_size(root, name))
+                with tarfile.open(path, "w") as tar:
+                    tar.add(root, arcname=name)
+            manifest = _manifest(path)
+            if bp := _blueprint(path):
+                manifest = dict(manifest or {}, blueprint=bp)
             # A file already carrying the codec's suffix uploads as-is; it must not be
             # stamped, or pull would decompress bytes we never compressed.
             compress = bool(self.codec_id) and path.suffix != codecs.suffix(self.codec_id)
@@ -319,30 +335,11 @@ class CloudData:
             raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
         if skip_recent and time.time() - path.stat().st_mtime < self.config.upload_quiet_s:
             raise RuntimeError("file still being written — skipped")
-        if is_dir:
-            root = path.resolve()
-            name = path.name if path.name not in ("", "..") else root.name or "root"
-            with tempfile.TemporaryDirectory() as tmp:
-                scratch = Path(tmp).resolve()
-                archive = scratch / f"{name}.tar"
-                # The temp root may itself be inside the directory being uploaded.
-                exclude = (
-                    (Path(name) / scratch.relative_to(root)).as_posix()
-                    if scratch.is_relative_to(root)
-                    else None
-                )
-                with tarfile.open(archive, "w") as tar:
-                    tar.add(
-                        path,
-                        arcname=name,
-                        filter=lambda entry: None if entry.name == exclude else entry,
-                    )
-                return self.upload(archive, robot_id, kind, chunk_mb, progress)
         chunk_mb = chunk_mb if chunk_mb is not None else self.config.upload_chunk_mb
         return self.backend.upload(
             path,
             robot_id=robot_id,
-            kind=kind or kind_of(path),
+            kind=kind or ("blob" if is_dir else kind_of(path)),
             part_size=chunk_mb * 2**20 if chunk_mb else None,
             progress=progress,
         )
@@ -412,6 +409,29 @@ def kind_of(path: Path) -> str:
     return "blob"
 
 
+def _tar_size(path: Path, name: str) -> int:
+    """Conservative preflight for a plain tar, without following nested symlinks."""
+    block = tarfile.BLOCKSIZE
+
+    def padded(size: int, unit: int) -> int:
+        return ((size + unit - 1) // unit) * unit
+
+    def member_size(member: Path, arcname: str) -> int:
+        info = member.lstat()
+        names = len(os.fsencode(arcname))
+        if stat.S_ISLNK(info.st_mode):
+            names += len(os.fsencode(os.readlink(member)))
+        # Member header, PAX headers/metadata and padding, including long names.
+        size = 4 * block + padded(names, block)
+        if stat.S_ISREG(info.st_mode):
+            size += padded(info.st_size, block)
+        elif stat.S_ISDIR(info.st_mode):
+            size += sum(member_size(child, f"{arcname}/{child.name}") for child in member.iterdir())
+        return size
+
+    return padded(member_size(path, name) + 2 * block, tarfile.RECORDSIZE)
+
+
 def _require_space(where: Path, need: int) -> None:
     """Uploads and pulls stage copies beside the file (or in DIMOS_CLOUD_STAGING_DIR); fail
     before starting rather than at 99% of a 100 GB transfer."""
@@ -423,10 +443,12 @@ def _require_space(where: Path, need: int) -> None:
         )
 
 
-def _reap_stale(parent: Path, max_age_s: float = 86400) -> None:
+def _reap_stale(parent: Path, max_age_s: float = 86400, *, keep: Path | None = None) -> None:
     """A SIGKILL mid-transfer orphans the staging dir beside the file; nothing else
     would ever remove it."""
     for d in parent.glob(".dimos-staging-*"):
+        if keep is not None and keep.is_relative_to(d):
+            continue
         try:
             if d.is_dir() and time.time() - d.stat().st_mtime > max_age_s:
                 shutil.rmtree(d, ignore_errors=True)
