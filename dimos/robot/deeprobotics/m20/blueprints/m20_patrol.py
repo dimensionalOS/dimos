@@ -21,8 +21,11 @@ from pathlib import Path
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.orchestration.orchestrator import Orchestrator
 from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
+# Watched through the Controller app, so no Rerun.
 m20_patrol = autoconnect(
     m20,
     Orchestrator.blueprint(file=Path(__file__).parent / "m20_patrol.toml"),
-)
+).disabled_modules(RerunBridgeModule, RerunWebSocketServer)
