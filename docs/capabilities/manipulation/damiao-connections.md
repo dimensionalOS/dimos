@@ -20,7 +20,8 @@ which only the `<robot>-calibrate` blueprints set; see
 [Calibrate a Damiao arm](/docs/capabilities/manipulation/arm_calibration.md).
 
 - Gains are those of the MIT frame: kp is clamped to 0 to 500 N m/rad and kd
-  to 0 to 5 N m s/rad.
+  to 0 to 5 N m s/rad, live and in a save alike. A calibration file with kp 0
+  or a gain past that range is not loaded.
 - kp 0 floats a joint, with kd as its damping and gravity still compensated.
   A robot without gravity compensation refuses it.
 - A torque offset is added to a joint's gravity torque for the session only,
@@ -28,7 +29,10 @@ which only the `<robot>-calibrate` blueprints set; see
 - A save (scope `persist`) merges into the arm's
   `~/.local/state/dimos/arms/<arm id>/calibration.json` and applies it. It
   writes nothing when applying it would change a joint's gravity torque at the
-  measured pose by more than 2 N m, unless forced.
+  measured pose by more than 2 N m, unless forced, nor when nothing in it
+  belongs in a file. A check is saved only while the arm runs the file as it
+  is on disk.
+- When a session ends, every joint is held where it is, with the file's gains.
 
 ## Run software tests first
 
