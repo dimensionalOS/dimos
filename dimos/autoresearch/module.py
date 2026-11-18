@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import threading
 import time
 from typing import Any, Literal
@@ -37,10 +38,11 @@ from dimos.autoresearch.judge import Judge, LiftJudge, PlaceAtJudge
 from dimos.autoresearch.program import RunStoppedError
 from dimos.autoresearch.scene_spec import ObjectSceneSpec
 from dimos.autoresearch.session import Budget, Session, SessionStatus, Split
+from dimos.autoresearch.skill import USER_SKILLS_DIR, export_skill
 from dimos.autoresearch.status import ActorState, AutoresearchStatus
 from dimos.autoresearch.trial import run_trial
 from dimos.autoresearch.world import MujocoWorld, PlacementBounds, TrajectoryControlSpec
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
@@ -136,7 +138,9 @@ class AutoresearchModuleConfig(ModuleConfig):
     5 cm of ``place_body``. ``program_timeout_s`` kills a candidate run.
     ``backend_factory`` is what the program drives, ``"package.module:function"``.
     ``model`` at ``actor_provider`` is what ``start_actor`` runs unless told
-    otherwise, for at most ``actor_max_steps`` model calls in ``actor_timeout_s``."""
+    otherwise, for at most ``actor_max_steps`` model calls in ``actor_timeout_s``.
+    ``blueprint`` (the stack's blueprint name) and ``scene_source`` (what finds
+    objects for ``scene.objects``) go into session.json for skill exports."""
 
     session_dir: Path
     task: str
@@ -151,6 +155,8 @@ class AutoresearchModuleConfig(ModuleConfig):
     place_body: str = "bowl"
     placement_bounds: PlacementBounds = Field(default_factory=PlacementBounds)
     backend_factory: str = "dimos.autoresearch.live:backend"
+    blueprint: str = ""
+    scene_source: str = "simulator-truth"
 
     @field_validator("actor_provider")
     @classmethod
@@ -206,7 +212,14 @@ class AutoresearchModule(Module):
     def start(self) -> None:
         super().start()
         self._session = Session.create(
-            self.config.session_dir, self.config.task, self.config.budget, self.config.model
+            self.config.session_dir,
+            self.config.task,
+            self.config.budget,
+            self.config.model,
+            blueprint=self.config.blueprint,
+            success_rule=self._success_rule(),
+            dimos_commit=_dimos_commit(),
+            scene_source=self.config.scene_source,
         )
         self._env = bus_env(self.config.g)
         arm = _wait_for_arm(self._arm, PLANNER_TIMEOUT_S)
@@ -279,6 +292,13 @@ class AutoresearchModule(Module):
         The session stays as it is; a trial loop the actor started runs on."""
         self._stop_actor()
         return self.get_status()
+
+    @rpc
+    def export_skill(self, name: str | None = None) -> str:
+        """Export the frozen candidate as an Agent Skill folder in the agent
+        harness's user skills folder and return its path. ``name`` defaults to
+        a slug of the task; refused before a candidate is frozen."""
+        return str(export_skill(self._session, USER_SKILLS_DIR, name))
 
     @skill
     def task(self) -> str:
@@ -646,6 +666,19 @@ class AutoresearchModule(Module):
 
     def _emit(self, status: AutoresearchStatus) -> None:
         self.autoresearch_status.publish(String(status.to_json()))
+
+
+def _dimos_commit() -> str:
+    """The checkout's ``git rev-parse HEAD``, or empty for an installed package."""
+    if not (DIMOS_PROJECT_ROOT / ".git").exists():
+        return ""
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=DIMOS_PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def _candidate_budget(budget: Budget) -> int:

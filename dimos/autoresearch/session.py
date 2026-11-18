@@ -51,13 +51,19 @@ class Budget(BaseModel):
 
 class SessionInfo(BaseModel):
     """The contents of ``session.json``. ``heldout_rate`` is the frozen
-    candidate's held-out pass rate, set when the session is scored."""
+    candidate's held-out pass rate, set when the session is scored. The
+    blueprint, success rule, dimos commit and scene source are empty for a
+    session that did not record them."""
 
     task: str
     budget: Budget
     model: str
     status: SessionStatus = "idle"
     heldout_rate: float | None = None
+    blueprint: str = ""
+    success_rule: str = ""
+    dimos_commit: str = ""
+    scene_source: str = ""
 
 
 class TrialRecord(BaseModel):
@@ -104,14 +110,33 @@ class Session:
         self.dir = directory
 
     @classmethod
-    def create(cls, directory: Path, task: str, budget: Budget, model: str) -> Session:
+    def create(
+        cls,
+        directory: Path,
+        task: str,
+        budget: Budget,
+        model: str,
+        *,
+        blueprint: str = "",
+        success_rule: str = "",
+        dimos_commit: str = "",
+        scene_source: str = "",
+    ) -> Session:
         """Start a session in ``directory``; refused if one is already there."""
         if (directory / "session.json").exists():
             raise FileExistsError(f"{directory} already holds a session")
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "candidates").mkdir()
         (directory / "library").mkdir()
-        info = SessionInfo(task=task, budget=budget, model=model)
+        info = SessionInfo(
+            task=task,
+            budget=budget,
+            model=model,
+            blueprint=blueprint,
+            success_rule=success_rule,
+            dimos_commit=dimos_commit,
+            scene_source=scene_source,
+        )
         (directory / "session.json").write_text(info.model_dump_json(indent=2))
         return cls(directory)
 

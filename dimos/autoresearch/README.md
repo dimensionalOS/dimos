@@ -171,3 +171,32 @@ idle, running, then done (the actor returned; freeze from the app if it did
 not) or failed with `actor_error`, beside `actor_model` and `actor_provider`.
 The trajectory (`trajectory.json`, the ATIF document), Pi's raw requests, its
 system prompt and its stderr land under `<session>/actor/`.
+
+## Export a skill
+
+A frozen candidate can leave the lab as an Agent Skill folder in the
+[agentskills.io](https://agentskills.io) format (`skill.py`):
+
+```
+<name>/               the name is a slug of the task unless --name is given
+  SKILL.md            what it does, how to run it, the score, known failures
+  scripts/program.py  the frozen candidate, byte for byte
+  scripts/run.py      runs it once on the running stack (program.py's runner
+                      and the live backend), printing the outcome and trace path
+  references/         hypothesis.md, and findings.md from library/ if any
+  assets/             validation.json (tallies, every held-out trial, model,
+                      commit, blueprint, scene source) and up to four keyframes
+```
+
+```bash
+dimos autoresearch export <session-dir> [--name NAME] [--root DIR]
+```
+
+needs no running stack; on a running lab the `export_skill(name=None)` RPC
+does the same. Both refuse before a candidate is frozen. The default root is
+`~/.config/dimos/agent/skills` (`$XDG_CONFIG_HOME/dimos/agent/skills`), the
+agent harness's user skills folder, so the next agent conversation lists the
+skill. An agent reads SKILL.md, checks a matching stack is up, then runs
+`python scripts/run.py` with the DimOS environment's Python. Sessions from
+before these fields existed export the blueprint, success rule, commit and
+scene source as `unknown`.
