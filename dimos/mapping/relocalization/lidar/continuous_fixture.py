@@ -120,7 +120,7 @@ def main(
                 rows[:, :3],
                 frame_id="world",
                 timestamp=ts,
-                premap=rows[:, 3].astype(np.uint8),
+                flags=rows[:, 3].astype(np.uint32),
                 change=rows[:, 4].astype(np.uint8),
             )
             stream.append(cloud, ts=ts)

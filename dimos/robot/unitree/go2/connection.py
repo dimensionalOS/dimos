@@ -16,13 +16,12 @@ import copy
 from enum import Enum
 from importlib import resources
 import sys
-from threading import Event, Lock, Thread
+from threading import Event, Thread
 import time
 from typing import Any, Protocol
 
-from pydantic import Field
-from reactivex import defer, empty, operators as ops
-from reactivex.abc import SchedulerBase
+from pydantic import Field, model_validator
+from reactivex import empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -32,8 +31,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.cli.dataset import open_store, resolve_dataset
+from dimos.memory.replay import Replay, ReplayStream
+from dimos.memory.replay_progress import ReplayProgress
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -43,7 +43,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.unitree.config import connection_type
+from dimos.robot.unitree.config import connection_type, require_robot_ip
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.simulation.dimsim.config import DimSimConfig
@@ -53,11 +53,16 @@ from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
+    from typing_extensions import Self, TypeVar
 else:
-    from typing import TypeVar
+    from typing import Self, TypeVar
 
 logger = setup_logger()
+
+_ROBOT_IP_GUIDANCE = (
+    "Set ROBOT_IP or --robot-ip (or --go2connection.ip), "
+    "or run without a robot using --replay or --simulation."
+)
 
 
 class Go2Mode(str, Enum):
@@ -66,7 +71,7 @@ class Go2Mode(str, Enum):
 
 
 class ConnectionConfig(ModuleConfig):
-    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
     camera: bool = True
@@ -77,6 +82,7 @@ class ConnectionConfig(ModuleConfig):
     aes_128_key: str | None = Field(default=None, repr=False)
     obstacle_avoidance: bool = True
     replay_exit: bool = False
+    replay_loop: bool = False
     mujoco: MujocoConfig = Field(default_factory=MujocoConfig)
     dimsim: DimSimConfig = Field(default_factory=DimSimConfig)
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
@@ -85,6 +91,27 @@ class ConnectionConfig(ModuleConfig):
     # Turn off where another module owns the base_link edge. The odom port
     # keeps publishing either way.
     publish_tf: bool = True
+
+    @model_validator(mode="after")
+    def validate_connection(self) -> Self:
+        self.validate_ip()
+        mode = connection_type(replay=self.g.replay, simulation=self.g.simulation).lower()
+        # make_connection gives these offline IP aliases precedence over simulation.
+        if (
+            mode == "dimsim"
+            and self.ip not in ("fake", "mock", "replay", "mujoco")
+            and self.g.transport != "lcm"
+        ):
+            raise ValueError(
+                "DimSim publishes over LCM only; the transport is "
+                f"{self.g.transport!r}. Use --transport lcm with --simulation dimsim."
+            )
+        return self
+
+    def validate_ip(self) -> None:
+        mode = connection_type(replay=self.g.replay, simulation=self.g.simulation).lower()
+        if mode == "webrtc":
+            require_robot_ip(self.ip, _ROBOT_IP_GUIDANCE)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -150,7 +177,9 @@ def make_connection(
     mode = connection_type(replay=cfg.g.replay, simulation=cfg.g.simulation).lower()
 
     if ip in ("fake", "mock", "replay") or mode == "replay":
-        return ReplayConnection(dataset=cfg.g.replay_db, exit_on_complete=cfg.replay_exit)
+        return ReplayConnection(
+            dataset=cfg.g.replay_db, loop=cfg.replay_loop, exit_on_complete=cfg.replay_exit
+        )
     elif ip == "mujoco" or mode in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -160,7 +189,7 @@ def make_connection(
 
         return DimSimConnection(cfg.dimsim, transport=cfg.g.transport)
     elif mode == "webrtc":
-        assert ip is not None, "IP address must be provided"
+        ip = require_robot_ip(ip, _ROBOT_IP_GUIDANCE)
         return UnitreeWebRTCConnection(
             ip,
             aes_128_key=aes_128_key,
@@ -188,19 +217,17 @@ class ReplayConnection(CompositeResource):
         self._duration = duration
         self._loop = loop
         self._exit_on_complete = exit_on_complete
-        self._completion_lock = Lock()
-        self._subscribed = 0
-        self._completed = 0
-        self._sealed = False
-        self._fired = False
+        self._progress = ReplayProgress(dataset, on_complete=self._on_complete)
+        self._replay_path: str | None = None
+        self._pending_streams: list[ReplayStream[Any]] = []
 
     @cached_property
     def replay(self) -> Replay:
         # One shared store + Replay so lidar/odom/video advance against the
         # same wall-clock anchor on subscribe.
-        store = self.register_disposable(
-            SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
-        )
+        path = resolve_dataset(self.dataset)
+        self._replay_path = str(path.resolve())
+        store = self.register_disposable(open_store(path))
         store.start()
         return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
 
@@ -246,56 +273,26 @@ class ReplayConnection(CompositeResource):
         raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
 
     def _tracked(self, source: Observable[_T]) -> Observable[_T]:
-        """With exit_on_complete, count every subscription to a replay stream
-        and request coordinator shutdown once the last one finishes.
+        return self._progress.track(source)
 
-        Completions only count once the module has sealed the subscription
-        set: subscriptions register one at a time, so without the seal a
-        stream that completes synchronously (an empty one, say) would match
-        the counters before the next stream ever subscribed.
-        """
-        if not self._exit_on_complete:
-            return source
-
-        def factory(_scheduler: SchedulerBase | None) -> Observable[_T]:
-            with self._completion_lock:
-                self._subscribed += 1
-            return source.pipe(ops.do_action(on_completed=self._stream_completed))
-
-        return defer(factory)
+    def _replay_observable(self, stream: ReplayStream[_T]) -> Observable[_T]:
+        self._pending_streams.append(stream)
+        return self._tracked(stream.observable())
 
     def seal_subscriptions(self) -> None:
-        """Mark the subscription set complete; exit-on-complete may now fire.
+        """Mark the subscription set complete so end-of-playback can be reported."""
+        if self._pending_streams:
+            # Only inspect selected streams: unused recordings may depend on
+            # unavailable payload types or contain unrelated timestamp ranges.
+            self._progress.start(self.replay, self._pending_streams, path=self._replay_path)
+            self._pending_streams.clear()
+        self._progress.seal()
 
-        Called by the module once start() has wired every stream it is going
-        to. A no-op without exit_on_complete.
-        """
-        with self._completion_lock:
-            self._sealed = True
-        self._maybe_request_shutdown()
-
-    def _stream_completed(self) -> None:
-        with self._completion_lock:
-            self._completed += 1
-        self._maybe_request_shutdown()
-
-    def _maybe_request_shutdown(self) -> None:
-        with self._completion_lock:
-            done = (
-                self._exit_on_complete
-                and self._sealed
-                and not self._fired
-                and self._subscribed > 0
-                and self._completed == self._subscribed
-            )
-            if done:
-                self._fired = True
-        if not done:
-            return
-        logger.info("Replay finished; requesting coordinator shutdown")
-        # Off the replay emission thread: the RPC round trip must not block
-        # the stream's own teardown.
-        Thread(target=self._request_shutdown, daemon=True).start()
+    def _on_complete(self) -> None:
+        if self._exit_on_complete:
+            logger.info("Requesting coordinator shutdown after replay", source=self.dataset)
+            # Keep the RPC round trip off the replay emission thread.
+            Thread(target=self._request_shutdown, daemon=True).start()
 
     def _request_shutdown(self) -> None:
         # Inline import: the connection must stay importable without the
@@ -316,18 +313,25 @@ class ReplayConnection(CompositeResource):
         stream: ReplayStream[PointCloud2] = self.replay.stream(
             self._stream_name("go2_lidar", "lidar")
         )
-        return self._tracked(stream.observable())
+        return self._replay_observable(stream)
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
-        stream: ReplayStream[PoseStamped] = self.replay.stream(
-            self._stream_name("go2_odom", "odom")
-        )
-        return self._tracked(stream.observable())
+        name = self._stream_name("go2_odom", "odom")
+        kind = self.replay.store.stream(name).data_type
+        if kind is None or not issubclass(kind, PoseStamped):
+            # A legacy Go2 DDS recording stores nav_msgs.Odometry. Replayed as is,
+            # it kills the odom subscriber and leaves lidar and video without TF.
+            raise TypeError(
+                f"Go2 replay needs PoseStamped odometry, but stream {name!r} in dataset "
+                f"{self.dataset!r} holds {kind.__name__ if kind else None}"
+            )
+        stream: ReplayStream[PoseStamped] = self.replay.stream(name)
+        return self._replay_observable(stream)
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
-        return self._tracked(self.replay.streams.color_image.observable())
+        return self._replay_observable(self.replay.streams.color_image)
 
     @simple_mcache
     def lowstate_stream(self) -> Observable:  # type: ignore[type-arg]
@@ -421,8 +425,8 @@ class GO2Connection(Module, Camera, Pointcloud):
             self._camera_info_thread.start()
 
         if isinstance(self.connection, ReplayConnection):
-            # Every stream this module will subscribe is wired; a finished
-            # replay may now shut the run down (--go2connection.replay-exit).
+            # Every replay subscription is wired; completion can now be reported
+            # and optionally shut the run down (--go2connection.replay-exit).
             self.connection.seal_subscriptions()
 
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):

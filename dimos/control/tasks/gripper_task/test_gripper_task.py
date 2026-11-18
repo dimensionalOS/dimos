@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import TaskConfig
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
@@ -24,9 +29,11 @@ from dimos.control.tasks.gripper_task.gripper_task import (
     GripperControlTaskConfig,
     create_task,
 )
+from dimos.control.tasks.registry import control_task_registry
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.robot.assets.model import RobotModel
 
 
 def _task() -> GripperControlTask:
@@ -177,3 +184,67 @@ def test_task_requires_finite_ordered_limits(limits: list[tuple[float, float]]) 
             GripperControlTaskConfig(joint_names=["arm/tool_joint"]),
             limits=limits,
         )
+
+
+@pytest.fixture
+def source(tmp_path: Path):
+    def build(robot: str, *, position: bool = True, continuous: bool = False) -> ConnectionSource:
+        path = tmp_path / f"{robot}.urdf"
+        bounds = "" if continuous else 'lower="0" upper="0.08"'
+        kind = "continuous" if continuous else "prismatic"
+        path.write_text(
+            f'<robot name="{robot}"><link name="base"/><link name="tip"/>'
+            f'<joint name="jaw" type="{kind}"><parent link="base"/><child link="tip"/>'
+            f'<limit {bounds} velocity="1" effort="10"/></joint></robot>'
+        )
+        interface = Interface.POSITION if position else Interface.VELOCITY
+        return ConnectionSource(
+            ConnectionConfig(
+                source=robot,
+                model=RobotModel.from_file(path),
+                joint_commands={"jaw": (interface,)},
+            ),
+            commands=["position_command" if position else "velocity_command"],
+            readings=["joint_state"],
+            reading_timeout_s=1.0,
+        )
+
+    return build
+
+
+def test_registry_resolves_each_gripper_joint_from_its_own_source(source) -> None:
+    left, right = source("left"), source("right")
+    task = control_task_registry.create(
+        "gripper", _cfg(["right/jaw", "left/jaw"]), connections={"left": left, "right": right}
+    )
+    assert isinstance(task, GripperControlTask)
+    assert task.set_normalized([0.25, 0.75])
+    output = task.compute(_state())
+    assert output is not None
+    assert output.joint_names == ["right/jaw", "left/jaw"]
+    assert output.positions == pytest.approx([0.02, 0.06])
+    assert left.position_limit("left/jaw").hi == 0.08
+    assert not left.ready_for_control()  # Limit discovery never relies on feedback.
+
+
+@pytest.mark.parametrize(
+    "names,expected",
+    [
+        ([], "requires at least one joint"),
+        (["arm/jaw", "arm/jaw"], "duplicates"),
+        (["missing/jaw"], "no connection source"),
+        (["arm/unknown"], "no declared position command"),
+    ],
+)
+def test_connection_gripper_rejects_invalid_joint_selection(source, names, expected) -> None:
+    with pytest.raises(ValueError, match=expected):
+        create_task(_cfg(names), {}, connections={"arm": source("arm")})
+
+
+@pytest.mark.parametrize("position,continuous", [(False, False), (True, True)])
+def test_connection_gripper_requires_a_bounded_position_command(
+    source, position, continuous
+) -> None:
+    connection = source("arm", position=position, continuous=continuous)
+    with pytest.raises(ValueError, match="position command|bounded position range"):
+        create_task(_cfg(["arm/jaw"]), {}, connections={"arm": connection})

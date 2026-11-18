@@ -25,7 +25,7 @@ base router receives on its TCP link from the edge router stay far below what
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import ExitStack, suppress
 import json
 from pathlib import Path
@@ -46,6 +46,7 @@ from dimos.core.stream import In, Out
 from dimos.hosted.config import HostConfig
 from dimos.hosted.daemon import HostDaemon
 from dimos.hosted.deploy import deployed, wait_for_hosts
+from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
 from dimos.hosted.machine import code_revision
 from dimos.msgs.std_msgs.String import String
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -200,10 +201,14 @@ def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
 ) -> None:
     edge_rpc, base_rpc, root = hosts
     result = tmp_path / "result.json"
-    app = autoconnect(
-        autoconnect(Source.blueprint(), Relay.blueprint()).hosted(host="edge"),
-        Sink.blueprint(result_path=str(result)),
-    ).global_config(n_workers=1)
+    app = (
+        autoconnect(
+            autoconnect(Source.blueprint(), Relay.blueprint()).solidify().hosted(host="edge"),
+            Sink.blueprint(result_path=str(result)),
+        )
+        .solidify()
+        .global_config(n_workers=1)
+    )
 
     descriptors = wait_for_hosts(root, {"edge", "base"}, timeout=20.0)
     logs: list[tuple[str, str]] = []
@@ -252,10 +257,14 @@ def test_a_module_ref_calls_its_provider_on_another_host(
     _edge_rpc, _base_rpc, root = hosts
     result = tmp_path / "answer.txt"
     # Pinned apart on purpose: a chatty pair is kept together by pinning both sides alike.
-    app = autoconnect(
-        Adder.blueprint().hosted(host="edge"),
-        Consumer.blueprint(result_path=str(result)).hosted(host="base"),
-    ).global_config(n_workers=1)
+    app = (
+        autoconnect(
+            Adder.blueprint().hosted(host="edge"),
+            Consumer.blueprint(result_path=str(result)).hosted(host="base"),
+        )
+        .solidify()
+        .global_config(n_workers=1)
+    )
 
     descriptors = wait_for_hosts(root, {"edge", "base"}, timeout=20.0)
     with deployed(
@@ -268,12 +277,15 @@ def test_a_module_ref_calls_its_provider_on_another_host(
         assert result.read_text() == "42"
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="scouts multicast on Linux loopback")
-def test_hosts_scout_each_other_and_answer_probes(tmp_path: Path) -> None:
-    from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
-
-    group = f"224.0.0.224:{_free_port()}"
-    config = HostConfig(autodiscovery=True, scout_addr=group, scout_interface="lo")
+def test_hosts_scout_each_other_and_answer_probes(
+    tmp_path: Path, unused_udp_port_factory: Callable[[], int]
+) -> None:
+    group = f"224.0.0.224:{unused_udp_port_factory()}"
+    config = HostConfig(
+        autodiscovery=True,
+        scout_addr=group,
+        scout_interface="lo0" if sys.platform == "darwin" else "lo",
+    )
     daemons = [
         HostDaemon(
             config.model_copy(update={"name": name, "listen": f"tcp/127.0.0.1:{_free_port()}"}),

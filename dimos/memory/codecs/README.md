@@ -23,7 +23,7 @@ class Codec(Protocol[T]):
 `codec_for(payload_type)` picks the right codec:
 
 ```python
-from dimos.memory.codecs import codec_for
+from dimos.memory.codecs.base import codec_for
 
 codec_for(Image)        # → JpegCodec(quality=50)
 codec_for(Image, sample=depth_image)  # → Lz4Codec(LcmCodec(Image))  (DEPTH, DEPTH16, GRAY16)
@@ -51,12 +51,8 @@ class MyCodec:
 
 2. Add a branch in `codec_for()` in `base.py` to auto-select it for the relevant type.
 
-3. Add a test case to `test_codecs.py` — the grid fixture makes this easy:
-
-```python
-@pytest.fixture(params=[..., ("mycodec", MyCodec(), sample_value)])
-def codec_case(request):
-    ...
-```
+3. Add a factory returning `Case` to `_case_factories` in `test_codecs.py`, and
+   add its key to `case_params`. The `case` fixture resolves that key, and the
+   parametrized round-trip tests exercise the codec.
 
 No base class needed — `Codec` is a protocol. Just implement `encode` and `decode`.

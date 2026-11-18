@@ -15,8 +15,6 @@
 """Continuous relocalization on the M20 fixture (continuous_fixture.py): a first fix
 that is off gets corrected by the later ones, which only move world -> map."""
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
@@ -53,13 +51,9 @@ def _diffs() -> list[PointCloud2]:
 
 def _run(first_fix: Transform | None) -> list[Transform]:
     """Every fix the module accepts over the fixture, starting from ``first_fix`` when given."""
-    map_file = str(get_data(NAME) / "premap.pc2.lcm")
-    m = DiffRelocalization(map_file=map_file)
-    # Driven by hand, without a bus.
-    m.loaded_map = SimpleNamespace(publish=lambda _: None)  # type: ignore[assignment]
-    m.register_disposable = lambda disposable: disposable  # type: ignore[method-assign]
-    m._load_premap(map_file)
-    assert m.premap is not None
+    # Driven by hand, without a bus, so the premap is set rather than loaded and published.
+    m = DiffRelocalization(map_frame="map")
+    m.premap = PointCloud2.lcm_decode((get_data(NAME) / "premap.pc2.lcm").read_bytes())
     m._relocalizer = LidarRelocalizer(m.premap.pointcloud, m.config.relocalize)
     fixes: list[Transform] = []
     m.fixes.subscribe(fixes.append)

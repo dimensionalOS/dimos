@@ -46,7 +46,9 @@ def recording(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def transfer(state: State, monkeypatch: pytest.MonkeyPatch) -> threading.Event:
     release = threading.Event()
 
-    def fake(path: str, robot_id: Any, kind: Any, tick: Callable[..., None]) -> dict[str, Any]:
+    def fake(
+        path: str, robot_id: Any, kind: Any, tick: Callable[..., None], settings: Any
+    ) -> dict[str, Any]:
         tick("upload", 0, 100)
         while not release.wait(0.02):
             tick("upload", 50, 100)
@@ -126,7 +128,7 @@ def test_an_upload_cancelled_after_its_last_part_ends_cancelled(
     release_completion = threading.Event()
 
     def completes_without_progress(
-        path: str, robot_id: Any, kind: Any, tick: Callable[..., None]
+        path: str, robot_id: Any, kind: Any, tick: Callable[..., None], settings: Any
     ) -> dict[str, Any]:
         tick("upload", 100, 100)
         release_completion.wait(10)
@@ -364,7 +366,9 @@ def test_an_upload_blocked_before_its_first_byte_still_cancels(
     timeout — used to ignore DELETE: 200 back, and the upload stayed "uploading" forever."""
     release = threading.Event()
 
-    def never_reports(path: str, robot_id: Any, kind: Any, tick: Callable[..., None]) -> Any:
+    def never_reports(
+        path: str, robot_id: Any, kind: Any, tick: Callable[..., None], settings: Any
+    ) -> Any:
         release.wait()  # blocked before the first tick(), so the flag is never read
         return {"upload_id": "cloud-1", "skipped": False, "quota": {}}
 
@@ -379,3 +383,92 @@ def test_an_upload_blocked_before_its_first_byte_still_cancels(
         until(lambda: state_of(client, upload["id"]) == "cancelled")
     finally:
         release.set()
+
+
+def test_the_login_after_a_state_answers_once_the_login_moves_on(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approve = threading.Event()
+
+    def post(path: str, **params: Any) -> dict[str, Any]:
+        if path == "/auth/device":
+            return {
+                "verification_uri": "https://console/device",
+                "user_code": "ABCD",
+                "expires_in": 600,
+                "interval": 0.05,
+                "device_code": "d",
+            }
+        return (
+            {"status": "ok", "api_key": "k", "email": "a@b"}
+            if approve.is_set()
+            else {"status": "pending"}
+        )
+
+    # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
+    monkeypatch.setattr(cloud, "_post", post)
+    monkeypatch.setattr(cloud, "_store", lambda key: None)
+    monkeypatch.setattr(uploads, "account", lambda: logged_in_account(approve.is_set()))
+    assert client.post("/cloud/login").json()["state"] == "pending"
+    # an answer that differs already comes at once
+    assert client.get("/cloud/login?after=idle").json()["state"] == "pending"
+    threading.Timer(0.2, approve.set).start()
+    assert client.get("/cloud/login?after=pending").json()["state"] == "approved"
+
+
+def test_an_upload_carries_its_own_transfer_settings(
+    client: TestClient, state: State, recording: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # every setting from the environment, so a developer's own DIMOS_CLOUD_* can't change the answer
+    monkeypatch.setenv("DIMOS_CLOUD_HTTP_TIMEOUT", "60")
+    monkeypatch.setenv("DIMOS_CLOUD_UPLOAD_RETRIES", "4")
+    monkeypatch.setenv("DIMOS_CLOUD_UPLOAD_CHUNK_MB", "8")
+    upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
+    assert upload["settings"] is None
+    again = {"path": str(recording), "httpTimeout": 300, "uploadChunkMb": 16}
+    assert client.post("/cloud/uploads", json=again).json()["settings"] == {
+        "httpTimeout": 300.0,
+        "uploadChunkMb": 16,
+    }, "a file already queued takes the new settings"
+    bad = [{"httpTimeout": 0}, {"uploadRetries": -1}, {"uploadChunkMb": 1}]
+    for setting in bad:
+        assert (
+            client.post("/cloud/uploads", json={"path": str(recording), **setting}).status_code
+            == 400
+        )
+
+    used: list[Any] = []
+
+    class FakeCloudData:
+        def __init__(self, config: Any) -> None:
+            used.append(config)
+
+        def upload(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {"upload_id": "cloud-1", "skipped": False, "quota": {}}
+
+    monkeypatch.setattr("dimos.cloud.data.CloudData", FakeCloudData)
+    monkeypatch.setattr(cloud, "api_key", lambda: "key")
+    queued = state.uploads.get(upload["id"])
+    assert queued is not None
+    state.uploads._transfer(str(recording), None, None, lambda *args: None, queued["settings"])
+    state.uploads._transfer(str(recording), None, None, lambda *args: None, None)
+    assert [(c.http_timeout, c.upload_retries, c.upload_chunk_mb) for c in used] == [
+        (300, 4, 16),
+        (60, 4, 8),
+    ], "the environment's settings for everything the upload doesn't set, and for other uploads"
+
+    state.uploads.update(upload["id"], state="failed")
+    retried = client.post("/cloud/uploads", json={"retry": upload["id"]}).json()
+    assert retried["settings"] == {"httpTimeout": 300.0, "uploadChunkMb": 16}, "kept by a retry"
+
+    state.uploads.update(upload["id"], state="failed")
+    reset = {"retry": upload["id"], "httpTimeout": None, "uploadRetries": 1}
+    assert client.post("/cloud/uploads", json=reset).json()["settings"] == {
+        "uploadChunkMb": 16,
+        "uploadRetries": 1,
+    }, "a retry's settings go over the kept ones, and a null puts one back to its default"
+
+    state.uploads.update(upload["id"], state="uploading")
+    busy = client.post("/cloud/uploads", json={"path": str(recording), "uploadRetries": 3})
+    assert busy.status_code == 409, "an upload already under way can't change its settings"
+    assert client.post("/cloud/uploads", json={"path": str(recording)}).status_code == 200

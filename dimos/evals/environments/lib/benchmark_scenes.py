@@ -30,10 +30,10 @@ from dimos.utils.data import get_data
 
 GradeKind = Literal["lifted"]
 
-# Same stack as ``mujoco_xarm`` — perception modules off for planner/MCP evals.
-XARM_EVAL_BLUEPRINT = ["xarm-perception-sim", "mcp-server", "observe-skill"]
+# Same stack as ``mujoco_xarm`` — perception modules off, the arm driven from Python.
+XARM_EVAL_BLUEPRINT = ["xarm-perception-sim", "observe-skill"]
 XARM_EVAL_DISABLE = (
-    "object-scene-registration-module",
+    "manipulation-localize",
     "pick-and-place-module",
     "heuristic-grasp-module",
 )

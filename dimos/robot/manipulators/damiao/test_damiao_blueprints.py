@@ -16,6 +16,7 @@
 
 import pytest
 
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
@@ -67,27 +68,30 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam_planner,
     teleop_webxr_openyam,
 )
-from dimos.robot.manipulators.openyam.config import OPENYAM, make_openyam_model_config
+from dimos.robot.manipulators.openyam.config import OPENYAM
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
 CASES = [
-    ("coordinator-makermods-metal", coordinator_makermods_metal),
-    ("makermods-metal-planner-coordinator", makermods_metal_planner_coordinator),
-    ("dual-makermods-metal-planner-coordinator", dual_makermods_metal_planner_coordinator),
-    ("coordinator-openyam", coordinator_openyam),
-    ("openyam-planner-coordinator", openyam_planner_coordinator),
-    ("keyboard-teleop-openyam", keyboard_teleop_openyam),
-    ("keyboard-teleop-openyam-planner", keyboard_teleop_openyam_planner),
-    ("teleop-webxr-openyam", teleop_webxr_openyam),
-    ("coordinator-dual-openyam", coordinator_dual_openyam),
-    ("dual-openyam-planner-coordinator", dual_openyam_planner_coordinator),
-    ("teleop-webxr-dual-openyam", teleop_webxr_dual_openyam),
-    ("coordinator-openarm", coordinator_openarm),
-    ("openarm-planner-coordinator", openarm_planner_coordinator),
-    ("teleop-webxr-openarm", teleop_webxr_openarm),
-    ("openyam-connection-control", openyam_connection_control),
-    ("openarm-connection-control", openarm_connection_control),
-    ("makermods-metal-connection-control", makermods_metal_connection_control),
+    ("coordinator-makermods-metal", coordinator_makermods_metal.solidify()),
+    ("makermods-metal-planner-coordinator", makermods_metal_planner_coordinator.solidify()),
+    (
+        "dual-makermods-metal-planner-coordinator",
+        dual_makermods_metal_planner_coordinator.solidify(),
+    ),
+    ("coordinator-openyam", coordinator_openyam.solidify()),
+    ("openyam-planner-coordinator", openyam_planner_coordinator.solidify()),
+    ("keyboard-teleop-openyam", keyboard_teleop_openyam.solidify()),
+    ("keyboard-teleop-openyam-planner", keyboard_teleop_openyam_planner.solidify()),
+    ("teleop-webxr-openyam", teleop_webxr_openyam.solidify()),
+    ("coordinator-dual-openyam", coordinator_dual_openyam.solidify()),
+    ("dual-openyam-planner-coordinator", dual_openyam_planner_coordinator.solidify()),
+    ("teleop-webxr-dual-openyam", teleop_webxr_dual_openyam.solidify()),
+    ("coordinator-openarm", coordinator_openarm.solidify()),
+    ("openarm-planner-coordinator", openarm_planner_coordinator.solidify()),
+    ("teleop-webxr-openarm", teleop_webxr_openarm.solidify()),
+    ("openyam-connection-control", openyam_connection_control.solidify()),
+    ("openarm-connection-control", openarm_connection_control.solidify()),
+    ("makermods-metal-connection-control", makermods_metal_connection_control.solidify()),
 ]
 
 
@@ -108,6 +112,16 @@ def test_retained_entry_routes_every_task_through_its_connection(name, blueprint
     assert connection.module.deployment == "python"
     assert connection.kwargs["source"] == "arm"
     assert coordinator.kwargs.get("hardware", []) == []
+    [declaration] = coordinator.kwargs["connections"]
+    driver = ConnectionConfig.model_validate(
+        {
+            key: value
+            for key, value in connection.kwargs.items()
+            if key in ConnectionConfig.model_fields
+        }
+    )
+    assert declaration.model == driver.model
+    assert declaration.joint_commands == driver.joint_commands
     joints = {f"arm/{name}" for name in connection.module.robot.joint_names}
     for task in coordinator.kwargs["tasks"]:
         assert set(task.joint_names) <= joints
@@ -120,7 +134,7 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
     clock = mocker.patch("dimos.control.tick_loop.time.perf_counter", return_value=100.0)
     atom = next(
         atom
-        for atom in makermods_metal_connection_control.blueprints
+        for atom in makermods_metal_connection_control.solidify().blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
     coordinator = atom.module(publish_joint_state=False, **atom.kwargs)
@@ -150,7 +164,7 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
 @pytest.mark.self_hosted
 def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     mocker.patch.object(global_config, "simulation", "mujoco")
-    blueprint = dual_openyam_control()
+    blueprint = dual_openyam_control().solidify()
     assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
     [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
     assert mock.kwargs["source"] == "arm"
@@ -167,7 +181,7 @@ def test_simulation_composes_an_independent_dual_arm_mock(mocker):
 
 
 def test_blueprint_composition_is_coordinator_connection_and_remaps():
-    blueprint = openyam_control()
+    blueprint = openyam_control().solidify()
     [connection] = [
         atom for atom in blueprint.blueprints if issubclass(atom.module, DamiaoConnection)
     ]
@@ -175,8 +189,19 @@ def test_blueprint_composition_is_coordinator_connection_and_remaps():
         atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
     ]
     assert connection.module is OpenYamConnection
-    assert connection.kwargs == {"source": "arm", "teach": False}
-    assert coordinator.kwargs["model"] == make_openyam_model_config(robot="arm").model
+    assert connection.kwargs["source"] == "arm"
+    assert connection.kwargs["teach"] is False
+    [declaration] = coordinator.kwargs["connections"]
+    assert declaration.model == OpenYamConnection.robot.model
+    driver = ConnectionConfig.model_validate(
+        {
+            key: value
+            for key, value in connection.kwargs.items()
+            if key in ConnectionConfig.model_fields
+        }
+    )
+    assert declaration.model == driver.model
+    assert declaration.joint_commands == driver.joint_commands
     assert coordinator.kwargs["zero_stiffness_joints"] == []
     assert blueprint.remapping_map == {
         (connection.name, "position_command"): "arm_position_command",
@@ -185,7 +210,7 @@ def test_blueprint_composition_is_coordinator_connection_and_remaps():
 
 
 def test_teaching_blueprint_declares_zero_stiffness_only_when_teaching():
-    blueprint = openyam_teach_collection
+    blueprint = openyam_teach_collection.solidify()
     [coordinator] = [
         atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
     ]

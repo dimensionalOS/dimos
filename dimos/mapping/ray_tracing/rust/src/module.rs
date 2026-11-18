@@ -19,7 +19,7 @@ use crate::mapper::{register, Mapper, Pose};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     non_premap_voxels, partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder,
-    SeedPartition, SeedRegion, VoxelKey,
+    SeedPartition, SeedRegion, VoxelFlags, VoxelKey,
 };
 use ahash::AHashSet;
 use dimos_module::pointcloud::{extract_xyz, ExtractError};
@@ -180,7 +180,7 @@ impl RayTracingVoxelMap {
 /// queued and handed on region by region as each one completes.
 struct SeedLoad {
     regions: Vec<SeedRegion>,
-    live: AHashSet<VoxelKey>,
+    non_premap: AHashSet<VoxelKey>,
     next_region: usize,
     next_tile: usize,
     tile_count: usize,
@@ -198,7 +198,7 @@ impl SeedLoad {
         Self {
             tile_count: part.tile_count(),
             regions: part.regions,
-            live: part.live,
+            non_premap: part.non_premap,
             next_region: 0,
             next_tile: 0,
             tiles_done: 0,
@@ -220,7 +220,7 @@ impl SeedLoad {
         let region = self.regions.get(self.next_region)?;
         let tile = &region.tiles[self.next_tile];
         let tile_start = Instant::now();
-        self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile, &self.live));
+        self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile, &self.non_premap));
         let tile_ms = tile_start.elapsed().as_secs_f64() * 1e3;
         self.last_tile_at = Instant::now();
         self.tiles_done += 1;
@@ -390,15 +390,10 @@ impl Worker {
                 let frame = self.config.world_frame.as_str();
                 let stamp = state.last_frame_stamp.clone();
                 if let Some(pending) = pending.filter(|p| !p.is_empty()) {
-                    let update = points_to_cloud(
-                        &pending,
-                        &[PREMAP_FIELD, CHANGE_FIELD],
-                        frame,
-                        stamp.clone(),
-                    );
+                    let update = diff_to_cloud(&pending, frame, stamp.clone());
                     publish_cloud(&self.map_update, &update).await;
                 }
-                let cloud = points_to_cloud(&points, &[PREMAP_FIELD], frame, stamp);
+                let cloud = points_to_cloud(&points, true, frame, stamp);
                 publish_cloud(&self.global_map, &cloud).await;
             }
         }
@@ -431,12 +426,8 @@ impl Worker {
                 .await
         };
         let Some(tf_pose) = found else {
-            warn!(
-                stamp,
-                world_frame = %self.config.world_frame,
-                cloud_frame = %msg.header.frame_id,
-                "No transform within tolerance of the cloud stamp, dropped a cloud.",
-            );
+            // The TF client diagnoses the miss, including stamp and tolerance,
+            // with startup grace and throttling. Do not warn twice for one miss.
             return;
         };
         let points = match extract_xyz(&msg) {
@@ -467,10 +458,10 @@ impl Worker {
                     if diff {
                         mapper.global_diff()
                     } else {
-                        mapper.global_points_premap()
+                        mapper.global_points_flags()
                     }
                 });
-                let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
+                let local_points = cylinder.as_ref().map(|cyl| mapper.local_points_flags(cyl));
                 let fine_points = emit_fine
                     .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
                     .flatten();
@@ -494,24 +485,19 @@ impl Worker {
 
         if let Some(points) = global_points {
             if !diff {
-                let global = points_to_cloud(&points, &[PREMAP_FIELD], out_frame_id, stamp.clone());
+                let global = points_to_cloud(&points, true, out_frame_id, stamp.clone());
                 publish_cloud(&self.global_map, &global).await;
             } else if !points.is_empty() {
-                let update = points_to_cloud(
-                    &points,
-                    &[PREMAP_FIELD, CHANGE_FIELD],
-                    out_frame_id,
-                    stamp.clone(),
-                );
+                let update = diff_to_cloud(&points, out_frame_id, stamp.clone());
                 publish_cloud(&self.map_update, &update).await;
             }
         }
         if let Some(points) = local_points {
-            let local = points_to_cloud(&points, &[], out_frame_id, stamp.clone());
+            let local = points_to_cloud(&points, true, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map, &local).await;
         }
         if let Some(points) = fine_points {
-            let fine = points_to_cloud(&points, &[], out_frame_id, stamp.clone());
+            let fine = points_to_cloud(&points, false, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map_fine, &fine).await;
         }
 
@@ -539,7 +525,8 @@ impl Worker {
             )
         });
         for (cell, points) in due {
-            let mut cloud = points_to_cloud(&points, &[], &self.config.world_frame, stamp.clone());
+            let mut cloud =
+                points_to_cloud(&points, false, &self.config.world_frame, stamp.clone());
             cloud.header.seq = pack_cell(cell);
             publish_cloud(&self.map_regions, &cloud).await;
         }
@@ -651,7 +638,7 @@ fn seed_region_messages(
 ) -> (PoseStamped, PointCloud2) {
     let mut bounds = bounds_to_pose(cylinder, frame_id, stamp.clone());
     bounds.header.seq = seq;
-    let mut cloud = points_to_cloud(points, &[], frame_id, stamp.clone());
+    let mut cloud = points_to_cloud(points, false, frame_id, stamp.clone());
     cloud.header.seq = seq;
     (bounds, cloud)
 }
@@ -692,7 +679,7 @@ fn map_regions_due(
 }
 
 /// Register a loaded cloud into the world by `pose` and split it into seed
-/// tiles, nearest `origin` first. Its points are premap unless its `premap`
+/// tiles, nearest `origin` first. Its points are premap unless its `flags`
 /// field says otherwise. None when the cloud is unusable.
 fn prepare_seed(
     msg: &PointCloud2,
@@ -701,7 +688,7 @@ fn prepare_seed(
     origin: (f32, f32, f32),
     region_m: f32,
 ) -> Option<SeedPartition> {
-    let (mut points, premap) = match extract_xyz_premap(msg) {
+    let (mut points, flags) = match extract_xyz_flags(msg) {
         Ok(p) => p,
         Err(e) => {
             warn!(error = %e, "Failed to get loaded map points, dropped a cloud.");
@@ -713,38 +700,67 @@ fn prepare_seed(
     }
     register(&mut points, pose);
     let mut part = partition_seed(&points, voxel_size, origin, region_m);
-    if let Some(premap) = premap {
-        part.live = non_premap_voxels(&points, &premap, voxel_size);
+    if let Some(flags) = flags {
+        let premap: Vec<bool> = flags
+            .iter()
+            .map(|&f| VoxelFlags::from_bits(f).is_premap())
+            .collect();
+        part.non_premap = non_premap_voxels(&points, &premap, voxel_size);
     }
     Some(part)
 }
 
-/// The per-point field saying a point is only known from a loaded map.
-const PREMAP_FIELD: &str = "premap";
+/// The per-point uint32 field of `Voxel::flags` bits is named this prefix plus
+/// the bits' names, comma separated, lowest bit first: `flags:premap`.
+const FLAGS_FIELD_PREFIX: &str = "flags:";
 
-/// The per-point field of a diff cloud: 1 for a voxel added, 0 for one removed.
+/// The per-point uint8 field of a diff cloud: 1 for a voxel added, 0 for one removed.
 const CHANGE_FIELD: &str = "change";
 
-/// A cloud's finite xyz points, with its `premap` flags when it has that field.
-type PointsWithPremap = (Vec<(f32, f32, f32)>, Option<Vec<bool>>);
+fn flags_field_name() -> String {
+    format!("{FLAGS_FIELD_PREFIX}{}", VoxelFlags::NAMES.join(","))
+}
 
-fn extract_xyz_premap(msg: &PointCloud2) -> Result<PointsWithPremap, ExtractError> {
-    let Some(field) = msg.fields.iter().find(|f| f.name == PREMAP_FIELD) else {
+/// For each bit a flags field's name lists, the `Voxel::flags` bit of the same
+/// name, zero for a name this map does not know.
+fn flag_remap(field_name: &str) -> Vec<u32> {
+    field_name[FLAGS_FIELD_PREFIX.len()..]
+        .split(',')
+        .take(32)
+        .map(|name| {
+            VoxelFlags::NAMES
+                .iter()
+                .position(|known| *known == name.trim())
+                .map_or(0, |bit| 1 << bit)
+        })
+        .collect()
+}
+
+/// A cloud's finite xyz points, with its `flags` (in `Voxel::flags` bit order)
+/// when it has that field.
+type PointsWithFlags = (Vec<(f32, f32, f32)>, Option<Vec<u32>>);
+
+fn extract_xyz_flags(msg: &PointCloud2) -> Result<PointsWithFlags, ExtractError> {
+    let Some(field) = msg
+        .fields
+        .iter()
+        .find(|f| f.name.starts_with(FLAGS_FIELD_PREFIX))
+    else {
         let points = extract_xyz(msg)?;
         return Ok((
             points.into_iter().map(|[x, y, z]| (x, y, z)).collect(),
             None,
         ));
     };
-    if field.datatype != PointField::UINT8 as u8 {
-        return Err(ExtractError("premap field is not uint8"));
+    if field.datatype != PointField::UINT32 as u8 {
+        return Err(ExtractError("flags field is not uint32"));
     }
     let step = usize::try_from(msg.point_step).map_err(|_| ExtractError("negative point_step"))?;
     let offset = usize::try_from(field.offset)
         .ok()
-        .filter(|&o| o < step)
+        .filter(|&o| o + 4 <= step)
         .ok_or(ExtractError(
-            "premap field offset does not fit within point_step",
+            "flags field offset does not fit within point_step",
         ))?;
     // extract_xyz checks the layout but drops non-finite points, so walk again to keep each flag with its point.
     let offsets = ["x", "y", "z"].map(|name| {
@@ -758,17 +774,26 @@ fn extract_xyz_premap(msg: &PointCloud2) -> Result<PointsWithPremap, ExtractErro
         return Err(ExtractError("missing a float32 x/y/z field"));
     };
     let n = (msg.width as usize) * (msg.height as usize);
-    let read = |at: usize| f32::from_le_bytes(msg.data[at..at + 4].try_into().expect("4 bytes"));
+    let bytes = |at: usize| -> [u8; 4] { msg.data[at..at + 4].try_into().expect("4 bytes") };
+    let read = |at: usize| f32::from_le_bytes(bytes(at));
     let mut points = Vec::with_capacity(n);
-    let mut premap = Vec::with_capacity(n);
+    let mut flags = Vec::with_capacity(n);
+    let remap = flag_remap(&field.name);
     for base in (0..n * step).step_by(step) {
         let (x, y, z) = (read(base + xo), read(base + yo), read(base + zo));
         if x.is_finite() && y.is_finite() && z.is_finite() {
             points.push((x, y, z));
-            premap.push(msg.data[base + offset] != 0);
+            let bits = u32::from_le_bytes(bytes(base + offset));
+            flags.push(
+                remap
+                    .iter()
+                    .enumerate()
+                    .filter(|&(bit, _)| bits & (1 << bit) != 0)
+                    .fold(0, |acc, (_, ours)| acc | ours),
+            );
         }
     }
-    Ok((points, Some(premap)))
+    Ok((points, Some(flags)))
 }
 
 /// How long a loaded map waits for the transform that places it.
@@ -866,28 +891,58 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
     }
 }
 
-/// Pack flat points into an LCM cloud message: (x, y, z) then one value per name in `flags`,
-/// each carried as a uint8 field after x, y, z, intensity.
-fn points_to_cloud(points: &[f32], flags: &[&str], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let stride = 3 + flags.len();
-    let step = 16 + flags.len() as i32;
+/// Pack flat (x, y, z) triples into an LCM cloud message. With `flags`, the
+/// points are (x, y, z, flags) quads, flags as `f32::from_bits`, and the cloud
+/// carries a uint32 `flags` field after x, y, z, intensity.
+fn points_to_cloud(points: &[f32], flags: bool, frame_id: &str, stamp: Time) -> PointCloud2 {
+    let stride = if flags { 4 } else { 3 };
+    let step: i32 = if flags { 20 } else { 16 };
     let mut data = Vec::with_capacity((points.len() / stride) * step as usize);
     let mut n: i32 = 0;
     for p in points.chunks_exact(stride) {
         write_point(&mut data, &mut n, p[0], p[1], p[2]);
-        data.extend(p[3..].iter().map(|&flag| u8::from(flag != 0.0)));
+        if flags {
+            data.extend_from_slice(&p[3].to_bits().to_le_bytes());
+        }
     }
     let mut cloud = make_cloud(data, n, frame_id, stamp);
-    for (i, name) in flags.iter().enumerate() {
+    if flags {
         cloud.fields.push(PointField {
-            name: (*name).into(),
-            offset: 16 + i as i32,
-            datatype: PointField::UINT8 as u8,
+            name: flags_field_name(),
+            offset: 16,
+            datatype: PointField::UINT32 as u8,
             count: 1,
         });
     }
     cloud.point_step = step;
     cloud.row_step = step * n;
+    cloud
+}
+
+/// Pack flat (x, y, z, flags, change) quintuples into an LCM diff cloud: the
+/// `points_to_cloud` flags layout plus a uint8 `change` field (1 added, 0 removed).
+fn diff_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let points = points.as_chunks::<5>().0;
+    let quads: Vec<f32> = points
+        .iter()
+        .flat_map(|p| [p[0], p[1], p[2], p[3]])
+        .collect();
+    let mut cloud = points_to_cloud(&quads, true, frame_id, stamp);
+    let step = cloud.point_step as usize;
+    let mut data = Vec::with_capacity(cloud.data.len() + points.len());
+    for (point, p) in cloud.data.chunks_exact(step).zip(points) {
+        data.extend_from_slice(point);
+        data.push(u8::from(p[4] != 0.0));
+    }
+    cloud.fields.push(PointField {
+        name: CHANGE_FIELD.into(),
+        offset: step as i32,
+        datatype: PointField::UINT8 as u8,
+        count: 1,
+    });
+    cloud.point_step += 1;
+    cloud.row_step = cloud.point_step * cloud.width;
+    cloud.data = data;
     cloud
 }
 
@@ -984,7 +1039,7 @@ mod tests {
             UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::FRAC_PI_2),
         );
         let t = Transform::new("odom", "map", 0.0, iso);
-        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], &[], "map", Time::default());
+        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], false, "map", Time::default());
 
         let part = prepare_seed(&cloud, tf_to_pose(&t), 1.0, (0.0, 0.0, 0.0), 4.0)
             .expect("loaded map must decode");
@@ -993,40 +1048,42 @@ mod tests {
         let mut mapper = Mapper::new(test_config());
         let created: usize = part
             .tiles()
-            .map(|tile| mapper.seed_tile(tile, &part.live))
+            .map(|tile| mapper.seed_tile(tile, &part.non_premap))
             .sum();
         assert_eq!(created, 1);
 
         let region = mapper.local_points(&part.regions[0].cylinder.bounds());
-        let seeded = points_to_cloud(&region, &[], "odom", Time::default());
+        let seeded = points_to_cloud(&region, false, "odom", Time::default());
         assert!(cloud_points(&seeded).contains(&voxel_center(10, 3, 0)));
     }
 
-    /// A loaded cloud's `premap` field survives the wire into the seed, and the
-    /// global map hands each voxel's flag back out on the same field.
+    /// A loaded cloud's `flags` field survives the wire into the seed, and the
+    /// global and local maps hand each voxel's premap bit back out on it.
     #[test]
-    fn premap_field_round_trips_through_seed_and_global_map() {
+    fn flags_field_round_trips_through_seed_and_maps() {
+        let premap = f32::from_bits(VoxelFlags::PREMAP);
+        let none = f32::from_bits(0);
         let quads = [
             1.5,
             0.5,
             0.5,
-            1.0,
+            premap,
             2.5,
             0.5,
             0.5,
-            0.0,
+            none,
             f32::NAN,
             0.0,
             0.0,
-            0.0,
+            premap,
         ];
-        let loaded = points_to_cloud(&quads, &[PREMAP_FIELD], "map", Time::default());
-        let (points, premap) = extract_xyz_premap(&loaded).expect("premap cloud must decode");
+        let loaded = points_to_cloud(&quads, true, "map", Time::default());
+        let (points, flags) = extract_xyz_flags(&loaded).expect("flags cloud must decode");
         assert_eq!(points, vec![(1.5, 0.5, 0.5), (2.5, 0.5, 0.5)]);
         assert_eq!(
-            premap,
-            Some(vec![true, false]),
-            "the NaN point drops with its flag"
+            flags,
+            Some(vec![VoxelFlags::PREMAP, 0]),
+            "the NaN point drops with its flags"
         );
 
         let part = prepare_seed(
@@ -1042,45 +1099,75 @@ mod tests {
         .expect("loaded map must decode");
         let mut mapper = Mapper::new(test_config());
         for tile in part.tiles() {
-            mapper.seed_tile(tile, &part.live);
+            mapper.seed_tile(tile, &part.non_premap);
         }
-        let global = points_to_cloud(
-            &mapper.global_points_premap(),
-            &[PREMAP_FIELD],
-            "odom",
-            Time::default(),
-        );
-        let (points, premap) = extract_xyz_premap(&global).expect("global map must decode");
-        let mut flagged: Vec<((f32, f32, f32), bool)> =
-            points.into_iter().zip(premap.unwrap()).collect();
-        flagged.sort_by(|a, b| a.0 .0.total_cmp(&b.0 .0));
-        assert_eq!(
-            flagged,
-            vec![((1.5, 0.5, 0.5), true), ((2.5, 0.5, 0.5), false)]
-        );
+        let everywhere = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: f32::MAX,
+            z_min: f32::MIN,
+            z_max: f32::MAX,
+        };
+        for (name, quads) in [
+            ("global", mapper.global_points_flags()),
+            ("local", mapper.local_points_flags(&everywhere)),
+        ] {
+            let cloud = points_to_cloud(&quads, true, "odom", Time::default());
+            let (points, flags) = extract_xyz_flags(&cloud).expect("map must decode");
+            let mut flagged: Vec<((f32, f32, f32), u32)> =
+                points.into_iter().zip(flags.unwrap()).collect();
+            flagged.sort_by(|a, b| a.0 .0.total_cmp(&b.0 .0));
+            assert_eq!(
+                flagged,
+                vec![((1.5, 0.5, 0.5), VoxelFlags::PREMAP), ((2.5, 0.5, 0.5), 0)],
+                "{name} map"
+            );
+        }
     }
 
-    /// A diff cloud carries premap then change as uint8 fields after x, y, z, intensity.
+    /// A flags field names its bits, so another writer's bit order still lands
+    /// each bit on the voxel flag of the same name, and unknown bits drop.
     #[test]
-    fn diff_cloud_packs_premap_and_change() {
-        let cloud = points_to_cloud(
-            &[0.5, 0.5, 0.5, 1.0, 0.0, 1.5, 0.5, 0.5, 0.0, 1.0],
-            &[PREMAP_FIELD, CHANGE_FIELD],
+    fn flags_field_bits_follow_their_names() {
+        assert_eq!(flags_field_name(), "flags:premap");
+        let quads = [
+            1.5,
+            0.5,
+            0.5,
+            f32::from_bits(0b10),
+            2.5,
+            0.5,
+            0.5,
+            f32::from_bits(0b01),
+        ];
+        let mut cloud = points_to_cloud(&quads, true, "map", Time::default());
+        cloud.fields.last_mut().unwrap().name = "flags:other,premap".into();
+        let (_, flags) = extract_xyz_flags(&cloud).expect("flags cloud must decode");
+        assert_eq!(flags, Some(vec![VoxelFlags::PREMAP, 0]));
+    }
+
+    /// A diff cloud carries uint32 flags then a uint8 change after x, y, z, intensity.
+    #[test]
+    fn diff_cloud_packs_flags_and_change() {
+        let premap = f32::from_bits(VoxelFlags::PREMAP);
+        let cloud = diff_to_cloud(
+            &[0.5, 0.5, 0.5, premap, 0.0, 1.5, 0.5, 0.5, 0.0, 1.0],
             "world",
             Time::default(),
         );
-        let flags: Vec<(&str, i32)> = cloud.fields[4..]
+        let fields: Vec<(&str, i32)> = cloud.fields[4..]
             .iter()
             .map(|f| (f.name.as_str(), f.offset))
             .collect();
-        assert_eq!(flags, vec![("premap", 16), ("change", 17)]);
-        assert_eq!((cloud.point_step, cloud.width), (18, 2));
+        assert_eq!(fields, vec![("flags:premap", 16), ("change", 20)]);
+        assert_eq!((cloud.point_step, cloud.width), (21, 2));
+        assert_eq!(cloud.data.len(), 42);
         assert_eq!(
             [
                 cloud.data[16],
-                cloud.data[17],
-                cloud.data[34],
-                cloud.data[35]
+                cloud.data[20],
+                cloud.data[37],
+                cloud.data[41]
             ],
             [1, 0, 0, 1]
         );
@@ -1088,8 +1175,8 @@ mod tests {
 
     /// A loaded cloud without the field is all premap.
     #[test]
-    fn loaded_cloud_without_premap_field_is_all_premap() {
-        let cloud = points_to_cloud(&[1.5, 0.5, 0.5], &[], "map", Time::default());
+    fn loaded_cloud_without_flags_field_is_all_premap() {
+        let cloud = points_to_cloud(&[1.5, 0.5, 0.5], false, "map", Time::default());
         let part = prepare_seed(
             &cloud,
             Pose {
@@ -1101,7 +1188,7 @@ mod tests {
             4.0,
         )
         .expect("loaded map must decode");
-        assert!(part.live.is_empty());
+        assert!(part.non_premap.is_empty());
     }
 
     /// Two chunks stacked in z share a region cell, a third far off has its own.
@@ -1241,7 +1328,7 @@ mod tests {
             4.0,
         );
         for tile in part.tiles() {
-            mapper.seed_tile(tile, &part.live);
+            mapper.seed_tile(tile, &part.non_premap);
         }
         let mut viz = RegionSweep::default();
         let sizes = |due: Vec<(Cell, Vec<f32>)>| -> Vec<(Cell, usize)> {
@@ -1286,7 +1373,7 @@ mod tests {
         assert_eq!(occupied, vec![(3, -2, 1)]);
 
         // Encode and decode the occupied voxel center exactly as the port would.
-        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], &[], "world", Time::default());
+        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], false, "world", Time::default());
         let Ok(points) = extract_xyz(&cloud) else {
             panic!("occupied cloud must decode");
         };
@@ -1312,13 +1399,13 @@ mod tests {
         };
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );
@@ -1339,13 +1426,13 @@ mod tests {
         };
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );
@@ -1367,13 +1454,13 @@ mod tests {
         };
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );
@@ -1397,13 +1484,13 @@ mod tests {
         };
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );
@@ -1437,7 +1524,7 @@ mod tests {
         map.set_support_min(3);
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
-            &[],
+            false,
             "world",
             Time::default(),
         );

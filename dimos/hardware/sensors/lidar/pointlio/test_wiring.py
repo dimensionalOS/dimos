@@ -23,7 +23,7 @@ import warnings
 from pydantic import BaseModel
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
+from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
@@ -55,7 +55,7 @@ def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) 
     skipped = []
     for name in UBUNTU_BLUEPRINTS:
         try:
-            blueprint = load_blueprint(name)
+            blueprint = autoconnect(load_blueprint(name)).solidify()
         except OptionalDependencyError as e:
             skipped.append(f"{name} ({e})")
             continue

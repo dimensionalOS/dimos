@@ -449,14 +449,42 @@ pub struct Voxel {
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
     normal: NormalFit,
-    /// The map frame this voxel was last hit (or seeded) in, in the low 31
-    /// bits, and the `PREMAP_BIT` above them.
+    /// The map frame this voxel was last hit (or seeded) in.
     stamp: u32,
+    flags: VoxelFlags,
 }
 
-/// Set in `Voxel::stamp` while only premap points put the voxel there: a
-/// live hit or non-premap seed point clears it.
-const PREMAP_BIT: u32 = 1 << 31;
+/// Per-voxel bits, named in order by `NAMES`; all their masking lives here.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct VoxelFlags(u32);
+
+impl VoxelFlags {
+    /// Set while only premap points put the voxel there: a live hit or
+    /// non-premap seed point clears it.
+    pub const PREMAP: u32 = 1 << 0;
+    /// The name of each bit, lowest first.
+    pub const NAMES: &'static [&'static str] = &["premap"];
+
+    pub fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    pub fn bits(self) -> u32 {
+        self.0
+    }
+
+    pub fn is_premap(self) -> bool {
+        self.0 & Self::PREMAP != 0
+    }
+
+    fn set_premap(&mut self, premap: bool) {
+        self.0 = if premap {
+            self.0 | Self::PREMAP
+        } else {
+            self.0 & !Self::PREMAP
+        };
+    }
+}
 
 impl Default for Voxel {
     fn default() -> Self {
@@ -469,6 +497,7 @@ impl Default for Voxel {
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
             stamp: 0,
+            flags: VoxelFlags::default(),
         }
     }
 }
@@ -483,24 +512,24 @@ impl Voxel {
 
     /// Only premap points put it here: a live hit or non-premap seed point clears it.
     pub fn is_premap(&self) -> bool {
-        self.stamp & PREMAP_BIT != 0
+        self.flags.is_premap()
+    }
+
+    pub fn flags(&self) -> VoxelFlags {
+        self.flags
     }
 
     fn set_premap(&mut self, premap: bool) {
-        self.stamp = if premap {
-            self.stamp | PREMAP_BIT
-        } else {
-            self.stamp & !PREMAP_BIT
-        };
+        self.flags.set_premap(premap);
     }
 
-    /// The map frame this voxel was last hit (or seeded) in, modulo 2^31.
+    /// The map frame this voxel was last hit (or seeded) in.
     fn last_hit(&self) -> u32 {
-        self.stamp & !PREMAP_BIT
+        self.stamp
     }
 
     fn set_last_hit(&mut self, frame: u32) {
-        self.stamp = (self.stamp & PREMAP_BIT) | (frame & !PREMAP_BIT);
+        self.stamp = frame;
     }
 
     /// Fold a centered point into the running moments. True when the count
@@ -862,14 +891,24 @@ pub fn emit_points(
     emit_points_impl(map, voxel_size, bounds, live, true, false)
 }
 
+/// `emit_points` as flat (x, y, z, flags) quads, flags being the voxel's
+/// `Voxel::flags` bits stored in an f32 (`f32::from_bits`).
+pub fn emit_points_flags(
+    map: &VoxelMap,
+    voxel_size: f32,
+    bounds: Option<&LocalBounds>,
+    live: &AHashSet<VoxelKey>,
+) -> Vec<f32> {
+    emit_points_impl(map, voxel_size, bounds, live, true, true)
+}
+
 /// Every healthy voxel plus this frame's live voxels, with no support gate.
 pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
     emit_points_impl(map, voxel_size, None, live, false, false)
 }
 
-/// `emit_points_ungated` as flat (x, y, z, premap) quads, premap 1.0 for a
-/// voxel only the loaded map has put there, else 0.0.
-pub fn emit_points_ungated_premap(
+/// `emit_points_ungated` as flat (x, y, z, flags) quads, like `emit_points_flags`.
+pub fn emit_points_ungated_flags(
     map: &VoxelMap,
     voxel_size: f32,
     live: &AHashSet<VoxelKey>,
@@ -883,7 +922,7 @@ fn emit_points_impl(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
     gated: bool,
-    with_premap: bool,
+    with_flags: bool,
 ) -> Vec<f32> {
     let mut out = scan_chunks(
         map,
@@ -898,14 +937,14 @@ fn emit_points_impl(
             let (x, y, z) = voxel_center(hv.key, voxel_size);
             if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
                 part.extend_from_slice(&[x, y, z]);
-                if with_premap {
-                    part.push(if hv.voxel.is_premap() { 1.0 } else { 0.0 });
+                if with_flags {
+                    part.push(f32::from_bits(hv.voxel.flags().bits()));
                 }
             }
         },
     );
 
-    // This frame hit them, so none is premap.
+    // This frame hit them, so none is premap and none has flags yet.
     for &key in live.iter() {
         if map.voxels.is_healthy(&key) {
             continue;
@@ -915,8 +954,8 @@ fn emit_points_impl(
             continue;
         }
         out.extend_from_slice(&[x, y, z]);
-        if with_premap {
-            out.push(0.0);
+        if with_flags {
+            out.push(f32::from_bits(0));
         }
     }
     out
@@ -1123,7 +1162,7 @@ pub struct SeedPartition {
     pub regions: Vec<SeedRegion>,
     pub voxels: usize,
     /// Voxels a non-premap point of the cloud falls in. Empty when the whole cloud is premap.
-    pub live: AHashSet<VoxelKey>,
+    pub non_premap: AHashSet<VoxelKey>,
 }
 
 impl SeedPartition {
@@ -1148,7 +1187,7 @@ pub fn partition_seed(
     SeedPartition {
         regions: seed_regions(tiles, voxel_size, region_m),
         voxels,
-        live: AHashSet::new(),
+        non_premap: AHashSet::new(),
     }
 }
 
@@ -1272,12 +1311,12 @@ impl Aabb {
 }
 
 /// Seed one tile without ray tracing, creating only absent voxels. A voxel
-/// in `live` is seeded non-premap, and makes an existing one non-premap.
+/// in `non_premap` is seeded non-premap, and makes an existing one non-premap.
 /// Returns the created keys.
 pub fn seed_tile(
     map: &mut VoxelMap,
     points: &[(f32, f32, f32)],
-    live: &AHashSet<VoxelKey>,
+    non_premap: &AHashSet<VoxelKey>,
     cfg: &Config,
 ) -> AHashSet<VoxelKey> {
     let inv = 1.0 / cfg.voxel_size;
@@ -1289,7 +1328,7 @@ pub fn seed_tile(
             continue;
         }
         let key = world_to_voxel(x, y, z, inv);
-        if map.insert_seed(key, !live.contains(&key)) {
+        if map.insert_seed(key, !non_premap.contains(&key)) {
             created.insert(key);
         } else if !created.contains(&key) {
             continue;
@@ -1307,7 +1346,7 @@ pub fn seed_points(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config)
     let part = partition_seed(points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m);
     map.reserve_chunks(part.tile_count());
     part.tiles()
-        .map(|tile| seed_tile(map, tile, &part.live, cfg).len())
+        .map(|tile| seed_tile(map, tile, &part.non_premap, cfg).len())
         .sum()
 }
 
@@ -1583,7 +1622,7 @@ fn find_misses_along_ray(
                 }
             }
             // Nothing has seen this voxel lately: no surface there to protect from a grazing ray.
-            if map_frame.wrapping_sub(c.last_hit()) & !PREMAP_BIT > graze_recent_frames {
+            if map_frame.wrapping_sub(c.last_hit()) > graze_recent_frames {
                 walk.misses.insert((x, y, z));
                 continue;
             }

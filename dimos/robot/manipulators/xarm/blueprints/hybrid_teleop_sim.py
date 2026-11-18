@@ -19,7 +19,9 @@ request_operator skill an agent calls to ask for the hold, an end-effector jog
 on ``ee_twist_command``, on/off streams for the hold and the e-stop, a point
 cloud of the scene on ``scene_pointcloud`` and the arm's URDF, so a Desktop page
 can show the arm and the scene, stop or hold it, and drive it by hand after
-taking over.
+taking over. An agent can ask either grasp generator, GraspGenX or the
+heuristic one, for grasps with propose_grasps; a pick given no grasp
+generates its own with GraspGenX.
 
 ``hybrid_teleop_sim_collect`` is hybrid-teleop-sim plus a collection session
 (wrist camera and joint positions, recorded from launch to
@@ -48,20 +50,25 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import DEFAULT_FPS, FeatureSpec
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     eef_twist_task,
     trajectory_task,
 )
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
+from dimos.robot.manipulators.xarm.blueprints.grasp import (
+    XARM_GRASP_FRAME_TO_TCP,
+    XARM_GRIPPER_SWEEP_VOLUME,
+)
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     XARM_HEURISTIC_AIM,
@@ -184,6 +191,7 @@ _collection_profile = CollectionProfile(
 
 hybrid_teleop_sim = autoconnect(
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_xarm7_sim_model,
         planning_timeout=10.0,
         visualization={"backend": "viser"},
@@ -191,10 +199,15 @@ hybrid_teleop_sim = autoconnect(
     ManipulationSkills.blueprint(),
     TeleopSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
+    GraspGenXModule.blueprint(
+        gripper=XARM_GRIPPER_SWEEP_VOLUME,
+        grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+        # Return every sample: the pick's contact check chooses among them.
+        max_candidates=500,
+    ),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
     # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
-    # world-frame points at 5 Hz. Renamed so they do not mix with the object
-    # clouds ObjectSceneRegistrationModule sends on "pointcloud".
+    # world-frame points at 5 Hz, renamed for the Desktop page's scene view.
     MujocoSimModule.blueprint(
         **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
         width=_CAMERA_WIDTH,
@@ -206,15 +219,7 @@ hybrid_teleop_sim = autoconnect(
         mujoco_lidar_raycast_height=60,
         mujoco_lidar_voxel_size=0.01,
     ).remappings([(MujocoSimModule, "pointcloud", "scene_pointcloud")]),
-    ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
-        # Detections closer than this (metres) count as one object. The objects
-        # on the table are 10 to 17 cm apart; the 0.2 m default merges them.
-        distance_threshold=0.05,
-    ),
+    ManipulationLocalize.blueprint(world_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[
@@ -239,7 +244,7 @@ hybrid_teleop_sim = autoconnect(
     # Serves the URDF and its meshes; the planner already puts the links on tf.
     UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
     RerunBridgeModule.blueprint(),
-)
+).remappings([(PickAndPlaceModule, "_grasp_generator", GraspGenXModule)])
 
 hybrid_teleop_sim_collect = autoconnect(
     # First, so the recorder and the episode monitor stop after what they record.

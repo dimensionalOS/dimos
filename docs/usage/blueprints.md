@@ -63,7 +63,8 @@ blueprint = autoconnect(
 )
 ```
 
-`blueprint` itself is a `Blueprint` so you can link it with other modules:
+`autoconnect()` returns a `MetaBlueprint`: an unresolved composition of concrete
+blueprints, other metablueprints, and optional choices. You can compose it further:
 
 ```python session=blueprint-ex1
 class Module4(Module):
@@ -82,7 +83,81 @@ expanded_blueprint = autoconnect(
 )
 ```
 
-Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
+Methods such as `.global_config()`, `.transports()`, `.remappings()`,
+`.namespace()`, and `.hosted()` work on both types. A `MetaBlueprint` records
+these operations and applies them, in order, after resolving choices. Each
+operation applies only to the fragment where it was declared. Validation that
+needs concrete modules also runs at that point.
+
+Call `.solidify()` when you need to inspect the concrete modules or pass the
+blueprint to `BlueprintConfigParser`:
+
+```python session=blueprint-ex1
+concrete_blueprint = expanded_blueprint.solidify()
+```
+
+Both types are frozen data classes. Solidification leaves the composition intact,
+so it can be resolved repeatedly with different choices. A `MetaBlueprint` also
+offers `.build(choices=...)`, which solidifies and calls `ModuleCoordinator.build()`.
+`ModuleCoordinator.build()` and `.load_blueprint()` also accept a `MetaBlueprint`
+and resolve its default choices at runtime. Keep exported compositions unresolved
+so the CLI can pass `--choice` selections before building. Calling `.solidify()`
+while defining an exported composition fixes its choices at import time.
+As with other coordinator builds, call it under an `if __name__ == "__main__":`
+guard when running a script.
+
+## Choices
+
+`ChoiceAtom` selects one fragment by name. Each alternative can be a concrete
+`Blueprint` or a nested `MetaBlueprint`:
+
+```python session=blueprint-choices
+from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
+from dimos.core.module import Module
+
+class VisModule(Module):
+    pass
+
+class RaytracerModule(Module):
+    pass
+
+class VoxelMapper(Module):
+    pass
+
+mapping = autoconnect(
+    VisModule.blueprint(),
+    ChoiceAtom(
+        name="PointClearing",
+        default="raycasting",
+        choices={
+            "raycasting": RaytracerModule.blueprint(),
+            "column_carving": VoxelMapper.blueprint(),
+        },
+    ),
+).global_config(n_workers=4)
+
+default_mapping = mapping.solidify()
+voxel_mapping = mapping.solidify(choices={"PointClearing": "column_carving"})
+```
+
+Expose the unresolved `mapping` variable through the blueprint registry or a
+package entry point to select alternatives at launch:
+
+```bash
+dimos run mapping
+dimos run mapping --choice PointClearing=column_carving
+```
+
+Repeat `--choice NAME=OPTION` for multiple choices. Names and options are case
+sensitive. A choice without a default requires an explicit selection. Invalid
+options, unknown or inactive names, and repeated CLI selections are errors.
+Nested choices are resolved only inside selected alternatives, so an unselected
+branch's required choices do not need values. Distinct active choices must have
+unique names; the same `ChoiceAtom` object can be reused across compositions.
+
+The CLI solidifies before configuration parsing and dependency checks. Module
+options and `--help` therefore describe the selected modules. Blueprint runtime
+features, including hosted placement, operate on the resulting concrete blueprint.
 
 ## Publishing external blueprints
 
@@ -116,7 +191,7 @@ External names are always `<canonical-distribution-namespace>.<external-local-bl
 
 Entry point targets may be either:
 
-- a `Blueprint` object, such as a module-level `go2_blueprint`; or
+- a `Blueprint` or `MetaBlueprint` object, such as a module-level `go2_blueprint`; or
 - a dimOS `Module` class, such as `KeyboardTeleop`, which dimOS converts with
   `.blueprint()`.
 
@@ -153,7 +228,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out, In
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 class ModuleA(Module):
     image: Out[Image]
@@ -214,7 +289,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out, In
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 class ConnectionModule(Module):
     color_image: Out[Image]  # Outputs on 'color_image'
@@ -364,7 +439,8 @@ resolves configuration sources, and returns an immutable
 ```python session=blueprint-ex1
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 
-parser = BlueprintConfigParser(base_blueprint)
+concrete_blueprint = base_blueprint.solidify()
+parser = BlueprintConfigParser(concrete_blueprint)
 parsed = parser.parse(["--module1.arg1=5"])
 ```
 
@@ -396,11 +472,11 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 config_path = Path.home() / "base-blueprint-config.json"
 cli_args = ["--module1.arg1=5"]
-parsed = BlueprintConfigParser(base_blueprint).parse(
+parsed = BlueprintConfigParser(concrete_blueprint).parse(
     cli_args,
     config_path=config_path,
 )
-coordinator = ModuleCoordinator.build(base_blueprint, parsed)
+coordinator = ModuleCoordinator.build(concrete_blueprint, parsed)
 ```
 
 Note that `build()` resets the process-global `global_config` to the full parsed

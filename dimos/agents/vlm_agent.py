@@ -57,6 +57,9 @@ class VLMAgent(Module):
             ensure_ollama_model(self.config.model.removeprefix("ollama:"))
 
         self._llm: BaseChatModel = init_chat_model(self.config.model)
+        logger.info(
+            "VLM agent model ready.", model=self.config.model, backend=type(self._llm).__name__
+        )
         self._latest_image: Image | None = None
         self._history: list[AIMessage | HumanMessage] = []
         self._system_message = SystemMessage(self.config.system_prompt or SYSTEM_PROMPT)

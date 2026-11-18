@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import model_validator
 
+from dimos.core.global_config import global_config
 from dimos.evals.environments.sim import Sim, SimConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.habitat.server import HabitatProp
@@ -94,6 +95,11 @@ class HabitatEnvironment(Sim):
                 raise FileNotFoundError(path)
         if self.config.executable is not None and not Path(self.config.executable).is_file():
             raise FileNotFoundError(self.config.executable)
+        if not agent.requires_mcp and global_config.transport != "zenoh":
+            raise ValueError(
+                f"Habitat runs on Zenoh only; start the eval with DIMOS_TRANSPORT=zenoh, "
+                f"not {global_config.transport}"
+            )
         super().preflight(agent)
 
     def connection_config(self) -> HabitatConnectionConfig:
@@ -155,7 +161,7 @@ class HabitatEnvironment(Sim):
         return {"episode": metadata}
 
     def wait_ready(self, recording: Store, *, deadline: float) -> None:
-        """Wait for fresh observations; Sim separately checks the MCP endpoint."""
+        """Wait for fresh observations; LiveEnvironment separately waits for the coordinator."""
         # Message timestamps are Unix wall-clock seconds. Use wall time for
         # freshness and monotonic time only for the elapsed launch deadline.
         while time.monotonic() < deadline:

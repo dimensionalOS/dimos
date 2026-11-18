@@ -278,7 +278,9 @@ For every declared `x: In[T]`, if the module defines `async def handle_x(self, m
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.navigation.spec import NO_HEADING
 
 class MovementManager(Module):
     clicked_point: In[PointStamped]
@@ -286,7 +288,7 @@ class MovementManager(Module):
     tele_cmd_vel: In[Twist]
 
     cmd_vel: Out[Twist]
-    goal: Out[PointStamped]
+    goal: Out[PoseStamped]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -294,7 +296,14 @@ class MovementManager(Module):
         self._teleop_active = False
 
     async def handle_clicked_point(self, msg: PointStamped) -> None:
-        self.goal.publish(msg)
+        self.goal.publish(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=[msg.x, msg.y, msg.z],
+                orientation=NO_HEADING,
+            )
+        )
 
     async def handle_nav_cmd_vel(self, msg: Twist) -> None:
         if not self._teleop_active:
@@ -448,9 +457,9 @@ A basic Unitree Go2 blueprint looks like what we saw before.
 
 ```python skip session=blueprints output=assets/go2_agentic.svg
 from dimos.core.introspection.svg import to_svg
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
+from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
 
-to_svg(agentic, "assets/go2_agentic.svg")
+to_svg(unitree_go2_agentic, "assets/go2_agentic.svg")
 ```
 
 ![output](assets/go2_agentic.svg)

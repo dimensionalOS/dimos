@@ -15,7 +15,7 @@
 """WebXR teleoperation for Dual OpenYAM, with each arm engaged by its own controller."""
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
@@ -23,6 +23,7 @@ from dimos.manipulation.visualization.viser.config import ViserVisualizationConf
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
@@ -31,7 +32,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_arm_joints,
-    dual_openyam_control_model,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
@@ -75,14 +75,14 @@ _dual_openyam_webxr_tasks = {
 
 def build_dual_openyam_webxr(
     *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
-) -> Blueprint:
+) -> MetaBlueprint:
     """Compose dual-arm teleop with deployment-specific visualization."""
     return autoconnect(
         ArmTeleopModule.blueprint(zero_button="B"),
         autoconnect(
             DamiaoTeleopCoordinator.blueprint(
                 instance_name="ControlCoordinator",
-                model=dual_openyam_control_model(robot="arm"),
+                connections=[arm_declaration(DualOpenYamConnection)],
                 tasks=[
                     *_dual_openyam_webxr_tasks.values(),
                     TaskConfig(

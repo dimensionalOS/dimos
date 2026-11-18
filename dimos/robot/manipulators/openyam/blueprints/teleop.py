@@ -17,7 +17,7 @@
 from copy import deepcopy
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.common.blueprints import planner
@@ -26,6 +26,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     DamiaoTwistCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.openyam.blueprints.basic import _gripper_task, _trajectory_task
@@ -49,12 +50,12 @@ def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
     )
 
 
-def _twist_control(tasks: list[TaskConfig]) -> Blueprint:
+def _twist_control(tasks: list[TaskConfig]) -> MetaBlueprint:
     """Twist-driven coordinator named ControlCoordinator over the connection."""
     return autoconnect(
         DamiaoTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_openyam_model.model,
+            connections=[arm_declaration(OpenYamConnection)],
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),
@@ -62,12 +63,12 @@ def _twist_control(tasks: list[TaskConfig]) -> Blueprint:
     ).remappings(arm_remaps(OpenYamConnection, DamiaoTwistCoordinator))
 
 
-def _teleop_control(tasks: list[TaskConfig]) -> Blueprint:
+def _teleop_control(tasks: list[TaskConfig]) -> MetaBlueprint:
     """WebXR coordinator named ControlCoordinator over the connection."""
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_openyam_model.model,
+            connections=[arm_declaration(OpenYamConnection)],
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),

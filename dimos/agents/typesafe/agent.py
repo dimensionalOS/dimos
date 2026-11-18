@@ -92,6 +92,11 @@ class TypeSafeAgent(BaseAgent):
     def start(self) -> None:
         super().start()
         self._session.headers["Authorization"] = f"Bearer {self.config.api_key}"
+        logger.info(
+            "TypeSafe agent started.",
+            model=self.config.model,
+            backend=os.environ.get(BASE_URL_ENV, DEFAULT_BASE_URL),
+        )
         source = self.trigger()
         if self.config.max_hz:
             source = source.pipe(ops.sample(1.0 / self.config.max_hz))

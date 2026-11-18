@@ -33,13 +33,16 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     LidarRelocalizer,
     RelocalizeConfig,
 )
-from dimos.mapping.relocalization.module import Config, RelocalizationModule
+from dimos.mapping.relocalization.module import Config, PremapModule
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import FLAG_NAMES, PointCloud2
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
+
+_SPARSE_CLOUD_GRACE_S = 10.0
+_SKIP_LOG_INTERVAL_S = 5.0
 
 
 def window(
@@ -63,7 +66,7 @@ class LidarConfig(Config):
     relocalize: RelocalizeConfig = MID360
 
 
-class CloudRelocalization(RelocalizationModule):
+class CloudRelocalization(PremapModule):
     """Coarse FPFH+RANSAC then ICP of a windowed live cloud against a pointcloud premap.
 
     Subclasses supply :meth:`clouds`.
@@ -74,7 +77,8 @@ class CloudRelocalization(RelocalizationModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._relocalizer: LidarRelocalizer | None = None
-        self._last_skip_log = 0.0
+        self._first_sparse_cloud: float | None = None
+        self._last_skip_log: float | None = None
 
     def clouds(self) -> Observable[PointCloud2]:
         """The windowed live cloud to match, at most one every ``reloc_interval``."""
@@ -99,12 +103,22 @@ class CloudRelocalization(RelocalizationModule):
 
     def _maybe_log_skip(self, msg: PointCloud2) -> None:
         if self._has_enough_points(msg):
+            self._first_sparse_cloud = None
+            self._last_skip_log = None
             return
         now = time.monotonic()
-        if now - self._last_skip_log > 5.0:
-            logger.warning(
-                f"relocalize skipped: n_pts={len(msg)} "
-                f"< min_local_points={self.config.min_local_points}"
+        if self._first_sparse_cloud is None:
+            self._first_sparse_cloud = now
+        if self._last_skip_log is None or now - self._last_skip_log >= _SKIP_LOG_INTERVAL_S:
+            log = (
+                logger.info
+                if now - self._first_sparse_cloud < _SPARSE_CLOUD_GRACE_S
+                else logger.warning
+            )
+            log(
+                "relocalize skipped: not enough local points",
+                n_pts=len(msg),
+                min_local_points=self.config.min_local_points,
             )
             self._last_skip_log = now
 
@@ -120,7 +134,7 @@ class CloudRelocalization(RelocalizationModule):
         t0 = time.monotonic()
         try:
             tf = self._relocalizer.attempt(
-                msg.pointcloud, self.config.world_frame, self.config.map_frame, self.near()
+                msg.pointcloud, self.config.world_frame, self.map_frame, self.near()
             ).fix
         except Exception:
             logger.exception("relocalize() failed")
@@ -204,7 +218,7 @@ class DiffRelocalization(CloudRelocalization):
         self.cloud_keyframe_request.publish(Bool(data=True))
 
     def on_keyframe(self, cloud: PointCloud2) -> None:
-        live = {tuple(p) for p in _flagged(cloud, None)}
+        live = {tuple(p) for p in cloud.points_f32()[~_premap(cloud)]}
         with self._lock:
             self._live = live
             self._keyframe_ts = cloud.ts
@@ -216,11 +230,13 @@ class DiffRelocalization(CloudRelocalization):
         if change is None:
             logger.warning("map_update without a change field, dropped")
             return
-        added = {tuple(p) for p in _flagged(cloud, change != 0)}
-        removed = {tuple(p) for p in cloud.points_f32()[change == 0]}
+        points, premap = cloud.points_f32(), _premap(cloud)
+        added = {tuple(p) for p in points[(change != 0) & ~premap]}
+        # Removed voxels, and ones only the premap now holds.
+        gone = {tuple(p) for p in points[(change == 0) | premap]}
         with self._lock:
+            self._live -= gone
             self._live |= added
-            self._live -= removed
 
     def live_cloud(self) -> PointCloud2:
         with self._lock:
@@ -234,12 +250,10 @@ class DiffRelocalization(CloudRelocalization):
         return self.fix
 
 
-def _flagged(cloud: PointCloud2, keep: np.ndarray | None) -> np.ndarray:
-    """The points of ``cloud`` that are live (premap flag 0), among ``keep`` if given."""
-    points = cloud.points_f32()
-    premap = cloud.premap_u8()
-    mask = np.ones(len(points), dtype=bool) if keep is None else keep
-    if premap is not None:
-        mask = mask & (premap == 0)
-    live: np.ndarray = points[mask]
-    return live
+def _premap(cloud: PointCloud2) -> np.ndarray:
+    """Per point, whether only the premap put that voxel there (all False without a flags field)."""
+    flags = cloud.flags_u32()
+    if flags is None:
+        return np.zeros(len(cloud), dtype=bool)
+    premap: np.ndarray = (flags & (1 << FLAG_NAMES.index("premap"))) != 0
+    return premap
