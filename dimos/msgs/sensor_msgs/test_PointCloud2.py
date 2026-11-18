@@ -313,16 +313,16 @@ def test_to_rerun_keeps_the_clouds_own_rgb() -> None:
 
 
 def test_lcm_diff_cloud_round_trip() -> None:
-    """A diff cloud's premap and change flags survive an lcm_encode → lcm_decode round trip."""
+    """A diff cloud's flags and change marks survive an lcm_encode → lcm_decode round trip."""
     points = np.array([[0.5, 0.5, 0.5], [1.5, 0.5, 0.5], [2.5, 0.5, 0.5]], dtype=np.float32)
-    premap = np.array([1, 0, 1], dtype=np.uint8)
+    flags = np.array([1, 0, 1], dtype=np.uint32)
     change = np.array([1, 1, 0], dtype=np.uint8)
 
     decoded = PointCloud2.lcm_decode(
-        PointCloud2.from_numpy(points, premap=premap, change=change).lcm_encode()
+        PointCloud2.from_numpy(points, flags=flags, change=change).lcm_encode()
     )
 
-    np.testing.assert_array_equal(decoded.premap_u8(), premap)
+    np.testing.assert_array_equal(decoded.flags_u32(), flags)
     np.testing.assert_array_equal(decoded.change_u8(), change)
     assert PointCloud2.lcm_decode(PointCloud2.from_numpy(points).lcm_encode()).change_u8() is None
 
@@ -343,3 +343,22 @@ def test_seq_round_trips_through_lcm_with_and_without_intensity_and_empty() -> N
         assert decoded.seq == seq
         assert len(decoded) == len(cloud)
     assert PointCloud2.lcm_decode(PointCloud2.from_numpy(pts, timestamp=1.0).lcm_encode()).seq == 0
+
+
+def test_flags_field_names_its_bits_and_decodes_by_name():
+    """The flags field is named by its bits, so another writer's order still decodes to ours."""
+    from dimos_lcm.sensor_msgs.PointCloud2 import PointCloud2 as LCMPointCloud2
+
+    cloud = PointCloud2.from_numpy(
+        np.zeros((2, 3), dtype=np.float32), timestamp=0.0, flags=np.array([1, 0], dtype=np.uint32)
+    )
+    msg = LCMPointCloud2.lcm_decode(cloud.lcm_encode())
+    field = next(f for f in msg.fields if f.name.startswith("flags:"))
+    assert field.name == "flags:premap"
+
+    field.name = "flags:other,premap"
+    msg.data = bytes(msg.data)
+    for i, bits in enumerate([0b10, 0b01]):
+        at = i * msg.point_step + field.offset
+        msg.data = msg.data[:at] + int(bits).to_bytes(4, "little") + msg.data[at + 4 :]
+    np.testing.assert_array_equal(PointCloud2.lcm_decode(msg.lcm_encode()).flags_u32(), [1, 0])

@@ -64,7 +64,7 @@ fn seed_all(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config) -> AHa
     let part = partition_seed(points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m);
     let mut created = AHashSet::new();
     for tile in part.tiles() {
-        created.extend(seed_tile(map, tile, &part.live, cfg));
+        created.extend(seed_tile(map, tile, &part.non_premap, cfg));
     }
     created
 }
@@ -1782,21 +1782,6 @@ fn premap_flag_clears_on_a_live_hit() {
     );
 }
 
-/// The premap flag and the last-hit frame share a word without clobbering each other.
-#[test]
-fn premap_bit_and_last_hit_are_independent() {
-    let mut v = Voxel::default();
-    v.set_premap(true);
-    v.set_last_hit(u32::MAX);
-    assert!(v.is_premap());
-    assert_eq!(v.last_hit(), u32::MAX >> 1, "the frame wraps at 2^31");
-    v.set_premap(false);
-    assert_eq!(v.last_hit(), u32::MAX >> 1);
-    v.set_last_hit(7);
-    assert!(!v.is_premap());
-    assert_eq!(v.last_hit(), 7);
-}
-
 /// A non-premap seed point makes its voxel non-premap, new or already seeded.
 #[test]
 fn non_premap_seed_points_land_non_premap() {
@@ -1805,10 +1790,10 @@ fn non_premap_seed_points_land_non_premap() {
     seed_all(&mut map, &[(1.5, 0.5, 0.5), (2.5, 0.5, 0.5)], &cfg);
 
     let points = [(2.5, 0.5, 0.5), (3.5, 0.5, 0.5), (4.5, 0.5, 0.5)];
-    let live = non_premap_voxels(&points, &[false, false, true], cfg.voxel_size);
+    let non_premap = non_premap_voxels(&points, &[false, false, true], cfg.voxel_size);
     let region_m = CHUNK_EDGE as f32 * cfg.voxel_size;
     for tile in partition_seed(&points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m).tiles() {
-        seed_tile(&mut map, tile, &live, &cfg);
+        seed_tile(&mut map, tile, &non_premap, &cfg);
     }
 
     assert!(
@@ -1822,15 +1807,23 @@ fn non_premap_seed_points_land_non_premap() {
     assert!(!map.voxels[&(3, 0, 0)].is_premap(), "new non-premap voxel");
     assert!(map.voxels[&(4, 0, 0)].is_premap(), "new premap voxel");
 
-    let quads = emit_points_ungated_premap(&map, cfg.voxel_size, &AHashSet::new());
-    let mut flags: Vec<(i32, f32)> = quads
+    let quads = emit_points_ungated_flags(&map, cfg.voxel_size, &AHashSet::new());
+    let mut flags: Vec<(i32, u32)> = quads
         .as_chunks::<4>()
         .0
         .iter()
-        .map(|q| (q[0].floor() as i32, q[3]))
+        .map(|q| (q[0].floor() as i32, q[3].to_bits()))
         .collect();
     flags.sort_by_key(|f| f.0);
-    assert_eq!(flags, vec![(1, 1.0), (2, 0.0), (3, 0.0), (4, 1.0)]);
+    assert_eq!(
+        flags,
+        vec![
+            (1, VoxelFlags::PREMAP),
+            (2, 0),
+            (3, 0),
+            (4, VoxelFlags::PREMAP)
+        ]
+    );
 }
 
 /// Seeding the same cloud twice creates nothing and adds no moments.
@@ -2036,7 +2029,7 @@ fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
     let mut map = VoxelMap::default();
     let mut created_total = 0;
     for (i, tile) in tiles.iter().enumerate() {
-        created_total += seed_tile(&mut map, tile, &part.live, &cfg).len();
+        created_total += seed_tile(&mut map, tile, &part.non_premap, &cfg).len();
         let frame: Vec<(f32, f32, f32)> = (0..200)
             .map(|_| (next_coord(), next_coord(), next_coord()))
             .collect();

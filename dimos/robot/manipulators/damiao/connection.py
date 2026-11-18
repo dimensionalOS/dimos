@@ -65,14 +65,13 @@ def zero_stiffness_joints(robot: DamiaoRobot, *, teach: bool, source: str = "arm
 
 
 class DamiaoConnectionConfig(ConnectionConfig):
-    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
     teach: bool = False
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
     deadman_timeout_s: float = Field(default=0.1, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _position_only(self) -> Self:
-        if self.joint_commands != (Interface.POSITION,) or self.pd or self.base_range is not None:
+        if any(interfaces != (Interface.POSITION,) for interfaces in self.joint_commands.values()):
             raise ValueError("Damiao connections accept position commands only")
         return self
 
@@ -87,6 +86,9 @@ class DamiaoConnection(ConnectionModule):
     joint_state: Out[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault(
+            "joint_commands", {name: (Interface.POSITION,) for name in self.robot.joint_names}
+        )
         super().__init__(**kwargs)
         self._arm: DamiaoArm | None = None
         self._fault: str | None = None

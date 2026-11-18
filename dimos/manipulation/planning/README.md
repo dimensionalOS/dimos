@@ -69,9 +69,9 @@ manual motion and explicit planning, preview, and execution through `arm.rpc`.
 ## Using ManipulationModule
 
 ```python skip
-from dimos.manipulation import ManipulationModule
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -96,7 +96,7 @@ config = RobotModelConfig(
 module = ManipulationModule(
     model=config,
     planning_timeout=10.0,
-    enable_viz=True,
+    visualization={"backend": "meshcat"},  # or "viser"
     world_backend="drake",                # RoboPlan is the default
     planner={"backend": "rrt_connect"},    # RoboPlan is the default
     trajectory_parametrization={"backend": "simple_trapezoid"},
@@ -123,8 +123,6 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 base = PlanarBaseDefinition(
-    workspace_lower=(-5.0, -5.0, -3.14),
-    workspace_upper=(5.0, 5.0, 3.14),
     velocity_limits=(1.0, 1.0, 2.0),
     acceleration_limits=(2.0, 2.0, 4.0),
 )
@@ -146,8 +144,7 @@ config = RobotModelConfig(
 )
 ```
 
-The finite workspace bounds define the current planner search domain, not
-physical base stops. `x` and `y` use meters; `yaw` uses radians. `base_pose`
+`x` and `y` use meters; `yaw` uses radians. `base_pose`
 remains the static world placement of the generated root, including the robot's
 floor height. Include all three generated joint names in
 `RobotModelConfig.joint_names`; individual planning groups opt into mobile-base
@@ -159,10 +156,10 @@ give the arm a Cartesian goal while allowing the waist and planar base to
 participate as auxiliary IK degrees of freedom. Select both arms for a bimanual
 goal; RoboPlan composes the selected groups automatically.
 
-A plan that moves the planar base executes when the module config names a
-`base_trajectory_task`, a coordinator task of type `planar_base_trajectory` claiming
-the base's twist joints. The plan's base columns go to that task and the rest to
-the joint trajectory task, both driven by the coordinator's tick clock. A
+A plan that moves the planar base executes when the module config maps a
+coordinator task name to the model's base joints in `trajectory_tasks`. That task
+has type `planar_base_trajectory` and claims the base's twist joints. The plan's
+base columns go to that task and the rest to the joint trajectory task, both driven by the coordinator's tick clock. A
 failure on either side cancels the other, because collision checking only covers
 the simultaneous motion the plan describes. Because the twist joints report
 odometry through their position fields, `joint_state_aliases` maps those
@@ -241,7 +238,7 @@ not the collision-checked geometric path.
 `roboplan_toppra` can parametrize a geometric path from any planner, but only
 when `world_backend="roboplan"`: it reuses the finalized `RoboPlanWorld` model
 and planning groups. Selecting it with another world fails during startup.
-DimOS supports RoboPlan `0.6.x` for this integration.
+DimOS pins RoboPlan `0.8.0` for this integration.
 
 For every selected movable joint, the materialized URDF must provide a finite,
 positive velocity and acceleration limit. Standard URDF has no acceleration
@@ -300,8 +297,7 @@ above.
 `PinkIK` is selectable with `kinematics={"backend": "pink"}` or the CLI override
 `--kinematics.backend=pink`. Pink tuning fields are nested
 under the same config, for example
-`--kinematics.max-iterations=100`. It is installed with the
-`manipulation` optional dependencies, which include the PyPI package `pin-pink`
+`--kinematics.max-iterations=100`. The core dependencies include the PyPI package `pin-pink`
 (import name `pink`) and a `qpsolvers` backend (`proxqp`). Pink is
 local/differential rather than global IK, so it can converge to local minima;
 collision checks remain enforced by the planning world before a candidate is
@@ -327,14 +323,14 @@ accepted.
 
 ```
 planning/
-├── spec.py                  # Protocols (WorldSpec, KinematicsSpec, PlannerSpec)
+├── spec/                    # Protocols, configs, enums and models
 ├── factory.py               # create_world, create_kinematics, create_planner
 ├── world/
 │   └── drake_world.py       # DrakeWorld implementation
 ├── kinematics/
 │   ├── jacobian_ik.py       # Backend-agnostic Jacobian IK
 │   ├── drake_optimization_ik.py  # Drake nonlinear IK
-│   └── pink_ik.py           # Optional Pink differential IK
+│   └── pink_ik.py           # Pink differential IK
 ├── planners/
 │   └── rrt_planner.py       # RRTConnectPlanner
 ├── monitor/                 # WorldMonitor (live state sync)
@@ -364,6 +360,6 @@ planning/
 # Unit tests (fast, no Drake)
 pytest dimos/manipulation/test_manipulation_unit.py -v
 
-# Integration tests (requires Drake)
-pytest dimos/e2e_tests/test_manipulation_module.py -v
+# Integration tests (requires Drake, marked self_hosted)
+pytest -m self_hosted dimos/manipulation/test_manipulation_module.py -v
 ```

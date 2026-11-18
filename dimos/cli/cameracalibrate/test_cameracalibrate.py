@@ -22,6 +22,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.cli.cameracalibrate.cameracalibrate import (
+    CalibrationAbortedError,
     DistortionModel,
     app,
     calibrate_from_frames,
@@ -31,6 +32,7 @@ from dimos.cli.cameracalibrate.cameracalibrate import (
     load_frames_from_folder,
     write_camera_info_yaml,
 )
+from dimos.cli.dimos import main as dimos_app
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as DimosCameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -189,6 +191,82 @@ def test_cli_help_lists_cameracalibrate_flags() -> None:
         "--distortion-model",
     ]:
         assert flag in output_plain
+
+
+@pytest.fixture(params=[(dimos_app, ["cameracalibrate"]), (app, [])], ids=["dimos", "standalone"])
+def calibration_cli(request):
+    cli_app, prefix = request.param
+    return cli_app, [*prefix, "--cols", "8", "--rows", "6", "--square-size-m", "0.025"]
+
+
+@pytest.fixture
+def webcam(mocker):
+    cap = mocker.patch.object(cv2, "VideoCapture").return_value
+    cap.isOpened.return_value = True
+    cap.read.return_value = (True, np.zeros((240, 320, 3), dtype=np.uint8))
+    mocker.patch.object(cv2, "imshow")
+    mocker.patch.object(cv2, "destroyWindow")
+    return cap
+
+
+@pytest.mark.parametrize("quit_key", [ord("q"), 27], ids=["q", "escape"])
+@pytest.mark.parametrize("accepted_count", [0, 1])
+def test_cli_webcam_quit_reports_abort_and_releases_camera(
+    calibration_cli, webcam, mocker, tmp_path, quit_key, accepted_count
+):
+    # The first frame has no board; subsequent frames allow SPACE to accept one.
+    board = _synthetic_chessboard_gray(320, 240, 8, 6, square_px=20)
+    webcam.read.side_effect = [webcam.read.return_value, (True, board), (True, board)]
+    mocker.patch.object(
+        cv2, "waitKey", side_effect=[ord(" ")] * (accepted_count + 1) + [quit_key, 0]
+    )
+    cli_app, args = calibration_cli
+    out = tmp_path / "camera_info.yaml"
+    preview = tmp_path / "camera_info.preview.png"
+
+    result = CliRunner().invoke(
+        cli_app, [*args, "--source", "webcam", "--out", str(out), str(preview)]
+    )
+
+    assert result.exit_code == 130, result.output
+    assert f"Calibration aborted, {accepted_count} of 20 frames accepted." in result.output
+    assert "SPACE" in result.output and "q" in result.output and "Esc" in result.output
+    assert "Usage:" not in result.output
+    assert "Invalid value" not in result.output
+    assert "RMS:" not in result.output
+    assert not out.exists()
+    assert not preview.exists()
+    webcam.release.assert_called_once_with()
+    cv2.destroyWindow.assert_called_once_with("dimos cameracalibrate")
+
+
+@pytest.mark.parametrize(
+    ("opened", "message"),
+    [(True, "Failed to read from camera"), (False, "Failed to open camera")],
+    ids=["read", "open"],
+)
+def test_cli_webcam_failure_is_not_a_usage_error(calibration_cli, webcam, opened, message):
+    webcam.isOpened.return_value = opened
+    webcam.read.return_value = (False, None)
+    cli_app, args = calibration_cli
+
+    result = CliRunner().invoke(cli_app, [*args, "--source", "webcam", "--no-display"])
+
+    assert result.exit_code == 1, result.output
+    assert message in result.output
+    assert "Usage:" not in result.output
+    assert "Invalid value" not in result.output
+    assert "aborted" not in result.output
+    webcam.release.assert_called_once_with()
+
+
+def test_cli_invalid_square_size_is_still_a_usage_error(calibration_cli):
+    cli_app, args = calibration_cli
+
+    result = CliRunner().invoke(cli_app, [*args, "--source", "webcam", "--square-size-m", "0"])
+
+    assert result.exit_code == 2, result.output
+    assert "square_size_m must be > 0" in result.output
 
 
 def test_cli_folder_writes_only_explicit_yaml_and_prints_rms(tmp_path: Path) -> None:
@@ -383,7 +461,9 @@ def test_capture_frames_from_webcam_mocked_quit_raises(
     monkeypatch.setattr(cv2, "VideoCapture", lambda *_a, **_k: _MockVideoCapture(bgr))
     monkeypatch.setattr(cv2, "waitKey", _fake_wait_key)
 
-    with pytest.raises(RuntimeError, match="Capture ended"):
+    with pytest.raises(
+        CalibrationAbortedError, match="Calibration aborted, 1 of 3 frames accepted"
+    ):
         capture_frames_from_webcam(0, 3, cols, rows, no_display=True)
 
 
@@ -450,9 +530,36 @@ def _make_subscribe_pubsub_uri_stub(
 
         if record is not None:
             record["unsub_state"] = unsubscribed
+            record["transport"] = transport
         return transport, _unsub
 
     return _stub
+
+
+@pytest.mark.parametrize("quit_key", [ord("q"), 27], ids=["q", "escape"])
+def test_cli_topic_quit_reports_abort_and_closes_subscription(calibration_cli, mocker, quit_key):
+    record = {}
+    mocker.patch(
+        "dimos.protocol.pubsub.registry.subscribe_pubsub_uri",
+        side_effect=_make_subscribe_pubsub_uri_stub(
+            fire_with=Image.from_opencv(np.zeros((240, 320, 3), dtype=np.uint8)),
+            record=record,
+        ),
+    )
+    mocker.patch.object(cv2, "waitKey", return_value=quit_key)
+    cli_app, args = calibration_cli
+
+    result = CliRunner().invoke(
+        cli_app, [*args, "--source", "topic", "--topic", "zenoh:calibration", "--no-display"]
+    )
+
+    assert result.exit_code == 130, result.output
+    assert "Calibration aborted, 0 of 20 frames accepted." in result.output
+    assert "SPACE" in result.output and "q" in result.output and "Esc" in result.output
+    assert "Usage:" not in result.output
+    assert "Invalid value" not in result.output
+    assert record["unsub_state"]["called"] is True
+    assert record["transport"].stopped is True
 
 
 @pytest.mark.parametrize("topic_uri", ["zenoh:dimos/color_image", "jpeg_lcm:/color_image"])

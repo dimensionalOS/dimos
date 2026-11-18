@@ -23,7 +23,7 @@ reopened on any failure, so a camera held by another process logs and waits.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import Field, model_validator
 
@@ -37,6 +37,8 @@ class V4L2CameraConfig(NativeModuleConfig):
     executable: str = "result/bin/v4l2_camera"
     # A Jetson builds path:.#jetson, the hardware JPEG path (see below).
     build_command: str | None = "nix build -L path:."
+    # Read by bin/native-modules so CI publishes the Jetson build too.
+    alternate_builds: ClassVar[tuple[str, ...]] = ("nix build -L path:.#jetson",)
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
 
@@ -55,7 +57,7 @@ class V4L2CameraConfig(NativeModuleConfig):
     @model_validator(mode="after")
     def _jetson_build(self) -> V4L2CameraConfig:
         if self.build_command == "nix build -L path:." and Path("/etc/nv_tegra_release").exists():
-            self.build_command = "nix build -L path:.#jetson"
+            self.build_command = self.alternate_builds[0]
         return self
 
 

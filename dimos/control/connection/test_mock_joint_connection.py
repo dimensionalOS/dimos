@@ -17,7 +17,13 @@
 import pytest
 
 from dimos.control._control_test_helpers import fake_arm_model
-from dimos.control.connection.mock_joint_connection import MockJointConnection
+from dimos.control.connection.mock_joint_connection import (
+    MockJointConnection,
+    MockJointConnectionConfig,
+)
+from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import limits
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
@@ -64,3 +70,23 @@ def test_invalid_commands_do_not_change_mock_feedback(rig, bad):
     commands.publish(JointState(name=["arm/joint1"], position=[bad]))
     assert module.status().last_rejection
     assert readings.sent[-1].position == [0.2, 0.4]
+
+
+def test_validated_mock_declaration_is_shared_with_the_coordinator():
+    config = MockJointConnectionConfig(model=fake_arm_model(("joint1", "joint2")))
+    assert config.joint_commands == {
+        "joint1": (Interface.POSITION,),
+        "joint2": (Interface.POSITION,),
+    }
+    source = ConnectionSource(config, ["position_command"], ["joint_state"], 1.0)
+    assert source.joint_names == ["arm/joint1", "arm/joint2"]
+    assert source.position_limit("arm/joint2") == limits(config)["arm/joint2/position"]
+    restored = MockJointConnectionConfig.model_validate(config.model_dump())
+    assert restored.joint_commands == config.joint_commands
+
+
+def test_mock_rejects_the_removed_tuple_declaration():
+    with pytest.raises(ValueError, match="dict"):
+        MockJointConnectionConfig.model_validate(
+            {"model": fake_arm_model(("joint1",)), "joint_commands": (Interface.POSITION,)}
+        )

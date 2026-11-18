@@ -152,7 +152,9 @@ class FakeArmConfig(ConnectionConfig):
 
     source: str = "mock"
     model: RobotModel | None = Field(default_factory=fake_arm_model)
-    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
+    joint_commands: dict[str, tuple[Interface, ...]] = {
+        name: (Interface.POSITION,) for name in FAKE_ARM_JOINTS
+    }
     state_rate_hz: float = 100.0
 
 

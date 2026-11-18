@@ -43,7 +43,7 @@ nix develop
 export UV_PYTHON_PREFERENCE=only-system UV_PYTHON_DOWNLOADS=never
 uv venv --python "$(command -v python3)"
 source .venv/bin/activate
-uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
+uv pip install --torch-backend cpu 'dimos[base,unitree,sim,drone]'
 uv run dimos --help
 ```
 

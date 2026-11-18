@@ -19,10 +19,10 @@ use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
-    emit_points_ungated_premap, global_normal_fits, global_normals, seed_points, seed_tile,
-    update_map, voxel_center, world_to_voxel, ChunkKey, Config, Cylinder, FrameHits, LocalBounds,
-    VoxelKey, VoxelMap,
+    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_flags,
+    emit_points_ungated, emit_points_ungated_flags, global_normal_fits, global_normals,
+    seed_points, seed_tile, update_map, voxel_center, world_to_voxel, ChunkKey, Config, Cylinder,
+    FrameHits, LocalBounds, VoxelFlags, VoxelKey, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -48,8 +48,8 @@ pub struct Mapper {
     last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
-    /// The global map as subscribers last heard it, voxel -> premap, which the next diff is taken against.
-    published: AHashMap<VoxelKey, bool>,
+    /// The global map as subscribers last heard it, voxel -> flags, which the next diff is taken against.
+    published: AHashMap<VoxelKey, VoxelFlags>,
 }
 
 impl Mapper {
@@ -112,10 +112,10 @@ impl Mapper {
     }
 
     /// Seed one tile of a partitioned world-frame cloud, the voxels in
-    /// `live` as non-premap. Returns how many voxels were created.
-    pub fn seed_tile(&mut self, tile: &[Point], live: &AHashSet<VoxelKey>) -> usize {
+    /// `non_premap` as non-premap. Returns how many voxels were created.
+    pub fn seed_tile(&mut self, tile: &[Point], non_premap: &AHashSet<VoxelKey>) -> usize {
         let pool = Arc::clone(&self.pool);
-        pool.install(|| seed_tile(&mut self.map, tile, live, &self.config))
+        pool.install(|| seed_tile(&mut self.map, tile, non_premap, &self.config))
             .len()
     }
 
@@ -206,44 +206,45 @@ impl Mapper {
             .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
     }
 
-    /// `global_points` as flat (x, y, z, premap) quads.
-    pub fn global_points_premap(&self) -> Vec<f32> {
+    /// `global_points` as flat (x, y, z, flags) quads.
+    pub fn global_points_flags(&self) -> Vec<f32> {
         self.pool.install(|| {
-            emit_points_ungated_premap(&self.map, self.config.voxel_size, &self.live.coarse)
+            emit_points_ungated_flags(&self.map, self.config.voxel_size, &self.live.coarse)
         })
     }
 
-    /// `global_points_premap`, made the baseline the next `global_diff` is taken against.
+    /// `global_points_flags`, made the baseline the next `global_diff` is taken against.
     pub fn global_keyframe(&mut self) -> Vec<f32> {
-        let points = self.global_points_premap();
-        self.published = premap_voxels(&points, self.config.voxel_size);
+        let points = self.global_points_flags();
+        self.published = voxel_flags(&points, self.config.voxel_size);
         points
     }
 
-    /// Voxels added (or whose premap flag changed) and removed since the last keyframe or diff,
-    /// as flat (x, y, z, premap, change) quintuples, change 1.0 for added and 0.0 for removed.
+    /// Voxels added (or whose flags changed) and removed since the last keyframe or diff,
+    /// as flat (x, y, z, flags, change) quintuples like `global_points_flags` plus change,
+    /// 1.0 for added and 0.0 for removed.
     pub fn global_diff(&mut self) -> Vec<f32> {
         let voxel_size = self.config.voxel_size;
-        let current = premap_voxels(&self.global_points_premap(), voxel_size);
+        let current = voxel_flags(&self.global_points_flags(), voxel_size);
         let mut out = Vec::new();
-        let mut push = |key: VoxelKey, premap: bool, added: bool| {
+        let mut push = |key: VoxelKey, flags: VoxelFlags, added: bool| {
             let (x, y, z) = voxel_center(key, voxel_size);
             out.extend_from_slice(&[
                 x,
                 y,
                 z,
-                f32::from(u8::from(premap)),
+                f32::from_bits(flags.bits()),
                 f32::from(u8::from(added)),
             ]);
         };
-        for (&key, &premap) in &current {
-            if self.published.get(&key) != Some(&premap) {
-                push(key, premap, true);
+        for (&key, &flags) in &current {
+            if self.published.get(&key) != Some(&flags) {
+                push(key, flags, true);
             }
         }
-        for (&key, &premap) in &self.published {
+        for (&key, &flags) in &self.published {
             if !current.contains_key(&key) {
-                push(key, premap, false);
+                push(key, flags, false);
             }
         }
         self.published = current;
@@ -255,6 +256,18 @@ impl Mapper {
     pub fn local_points(&self, bounds: &LocalBounds) -> Vec<f32> {
         self.pool.install(|| {
             emit_points(
+                &self.map,
+                self.config.voxel_size,
+                Some(bounds),
+                &self.live.coarse,
+            )
+        })
+    }
+
+    /// `local_points` as flat (x, y, z, flags) quads.
+    pub fn local_points_flags(&self, bounds: &LocalBounds) -> Vec<f32> {
+        self.pool.install(|| {
+            emit_points_flags(
                 &self.map,
                 self.config.voxel_size,
                 Some(bounds),
@@ -305,14 +318,19 @@ impl Mapper {
     }
 }
 
-/// The voxels of flat (x, y, z, premap) quads of voxel centers, with their premap flags.
-fn premap_voxels(quads: &[f32], voxel_size: f32) -> AHashMap<VoxelKey, bool> {
+/// The voxels of flat (x, y, z, flags) quads of voxel centers, with their flags.
+fn voxel_flags(quads: &[f32], voxel_size: f32) -> AHashMap<VoxelKey, VoxelFlags> {
     let inv = 1.0 / voxel_size;
     quads
         .as_chunks::<4>()
         .0
         .iter()
-        .map(|q| (world_to_voxel(q[0], q[1], q[2], inv), q[3] != 0.0))
+        .map(|q| {
+            (
+                world_to_voxel(q[0], q[1], q[2], inv),
+                VoxelFlags::from_bits(q[3].to_bits()),
+            )
+        })
         .collect()
 }
 
@@ -479,7 +497,7 @@ mod tests {
     fn keyframe_and_diffs_rebuild_the_global_map() {
         let mut mapper = Mapper::new(config());
         mapper.seed_points(&[(6.5, 0.5, 0.5), (0.5, 6.5, 0.5)]);
-        let mut replica = premap_voxels(&mapper.global_keyframe(), 1.0);
+        let mut replica = voxel_flags(&mapper.global_keyframe(), 1.0);
         assert_eq!(replica.len(), 2);
         let pose = Pose {
             position: (0.0, 0.0, 0.0),
@@ -492,14 +510,17 @@ mod tests {
             for q in mapper.global_diff().as_chunks::<5>().0 {
                 let key = world_to_voxel(q[0], q[1], q[2], 1.0);
                 if q[4] != 0.0 {
-                    turned_live += usize::from(replica.get(&key) == Some(&true) && q[3] == 0.0);
-                    replica.insert(key, q[3] != 0.0);
+                    let flags = VoxelFlags::from_bits(q[3].to_bits());
+                    turned_live += usize::from(
+                        replica.get(&key).is_some_and(|f| f.is_premap()) && !flags.is_premap(),
+                    );
+                    replica.insert(key, flags);
                 } else {
                     removed += 1;
                     replica.remove(&key);
                 }
             }
-            assert_eq!(replica, premap_voxels(&mapper.global_points_premap(), 1.0));
+            assert_eq!(replica, voxel_flags(&mapper.global_points_flags(), 1.0));
         }
         assert!(
             removed >= 1 && turned_live == 1,

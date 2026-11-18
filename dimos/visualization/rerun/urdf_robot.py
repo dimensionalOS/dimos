@@ -135,10 +135,7 @@ class UrdfRobotStaticRerunFactory:
             str(robot.base_link),
             list(robot.robot.joints),
         )
-        entities: list[tuple[str, Any]] = [
-            (self.root_path, rr.Transform3D()),
-            (link_paths[str(robot.base_link)], rr.Transform3D()),
-        ]
+        entities: list[tuple[str, Any]] = []
 
         geometry_nodes = set(robot.scene.graph.nodes_geometry)
         for parent, node, edge_data in robot.scene.graph.to_edgelist():

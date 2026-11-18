@@ -106,7 +106,7 @@ def test_composition_adds_relay_to_non_visual_blueprint() -> None:
 
 def test_composition_includes_costmap_producer() -> None:
     blueprint = with_relay_bridge(
-        autoconnect(_ImageProducer.blueprint(), _CostmapProducer.blueprint())
+        autoconnect(_ImageProducer.blueprint(), _CostmapProducer.blueprint()).solidify()
     )
     relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
 
@@ -118,7 +118,7 @@ def test_composition_derives_tx_channels_from_consumers() -> None:
     # available (Out transports exist regardless of wiring, so consumers are
     # the availability signal).
     blueprint = with_relay_bridge(
-        autoconnect(_ImageProducer.blueprint(), _TwistConsumer.blueprint())
+        autoconnect(_ImageProducer.blueprint(), _TwistConsumer.blueprint()).solidify()
     )
     relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
 
@@ -135,7 +135,7 @@ def test_composition_ignores_disabled_producers() -> None:
 
 def test_composition_preserves_existing_relay() -> None:
     existing = RelayBridgeModule.blueprint(local_port=8899, available_channels=("odom",))
-    blueprint = with_relay_bridge(autoconnect(_BareModule.blueprint(), existing))
+    blueprint = with_relay_bridge(autoconnect(_BareModule.blueprint(), existing).solidify())
     relay_atoms = [atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule]
 
     assert len(relay_atoms) == 1

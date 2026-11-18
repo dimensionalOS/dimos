@@ -44,8 +44,9 @@ unitree_go2_keyboard_teleop = autoconnect(
         tasks=[
             TaskConfig(
                 name="vel_go2",
-                type="velocity",
+                type="twist_velocity",
                 joint_names=_go2_joints,
+                params={"axes": ["linear.x", "linear.y", "angular.z"]},
                 priority=10,
             ),
         ],

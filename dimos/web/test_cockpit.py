@@ -785,7 +785,7 @@ def test_stats_panel_switches_stats_publishing_on() -> None:
     # it, composition keeps it, and the CLI's own sources still win.
     blueprint = cockpit(layout=Stats())
     assert dict(blueprint.global_config_overrides) == {"dtop": True}
-    composed = autoconnect(blueprint).global_config(n_workers=9)
+    composed = autoconnect(blueprint).solidify().global_config(n_workers=9)
     assert dict(composed.global_config_overrides) == {"dtop": True, "n_workers": 9}
     assert dict(cockpit(layout=Video("color_image")).global_config_overrides) == {}
     parser = BlueprintConfigParser(blueprint)

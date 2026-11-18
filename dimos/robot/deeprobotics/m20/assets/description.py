@@ -21,6 +21,7 @@ from hashlib import sha256
 from pathlib import Path
 import shutil
 import tempfile
+import time
 from typing import Any
 
 from filelock import FileLock
@@ -28,6 +29,9 @@ from git import Repo
 
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCacheError
 from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class SparseDescriptionSource(RobotDescriptionSource):
@@ -73,6 +77,8 @@ def _sparse_checkout(url: str, ref: str, sparse_paths: tuple[str, ...]) -> Path:
         if checkout_path.exists():
             return checkout_path
         temp_path = Path(tempfile.mkdtemp(prefix=".fetch-", dir=checkout_path.parent))
+        logger.info("Fetching robot assets", repo=url, ref=ref, path=str(checkout_path))
+        started = time.monotonic()
         try:
             repo = Repo.init(temp_path)
             repo.create_remote("origin", url)
@@ -94,4 +100,5 @@ def _sparse_checkout(url: str, ref: str, sparse_paths: tuple[str, ...]) -> Path:
             raise GitAssetCacheError(
                 f"Failed to fetch {', '.join(sparse_paths)} from {url!r} at {ref!r}: {exc}"
             ) from exc
+        logger.info("Fetched robot assets", repo=url, duration=f"{time.monotonic() - started:.1f}s")
     return checkout_path

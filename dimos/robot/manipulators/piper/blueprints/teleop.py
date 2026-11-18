@@ -16,9 +16,12 @@
 
 from __future__ import annotations
 
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -178,7 +181,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def _teleop() -> Blueprint:
+def _teleop() -> MetaBlueprint:
     """Jog a Piper's end and open and close its gripper from the Desktop
     Manipulation app, through ``PiperConnection``. ``UrdfManager`` serves the
     Piper's URDF and puts its joints on tf, so the app can draw it.
@@ -195,7 +198,13 @@ def _teleop() -> Blueprint:
     return autoconnect(
         PiperTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=model,
+            connections=[
+                ConnectionConfig(
+                    source="arm",
+                    model=model,
+                    joint_commands={j.name: (Interface.POSITION,) for j in movable_joints(model)},
+                )
+            ],
             tasks=[
                 TaskConfig(
                     name=EEF_TWIST_TASK_NAME,

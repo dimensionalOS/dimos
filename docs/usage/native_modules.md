@@ -51,7 +51,7 @@ When `start()` is called, NativeModule:
 4. **Launches the subprocess** with `Popen`, piping stdout/stderr.
 5. **Starts a watchdog** thread that calls `stop()` if the process crashes.
 
-For the example above, the launched command would look like:
+With LCM selected for the example above, the launched command would look like:
 
 ```sh skip
 ./build/my_lidar \
@@ -72,7 +72,7 @@ mylidar.start()
 2026-02-14T11:22:12.123963Z [info     ] Starting native process   [dimos/core/native_module.py] cmd='./build/my_lidar --pointcloud /lidar#sensor_msgs.PointCloud2 --imu /imu#sensor_msgs.Imu --host_ip 192.168.1.5 --frequency 10.0' cwd=/home/lesh/coding/dimos/docs/usage/build
 ```
 
-Topic strings use the format `/<name>#<msg_type>`, which is the LCM channel name that Python `LCMTransport` subscribers use. The native binary publishes on these exact channels.
+LCM topic strings use the format `/<name>#<msg_type>`, matching Python `LCMTransport` subscribers. With the default Zenoh transport, topics use `dimos/<name>/<msg_type>`. The native binary must support the selected transport and publish on the assigned topics.
 
 When `stop()` is called, the process receives SIGTERM. If it doesn't exit within `shutdown_timeout` seconds (default 2), it gets SIGKILL.
 
@@ -132,18 +132,25 @@ Native modules work with `autoconnect` exactly like Python modules:
 
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.module import Module
+from dimos.core.stream import In
 
 class PointCloudConsumer(Module):
     pointcloud: In[PointCloud2]
     imu: In[Imu]
 
-autoconnect(
+blueprint = autoconnect(
     MyLidar.blueprint(host_ip="192.168.1.10"),
     PointCloudConsumer.blueprint(),
-).build().loop()
+)
+
+# Workers import this script again, so build under the __main__ guard
+if __name__ == "__main__":
+    ModuleCoordinator.build(blueprint).loop()
 ```
 
-`autoconnect` matches ports by `(name, type)`, assigns LCM topics, and passes them to the native binary as CLI args. You can override transports as usual:
+`autoconnect` matches ports by `(name, type)`, assigns topics on the active transport (Zenoh by default), and passes them to the native binary as CLI args. You can override transports as usual:
 
 ```python skip
 blueprint = autoconnect(
@@ -245,8 +252,9 @@ from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/livox/rust"
-    executable: str = "../../../../../../target/release/mid360_native"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/mid360_native"
+    build_command: str | None = "nix build -L path:."
+    stdin_config: bool = True
     host_ip: str | None = None  # auto-detected on the lidar's subnet
     lidar_ip: str | None = None  # required for a live sensor
     frequency: float = 10.0
@@ -336,3 +344,7 @@ locally to skip cold compiles when the cache has them:
 extra-substituters = https://dimensionalos.cachix.org
 extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
 ```
+
+The cache holds the native modules that ship in the `dimos` package, the ones
+`bin/native-modules --build` builds. CI does not publish the examples under
+[/examples/native-modules/](/examples/native-modules/), so their first run compiles them.

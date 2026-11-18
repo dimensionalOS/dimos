@@ -81,6 +81,26 @@ class SectorJson(TypedDict):
     state: str
 
 
+# Per-point flag bits, lowest first. On the wire the uint32 field is named
+# FLAGS_FIELD_PREFIX plus these names, comma separated: "flags:premap".
+FLAG_NAMES = ("premap",)
+FLAGS_FIELD_PREFIX = "flags:"
+
+
+def _flags_field_name() -> str:
+    return FLAGS_FIELD_PREFIX + ",".join(FLAG_NAMES)
+
+
+def _remap_flags(field_name: str, bits: np.ndarray) -> np.ndarray:
+    """Move each bit a flags field's name lists onto the FLAG_NAMES bit of that name, dropping unknown ones."""
+    out = np.zeros(len(bits), dtype=np.uint32)
+    for bit, name in enumerate(field_name[len(FLAGS_FIELD_PREFIX) :].split(",")[:32]):
+        if name.strip() in FLAG_NAMES:
+            ours = FLAG_NAMES.index(name.strip())
+            out |= ((bits.astype(np.uint32) >> bit) & 1) << ours
+    return out
+
+
 class PointCloud2(Timestamped):
     msg_name = "sensor_msgs.PointCloud2"
     seq: int = 0
@@ -200,7 +220,7 @@ class PointCloud2(Timestamped):
         tags: np.ndarray | None = None,
         lines: np.ndarray | None = None,
         stamps: np.ndarray | None = None,
-        premap: np.ndarray | None = None,
+        flags: np.ndarray | None = None,
         change: np.ndarray | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
@@ -216,8 +236,9 @@ class PointCloud2(Timestamped):
             lines: Optional (N,) uint8 array of per-point laser line numbers
             stamps: Optional (N,) float64 array of per-point capture times in
                 absolute seconds. In-memory only, not encoded on the wire.
-            premap: Optional (N,) uint8 array, nonzero where a point came from a
-                loaded premap rather than live sensing
+            flags: Optional (N,) uint32 array of per-point flag bits, named in
+                order by FLAG_NAMES (premap: the point came from a loaded premap,
+                not live sensing)
             change: Optional (N,) uint8 array marking a diff cloud: 1 where a voxel
                 was added, 0 where one was removed
 
@@ -233,7 +254,7 @@ class PointCloud2(Timestamped):
             ("tags", tags),
             ("lines", lines),
             ("stamps", stamps),
-            ("premap", premap),
+            ("flags", flags),
             ("change", change),
         ):
             if values is not None and len(values) != len(points):
@@ -259,9 +280,9 @@ class PointCloud2(Timestamped):
             pcd_t.point["stamps"] = o3c.Tensor(
                 stamps.astype(np.float64).reshape(-1, 1), dtype=o3c.float64
             )
-        if premap is not None:
-            pcd_t.point["premap"] = o3c.Tensor(
-                premap.astype(np.uint8).reshape(-1, 1), dtype=o3c.uint8
+        if flags is not None:
+            pcd_t.point["flags"] = o3c.Tensor(
+                flags.astype(np.uint32).reshape(-1, 1), dtype=o3c.uint32
             )
         if change is not None:
             pcd_t.point["change"] = o3c.Tensor(
@@ -522,9 +543,9 @@ class PointCloud2(Timestamped):
         """Per-point capture times (absolute seconds) as flat float64, or None if absent."""
         return self._per_point_field("stamps", np.float64)
 
-    def premap_u8(self) -> np.ndarray | None:
-        """Per-point premap flags (nonzero = from a loaded premap) as flat uint8, or None."""
-        return self._per_point_field("premap", np.uint8)
+    def flags_u32(self) -> np.ndarray | None:
+        """Per-point flag bits (bit 0 = from a loaded premap) as flat uint32, or None."""
+        return self._per_point_field("flags", np.uint32)
 
     def change_u8(self) -> np.ndarray | None:
         """Per-point diff marks (1 = added, 0 = removed) as flat uint8, or None if not a diff cloud."""
@@ -642,7 +663,7 @@ class PointCloud2(Timestamped):
 
             point_data = np.column_stack([points, intensities]).astype(np.float32)
 
-        # Optional per-point attributes (offset_time/tag/line/premap/change) extend the
+        # Optional per-point attributes (offset_time/tag/line/flags/change) extend the
         # base 16-byte layout with packed extra fields, emitted only when present.
         extras: list[tuple[str, np.dtype, int, np.ndarray]] = []
         offset_times = self.offset_times_u32()
@@ -654,9 +675,9 @@ class PointCloud2(Timestamped):
         lines = self.lines_u8()
         if lines is not None:
             extras.append(("line", np.dtype("u1"), PointField.UINT8, lines))
-        premap = self.premap_u8()
-        if premap is not None:
-            extras.append(("premap", np.dtype("u1"), PointField.UINT8, premap))
+        flags = self.flags_u32()
+        if flags is not None:
+            extras.append((_flags_field_name(), np.dtype("<u4"), PointField.UINT32, flags))
         change = self.change_u8()
         if change is not None:
             extras.append(("change", np.dtype("u1"), PointField.UINT8, change))
@@ -734,7 +755,6 @@ class PointCloud2(Timestamped):
             "offset_time": PointField.UINT32,
             "tag": PointField.UINT8,
             "line": PointField.UINT8,
-            "premap": PointField.UINT8,
             "change": PointField.UINT8,
             # ROS-style per-point fields (the Go2 L1): seconds after the stamp, and ring.
             "time": PointField.FLOAT32,
@@ -742,8 +762,15 @@ class PointCloud2(Timestamped):
         }
         x_offset = y_offset = z_offset = rgb_offset = intensity_offset = None
         offset_time_offset = tag_offset = line_offset = time_offset = ring_offset = None
-        premap_offset = change_offset = None
+        flags_field = None
+        change_offset = None
         for msgfield in msg.fields:
+            if (
+                msgfield.name.startswith(FLAGS_FIELD_PREFIX)
+                and msgfield.datatype == PointField.UINT32
+            ):
+                flags_field = msgfield
+                continue
             if _expected_datatype.get(msgfield.name) != msgfield.datatype:
                 continue
             if msgfield.name == "x":
@@ -766,8 +793,6 @@ class PointCloud2(Timestamped):
                 time_offset = msgfield.offset
             elif msgfield.name == "ring":
                 ring_offset = msgfield.offset
-            elif msgfield.name == "premap":
-                premap_offset = msgfield.offset
             elif msgfield.name == "change":
                 change_offset = msgfield.offset
 
@@ -822,7 +847,7 @@ class PointCloud2(Timestamped):
                     intensities.reshape(-1, 1), dtype=o3c.float32
                 )
 
-        # Extract per-point attributes (offset_time/tag/line/premap/change) if present. Unlike
+        # Extract per-point attributes (offset_time/tag/line/flags/change) if present. Unlike
         # intensity, zero is a meaningful value (first point's offset_time is 0),
         # so field presence alone decides — no nonzero check.
         def _extract_scalar_field(field_offset: int, np_dtype: str) -> np.ndarray:
@@ -864,9 +889,12 @@ class PointCloud2(Timestamped):
                 _extract_scalar_field(ring_offset, "<u2").astype(np.uint8).reshape(-1, 1),
                 dtype=o3c.uint8,
             )
-        if premap_offset is not None:
-            pcd_t.point["premap"] = o3c.Tensor(
-                _extract_scalar_field(premap_offset, "u1").reshape(-1, 1), dtype=o3c.uint8
+        if flags_field is not None:
+            pcd_t.point["flags"] = o3c.Tensor(
+                _remap_flags(
+                    flags_field.name, _extract_scalar_field(flags_field.offset, "<u4")
+                ).reshape(-1, 1),
+                dtype=o3c.uint32,
             )
         if change_offset is not None:
             pcd_t.point["change"] = o3c.Tensor(

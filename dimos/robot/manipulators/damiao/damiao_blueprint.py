@@ -21,7 +21,9 @@ that must agree with the connection: the simulation swap and the stream remaps.
 
 from __future__ import annotations
 
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection.mock_joint_connection import MockJointConnection
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
@@ -71,6 +73,19 @@ def mock_initial_positions(robot: DamiaoRobot) -> dict[str, float]:
     return dict(zip(robot.joint_names, [*home, *closed], strict=True))
 
 
+def arm_declaration(connection: type[DamiaoConnection]) -> ConnectionConfig:
+    """The explicit position contract shared by the native and simulated deployment.
+
+    Robot topology already names every driven joint, including the grippers;
+    composing a blueprint does not need to load geometry to discover them.
+    """
+    return ConnectionConfig(
+        source="arm",
+        model=connection.robot.model,
+        joint_commands={name: (Interface.POSITION,) for name in connection.robot.joint_names},
+    )
+
+
 def arm_connection(connection: type[DamiaoConnection], *, teach: bool = False) -> Blueprint:
     """The deployed connection, or an independent mock when ``--simulation`` is on.
 
@@ -78,13 +93,13 @@ def arm_connection(connection: type[DamiaoConnection], *, teach: bool = False) -
     simulation swap is visible next to the coordinator it feeds instead of
     hiding inside a general-purpose composer.
     """
+    declaration = arm_declaration(connection)
     if global_config.simulation:
         return MockJointConnection.blueprint(
-            source="arm",
-            model=connection.robot.model,
+            **declaration.model_dump(),
             initial_positions=mock_initial_positions(connection.robot),
         )
-    return connection.blueprint(source="arm", teach=teach)
+    return connection.blueprint(**declaration.model_dump(), teach=teach)
 
 
 def arm_remaps(
