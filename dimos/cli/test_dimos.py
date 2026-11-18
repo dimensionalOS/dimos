@@ -29,6 +29,7 @@ from dimos.cli.commands.lifecycle import _with_relay_bridge
 import dimos.cli.commands.mcp as mcp
 from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
+from dimos.core.coordination.blueprints import Blueprint, ChoiceAtom, autoconnect
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
 import dimos.core.daemon as core_daemon
@@ -39,6 +40,7 @@ import dimos.core.run_registry as run_registry
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
+from dimos.robot.get_all_blueprints import get_by_name_or_exit
 from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.effectors.high_level.webrtc import G1HighLevelWebRtc
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -403,6 +405,174 @@ def test_foreground_logs_signal_and_requests_shutdown_once(
         "Received signal, shutting down", signal=signum, run_id="test-alpha"
     )
     shutdown.assert_called_once_with()
+
+
+@pytest.fixture
+def stubbed_choices(stubbed_run, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch):
+    mapping = autoconnect(
+        ChoiceAtom(
+            name="PointClearing",
+            default="raycasting",
+            choices={
+                "raycasting": RunModuleA.blueprint(),
+                "column_carving": RunModuleB.blueprint(),
+            },
+        ),
+        ChoiceAtom(
+            name="Viewer",
+            default="off",
+            choices={"on": RunModuleA.blueprint(instance_name="viewer"), "off": autoconnect()},
+        ),
+    )
+    mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", return_value=mapping)
+    monkeypatch.setenv("TOPIC_METADATA", "false")
+    return stubbed_run
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ([], RunModuleA),
+        (["--choice", "PointClearing=column_carving"], RunModuleB),
+        (["--choice=PointClearing=column_carving"], RunModuleB),
+    ],
+)
+def test_run_resolves_choices_before_build(stubbed_choices, options, expected) -> None:
+    result = CliRunner().invoke(main, ["run", "mapping", *options])
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert isinstance(stubbed_choices["blueprint"], Blueprint)
+    assert [atom.module for atom in stubbed_choices["blueprint"].blueprints] == [expected]
+
+
+def test_run_supports_multiple_choices(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["run", "mapping", "--choice", "PointClearing=column_carving", "--choice", "Viewer=on"],
+    )
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert [atom.name for atom in stubbed_choices["blueprint"].blueprints] == [
+        "runmoduleb",
+        "viewer",
+    ]
+
+
+def test_run_parses_configuration_for_the_selected_branch(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "mapping",
+            "--runmoduleb.lookahead",
+            "2.5",
+            "--choice",
+            "PointClearing=column_carving",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert stubbed_choices["parsed_config"].module_kwargs("runmoduleb")["lookahead"] == 2.5
+
+
+def test_run_rejects_configuration_for_unselected_modules(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "mapping",
+            "--choice",
+            "PointClearing=column_carving",
+            "--runmodulea.entity-prefix",
+            "unused",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "runmodulea.entity-prefix" in result.output
+    assert stubbed_choices == {}
+
+
+def test_run_help_uses_the_selected_branch(stubbed_choices) -> None:
+    result = CliRunner().invoke(
+        main, ["run", "mapping", "--choice", "PointClearing=column_carving", "--help"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--runmoduleb.lookahead" in result.output
+    assert "--runmodulea.entity-prefix" not in result.output
+    assert stubbed_choices == {}
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (["--choice", "PointClearing"], "expected NAME=OPTION"),
+        (["--choice", "=raycasting"], "expected NAME=OPTION"),
+        (["--choice", "PointClearing="], "expected NAME=OPTION"),
+        (["--choice", "PointClearing=typo"], "Invalid option 'typo'"),
+        (["--choice", "Typo=raycasting"], "Unknown or inactive choices: Typo"),
+        (
+            ["--choice", "PointClearing=raycasting", "--choice", "PointClearing=column_carving"],
+            "Choice 'PointClearing' was specified more than once",
+        ),
+    ],
+)
+def test_run_rejects_invalid_choices_before_starting(stubbed_choices, options, message) -> None:
+    result = CliRunner().invoke(main, ["run", "mapping", *options])
+
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    assert stubbed_choices == {}
+
+
+def test_run_requires_a_selection_when_no_default_exists(
+    stubbed_run, mocker: MockerFixture
+) -> None:
+    mapping = autoconnect(ChoiceAtom(name="Required", choices={"alpha": RunModuleA.blueprint()}))
+    mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", return_value=mapping)
+
+    result = CliRunner().invoke(main, ["run", "mapping"])
+
+    assert result.exit_code == 2, result.output
+    assert "Choice 'Required' is required" in result.output
+    assert "--choice Required=<option>" in result.output
+    assert stubbed_run == {}
+
+
+def test_run_resolves_nested_choices_loaded_from_the_registry(stubbed_run, monkeypatch) -> None:
+    inner = autoconnect(
+        ChoiceAtom(
+            name="PointClearing",
+            choices={
+                "raycasting": RunModuleA.blueprint(),
+                "column_carving": RunModuleB.blueprint(),
+            },
+        )
+    )
+    exported = autoconnect(inner.global_config(n_workers=2)).global_config(n_workers=4)
+    monkeypatch.setattr(sys.modules[__name__], "registered_choices", exported, raising=False)
+    monkeypatch.setitem(
+        get_all_blueprints.all_blueprints, "mapping", f"{__name__}:registered_choices"
+    )
+    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", get_by_name_or_exit)
+    monkeypatch.setenv("TOPIC_METADATA", "false")
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "mapping",
+            "--choice",
+            "PointClearing=column_carving",
+            "--runmoduleb.lookahead=2.5",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert [atom.module for atom in stubbed_run["blueprint"].blueprints] == [RunModuleB]
+    assert stubbed_run["parsed_config"].module_kwargs("runmoduleb")["lookahead"] == 2.5
+    assert stubbed_run["blueprint"].global_config_overrides == {"n_workers": 4}
 
 
 @pytest.mark.parametrize("run_options", [[], ["--daemon"]])

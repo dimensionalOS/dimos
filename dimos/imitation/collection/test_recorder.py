@@ -91,10 +91,14 @@ def recorder(tmp_path):
 @pytest.mark.parametrize("count", [1, 2, 4])
 def test_factory_exposes_all_typed_inputs_before_autoconnect(count, tmp_path):
     blueprint = collect(profile=_profile(count), recording=tmp_path / "test.mcap")
-    stack = autoconnect(
-        blueprint,
-        *[_CameraPublisher.blueprint(instance_name=f"publisher_{i}") for i in range(count)],
-    ).remappings([(f"publisher_{i}", "color_image", f"camera_{i}") for i in range(count)])
+    stack = (
+        autoconnect(
+            blueprint,
+            *[_CameraPublisher.blueprint(instance_name=f"publisher_{i}") for i in range(count)],
+        )
+        .solidify()
+        .remappings([(f"publisher_{i}", "color_image", f"camera_{i}") for i in range(count)])
+    )
     atom = stack.active_blueprints[0]
     assert {s.name: s.type for s in atom.streams if s.name != "tf"} == {
         **{f"camera_{i}": Image for i in range(count)},
@@ -118,7 +122,7 @@ def test_two_shapes_and_recording_paths_have_independent_configuration(tmp_path)
     first = collect(profile=_profile(1), recording=tmp_path / "one.mcap", instance_name="one")
     second = collect(profile=_profile(4), recording=tmp_path / "four.mcap", instance_name="four")
     same_shape = collect(profile=_profile(1), recording=tmp_path / "other.mcap")
-    one, four = autoconnect(first, second).active_blueprints
+    one, four = autoconnect(first, second).solidify().active_blueprints
     assert one.module is same_shape.active_blueprints[0].module
     assert one.module is four.module
     assert {p.name for p in one.streams} != {p.name for p in four.streams}
@@ -382,7 +386,7 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     try:
-        blueprint = get_by_name("vendor-robot.collect")
+        blueprint = autoconnect(get_by_name("vendor-robot.collect")).solidify()
         parsed = BlueprintConfigParser(blueprint).parse(
             ["--recording", str(tmp_path / "session")], environ={}
         )

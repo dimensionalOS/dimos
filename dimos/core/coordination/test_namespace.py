@@ -82,17 +82,23 @@ class FleetCommander(Module):
 
 
 def _fleet_blueprint():
-    return autoconnect(
-        Aggregator.blueprint(),
-        FleetCommander.blueprint(),
-        *[
-            autoconnect(
-                Sensor.blueprint(),
-                LocalMapper.blueprint(),
-            ).namespace(f"robot{i}", expose={"pointcloud"})
-            for i in range(2)
-        ],
-    ).remappings([(FleetCommander, "cmd", "robot0/cmd")])
+    return (
+        autoconnect(
+            Aggregator.blueprint(),
+            FleetCommander.blueprint(),
+            *[
+                autoconnect(
+                    Sensor.blueprint(),
+                    LocalMapper.blueprint(),
+                )
+                .solidify()
+                .namespace(f"robot{i}", expose={"pointcloud"})
+                for i in range(2)
+            ],
+        )
+        .solidify()
+        .remappings([(FleetCommander, "cmd", "robot0/cmd")])
+    )
 
 
 def _parsed_config(
@@ -227,7 +233,7 @@ def test_load_blueprint_resolves_existing_provider_in_same_namespace():
     blueprint = autoconnect(
         Sensor.blueprint().namespace("robot0"),
         Sensor.blueprint().namespace("robot1"),
-    )
+    ).solidify()
     coordinator = ModuleCoordinator.build(blueprint, _parsed_config(blueprint))
     try:
         coordinator.load_blueprint(LocalMapper.blueprint().namespace("robot0"))
