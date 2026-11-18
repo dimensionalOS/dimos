@@ -43,7 +43,7 @@ only the first four per body carry gravity, and only the spec's
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import itertools
 import math
 from typing import TypeAlias
@@ -56,7 +56,6 @@ from dimos.robot.manipulators.calibration.robots import arm_spec
 from dimos.robot.manipulators.calibration.spec import (
     ArmCalibrationSpec,
     NoWorkspaceGuardError,
-    WorkspaceGuard,
     default_clearance_frames,
     frame_id,
     gravity_samples,
@@ -584,13 +583,7 @@ def main(
     if (floor_z_m is None) != (min_x_m is None):
         raise typer.BadParameter("give both --floor-z-m and --min-x-m, or neither")
     if floor_z_m is not None and min_x_m is not None:
-        guard = WorkspaceGuard.for_bench(
-            floor_z_m,
-            min_x_m,
-            keep_out=spec.workspace.keep_out,
-            clearance_frames=spec.workspace.clearance_frames,
-        )
-        spec = replace(spec, workspace=guard)
+        spec = spec.on_bench(floor_z_m, min_x_m)
     model = ArmModel(spec)
     try:
         pose_set = generate_poses(model, count=count)

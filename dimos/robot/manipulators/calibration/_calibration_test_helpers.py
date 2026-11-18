@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test helpers: robot models from disk only, never downloaded.
+"""Test helpers: robot models from disk only, never downloaded, and arms heavier than modelled.
 
 Robot models come from Git LFS archives and cached description repositories.
 Inside ``offline_robot_assets`` a cached checkout is used as it is (no fetch),
@@ -22,16 +22,20 @@ reaching the network; ``require_model`` turns that into a skip with the reason.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import numpy as np
+from numpy.typing import NDArray
+import pinocchio as pin
 import pytest
 
 from dimos.robot.assets.git_cache import GitAssetCache
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, specs_from_damiao_robot
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 import dimos.utils.data as lfs_data
@@ -80,3 +84,25 @@ def robot_specs_or_skip(robot: DamiaoRobot, what: str, **options: Any) -> list[A
     """``specs_from_damiao_robot(robot, **options)`` when its gravity model is on disk, else skip."""
     require_model(robot.gravity_model, what)
     return specs_from_damiao_robot(robot, **options)
+
+
+# A camera and bracket on the gripper, a heavier forearm: what the rig likely has.
+# Link: (d mass kg, d(m*c) kg m).
+PERTURBATION: dict[str, tuple[float, NDArray[np.float64]]] = {
+    "left_gripper": (0.25, np.array([-0.02, 0.0, -0.01])),
+    "left_link3": (0.15, np.array([0.0, 0.0, -0.02])),
+}
+
+
+def perturbed_model(
+    arm: ArmModel, perturbation: Mapping[str, tuple[float, NDArray[np.float64]]]
+) -> pin.Model:
+    """``arm``'s model with masses and first moments added to the named links: the "true" arm."""
+    model = arm.model.copy()
+    for link, (d_mass, d_moment) in perturbation.items():
+        joint_id = int(model.frames[model.getFrameId(link, pin.FrameType.BODY)].parentJoint)
+        inertia = model.inertias[joint_id]
+        mass = inertia.mass + d_mass
+        com = (inertia.mass * inertia.lever + d_moment) / mass
+        model.inertias[joint_id] = pin.Inertia(mass, com, inertia.inertia)
+    return model

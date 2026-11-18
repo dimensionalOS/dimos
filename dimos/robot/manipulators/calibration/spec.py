@@ -283,6 +283,21 @@ class ArmCalibrationSpec:
             )
         return self.workspace
 
+    def on_bench(self, floor_z_m: float, min_x_m: float) -> ArmCalibrationSpec:
+        """This spec with an explicit bench guard (``WorkspaceGuard.for_bench``).
+
+        The table height and the in-front line replace the guard's; its
+        keep-out regions, clearance frames and fingertip offset stay.
+        """
+        guard = WorkspaceGuard.for_bench(
+            floor_z_m,
+            min_x_m,
+            keep_out=self.workspace.keep_out,
+            clearance_frames=self.workspace.clearance_frames,
+            point_offset_m=self.workspace.point_offset_m,
+        )
+        return replace(self, workspace=guard)
+
     @property
     def home_vector(self) -> np.ndarray:
         """Home posture in ``joint_names`` order, rad."""

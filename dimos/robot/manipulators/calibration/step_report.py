@@ -94,8 +94,14 @@ class StepRecord:
     metrics: StepMetrics
 
 
-def load_recording(recording_dir: Path) -> Recording:
-    """Read the joint and event streams of a step-test recording (every recorded joint)."""
+def load_recording(recording_dir: Path, window: tuple[float, float] | None = None) -> Recording:
+    """Read the joint and event streams of a step-test recording (every recorded joint).
+
+    Args:
+        recording_dir: The directory holding ``memory.db``.
+        window: Only the joint samples and step markers between these Unix
+            times, e.g. those of one calibration step in a longer run.
+    """
     path = recording_dir / "memory.db"
     if not path.exists():
         raise FileNotFoundError(f"no memory.db in {recording_dir}")
@@ -111,6 +117,8 @@ def load_recording(recording_dir: Path) -> Recording:
         velocities: list[list[float]] = []
         joint_names: list[str] | None = None
         state_stream: Any = store.stream(JOINT_STATE_STREAM)
+        if window is not None:
+            state_stream = state_stream.time_range(*window)
         for obs in state_stream:
             msg = obs.data
             if joint_names is None:
@@ -133,7 +141,18 @@ def load_recording(recording_dir: Path) -> Recording:
         events = [StepEvent.from_json(obs.data.data) for obs in event_stream]
     finally:
         store.stop()
+    if window is not None:
+        events = [event for event in events if window[0] <= event.t0 <= window[1]]
     return Recording(traces=traces, events=events, t_end=float(t[-1]))
+
+
+def recorded_trace(recording: Recording, joint: str) -> JointTrace | None:
+    """The trace of ``joint``: by its name, else the only one with a ``robot/`` prefix on it."""
+    trace = recording.traces.get(joint)
+    if trace is not None:
+        return trace
+    prefixed = [name for name in recording.traces if name.rsplit("/", 1)[-1] == joint]
+    return recording.traces[prefixed[0]] if len(prefixed) == 1 else None
 
 
 def extract_steps(
@@ -144,7 +163,7 @@ def extract_steps(
     for event, start, stop in segment_steps(recording.events, recording.t_end):
         if on_step is not None:
             on_step(event)
-        trace = recording.traces.get(event.joint)
+        trace = recorded_trace(recording, event.joint)
         if trace is None:
             continue
         mask = (trace.t >= start) & (trace.t <= stop)

@@ -25,6 +25,10 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.robot.manipulators.calibration import gravity_fit
+from dimos.robot.manipulators.calibration._calibration_test_helpers import (
+    PERTURBATION,
+    perturbed_model,
+)
 from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.robot.manipulators.calibration.gravity_fit import (
     COM_BOX_M,
@@ -82,11 +86,6 @@ BENCH_HOLDOUT_RMS_NM = {
     "left": {2: (2.41, 0.31), 3: (1.48, 0.07)},
     "right": {2: (2.40, 0.20), 3: (1.71, 0.25)},
 }
-# A camera and bracket on the gripper, a heavier forearm: what the rig likely has.
-PERTURBATION = {
-    "left_gripper": (0.25, np.array([-0.02, 0.0, -0.01])),  # d mass (kg), d(m*c) (kg m)
-    "left_link3": (0.15, np.array([0.0, 0.0, -0.02])),
-}
 
 
 @pytest.fixture(scope="module")
@@ -112,17 +111,6 @@ def right_pose_set(right_arm: ArmModel) -> PoseSet:
 @pytest.fixture(scope="module")
 def b601_arm(b601_spec: ArmCalibrationSpec) -> ArmModel:
     return ArmModel(b601_spec)
-
-
-def perturbed_model(arm: ArmModel, perturbation: dict[str, tuple[float, np.ndarray]]) -> pin.Model:
-    model = arm.model.copy()
-    for link, (d_mass, d_moment) in perturbation.items():
-        joint_id = int(model.frames[model.getFrameId(link, pin.FrameType.BODY)].parentJoint)
-        inertia = model.inertias[joint_id]
-        mass = inertia.mass + d_mass
-        com = (inertia.mass * inertia.lever + d_moment) / mass
-        model.inertias[joint_id] = pin.Inertia(mass, com, inertia.inertia)
-    return model
 
 
 def synthetic_measurements(
@@ -603,7 +591,7 @@ def test_stored_checks_survive_a_refit_with_the_same_masses(
     stored = save_calibration(
         tmp_path, new.model_copy(update={"checks": {"float": {"passed": True}}, "notes": "x"})
     )
-    kept = gravity_fit._keep_existing(stored, new, left_spec)
+    kept = gravity_fit.merge_with_stored(stored, new, left_spec)
     assert kept.checks == {"float": {"passed": True}} and kept.notes == "x"
 
 

@@ -220,9 +220,14 @@ class FitResult:
 # Loading
 
 
-def load_gravity_recording(recording_dir: Path) -> GravityRecording:
-    """Joint traces and step events (as the step report) plus the pose markers, if any."""
-    recording = load_recording(recording_dir)
+def load_gravity_recording(
+    recording_dir: Path, window: tuple[float, float] | None = None
+) -> GravityRecording:
+    """Joint traces and step events (as the step report) plus the pose markers, if any.
+
+    With ``window``, only what was recorded between those Unix times.
+    """
+    recording = load_recording(recording_dir, window)
     store = SqliteStore(path=str(recording_dir / "memory.db"), must_exist=True)
     store.start()
     try:
@@ -232,6 +237,8 @@ def load_gravity_recording(recording_dir: Path) -> GravityRecording:
             markers = [PoseMarker.from_json(obs.data.data) for obs in stream]
     finally:
         store.stop()
+    if window is not None:
+        markers = [marker for marker in markers if window[0] <= marker.t0 <= window[1]]
     markers.sort(key=lambda m: m.t0)
     return GravityRecording(recording=recording, markers=markers)
 
@@ -939,7 +946,7 @@ def generate_gravity_report(
     A passing fit also writes ``gravity_<arm>_<date>.json``, an
     ``ArmCalibration``; with ``save_to`` it is saved there too, keeping the
     gains and notes of a calibration already there for the same model (see
-    ``_keep_existing``), unless ``save_refusals`` objects and ``force`` is
+    ``merge_with_stored``), unless ``save_refusals`` objects and ``force`` is
     not given.
     """
     arm = arm or ArmModel(spec)
@@ -967,7 +974,7 @@ def generate_gravity_report(
         if save_to is not None:
             not_saved = [] if force else save_refusals(result)
             if not not_saved:
-                save_calibration(save_to, _keep_existing(save_to, calibration, spec))
+                save_calibration(save_to, merge_with_stored(save_to, calibration, spec))
     else:
         json_path = None
     (out_dir / "report.md").write_text(
@@ -978,7 +985,7 @@ def generate_gravity_report(
     return result, out_dir, calibration
 
 
-def _keep_existing(path: Path, new: ArmCalibration, spec: ArmCalibrationSpec) -> ArmCalibration:
+def merge_with_stored(path: Path, new: ArmCalibration, spec: ArmCalibrationSpec) -> ArmCalibration:
     """``new`` plus the gains and notes of a stored calibration for the same arm and model.
 
     Its checks (float drift and the like) ran with the old masses, so they are
