@@ -622,10 +622,18 @@ class ConnectionModule(Module, ABC):
         )
 
     def _begin_config_session(self, lease_s: float) -> _ConfigSession:
-        """Start the config session. Call with ``_hardware_lock`` held and none live."""
+        """Start the config session. Call with ``_hardware_lock`` held and none live.
+
+        The deadman a position command armed before it is disarmed: those
+        commands are dropped now, so their pause must not halt the robot and
+        end the session. The session's own ``config_command`` arms it again.
+        """
         session = _ConfigSession(uuid.uuid4().hex, lease_s, time.monotonic() + lease_s)
         with self._lock:
             self._config_session = session
+            # A timer already due sees a newer command and does nothing.
+            self._command_seq += 1
+        self._on_loop(self._disarm_deadman)
         self._on_loop(self._arm_config_lease)
         logger.info(
             f"{self._label}: config session {session.session_id[:8]} started, lease "

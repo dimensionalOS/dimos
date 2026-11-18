@@ -625,6 +625,19 @@ def test_the_deadman_halting_the_arm_ends_the_session(rig: Callable[..., Rig]) -
         r.module.config_command({"joint1": 0.3}, session)
 
 
+def test_a_deadman_armed_before_the_session_does_not_end_it(rig: Callable[..., Rig]) -> None:
+    r = rig(TunableArm, config_sessions=True)
+    r.move(joint1=0.5)
+    session = _begin(r.module, lease_s=5.0)
+    time.sleep(6 * DEADMAN_S)
+    assert _live(r.module) and r.module.halts == 0
+    assert not r.module.status().deadman_fired
+    # The session's own commands arm it again.
+    assert r.module.config_command({"joint1": 0.3}, session).ok
+    assert wait_until(lambda: r.module.status().deadman_fired)
+    assert not _live(r.module) and r.module.halts == 1
+
+
 def test_a_command_the_hardware_did_not_take_is_not_ok_and_ends_the_session(
     rig: Callable[..., Rig],
 ) -> None:
