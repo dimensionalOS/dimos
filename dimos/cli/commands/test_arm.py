@@ -17,18 +17,24 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
+import signal
+import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from typer.testing import CliRunner
 
 from dimos.cli.commands import arm as arm_command
+from dimos.cli.commands.arm_run import OurRun, calibrate_lock
 from dimos.cli.dimos import main
 from dimos.robot.manipulators.calibration.schema import calibration_path, save_calibration
 from dimos.robot.manipulators.calibration.test_schema import TOY_MODEL, TOY_URDF, calibration
 
 ARM_ID = "dual_openyam/left"
+RUN_ID = "20261118-101010-abcd-dual-openyam-calibrate"
 STEPS = [
     {"id": "check", "title": "Check the arm"},
     {"id": "gravity_fit", "title": "Fit gravity"},
@@ -56,8 +62,10 @@ def status(
         "message": f"message of {state}",
         "prompt": prompt,
         "prompt_id": prompt_id,
+        "prompt_deadline": None,
         "progress": None,
         "steps": steps,
+        "park": None,
         "updated": 0.0,
     }
 
@@ -80,19 +88,28 @@ RESULTS = {
 }
 
 
+def home_script(end: str = "done", message: str = "the arm is at home") -> list[dict[str, Any]]:
+    return [
+        status("running") | {"step": "home"},
+        status("waiting_confirm", prompt="The arm will ramp to home", prompt_id=50),
+        status(end) | {"message": message, "step": None},
+    ]
+
+
 class FakeModule:
-    """Plays a list of statuses; a waiting one stays until it is answered."""
+    """Plays a list of statuses; a waiting one stays until it is answered. Idle until run."""
 
     def __init__(self, script: list[dict[str, Any]]) -> None:
         self.script = script
         self.index = 0
         self.answered = False
+        self.started = False
         self.calls: list[tuple[str, Any]] = []
-        self.home_script = [
-            status("running") | {"step": "home"},
-            status("waiting_confirm", prompt="The arm will ramp to home", prompt_id=50),
-            status("done") | {"message": "the arm is at home"},
-        ]
+        self.home_script = home_script()
+        self.home_errors: list[Exception] = []
+        self.abort_holds = False
+        self.run_id = RUN_ID
+        self.arm_id = ARM_ID
 
     def plan(self) -> list[dict[str, Any]]:
         return [
@@ -106,11 +123,17 @@ class FakeModule:
             {"id": "float_check", "title": "Float check", "supported": True, "reason": None},
         ]
 
+    def dimos_run_id(self) -> str:
+        return self.run_id
+
     def run(self, steps: list[str] | None = None) -> dict[str, Any]:
         self.calls.append(("run", steps))
+        self.started = True
         return self.script[0]
 
     def status(self) -> dict[str, Any]:
+        if not self.started:
+            return status("idle") | {"arm_id": self.arm_id, "run_id": None}
         current = self.script[self.index]
         if current["state"] == "waiting_confirm" and not self.answered:
             return current
@@ -122,38 +145,53 @@ class FakeModule:
     def results(self) -> dict[str, Any]:
         return RESULTS
 
-    def confirm(self, prompt_id: int | None = None) -> bool:
+    def confirm(self, prompt_id: int) -> bool:
         self.calls.append(("confirm", prompt_id))
         self.answered = True
         return True
 
-    def skip(self, prompt_id: int | None = None) -> bool:
+    def skip(self, prompt_id: int) -> bool:
         self.calls.append(("skip", prompt_id))
         self.answered = True
         return True
 
     def abort(self) -> bool:
         self.calls.append(("abort", None))
-        self.script = [
-            status("aborted", gravity_fit="aborted") | {"message": "aborted: the arm holds"}
-        ]
-        self.index = 0
+        if not self.abort_holds:
+            self.script = [status("aborted", gravity_fit="aborted") | {"message": "aborted"}]
+            self.index = 0
         return True
 
     def go_home(self) -> dict[str, Any]:
         self.calls.append(("go_home", None))
+        if self.home_errors:
+            raise self.home_errors.pop(0)
         self.script, self.index, self.answered = self.home_script, 0, False
         return self.script[0]
 
+    def named(self, *names: str) -> list[tuple[str, Any]]:
+        return [call for call in self.calls if call[0] in names]
+
 
 class ScriptedKeys:
+    """Each line answers the next prompt shown; a line starting "!" is typed while it runs.
+
+    Once the lines run out, the next prompt sees the end of input.
+    """
+
     def __init__(self, lines: list[str]) -> None:
         self.lines = list(lines)
+        self.open = False
 
     def drain(self) -> None:
-        pass
+        self.open = True
 
     def get(self) -> object:
+        if self.lines and self.lines[0].startswith("!"):
+            return self.lines.pop(0)[1:]
+        if not self.open:
+            return None
+        self.open = False
         return self.lines.pop(0) if self.lines else arm_command.EOF
 
 
@@ -162,29 +200,48 @@ class Rig:
         self.module = FakeModule([])
         self.keys: list[str] = []
         self.busy: list[arm_command.ActiveRun] = []
+        self.bus_busy = False
+        self.alive = True
         self.launched: list[list[str]] = []
+        self.globals: list[tuple[list[str], dict[str, Any]]] = []
         self.stopped: list[str] = []
+        self.connect: Any = None
 
 
 @pytest.fixture
 def rig(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Rig:
     rig = Rig()
     monkeypatch.setattr(arm_command, "POLL_S", 0.0)
+    monkeypatch.setattr(arm_command, "ABORT_WAIT_S", 0.2)
     monkeypatch.setattr(arm_command, "dimos_command", lambda: ["dimos"])
     monkeypatch.setattr(arm_command, "active_runs", lambda: rig.busy)
+    monkeypatch.setattr(arm_command, "coordinator_answers", lambda: rig.bus_busy)
+    monkeypatch.setattr(
+        arm_command,
+        "use_run_globals",
+        lambda tokens, overrides: rig.globals.append((list(tokens), dict(overrides))),
+    )
 
-    def launch(argv: list[str]) -> str:
+    def launch(argv: list[str], *, token: str) -> OurRun:
+        assert token.startswith("dual-openyam-calibrate:")
         rig.launched.append(argv)
-        return "20261118-101010-abcd-dual-openyam-calibrate"
+        return OurRun(RUN_ID, 4242, token, 0.0, tmp_path / "launch.log")
 
     monkeypatch.setattr(arm_command, "launch_run", launch)
 
-    def stop(run_id: str) -> str:
-        rig.stopped.append(run_id)
-        return "stopped"
+    def stop(run: OurRun) -> str:
+        rig.stopped.append(run.run_id)
+        return f"stopped {run.run_id}"
 
     monkeypatch.setattr(arm_command, "stop_run", stop)
-    monkeypatch.setattr(arm_command, "connect_module", lambda timeout: rig.module)
+    monkeypatch.setattr(arm_command, "run_alive", lambda run: rig.alive)
+
+    def connect(timeout: float, alive: Any) -> FakeModule:
+        if rig.connect is not None:
+            rig.connect()
+        return rig.module
+
+    monkeypatch.setattr(arm_command, "connect_module", connect)
     monkeypatch.setattr(arm_command, "make_keys", lambda: ScriptedKeys(rig.keys))
     monkeypatch.setattr(arm_command, "arms_root", lambda: tmp_path / "arms")
     return rig
@@ -205,10 +262,11 @@ def invoke(*args: str, input: str = "") -> Any:
     return CliRunner().invoke(main, ["arm", *args], input=input)
 
 
-def test_calibrate_prints_the_plan_confirms_the_right_prompt_and_stops_only_its_run(
+def test_calibrate_answers_the_right_prompts_goes_home_and_only_then_stops_its_run(
     rig: Rig,
 ) -> None:
     rig.module.script = happy_script()
+    # Move to home?, Save and apply? (skip), the final offer (Enter: go home), its confirmation.
     rig.keys = ["", "s", "", ""]
 
     result = invoke("calibrate", "dual-openyam")
@@ -217,7 +275,12 @@ def test_calibrate_prints_the_plan_confirms_the_right_prompt_and_stops_only_its_
     assert result.exit_code == 0, out
     assert "✓ check: Check the arm" in out
     assert "x gravity_fit: Fit gravity  (cannot run: no recording)" in out
-    assert [c for c in rig.module.calls if c[0] != "run"] == [("confirm", 7), ("skip", 8)]
+    assert rig.module.named("confirm", "skip", "go_home") == [
+        ("confirm", 7),
+        ("skip", 8),
+        ("go_home", None),
+        ("confirm", 50),
+    ]
     assert rig.module.calls[0] == ("run", None)
     assert "Move to home?" in out and "Save and apply?" in out
     # The results of a finished step come as a table.
@@ -225,7 +288,8 @@ def test_calibrate_prints_the_plan_confirms_the_right_prompt_and_stops_only_its_
     assert "at a bound" in out and "left_joint3" in out and "FAIL" in out
     assert "Calibration file: /state/arms/dual_openyam/left/calibration.json" in out
     assert "history/" in out and "calibration off" in out
-    assert rig.stopped == ["20261118-101010-abcd-dual-openyam-calibrate"]
+    assert "the arm is at home" in out
+    assert rig.stopped == [RUN_ID]
     [argv] = rig.launched
     assert argv == [
         "dimos",
@@ -235,22 +299,70 @@ def test_calibrate_prints_the_plan_confirms_the_right_prompt_and_stops_only_its_
         "--calibrationmodule.arm",
         "left",
     ]
+    # The run's global options were resolved for the walk-through's own connection too.
+    assert rig.globals == [([], {})]
 
 
-def test_q_aborts_and_only_our_run_is_stopped(rig: Rig) -> None:
+def test_q_at_a_prompt_aborts_once_then_the_arm_goes_home_before_the_stop(rig: Rig) -> None:
     rig.module.script = happy_script()
-    rig.keys = ["q", ""]
+    rig.keys = ["q", "", ""]
 
     result = invoke("calibrate", "dual-openyam", "--steps", "check,float_check")
 
     assert result.exit_code == 130, result.output
-    assert ("abort", None) in rig.module.calls and (
-        "run",
-        ["check", "float_check"],
-    ) in rig.module.calls
+    assert ("run", ["check", "float_check"]) in rig.module.calls
+    assert rig.module.named("abort", "go_home", "confirm") == [
+        ("abort", None),
+        ("go_home", None),
+        ("confirm", 50),
+    ]
     assert "Run aborted" in result.output
-    assert rig.stopped == ["20261118-101010-abcd-dual-openyam-calibrate"]
-    assert not any(call[0] == "go_home" for call in rig.module.calls)
+    assert "q: aborting; the arm stops and holds where it is, its motors on" in result.output
+    assert rig.stopped == [RUN_ID]
+
+
+@pytest.mark.parametrize("key", ["q", "p"])
+def test_q_or_p_while_the_arm_moves_aborts_without_waiting_for_a_prompt(rig: Rig, key: str) -> None:
+    rig.module.script = happy_script()
+    rig.keys = [f"!{key}", "", ""]
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 130, result.output
+    assert rig.module.named("abort", "confirm")[0] == ("abort", None)
+    assert ("confirm", 7) not in rig.module.calls
+    assert len(rig.module.named("abort")) == 1
+    assert rig.stopped == [RUN_ID]
+
+
+def test_eof_at_a_prompt_aborts_exactly_once_and_leaves_the_run_up_without_a_yes(
+    rig: Rig,
+) -> None:
+    rig.module.script = happy_script()
+    rig.keys = []
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 130, result.output
+    assert rig.module.named("abort", "go_home", "confirm", "skip") == [("abort", None)]
+    assert "input closed: aborting" in result.output
+    assert "Stop anyway: the arm will go limp where it is" in result.output
+    assert f"Left {RUN_ID} running" in result.output
+    assert rig.stopped == []
+
+
+def test_keeping_the_arm_away_from_home_needs_an_explicit_yes(rig: Rig) -> None:
+    rig.module.script = happy_script()
+    # Abort; keep the arm where it is; Enter (No) at the stop prompt; k again; yes.
+    rig.keys = ["q", "k", "", "k", "yes"]
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 130, result.output
+    assert rig.module.named("go_home") == []
+    assert result.output.count("Stop anyway: the arm will go limp where it is") == 2
+    assert "backstop park" in result.output
+    assert rig.stopped == [RUN_ID]
 
 
 def test_a_failed_run_exits_non_zero_and_h_goes_home_after_its_own_confirmation(rig: Rig) -> None:
@@ -264,19 +376,89 @@ def test_a_failed_run_exits_non_zero_and_h_goes_home_after_its_own_confirmation(
 
     assert result.exit_code == 1, result.output
     assert "Run failed: Gravity poses failed: stalled" in result.output
-    assert [c for c in rig.module.calls if c[0] in ("go_home", "confirm")] == [
-        ("go_home", None),
-        ("confirm", 50),
-    ]
+    assert rig.module.named("go_home", "confirm") == [("go_home", None), ("confirm", 50)]
     assert "the arm is at home" in result.output
-    assert len(rig.stopped) == 1
+    assert rig.stopped == [RUN_ID]
 
 
-def test_ctrl_c_aborts_waits_for_the_engine_and_stops_the_run(
+def test_going_home_that_fails_needs_a_yes_and_exits_1(rig: Rig) -> None:
+    rig.module.script = happy_script()
+    rig.module.home_script = home_script("failed", "going home failed: stalled")
+    rig.keys = ["", "", "", "", "yes"]
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 1, result.output
+    assert "Not at home: going home failed: stalled" in result.output
+    assert "Stop anyway" in result.output and rig.stopped == [RUN_ID]
+
+
+def test_go_home_raising_is_handled_and_already_running_is_retried(rig: Rig) -> None:
+    rig.module.script = happy_script()
+    rig.module.home_errors = [
+        RuntimeError("the procedure is already running"),
+        RuntimeError("the procedure is shutting down"),
+    ]
+    # Prompts 7 and 8; go home: busy, settles, refused; then yes.
+    rig.keys = ["", "", "", "yes"]
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 1, result.output
+    assert rig.module.named("go_home") == [("go_home", None), ("go_home", None)]
+    assert "still busy" in result.output
+    assert "Going home was refused: the procedure is shutting down" in result.output
+    assert rig.stopped == [RUN_ID]
+
+
+def test_an_rpc_error_mid_poll_aborts_then_goes_home_then_stops(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rig.module.script = happy_script()
-    rig.keys = [""]
+    rig.keys = ["", "", ""]
+    calls = {"n": 0}
+    real_status = rig.module.status
+
+    def flaky() -> dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 4:
+            raise TimeoutError("RPC call to 'CalibrationModule/status' timed out after 2.0 seconds")
+        return real_status()
+
+    monkeypatch.setattr(rig.module, "status", flaky)
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 1, result.output
+    assert "lost touch with the calibration module (TimeoutError" in result.output
+    assert [c[0] for c in rig.module.calls if c[0] in ("abort", "go_home")] == [
+        "abort",
+        "go_home",
+    ]
+    assert rig.stopped == [RUN_ID]
+
+
+def test_an_abort_the_engine_never_confirms_is_not_reported_as_aborted(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig.module.script = [status("running")]
+    rig.module.abort_holds = True
+    rig.keys = ["!q"]
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 1, result.output
+    assert "did not confirm the abort" in result.output
+    assert "Run aborted" not in result.output
+    assert len(rig.module.named("abort")) == 1
+    assert f"Left {RUN_ID} running" in result.output and rig.stopped == []
+
+
+def test_ctrl_c_aborts_waits_for_the_engine_and_goes_home_before_the_stop(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig.module.script = happy_script()
+    rig.keys = ["", "", ""]
     seen: list[str] = []
     real_status = rig.module.status
 
@@ -292,9 +474,110 @@ def test_ctrl_c_aborts_waits_for_the_engine_and_stops_the_run(
     result = invoke("calibrate", "dual-openyam")
 
     assert result.exit_code == 130, result.output
-    assert ("abort", None) in rig.module.calls
-    assert "Ctrl-C: aborting" in result.output
-    assert rig.stopped == ["20261118-101010-abcd-dual-openyam-calibrate"]
+    assert [c[0] for c in rig.module.calls if c[0] in ("abort", "go_home")] == [
+        "abort",
+        "go_home",
+    ]
+    assert "Ctrl-C: aborting; the arm stops and holds where it is" in result.output
+    assert rig.stopped == [RUN_ID]
+
+
+def test_a_closed_terminal_sighup_takes_the_abort_path(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig.module.script = happy_script()
+    rig.keys = [""]
+    calls = {"n": 0}
+    real_status = rig.module.status
+
+    def hangup() -> dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 4:
+            os.kill(os.getpid(), signal.SIGHUP)
+            time.sleep(0.5)
+        return real_status()
+
+    monkeypatch.setattr(rig.module, "status", hangup)
+    before = signal.getsignal(signal.SIGHUP)
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 130, result.output
+    assert "SIGHUP (the terminal closed): aborting" in result.output
+    assert len(rig.module.named("abort")) == 1
+    # Nobody can type yes on a closed terminal: the run stays up, the arm held.
+    assert rig.stopped == [] and f"Left {RUN_ID} running" in result.output
+    assert signal.getsignal(signal.SIGHUP) is before
+
+
+@pytest.mark.parametrize(
+    "field,value,said",
+    [
+        ("arm_id", "dual_openyam/right", "calibrates 'dual_openyam/right'"),
+        ("run_id", "20261118-090000-ffff-xarm", "belongs to 20261118-090000-ffff-xarm"),
+    ],
+)
+def test_a_module_of_another_run_or_arm_is_refused_and_never_driven(
+    rig: Rig, field: str, value: str, said: str
+) -> None:
+    setattr(rig.module, field, value)
+    rig.module.script = happy_script()
+    rig.keys = ["yes"]
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 1, result.output
+    assert "connected to a different run" in result.output and said in result.output
+    assert rig.module.calls == []
+    assert "has not moved the arm" in result.output and rig.stopped == [RUN_ID]
+
+
+def test_ctrl_c_while_connecting_is_a_clean_message_and_the_stop_still_asks(rig: Rig) -> None:
+    def interrupt() -> None:
+        raise KeyboardInterrupt
+
+    rig.connect = interrupt
+    rig.keys = []
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 130, result.output
+    assert "Ctrl-C while connecting; the calibration has not moved the arm." in result.output
+    assert "Traceback" not in result.output
+    assert rig.stopped == [] and f"Left {RUN_ID} running" in result.output
+
+
+def test_a_run_whose_process_is_gone_is_cleaned_up_without_asking(rig: Rig) -> None:
+    def gone() -> None:
+        rig.alive = False
+        raise arm_command.ModuleConnectError("the run's process exited")
+
+    rig.connect = gone
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 1, result.output
+    assert "Stop anyway" not in result.output and rig.stopped == [RUN_ID]
+
+
+def test_the_lock_keeps_a_second_walk_through_of_the_robot_out(rig: Rig, tmp_path: Path) -> None:
+    with calibrate_lock(tmp_path / "arms" / "dual-openyam.calibrate.lock"):
+        result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 1
+    assert "another `dimos arm calibrate` of this robot is running" in result.output
+    assert f"pid {os.getpid()}" in result.output
+    assert rig.launched == [] and rig.stopped == []
+
+
+def test_a_coordinator_on_the_bus_is_refused_even_without_a_registry_entry(rig: Rig) -> None:
+    rig.bus_busy = True
+
+    result = invoke("calibrate", "dual-openyam")
+
+    assert result.exit_code == 1
+    assert "already answers on the" in result.output and "still starting" in result.output
+    assert rig.launched == []
 
 
 def test_dry_run_prints_the_command_and_plan_and_launches_nothing(rig: Rig) -> None:
@@ -316,7 +599,53 @@ def test_dry_run_prints_the_command_and_plan_and_launches_nothing(rig: Rig) -> N
         "--dualopenyamconnection.left-can-port follower_l"
     ) in result.output
     assert "✓ check: Check the arm" in result.output and "Nothing was started" in result.output
-    assert rig.launched == [] and rig.stopped == []
+    assert rig.launched == [] and rig.stopped == [] and rig.globals == []
+
+
+def test_global_options_reach_the_run_and_the_walk_through_connection(rig: Rig) -> None:
+    rig.module.script = happy_script()
+    rig.keys = ["", "", "", ""]
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "--transport",
+            "lcm",
+            "--no-zenoh-multicast",
+            "arm",
+            "calibrate",
+            "dual-openyam",
+            "--zenoh-connect",
+            "tcp/127.0.0.1:7447",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    [argv] = rig.launched
+    assert argv[:6] == [
+        "dimos",
+        "--no-zenoh-multicast",
+        "--transport",
+        "lcm",
+        "run",
+        "dual-openyam-calibrate",
+    ]
+    assert argv[-2:] == ["--zenoh-connect", "tcp/127.0.0.1:7447"]
+    assert rig.globals == [
+        (["--zenoh-connect", "tcp/127.0.0.1:7447"], {"zenoh_multicast": False, "transport": "lcm"})
+    ]
+
+
+def test_the_run_globals_are_resolved_as_dimos_run_resolves_them() -> None:
+    from dimos.core.global_config import global_config
+
+    arm_command.use_run_globals(
+        ["--calibrationmodule.arm", "left", "--zenoh-connect", "tcp/127.0.0.1:7447"],
+        {"transport": "lcm"},
+    )
+
+    assert global_config.transport == "lcm"
+    assert global_config.zenoh_connect == "tcp/127.0.0.1:7447"
 
 
 def test_a_foreign_active_run_is_refused_with_its_id_and_owner(rig: Rig) -> None:
@@ -367,17 +696,63 @@ def test_poses_and_speed_are_checked_before_anything_starts(
     assert rig.launched == []
 
 
-def test_stdin_keys_reads_lines_and_forgets_what_was_typed_ahead() -> None:
+def test_stdin_keys_reads_lines_and_forgets_what_was_typed_ahead_except_q_and_eof() -> None:
     keys = arm_command.StdinKeys(io.StringIO("\nS\nq\n"))
     for _ in range(100):
         if keys._lines.qsize() >= 4:
             break
-        import time
-
         time.sleep(0.01)
     keys.drain()
+    assert keys.get() == "q"
     assert keys.get() is arm_command.EOF
     assert keys.get() is arm_command.EOF
+
+
+def test_the_walk_through_calls_get_short_timeouts() -> None:
+    client = SimpleNamespace(rpc_timeouts={"start": 1200.0})
+    module = SimpleNamespace(rpc=client, remote_name="CalibrationModule")
+
+    arm_command.set_call_timeouts(module)
+
+    timeouts = client.rpc_timeouts
+    assert timeouts["CalibrationModule/status"] == 2.0
+    assert timeouts["CalibrationModule/confirm"] == 2.0
+    assert timeouts["CalibrationModule/abort"] == 5.0
+    assert timeouts["CalibrationModule/go_home"] == 10.0
+    assert timeouts["start"] == 1200.0
+    arm_command.set_call_timeouts(object())  # a fake with no client is left alone
+
+
+def test_each_failed_connect_attempt_is_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.porcelain.dimos import Dimos
+
+    module = SimpleNamespace(plan=lambda: [])
+    apps: list[Any] = []
+
+    class App:
+        def __init__(self, fails: bool) -> None:
+            self.fails = fails
+            self.stopped = False
+
+        def get_module(self, name: str) -> Any:
+            if self.fails:
+                raise LookupError("not deployed yet")
+            return module
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    def connect(*, timeout: float) -> Any:
+        apps.append(App(fails=len(apps) == 0))
+        return apps[-1]
+
+    monkeypatch.setattr(Dimos, "connect", connect)
+    monkeypatch.setattr(arm_command, "CONNECT_RETRY_S", 0.0)
+
+    assert arm_command.connect_module(5.0, lambda: True) is module
+    assert [app.stopped for app in apps] == [True, False]
+    with pytest.raises(arm_command.ModuleConnectError, match="process exited"):
+        arm_command.connect_module(5.0, lambda: False)
 
 
 def test_show_prints_the_saved_file_or_none(rig: Rig, tmp_path: Path) -> None:
@@ -442,24 +817,15 @@ def test_bake_writes_the_urdf_with_the_fitted_masses_and_refuses_a_foreign_urdf(
     assert missing.exit_code == 1 and "No arm calibration" in missing.output
 
 
-def test_every_forwarded_flag_parses_on_the_real_blueprint() -> None:
+def test_every_forwarded_flag_parses_on_the_real_blueprint_to_the_value_given() -> None:
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.robot.get_all_blueprints import load_blueprint
 
+    flags = arm_command.calibrate_flags("left", -0.03, 0.12, 6, 10.0, confirm_each=False)
     parser = BlueprintConfigParser(load_blueprint("dual-openyam-calibrate"))
     parsed = parser.parse(
         [
-            "--calibrationmodule.arm",
-            "left",
-            "--calibrationmodule.floor-z-m",
-            "-0.03",
-            "--calibrationmodule.min-x-m",
-            "0.12",
-            "--calibrationmodule.poses",
-            "6",
-            "--calibrationmodule.speed-deg-s",
-            "10.0",
-            "--calibrationmodule.confirm-each=false",
+            *flags,
             "--dualopenyamconnection.left-can-port",
             "follower_l",
             "--dualopenyamconnection.right-can-port",
@@ -469,4 +835,20 @@ def test_every_forwarded_flag_parses_on_the_real_blueprint() -> None:
         environ={},
         global_overrides={},
     )
-    assert parsed is not None
+
+    calibration_values = dict(parsed.module_configs["calibrationmodule"])
+    assert calibration_values == {
+        "robot": "dual-openyam",
+        "arm": "left",
+        "floor_z_m": -0.03,
+        "min_x_m": 0.12,
+        "poses": 6,
+        "speed_deg_s": 10.0,
+        "confirm_each": False,
+    }
+    connection = parsed.module_configs["dualopenyamconnection"]
+    assert (connection["left_can_port"], connection["right_can_port"]) == (
+        "follower_l",
+        "follower_r",
+    )
+    assert connection["tuning"] is True
