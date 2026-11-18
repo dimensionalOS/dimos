@@ -22,6 +22,7 @@ from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -148,14 +149,16 @@ def _planner_coordinator(arm: XArmType) -> Blueprint:
 xarm7_planner_coordinator = _planner_coordinator("xarm7").remappings(XARM_REMAPS)
 xarm6_planner_coordinator = _planner_coordinator("xarm6").remappings(XARM_REMAPS)
 
-_coordinator_xarm7_hw = xarm7_hardware("arm")
+# The xarm7 scene has the gripper, and the sim adapter needs every scene joint declared.
+_coordinator_xarm7_hw = xarm7_hardware("arm", gripper=bool(global_config.simulation))
 
 coordinator_xarm7 = autoconnect(
     coordinator(
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
+    # dof is the arm joints alone, so the sim drives the gripper through its own range.
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
 _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
