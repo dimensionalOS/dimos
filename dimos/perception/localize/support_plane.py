@@ -35,6 +35,8 @@ MIN_HORIZONTAL_DOT = 0.90  # |normal . z| for a plane to count as horizontal
 PLANE_INLIER_QUANTILE = 0.15  # anchor plane offset near the base of the inlier slab
 PLANE_SEED = 0  # so one window always fits the same plane
 MIN_SURFACE_SIDE = 0.10  # m - a narrower plane, such as a block's top, is not a surface
+PIECE_CELL = 0.02  # m - inliers this close in the plane are one patch
+DEDUPE_CELL = 0.01  # m - find_surfaces counts points closer than this once
 
 
 @dataclass
@@ -161,27 +163,67 @@ class Surface:
         }
 
 
-def describe_surface(model: np.ndarray, inliers: np.ndarray) -> Surface:
-    """A plane's height, extent, heading and tilt, from its inliers."""
+def _plane_axes(normal: np.ndarray) -> np.ndarray:
+    """Two unit vectors in a plane with this normal: the x axis and the y axis laid onto it."""
+    first = np.array([1.0, 0.0, 0.0]) - normal * normal[0]
+    if np.linalg.norm(first) < 1e-6:
+        first = np.array([0.0, 1.0, 0.0]) - normal * normal[1]
+    first /= np.linalg.norm(first)
+    return np.stack([first, np.cross(normal, first)])
+
+
+def connected_pieces(model: np.ndarray, inliers: np.ndarray) -> list[np.ndarray]:
+    """A plane's inliers split into the patches that touch, on a ``PIECE_CELL`` grid in
+    the plane: four block tops at one height are four pieces, not one surface."""
+    from scipy import ndimage
+
+    uv = inliers @ _plane_axes(np.asarray(model[:3], dtype=np.float64)).T
+    cells = np.floor((uv - uv.min(axis=0)) / PIECE_CELL).astype(np.int64)
+    grid = np.zeros(cells.max(axis=0) + 1, dtype=bool)
+    grid[cells[:, 0], cells[:, 1]] = True
+    labels, count = ndimage.label(grid, structure=np.ones((3, 3), dtype=bool))
+    of_point = labels[cells[:, 0], cells[:, 1]]
+    return [inliers[of_point == label] for label in range(1, count + 1)]
+
+
+def describe_surface(model: np.ndarray, inliers: np.ndarray, level: bool = False) -> Surface:
+    """A plane's height, extent, heading and tilt, from its inliers.
+
+    The size and heading are those of the smallest rectangle round the inliers in
+    the plane, so a square table reads square; the 1st to 99th percentile spans
+    along its sides ignore strays and run about 2% short. ``level`` reports the
+    surface as parallel to the xy plane, at the height of its centre.
+    """
+    import cv2
+
     plane = anchored(model, inliers)
-    a, b, c, d = plane.coefficients
-    normal = np.array([a, b, c])
+    normal = np.asarray(plane.coefficients[:3])
     distances = plane.height_above(inliers)
-    # The inliers flattened onto the plane; the 1st to 99th percentile spans ignore strays and run about 2% short.
     flat = inliers - np.outer(distances, normal)
-    middle = np.median(flat, axis=0)
-    in_plane = np.eye(3) - np.outer(normal, normal)
-    axes = np.linalg.svd((flat - middle) @ in_plane, full_matrices=False)[2]
+    axes = _plane_axes(normal)
+    uv = flat @ axes.T
+    middle = np.median(uv, axis=0)
+    (_, _), (_, _), angle = cv2.minAreaRect((uv - middle).astype(np.float32))
+    turn = np.radians(angle)
+    sides = np.array([[np.cos(turn), np.sin(turn)], [-np.sin(turn), np.cos(turn)]])
     spans = []
-    center = middle.copy()
-    for axis in axes[:2]:
-        low, high = np.percentile((flat - middle) @ axis, [1, 99])
+    center_uv = middle.copy()
+    for side in sides:
+        low, high = np.percentile((uv - middle) @ side, [1, 99])
         spans.append(float(high - low))
-        center += axis * (low + high) / 2
-    long_axis = axes[0] if spans[0] >= spans[1] else axes[1]
+        center_uv += side * (low + high) / 2
+    long_side = sides[0] if spans[0] >= spans[1] else sides[1]
+    long_axis = long_side @ axes
     yaw = float(np.degrees(np.arctan2(long_axis[1], long_axis[0])))
     # A side's heading is the same as its opposite's: keep it in (-90, 90].
     yaw = yaw - 180.0 if yaw > 90.0 else yaw + 180.0 if yaw <= -90.0 else yaw
+    # The centre, on the plane: the point along the normal that the plane passes.
+    center = center_uv @ axes - normal * plane.coefficients[3]
+    if level:
+        plane = SupportPlane(coefficients=(0.0, 0.0, 1.0, -float(center[2])))
+        normal = np.array([0.0, 0.0, 1.0])
+        distances = plane.height_above(inliers)
+    a, b, c, d = plane.coefficients
     return Surface(
         plane=plane,
         height=-d / c if abs(c) > 1e-6 else float("nan"),
@@ -189,34 +231,10 @@ def describe_surface(model: np.ndarray, inliers: np.ndarray) -> Surface:
         size=(max(spans), min(spans)),
         yaw_deg=yaw,
         tilt_deg=float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0)))),
-        downhill_deg=float(np.degrees(np.arctan2(b, a))),
+        downhill_deg=float(np.degrees(np.arctan2(b, a))) if not level else 0.0,
         points=len(inliers),
         rms_m=float(np.sqrt(np.mean((distances - np.median(distances)) ** 2))),
     )
-
-
-def level_planes(points: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Up to four planes parallel to the points' xy plane, densest first, each as
-    (0, 0, 1, -z) and its inliers: the heights where most points sit within
-    ``PLANE_DISTANCE``, peeled off one after another."""
-    found: list[tuple[np.ndarray, np.ndarray]] = []
-    remaining = np.asarray(points, dtype=np.float64)
-    for _ in range(4):
-        if len(remaining) < 500:
-            break
-        z = remaining[:, 2]
-        edges = np.arange(z.min(), z.max() + 2 * PLANE_DISTANCE, PLANE_DISTANCE)
-        counts, edges = np.histogram(z, edges)
-        # Two neighbouring bins: one slab PLANE_DISTANCE either side of their shared edge.
-        pairs = counts[:-1] + counts[1:] if len(counts) > 1 else counts
-        best = int(np.argmax(pairs))
-        height = float(edges[best + 1] if len(counts) > 1 else edges[0])
-        inside = np.abs(z - height) <= PLANE_DISTANCE
-        height = float(np.median(z[inside]))
-        inside = np.abs(z - height) <= PLANE_DISTANCE
-        found.append((np.array([0.0, 0.0, 1.0, -height]), remaining[inside]))
-        remaining = remaining[~inside]
-    return found
 
 
 def find_surfaces(
@@ -225,29 +243,34 @@ def find_surfaces(
     to_frame: np.ndarray | None = None,
     level: bool = False,
 ) -> list[Surface]:
-    """Every flat surface at least ``MIN_SURFACE_SIDE`` wide among up to four peels of
-    ``points``, the biggest first.
+    """Every flat surface at least ``MIN_SURFACE_SIDE`` wide among up to four RANSAC
+    peels of ``points``, each split into the patches that touch, the biggest first.
 
-    ``points`` are world-frame. ``to_frame``, a 4x4 matrix from the world frame to
-    another, describes each surface in that frame.
+    ``points`` are world-frame; points closer than 1 cm count once, so a surface
+    seen in many frames does not outweigh one seen in a few. ``to_frame``, a 4x4
+    matrix from the world frame to another, describes each surface in that frame.
 
     ``level`` takes every surface as parallel to that frame's xy plane, such as a
-    table top square to the arm's base: only heights are fitted, so a few points
-    off the plane cannot tilt it, and ``max_tilt_deg`` does not apply. Otherwise a
-    RANSAC fit takes surfaces tilted at most ``max_tilt_deg`` from level to the
-    world frame.
+    table top square to the arm's base, and reports it at the height of its centre
+    with no tilt. The fit still allows ``max_tilt_deg``, so a table a degree or two
+    off its base stays one surface; past about half a degree its two ends sit a
+    centimetre either side of the reported height over a metre. Otherwise the tilt
+    is fitted, level to the world frame.
     """
-    if level:
-        if to_frame is not None:
-            points = points @ to_frame[:3, :3].T + to_frame[:3, 3]
-        planes = level_planes(points)
-    else:
-        planes = []
-        for model, inliers in peel_planes(points, float(np.cos(np.radians(max_tilt_deg)))):
-            if to_frame is not None:
-                model = np.append(to_frame[:3, :3] @ model[:3], 0.0)
-                inliers = inliers @ to_frame[:3, :3].T + to_frame[:3, 3]
-            planes.append((model, inliers))
-    surfaces = [describe_surface(model, inliers) for model, inliers in planes]
-    surfaces = [surface for surface in surfaces if surface.size[1] >= MIN_SURFACE_SIDE]
+    points = np.asarray(points, dtype=np.float64)
+    _, first = np.unique(np.floor(points / DEDUPE_CELL).astype(np.int64), axis=0, return_index=True)
+    points = points[np.sort(first)]
+    if level and to_frame is not None:
+        points = points @ to_frame[:3, :3].T + to_frame[:3, 3]
+    surfaces = []
+    for model, inliers in peel_planes(points, float(np.cos(np.radians(max_tilt_deg)))):
+        if to_frame is not None and not level:
+            model = np.append(to_frame[:3, :3] @ model[:3], 0.0)
+            inliers = inliers @ to_frame[:3, :3].T + to_frame[:3, 3]
+        for piece in connected_pieces(model, inliers):
+            if len(piece) < 3:
+                continue
+            surface = describe_surface(model, piece, level)
+            if surface.size[1] >= MIN_SURFACE_SIDE:
+                surfaces.append(surface)
     return sorted(surfaces, key=lambda surface: -surface.points)

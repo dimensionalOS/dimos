@@ -215,9 +215,10 @@ class ManipulationLocalize(PerceptionLocalize):
         ``start`` and ``duration`` name the window as in ``localize``. ``frame``
         is the frame to report in, e.g. the arm's base link; empty means the
         world frame. By default (``surface_parallel_to_frame``) every surface is
-        taken as parallel to that frame's xy plane, so the tilt reads 0; with it
-        off, the tilt is fitted, level is level to the world frame, and
-        ``max_tilt_deg`` drops surfaces tilted more than that.
+        taken as parallel to that frame's xy plane and reported at the height of
+        its centre, tilt 0; this assumes the table is square to the frame within
+        about half a degree. With it off, the tilt is fitted, level to the world
+        frame. Either way ``max_tilt_deg`` drops surfaces tilted more than that.
         """
         if not self._ready.is_set():
             return (

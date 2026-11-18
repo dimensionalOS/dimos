@@ -127,3 +127,50 @@ def test_level_mode_is_parallel_to_the_reporting_frame(rng):
 
     assert surface.tilt_deg == 0.0
     assert surface.height == pytest.approx(0.1, abs=0.004)
+
+
+@pytest.mark.parametrize("level", [True, False])
+def test_a_square_table_reads_square(rng, level):
+    """The axes of a square's points are any two; its smallest rectangle is not."""
+    table = _slab(1.0, 1.0, 20.0, 0.0, 0.0, (0.5, 0.0, 0.12), rng)
+
+    (surface,) = find_surfaces(table, level=level)
+
+    assert surface.size == pytest.approx((1.0, 1.0), abs=0.03)
+    assert surface.yaw_deg % 90.0 == pytest.approx(20.0, abs=1.5)
+
+
+def test_level_mode_keeps_a_slightly_tilted_table_whole(rng):
+    """A base 1.5 degrees off its table: 2.6 cm over a metre, one surface all the same."""
+    table = _slab(1.0, 1.0, 0.0, 1.5, 0.0, (0.5, 0.0, 0.12), rng)
+
+    (surface,) = find_surfaces(table, level=True)
+
+    assert surface.tilt_deg == 0.0
+    assert surface.height == pytest.approx(0.12, abs=0.004)
+    assert surface.size == pytest.approx((1.0, 1.0), abs=0.03)
+
+
+@pytest.mark.parametrize("level", [True, False])
+def test_scattered_block_tops_are_not_a_surface(rng, level):
+    """Four 4 cm tops at one height, 20 cm apart, are four patches too small to count."""
+    table = _slab(1.0, 1.0, 0.0, 0.0, 0.0, (0.5, 0.0, 0.12), rng)
+    tops = [
+        _slab(0.04, 0.04, 0.0, 0.0, 0.0, (0.2 + 0.2 * i, 0.0, 0.16), rng, step=0.001)
+        for i in range(4)
+    ]
+
+    surfaces = find_surfaces(np.concatenate([table, *tops]), level=level)
+
+    assert [round(s.height, 2) for s in surfaces] == [0.12]
+
+
+def test_a_surface_seen_twice_is_not_bigger(rng):
+    table = _slab(0.8, 0.5, 0.0, 0.0, 0.0, (0.5, 0.0, 0.12), rng)
+    floor = _slab(1.0, 0.6, 0.0, 0.0, 0.0, (1.2, 0.0, -0.5), rng)
+
+    once = find_surfaces(np.concatenate([table, floor]))
+    twice = find_surfaces(np.concatenate([table, table, table, floor]))
+
+    assert [s.points for s in twice] == [s.points for s in once]
+    assert [round(s.height, 1) for s in twice] == [-0.5, 0.1]
