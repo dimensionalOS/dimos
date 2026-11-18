@@ -29,7 +29,11 @@ from pydantic import ValidationError
 import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
-from dimos.core.coordination.meta_blueprints import ChoiceResolutionError, autoconnect_with_choices
+from dimos.core.coordination.meta_blueprints import (
+    ChoiceAtom,
+    ChoiceResolutionError,
+    autoconnect_with_choices,
+)
 from dimos.core.daemon import (
     DAEMON_STATUS_FD_ENV,
     fork_daemon,
@@ -177,6 +181,17 @@ def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None
     return None
 
 
+def _format_choices_help(active_choices: tuple[ChoiceAtom, ...], selections: dict[str, str]) -> str:
+    lines = ["Blueprint choices (the configuration options below match the selection):"]
+    for choice in active_choices:
+        selected = selections.get(choice.name, choice.default)
+        lines.append(
+            f"  --choice {choice.name}=<{'|'.join(choice.choices)}> "
+            f"(default: {choice.default}, selected: {selected})"
+        )
+    return "\n".join(lines)
+
+
 @cache_usage_locked
 def run(
     ctx: typer.Context,
@@ -272,10 +287,9 @@ def run(
         typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
         raise typer.Exit(2) from error
 
+    meta_blueprint = autoconnect_with_choices(*map(get_by_name_or_exit, blueprint_names))
     try:
-        blueprint = autoconnect_with_choices(*map(get_by_name_or_exit, blueprint_names)).solidify(
-            choices=choices
-        )
+        blueprint = meta_blueprint.solidify(choices=choices)
     except ChoiceResolutionError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
@@ -307,6 +321,10 @@ def run(
         }
         typer.echo(ctx.get_help())
         typer.echo()
+        active_choices = meta_blueprint.active_choices(choices=choices)
+        if active_choices:
+            typer.echo(_format_choices_help(active_choices, choices))
+            typer.echo()
         typer.echo(parser.format_help(reserved_options))
         return
 

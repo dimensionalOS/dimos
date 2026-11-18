@@ -87,9 +87,10 @@ Blueprints are frozen data classes, and `autoconnect()` always constructs an exp
 ## Choosing blueprint alternatives
 
 `autoconnect_with_choices()` creates a `MetaBlueprint` containing ordinary
-blueprints and named `ChoiceAtom` alternatives. Its only operation is
-`.solidify(choices=...)`, which selects fragments and returns a normal `Blueprint`.
-`autoconnect()` continues to accept and return ordinary blueprints.
+blueprints and named `ChoiceAtom` alternatives. `.solidify(choices=...)` selects
+fragments and returns a normal `Blueprint`. `.active_choices(choices=...)` returns
+the choices those selections resolve. `autoconnect()` continues to accept and
+return ordinary blueprints only.
 
 ```python session=blueprint-choices
 from dimos.core.coordination.blueprints import autoconnect
@@ -128,14 +129,19 @@ Export `mapping` as a runnable blueprint using the built-in registry or a packag
 entry point. `dimos run mapping` uses its default; select the alternative with
 `dimos run mapping --choice PointClearing=column_carving`. Repeat `--choice`
 for multiple choices, including choices from different blueprints in the same run.
-Module flags and `--help` describe the selected modules.
+`dimos run mapping --help` lists each active choice with its options, default and
+current selection. The module flags it prints after that describe the selected modules.
 
-Omitting `default` makes a choice required at solidification or startup. Invalid
-options, unknown choice names, and duplicate CLI selections raise errors.
-Choice names and options are case-sensitive. Nested `MetaBlueprint`s are supported
-both as fragments and as alternatives; only selected alternatives need their
-required choices supplied. Overrides for inactive choices are rejected. Distinct
-active choices must have unique names, though the same `ChoiceAtom` can be reused.
+Every choice has a `default`. So `dimos graph`, `Dimos.run("mapping")` and every
+other loader that takes a name work without selections. Invalid options, unknown
+choice names, and duplicate CLI selections raise errors. The error for an unknown
+name lists the available choices. Choice names and options are case-sensitive.
+
+Nested `MetaBlueprint`s are supported both as fragments and as alternatives. A
+choice inside an alternative is active only when that alternative is selected.
+Overrides for inactive choices are rejected, and the error names the selection that
+activates them. Active choices with the same name must be equal. The same
+`ChoiceAtom` can be reused, and so can equal ones built by a helper function.
 
 Apply `.hosted()`, `.transports()`, `.remappings()`, and other blueprint operations
 to concrete fragments before composing, or to the result of `.solidify()`.

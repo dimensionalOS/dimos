@@ -23,8 +23,8 @@ from dimos.core.coordination.meta_blueprints import (
     ChoiceAtom,
     autoconnect_with_choices,
 )
+from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import (
-    all_blueprints,
     get_blueprint_by_name,
     get_by_name,
     get_by_name_or_exit,

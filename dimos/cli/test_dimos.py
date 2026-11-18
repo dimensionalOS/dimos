@@ -462,10 +462,18 @@ def test_run_supports_multiple_choices(stubbed_choices) -> None:
 def test_run_resolves_choices_across_multiple_blueprints(stubbed_run, mocker, monkeypatch) -> None:
     blueprints = {
         "mapping": autoconnect_with_choices(
-            ChoiceAtom(name="Mapping", choices={"on": RunModuleB.blueprint()})
+            ChoiceAtom(
+                name="Mapping",
+                default="off",
+                choices={"on": RunModuleB.blueprint(), "off": autoconnect()},
+            )
         ),
         "viewer": autoconnect_with_choices(
-            ChoiceAtom(name="Viewer", choices={"on": RunModuleA.blueprint(instance_name="viewer")})
+            ChoiceAtom(
+                name="Viewer",
+                default="off",
+                choices={"on": RunModuleA.blueprint(instance_name="viewer"), "off": autoconnect()},
+            )
         ),
         "plain": RunModuleA.blueprint(),
     }
@@ -520,15 +528,40 @@ def test_run_rejects_configuration_for_unselected_modules(stubbed_choices) -> No
     assert stubbed_choices == {}
 
 
-def test_run_help_uses_the_selected_branch(stubbed_choices) -> None:
-    result = CliRunner().invoke(
-        main, ["run", "mapping", "--choice", "PointClearing=column_carving", "--help"]
-    )
+@pytest.mark.parametrize(
+    ("options", "selected", "shown", "hidden"),
+    [
+        ([], "raycasting", "--runmodulea.entity-prefix", "--runmoduleb.lookahead"),
+        (
+            ["--choice", "PointClearing=column_carving"],
+            "column_carving",
+            "--runmoduleb.lookahead",
+            "--runmodulea.entity-prefix",
+        ),
+    ],
+)
+def test_run_help_lists_choices_and_the_selected_modules(
+    stubbed_choices, options, selected, shown, hidden
+) -> None:
+    result = CliRunner().invoke(main, ["run", "mapping", *options, "--help"])
 
     assert result.exit_code == 0, result.output
-    assert "--runmoduleb.lookahead" in result.output
-    assert "--runmodulea.entity-prefix" not in result.output
+    assert (
+        "  --choice PointClearing=<raycasting|column_carving> "
+        f"(default: raycasting, selected: {selected})\n"
+        "  --choice Viewer=<on|off> (default: off, selected: off)\n"
+    ) in result.output
+    assert shown in result.output
+    assert hidden not in result.output
     assert stubbed_choices == {}
+
+
+def test_run_help_has_no_choices_block_without_choices(stubbed_run) -> None:
+    result = CliRunner().invoke(main, ["run", "alpha", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--runmodulea.entity-prefix" in result.output
+    assert "Blueprint choices" not in result.output
 
 
 @pytest.mark.parametrize(
@@ -538,7 +571,11 @@ def test_run_help_uses_the_selected_branch(stubbed_choices) -> None:
         (["--choice", "=raycasting"], "expected NAME=OPTION"),
         (["--choice", "PointClearing="], "expected NAME=OPTION"),
         (["--choice", "PointClearing=typo"], "Invalid option 'typo'"),
-        (["--choice", "Typo=raycasting"], "Unknown or inactive choices: Typo"),
+        (
+            ["--choice", "Typo=raycasting"],
+            "Unknown choice 'Typo'. Available choices: PointClearing, Viewer",
+        ),
+        (["--choice", "viewer=on"], "Unknown choice 'viewer'"),
         (
             ["--choice", "PointClearing=raycasting", "--choice", "PointClearing=column_carving"],
             "Choice 'PointClearing' was specified more than once",
@@ -553,19 +590,18 @@ def test_run_rejects_invalid_choices_before_starting(stubbed_choices, options, m
     assert stubbed_choices == {}
 
 
-def test_run_requires_a_selection_when_no_default_exists(
+def test_run_does_not_report_a_choice_definition_bug_as_a_usage_error(
     stubbed_run, mocker: MockerFixture
 ) -> None:
-    mapping = autoconnect_with_choices(
-        ChoiceAtom(name="Required", choices={"alpha": RunModuleA.blueprint()})
-    )
-    mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", return_value=mapping)
+    def load_broken_blueprint(name: str) -> None:
+        ChoiceAtom(name="Viewer", default="typo", choices={"on": RunModuleA.blueprint()})
+
+    mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", load_broken_blueprint)
 
     result = CliRunner().invoke(main, ["run", "mapping"])
 
-    assert result.exit_code == 2, result.output
-    assert "Choice 'Required' is required" in result.output
-    assert "--choice Required=<option>" in result.output
+    assert type(result.exception) is ValueError
+    assert "Invalid default 'typo'" in str(result.exception)
     assert stubbed_run == {}
 
 
@@ -573,6 +609,7 @@ def test_run_resolves_nested_choices_loaded_from_the_registry(stubbed_run, monke
     inner = autoconnect_with_choices(
         ChoiceAtom(
             name="PointClearing",
+            default="raycasting",
             choices={
                 "raycasting": RunModuleA.blueprint(),
                 "column_carving": RunModuleB.blueprint().global_config(n_workers=4),

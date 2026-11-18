@@ -21,6 +21,7 @@ from dimos.core.coordination.meta_blueprints import (
     MetaBlueprint,
     autoconnect_with_choices,
 )
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
@@ -78,6 +79,7 @@ def test_nested_composition_resolves_multiple_choices_at_the_root(clearing) -> N
         autoconnect_with_choices(clearing),
         ChoiceAtom(
             name="Viewer",
+            default="on",
             choices={"on": VisModule.blueprint(), "off": autoconnect()},
         ),
     )
@@ -87,46 +89,47 @@ def test_nested_composition_resolves_multiple_choices_at_the_root(clearing) -> N
     assert resolved == VoxelMapper.blueprint()
 
 
+@pytest.fixture
+def nested(clearing) -> MetaBlueprint:
+    return autoconnect_with_choices(
+        ChoiceAtom(
+            name="Mapping",
+            default="off",
+            choices={"off": VisModule.blueprint(), "on": autoconnect_with_choices(clearing)},
+        )
+    )
+
+
 @pytest.mark.parametrize(
     ("choices", "expected"),
     [
         ({}, VisModule.blueprint()),
-        ({"Mapping": "on", "Required": "voxel"}, VoxelMapper.blueprint()),
+        ({"Mapping": "on"}, RaytracerModule.blueprint()),
+        ({"Mapping": "on", "PointClearing": "column_carving"}, VoxelMapper.blueprint()),
     ],
 )
-def test_only_selected_alternatives_require_nested_choices(choices, expected) -> None:
-    mapping = autoconnect_with_choices(
-        ChoiceAtom(
-            name="Mapping",
-            default="off",
-            choices={
-                "off": VisModule.blueprint(),
-                "on": autoconnect_with_choices(
-                    ChoiceAtom(name="Required", choices={"voxel": VoxelMapper.blueprint()})
-                ),
-            },
-        )
-    )
-
-    assert mapping.solidify(choices=choices) == expected
+def test_choices_inside_an_alternative_resolve_when_it_is_selected(
+    nested, choices, expected
+) -> None:
+    assert nested.solidify(choices=choices) == expected
 
 
-def test_required_choice_errors_only_when_solidified() -> None:
-    mapping = autoconnect_with_choices(
-        ChoiceAtom(name="Required", choices={"voxel": VoxelMapper.blueprint()})
-    )
-
-    with pytest.raises(ChoiceResolutionError, match="Required.*required.*voxel"):
-        mapping.solidify()
-
-    assert mapping.solidify(choices={"Required": "voxel"}) == VoxelMapper.blueprint()
+def test_active_choices_lists_what_solidify_resolves(nested, clearing) -> None:
+    assert [choice.name for choice in nested.active_choices()] == ["Mapping"]
+    assert nested.active_choices(choices={"Mapping": "on"})[1:] == (clearing,)
 
 
 @pytest.mark.parametrize(
     ("choices", "message"),
     [
         ({"PointClearing": "typo"}, "Invalid option.*typo.*PointClearing.*raycasting"),
-        ({"Misspelled": "raycasting"}, "Unknown or inactive choices: Misspelled"),
+        (
+            {"PointClearng": "raycasting"},
+            r"Unknown choice 'PointClearng'\. Available choices: PointClearing\. "
+            r"Did you mean: PointClearing\?",
+        ),
+        ({"pointclearing": "raycasting"}, "Unknown choice.*Did you mean: PointClearing"),
+        ({"Viewer": "on"}, r"Unknown choice 'Viewer'\. Available choices: PointClearing$"),
     ],
 )
 def test_rejects_invalid_overrides(clearing, choices, message) -> None:
@@ -134,17 +137,44 @@ def test_rejects_invalid_overrides(clearing, choices, message) -> None:
         autoconnect_with_choices(clearing).solidify(choices=choices)
 
 
-def test_rejects_overrides_for_inactive_choices(clearing) -> None:
+def test_rejects_overrides_when_there_are_no_choices() -> None:
+    with pytest.raises(ChoiceResolutionError, match="'Viewer'. This blueprint has no choices"):
+        autoconnect_with_choices(VisModule.blueprint()).solidify(choices={"Viewer": "on"})
+
+
+def test_rejects_overrides_for_inactive_choices(nested) -> None:
+    message = r"Choice 'PointClearing' is inactive because Mapping=off\. It needs Mapping=on"
+
+    with pytest.raises(ChoiceResolutionError, match=message):
+        nested.solidify(choices={"PointClearing": "column_carving"})
+
+    with pytest.raises(ChoiceResolutionError, match="Available choices: Mapping, PointClearing"):
+        nested.solidify(choices={"Typo": "on"})
+
+
+def test_inactive_choice_error_names_the_outermost_unselected_parent(clearing) -> None:
     mapping = autoconnect_with_choices(
         ChoiceAtom(
-            name="Mapping",
-            default="off",
-            choices={"off": autoconnect(), "on": autoconnect_with_choices(clearing)},
+            name="Stack",
+            default="full",
+            choices={
+                "minimal": autoconnect(),
+                "full": autoconnect_with_choices(
+                    ChoiceAtom(
+                        name="Mapping",
+                        default="off",
+                        choices={"off": autoconnect(), "on": autoconnect_with_choices(clearing)},
+                    )
+                ),
+            },
         )
     )
 
-    with pytest.raises(ChoiceResolutionError, match="inactive choices: PointClearing"):
+    with pytest.raises(ChoiceResolutionError, match="inactive because Mapping=off"):
         mapping.solidify(choices={"PointClearing": "column_carving"})
+
+    with pytest.raises(ChoiceResolutionError, match="inactive because Stack=minimal"):
+        mapping.solidify(choices={"Stack": "minimal", "PointClearing": "column_carving"})
 
 
 def test_rejects_distinct_active_choices_with_the_same_name(clearing) -> None:
@@ -163,6 +193,23 @@ def test_shared_choice_can_be_reused_in_compositions(clearing) -> None:
     assert mapping.solidify(choices={"PointClearing": "column_carving"}) == autoconnect(
         VisModule.blueprint(), VoxelMapper.blueprint()
     )
+
+
+def test_equal_choices_built_by_a_factory_can_be_reused_in_compositions() -> None:
+    def viewer_choice() -> ChoiceAtom:
+        return ChoiceAtom(
+            name="Viewer",
+            default="on",
+            choices={"on": VisModule.blueprint(), "off": autoconnect()},
+        )
+
+    mapping = autoconnect_with_choices(
+        autoconnect_with_choices(viewer_choice(), RaytracerModule.blueprint()),
+        autoconnect_with_choices(viewer_choice()),
+    )
+
+    assert mapping.active_choices() == (viewer_choice(),)
+    assert mapping.solidify(choices={"Viewer": "off"}) == RaytracerModule.blueprint()
 
 
 def test_selected_branch_preserves_concrete_blueprint_behavior() -> None:
@@ -196,13 +243,58 @@ def test_choice_options_are_snapshotted() -> None:
 @pytest.mark.parametrize(
     ("name", "choices", "default", "message"),
     [
-        ("", {"a": autoconnect()}, None, "names must be nonempty"),
-        ("Invalid=Name", {"a": autoconnect()}, None, "cannot contain '='"),
-        ("Empty", {}, None, "nonempty option names"),
-        ("Empty", {"": autoconnect()}, None, "nonempty option names"),
+        ("", {"a": autoconnect()}, "a", "names must be nonempty"),
+        ("Invalid=Name", {"a": autoconnect()}, "a", "cannot contain '='"),
+        ("Empty", {}, "a", "at least one option"),
+        ("Empty", {"": autoconnect()}, "", "nonempty strings, got ''"),
+        ("NotStr", {1: autoconnect()}, 1, "nonempty strings, got 1"),
         ("Default", {"a": autoconnect()}, "b", "Invalid default.*b.*Default.*a"),
     ],
 )
 def test_rejects_invalid_choice_definitions(name, choices, default, message) -> None:
-    with pytest.raises(ChoiceResolutionError, match=message):
+    with pytest.raises(ValueError, match=message) as error:
         ChoiceAtom(name=name, choices=choices, default=default)
+
+    # A definition bug is not a selection error, so the CLI does not report it as one.
+    assert not isinstance(error.value, ChoiceResolutionError)
+
+
+def test_choice_requires_a_default() -> None:
+    with pytest.raises(TypeError, match="default"):
+        ChoiceAtom(name="Viewer", choices={"on": VisModule.blueprint()})  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("alternative", "message"),
+    [
+        (VisModule, "Option 'a' of choice 'Viewer' must be a Blueprint or MetaBlueprint, got the"),
+        (None, "got NoneType"),
+        (ChoiceAtom(name="Nested", choices={"a": autoconnect()}, default="a"), "got ChoiceAtom"),
+    ],
+)
+def test_rejects_choice_options_that_are_not_blueprints(alternative, message) -> None:
+    with pytest.raises(TypeError, match=message):
+        ChoiceAtom(name="Viewer", choices={"a": alternative}, default="a")
+
+
+def test_rejects_parts_that_are_not_blueprints_or_choices(clearing) -> None:
+    with pytest.raises(TypeError, match="got the class VisModule"):
+        autoconnect_with_choices(clearing, VisModule)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("argument", "got"),
+    [
+        (autoconnect_with_choices(), "MetaBlueprint"),
+        (ChoiceAtom(name="Viewer", choices={"a": autoconnect()}, default="a"), "ChoiceAtom"),
+        (VisModule, "the class VisModule"),
+    ],
+)
+def test_autoconnect_rejects_arguments_that_are_not_blueprints(argument, got) -> None:
+    with pytest.raises(TypeError, match=f"got {got}.*autoconnect_with_choices"):
+        autoconnect(VisModule.blueprint(), argument)
+
+
+def test_coordinator_build_asks_for_a_solidified_blueprint(clearing) -> None:
+    with pytest.raises(TypeError, match=r"got MetaBlueprint.*\.solidify\(\)"):
+        ModuleCoordinator.build(autoconnect_with_choices(clearing))  # type: ignore[arg-type]

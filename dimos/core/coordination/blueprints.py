@@ -444,6 +444,18 @@ def transport_config_name(cls: type) -> str:
 
 
 def autoconnect(*blueprints: Blueprint) -> Blueprint:
+    for blueprint in blueprints:
+        if not isinstance(blueprint, Blueprint):
+            # A class here is most often a Module that is missing its .blueprint() call.
+            got = (
+                f"the class {blueprint.__name__}"
+                if isinstance(blueprint, type)
+                else type(blueprint).__name__
+            )
+            raise TypeError(
+                f"autoconnect() expects Blueprint arguments, got {got}. "
+                "Compose a MetaBlueprint or ChoiceAtom with autoconnect_with_choices()"
+            )
     all_atoms = [atom for blueprint in blueprints for atom in blueprint.blueprints]
     all_blueprints = tuple(_eliminate_duplicates(all_atoms))
     all_transports = dict(  # type: ignore[var-annotated]

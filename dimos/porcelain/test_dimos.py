@@ -23,6 +23,7 @@ import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.demo_calculator_skill import DemoCalculatorSkill
+from dimos.core.coordination.meta_blueprints import autoconnect_with_choices
 from dimos.core.core import rpc
 from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import global_config
@@ -32,7 +33,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.porcelain.dimos import Dimos, _resolve_target
+from dimos.porcelain.dimos import Dimos, _resolve_target, _run_remote
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -163,6 +164,12 @@ def test_resolve_unknown_string():
 def test_resolve_invalid_type():
     with pytest.raises(TypeError, match="run\\(\\) expects"):
         _resolve_target(42)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("resolve", [_resolve_target, lambda target: _run_remote(target, None)])
+def test_resolve_meta_blueprint_asks_for_solidify(resolve):
+    with pytest.raises(TypeError, match=r"got MetaBlueprint\. Call \.solidify\(\)"):
+        resolve(autoconnect_with_choices())
 
 
 def test_default_construction(app):

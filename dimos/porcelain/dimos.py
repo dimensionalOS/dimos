@@ -22,6 +22,7 @@ import threading
 from typing import Any, TypeAlias, TypeVar, cast
 
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.meta_blueprints import MetaBlueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 from dimos.core.global_config import global_config
 from dimos.core.introspection.module.info import (
@@ -445,10 +446,7 @@ def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModule
     if isinstance(target, Blueprint):
         source.load_blueprint(target)
         return
-    raise TypeError(
-        f"run() expects a blueprint name (str), Blueprint, or Module class, "
-        f"got {type(target).__name__}"
-    )
+    raise _unsupported_target_error(target)
 
 
 def _load_module_class(descriptor: ModuleDescriptor) -> type[ModuleBase] | None:
@@ -495,9 +493,16 @@ def _resolve_target(target: str | Blueprint | type[ModuleBase]) -> Blueprint:
         return target
     if inspect.isclass(target) and issubclass(target, ModuleBase):
         return target.blueprint()  # type: ignore[no-any-return]
-    raise TypeError(
+    raise _unsupported_target_error(target)
+
+
+def _unsupported_target_error(target: object) -> TypeError:
+    hint = (
+        ". Call .solidify() on a MetaBlueprint first" if isinstance(target, MetaBlueprint) else ""
+    )
+    return TypeError(
         f"run() expects a blueprint name (str), Blueprint, or Module class, "
-        f"got {type(target).__name__}"
+        f"got {type(target).__name__}{hint}"
     )
 
 

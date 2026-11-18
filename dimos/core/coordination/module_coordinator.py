@@ -33,7 +33,7 @@ from dimos.core.coordination.blueprint_config.fields import (
     validate_module_config,
 )
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
-from dimos.core.coordination.blueprints import transport_config_name
+from dimos.core.coordination.blueprints import Blueprint, transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
@@ -62,7 +62,7 @@ from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
-    from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
+    from dimos.core.coordination.blueprints import BlueprintAtom
     from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol, RPCClient
 
 logger = setup_logger()
@@ -442,6 +442,11 @@ class ModuleCoordinator(Resource):
         sources); :meth:`load_blueprint` instead applies only explicitly-set
         fields.
         """
+        if not isinstance(blueprint, Blueprint):
+            raise TypeError(
+                f"build() expects a Blueprint, got {type(blueprint).__name__}. "
+                "Call .solidify() on a MetaBlueprint first"
+            )
         check_module_dependencies(blueprint, parsed_config)
         logger.info("Building the blueprint")
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
