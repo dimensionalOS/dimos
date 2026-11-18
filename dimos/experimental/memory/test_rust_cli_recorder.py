@@ -273,7 +273,7 @@ def test_stop_kills_process_that_does_not_flush(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     process = _FakeProcess(ignore_term=True)
-    monkeypatch.setattr(rust_cli_recorder, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.01)
+    monkeypatch.setattr(rust_cli_recorder, "_STOP_TIMEOUT", 0.01)
     session = _start_fake_session(tmp_path, monkeypatch, process)
 
     session.stop()

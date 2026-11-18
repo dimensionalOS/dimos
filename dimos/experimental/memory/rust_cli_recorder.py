@@ -26,7 +26,7 @@ import threading
 import time
 from typing import IO, Any
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, RUN_SHUTDOWN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, session_config
@@ -49,6 +49,8 @@ logger = setup_logger()
 _READY_TIMEOUT = 10.0
 _DEFAULT_ENCODING_THREADS = 4
 _READY_MESSAGE = "memory recorder ready"
+# Event mode drains its whole window on stop. Only the run's own shutdown budget bounds it.
+_STOP_TIMEOUT = RUN_SHUTDOWN_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -309,7 +311,7 @@ class RustRecordingSession:
         if process.poll() is None:
             process.send_signal(signal.SIGTERM)
             try:
-                process.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                process.wait(timeout=_STOP_TIMEOUT)
             except subprocess.TimeoutExpired:
                 logger.warning("Rust recorder did not flush in time; sending SIGKILL")
                 process.kill()
