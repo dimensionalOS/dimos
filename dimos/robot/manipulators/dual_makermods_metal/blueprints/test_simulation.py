@@ -62,6 +62,17 @@ def planning_stack(mocker: MockerFixture) -> Iterator[Deployed]:
 def test_planner_plans_and_the_rig_executes(planning_stack: Deployed) -> None:
     planner = planning_stack.modules[ManipulationModule]
 
+    # The left hand 5 cm straight up from where the arm starts, the jaw still
+    # pointing down.
+    start = planner.get_ee_pose("left_arm")
+    assert start is not None
+    up = PoseStamped(
+        frame_id="world",
+        position=[start.position.x, start.position.y, start.position.z + 0.05],
+        orientation=start.orientation,
+    )
+    assert planner.plan_to_poses({"left_arm": up}).status is PlanStatus.SUCCEEDED
+
     # A joint target for the left arm.
     targets = dict(
         zip(
