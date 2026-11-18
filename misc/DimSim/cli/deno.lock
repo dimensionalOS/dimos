@@ -16,8 +16,7 @@
     "jsr:@std/path@^1.1.4": "1.1.4",
     "jsr:@std/streams@^1.0.17": "1.0.17",
     "npm:@dimforge/rapier3d-compat@0.14": "0.14.0",
-    "npm:playwright@*": "1.58.2",
-    "npm:playwright@^1.58.0": "1.58.2"
+    "npm:playwright@1.61.0": "1.61.0"
   },
   "jsr": {
     "@antim/dimsim@0.1.27": {
@@ -26,8 +25,7 @@
         "jsr:@dimos/msgs",
         "jsr:@std/http",
         "jsr:@std/path@1",
-        "npm:@dimforge/rapier3d-compat",
-        "npm:playwright@^1.58.0"
+        "npm:@dimforge/rapier3d-compat"
       ]
     },
     "@dimos/msgs@0.1.4": {
@@ -90,12 +88,12 @@
       "os": ["darwin"],
       "scripts": true
     },
-    "playwright-core@1.58.2": {
-      "integrity": "sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==",
+    "playwright-core@1.61.0": {
+      "integrity": "sha512-caX7TrY3Ml6egyDX0WUcTHDxodl/b51y5wJOdCEA36QviK/s2g081hvmGs8eaE3DWb6NYZQ6BjO/QkNRPenoPA==",
       "bin": true
     },
-    "playwright@1.58.2": {
-      "integrity": "sha512-vA30H8Nvkq/cPBnNw4Q8TWz1EJyqgpuinBcHET0YVJVFldr8JDNiU9LaWAE1KqSkRYazuaBhTpB5ZzShOezQ6A==",
+    "playwright@1.61.0": {
+      "integrity": "sha512-Z+7BeeqQPRRzklHsVFP4KTGIyMxKUmfeRA4WisM6G3/XW6nwGeX6fX9qYaDa+CiUqpOkb2f6X3nar05R3kSuJQ==",
       "dependencies": [
         "playwright-core"
       ],
@@ -111,7 +109,7 @@
       "jsr:@std/http@1",
       "jsr:@std/path@1",
       "npm:@dimforge/rapier3d-compat@0.14",
-      "npm:playwright@^1.58.0"
+      "npm:playwright@1.61.0"
     ]
   }
 }
