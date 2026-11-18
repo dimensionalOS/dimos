@@ -195,7 +195,7 @@ class BlueprintAtom:
 _PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
 
 
-def _also_in_choices(method: Callable[..., "Blueprint"]) -> Callable[..., "Blueprint"]:
+def _apply_to_subblueprints(method: Callable[..., "Blueprint"]) -> Callable[..., "Blueprint"]:
     """Apply a fluent operation to this fragment and to every option of its choices."""
 
     @wraps(method)
@@ -270,17 +270,17 @@ class Blueprint:
         blueprint = BlueprintAtom.create(module, kwargs)
         return cls(blueprints=(blueprint,))
 
-    @_also_in_choices
+    @_apply_to_subblueprints
     def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
 
-    @_also_in_choices
+    @_apply_to_subblueprints
     def transports(
         self, transports: dict[tuple[str, type], TransportSpec | Transport[Any]]
     ) -> "Blueprint":
         return replace(self, transport_map=MappingProxyType({**self.transport_map, **transports}))
 
-    @_also_in_choices
+    @_apply_to_subblueprints
     def global_config(self, **kwargs: Any) -> "Blueprint":
         return replace(
             self,
@@ -338,7 +338,7 @@ class Blueprint:
             host=host, tags=tags, local=local, prefer=prefer, minimum=minimum, group=group
         )
 
-    @_also_in_choices
+    @_apply_to_subblueprints
     def _placed(self, **placement: Any) -> "Blueprint":
         if not self.blueprints:
             return self
@@ -356,7 +356,7 @@ class Blueprint:
             {(self._instance_key(module), old): new for module, old, new in remappings}
         )
 
-    @_also_in_choices
+    @_apply_to_subblueprints
     def _remapped(
         self, remappings: Mapping[tuple[str, str], str | type[ModuleBase] | type[Spec]]
     ) -> "Blueprint":
@@ -423,7 +423,7 @@ class Blueprint:
             )
         return self._namespaced(prefix, expose_set)
 
-    @_also_in_choices
+    @_apply_to_subblueprints
     def _namespaced(self, prefix: str, expose_set: frozenset[str]) -> "Blueprint":
         new_atoms = []
         new_remap: dict[tuple[str, str], str | type[ModuleBase] | type[Spec]] = {}
@@ -477,11 +477,11 @@ class Blueprint:
             ),
         )
 
-    @_also_in_choices
+    @_apply_to_subblueprints
     def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
         return replace(self, requirement_checks=self.requirement_checks + tuple(checks))
 
-    @_also_in_choices
+    @_apply_to_subblueprints
     def configurators(self, *checks: "SystemConfigurator") -> "Blueprint":
         return replace(self, configurator_checks=self.configurator_checks + tuple(checks))
 
