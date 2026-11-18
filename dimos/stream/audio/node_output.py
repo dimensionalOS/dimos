@@ -17,9 +17,9 @@ import threading
 
 import numpy as np
 from reactivex import Observable
-import sounddevice as sd  # type: ignore[import-untyped]
 
 from dimos.stream.audio.base import AbstractAudioConsumer
+from dimos.stream.audio.sounddevice_loader import sounddevice as sd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
