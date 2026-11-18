@@ -92,9 +92,6 @@ class RpcCall:
             return None
 
         result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))
-        # The reply has arrived, so its callback has nothing left to wait for:
-        # release it now. Keeping one closure per call until stop_rpc_client
-        # grows without bound on a client called at a steady rate.
         unsub_fn()
         return result
 
