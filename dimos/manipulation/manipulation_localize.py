@@ -39,6 +39,11 @@ logger = setup_logger()
 
 # The table's planner obstacle and its cut out of the voxel map share this name.
 TABLE = "scene/table"
+# add_table takes the highest surface with at least this share of the biggest one's
+# points: a table over the floor around it, not the tops of the objects on it.
+TABLE_MIN_SHARE = 0.25
+# add_table(height=...) takes the surface within this of the height asked, metres.
+TABLE_HEIGHT_TOLERANCE = 0.02
 
 
 class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
@@ -272,12 +277,16 @@ class ManipulationLocalize(PerceptionLocalize):
         return "\n".join(lines)
 
     @skill
-    def add_table(self, start: float = -10.0, duration: float = 10.0) -> str:
+    def add_table(
+        self, start: float = -10.0, duration: float = 10.0, height: float | None = None
+    ) -> str:
         """Put the table the camera sees into the motion planner as one flat box.
 
         Measures the table's height in the window, as ``find_surface`` does, and
         puts a box whose top is the measured surface under the whole of the
-        arm's reach. The voxel map's cells under that surface are cut: the
+        arm's reach. The table is the highest of the large surfaces, so a table
+        wins over the floor around it; ``height`` (metres, in the world frame)
+        takes the ``find_surface`` surface nearest it instead. The voxel map's cells under that surface are cut: the
         coarse cells make the table look thicker than it is, and nothing under
         the table top can be reached. Cells just over the table, such as the
         bottom centimetre of an object standing on it, are cut too.
@@ -291,12 +300,15 @@ class ManipulationLocalize(PerceptionLocalize):
         surfaces = self.surfaces(start, duration)
         if not surfaces:
             return "no table: no flat surface in the window. Look at the table and try again."
+        table = pick_table(surfaces, height)
+        if table is None:
+            heights = ", ".join(f"{surface['height']:.3f}" for surface in surfaces)
+            return f"no table at {height} m: the surfaces are at {heights} m"
         groups = self._obstacles.list_planning_groups()
         bases = sorted({group.base_frame for group in groups})
         origins = [self._origin(base) for base in bases]
         if any(origin is None for origin in origins):
             return f"no table: no transform from {self.rig.world_frame} to the arm's base {bases}"
-        table = surfaces[0]
         (box_pose, box_size), (cut_pose, cut_size) = table_boxes(
             table,
             [origin for origin in origins if origin is not None],
@@ -379,6 +391,22 @@ class ManipulationLocalize(PerceptionLocalize):
         if not known:
             raise LookupError(f"No {target!r}: no object is localized. Localize it first.")
         raise LookupError(f"No {target!r} among the localized objects. They are: {known}.")
+
+
+def pick_table(
+    surfaces: list[dict[str, Any]], height: float | None = None
+) -> dict[str, Any] | None:
+    """The table among ``surfaces`` entries: the one nearest ``height``, within
+    ``TABLE_HEIGHT_TOLERANCE``, or without a height the highest of those with at least
+    ``TABLE_MIN_SHARE`` of the biggest one's points. None when no surface fits."""
+    if not surfaces:
+        return None
+    if height is not None:
+        nearest = min(surfaces, key=lambda surface: abs(surface["height"] - height))
+        return nearest if abs(nearest["height"] - height) <= TABLE_HEIGHT_TOLERANCE else None
+    most = max(surface["points"] for surface in surfaces)
+    large = [surface for surface in surfaces if surface["points"] >= TABLE_MIN_SHARE * most]
+    return max(large, key=lambda surface: surface["height"])
 
 
 def table_boxes(

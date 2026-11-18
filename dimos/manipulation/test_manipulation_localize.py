@@ -18,7 +18,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from dimos.manipulation.manipulation_localize import TABLE, ManipulationLocalize, table_boxes
+from dimos.manipulation.manipulation_localize import (
+    TABLE,
+    ManipulationLocalize,
+    pick_table,
+    table_boxes,
+)
 from dimos.mapping.pointclouds.box_filter import inside_boxes
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -219,7 +224,7 @@ def test_find_surface_reports_the_table_in_the_base_frame(localizer, mocker):
     assert surface["size"] == pytest.approx([0.8, 0.5], abs=0.03)
 
 
-def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5)):
+def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5), points=4000):
     return {
         "height": center[2],
         "center": list(center),
@@ -229,7 +234,7 @@ def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5)):
         "tilt_deg": 0.0,
         "downhill_deg": 0.0,
         "coefficients": [0.0, 0.0, 1.0, -center[2]],
-        "points": 4000,
+        "points": points,
         "rms_m": 0.002,
     }
 
@@ -316,3 +321,15 @@ def test_add_table_with_no_surface_in_view_adds_nothing(localizer, mocker):
     assert localizer.add_table().startswith("no table")
     localizer._obstacles.add_obstacle.assert_not_called()
     localizer._box_filter.set_box.assert_not_called()
+
+
+def test_the_table_is_the_highest_large_surface_not_the_floor_or_an_object_top():
+    # The xArm grasp sim: a small table over a floor that fills more of the view.
+    floor = _surface(center=(0.55, 0.0, 0.0), points=26390)
+    table = _surface(center=(0.52, 0.0, 0.13), points=15000)
+    object_tops = _surface(center=(0.5, 0.0, 0.2), points=2110)
+
+    assert pick_table([floor, table, object_tops]) is table
+    assert pick_table([floor, table, object_tops], height=0.0) is floor
+    assert pick_table([floor, table, object_tops], height=0.5) is None
+    assert pick_table([]) is None
