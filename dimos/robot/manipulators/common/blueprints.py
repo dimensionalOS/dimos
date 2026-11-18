@@ -195,12 +195,15 @@ def manipulation_mapping(
     self_filter_model: RobotModel,
     voxel_size: float,
     world_frame: str = "world",
+    workspace_radius_m: float | None = None,
+    workspace_frame: str | None = None,
 ) -> Blueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
     Three modules in a row: a self filter drops the robot's own returns, a
     voxel mapper collects the rest, and a box filter lets pick-and-place leave
-    the object it is picking out of the map. The box filter's output is named
+    the object it is picking, and add_table the table, out of the map, and drops
+    what lies outside the workspace. The box filter's output is named
     ``voxel_map``, so ManipulationModule's input of that name connects by
     itself. The camera's ``pointcloud`` output must be switched on.
 
@@ -211,6 +214,11 @@ def manipulation_mapping(
             same ``voxel_map_resolution``, or its octree will not line up with
             the map.
         world_frame: Fixed frame the map is built and published in.
+        workspace_radius_m: Cells farther than this from the workspace's centre
+            are left out of the map, such as what the arm can never reach.
+            None keeps them all.
+        workspace_frame: The workspace's centre, e.g. the arm's base link; None
+            for the origin of ``world_frame``.
     """
     return autoconnect(
         UrdfManagerPointClearing.blueprint(
@@ -231,7 +239,9 @@ def manipulation_mapping(
             world_frame=world_frame,
             max_range=2.0,
         ),
-        PointCloudBoxFilter.blueprint(),
+        PointCloudBoxFilter.blueprint(
+            keep_within_m=workspace_radius_m, keep_within_frame=workspace_frame
+        ),
     ).remappings(
         [
             (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),

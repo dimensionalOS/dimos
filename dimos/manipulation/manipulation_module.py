@@ -1315,8 +1315,13 @@ class ManipulationModule(Module):
         shape: str,
         dimensions: list[float] | None = None,
         mesh_path: str | None = None,
+        touch_links: list[str] | None = None,
     ) -> str:
-        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id."""
+        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id.
+
+        ``touch_links`` names robot links whose contact with this obstacle is not a
+        collision, e.g. a base link that stands inside a table box.
+        """
         if not self._world_monitor:
             return ""
 
@@ -1336,6 +1341,7 @@ class ManipulationModule(Module):
             pose=PoseStamped(position=pose.position, orientation=pose.orientation),
             dimensions=tuple(dimensions) if dimensions else (),
             mesh_path=mesh_path,
+            touch_links=tuple(touch_links or ()),
         )
         return self._world_monitor.add_obstacle(obstacle)
 

@@ -23,6 +23,7 @@ from typing import Protocol
 
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -272,3 +273,21 @@ class ManipulationSpec(Spec, Protocol):
     ) -> CommandResult: ...
 
     def cancel(self) -> ExecutionResult: ...
+
+
+class PlanningObstaclesSpec(Spec, Protocol):
+    """The planner's named obstacles, for modules that put what they perceive into it."""
+
+    def list_planning_groups(self) -> tuple[PlanningGroupInfo, ...]: ...
+
+    def add_obstacle(
+        self,
+        name: str,
+        pose: Pose,
+        shape: str,
+        dimensions: list[float] | None = None,
+        mesh_path: str | None = None,
+        touch_links: list[str] | None = None,
+    ) -> str: ...
+
+    def remove_obstacle(self, obstacle_id: str) -> bool: ...

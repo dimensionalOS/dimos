@@ -19,9 +19,14 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
+from dimos.manipulation.manipulation_spec import PlanningObstaclesSpec
+from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.localize.module import PerceptionLocalize, PerceptionLocalizeConfig
@@ -31,6 +36,9 @@ from dimos.perception.localize.types import Localization
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# The table's planner obstacle and its cut out of the voxel map share this name.
+TABLE = "scene/table"
 
 
 class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
@@ -42,6 +50,16 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     # find_surface: surfaces are parallel to the reporting frame's xy plane, as a
     # table is to the arm's base; False fits their tilt too.
     surface_parallel_to_frame: bool = True
+    # add_table, metres. The table is taken to reach past everything the arm can:
+    # its box is a square table_reach_m either side of the arm's base, its top on
+    # the measured plane, table_thickness_m thick. Every voxel map cell under the
+    # plane in that square is cut, with those centred up to table_cut_above_m over
+    # it: a cell's centre sits up to half a cell over the points in it, so that
+    # wants half the map's cell plus the depth noise; 0.01 suits 1 cm cells, 2.5 cm
+    # cells want about 0.018.
+    table_reach_m: float = 1.0
+    table_thickness_m: float = 0.03
+    table_cut_above_m: float = 0.01
 
 
 class ManipulationLocalize(PerceptionLocalize):
@@ -50,10 +68,15 @@ class ManipulationLocalize(PerceptionLocalize):
     A ``localize`` or ``scan`` answer replaces the objects of the labels it was
     asked for and keeps the others. Pick and place reads them by id, or by a
     label only one object has. A forgotten object's older sightings are left out
-    of later answers. ``find_surface`` measures the table the objects stand on.
+    of later answers. ``find_surface`` measures the table the objects stand on,
+    and ``add_table`` puts it into the motion planner as one flat box.
     """
 
     config: ManipulationLocalizeConfig
+
+    # Where add_table puts the table; both optional, as in a blueprint with no planner.
+    _obstacles: PlanningObstaclesSpec | None = None
+    _box_filter: PointCloudBoxFilterSpec | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -248,6 +271,67 @@ class ManipulationLocalize(PerceptionLocalize):
             )
         return "\n".join(lines)
 
+    @skill
+    def add_table(self, start: float = -10.0, duration: float = 10.0) -> str:
+        """Put the table the camera sees into the motion planner as one flat box.
+
+        Measures the table's height in the window, as ``find_surface`` does, and
+        puts a box whose top is the measured surface under the whole of the
+        arm's reach. The voxel map's cells under that surface are cut: the
+        coarse cells make the table look thicker than it is, and nothing under
+        the table top can be reached. Cells just over the table, such as the
+        bottom centimetre of an object standing on it, are cut too.
+
+        Calling it again replaces the table; ``clear_table`` removes it.
+        """
+        if not self._ready.is_set():
+            return f"add_table cannot answer yet: {self._stage}. Poll state() until it reads ready."
+        if self._obstacles is None or self._box_filter is None:
+            return "add_table needs a motion planner and a voxel map box filter in the blueprint"
+        surfaces = self.surfaces(start, duration)
+        if not surfaces:
+            return "no table: no flat surface in the window. Look at the table and try again."
+        groups = self._obstacles.list_planning_groups()
+        bases = sorted({group.base_frame for group in groups})
+        origins = [self._origin(base) for base in bases]
+        if any(origin is None for origin in origins):
+            return f"no table: no transform from {self.rig.world_frame} to the arm's base {bases}"
+        table = surfaces[0]
+        (box_pose, box_size), (cut_pose, cut_size) = table_boxes(
+            table,
+            [origin for origin in origins if origin is not None],
+            reach=self.config.table_reach_m,
+            thickness=self.config.table_thickness_m,
+            cut_above=self.config.table_cut_above_m,
+        )
+        self.clear_table()
+        # The arm's base may stand inside the box, e.g. on a mount below the table top.
+        if not self._obstacles.add_obstacle(TABLE, box_pose, "box", box_size, None, bases):
+            return "the planner refused the table box"
+        self._box_filter.set_box(TABLE, cut_pose, Vector3(*cut_size))
+        return (
+            f"table added: top at z={table['height']:.3f} m in {self.rig.world_frame}, "
+            f"{box_size[0]:.2f} x {box_size[1]:.2f} m round the arm's base; the voxel map "
+            f"cells under it are cut"
+        )
+
+    @skill
+    def clear_table(self) -> str:
+        """Remove the table ``add_table`` put into the planner, and let its voxel map cells back."""
+        if self._obstacles is None or self._box_filter is None:
+            return "no table: the blueprint has no motion planner or voxel map box filter"
+        removed = self._obstacles.remove_obstacle(TABLE)
+        self._box_filter.clear_box(TABLE)
+        return "table removed" if removed else "no table to remove"
+
+    def _origin(self, frame: str) -> np.ndarray | None:
+        """Where a frame's origin is in the world frame now; None while tf lacks it."""
+        if frame == self.rig.world_frame:
+            return np.zeros(3)
+        _, head = self.index.get_time_range()
+        transform = self.rig.tf.get(self.rig.world_frame, frame, head, TF_TOLERANCE)
+        return None if transform is None else transform.translation.to_numpy()
+
     def _localize(
         self,
         queries: list[str],
@@ -295,3 +379,43 @@ class ManipulationLocalize(PerceptionLocalize):
         if not known:
             raise LookupError(f"No {target!r}: no object is localized. Localize it first.")
         raise LookupError(f"No {target!r} among the localized objects. They are: {known}.")
+
+
+def table_boxes(
+    surface: dict[str, Any],
+    bases: list[np.ndarray],
+    *,
+    reach: float,
+    thickness: float,
+    cut_above: float,
+) -> tuple[tuple[Pose, list[float]], tuple[Pose, list[float]]]:
+    """The planner box and the voxel map cut for one ``surfaces`` entry, each as a pose
+    and full edge lengths, z along the surface's normal.
+
+    Both cover the square ``reach`` either side of every base, in the surface's
+    plane. The box hangs ``thickness`` under the surface; the cut runs from
+    ``cut_above`` over it down ``reach`` under it.
+    """
+    normal = np.asarray(surface["normal"], dtype=np.float64)
+    a, b, c, d = surface["coefficients"]
+    # The bases dropped onto the plane, along the normal.
+    feet = [base - normal * (float(np.dot([a, b, c], base)) + d) for base in bases]
+    x_axis = np.array([1.0, 0.0, 0.0]) - normal * normal[0]
+    if np.linalg.norm(x_axis) < 1e-6:
+        x_axis = np.array([0.0, 1.0, 0.0]) - normal * normal[1]
+    x_axis /= np.linalg.norm(x_axis)
+    axes = np.column_stack([x_axis, np.cross(normal, x_axis), normal])
+    qx, qy, qz, qw = Rotation.from_matrix(axes).as_quat()
+    orientation = Quaternion(float(qx), float(qy), float(qz), float(qw))
+    # The square in the plane's own axes, round all the feet.
+    in_plane = np.array([axes.T @ foot for foot in feet])
+    low, high = in_plane[:, :2].min(axis=0) - reach, in_plane[:, :2].max(axis=0) + reach
+    middle = axes @ np.array([*(low + high) / 2, in_plane[0, 2]])
+    side = [float(v) for v in high - low]
+
+    def placed(offset: float) -> Pose:
+        return Pose(position=Vector3(*(middle + normal * offset)), orientation=orientation)
+
+    box = (placed(-thickness / 2), [*side, thickness])
+    cut = (placed((cut_above - reach) / 2), [*side, cut_above + reach])
+    return box, cut
