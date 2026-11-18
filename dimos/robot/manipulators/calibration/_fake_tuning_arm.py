@@ -1,0 +1,626 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Test helpers: a simulated arm behind the tuning hooks, its clock and its recording.
+
+:class:`FakeTuningArm` is a ``TuningConnection`` for one arm of a spec. Each
+joint follows its PD target with first-order dynamics, ``(b + kd) dq/dt =
+kp (target - q) + g_comp(q) - g_true(q) + ff - friction``: the connection
+compensates gravity with the model it runs (the URDF, or the URDF with the
+applied calibration's masses), while the arm obeys ``truth``. Coulomb
+friction holds a joint that has stopped until the drive exceeds its stiction.
+Gravity is evaluated once every 10 ms, the period it also records joint
+states at, like the connection's 100 Hz ``joint_state``. It keeps the tuning
+session's rules: one session, a lease every call renews, a 0.1 s deadman on
+targets, the session ending on lapse, deadman or any raising call (floating
+joints then held where they are, feed-forward dropped, gains restored), and
+position commands dropped while a session lasts.
+
+What it does not simulate: inertia (so no overshoot or ringing), velocity
+limits, encoder noise and quantization, torque saturation, the other arm of
+a robot, grippers, CAN timing, and the connection's own threads (everything
+happens in the caller's thread as simulated time advances).
+
+:class:`SimClock` is that simulated time: ``sleep`` advances the arm.
+:class:`MemoryRecording` keeps the samples and the procedure's markers in
+memory and reads them back as the sqlite recording would.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+import json
+import math
+from pathlib import Path
+import threading
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
+import pinocchio as pin
+
+from dimos.robot.manipulators.calibration._inertial import apply_inertial_overrides
+from dimos.robot.manipulators.calibration.arm_session import MarkerStream
+from dimos.robot.manipulators.calibration.gravity_fit import GravityRecording, PoseMarker
+from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
+from dimos.robot.manipulators.calibration.hooks import (
+    AppliedCalibration,
+    CalibrationApplied,
+    CommandResult,
+    JointGainsState,
+    JointSample,
+    TuningSession,
+)
+from dimos.robot.manipulators.calibration.procedure import Procedure, ProcedureStatus
+from dimos.robot.manipulators.calibration.recording import RecordingUnavailableError
+from dimos.robot.manipulators.calibration.schema import (
+    calibration_path,
+    load_for_spec,
+    to_inertial_overrides,
+)
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, urdf_limits
+from dimos.robot.manipulators.calibration.step_analysis import StepEvent
+from dimos.robot.manipulators.calibration.step_report import JointTrace, Recording
+from dimos.robot.manipulators.damiao.status import DamiaoConnectionStatus
+
+DEADMAN_S = 0.1
+SAMPLE_PERIOD_S = 0.01
+MAX_LEASE_S = 30.0
+MAX_GRAVITY_STEP_NM = 2.0
+MAX_KP = 500.0
+MAX_KD = 5.0
+VISCOUS_NM_S = 0.05
+DEFAULT_FRICTION_NM = 0.05
+STICTION_RATIO = 1.2
+# Below this speed a joint counts as stopped, and friction may hold it.
+STOPPED_RAD_S = 1e-3
+# How long a simulated wait lets other threads answer before time moves on.
+REAL_WAIT_S = 0.002
+START_TIME = 1_800_000_000.0
+
+Vector = NDArray[np.float64]
+
+
+@dataclass
+class _Session:
+    session_id: str
+    lease_s: float
+    last_call: float
+
+
+class MemoryRecording:
+    """Joint samples and markers in memory: a ``RecordingSource`` and an ``EventSink``.
+
+    Samples are recorded under ``f"{source}/{joint}"``, as a connection
+    publishes them. Every status change is kept and counted, so a driver can
+    wait for the next one.
+    """
+
+    def __init__(self, source: str = "arm", directory: Path | None = None) -> None:
+        self._source = source
+        self._directory = directory
+        self._lock = threading.Condition()
+        self._times: list[float] = []
+        self._names: list[str] = []
+        self._positions: list[Vector] = []
+        self._velocities: list[Vector] = []
+        self.markers: dict[str, list[dict[str, Any]]] = {}
+        self.statuses: list[ProcedureStatus] = []
+
+    @property
+    def directory(self) -> Path | None:
+        return self._directory
+
+    @property
+    def version(self) -> int:
+        with self._lock:
+            return len(self.statuses)
+
+    def add_sample(self, t: float, names: list[str], q: Vector, dq: Vector) -> None:
+        with self._lock:
+            self._names = names
+            self._times.append(t)
+            self._positions.append(q.copy())
+            self._velocities.append(dq.copy())
+
+    def marker(self, stream: MarkerStream, payload: dict[str, Any]) -> None:
+        # Through JSON, as the markers reach a recording over the wire.
+        with self._lock:
+            self.markers.setdefault(stream, []).append(json.loads(json.dumps(payload)))
+
+    def status(self, status: ProcedureStatus) -> None:
+        with self._lock:
+            self.statuses.append(json.loads(json.dumps(status)))
+            self._lock.notify_all()
+
+    def wait_change(self, seen: int, timeout_s: float) -> bool:
+        """Wait until more than ``seen`` statuses arrived; whether they did."""
+        with self._lock:
+            return self._lock.wait_for(lambda: len(self.statuses) > seen, timeout_s)
+
+    def wait_for(self, until: float, timeout_s: float = 0.0) -> None:
+        # Samples land as simulated time passes, so all up to the last are here.
+        with self._lock:
+            if not self._times or self._times[-1] < until - SAMPLE_PERIOD_S:
+                raise RecordingUnavailableError(f"nothing was recorded up to {until}")
+
+    def steps(self, start: float, end: float) -> Recording:
+        with self._lock:
+            t = np.asarray(self._times)
+            mask = (t >= start) & (t <= end)
+            q = np.degrees(np.vstack(self._positions)[mask])
+            dq = np.degrees(np.vstack(self._velocities)[mask])
+            events = [
+                StepEvent.from_json(json.dumps(m))
+                for m in self.markers.get("step_events", [])
+                if start <= m["t0"] <= end
+            ]
+            names = list(self._names)
+        times = t[mask]
+        if not times.size:
+            raise RecordingUnavailableError(f"nothing was recorded between {start} and {end}")
+        traces = {
+            f"{self._source}/{name}": JointTrace(t=times, q_deg=q[:, i], dq_deg_s=dq[:, i])
+            for i, name in enumerate(names)
+        }
+        return Recording(traces=traces, events=events, t_end=float(times[-1]))
+
+    def gravity(self, start: float, end: float) -> GravityRecording:
+        with self._lock:
+            payloads = [
+                m for m in self.markers.get("gravity_events", []) if start <= m["t0"] <= end
+            ]
+        markers = sorted(
+            (PoseMarker.from_json(json.dumps(m)) for m in payloads), key=lambda m: m.t0
+        )
+        return GravityRecording(recording=self.steps(start, end), markers=markers)
+
+
+class FakeTuningArm:
+    """One simulated arm behind the tuning hooks; see the module doc for what it simulates.
+
+    Args:
+        spec: The arm.
+        arm: ``ArmModel(spec)``, when already built.
+        truth: The arm's real masses; the spec's model when ``None``.
+        friction_nm: Coulomb friction, one value or by joint.
+        gravity_compensation: Whether the connection compensates gravity.
+        recording: Where joint states are recorded.
+        calibration_root: Where "auto" calibration files are looked up.
+        applied: A calibration file applied at start, as a connection's "auto" would.
+        start: Initial joint positions; home when ``None``.
+    """
+
+    def __init__(
+        self,
+        spec: ArmCalibrationSpec,
+        *,
+        arm: ArmModel | None = None,
+        truth: pin.Model | None = None,
+        friction_nm: float | Mapping[str, float] = DEFAULT_FRICTION_NM,
+        gravity_compensation: bool = True,
+        recording: MemoryRecording | None = None,
+        calibration_root: Path,
+        applied: Path | None = None,
+        start: Vector | None = None,
+    ) -> None:
+        self.spec = spec
+        self.arm = arm if arm is not None else ArmModel(spec)
+        self._names = list(spec.joint_names)
+        self._lock = threading.RLock()
+        self._truth = truth if truth is not None else self.arm.model.copy()
+        self._truth_data = self._truth.createData()
+        self._comp = self.arm.model.copy()
+        self._comp_data = self._comp.createData()
+        self._gravity_comp = gravity_compensation
+        self._recording = recording
+        self._root = calibration_root
+        if isinstance(friction_nm, Mapping):
+            self._friction = np.asarray([friction_nm[name] for name in self._names])
+        else:
+            self._friction = np.full(len(self._names), float(friction_nm))
+        self._limits = {
+            joint.name: urdf_limits(joint)
+            for joint in spec.model.load().joints
+            if joint.name in self._names
+        }
+        self.q: Vector = np.array(self.arm.home if start is None else start, dtype=np.float64)
+        self.v: Vector = np.zeros(len(self._names))
+        self._stopped = np.ones(len(self._names), dtype=bool)
+        self.target: Vector = self.q.copy()
+        self._defaults = {name: spec.gains[name] for name in self._names}
+        self._calibrated: dict[str, tuple[float, float]] = {}
+        self._overrides: dict[str, tuple[float, float]] = {}
+        self._floating: dict[str, float] = {}
+        self._feedforward: dict[str, float] = {}
+        self._applied: AppliedCalibration | None = None
+        self.now = START_TIME
+        self._next_sample = START_TIME
+        self._session: _Session | None = None
+        self._sessions = 0
+        self.ended: list[str] = []
+        self._last_command: float | None = None
+        self.deadman_fired = False
+        self.commands = 0
+        self.dropped_position_commands = 0
+        # Fault injection: tuning_command raises once this many were taken; joints
+        # in ``blocked`` cannot move.
+        self.fail_after_commands: int | None = None
+        self.blocked: set[str] = set()
+        self.on_command: Callable[[FakeTuningArm], None] | None = None
+        if applied is not None:
+            self._apply(applied)
+
+    # Simulated time.
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            end = self.now + seconds
+            while self.now < end - 1e-12:
+                self._timeouts()
+                h = min(end, self._next_sample) - self.now
+                if h > 1e-12:
+                    self._integrate(h)
+                    self.now += h
+                if self.now >= self._next_sample - 1e-12:
+                    if self._recording is not None:
+                        self._recording.add_sample(self.now, self._names, self.q, self.v)
+                    self._next_sample += SAMPLE_PERIOD_S
+
+    def _timeouts(self) -> None:
+        if self._last_command is not None and self.now - self._last_command > DEADMAN_S:
+            self._last_command = None
+            self.deadman_fired = True
+            self._end("the command deadman fired")
+            self.target = self.q.copy()
+        session = self._session
+        if session is not None and self.now - session.last_call > session.lease_s:
+            self._end(f"no tuning call within its lease of {session.lease_s:g} s")
+
+    def _gravity_error(self) -> Vector:
+        true = np.asarray(pin.computeGeneralizedGravity(self._truth, self._truth_data, self.q))
+        if not self._gravity_comp:
+            return -true
+        comp = np.asarray(pin.computeGeneralizedGravity(self._comp, self._comp_data, self.q))
+        error: Vector = comp - true
+        return error
+
+    def _integrate(self, h: float) -> None:
+        error = self._gravity_error()
+        for i, name in enumerate(self._names):
+            if name in self.blocked:
+                self.v[i] = 0.0
+                continue
+            floating = name in self._floating
+            kp, kd = (0.0, self._floating[name]) if floating else self._gains(name)
+            forcing = float(error[i]) + self._feedforward.get(name, 0.0)
+            drive = kp * (float(self.target[i]) - float(self.q[i])) + forcing
+            friction = float(self._friction[i])
+            # Friction never pushes: a drive it can hold stops the joint.
+            hold = STICTION_RATIO * friction if self._stopped[i] else friction
+            if abs(drive) <= hold:
+                self.v[i] = 0.0
+                self._stopped[i] = True
+                continue
+            push = forcing - math.copysign(friction, drive)
+            damping = VISCOUS_NM_S + kd
+            if kp > 0.0:
+                tau = damping / kp
+                rest = float(self.target[i]) + push / kp
+                q = rest + (float(self.q[i]) - rest) * math.exp(-h / tau)
+                v = (rest - q) / tau
+            else:
+                v = push / damping
+                q = float(self.q[i]) + v * h
+            self.q[i], self.v[i] = q, v
+            self._stopped[i] = abs(v) < STOPPED_RAD_S
+
+    def _gains(self, name: str) -> tuple[float, float]:
+        return self._overrides.get(name) or self._calibrated.get(name) or self._defaults[name]
+
+    # The session rules.
+
+    def _end(self, reason: str) -> None:
+        if self._session is None:
+            return
+        self._session = None
+        self.ended.append(reason)
+        for name in self._floating:
+            self.target[self._names.index(name)] = self.q[self._names.index(name)]
+        self._floating.clear()
+        self._feedforward.clear()
+        self._overrides.clear()
+
+    def _call(self, name: str, call: Callable[[], Any], *, session: bool) -> Any:
+        with self._lock:
+            try:
+                if self._session is not None:
+                    self._session.last_call = self.now
+                elif session:
+                    raise RuntimeError("no tuning session is active; call tuning_begin first")
+                return call()
+            except Exception as error:
+                self._end(f"{name} raised {type(error).__name__}: {error}")
+                raise
+
+    def _state(self, name: str) -> JointGainsState:
+        kp, kd = self._gains(name)
+        return JointGainsState(
+            kp=kp,
+            kd=kd,
+            floating=name in self._floating,
+            float_kd=self._floating.get(name),
+            feedforward_nm=self._feedforward.get(name, 0.0),
+        )
+
+    def _joint(self, joint: str) -> int:
+        if joint not in self._names:
+            raise ValueError(f"{joint!r} is not an arm joint")
+        return self._names.index(joint)
+
+    def session_active(self) -> bool:
+        with self._lock:
+            return self._session is not None
+
+    @property
+    def session_id(self) -> str | None:
+        with self._lock:
+            return None if self._session is None else self._session.session_id
+
+    def position_command(self, targets: Mapping[str, float]) -> bool:
+        """A normal position command: dropped while a tuning session lasts."""
+        with self._lock:
+            if self._session is not None:
+                self.dropped_position_commands += 1
+                return False
+            for joint, value in targets.items():
+                self.target[self._joint(joint)] = value
+            self._last_command = self.now
+            return True
+
+    # TuningConnection.
+
+    def status(self) -> DamiaoConnectionStatus:
+        with self._lock:
+            return DamiaoConnectionStatus(
+                session_id="fake",
+                connected=True,
+                last_command_time=self._last_command,
+                deadman_fired=self.deadman_fired,
+                last_rejection=None,
+                last_error=None,
+                calibration={self.spec.arm_id: self._applied},
+            )
+
+    def tuning_begin(self, lease_s: float = 2.0) -> TuningSession:
+        def begin() -> TuningSession:
+            if not 0.0 < lease_s <= MAX_LEASE_S:
+                raise ValueError(f"lease_s must be in (0, {MAX_LEASE_S:g}] s, got {lease_s}")
+            if self._session is not None:
+                raise RuntimeError("a tuning session is already active")
+            self._sessions += 1
+            self._session = _Session(f"fake-{self._sessions}", float(lease_s), self.now)
+            return TuningSession(session_id=self._session.session_id, lease_s=float(lease_s))
+
+        result: TuningSession = self._call("tuning_begin", begin, session=False)
+        return result
+
+    def tuning_end(self) -> None:
+        with self._lock:
+            self._end("tuning_end")
+
+    def tuning_arm_ids(self) -> list[str]:
+        return [self.spec.arm_id]
+
+    def tuning_joint_names(self) -> list[str]:
+        return list(self._names)
+
+    def tuning_get_gains(self) -> dict[str, JointGainsState]:
+        result: dict[str, JointGainsState] = self._call(
+            "tuning_get_gains", lambda: {n: self._state(n) for n in self._names}, session=False
+        )
+        return result
+
+    def tuning_set_gains(self, joint: str, kp: float, kd: float) -> JointGainsState:
+        def set_gains() -> JointGainsState:
+            self._joint(joint)
+            if not (math.isfinite(kp) and math.isfinite(kd)):
+                raise ValueError("gains must be finite")
+            self._overrides[joint] = (min(max(kp, 0.0), MAX_KP), min(max(kd, 0.0), MAX_KD))
+            return self._state(joint)
+
+        result: JointGainsState = self._call("tuning_set_gains", set_gains, session=True)
+        return result
+
+    def tuning_reset_gains(self) -> None:
+        self._call("tuning_reset_gains", self._overrides.clear, session=False)
+
+    def tuning_set_float(self, joint: str, on: bool, kd: float | None = None) -> JointGainsState:
+        def set_float() -> JointGainsState:
+            index = self._joint(joint)
+            if on and not self._gravity_comp:
+                raise ValueError(f"{joint} cannot float: the robot does not compensate gravity")
+            if on:
+                self._floating[joint] = self._gains(joint)[1] if kd is None else float(kd)
+            elif joint in self._floating:
+                del self._floating[joint]
+                self.target[index] = self.q[index]
+            return self._state(joint)
+
+        result: JointGainsState = self._call("tuning_set_float", set_float, session=True)
+        return result
+
+    def tuning_set_feedforward(self, joint: str, tau_nm: float) -> JointGainsState:
+        def set_feedforward() -> JointGainsState:
+            self._joint(joint)
+            self._feedforward[joint] = float(tau_nm)
+            return self._state(joint)
+
+        result: JointGainsState = self._call(
+            "tuning_set_feedforward", set_feedforward, session=True
+        )
+        return result
+
+    def tuning_reset_all(self) -> None:
+        def reset() -> None:
+            for name in self._floating:
+                self.target[self._names.index(name)] = self.q[self._names.index(name)]
+            self._floating.clear()
+            self._feedforward.clear()
+            self._overrides.clear()
+
+        self._call("tuning_reset_all", reset, session=False)
+
+    def tuning_read(self) -> dict[str, JointSample]:
+        def read() -> dict[str, JointSample]:
+            return {
+                name: JointSample(
+                    position=float(self.q[i]), velocity=float(self.v[i]), effort=0.0, ts=self.now
+                )
+                for i, name in enumerate(self._names)
+            }
+
+        result: dict[str, JointSample] = self._call("tuning_read", read, session=False)
+        return result
+
+    def tuning_command(self, targets: dict[str, float]) -> CommandResult:
+        def command() -> CommandResult:
+            for joint, value in targets.items():
+                low, high = self._limits[self._names[self._joint(joint)]]
+                if not low <= value <= high:
+                    raise ValueError(f"{joint} target {value} is outside {low}..{high}")
+            if self.fail_after_commands is not None and self.commands >= self.fail_after_commands:
+                raise RuntimeError("feedback failed: the bus went silent")
+            for joint, value in targets.items():
+                if joint not in self._floating:
+                    self.target[self._names.index(joint)] = value
+            self.commands += 1
+            self._last_command = self.now
+            if self.on_command is not None:
+                self.on_command(self)
+            return CommandResult(ok=True, error=None)
+
+        result: CommandResult = self._call("tuning_command", command, session=True)
+        return result
+
+    def tuning_apply_calibration(
+        self, path: str | None = None, force: bool = False
+    ) -> CalibrationApplied:
+        result: CalibrationApplied = self._call(
+            "tuning_apply_calibration", lambda: self._apply_checked(path, force), session=False
+        )
+        return result
+
+    def _apply_checked(self, path: str | None, force: bool) -> CalibrationApplied:
+        if path == "off":
+            file: Path | None = None
+        elif path is None:
+            stored = calibration_path(self.spec.arm_id, self._root)
+            file = stored if stored.exists() else None
+        else:
+            file = Path(path)
+        before = np.asarray(pin.computeGeneralizedGravity(self._comp, self._comp_data, self.q))
+        comp = self._model(file)
+        after = np.asarray(pin.computeGeneralizedGravity(comp, comp.createData(), self.q))
+        step = {name: float(after[i] - before[i]) for i, name in enumerate(self._names)}
+        large = {
+            joint: round(value, 2)
+            for joint, value in step.items()
+            if abs(value) > MAX_GRAVITY_STEP_NM
+        }
+        if large and not force:
+            raise ValueError(
+                f"applying {path} would change the gravity torque at this pose by more than "
+                f"{MAX_GRAVITY_STEP_NM:g} N m: {large} (N m); apply calibrations near home, or "
+                "pass force=True"
+            )
+        self._apply(file)
+        return CalibrationApplied(arms={self.spec.arm_id: self._applied}, gravity_step_nm=step)
+
+    def _model(self, file: Path | None) -> pin.Model:
+        model = self.arm.model.copy()
+        if file is not None:
+            apply_inertial_overrides(model, to_inertial_overrides(load_for_spec(self.spec, file)))
+        return model
+
+    def _apply(self, file: Path | None) -> None:
+        self._comp = self._model(file)
+        self._comp_data = self._comp.createData()
+        if file is None:
+            self._calibrated = {}
+            self._applied = None
+            return
+        calibration = load_for_spec(self.spec, file)
+        self._calibrated = {
+            name: (gains.kp, gains.kd) for name, gains in (calibration.gains or {}).items()
+        }
+        self._applied = AppliedCalibration(
+            path=str(file),
+            created=calibration.created.isoformat(),
+            gains=sorted(self._calibrated),
+            links=sorted(to_inertial_overrides(calibration)),
+        )
+
+
+class SimClock:
+    """Simulated Unix time on a fake arm: ``sleep`` advances it."""
+
+    def __init__(self, arm: FakeTuningArm) -> None:
+        self._arm = arm
+
+    def now(self) -> float:
+        return self._arm.now
+
+    def sleep(self, seconds: float) -> None:
+        if seconds > 0.0:
+            self._arm.advance(seconds)
+
+    def wait(self, event: threading.Event, seconds: float) -> bool:
+        if event.wait(REAL_WAIT_S):
+            return True
+        self.sleep(seconds)
+        return event.is_set()
+
+
+def drive(
+    procedure: Procedure,
+    sink: MemoryRecording,
+    answer: Callable[[str], str] | None = None,
+    *,
+    timeout_s: float = 120.0,
+) -> ProcedureStatus:
+    """Answer every prompt until the run finishes; returns its final status.
+
+    ``answer`` maps a prompt to "confirm", "skip" or "abort"; by default
+    every prompt is confirmed.
+    """
+    answered: set[int] = set()
+    while True:
+        seen = sink.version
+        status = procedure.status()
+        if status["state"] in ("done", "failed", "aborted", "idle"):
+            return status
+        prompt, prompt_id = status["prompt"], status["prompt_id"]
+        if prompt is not None and prompt_id is not None and prompt_id not in answered:
+            answered.add(prompt_id)
+            decision = "confirm" if answer is None else answer(prompt)
+            if decision == "abort":
+                procedure.abort()
+            elif decision == "skip":
+                procedure.skip(prompt_id)
+            else:
+                procedure.confirm(prompt_id)
+        if not sink.wait_change(seen, timeout_s):
+            raise TimeoutError(f"the procedure stopped changing: {procedure.status()}")
