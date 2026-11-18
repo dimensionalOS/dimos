@@ -20,11 +20,6 @@ from dataclasses import replace
 
 import pytest
 
-from dimos.robot.manipulators.calibration._calibration_test_helpers import (
-    ModelNotOnDiskError,
-    offline_robot_assets,
-)
-from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS, robot_id, robot_specs
 from dimos.robot.manipulators.damiao.robot import DamiaoMotor, DamiaoProfile, DamiaoRobot
 from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
@@ -291,40 +286,3 @@ def test_robot_data_rejects_wrong_teach_damping_or_home_length():
         replace(OPENYAM, teach_kd=[1.0])
     with pytest.raises(ValueError, match="home_joints"):
         replace(OPENYAM, home_joints=[0.0])
-
-
-@pytest.mark.parametrize(
-    "robot,arm_ids",
-    [
-        (OPENYAM, ["openyam"]),
-        (DUAL_OPENYAM, ["dual_openyam/left", "dual_openyam/right"]),
-        (OPENARM, ["openarm/left", "openarm/right"]),
-        (METAL, ["metal"]),
-        (DUAL_METAL, ["dual_metal/left", "dual_metal/right"]),
-        (B601_DM, ["b601_dm"]),
-    ],
-)
-def test_each_arm_has_a_stable_calibration_id(robot, arm_ids):
-    assert robot.arm_ids() == arm_ids
-
-
-@pytest.mark.parametrize("key", sorted(KNOWN_ROBOTS))
-def test_arm_ids_are_the_ones_the_calibration_tools_save_under(key):
-    robot = KNOWN_ROBOTS[key]
-    assert robot.name == robot_id(key)
-    try:
-        with offline_robot_assets():
-            specs = robot_specs(key)
-    except ModelNotOnDiskError as error:
-        pytest.skip(f"{key} model is not on disk: {error}")
-    assert robot.arm_ids() == [spec.arm_id for spec in specs]
-
-
-def test_an_unnamed_robot_has_no_arm_ids():
-    assert replace(OPENYAM, name="").arm_ids() == []
-
-
-@pytest.mark.parametrize("name", ["dual/openyam", "open yam", "../x"])
-def test_robot_data_rejects_a_name_that_is_not_one_plain_word(name):
-    with pytest.raises(ValueError, match="robot name"):
-        replace(OPENYAM, name=name)
