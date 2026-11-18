@@ -197,6 +197,7 @@ def manipulation_mapping(
     world_frame: str = "world",
     grace_depth: float | None = None,
     self_filter_padding: float | None = None,
+    tf_tolerance_s: float = 0.1,
 ) -> Blueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
@@ -219,6 +220,8 @@ def manipulation_mapping(
         self_filter_padding: How far around the robot's links, metres, the self
             filter also drops points; None keeps its 0.01 m. Raise it when table
             cells beside the base stay in the map and the base collides with them.
+        tf_tolerance_s: How far from a cloud's capture time the robot tf may be,
+            seconds, each way; one publish period of ManipulationModule's tf.
     """
     mapper_overrides = {} if grace_depth is None else {"grace_depth": grace_depth}
     filter_overrides = {} if self_filter_padding is None else {"padding_m": self_filter_padding}
@@ -232,8 +235,8 @@ def manipulation_mapping(
             # tolerance cannot bracket a ~92ms publish period and drops most
             # clouds. One full period admits them all, and the arm holds still
             # while scanning, so a transform a period old describes the same pose.
-            tf_tolerance_s=0.1,
-            tf_forward_tolerance_s=0.1,
+            tf_tolerance_s=tf_tolerance_s,
+            tf_forward_tolerance_s=tf_tolerance_s,
             **filter_overrides,
         ),
         # Tabletop reach, not a room-scale lidar sweep.

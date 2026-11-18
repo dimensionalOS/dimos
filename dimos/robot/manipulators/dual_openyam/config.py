@@ -16,6 +16,7 @@
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.manipulators._modeling import named_for_robot
 from dimos.robot.manipulators.damiao.robot import (
@@ -66,11 +67,45 @@ DUAL_OPENYAM_LINKS = [
     ],
 ]
 
+# These pairs overlap by a few mm at the folded rest pose.
+DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
+    (f"{side}_link{a}", f"{side}_link{b}")
+    for side in DUAL_OPENYAM_SIDES
+    for a, b in ((1, 3), (2, 4))
+]
+
+# The workcell model's finger joints: the planner's grasp contact check slides them;
+# the connection and the map's self filter hold them fixed.
+DUAL_OPENYAM_FINGER_JOINTS = [
+    f"{side}_finger_{jaw}_joint" for side in DUAL_OPENYAM_SIDES for jaw in ("left", "right")
+]
+# Finger joint position (metres) at fully open; zero is closed with the pads touching.
+# Calipers on the rig's printed fingers: 98 mm between the nose faces at full open, so
+# 49 mm of travel per finger (the i2rt travel of 46.95 mm gave 93.9 mm).
+DUAL_OPENYAM_FINGER_OPEN = -0.049
+
 
 def dual_openyam_arm_joints(side: str) -> list[str]:
     if side not in DUAL_OPENYAM_SIDES:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
     return [f"{side}_joint{index}" for index in range(1, 7)]
+
+
+def dual_openyam_gripper_config() -> GripperConfig:
+    """Which OpenYAM links may touch a grasped object and how the fingers close.
+
+    For the pick's grasp contact check: only the fingertip links may touch the
+    object, and the check slides the four finger joints from open to closed to
+    drop grasps that hit the table or a neighbour, or close on nothing.
+    """
+    return GripperConfig(
+        pad_links=tuple(
+            f"{side}_tip_{jaw}" for side in DUAL_OPENYAM_SIDES for jaw in ("left", "right")
+        ),
+        finger_joints={
+            joint: (DUAL_OPENYAM_FINGER_OPEN, 0.0) for joint in DUAL_OPENYAM_FINGER_JOINTS
+        },
+    )
 
 
 def dual_openyam_model_config(*, robot: str | None = None) -> RobotModelConfig:
@@ -80,6 +115,8 @@ def dual_openyam_model_config(*, robot: str | None = None) -> RobotModelConfig:
             model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
             joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
             base_link="dual_openyam_base",
+            collision_exclusion_pairs=list(DUAL_OPENYAM_COLLISION_EXCLUSIONS),
+            gripper=dual_openyam_gripper_config(),
             planning_groups=[
                 PlanningGroupDefinition(
                     name="left_manipulator",
@@ -105,27 +142,32 @@ def dual_openyam_model_config(*, robot: str | None = None) -> RobotModelConfig:
 def dual_openyam_control_model(*, robot: str | None = None) -> RobotModel:
     """The model the connection and coordinator use: the arms plus one opening joint per jaw.
 
-    The dual URDF has its finger joints fixed, so each jaw is a made-up joint,
-    "left_gripper" or "right_gripper", from 0 (closed) to 1 (open).
+    Each jaw is a made-up joint, "left_gripper" or "right_gripper", from 0
+    (closed) to 1 (open); the URDF's finger joints are the planner's, for the
+    grasp contact check.
 
     Args:
         robot: Name the moving joints under this robot, e.g. "arm" gives
             "arm/left_joint1" and "arm/left_gripper".
     """
-    model = dual_openyam_model_config().model.with_added_joints(
-        *[
-            JointDescription(
-                name=name,
-                type="revolute",
-                parent_link="dual_openyam_base",
-                child_link=f"{name}_control_link",
-                lower=0.0,
-                upper=1.0,
-                velocity=0.0,
-                effort=0.0,
-            )
-            for name in DUAL_OPENYAM_GRIPPER_JOINTS
-        ]
+    model = (
+        dual_openyam_model_config()
+        .model.with_fixed_joints(*DUAL_OPENYAM_FINGER_JOINTS)
+        .with_added_joints(
+            *[
+                JointDescription(
+                    name=name,
+                    type="revolute",
+                    parent_link="dual_openyam_base",
+                    child_link=f"{name}_control_link",
+                    lower=0.0,
+                    upper=1.0,
+                    velocity=0.0,
+                    effort=0.0,
+                )
+                for name in DUAL_OPENYAM_GRIPPER_JOINTS
+            ]
+        )
     )
     if robot is None:
         return model
