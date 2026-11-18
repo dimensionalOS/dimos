@@ -526,18 +526,19 @@ def test_run_rejects_invalid_choices_before_starting(stubbed_choices, options, m
     assert stubbed_choices == {}
 
 
-def test_run_requires_a_selection_when_no_default_exists(
-    stubbed_run, mocker: MockerFixture
+def test_run_uses_the_first_option_when_no_default_exists(
+    stubbed_run, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mapping = autoconnect(ChoiceAtom(name="Required", choices={"alpha": RunModuleA.blueprint()}))
+    mapping = autoconnect(
+        ChoiceAtom(name="Unset", choices={"b": RunModuleB.blueprint(), "a": RunModuleA.blueprint()})
+    )
     mocker.patch.object(get_all_blueprints, "get_by_name_or_exit", return_value=mapping)
+    monkeypatch.setenv("TOPIC_METADATA", "false")
 
     result = CliRunner().invoke(main, ["run", "mapping"])
 
-    assert result.exit_code == 2, result.output
-    assert "Choice 'Required' is required" in result.output
-    assert "--choice Required=<option>" in result.output
-    assert stubbed_run == {}
+    assert result.exit_code == 0, result.output + repr(result.exception)
+    assert [atom.module for atom in stubbed_run["blueprint"].blueprints] == [RunModuleB]
 
 
 def test_run_resolves_nested_choices_loaded_from_the_registry(stubbed_run, monkeypatch) -> None:

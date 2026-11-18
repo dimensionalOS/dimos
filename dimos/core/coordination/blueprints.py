@@ -508,9 +508,8 @@ class Blueprint:
         Selections must name active choices, so misspellings and unused ones fail.
 
         Raises:
-            ChoiceResolutionError: A required choice is missing, an option is
-                invalid, a name is used by two different choices, or a selection
-                is unused.
+            ChoiceResolutionError: A selected option is invalid, a name is used
+                by two different ChoiceAtoms, or a selection is unused.
         """
         selections = dict(choices or {})
         active_choices: dict[str, ChoiceAtom] = {}
@@ -521,13 +520,8 @@ class Blueprint:
                 previous = active_choices.setdefault(choice.name, choice)
                 if previous.origin is not choice.origin:
                     raise ChoiceResolutionError(f"Duplicate choice name: {choice.name!r}")
-                option = selections.get(choice.name, choice.default)
+                option = selections.get(choice.name, cast("str", choice.default))
                 available = f"Available options: {', '.join(choice.choices)}"
-                if option is None:
-                    raise ChoiceResolutionError(
-                        f"Choice {choice.name!r} is required. {available}. "
-                        f"Select it with --choice {choice.name}=<option>"
-                    )
                 if option not in choice.choices:
                     raise ChoiceResolutionError(
                         f"Invalid option {option!r} for choice {choice.name!r}. {available}"
@@ -562,6 +556,7 @@ class ChoiceAtom:
 
     name: str
     choices: Mapping[str, Blueprint]
+    # None means the first option.
     default: str | None = None
     # Kept by the copies that fluent operations make, so only one ChoiceAtom may use a name.
     origin: object = field(default_factory=object, compare=False, repr=False)
@@ -577,6 +572,8 @@ class ChoiceAtom:
                 f"Available options: {', '.join(self.choices)}"
             )
         object.__setattr__(self, "choices", MappingProxyType(dict(self.choices)))
+        if self.default is None:
+            object.__setattr__(self, "default", next(iter(self.choices)))
 
 
 def _join_placement_groups(placements: tuple[HostedPlacement, ...]) -> tuple[HostedPlacement, ...]:

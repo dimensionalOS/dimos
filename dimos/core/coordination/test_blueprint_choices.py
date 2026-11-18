@@ -123,13 +123,14 @@ def test_only_selected_alternatives_require_nested_choices(
     assert mapping.solidify(choices=choices) == expected
 
 
-def test_required_choice_errors_only_when_solidified() -> None:
-    mapping = autoconnect(ChoiceAtom(name="Required", choices={"voxel": VoxelMapper.blueprint()}))
+def test_choice_without_a_default_picks_its_first_option() -> None:
+    choice = ChoiceAtom(
+        name="Clearing",
+        choices={"voxel": VoxelMapper.blueprint(), "ray": RaytracerModule.blueprint()},
+    )
 
-    with pytest.raises(ChoiceResolutionError, match="Required.*required.*voxel"):
-        mapping.solidify()
-
-    assert mapping.solidify(choices={"Required": "voxel"}) == VoxelMapper.blueprint()
+    assert choice.default == "voxel"
+    assert autoconnect(choice).solidify() == VoxelMapper.blueprint()
 
 
 @pytest.mark.parametrize(
@@ -261,17 +262,14 @@ def test_operations_keep_their_fragment_scope_and_call_order(clearing: ChoiceAto
     assert inner.solidify() == RaytracerModule.blueprint().global_config(n_workers=2)
 
 
-def test_required_choices_can_be_configured_before_selection() -> None:
+def test_choices_can_be_configured_before_selection() -> None:
     mapping = (
-        autoconnect(ChoiceAtom(name="Required", choices={"voxel": VoxelMapper.blueprint()}))
+        autoconnect(ChoiceAtom(name="Only", choices={"voxel": VoxelMapper.blueprint()}))
         .global_config(n_workers=4)
         .hosted(host="edge")
     )
 
-    with pytest.raises(ChoiceResolutionError, match="Required.*required"):
-        mapping.solidify()
-
-    assert mapping.solidify(choices={"Required": "voxel"}) == (
+    assert mapping.solidify() == (
         VoxelMapper.blueprint().global_config(n_workers=4).hosted(host="edge")
     )
 
