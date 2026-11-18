@@ -56,6 +56,7 @@ from dimos.cli.can import app as can_app
 from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
 from dimos.cli.commands.agent import agent_app
 from dimos.cli.commands.apriltag import apriltag
+from dimos.cli.commands.autoresearch import autoresearch_app
 from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
@@ -138,6 +139,7 @@ main.command(name="list")(list_blueprints)
 main.command()(graph)
 main.command()(docs)
 main.add_typer(imitation_app, name="imitation")
+main.add_typer(autoresearch_app, name="autoresearch")
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(spy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(lcmspy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(agentspy)

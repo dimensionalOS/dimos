@@ -53,6 +53,8 @@ autoresearch_metal_sim = autoconnect(
     EpisodeMonitorModule.blueprint(instance_name="episodes", task=DEFAULT_TASK),
     metal_sim,
     TruthSceneModule.blueprint(objects=METAL_BENCH_TRUTH),
-    AutoresearchModule.blueprint(session_dir=_DEFAULT_SESSION, task=DEFAULT_TASK),
+    AutoresearchModule.blueprint(
+        session_dir=_DEFAULT_SESSION, task=DEFAULT_TASK, blueprint="autoresearch-metal-sim"
+    ),
     McpServer.blueprint(),
 ).remappings([("recorder", "wrist_image", "color_image")])
