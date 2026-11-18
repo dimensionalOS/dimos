@@ -31,6 +31,7 @@ from dimos.robot.manipulators.openyam.config import (
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
 from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
+from dimos.robot.urdf_manager import UrdfManager
 
 _openyam = make_openyam_model_config(robot="arm")
 
@@ -69,7 +70,10 @@ def openyam_control(*, teach: bool = False) -> Blueprint:
 
 
 coordinator_openyam = openyam_control().remappings([])
+# UrdfManager serves the URDF to web 3D views. The planner already puts every
+# link on tf, so the manager leaves joint tf off (on, links would get two parents).
 openyam_planner_coordinator = autoconnect(
     planner(model=_openyam, gripper_tasks={"manipulator": "arm_gripper"}),
     openyam_control(),
+    UrdfManager.blueprint(model=_openyam.model, publish_joint_tf=False),
 )
