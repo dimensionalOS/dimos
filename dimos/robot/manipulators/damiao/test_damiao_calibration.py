@@ -34,6 +34,7 @@ import pytest
 
 from dimos.control.connection import connection_module
 from dimos.control.connection.arm_config import AppliedFile, CommandResult, ConfigPatch
+from dimos.control.connection.connection_module import ConnectionStatus
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     offline_robot_assets,
@@ -141,6 +142,11 @@ def _messages(spy) -> list[str]:
     return [str(call.args[0]) for call in spy.call_args_list]
 
 
+def _files(module) -> dict[str, AppliedFile | None]:
+    """The calibration file each arm runs, by arm id, as config_get reports it."""
+    return {arm_id: state.file for arm_id, state in module.config_get().items()}
+
+
 def test_auto_applies_each_arms_saved_file_and_logs_one_line(
     start, boundary, calibration_root, mocker
 ):
@@ -160,15 +166,15 @@ def test_auto_applies_each_arms_saved_file_and_logs_one_line(
     np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[60, 3], [10, 1.5]])
     np.testing.assert_allclose(_rows(boundary, "left_arm")[:, 4], expected[:2])
     np.testing.assert_allclose(_rows(boundary, "right_arm")[:, 4], expected[2:])
-    assert module.status().calibration == {
-        "rig/left": {
-            "path": str(path),
-            "created": "2026-11-17T09:30:00+00:00",
-            "gains": ["joint1"],
-            "links": ["link2"],
-        },
+    assert _files(module) == {
+        "rig/left": AppliedFile(
+            path=str(path),
+            created="2026-11-17T09:30:00+00:00",
+            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        ),
         "rig/right": None,
     }
+    assert set(module.config_get()["rig/left"].links) == {"link2"}
     lines = [line for line in _messages(info) if "rig/left" in line]
     assert len(lines) == 1
     assert str(path) in lines[0] and "2026-11-17 09:30 UTC" in lines[0]
@@ -206,7 +212,7 @@ def test_auto_without_a_saved_file_sends_what_was_sent_before_calibration(
         )
         for arm_id in robot.arm_ids():
             assert f"No calibration for {arm_id}, using URDF defaults" in _messages(info)
-        assert module.status().calibration == dict.fromkeys(robot.arm_ids())
+        assert _files(module) == dict.fromkeys(robot.arm_ids())
         sent = drive_and_record(module, boundary[0], recorded["pose"])
     expected = recorded["sent"]
     assert list(sent) == list(expected)
@@ -236,9 +242,9 @@ def test_an_explicit_file_applies_to_the_arm_it_names(start, boundary, tmp_path)
     module.command({"arm/joint1/position": 0.2})
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [30, 1])
     np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[80, 5], [10, 1.5]])
-    calibration = module.status().calibration
-    assert calibration["rig/left"] is None
-    assert calibration["rig/right"]["path"] == str(path)
+    files = _files(module)
+    assert files["rig/left"] is None
+    assert files["rig/right"] is not None and files["rig/right"].path == str(path)
 
 
 def _write_text(path, text: str) -> None:
@@ -310,7 +316,7 @@ def test_a_file_that_does_not_fit_is_ignored_with_a_warning(
     module = start()
     module.command({"arm/joint1/position": 0.2})
     np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[80, 5], [10, 1.5]])
-    assert module.status().calibration == {"rig/left": None, "rig/right": None}
+    assert _files(module) == {"rig/left": None, "rig/right": None}
     lines = [line for line in _messages(warning) if "rig/left" in line]
     assert len(lines) == 1
     assert lines[0].startswith("Ignoring the calibration for rig/left, using URDF defaults: ")
@@ -324,14 +330,13 @@ def test_off_never_reads_a_saved_file(start, boundary, calibration_root, mocker)
     module.command({"arm/joint1/position": 0.2})
     load.assert_not_called()
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [80, 5])
-    assert module.status().calibration == {"rig/left": None, "rig/right": None}
+    assert _files(module) == {"rig/left": None, "rig/right": None}
 
 
 def test_an_unnamed_robot_reads_no_calibration(make_rig, mocker):
     load = mocker.spy(common, "load_calibration")
     module, _, _ = make_rig(config_sessions=True)
     load.assert_not_called()
-    assert module.status().calibration == {}
     assert module.config_keys().arms == {} and module.config_get() == {}
 
 
@@ -424,6 +429,8 @@ def test_the_config_contract_round_trip(start, boundary, calibration_root):
     assert _rows(boundary, "left_arm")[0, 2] == 0.3
     assert native.groups["left_gripper"].commands[-1] == pytest.approx(0.5)
     assert module.status().last_command_time is not None
+    # The base status, which an RPC client decodes without any Damiao code.
+    assert type(module.status()) is ConnectionStatus
     assert module.status().config_session_id == session
     module.config_reset()
     assert not _active(module)
@@ -588,7 +595,9 @@ def test_a_lapsed_lease_undoes_every_live_change_and_logs_one_line(start, bounda
     _left(module, session, torque_offset_nm={"joint1": 1.0})
     boundary[0].groups["right_arm"].q[:] = [0.7]
     wait_until(lambda: not _active(module), timeout=2)
-    arm = module._arm
+    # The session is gone before its undo finishes, both under the hardware lock.
+    with module._hardware_lock:
+        arm = module._arm
     assert arm.floating == {} and arm.feedforward == {}
     assert arm.get_gains()["joint2"] == (10.0, 1.5)
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :3], [20, 0.6, 0.7])
@@ -695,8 +704,7 @@ def test_a_save_merges_into_the_arms_file_and_applies_it_live(start, boundary, c
     assert state.links == links and state.file is not None
     assert state.file.path == str(path)
     assert state.file.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert module.status().calibration["rig/left"]["links"] == ["link2"]
-    assert module.status().calibration["rig/right"] is None
+    assert _files(module)["rig/right"] is None
 
     # A second save merges: joint2's gains join joint1's, the links stay.
     more = ConfigPatch(arm_id="rig/left", gains={"joint2": JointGains(kp=30.0, kd=1.0)})
@@ -767,9 +775,11 @@ def test_saving_one_arms_file_live_keeps_what_the_other_arm_runs(start, boundary
     left = ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)})
     module.config_set(right, scope="persist")
     module.config_set(left, scope="persist")
-    applied = module.status().calibration
-    assert applied["rig/right"]["path"] == str(calibration_root / "rig/right/calibration.json")
-    assert applied["rig/left"]["path"] == str(calibration_root / "rig/left/calibration.json")
+    files = _files(module)
+    assert {arm_id: None if file is None else file.path for arm_id, file in files.items()} == {
+        "rig/left": str(calibration_root / "rig/left/calibration.json"),
+        "rig/right": str(calibration_root / "rig/right/calibration.json"),
+    }
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [30, 1])
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 3])
 
@@ -791,12 +801,12 @@ def test_a_save_that_steps_gravity_more_than_2_nm_is_refused_unless_forced(
     assert abs(refused.gravity_step_nm["joint1"]) > 2.0
     assert not path.exists()
     assert len(boundary[0].groups["left_arm"].commands) == sent
-    assert module.status().calibration["rig/left"] is None
+    assert _files(module)["rig/left"] is None
 
     # Skipping writes the file without applying it.
     skipped = module.config_set(heavier, scope="persist", apply_now=False)
     assert skipped.path == str(path) and not skipped.applied_now and skipped.refused is None
-    assert path.exists() and module.status().calibration["rig/left"] is None
+    assert path.exists() and _files(module)["rig/left"] is None
     assert len(boundary[0].groups["left_arm"].commands) == sent
 
     result = module.config_set(heavier, scope="persist", force=True)
@@ -814,7 +824,7 @@ def test_a_save_that_steps_gravity_more_than_2_nm_is_refused_unless_forced(
     )
     # joint3 carries none of link2.
     assert result.gravity_step_nm["joint3"] == 0.0
-    assert module.status().calibration["rig/left"]["links"] == ["link2"]
+    assert set(module.config_get()["rig/left"].links) == {"link2"}
     np.testing.assert_allclose(_rows(boundary, "left_arm")[:, 4], after[:2])
 
 
@@ -835,7 +845,7 @@ def test_masses_over_a_motors_rating_at_home_are_refused(
         ArmCalibrationError, match="on joint1 at home, more than its motor's rated 28 N m"
     ):
         module.config_set(heavy, scope="persist")
-    assert module.status().calibration == {"rig/left": None, "rig/right": None}
+    assert _files(module) == {"rig/left": None, "rig/right": None}
     assert not (calibration_root / "rig/left/calibration.json").exists()
 
 
@@ -867,11 +877,13 @@ def test_files_from_the_calibration_tools_load_into_dual_openyam(
             source="arm",
             model=_local_test_model(DualOpenYamConnection, tmp_path / "control.urdf"),
         )
-    calibration = module.status().calibration
-    assert list(calibration) == ["dual_openyam/left", "dual_openyam/right"]
+    states = module.config_get()
+    assert list(states) == ["dual_openyam/left", "dual_openyam/right"]
     for spec in specs:
-        assert calibration[spec.arm_id]["gains"] == [spec.joint_names[0]]
-        assert calibration[spec.arm_id]["links"] == [spec.gravity_links[-1]]
+        state = states[spec.arm_id]
+        assert state.file is not None and state.file.path.startswith(str(calibration_root))
+        assert state.gains[spec.joint_names[0]] == JointGains(kp=60.0, kd=4.0)
+        assert list(state.links) == [spec.gravity_links[-1]]
     module.command({"arm/left_joint1/position": 0.0})
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 4])
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [60, 4])

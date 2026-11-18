@@ -31,7 +31,7 @@ from the connection's ``joint_state`` stream.
 
 from __future__ import annotations
 
-from typing import Protocol, TypedDict, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from dimos.control.connection.arm_config import (
     DEFAULT_CONFIG_LEASE_S,
@@ -43,22 +43,6 @@ from dimos.control.connection.arm_config import (
     ConfigScope,
 )
 from dimos.control.connection.connection_module import ConnectionStatus
-
-
-class AppliedCalibration(TypedDict):
-    """The calibration file one arm runs, as ``DamiaoConnectionStatus`` reports it.
-
-    Attributes:
-        path: The file.
-        created: When it was written, ISO 8601, UTC.
-        gains: The joints it gave gains to.
-        links: The links it gave masses to.
-    """
-
-    path: str
-    created: str
-    gains: list[str]
-    links: list[str]
 
 
 @runtime_checkable

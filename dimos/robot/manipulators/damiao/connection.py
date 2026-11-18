@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
@@ -66,7 +66,6 @@ from dimos.control.connection.arm_config import (
 from dimos.control.connection.connection_module import (
     ConnectionConfig,
     ConnectionModule,
-    ConnectionStatus,
     Values,
 )
 from dimos.control.contract.convert import joint_state_to_values
@@ -77,7 +76,6 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
-from dimos.robot.manipulators.calibration.hooks import AppliedCalibration
 from dimos.robot.manipulators.calibration.schema import (
     ARMS_STATE_DIR,
     ArmCalibration,
@@ -94,7 +92,6 @@ from dimos.robot.manipulators.calibration.schema import (
 from dimos.robot.manipulators.calibration.spec import model_name, model_sha256
 from dimos.robot.manipulators.damiao.arm import ArmReading, DamiaoArm, TuningReset
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
-from dimos.robot.manipulators.damiao.status import DamiaoConnectionStatus
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -104,7 +101,6 @@ __all__ = [
     "MAX_GRAVITY_STEP_NM",
     "DamiaoConnection",
     "DamiaoConnectionConfig",
-    "DamiaoConnectionStatus",
     "zero_stiffness_joints",
 ]
 
@@ -172,14 +168,6 @@ class _ArmFile:
     gains: dict[str, tuple[float, float]]
     links: dict[str, LinkInertial]
     sha256: str
-
-    def summary(self) -> AppliedCalibration:
-        return AppliedCalibration(
-            path=str(self.path),
-            created=self.calibration.created.isoformat(),
-            gains=sorted(self.gains),
-            links=sorted(self.links),
-        )
 
     def applied_file(self) -> AppliedFile:
         return AppliedFile(
@@ -349,19 +337,6 @@ class DamiaoConnection(ConnectionModule):
                     error = f"{self.config.source} reader did not stop before the shutdown timeout"
                     self._report(error)
                     raise RuntimeError(error)
-
-    @rpc
-    def status(self) -> DamiaoConnectionStatus:
-        """A snapshot of the connection and the calibration each arm runs."""
-        base = super().status()
-        with self._lock:
-            applied = dict(self._applied)
-        return DamiaoConnectionStatus(
-            **{item.name: getattr(base, item.name) for item in fields(ConnectionStatus)},
-            calibration={
-                arm_id: None if item is None else item.summary() for arm_id, item in applied.items()
-            },
-        )
 
     def _config_keys(self) -> ConfigKeys:
         """Each arm's joints, and what a session and a save change; "float" needs gravity."""
