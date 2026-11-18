@@ -29,7 +29,10 @@ error.
 
 The grid has about ``GRID_CANDIDATES_PER_POSE`` points per requested pose; a
 wider range gets more grid values, and a joint carrying more gravity a finer
-step (see ``grid_axes``).
+step (see ``grid_axes``), unless the spec sets the steps (``grid_step_rad``).
+
+Poses are generated only for a spec with an explicit workspace guard: the
+implicit one knows nothing of the arm's surroundings.
 
 The regressor is pinocchio's joint torque regressor at rest: ``tau = Y(q) @
 phi`` with ten inertial parameters per body ``(m, m*cx, m*cy, m*cz, I...)``;
@@ -40,7 +43,7 @@ only the first four per body carry gravity, and only the spec's
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import itertools
 import math
 from typing import TypeAlias
@@ -52,6 +55,8 @@ import typer
 from dimos.robot.manipulators.calibration.robots import arm_spec
 from dimos.robot.manipulators.calibration.spec import (
     ArmCalibrationSpec,
+    NoWorkspaceGuardError,
+    WorkspaceGuard,
     default_clearance_frames,
     frame_id,
     gravity_samples,
@@ -261,14 +266,19 @@ def grid_axes(
     """Grid values per arm joint (rad) and the grid step per measured joint (deg).
 
     Measured joints span their ``joint_ranges``; every other joint stays at home.
-    A joint's step is a shared base step times ``sqrt(largest span / its span)``
-    of the model gravity torque over random poses, so joints that carry more
-    gravity get a finer grid (the hand-made bench boxes did the same), and the
-    base step is chosen so the grid has about ``GRID_CANDIDATES_PER_POSE * count``
-    points.
+    A joint in the spec's ``grid_step_rad`` gets that step (rounded so the grid
+    ends on both ends of its range). Any other joint's step is a shared base
+    step times ``sqrt(largest span / its span)`` of the model gravity torque over
+    random poses, so joints that carry more gravity get a finer grid, and the
+    base step is chosen so the grid has about ``GRID_CANDIDATES_PER_POSE *
+    count`` points. Derived steps do not reproduce a hand-set grid: on the Dual
+    OpenYAM boxes they come out near 9.6, 13.5, 30 and 50 deg for joints 2-5,
+    where the bench used 12.5, 13.5, 25 and 37.5 deg, so the bench spec sets
+    those.
     """
     budget = min(MAX_GRID_CANDIDATES, GRID_CANDIDATES_PER_POSE * max(count, 1))
     ranges = arm.spec.joint_ranges
+    given = arm.spec.grid_step_rad or {}
     torques = gravity_samples(arm.model, arm.joint_names, ranges)
     torque_spans = dict(
         zip(arm.joint_names, torques.max(axis=0) - torques.min(axis=0), strict=True)
@@ -279,9 +289,17 @@ def grid_axes(
         name: math.sqrt(widest / max(float(torque_spans[name]), 1e-9 * widest)) for name in gridded
     }
     span_deg = {name: math.degrees(ranges[name][1] - ranges[name][0]) for name in gridded}
+    fixed = {
+        name: max(2, round(span_deg[name] / math.degrees(given[name])) + 1)
+        for name in gridded
+        if name in given
+    }
 
     def points(step: float) -> dict[str, int]:
-        return {name: max(2, round(span_deg[name] / (step * weight[name])) + 1) for name in gridded}
+        return {
+            name: fixed.get(name, max(2, round(span_deg[name] / (step * weight[name])) + 1))
+            for name in gridded
+        }
 
     low_step, high_step = 1e-3, 360.0
     for _ in range(60):
@@ -444,8 +462,12 @@ def generate_poses(
         count: How many identification poses to pick.
         gravity_free_joints: Joints to find a gravity-free pose for; defaults
             to every measured joint.
+
+    Raises:
+        NoWorkspaceGuardError: The spec has only the implicit workspace guard.
     """
     arm = spec if isinstance(spec, ArmModel) else ArmModel(spec)
+    arm.spec.require_workspace_guard()
     home = home_pose(arm)
     axes, steps_deg = grid_axes(arm, count)
     candidates = candidate_poses(arm, axes)
@@ -547,14 +569,34 @@ def main(
     robot: str = typer.Option(..., help="A known robot, e.g. dual-openyam or b601-dm"),
     arm: str | None = typer.Option(None, help="Which arm, e.g. left; omit for a single arm"),
     count: int = typer.Option(DEFAULT_POSE_COUNT, help="Identification poses to pick"),
+    floor_z_m: float | None = typer.Option(
+        None, help="Table height from the arm's base, m, for a robot without a bench guard"
+    ),
+    min_x_m: float | None = typer.Option(
+        None, help="The fingertip stays in front of this x from the base, m, with --floor-z-m"
+    ),
 ) -> None:
     """Print the identification and gravity-free poses for one arm, in degrees."""
     try:
         spec = arm_spec(robot, arm)
     except ValueError as error:
         raise typer.BadParameter(str(error)) from None
+    if (floor_z_m is None) != (min_x_m is None):
+        raise typer.BadParameter("give both --floor-z-m and --min-x-m, or neither")
+    if floor_z_m is not None and min_x_m is not None:
+        guard = WorkspaceGuard.for_bench(
+            floor_z_m,
+            min_x_m,
+            keep_out=spec.workspace.keep_out,
+            clearance_frames=spec.workspace.clearance_frames,
+        )
+        spec = replace(spec, workspace=guard)
     model = ArmModel(spec)
-    typer.echo(format_pose_set(model, generate_poses(model, count=count)))
+    try:
+        pose_set = generate_poses(model, count=count)
+    except NoWorkspaceGuardError as error:
+        raise typer.BadParameter(f"{error} (--floor-z-m and --min-x-m)") from None
+    typer.echo(format_pose_set(model, pose_set))
 
 
 if __name__ == "__main__":

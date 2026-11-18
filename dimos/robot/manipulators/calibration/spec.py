@@ -29,13 +29,24 @@ move it. Everything else is derived from the model unless given:
   load sits on its axis.
 - ``joint_ranges``: the URDF limits shrunk on each side by the larger of
   ``range_margin_fraction`` of the span and ``range_margin_rad``.
-- ``max_torque_nm``: for Damiao robots, the motor profile's ``t_max`` times
-  ``torque_safety_factor``; no identification pose may need more in the model.
-- ``workspace``: a :class:`WorkspaceGuard`, by default with the model root's
-  z = 0 plane as the floor and nothing else; its clearance frames default to
-  every link below the arm's first joint that moves when the measured joints do.
-  It knows no other bodies: a robot with a torso or a neighbour needs keep-out
-  half-spaces of its own (see ``dual_openyam.calibration_workspace``).
+- ``max_torque_nm``: for Damiao robots, the motor type's rated peak torque
+  (``DAMIAO_STOCK_TORQUE_LIMIT_NM``) times ``torque_safety_factor``; no
+  identification pose may need more in the model. A custom firmware profile's
+  ``t_max`` is the torque range of its MIT frames, not a rating, so a motor of
+  unknown type needs an explicit cap, or gets the smallest known rating with a
+  warning.
+- ``workspace``: a :class:`WorkspaceGuard`. Without one the spec gets an
+  implicit guard (``explicit`` False) with the model root's z = 0 plane as the
+  floor and nothing else, which knows nothing of the table, the space behind
+  the base or a torso: pose generation refuses it, so anything that moves an
+  arm needs an explicit guard (:meth:`WorkspaceGuard.for_bench`). Its
+  clearance frames default to every link below the arm's first joint that
+  moves when the measured joints do. On a robot with several arms, each arm's
+  guard also keeps out of the other arms' halves, split halfway between the
+  bases in the model; a torso or other bodies need keep-out half-spaces of
+  their own (see ``dual_openyam.calibration_workspace``).
+- ``grid_step_rad``: the pose grid steps of the measured joints, derived from
+  the gravity torque spans unless given (see ``gravity_poses.grid_axes``).
 
 Workspace coordinates are metres with the origin at ``base_frame`` and the axes
 of the model root, whose -z is gravity, so z is height and the floor is a plane.
@@ -55,7 +66,10 @@ import numpy as np
 import pinocchio as pin
 
 from dimos.robot.assets.model import JointDescription, RobotModel
-from dimos.robot.manipulators.damiao.robot import DamiaoMotor, DamiaoRobot
+from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoMotor, DamiaoRobot
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 Vector3 = tuple[float, float, float]
 
@@ -64,10 +78,12 @@ DEFAULT_RANGE_MARGIN_RAD = math.radians(5.0)
 # Pose generation range of a joint without position limits.
 CONTINUOUS_RANGE_RAD = (-math.pi, math.pi)
 # An identification pose may load each motor with at most this share of its
-# profile's peak torque: 10 Nm on a DM4340 (28 Nm peak), about its continuous
+# type's peak torque: 10 Nm on a DM4340 (28 Nm peak), about its continuous
 # rating and the cap the bench used; 3.6 Nm on a DM4310.
 DEFAULT_TORQUE_SAFETY_FACTOR = 10.0 / 28.0
-# Peak torque of the stock Damiao MIT scaling, by motor type.
+# Peak torque of the stock Damiao MIT scaling, by motor type: the range of the
+# torque slot the connection clamps to, and the rating the calibration caps
+# scale. A custom profile's t_max is only the first of these.
 DAMIAO_STOCK_TORQUE_LIMIT_NM: dict[str, float] = {
     "DM4310": 10.0,
     "DM4340": 28.0,
@@ -86,8 +102,14 @@ MOBILE_FRAME_MIN_TRAVEL_M = 0.005
 # Preferred tip frame names below the last arm joint, in order.
 TIP_FRAME_HINTS = ("grasp", "tcp")
 
+NO_WORKSPACE_GUARD_HINT = "pass floor height and front limit"
+
 _ARM_ID = re.compile(r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$")
 _FILENAME_ATTR = re.compile(r'filename="([^"]*)"')
+
+
+class NoWorkspaceGuardError(ValueError):
+    """An arm would be moved with only the implicit, model-derived workspace guard."""
 
 
 @dataclass(frozen=True)
@@ -119,6 +141,9 @@ class WorkspaceGuard:
         clearance_frames: Frames whose origins are checked; ``None`` derives
             them from the model (see :func:`default_clearance_frames`).
         point_offset_m: The fingertip in the spec's tip frame.
+        explicit: Whether someone described the arm's surroundings. The guard
+            a spec gets when none is given is not (False): its floor is only
+            the model root's z = 0 plane, and nothing moves an arm with it.
     """
 
     floor_z_m: float = 0.0
@@ -128,10 +153,45 @@ class WorkspaceGuard:
     keep_out: tuple[HalfSpace, ...] = ()
     clearance_frames: tuple[str, ...] | None = None
     point_offset_m: Vector3 = (0.0, 0.0, 0.0)
+    explicit: bool = True
 
     def __post_init__(self) -> None:
         if self.pose_clearance_m < 0.0 or self.transition_clearance_m < 0.0:
             raise ValueError("workspace clearances must not be negative")
+
+    @classmethod
+    def for_bench(
+        cls,
+        floor_z_m: float,
+        min_x_m: float,
+        *,
+        pose_clearance_m: float = 0.15,
+        transition_clearance_m: float = 0.11,
+        keep_out: Sequence[HalfSpace] = (),
+        clearance_frames: Sequence[str] | None = None,
+        point_offset_m: Vector3 = (0.0, 0.0, 0.0),
+    ) -> WorkspaceGuard:
+        """An explicit guard for an arm on a bench: the table height and the in-front line.
+
+        Args:
+            floor_z_m: The table's height in the workspace frame, e.g. -0.03
+                for a base 30 mm above it.
+            min_x_m: The fingertip stays in front of this x at a pose.
+            pose_clearance_m: Height above the table kept at a pose.
+            transition_clearance_m: Height above the table kept between poses.
+            keep_out: Further keep-out half-spaces.
+            clearance_frames: Frames to check; ``None`` derives them.
+            point_offset_m: The fingertip in the tip frame.
+        """
+        return cls(
+            floor_z_m=floor_z_m,
+            pose_clearance_m=pose_clearance_m,
+            transition_clearance_m=transition_clearance_m,
+            min_x_m=min_x_m,
+            keep_out=tuple(keep_out),
+            clearance_frames=None if clearance_frames is None else tuple(clearance_frames),
+            point_offset_m=point_offset_m,
+        )
 
     @property
     def min_pose_z_m(self) -> float:
@@ -164,6 +224,8 @@ class ArmCalibrationSpec:
         max_torque_nm: Most model gravity torque a pose may need, per joint.
         workspace: Where the arm may go.
         gains: The robot's configured ``(kp, kd)`` per joint, if known.
+        grid_step_rad: Pose grid step per measured joint, rad; joints left out
+            (or every joint, when ``None``) get the derived step.
     """
 
     arm_id: str
@@ -176,8 +238,9 @@ class ArmCalibrationSpec:
     measured_joints: list[str]
     joint_ranges: dict[str, tuple[float, float]]
     max_torque_nm: dict[str, float]
-    workspace: WorkspaceGuard = field(default_factory=WorkspaceGuard)
+    workspace: WorkspaceGuard = field(default_factory=lambda: WorkspaceGuard(explicit=False))
     gains: dict[str, tuple[float, float]] = field(default_factory=dict)
+    grid_step_rad: dict[str, float] | None = None
 
     def __post_init__(self) -> None:
         if not _ARM_ID.match(self.arm_id) or ".." in self.arm_id.split("/"):
@@ -202,6 +265,23 @@ class ArmCalibrationSpec:
                 raise ValueError(f"{self.arm_id}: {joint} range {low}..{high} is empty")
         if any(limit <= 0.0 for limit in self.max_torque_nm.values()):
             raise ValueError(f"{self.arm_id}: torque limits must be positive")
+        if self.grid_step_rad is not None:
+            unmeasured = set(self.grid_step_rad) - set(self.measured_joints)
+            if unmeasured:
+                raise ValueError(
+                    f"{self.arm_id}: grid steps given for joints that are not measured: "
+                    f"{sorted(unmeasured)}"
+                )
+            if not all(math.isfinite(s) and s > 0.0 for s in self.grid_step_rad.values()):
+                raise ValueError(f"{self.arm_id}: grid steps must be positive")
+
+    def require_workspace_guard(self) -> WorkspaceGuard:
+        """The guard, when it is explicit; raises ``NoWorkspaceGuardError`` before any motion."""
+        if not self.workspace.explicit:
+            raise NoWorkspaceGuardError(
+                f"no workspace guard defined for {self.arm_id}: {NO_WORKSPACE_GUARD_HINT}"
+            )
+        return self.workspace
 
     @property
     def home_vector(self) -> np.ndarray:
@@ -225,7 +305,11 @@ def model_sha256(model: RobotModel) -> str:
     absolute per checkout, so they are reduced to file names to keep the hash the
     same on every machine.
     """
-    xml = model.load().xml
+    return urdf_sha256(model.load().xml)
+
+
+def urdf_sha256(xml: str) -> str:
+    """:func:`model_sha256` of a materialized URDF text, e.g. ``model.load().xml``."""
     canonical = _FILENAME_ATTR.sub(
         lambda match: f'filename="{PurePosixPath(match.group(1)).name}"', xml
     )
@@ -286,6 +370,7 @@ def build_arm_spec(
     max_torque_nm: Mapping[str, float] | None = None,
     workspace: WorkspaceGuard | None = None,
     gains: Mapping[str, tuple[float, float]] | None = None,
+    grid_step_rad: Mapping[str, float] | None = None,
 ) -> ArmCalibrationSpec:
     """Spec for one arm of ``model``, deriving every field not given (see the module doc).
 
@@ -305,9 +390,11 @@ def build_arm_spec(
         range_margin_fraction: Default range margin as a share of the span.
         range_margin_rad: Smallest default range margin.
         max_torque_nm: Per-joint torque caps; defaults to the URDF effort limit.
-        workspace: Defaults to the model root's z = 0 plane as the floor and
-            nothing else.
+        workspace: Defaults to an implicit guard (``explicit`` False) with the
+            model root's z = 0 plane as the floor and nothing else; poses are
+            not generated for it.
         gains: The robot's configured ``(kp, kd)`` per joint.
+        grid_step_rad: Pose grid steps of measured joints, rad.
     """
     names = list(joint_names)
     pin_model = reduced_model(model, names)
@@ -345,7 +432,9 @@ def build_arm_spec(
         torques = {name: float(max_torque_nm[name]) for name in names}
     for frame in (base, tip, *((workspace.clearance_frames or ()) if workspace else ())):
         frame_id(pin_model, frame)  # raises for an unknown frame
-    guard = workspace or WorkspaceGuard(floor_z_m=root_floor_z(pin_model, base, home, names))
+    guard = workspace or WorkspaceGuard(
+        floor_z_m=root_floor_z(pin_model, base, home, names), explicit=False
+    )
     if guard.clearance_frames is None:
         guard = replace(
             guard,
@@ -368,6 +457,7 @@ def build_arm_spec(
         max_torque_nm=torques,
         workspace=guard,
         gains=dict(gains or {}),
+        grid_step_rad=None if grid_step_rad is None else dict(grid_step_rad),
     )
 
 
@@ -389,28 +479,44 @@ def specs_from_damiao_robot(
     arm_id: str | None = None,
     joint_ranges: Mapping[str, tuple[float, float]] | None = None,
     torque_safety_factor: float = DEFAULT_TORQUE_SAFETY_FACTOR,
+    max_torque_nm: Mapping[str, float] | None = None,
+    grid_step_rad: Mapping[str, float] | None = None,
 ) -> list[ArmCalibrationSpec]:
     """One spec per bus of a Damiao robot, in bus order.
 
     Args:
         robot: The robot; its ``gravity_model`` is the mass-bearing model.
         workspace: One guard for every arm, or guards by arm name ("left") or
-            bus name ("left_arm"); arms without one get the default guard.
-        arm_id: The robot's name in arm ids; a single-bus robot's arm is
-            ``arm_id``, the others ``f"{arm_id}/{arm}"`` where ``arm`` is the
-            bus name without its "_arm" suffix. Defaults to the URDF name.
+            bus name ("left_arm"); arms without one get the implicit guard,
+            for which no poses are generated. On several buses each arm's
+            guard also gets a keep-out half-space toward every other arm,
+            halfway between their bases in the model.
+        arm_id: Overrides ``robot.name`` in the arm ids, which are those of
+            ``robot.arm_ids()``: a single-bus robot's arm is the name, the
+            others ``f"{name}/{arm}"``, ``arm`` being the bus name without its
+            "_arm" suffix. Required when the robot has no name.
         joint_ranges: Per-joint range overrides, rad, for any of the arms.
-        torque_safety_factor: Share of each motor's peak torque a pose may use.
+        torque_safety_factor: Share of each motor's rated peak torque a pose
+            may use.
+        max_torque_nm: Per-joint pose torque caps, used as given; needed for a
+            motor of unknown type, such as one on a custom firmware profile.
+        grid_step_rad: Per-joint pose grid steps, rad, for any of the arms.
     """
     model = robot.gravity_model if robot.gravity_model is not None else robot.model
-    unknown = set(joint_ranges or {}) - set(robot.arm_joint_names)
-    if unknown:
-        raise ValueError(f"joint ranges given for joints of no arm: {sorted(unknown)}")
-    prefix = arm_id or _plain_name(model_name(model))
-    single = len(robot.buses) == 1
+    for label, values in (
+        ("joint ranges", joint_ranges),
+        ("torque caps", max_torque_nm),
+        ("grid steps", grid_step_rad),
+    ):
+        unknown = set(values or {}) - set(robot.arm_joint_names)
+        if unknown:
+            raise ValueError(f"{label} given for joints of no arm: {sorted(unknown)}")
+    if arm_id is None and not robot.name:
+        raise ValueError("the robot has no name to make arm ids from; pass arm_id")
+    named = robot if arm_id is None or arm_id == robot.name else replace(robot, name=arm_id)
     specs: list[ArmCalibrationSpec] = []
     offset = 0
-    for bus in robot.buses:
+    for bus, spec_id in zip(robot.buses, named.arm_ids(), strict=True):
         joints = [motor.name for motor in bus.arm]
         arm = arm_name(bus.name)
         guard: WorkspaceGuard | None
@@ -425,26 +531,65 @@ def specs_from_damiao_robot(
         )
         specs.append(
             build_arm_spec(
-                prefix if single else f"{prefix}/{arm}",
+                spec_id,
                 model,
                 joints,
                 home_joints=home,
                 joint_ranges={
                     name: value for name, value in (joint_ranges or {}).items() if name in joints
                 },
-                max_torque_nm={
-                    motor.name: motor_torque_limit_nm(motor) * torque_safety_factor
-                    for motor in bus.arm
-                },
+                max_torque_nm=_torque_caps(spec_id, bus, torque_safety_factor, max_torque_nm),
                 workspace=guard,
                 gains={
                     name: (float(kp), float(kd))
                     for name, kp, kd in zip(joints, bus.kp, bus.kd, strict=True)
                 },
+                grid_step_rad=(
+                    None
+                    if grid_step_rad is None
+                    else {name: step for name, step in grid_step_rad.items() if name in joints}
+                ),
             )
         )
         offset += len(joints)
-    return specs
+    return with_midline_keep_outs(specs) if len(specs) > 1 else specs
+
+
+def with_midline_keep_outs(specs: Sequence[ArmCalibrationSpec]) -> list[ArmCalibrationSpec]:
+    """Each spec with a keep-out half-space toward every other arm, halfway between the bases.
+
+    The bases are placed by the specs' (shared) model with every joint at
+    neutral; base frames sit above the arm joints, so the arms' postures do not
+    move them. A spec's guard keeps its own keep-outs, explicit or not.
+    """
+    model = pin.buildModelFromXML(specs[0].model.load().xml)
+    data = model.createData()
+    pin.framesForwardKinematics(model, data, pin.neutral(model))
+    bases = [
+        np.asarray(data.oMf[frame_id(model, spec.base_frame)].translation, dtype=np.float64)
+        for spec in specs
+    ]
+    result: list[ArmCalibrationSpec] = []
+    for index, spec in enumerate(specs):
+        spaces: list[HalfSpace] = []
+        for other_index, other in enumerate(specs):
+            if other_index == index:
+                continue
+            toward = bases[other_index] - bases[index]
+            distance = float(np.linalg.norm(toward))
+            if distance < 1e-9:
+                raise ValueError(f"{spec.arm_id} and {other.arm_id} share a base position")
+            nx, ny, nz = (float(v) for v in toward / distance)
+            spaces.append(
+                HalfSpace(
+                    normal=(nx, ny, nz),
+                    offset_m=distance / 2.0,
+                    name=f"midline to {other.arm_id}",
+                )
+            )
+        guard = replace(spec.workspace, keep_out=(*spec.workspace.keep_out, *spaces))
+        result.append(replace(spec, workspace=guard))
+    return result
 
 
 def arm_name(bus_name: str) -> str:
@@ -453,7 +598,11 @@ def arm_name(bus_name: str) -> str:
 
 
 def motor_torque_limit_nm(motor: DamiaoMotor) -> float:
-    """Peak torque of a Damiao motor: its custom profile's ``t_max`` or the stock scaling."""
+    """The torque range of a Damiao motor's MIT frames: its custom profile's ``t_max``, else stock.
+
+    This is what the torque slot can encode, which the connection clamps to.
+    It is not what the motor can deliver: see :func:`motor_rated_torque_nm`.
+    """
     if motor.profile is not None:
         return float(motor.profile.t_max)
     try:
@@ -462,6 +611,44 @@ def motor_torque_limit_nm(motor: DamiaoMotor) -> float:
         raise ValueError(
             f"no torque limit known for Damiao motor type {motor.type!r} ({motor.name})"
         ) from None
+
+
+def motor_rated_torque_nm(motor: DamiaoMotor) -> float | None:
+    """Rated peak torque of a Damiao motor by its type, or ``None`` for an unknown type.
+
+    A motor on a custom firmware profile has type "profile", which names no
+    motor: its profile's ``t_max`` only scales the MIT frames.
+    """
+    return DAMIAO_STOCK_TORQUE_LIMIT_NM.get(motor.type)
+
+
+def _torque_caps(
+    arm_id: str,
+    bus: DamiaoBus,
+    safety_factor: float,
+    explicit: Mapping[str, float] | None,
+) -> dict[str, float]:
+    """Pose torque cap per arm motor: explicit, else the rating times ``safety_factor``."""
+    fallback = min(DAMIAO_STOCK_TORQUE_LIMIT_NM.values())
+    caps: dict[str, float] = {}
+    unrated: list[str] = []
+    for motor in bus.arm:
+        if explicit is not None and motor.name in explicit:
+            caps[motor.name] = float(explicit[motor.name])
+            continue
+        rating = motor_rated_torque_nm(motor)
+        if rating is None:
+            unrated.append(motor.name)
+            rating = fallback
+        caps[motor.name] = rating * safety_factor
+    if unrated:
+        logger.warning(
+            f"{arm_id}: no torque rating is known for {unrated} (a custom profile's t_max is "
+            f"its MIT range, not a rating); capping their pose torque at the smallest known "
+            f"rating, {fallback:g} Nm x {safety_factor:.3g} = {fallback * safety_factor:.2f} Nm. "
+            "Pass max_torque_nm to set them."
+        )
+    return caps
 
 
 def urdf_limits(joint: JointDescription) -> tuple[float, float]:
@@ -672,8 +859,3 @@ def _urdf_effort(joint: JointDescription) -> float:
     if joint.effort is None or joint.effort <= 0.0:
         raise ValueError(f"{joint.name} has no URDF effort limit; pass max_torque_nm")
     return float(joint.effort)
-
-
-def _plain_name(name: str) -> str:
-    plain = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_.").lower()
-    return plain or "robot"

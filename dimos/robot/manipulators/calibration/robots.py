@@ -15,8 +15,9 @@
 """The Damiao robots the calibration tools know by name, e.g. ``--robot dual-openyam --arm left``.
 
 ``robot_specs`` applies a robot's own calibration setup where it has one (the
-Dual OpenYAM bench guard and pose boxes); every other robot gets the defaults
-derived from its model.
+Dual OpenYAM bench guard, pose boxes and grid); every other robot gets the
+defaults derived from its model, whose implicit workspace guard lets its poses
+be fitted but not generated. Arm ids are the robot's ``arm_ids()``.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ _CUSTOM_SPECS: dict[str, Callable[[], list[ArmCalibrationSpec]]] = {
 
 
 def robot_id(robot: str) -> str:
-    """The robot part of its arm ids: ``dual-openyam`` -> ``dual_openyam``."""
+    """The robot part of its arm ids, its ``DamiaoRobot.name``: ``dual-openyam`` -> ``dual_openyam``."""
     return robot.replace("-", "_")
 
 
@@ -66,7 +67,7 @@ def robot_specs(robot: str) -> list[ArmCalibrationSpec]:
     custom = _CUSTOM_SPECS.get(robot)
     if custom is not None:
         return custom()
-    return specs_from_damiao_robot(KNOWN_ROBOTS[robot], arm_id=robot_id(robot))
+    return specs_from_damiao_robot(KNOWN_ROBOTS[robot])
 
 
 def arm_spec(robot: str, arm: str | None = None) -> ArmCalibrationSpec:

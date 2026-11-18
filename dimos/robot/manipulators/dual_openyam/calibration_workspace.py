@@ -15,11 +15,13 @@
 """Where each Dual OpenYAM arm may go while it is calibrated on the bench.
 
 The arms stand on a table about 30 mm below their base frames, their bases
-``DUAL_OPENYAM_BENCH_BASE_SPACING_M`` apart (the URDF's default is 0.430 m; the
-bench measures 0.468 m). During calibration an arm's fingertip stays in front
-of its base, every checked point stays 150 mm above the table at a pose (110 mm
-on the way between poses), and nothing crosses the rig midline, halfway between
-the bases, by more than ``DUAL_OPENYAM_MIDLINE_MARGIN_M``.
+``DUAL_OPENYAM_BENCH_BASE_SPACING_M`` apart: the bench measures 0.468 m, while
+the URDF puts the bases at y = +-0.31 m, 0.62 m apart. During calibration an
+arm's fingertip stays in front of its base, every checked point stays 150 mm
+above the table at a pose (110 mm on the way between poses), and nothing
+crosses the rig midline, halfway between the bases on the bench, by more than
+``DUAL_OPENYAM_MIDLINE_MARGIN_M``. The pose grid uses the bench's hand-set
+steps, so the poses are those the bench has run.
 """
 
 from __future__ import annotations
@@ -34,7 +36,8 @@ from dimos.robot.manipulators.calibration.spec import (
 )
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM, DUAL_OPENYAM_SIDES
 
-DUAL_OPENYAM_DEFAULT_BASE_SPACING_M = 0.430
+# The bases' spacing in the URDF (y = +-0.31 m) and on the bench.
+DUAL_OPENYAM_URDF_BASE_SPACING_M = 0.62
 DUAL_OPENYAM_BENCH_BASE_SPACING_M = 0.468
 DUAL_OPENYAM_TABLE_Z_M = -0.03
 DUAL_OPENYAM_POSE_CLEARANCE_M = 0.15
@@ -54,6 +57,8 @@ DUAL_OPENYAM_CALIBRATION_RANGES_DEG: dict[int, tuple[float, float]] = {
     5: (-75.0, 75.0),
     6: (0.0, 0.0),
 }
+# Pose grid steps, deg by measured joint number: the bench's hand-set grid.
+DUAL_OPENYAM_GRID_STEP_DEG: dict[int, float] = {2: 12.5, 3: 13.5, 4: 25.0, 5: 37.5}
 
 
 def dual_openyam_bench_workspace(
@@ -88,19 +93,29 @@ def dual_openyam_calibration_ranges(side: str) -> dict[str, tuple[float, float]]
     }
 
 
+def dual_openyam_grid_steps(side: str) -> dict[str, float]:
+    """The bench's pose grid steps for one arm, rad by joint name."""
+    return {
+        f"{side}_joint{number}": math.radians(step)
+        for number, step in DUAL_OPENYAM_GRID_STEP_DEG.items()
+    }
+
+
 def dual_openyam_calibration_specs(
     *, base_spacing_m: float = DUAL_OPENYAM_BENCH_BASE_SPACING_M
 ) -> list[ArmCalibrationSpec]:
-    """Both arms' specs with the bench guard and boxes: "dual_openyam/left" and ".../right"."""
+    """Both arms' specs with the bench guard, boxes and grid: "dual_openyam/left" and ".../right"."""
     ranges: dict[str, tuple[float, float]] = {}
+    steps: dict[str, float] = {}
     for side in DUAL_OPENYAM_SIDES:
         ranges.update(dual_openyam_calibration_ranges(side))
+        steps.update(dual_openyam_grid_steps(side))
     return specs_from_damiao_robot(
         DUAL_OPENYAM,
-        arm_id="dual_openyam",
         workspace={
             side: dual_openyam_bench_workspace(side, base_spacing_m=base_spacing_m)
             for side in DUAL_OPENYAM_SIDES
         },
         joint_ranges=ranges,
+        grid_step_rad=steps,
     )

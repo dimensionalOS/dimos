@@ -14,34 +14,57 @@
 
 from dataclasses import replace
 import math
+from pathlib import Path
+import re
 
+import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
+import dimos
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.calibration import spec as spec_module
 from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     require_model,
     robot_specs_or_skip,
 )
-from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS, arm_spec, robot_id
+from dimos.robot.manipulators.calibration.gravity_poses import (
+    ArmModel,
+    candidate_poses,
+    generate_poses,
+    grid_axes,
+)
+from dimos.robot.manipulators.calibration.robots import (
+    KNOWN_ROBOTS,
+    arm_spec,
+    robot_id,
+    robot_specs,
+)
 from dimos.robot.manipulators.calibration.spec import (
     DAMIAO_STOCK_TORQUE_LIMIT_NM,
     DEFAULT_TORQUE_SAFETY_FACTOR,
     ArmCalibrationSpec,
+    NoWorkspaceGuardError,
+    WorkspaceGuard,
     build_arm_spec,
     merged_links,
     model_sha256,
     specs_from_damiao_robot,
     urdf_limits,
 )
+from dimos.robot.manipulators.damiao.robot import DamiaoRobot
+from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
 from dimos.robot.manipulators.dual_openyam.calibration_workspace import (
     DUAL_OPENYAM_BENCH_BASE_SPACING_M,
     DUAL_OPENYAM_MIDLINE_MARGIN_M,
     DUAL_OPENYAM_TABLE_Z_M,
+    DUAL_OPENYAM_URDF_BASE_SPACING_M,
 )
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.makermods_metal.config import METAL
 from dimos.robot.manipulators.openarm.config import OPENARM
 from dimos.robot.manipulators.openyam.config import OPENYAM
+from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM
 
 DM4340 = DAMIAO_STOCK_TORQUE_LIMIT_NM["DM4340"] * DEFAULT_TORQUE_SAFETY_FACTOR
 DM4310 = DAMIAO_STOCK_TORQUE_LIMIT_NM["DM4310"] * DEFAULT_TORQUE_SAFETY_FACTOR
@@ -79,15 +102,28 @@ def test_dual_openyam_bench_specs(dual_openyam_specs: list[ArmCalibrationSpec]) 
         assert spec.gains[f"{side}_joint2"] == (80.0, 5.0)
         assert_ranges_inside_urdf_limits(spec)
         guard = spec.workspace
+        assert guard.explicit
         assert guard.floor_z_m == DUAL_OPENYAM_TABLE_Z_M
         assert guard.min_pose_z_m == pytest.approx(0.12)
         assert guard.min_transition_z_m == pytest.approx(0.08)
         assert guard.min_x_m == 0.15 and guard.point_offset_m == (0.0, 0.0, -0.046)
-        (midline,) = guard.keep_out
+        # The bench midline, then the looser one halfway between the URDF's bases.
+        midline, model_midline = guard.keep_out
+        toward_other = (0.0, -1.0 if side == "left" else 1.0, 0.0)
+        assert midline.name == "rig midline" and midline.normal == toward_other
         assert midline.offset_m == pytest.approx(
             DUAL_OPENYAM_BENCH_BASE_SPACING_M / 2 + DUAL_OPENYAM_MIDLINE_MARGIN_M
         )
-        assert midline.normal == (0.0, -1.0 if side == "left" else 1.0, 0.0)
+        assert model_midline.normal == pytest.approx(toward_other)
+        assert model_midline.offset_m == pytest.approx(DUAL_OPENYAM_URDF_BASE_SPACING_M / 2)
+        assert model_midline.offset_m > midline.offset_m
+        # The bench's hand-set pose grid.
+        assert spec.grid_step_rad == pytest.approx(
+            {
+                f"{side}_joint{number}": math.radians(step)
+                for number, step in {2: 12.5, 3: 13.5, 4: 25.0, 5: 37.5}.items()
+            }
+        )
         # Every frame the old filter checked is still checked, plus the elbow and
         # the grasp frame; the shoulder, which cannot move, is not.
         assert guard.clearance_frames is not None
@@ -99,8 +135,9 @@ def test_dual_openyam_bench_specs(dual_openyam_specs: list[ArmCalibrationSpec]) 
 
 def test_dual_openyam_default_spec_derives_everything_from_the_model() -> None:
     require_model(DUAL_OPENYAM.gravity_model, "Dual OpenYAM")
-    left, right = specs_from_damiao_robot(DUAL_OPENYAM, arm_id="dual_openyam")
-    for spec in (left, right):
+    left, right = specs_from_damiao_robot(DUAL_OPENYAM)
+    assert [left.arm_id, right.arm_id] == DUAL_OPENYAM.arm_ids()
+    for spec, toward_other in ((left, (0.0, -1.0, 0.0)), (right, (0.0, 1.0, 0.0))):
         assert len(spec.joint_names) == 6
         assert_ranges_inside_urdf_limits(spec)
         joints = {joint.name: joint for joint in spec.model.load().joints}
@@ -112,13 +149,18 @@ def test_dual_openyam_default_spec_derives_everything_from_the_model() -> None:
         assert spec.joint_names[0] not in spec.measured_joints
         assert spec.joint_names[5] not in spec.measured_joints
         assert len(spec.gravity_links) == 5
-        # The default floor is the model root's z = 0 plane: the bases' level here.
+        # The implicit guard: the model root's z = 0 plane (the bases' level here)
+        # and the midline between the URDF's bases, nothing in front or behind.
+        assert not spec.workspace.explicit
         assert spec.workspace.floor_z_m == pytest.approx(0.0)
-        assert spec.workspace.keep_out == () and spec.workspace.min_x_m is None
+        assert spec.workspace.min_x_m is None and spec.grid_step_rad is None
+        (midline,) = spec.workspace.keep_out
+        assert midline.normal == pytest.approx(toward_other)
+        assert midline.offset_m == pytest.approx(DUAL_OPENYAM_URDF_BASE_SPACING_M / 2)
 
 
 def test_openyam_spec() -> None:
-    (spec,) = robot_specs_or_skip(OPENYAM, "openyam", "OpenYAM (yam_description LFS archive)")
+    (spec,) = robot_specs_or_skip(OPENYAM, "OpenYAM (yam_description LFS archive)")
     assert spec.arm_id == "openyam"
     assert spec.joint_names == [f"yam_joint{i}" for i in range(1, 7)]
     assert "yam_joint1" not in spec.measured_joints
@@ -146,21 +188,34 @@ def test_b601_spec_from_its_motor_table(b601_spec: ArmCalibrationSpec) -> None:
     ]
 
 
-def test_metal_spec_takes_torque_limits_from_its_custom_profiles() -> None:
-    (spec,) = robot_specs_or_skip(METAL, "metal", "MakerMods Metal")
-    profiles = [motor.profile for motor in METAL.buses[0].arm]
-    assert all(profile is not None for profile in profiles)
-    assert list(spec.max_torque_nm.values()) == pytest.approx(
-        [profile.t_max * DEFAULT_TORQUE_SAFETY_FACTOR for profile in profiles if profile]
+def test_metal_spec_does_not_take_torque_caps_from_its_profiles_mit_range(
+    mocker: MockerFixture,
+) -> None:
+    # The custom profiles' t_max (30, 120 and 20 Nm) only scale the MIT frames;
+    # the motors' ratings are unknown, so the caps fall back to the smallest
+    # known rating, with a warning, unless given.
+    warning = mocker.spy(spec_module.logger, "warning")
+    (spec,) = robot_specs_or_skip(METAL, "MakerMods Metal")
+    assert all(motor.profile is not None for motor in METAL.buses[0].arm)
+    smallest = min(DAMIAO_STOCK_TORQUE_LIMIT_NM.values()) * DEFAULT_TORQUE_SAFETY_FACTOR
+    assert spec.max_torque_nm == pytest.approx(dict.fromkeys(spec.joint_names, smallest))
+    (message,) = [call.args[0] for call in warning.call_args_list]
+    assert message.startswith("metal: no torque rating is known for ['joint1'")
+    assert "Pass max_torque_nm" in message
+    warning.reset_mock()
+    (given,) = robot_specs_or_skip(
+        METAL, "MakerMods Metal", max_torque_nm={"joint2": 12.0, "joint3": 8.0}
     )
-    assert spec.max_torque_nm["joint2"] == pytest.approx(120.0 * DEFAULT_TORQUE_SAFETY_FACTOR)
+    assert given.max_torque_nm["joint2"] == 12.0 and given.max_torque_nm["joint3"] == 8.0
+    assert given.max_torque_nm["joint1"] == pytest.approx(smallest)
+    assert "['joint1', 'joint4', 'joint5', 'joint6']" in warning.call_args.args[0]
     assert spec.tip_frame == "gripper_base"
     assert "joint1" not in spec.measured_joints
     assert_ranges_inside_urdf_limits(spec)
 
 
 def test_openarm_keeps_its_horizontal_shoulder_joint() -> None:
-    left, right = robot_specs_or_skip(OPENARM, "openarm", "OpenArm")
+    left, right = robot_specs_or_skip(OPENARM, "OpenArm")
     assert [left.arm_id, right.arm_id] == ["openarm/left", "openarm/right"]
     for spec in (left, right):
         assert len(spec.joint_names) == 7
@@ -204,10 +259,10 @@ def _without_efforts(model: RobotModel) -> RobotModel:
 
 def test_model_fingerprint_ignores_mesh_paths_but_not_edits(left_spec: ArmCalibrationSpec) -> None:
     xml = left_spec.model.load().xml
+    checkout = f"{Path(dimos.__file__).resolve().parents[1]}/"
+    assert checkout in xml  # the meshes are under this checkout
     here = RobotModel.from_urdf_string(xml)
-    elsewhere = RobotModel.from_urdf_string(
-        xml.replace("/home/anvil/dimos-wt/arm-calibration/", "/srv/other/checkout/")
-    )
+    elsewhere = RobotModel.from_urdf_string(xml.replace(checkout, "/srv/other/checkout/"))
     assert model_sha256(here) == model_sha256(elsewhere) == left_spec.model_sha256()
     heavier = RobotModel.from_urdf_string(xml.replace('value="1.46908"', 'value="1.6"', 1))
     assert model_sha256(heavier) != model_sha256(here)
@@ -244,3 +299,93 @@ def test_spec_rejects_inconsistent_fields(left_spec: ArmCalibrationSpec) -> None
         replace(left_spec, home_joints={})
     with pytest.raises(ValueError, match="empty"):
         replace(left_spec, joint_ranges={**left_spec.joint_ranges, "left_joint2": (1.0, 0.0)})
+
+
+# Arm ids: one source of truth, the robot's name
+
+
+@pytest.mark.parametrize("key", sorted(KNOWN_ROBOTS))
+def test_spec_arm_ids_are_the_robots_arm_ids(key: str) -> None:
+    robot = KNOWN_ROBOTS[key]
+    require_model(robot.gravity_model, key)
+    ids = robot.arm_ids()
+    assert ids and ids[0].split("/")[0] == robot.name == robot_id(key)
+    assert [spec.arm_id for spec in specs_from_damiao_robot(robot)] == ids
+    assert [spec.arm_id for spec in robot_specs(key)] == ids
+
+
+def test_an_unnamed_robot_needs_an_arm_id(b601_spec: ArmCalibrationSpec) -> None:
+    unnamed: DamiaoRobot = replace(B601_DM, name="")
+    with pytest.raises(ValueError, match="no name"):
+        specs_from_damiao_robot(unnamed)
+    (spec,) = specs_from_damiao_robot(unnamed, arm_id="bench_b601")
+    assert spec.arm_id == "bench_b601"
+
+
+# Workspace guards: nothing moves without an explicit one
+
+
+@pytest.mark.parametrize(
+    ("robot", "what"), [(OPENYAM, "OpenYAM"), (METAL, "MakerMods Metal"), (OPENARM, "OpenArm")]
+)
+def test_poses_are_not_generated_without_an_explicit_guard(robot: DamiaoRobot, what: str) -> None:
+    for spec in robot_specs_or_skip(robot, what):
+        assert not spec.workspace.explicit
+        expected = (
+            f"no workspace guard defined for {spec.arm_id}: pass floor height and front limit"
+        )
+        with pytest.raises(NoWorkspaceGuardError, match=re.escape(expected)):
+            spec.require_workspace_guard()
+        with pytest.raises(NoWorkspaceGuardError, match=re.escape(expected)):
+            generate_poses(spec)
+
+
+def test_a_bench_guard_is_explicit_and_a_spec_without_one_is_not(
+    left_spec: ArmCalibrationSpec,
+) -> None:
+    bench = WorkspaceGuard.for_bench(-0.03, 0.15, pose_clearance_m=0.2)
+    assert bench.explicit and bench.floor_z_m == -0.03 and bench.min_x_m == 0.15
+    assert bench.min_pose_z_m == pytest.approx(0.17) and bench.keep_out == ()
+    assert WorkspaceGuard().explicit
+    fields = {name: getattr(left_spec, name) for name in left_spec.__dataclass_fields__}
+    del fields["workspace"]
+    assert not ArmCalibrationSpec(**fields).workspace.explicit
+
+
+@pytest.mark.parametrize(
+    ("robot", "what", "floor_z_m", "half_spacing_m"),
+    [
+        (DUAL_METAL, "Dual MakerMods Metal", 0.0, 0.30),
+        (OPENARM, "OpenArm", -0.6, 0.031),
+    ],
+)
+def test_two_arm_robots_keep_each_arm_out_of_the_others_half(
+    robot: DamiaoRobot, what: str, floor_z_m: float, half_spacing_m: float
+) -> None:
+    implicit = robot_specs_or_skip(robot, what)
+    bench = WorkspaceGuard.for_bench(floor_z_m, 0.10)
+    specs = robot_specs_or_skip(robot, what, workspace=bench)
+    for spec, default, other, toward_y in zip(
+        specs, implicit, reversed(specs), (-1.0, 1.0), strict=True
+    ):
+        # Added to the implicit guard and to an explicit one alike.
+        (midline,) = spec.workspace.keep_out
+        assert default.workspace.keep_out == (midline,)
+        assert midline.name == f"midline to {other.arm_id}"
+        assert midline.normal == pytest.approx((0.0, toward_y, 0.0))
+        assert midline.offset_m == pytest.approx(half_spacing_m, abs=1e-3)
+        arm = ArmModel(spec)
+        pose_set = generate_poses(arm, count=6)
+        assert pose_set.identification
+        for pose in [*pose_set.identification, *(g.pose for g in pose_set.gravity_free.values())]:
+            assert not midline.violated_by(np.vstack(arm.points(arm.q(pose.joints_rad))))
+    if robot is OPENARM:
+        # Without the midline some grid poses reach into the other arm's half.
+        left = specs[0]
+        free = ArmModel(replace(left, workspace=replace(left.workspace, keep_out=())))
+        crossing = [
+            pose
+            for pose in candidate_poses(free, grid_axes(free, 6)[0])
+            if left.workspace.keep_out[0].violated_by(np.vstack(free.points(free.q(pose))))
+        ]
+        assert crossing

@@ -25,12 +25,15 @@ from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     require_model,
     robot_specs_or_skip,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, WorkspaceGuard
 from dimos.robot.manipulators.dual_openyam.calibration_workspace import (
     dual_openyam_calibration_specs,
 )
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM
+
+# A table at the base's level, the fingertip 100 mm in front of the base.
+B601_TEST_BENCH = WorkspaceGuard.for_bench(floor_z_m=0.0, min_x_m=0.10)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -59,5 +62,8 @@ def right_spec(dual_openyam_specs: list[ArmCalibrationSpec]) -> ArmCalibrationSp
 
 @pytest.fixture(scope="session")
 def b601_spec(offline_assets: None) -> ArmCalibrationSpec:
-    """The Seeed B601-DM, a single non-OpenYAM Damiao arm, with default guard and ranges."""
-    return robot_specs_or_skip(B601_DM, "b601_dm", "Seeed B601-DM")[0]
+    """The Seeed B601-DM, a single non-OpenYAM Damiao arm, on a bench at its base's level.
+
+    Everything but the workspace guard is derived from the model.
+    """
+    return robot_specs_or_skip(B601_DM, "Seeed B601-DM", workspace=B601_TEST_BENCH)[0]

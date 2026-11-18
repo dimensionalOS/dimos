@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -26,6 +27,7 @@ from dimos.robot.manipulators.calibration.gravity_poses import (
     body_joint_id,
     format_pose_set,
     generate_poses,
+    grid_axes,
     home_pose,
 )
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, HalfSpace
@@ -153,6 +155,44 @@ def test_generates_the_requested_number_of_poses(pose_set: PoseSet) -> None:
     assert pose_set.candidates > 500
     assert pose_set.arm_id == "dual_openyam/left"
     assert set(pose_set.grid_step_deg) == {f"left_joint{i}" for i in (2, 3, 4, 5)}
+
+
+def test_bench_poses_come_from_the_bench_grid(arm: ArmModel, pose_set: PoseSet) -> None:
+    # The hand-set bench grid, not the derived one (about 9.6, 13.5, 30, 50 deg).
+    assert pose_set.grid_step_deg == pytest.approx(
+        {"left_joint2": 12.5, "left_joint3": 13.5, "left_joint4": 25.0, "left_joint5": 37.5}
+    )
+    axes, _ = grid_axes(arm)
+    assert [len(axis) for axis in axes] == [1, 11, 11, 7, 5, 1]
+    for number, axis in enumerate(axes[1:5], 2):
+        low, high = DUAL_OPENYAM_CALIBRATION_RANGES_DEG[number]
+        assert np.degrees(axis) == pytest.approx(np.arange(low, high + 1e-9, axis_step(number)))
+    for pose in pose_set.identification:
+        for number, value in enumerate(pose.joints_deg[1:5], 2):
+            low = DUAL_OPENYAM_CALIBRATION_RANGES_DEG[number][0]
+            steps = (value - low) / axis_step(number)
+            assert steps == pytest.approx(round(steps), abs=1e-9), (pose.name, number)
+
+
+def axis_step(number: int) -> float:
+    return {2: 12.5, 3: 13.5, 4: 25.0, 5: 37.5}[number]
+
+
+def test_given_grid_steps_replace_only_their_joints_derived_steps(
+    b601_spec: ArmCalibrationSpec,
+) -> None:
+    derived = grid_axes(ArmModel(b601_spec))[1]
+    given = ArmModel(replace(b601_spec, grid_step_rad={"joint3": math.radians(20.0)}))
+    axes, steps = grid_axes(given)
+    assert steps["joint3"] == pytest.approx(20.0, rel=0.1)
+    assert len(axes[given.joint_names.index("joint3")]) == (
+        round(math.degrees(np.ptp(b601_spec.joint_ranges["joint3"])) / 20.0) + 1
+    )
+    assert set(steps) == set(derived)
+    with pytest.raises(ValueError, match="not measured"):
+        replace(b601_spec, grid_step_rad={"joint1": 0.1})
+    with pytest.raises(ValueError, match="positive"):
+        replace(b601_spec, grid_step_rad={"joint2": 0.0})
 
 
 def test_poses_stay_inside_the_joint_ranges(arm: ArmModel, pose_set: PoseSet) -> None:
@@ -304,8 +344,10 @@ def test_right_arm_poses_match_the_left_and_stay_on_their_side(
 
 
 def test_midline_keep_out_faces_the_other_arm(arm: ArmModel, right_arm: ArmModel) -> None:
-    (left_midline,) = arm.workspace.keep_out
-    (right_midline,) = right_arm.workspace.keep_out
+    # The bench midline; the second keep-out, halfway between the URDF's bases, is looser.
+    left_midline, left_model_midline = arm.workspace.keep_out
+    right_midline, right_model_midline = right_arm.workspace.keep_out
+    assert left_model_midline.offset_m == right_model_midline.offset_m > left_midline.offset_m
     limit = DUAL_OPENYAM_BENCH_BASE_SPACING_M / 2.0 + DUAL_OPENYAM_MIDLINE_MARGIN_M
     assert left_midline.offset_m == right_midline.offset_m == pytest.approx(limit)
     assert not left_midline.violated_by(np.array([0.3, -limit + 0.01, 0.3]))

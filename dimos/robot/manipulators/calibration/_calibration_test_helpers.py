@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -75,7 +76,7 @@ def require_model(model: RobotModel, what: str) -> None:
         pytest.skip(f"{what} model is not on disk: {error}")
 
 
-def robot_specs_or_skip(robot: DamiaoRobot, arm_id: str, what: str) -> list[ArmCalibrationSpec]:
-    """``specs_from_damiao_robot`` when the robot's gravity model is on disk, else skip."""
+def robot_specs_or_skip(robot: DamiaoRobot, what: str, **options: Any) -> list[ArmCalibrationSpec]:
+    """``specs_from_damiao_robot(robot, **options)`` when its gravity model is on disk, else skip."""
     require_model(robot.gravity_model, what)
-    return specs_from_damiao_robot(robot, arm_id=arm_id)
+    return specs_from_damiao_robot(robot, **options)
