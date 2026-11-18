@@ -141,8 +141,8 @@ When `--daemon` is used, the process:
 
 #### Adding a New Blueprint
 
-For an in-repository dimOS blueprint, define a module-level `Blueprint` variable and
-regenerate the built-in registry:
+For an in-repository dimOS blueprint, define a module-level `Blueprint` or
+`MetaBlueprint` variable and regenerate the built-in registry:
 
 ```bash
 pytest dimos/robot/test_all_blueprints_generation.py
