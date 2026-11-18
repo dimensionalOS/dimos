@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The simulated Dual OpenYAM rig: the workcell model stepped by one MujocoEngine.
+"""The simulated rig: the workcell model stepped by one MujocoEngine.
 
-``DualOpenYamSimRig`` stands where :class:`~dimos.robot.manipulators.damiao.arm.DamiaoArm`
+``DamiaoSimRig`` stands where :class:`~dimos.robot.manipulators.damiao.arm.DamiaoArm`
 stands for the real robot. It takes plain robot data and exposes the same few
 operations: connect, command, hold, read and disconnect, plus the rig's
 cameras. The DimOS connection module only translates ports and time into
-those calls.
+those calls. ``DualOpenYamSimRig`` is the Dual OpenYAM's.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import queue
 import threading
 import time
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -36,9 +37,10 @@ from numpy.typing import NDArray
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.robot.manipulators.dual_openyam.sim_scene import (
+    DUAL_OPENYAM_WORKCELL,
     OVERHEAD_CAMERA,
-    WRIST_CAMERAS,
-    dual_openyam_workcell,
+    SimWorkcell,
+    scene_spec,
 )
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
 
@@ -105,18 +107,19 @@ class _Snapshot:
 FramesCallback = Callable[[Mapping[str, SimCameraFrame]], None]
 
 
-class DualOpenYamSimRig:
-    """Both arms, their jaws, the table and its objects in MuJoCo, with the rig's cameras.
+class DamiaoSimRig:
+    """A robot's arms, their jaws, the table and its objects in MuJoCo, with the rig's cameras.
 
     Positions are commanded and read by joint name. Each jaw is its gripper
     joint, in that joint's unit; its closed-to-open range maps linearly onto
     the fingers' travel.
 
-    Rendering runs on its own thread from a snapshot of the last step, so three
+    Rendering runs on its own thread from a snapshot of the last step, so the
     cameras do not slow the physics below real time.
 
     Args:
         robot: The motors, gains, gripper joints and models to simulate.
+        workcell: Where the robot's arms are in the URDF it is built from.
         headless: Run without MuJoCo's viewer window.
         camera_size: Image (width, height) in pixels, or ``None`` to render no
             cameras; rendering needs an OpenGL context.
@@ -128,6 +131,7 @@ class DualOpenYamSimRig:
     def __init__(
         self,
         robot: DamiaoRobot,
+        workcell: SimWorkcell,
         *,
         headless: bool = True,
         camera_size: tuple[int, int] | None = (640, 480),
@@ -135,6 +139,7 @@ class DualOpenYamSimRig:
         on_frames: FramesCallback | None = None,
     ) -> None:
         self._robot = robot
+        self._workcell = workcell
         self._headless = headless
         self._camera_size = camera_size
         self._camera_fps = camera_fps
@@ -171,13 +176,13 @@ class DualOpenYamSimRig:
             if self._engine is not None:
                 raise RuntimeError("the simulated rig is already connected")
         robot = self._robot
-        model = dual_openyam_workcell(robot).compile()
+        model = scene_spec(robot, self._workcell).compile()
         if self._camera_size is not None:
             width, height = self._camera_size
             model.vis.global_.offwidth = max(model.vis.global_.offwidth, width)
             model.vis.global_.offheight = max(model.vis.global_.offheight, height)
-        source = robot.gravity_model.load().source_path
-        assert source is not None, "the Dual OpenYAM model is a file"
+        source = self._workcell.urdf.load().source_path
+        assert source is not None, "the workcell's URDF is a file"
         engine = MujocoEngine(
             config_path=source,
             headless=self._headless,
@@ -189,11 +194,9 @@ class DualOpenYamSimRig:
             raise ValueError("the workcell's actuators do not match the robot's joints")
         self._index = {name: index for index, name in enumerate(engine.joint_names)}
         travel = robot.gripper_travel()
-        for name in robot.gripper_joint_names:
-            limits = engine.get_actuator_ctrl_range(self._index[name])
-            assert limits is not None, "every jaw has an actuator"
-            # The fingers' zero is closed and their lower end is fully open.
-            self._jaws[name] = (travel[name], (limits[1], limits[0]))
+        for bus, arm in zip(robot.buses, self._workcell.arms, strict=True):
+            if bus.gripper is not None:
+                self._jaws[bus.gripper.joint] = (travel[bus.gripper.joint], arm.finger_travel)
         engine.set_step_hooks(after=self._after_step)
         self._stepped.clear()
         self._stop.clear()
@@ -233,7 +236,7 @@ class DualOpenYamSimRig:
         """
         unknown = set(targets) - set(self._index)
         if unknown:
-            raise ValueError(f"unknown Dual OpenYAM joints: {sorted(unknown)}")
+            raise ValueError(f"unknown {self._workcell.name} joints: {sorted(unknown)}")
         engine = self._connected_engine()
         for name, value in targets.items():
             if name in self._jaws:
@@ -313,7 +316,7 @@ class DualOpenYamSimRig:
 
     def _start_rendering(self, model: mujoco.MjModel) -> None:
         self._renderer = threading.Thread(
-            target=self._render_loop, args=(model,), daemon=True, name="dual-openyam-sim-render"
+            target=self._render_loop, args=(model,), daemon=True, name="damiao-sim-render"
         )
         self._renderer.start()
         try:
@@ -338,7 +341,7 @@ class DualOpenYamSimRig:
             return
         depth.enable_depth_rendering()
         self._renderer_ready.put(None)
-        cameras = [OVERHEAD_CAMERA, *WRIST_CAMERAS.values()]
+        cameras = [OVERHEAD_CAMERA, *(arm.wrist_camera for arm in self._workcell.arms)]
         view = mujoco.MjData(model)
         period = 1.0 / self._camera_fps
         rendered = 0.0
@@ -379,6 +382,13 @@ class DualOpenYamSimRig:
                 if now - due > period:
                     due = now
                 self._stop.wait(max(0.0, due - now))
+
+
+class DualOpenYamSimRig(DamiaoSimRig):
+    """Both Dual OpenYAM arms; ``options`` as for ``DamiaoSimRig``."""
+
+    def __init__(self, robot: DamiaoRobot, **options: Any) -> None:
+        super().__init__(robot, DUAL_OPENYAM_WORKCELL, **options)
 
 
 def _rescale(value: float, source: tuple[float, float], target: tuple[float, float]) -> float:

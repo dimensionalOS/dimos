@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Dual OpenYAM in MuJoCo, behind the ports of its Damiao connection and its cameras.
+"""A Damiao robot in MuJoCo, behind the ports of its Damiao connection and its cameras.
 
 The simulation lives in :mod:`dimos.robot.manipulators.dual_openyam.sim_rig`.
-This module only translates streams into targets, publishes readings at a
-fixed rate, and publishes each rendered frame on the port and under the frame
-names the rig's RealSense modules use.
+``DamiaoSimConnection`` only translates streams into targets, publishes
+readings at a fixed rate, and publishes each rendered frame on the port and
+under the frame names the rig's RealSense modules use.
+``DualOpenYamSimConnection`` is the Dual OpenYAM's.
 """
 
 from __future__ import annotations
@@ -49,12 +50,14 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
-from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM, DUAL_OPENYAM_SIDES
-from dimos.robot.manipulators.dual_openyam.sim_rig import DualOpenYamSimRig, SimCameraFrame
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
+from dimos.robot.manipulators.dual_openyam.sim_rig import DamiaoSimRig, SimCameraFrame
 from dimos.robot.manipulators.dual_openyam.sim_scene import (
     CAMERA_FOVY,
+    DUAL_OPENYAM_WORKCELL,
     OVERHEAD_CAMERA,
     WRIST_CAMERAS,
+    SimWorkcell,
 )
 
 # The frame every camera pose is published in: the planner's world frame, where
@@ -62,11 +65,6 @@ from dimos.robot.manipulators.dual_openyam.sim_scene import (
 _WORLD_FRAME = "world"
 # A camera_link (x forward, y left, z up) as seen from its optical frame.
 _LINK_IN_OPTICAL = OPTICAL_ROTATION.to_rotation_matrix().T
-
-
-def _wrist_frame_prefix(side: str) -> str:
-    """The frame namespace the rig's wrist RealSense of that side publishes in."""
-    return f"{side}_wrist"
 
 
 def _frame(prefix: str | None, name: str) -> str:
@@ -106,13 +104,13 @@ def _camera_transforms(
     return transforms
 
 
-class DualOpenYamSimConnectionConfig(ConnectionConfig):
-    """Settings of the simulated Dual OpenYAM.
+class DamiaoSimConnectionConfig(ConnectionConfig):
+    """Settings of a simulated Damiao robot.
 
     Attributes:
         state_rate_hz: How often joint readings are published, in Hz.
         headless: Run without MuJoCo's viewer window.
-        cameras: Render and publish the three cameras; needs an OpenGL context.
+        cameras: Render and publish the cameras; needs an OpenGL context.
         width: Width of every camera image, in pixels.
         height: Height of every camera image, in pixels.
         fps: How often the cameras are rendered, in frames per second.
@@ -126,7 +124,6 @@ class DualOpenYamSimConnectionConfig(ConnectionConfig):
             dropped, in metres.
     """
 
-    source: str = "dual_openyam"
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
     headless: bool = True
     cameras: bool = True
@@ -140,28 +137,32 @@ class DualOpenYamSimConnectionConfig(ConnectionConfig):
     depth_trunc_m: float = Field(default=5.0, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
-    def _set_model(self) -> Self:
+    def _position_only(self) -> Self:
         if any(interfaces != (Interface.POSITION,) for interfaces in self.joint_commands.values()):
-            raise ValueError("the simulated Dual OpenYAM accepts position commands only")
-        if self.model is None:
-            self.model = DUAL_OPENYAM.model
+            raise ValueError("the simulated robot accepts position commands only")
         return self
 
 
-class DualOpenYamSimConnection(ConnectionModule):
-    """Both OpenYAM arms and jaws in MuJoCo, where ``DualOpenYamConnection`` drives the robot.
+#: A wrist camera's ports and frames: its image port, its intrinsics port and
+#: the frame namespace its RealSense publishes in.
+WristPorts = tuple[Out[Image], Out[CameraInfo], str]
+
+
+class DamiaoSimConnection(ConnectionModule):
+    """A Damiao robot in MuJoCo, where its Damiao connection drives the robot.
 
     Joint commands and readings use that connection's ports, names and units.
     The overhead D405 publishes on ``color_image``, ``depth_image``,
-    ``camera_info``, ``depth_camera_info`` and, if asked to, ``pointcloud``,
-    and each wrist D405 on
-    ``{side}_wrist_color_image`` and ``{side}_wrist_camera_info``. Every camera's
+    ``camera_info``, ``depth_camera_info`` and, if asked to, ``pointcloud``;
+    each wrist camera on the ports ``_wrist_ports`` names. Every camera's
     frames are on ``tf`` under the world frame, named as a RealSense names them.
     """
 
     #: The robot this connection simulates: joints, gains, grippers and models.
-    robot: ClassVar[DamiaoRobot] = DUAL_OPENYAM
-    config: DualOpenYamSimConnectionConfig
+    robot: ClassVar[DamiaoRobot]
+    #: Where the robot's arms are in the URDF the simulation is built from.
+    workcell: ClassVar[SimWorkcell]
+    config: DamiaoSimConnectionConfig
     position_command: In[JointState]
     joint_state: Out[JointState]
     color_image: Out[Image]
@@ -169,29 +170,23 @@ class DualOpenYamSimConnection(ConnectionModule):
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
     pointcloud: Out[PointCloud2]
-    left_wrist_color_image: Out[Image]
-    left_wrist_camera_info: Out[CameraInfo]
-    right_wrist_color_image: Out[Image]
-    right_wrist_camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         kwargs.setdefault(
             "joint_commands", {name: (Interface.POSITION,) for name in self.robot.joint_names}
         )
+        kwargs.setdefault("model", self.robot.model)
         super().__init__(**kwargs)
         config = self.config
-        self._rig = DualOpenYamSimRig(
+        self._rig = DamiaoSimRig(
             self.robot,
+            self.workcell,
             headless=config.headless,
             camera_size=(config.width, config.height) if config.cameras else None,
             camera_fps=config.fps,
             on_frames=self._publish_frames,
         )
-        self._wrist_ports = {
-            "left": (self.left_wrist_color_image, self.left_wrist_camera_info),
-            "right": (self.right_wrist_color_image, self.right_wrist_camera_info),
-        }
         self._state_frame = ""
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
@@ -307,10 +302,8 @@ class DualOpenYamSimConnection(ConnectionModule):
             self.pointcloud.publish(self._point_cloud(color, depth))
         transforms = _camera_transforms(None, overhead, ("color", "depth"))
 
-        for side in DUAL_OPENYAM_SIDES:
-            frame = frames[WRIST_CAMERAS[side]]
-            prefix = _wrist_frame_prefix(side)
-            image_port, info_port = self._wrist_ports[side]
+        for camera, (image_port, info_port, prefix) in self._wrist_ports().items():
+            frame = frames[camera]
             optical = _optical_frame(prefix)
             image_port.publish(
                 Image(data=frame.color, format=ImageFormat.RGB, frame_id=optical, ts=frame.stamp)
@@ -320,6 +313,10 @@ class DualOpenYamSimConnection(ConnectionModule):
             transforms.extend(_camera_transforms(prefix, frame, ("color",)))
 
         self.tf.publish(TFMessage(*transforms))
+
+    def _wrist_ports(self) -> dict[str, WristPorts]:
+        """Each wrist camera of the workcell, by name, and where its frames go."""
+        raise NotImplementedError
 
     def _camera_info(self, frame_id: str, stamp: float) -> CameraInfo:
         """Pinhole intrinsics of a rendered image: square pixels, no distortion."""
@@ -357,3 +354,39 @@ class DualOpenYamSimConnection(ConnectionModule):
         return PointCloud2.from_rgbd(
             thinned_color, thinned_depth, thinned, depth_trunc=self.config.depth_trunc_m
         )
+
+
+class DualOpenYamSimConnectionConfig(DamiaoSimConnectionConfig):
+    """Settings of the simulated Dual OpenYAM."""
+
+    source: str = "dual_openyam"
+
+
+class DualOpenYamSimConnection(DamiaoSimConnection):
+    """Both OpenYAM arms and jaws in MuJoCo, where ``DualOpenYamConnection`` drives the robot.
+
+    Each wrist D405 publishes on ``{side}_wrist_color_image`` and
+    ``{side}_wrist_camera_info``, in the frames of the "{side}_wrist" RealSense.
+    """
+
+    robot = DUAL_OPENYAM
+    workcell = DUAL_OPENYAM_WORKCELL
+    config: DualOpenYamSimConnectionConfig
+    left_wrist_color_image: Out[Image]
+    left_wrist_camera_info: Out[CameraInfo]
+    right_wrist_color_image: Out[Image]
+    right_wrist_camera_info: Out[CameraInfo]
+
+    def _wrist_ports(self) -> dict[str, WristPorts]:
+        return {
+            WRIST_CAMERAS["left"]: (
+                self.left_wrist_color_image,
+                self.left_wrist_camera_info,
+                "left_wrist",
+            ),
+            WRIST_CAMERAS["right"]: (
+                self.right_wrist_color_image,
+                self.right_wrist_camera_info,
+                "right_wrist",
+            ),
+        }
