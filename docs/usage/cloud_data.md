@@ -33,23 +33,14 @@ dimos data upload ./my-folder
 dimos data pull <upload-id> --dest restored-folder
 ```
 
-Passing a directory uploads the **whole tree**, including hidden files, private
-metadata, and empty folders. Nothing is filtered or redacted. Review the folder
-before uploading and stop anything writing to it. Ordinary file bytes are kept
-as-is; permissions, ownership, and timestamps are not preserved. Symlinks,
-FIFOs, devices, and other special entries cause the upload to fail.
+Review the folder before uploading: the whole tree goes up, including hidden
+files and empty folders. Stop anything writing to it first. Symlinks and special
+entries fail the upload. Permissions, ownership, and timestamps are not preserved.
 
-The CLI sends a plain, uncompressed tar blob with the `dimos.directory.tar` v1
-marker. Small archives use standard zero padding to reach the cloud's 1 MiB
-minimum. Cloud quotas apply, and the CLI caps archives at 100 GiB and 20,000
-entries. Files you upload yourself, including `.tar` files, use the normal file
-path and are never auto-extracted. If identical wire bytes already have a
-different upload type, the CLI refuses to reuse the object.
-
-Only marked uploads restore as directories. Pull verifies the archive before
-extracting, rejects unsafe paths and unsupported tar entries (including links),
-and publishes to a **new** directory on Linux or macOS without overwriting.
-Without `--dest`, it uses the usual download location without the `.tar` suffix.
+Directory uploads use an uncompressed tar blob (up to 100 GiB and 20,000 entries,
+subject to cloud quotas). Pull verifies the checksum and restores to a **new**
+directory on Linux or macOS. Without `--dest`, it uses the usual download name
+without `.tar`. Uploading a `.tar` file yourself still restores it as a file.
 
 ## Pulls
 
