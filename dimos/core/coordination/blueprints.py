@@ -24,6 +24,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    Protocol,
     Union,
     cast,
     get_args,
@@ -32,6 +33,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.module import ModuleBase, is_module_type
@@ -193,8 +195,43 @@ class BlueprintAtom:
 _PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
 
 
+class BlueprintProtocol(Protocol):
+    """Fluent operations shared by concrete and unresolved blueprints."""
+
+    def disabled_modules(self, *modules: type[ModuleBase]) -> Self: ...
+
+    def transports(
+        self, transports: dict[tuple[str, type], TransportSpec | Transport[Any]]
+    ) -> Self: ...
+
+    def global_config(self, **kwargs: Any) -> Self: ...
+
+    def hosted(
+        self,
+        *,
+        host: str | None = None,
+        tags: Mapping[str, str | bool] | None = None,
+        prefer: str | None = None,
+        local: bool = False,
+        minimum: Mapping[str, float] | None = None,
+    ) -> Self: ...
+
+    def remappings(
+        self,
+        remappings: Sequence[
+            tuple[type[ModuleBase] | str, str, str | type[ModuleBase] | type[Spec]]
+        ],
+    ) -> Self: ...
+
+    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self: ...
+
+    def requirements(self, *checks: Callable[[], str | None]) -> Self: ...
+
+    def configurators(self, *checks: "SystemConfigurator") -> Self: ...
+
+
 @dataclass(frozen=True)
-class Blueprint:
+class Blueprint(BlueprintProtocol):
     blueprints: tuple[BlueprintAtom, ...]
     disabled_modules_tuple: tuple[type[ModuleBase], ...] = field(default_factory=tuple)
     transport_map: Mapping[tuple[str, type], TransportSpec | Transport[Any]] = field(
@@ -241,15 +278,15 @@ class Blueprint:
         blueprint = BlueprintAtom.create(module, kwargs)
         return cls(blueprints=(blueprint,))
 
-    def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
+    def disabled_modules(self, *modules: type[ModuleBase]) -> Self:
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
 
     def transports(
         self, transports: dict[tuple[str, type], TransportSpec | Transport[Any]]
-    ) -> "Blueprint":
+    ) -> Self:
         return replace(self, transport_map=MappingProxyType({**self.transport_map, **transports}))
 
-    def global_config(self, **kwargs: Any) -> "Blueprint":
+    def global_config(self, **kwargs: Any) -> Self:
         return replace(
             self,
             global_config_overrides=MappingProxyType({**self.global_config_overrides, **kwargs}),
@@ -263,7 +300,7 @@ class Blueprint:
         prefer: str | None = None,
         local: bool = False,
         minimum: Mapping[str, float] | None = None,
-    ) -> "Blueprint":
+    ) -> Self:
         """Schedule this Blueprint fragment as one placement unit.
 
         With no selector, ``hosted()`` chooses any available Host. An exact Host
@@ -316,7 +353,7 @@ class Blueprint:
         remappings: Sequence[
             tuple[type[ModuleBase] | str, str, str | type[ModuleBase] | type[Spec]]
         ],
-    ) -> "Blueprint":
+    ) -> Self:
         remappings_dict = dict(self.remapping_map)
         for module, old, new in remappings:
             remappings_dict[(self._instance_key(module), old)] = new
@@ -333,7 +370,7 @@ class Blueprint:
             )
         return names[0] if names else module.name
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> "Blueprint":
+    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self:
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
         Instance names, stream names (and so their topics), and RPC topics all get
@@ -423,10 +460,10 @@ class Blueprint:
             ),
         )
 
-    def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
+    def requirements(self, *checks: Callable[[], str | None]) -> Self:
         return replace(self, requirement_checks=self.requirement_checks + tuple(checks))
 
-    def configurators(self, *checks: "SystemConfigurator") -> "Blueprint":
+    def configurators(self, *checks: "SystemConfigurator") -> Self:
         return replace(self, configurator_checks=self.configurator_checks + tuple(checks))
 
     @cached_property
@@ -441,7 +478,166 @@ def transport_config_name(cls: type) -> str:
     return cls.__name__.removesuffix("Config").lower()
 
 
-def autoconnect(*blueprints: Blueprint) -> Blueprint:
+class ChoiceResolutionError(ValueError):
+    """A blueprint choice is missing, invalid, or ambiguous."""
+
+
+@dataclass(frozen=True)
+class ChoiceAtom:
+    """Select one blueprint fragment by name when a MetaBlueprint is solidified."""
+
+    name: str
+    choices: "Mapping[str, Blueprint | MetaBlueprint]"
+    default: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name or "=" in self.name:
+            raise ChoiceResolutionError("Choice names must be nonempty and cannot contain '='")
+        if not self.choices or any(not option for option in self.choices):
+            raise ChoiceResolutionError(f"Choice {self.name!r} must have nonempty option names")
+        if self.default is not None and self.default not in self.choices:
+            raise ChoiceResolutionError(
+                f"Invalid default {self.default!r} for choice {self.name!r}. "
+                f"Available options: {', '.join(self.choices)}"
+            )
+        object.__setattr__(self, "choices", MappingProxyType(dict(self.choices)))
+
+
+@dataclass(frozen=True)
+class _BlueprintOperation:
+    method: Callable[..., Blueprint]
+    args: tuple[Any, ...]
+    kwargs: Mapping[str, Any]
+
+    def __call__(self, blueprint: Blueprint) -> Blueprint:
+        return self.method(blueprint, *self.args, **self.kwargs)
+
+
+@dataclass(frozen=True)
+class MetaBlueprint(BlueprintProtocol):
+    """An unresolved composition with operations applied after choice resolution."""
+
+    blueprints: "tuple[Blueprint | MetaBlueprint | ChoiceAtom, ...]"
+    _operations: tuple[_BlueprintOperation, ...] = field(default_factory=tuple)
+
+    def _defer(
+        self,
+        method: Callable[..., Blueprint],
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Self:
+        operation = _BlueprintOperation(method, args, MappingProxyType(kwargs))
+        return replace(self, _operations=(*self._operations, operation))
+
+    def disabled_modules(self, *modules: type[ModuleBase]) -> Self:
+        return self._defer(Blueprint.disabled_modules, *modules)
+
+    def transports(
+        self, transports: dict[tuple[str, type], TransportSpec | Transport[Any]]
+    ) -> Self:
+        return self._defer(Blueprint.transports, dict(transports))
+
+    def global_config(self, **kwargs: Any) -> Self:
+        return self._defer(Blueprint.global_config, **kwargs)
+
+    def hosted(
+        self,
+        *,
+        host: str | None = None,
+        tags: Mapping[str, str | bool] | None = None,
+        prefer: str | None = None,
+        local: bool = False,
+        minimum: Mapping[str, float] | None = None,
+    ) -> Self:
+        return self._defer(
+            Blueprint.hosted,
+            host=host,
+            tags=dict(tags) if tags is not None else None,
+            prefer=prefer,
+            local=local,
+            minimum=dict(minimum) if minimum is not None else None,
+        )
+
+    def remappings(
+        self,
+        remappings: Sequence[
+            tuple[type[ModuleBase] | str, str, str | type[ModuleBase] | type[Spec]]
+        ],
+    ) -> Self:
+        return self._defer(Blueprint.remappings, tuple(remappings))
+
+    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self:
+        return self._defer(Blueprint.namespace, prefix, expose=tuple(expose))
+
+    def requirements(self, *checks: Callable[[], str | None]) -> Self:
+        return self._defer(Blueprint.requirements, *checks)
+
+    def configurators(self, *checks: "SystemConfigurator") -> Self:
+        return self._defer(Blueprint.configurators, *checks)
+
+    def solidify(self, *, choices: Mapping[str, str] | None = None) -> Blueprint:
+        """Resolve selected alternatives and compose a concrete Blueprint.
+
+        Only selected alternatives are traversed. Distinct active ChoiceAtoms
+        must have unique names; a shared ChoiceAtom may be reused. Overrides
+        must name active choices, so misspellings and unused selections fail.
+        Deferred operations run in call order on each resolved fragment before
+        it is merged into its parent.
+
+        Raises:
+            ChoiceResolutionError: A required choice is missing, an option is
+                invalid, a name is ambiguous, or an override is unused.
+        """
+        selections = dict(choices or {})
+        active_choices: dict[str, ChoiceAtom] = {}
+
+        def resolve(part: Blueprint | MetaBlueprint | ChoiceAtom) -> Blueprint:
+            if isinstance(part, Blueprint):
+                return part
+            if isinstance(part, MetaBlueprint):
+                blueprint = _merge_blueprints(*(resolve(child) for child in part.blueprints))
+                for operation in part._operations:
+                    blueprint = operation(blueprint)
+                return blueprint
+
+            previous = active_choices.get(part.name)
+            if previous is not None and previous is not part:
+                raise ChoiceResolutionError(f"Duplicate choice name: {part.name!r}")
+            active_choices[part.name] = part
+            option = selections.get(part.name, part.default)
+            available = f"Available options: {', '.join(part.choices)}"
+            if option is None:
+                raise ChoiceResolutionError(
+                    f"Choice {part.name!r} is required. {available}. "
+                    f"Select it with --choice {part.name}=<option>"
+                )
+            if option not in part.choices:
+                raise ChoiceResolutionError(
+                    f"Invalid option {option!r} for choice {part.name!r}. {available}"
+                )
+            return resolve(part.choices[option])
+
+        blueprint = resolve(self)
+        unused = selections.keys() - active_choices.keys()
+        if unused:
+            raise ChoiceResolutionError(f"Unknown or inactive choices: {', '.join(sorted(unused))}")
+        return blueprint
+
+    def build(self, *, choices: Mapping[str, str] | None = None) -> "ModuleCoordinator":
+        """Solidify choices and build the resulting blueprint with a coordinator."""
+        # The coordinator imports blueprint definitions, so defer this circular import.
+        from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
+        return ModuleCoordinator.build(self.solidify(choices=choices))
+
+
+def autoconnect(*blueprints: Blueprint | MetaBlueprint | ChoiceAtom) -> MetaBlueprint:
+    """Compose fragments without resolving choices until solidify() or build()."""
+    return MetaBlueprint(blueprints=blueprints)
+
+
+def _merge_blueprints(*blueprints: Blueprint) -> Blueprint:
     all_atoms = [atom for blueprint in blueprints for atom in blueprint.blueprints]
     all_blueprints = tuple(_eliminate_duplicates(all_atoms))
     all_transports = dict(  # type: ignore[var-annotated]

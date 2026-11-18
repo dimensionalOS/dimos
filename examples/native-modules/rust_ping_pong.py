@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import argparse
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -70,7 +70,7 @@ class PongModule(NativeModule):
     confirm: Out[Twist]
 
 
-def blueprint(topology: bool = False) -> Blueprint:
+def blueprint(topology: bool = False) -> MetaBlueprint:
     ping_zenoh = None
     pong_zenoh = None
     if topology:

@@ -184,7 +184,7 @@ def serve_system() -> None:
         patch.setattr(global_config, "record_topics", "*")
         patch.setattr(tap, "RECORDINGS_DIR", STATE_DIR / "recordings")
         coordinator = ModuleCoordinator.build(
-            autoconnect(HarnessProbe.blueprint(), mcp_server_blueprint())
+            autoconnect(HarnessProbe.blueprint(), mcp_server_blueprint()).solidify()
         )
         with tap.recording(coordinator):
             coordinator.loop()

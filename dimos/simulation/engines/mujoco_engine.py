@@ -37,6 +37,7 @@ from dimos.simulation.engines.robot_sim_binding import (
     RobotSimSpec,
     resolve_robot_sim_binding,
 )
+from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -171,6 +172,7 @@ class MujocoEngine(SimulationEngine):
         reset_joint_positions: list[float] | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
+        configure_mujoco_logging()
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
         self._spawn_xy = spawn_xy

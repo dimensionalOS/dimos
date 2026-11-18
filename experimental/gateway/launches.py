@@ -111,6 +111,8 @@ def launch_env_defaults() -> dict[str, str]:
     defaults = module_env({RerunBridgeModule.name: {"rerun_open": "none", "rerun_web": True}})
     if shared_config.shared_config().topics_enabled is True:
         defaults["TOPIC_METADATA"] = "true"
+    if zenoh_connect := shared_config.shared_config().zenoh_connect:
+        defaults["ZENOH_CONNECT"] = str(zenoh_connect)
     return defaults
 
 
@@ -795,6 +797,9 @@ def stop() -> str:
             launch = current_launch()
             if launch is None or launch["phase"] != "starting":
                 raise ApiError(409, "nothing running")
+            assert record is not None
+            # asked for, so its exit is a stop: without this the dead launch reads as failed
+            _save({**record, "stopping": True})
             message = kill_starting(launch)
             _wait_reaped(int(launch["pid"]))
             return message

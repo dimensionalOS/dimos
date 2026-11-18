@@ -103,7 +103,7 @@ def test_get_connection_set() -> None:
 
 
 def test_autoconnect() -> None:
-    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify()
 
     assert blueprint_set == Blueprint(
         blueprints=(
@@ -131,7 +131,7 @@ def test_autoconnect() -> None:
 
 
 def test_config_rejects_unknown_fields_and_sections() -> None:
-    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify()
     parser = BlueprintConfigParser(blueprint)
 
     with pytest.raises(BlueprintConfigError, match="invalid_key"):
@@ -142,8 +142,10 @@ def test_config_rejects_unknown_fields_and_sections() -> None:
 
 def test_transports() -> None:
     custom_transport = LCMTransport("/custom_topic", Data1)
-    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).transports(
-        {("data1", Data1): custom_transport}
+    blueprint_set = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .solidify()
+        .transports({("data1", Data1): custom_transport})
     )
 
     assert ("data1", Data1) in blueprint_set.transport_map
@@ -151,8 +153,10 @@ def test_transports() -> None:
 
 
 def test_global_config() -> None:
-    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).global_config(
-        option1=True, option2=42
+    blueprint_set = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .solidify()
+        .global_config(option1=True, option2=42)
     )
 
     assert "option1" in blueprint_set.global_config_overrides
@@ -162,7 +166,9 @@ def test_global_config() -> None:
 
 
 def test_hosted_marks_a_composed_fragment_without_forwarding_module_kwargs() -> None:
-    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).hosted(tags={"gpu": True})
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify().hosted(tags={"gpu": True})
+    )
 
     assert blueprint.hosted_placements == (
         HostedPlacement(
@@ -177,7 +183,7 @@ def test_autoconnect_preserves_independent_hosted_units() -> None:
     blueprint = autoconnect(
         ModuleA.blueprint().hosted(host="robot-1"),
         ModuleB.blueprint().hosted(),
-    )
+    ).solidify()
 
     assert blueprint.hosted_placements == (
         HostedPlacement(module_names=("modulea",), host="robot-1"),
@@ -219,7 +225,7 @@ def test_autoconnect_drops_hosted_metadata_from_overridden_module() -> None:
     blueprint = autoconnect(
         ModuleA.blueprint().hosted(tags={"old": True}),
         ModuleA.blueprint(key1="new"),
-    )
+    ).solidify()
 
     assert blueprint.hosted_placements == ()
 
@@ -296,7 +302,7 @@ def test_autoconnect_merges_disabled_modules() -> None:
         disabled_modules_tuple=(ModuleB,),
     )
 
-    merged = autoconnect(bp_a, bp_b)
+    merged = autoconnect(bp_a, bp_b).solidify()
     assert merged.disabled_modules_tuple == (ModuleA, ModuleB)
 
 
@@ -322,7 +328,7 @@ def test_autoconnect_eliminates_duplicates_keeps_newer() -> None:
     bp1 = Blueprint.create(ModuleA, key1="old")
     bp2 = Blueprint.create(ModuleA, key1="new")
 
-    merged = autoconnect(bp1, bp2)
+    merged = autoconnect(bp1, bp2).solidify()
 
     module_a_atoms = [a for a in merged.blueprints if a.module is ModuleA]
     assert len(module_a_atoms) == 1
@@ -340,6 +346,7 @@ def test_disabled_module_proxy_roundtrip() -> None:
 def test_blueprint_roundtrip() -> None:
     blueprint = (
         autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .solidify()
         .global_config(option1=True, option2=42)
         .remappings([(ModuleA, "module_a", ModuleB)])
     )
@@ -356,7 +363,9 @@ def test_blueprint_roundtrip() -> None:
 
 
 def test_active_blueprints_filters_disabled() -> None:
-    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).disabled_modules(ModuleA)
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify().disabled_modules(ModuleA)
+    )
 
     active_modules = {bp.module for bp in blueprint.active_blueprints}
     assert ModuleA not in active_modules
@@ -364,7 +373,7 @@ def test_active_blueprints_filters_disabled() -> None:
 
 
 def test_namespace_prefixes_names_streams_and_frames() -> None:
-    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).namespace("robot0")
+    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify().namespace("robot0")
 
     atom_a = next(a for a in blueprint.blueprints if a.module is ModuleA)
     assert atom_a.name == "robot0/modulea"
@@ -421,12 +430,12 @@ def test_namespace_allows_duplicate_module_classes() -> None:
     blueprint = autoconnect(
         ModuleA.blueprint(key1="a").namespace("robot0"),
         ModuleA.blueprint(key1="b").namespace("robot1"),
-    )
+    ).solidify()
 
     atoms = [a for a in blueprint.blueprints if a.module is ModuleA]
     assert {a.name for a in atoms} == {"robot0/modulea", "robot1/modulea"}
     # Later-wins dedup still applies per instance name.
-    merged = autoconnect(blueprint, ModuleA.blueprint(key1="c").namespace("robot1"))
+    merged = autoconnect(blueprint, ModuleA.blueprint(key1="c").namespace("robot1")).solidify()
     robot1 = next(a for a in merged.blueprints if a.name == "robot1/modulea")
     assert robot1.kwargs["key1"] == "c"
 
@@ -435,7 +444,7 @@ def test_namespace_config_keys_escaped() -> None:
     blueprint = autoconnect(
         ModuleA.blueprint().namespace("robot0"),
         ModuleA.blueprint().namespace("robot1"),
-    )
+    ).solidify()
     parser = BlueprintConfigParser(blueprint)
     parser.parse(environ={}, overrides={"robot0_modulea": {}, "robot1_modulea": {}})
     with pytest.raises(BlueprintConfigError, match="Unknown configuration section"):
@@ -453,6 +462,7 @@ def test_explicit_instance_name_sets_blueprint_identity() -> None:
 def test_namespace_prefixes_pinned_transports() -> None:
     blueprint = (
         autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .solidify()
         .transports({("data1", Data1): LCMTransport("/custom_topic", Data1)})
         .namespace("robot0")
     )
@@ -464,10 +474,14 @@ def test_namespace_prefixes_pinned_transports() -> None:
 
 def test_namespace_remappings_by_instance_name() -> None:
     # A remapping added after namespacing can target an instance by name.
-    blueprint = autoconnect(
-        ModuleA.blueprint().namespace("robot0"),
-        ModuleA.blueprint().namespace("robot1"),
-    ).remappings([("robot0/modulea", "data1", "special_data")])
+    blueprint = (
+        autoconnect(
+            ModuleA.blueprint().namespace("robot0"),
+            ModuleA.blueprint().namespace("robot1"),
+        )
+        .solidify()
+        .remappings([("robot0/modulea", "data1", "special_data")])
+    )
 
     assert blueprint.remapping_map[("robot0/modulea", "data1")] == "special_data"
     # Targeting the class is ambiguous with two instances.
@@ -475,7 +489,7 @@ def test_namespace_remappings_by_instance_name() -> None:
         autoconnect(
             ModuleA.blueprint().namespace("robot0"),
             ModuleA.blueprint().namespace("robot1"),
-        ).remappings([(ModuleA, "data1", "other")])
+        ).solidify().remappings([(ModuleA, "data1", "other")])
 
 
 def _always_ok() -> str | None:
@@ -487,6 +501,7 @@ def test_blueprint_roundtrip_keeps_checks_and_pinned_transports() -> None:
     try:
         blueprint = (
             autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+            .solidify()
             .transports({("module_a", Data1): pinned})
             .requirements(_always_ok)
             .configurators(ClockSyncConfigurator())

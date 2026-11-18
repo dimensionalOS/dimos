@@ -42,8 +42,8 @@ pytestmark = [
 
 @pytest.fixture(
     params=[
-        pytest.param((RecordingPlayer, "dataset"), id="recording"),
-        pytest.param((SpotReplay, "db_path"), id="spot"),
+        pytest.param((RecordingPlayer, "dataset", {}), id="recording"),
+        pytest.param((SpotReplay, "db_path", {"loop": False}), id="spot"),
     ]
 )
 def player(
@@ -59,8 +59,8 @@ def player(
             odometry.append(Odometry(ts=ts), ts=ts)
             tf.append(TFMessage(), ts=ts)
 
-    player_type, path_param = request.param
-    module = player_type(**{path_param: str(path)})
+    player_type, path_param, kwargs = request.param
+    module = player_type(**{path_param: str(path)}, **kwargs)
     yield module
     module.stop()
 
@@ -153,3 +153,25 @@ def test_player_closes_store_after_partial_startup(
 
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
         replay.spy_return.store.list_streams()
+
+
+def test_player_logs_source_duration_and_completion(player, mocker):
+    scheduler = TestScheduler()
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    log = mocker.patch("dimos.memory.replay_progress.logger")
+    player.start()
+    path = (
+        str(player.config.dataset) if isinstance(player, RecordingPlayer) else player.config.db_path
+    )
+    log.info.assert_called_once_with(
+        "Replay started",
+        source=path,
+        path=path,
+        duration_s=20.0,
+        speed=1.0,
+        loop=False,
+    )
+    scheduler.advance_by(5)
+    assert log.info.call_count == 1
+    scheduler.advance_by(100)
+    assert log.info.call_args_list[1:] == [mocker.call("Replay finished", source=path)]
