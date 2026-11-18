@@ -71,8 +71,13 @@ XARM_GRASP_SCENE_PATH = LfsPath("xarm_grasp_sim/scene.xml")
 # spaced targets. This collision-free top-down pose raises the camera enough to
 # put every mesh in one frame, without changing the configured base pose.
 XARM_GRASP_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
-# The mapper and planner octree use the same resolution.
-XARM_GRASP_VOXEL_SIZE = 0.025
+# The mapper and planner octree use the same resolution. A cell reaches up to one
+# cell past the points in it, so coarse cells keep the gripper off what it grasps.
+XARM_GRASP_VOXEL_SIZE = 0.01
+# Everything the arm can touch, round link_base at the world origin: the xArm's
+# 0.7 m reach to the flange, the gripper and a margin. The map drops what lies
+# farther, and add_table spans this far.
+XARM_GRASP_WORKSPACE_RADIUS = 0.9
 
 XARM_GRASP_PROMPTS = [
     "black bottle",
@@ -199,11 +204,14 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
         PickAndPlaceModule.blueprint(planning_frame="world", robot=model),
         *_sensing(simulated),
         # Finds the objects pick_object takes by id, and the dense scene its contact check needs.
-        ManipulationLocalize.blueprint(world_frame="world"),
+        ManipulationLocalize.blueprint(
+            world_frame="world", table_reach_m=XARM_GRASP_WORKSPACE_RADIUS
+        ),
         manipulation_mapping(
             # Filter only the arm; gripper returns may remain in the map.
             self_filter_model=self_filter_model,
             voxel_size=XARM_GRASP_VOXEL_SIZE,
+            workspace_radius_m=XARM_GRASP_WORKSPACE_RADIUS,
         ),
         RerunBridgeModule.blueprint(),
         control,

@@ -18,10 +18,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from dimos.manipulation.manipulation_localize import ManipulationLocalize
+from dimos.manipulation.manipulation_localize import TABLE, ManipulationLocalize, table_boxes
+from dimos.mapping.pointclouds.box_filter import inside_boxes
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.transform_utils import pose_to_matrix
 
 
 @pytest.fixture
@@ -215,3 +217,102 @@ def test_find_surface_reports_the_table_in_the_base_frame(localizer, mocker):
     (surface,) = localizer.surfaces()
     assert surface["height"] == pytest.approx(0.0, abs=0.004)
     assert surface["size"] == pytest.approx([0.8, 0.5], abs=0.03)
+
+
+def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5)):
+    return {
+        "height": center[2],
+        "center": list(center),
+        "size": list(size),
+        "yaw_deg": yaw_deg,
+        "normal": [0.0, 0.0, 1.0],
+        "tilt_deg": 0.0,
+        "downhill_deg": 0.0,
+        "coefficients": [0.0, 0.0, 1.0, -center[2]],
+        "points": 4000,
+        "rms_m": 0.002,
+    }
+
+
+_TABLE_SETTINGS = dict(reach=1.0, thickness=0.03, cut_above=0.01)
+
+
+def test_table_box_tops_out_on_the_surface_round_the_whole_reach():
+    base = np.zeros(3)
+    (box_pose, box_size), (cut_pose, cut_size) = table_boxes(_surface(), [base], **_TABLE_SETTINGS)
+
+    # Centred under the base, not on the measured table: its edges are never used.
+    assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.0, 0.0])
+    assert box_size == pytest.approx([2.0, 2.0, 0.03])
+    assert box_pose.position.z + box_size[2] / 2 == pytest.approx(0.08)
+    assert cut_size == pytest.approx([2.0, 2.0, 1.01])
+    assert cut_pose.position.z + cut_size[2] / 2 == pytest.approx(0.09)
+    assert cut_pose.position.z - cut_size[2] / 2 == pytest.approx(-0.92)
+    assert pose_to_matrix(box_pose)[:3, 2] == pytest.approx([0.0, 0.0, 1.0])
+
+
+def test_two_arms_share_one_table_round_both():
+    bases = [np.array([0.0, -0.3, 0.0]), np.array([0.0, 0.3, 0.0])]
+    (box_pose, box_size), _ = table_boxes(_surface(), bases, **_TABLE_SETTINGS)
+
+    assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.0, 0.0])
+    assert box_size[:2] == pytest.approx([2.0, 2.6])
+
+
+def test_the_cut_takes_table_cells_and_what_is_under_and_keeps_what_stands_on_it():
+    _, (cut_pose, cut_size) = table_boxes(_surface(), [np.zeros(3)], **_TABLE_SETTINGS)
+    cells = np.array(
+        [
+            [0.5, 0.0, 0.085],  # a 1 cm cell of the table top, its centre half a cell up
+            [0.3, 0.2, -0.4],  # under the table
+            [0.5, 0.0, 0.105],  # a block's cell 2.5 cm over the table
+            [1.2, 0.0, 0.085],  # past the arm's reach
+        ]
+    )
+
+    inside = inside_boxes(cells, [(pose_to_matrix(cut_pose), np.asarray(cut_size))])
+
+    assert inside.tolist() == [True, True, False, False]
+
+
+def test_add_table_puts_a_box_in_the_planner_and_cuts_its_cells(localizer, mocker):
+    _ready(localizer, mocker, [])
+    mocker.patch.object(localizer, "surfaces", return_value=[_surface()])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (
+        SimpleNamespace(base_frame="link_base"),
+    )
+    localizer._obstacles.add_obstacle.return_value = TABLE
+    localizer._box_filter = mocker.Mock()
+    localizer.rig.tf.get.return_value = Transform(
+        translation=Vector3(0.0, 0.0, 0.0), frame_id="world", child_frame_id="link_base"
+    )
+
+    answer = localizer.add_table()
+
+    assert answer.startswith("table added: top at z=0.080 m in world, 2.00 x 2.00 m")
+    name, pose, shape, size, mesh, touch = localizer._obstacles.add_obstacle.call_args.args
+    assert (name, shape, mesh, touch) == (TABLE, "box", None, ["link_base"])
+    assert size == pytest.approx([2.0, 2.0, 0.03])
+    cut_name, _, cut_size = localizer._box_filter.set_box.call_args.args
+    assert cut_name == TABLE
+    assert cut_size.to_tuple() == pytest.approx((2.0, 2.0, 1.01))
+    # A second call replaces the table rather than stacking another.
+    localizer._obstacles.remove_obstacle.assert_called_once_with(TABLE)
+
+
+def test_add_table_without_a_planner_says_so(localizer, mocker):
+    _ready(localizer, mocker, [])
+
+    assert "needs a motion planner" in localizer.add_table()
+
+
+def test_add_table_with_no_surface_in_view_adds_nothing(localizer, mocker):
+    _ready(localizer, mocker, [])
+    mocker.patch.object(localizer, "surfaces", return_value=[])
+    localizer._obstacles = mocker.Mock()
+    localizer._box_filter = mocker.Mock()
+
+    assert localizer.add_table().startswith("no table")
+    localizer._obstacles.add_obstacle.assert_not_called()
+    localizer._box_filter.set_box.assert_not_called()
