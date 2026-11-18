@@ -1,6 +1,6 @@
 # Installing DDS Transport Libs on Ubuntu
 
-The `dds` extra provides DDS (Data Distribution Service) transport support via [Eclipse Cyclone DDS](https://cyclonedds.io/docs/cyclonedds-python/latest/). The Python package builds C extensions against the CycloneDDS C library, so the C library must be installed before the Python package.
+The `dds` extra provides DDS (Data Distribution Service) transport support via [Eclipse Cyclone DDS](https://cyclonedds.io/docs/cyclonedds-python/latest/). On x86_64 Linux, macOS and Windows it installs from wheels that bundle the CycloneDDS C library, so nothing on this page is needed there. Linux arm64 has no wheels: there the Python package (0.10) builds C extensions against a CycloneDDS 0.10 C library, which must be installed first.
 
 ## Recommended: nix-provided cyclonedds
 

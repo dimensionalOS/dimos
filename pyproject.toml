@@ -280,9 +280,9 @@ unitree = [
 ]
 
 unitree-dds = [
-    "dimos[unitree]",
-    "unitree-sdk2py-dimos>=1.0.2",
-    "cyclonedds>=0.10.5",
+    "dimos[unitree,dds]",
+    # 1.0.4 is the first release whose messages match the robots' under cyclonedds 11.
+    "unitree-sdk2py-dimos>=1.0.4",
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
@@ -361,7 +361,11 @@ drone = [
 ]
 
 dds = [
-    "cyclonedds>=0.10.5",
+    # 11.x ships wheels with the C library for x86_64 Linux, macOS and Windows. Linux
+    # arm64 has none, so it stays on 0.10, which builds against the CycloneDDS 0.10
+    # that Ubuntu 24.04 and Unitree's robots ship (11.x does not build against it).
+    "cyclonedds>=11.1.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
+    "cyclonedds>=0.10.5,<11; sys_platform == 'linux' and platform_machine == 'aarch64'",
 ]
 
 webrtc = [
@@ -548,7 +552,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false, unitree-sdk2py-dimos = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
