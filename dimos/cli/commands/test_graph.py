@@ -28,7 +28,7 @@ def test_render_graph_resolves_blueprint_and_calls_existing_renderer(
     tmp_path: Path,
     mocker: MockerFixture,
 ) -> None:
-    blueprint = mocker.sentinel.blueprint
+    blueprint = mocker.Mock()
     output = tmp_path / "graph.svg"
     resolve = mocker.patch.object(
         graph_command.get_all_blueprints,
@@ -40,7 +40,7 @@ def test_render_graph_resolves_blueprint_and_calls_existing_renderer(
     graph_command._render_graph("alpha", output, include_rpc=False)
 
     resolve.assert_called_once_with("alpha")
-    render.assert_called_once_with(blueprint, str(output), include_rpc=False)
+    render.assert_called_once_with(blueprint.solidify.return_value, str(output), include_rpc=False)
 
 
 def test_graph_command_uses_default_svg_path(

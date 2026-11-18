@@ -84,6 +84,66 @@ expanded_blueprint = autoconnect(
 
 Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
 
+## Choices
+
+`ChoiceAtom` holds alternative fragments, and `solidify()` picks one of them by name:
+
+```python session=blueprint-choices
+from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
+from dimos.core.module import Module
+
+class VisModule(Module):
+    pass
+
+class RaytracerModule(Module):
+    pass
+
+class VoxelMapper(Module):
+    pass
+
+mapping = autoconnect(
+    VisModule.blueprint(),
+    ChoiceAtom(
+        name="PointClearing",
+        default="raycasting",
+        choices={
+            "raycasting": RaytracerModule.blueprint(),
+            "column_carving": VoxelMapper.blueprint(),
+        },
+    ),
+).global_config(n_workers=4)
+
+default_mapping = mapping.solidify()
+voxel_mapping = mapping.solidify(choices={"PointClearing": "column_carving"})
+```
+
+`mapping` is still a flat `Blueprint`: `autoconnect()` puts every option's modules
+in it, each marked with the option it belongs to, and `solidify()` keeps only the
+modules of the selected options. Methods such as `.global_config()`, `.namespace()`,
+`.remappings()` and `.hosted()` therefore see every option's modules, so a mistake
+raises where it is written. A blueprint without choices is already solid:
+`solidify()` returns it unchanged. `ModuleCoordinator.build()` solidifies with the
+default choices; select others at launch:
+
+```bash
+dimos run mapping --choice PointClearing=column_carving
+```
+
+Repeat `--choice NAME=OPTION` for multiple choices. A choice without a default
+uses its first option, so every blueprint runs without selections. Invalid
+options, unknown or inactive names, and repeated selections are errors. Nested
+choices are inactive unless their outer option is picked. Each choice name
+belongs to one `ChoiceAtom`; reusing that same atom in several places is fine,
+and one selection picks for all of them.
+
+Two rules keep options apart:
+
+- A module may sit under only one option, and not also outside the choice. Give
+  each copy its own `instance_name` instead.
+- An option may not set `global_config`, transports, requirements, configurators
+  or `disabled_modules`; set them on the blueprint around the choice. Remappings
+  and `.hosted()` inside an option are fine.
+
 ## Publishing external blueprints
 
 dimOS can discover runnable blueprints from installed Python packages. External

@@ -442,6 +442,7 @@ class ModuleCoordinator(Resource):
         sources); :meth:`load_blueprint` instead applies only explicitly-set
         fields.
         """
+        blueprint = blueprint.solidify()
         check_module_dependencies(blueprint, parsed_config)
         logger.info("Building the blueprint")
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
@@ -538,6 +539,7 @@ class ModuleCoordinator(Resource):
         blueprint: Blueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
+        blueprint = blueprint.solidify()
         check_module_dependencies(blueprint, parsed_config)
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config, sparse_globals=True

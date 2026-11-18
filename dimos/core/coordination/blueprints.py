@@ -122,6 +122,8 @@ class BlueprintAtom:
     # Set when the same module class appears more than once in a blueprint
     # (e.g. one per robot). `None` means just one.
     instance_name: str | None = None
+    # (choice name, option) pairs that must all be selected for this atom to survive solidify().
+    conditions: tuple[tuple[str, str], ...] = ()
 
     @property
     def name(self) -> str:
@@ -209,6 +211,8 @@ class Blueprint:
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
     hosted_placements: tuple[HostedPlacement, ...] = field(default_factory=tuple)
+    # Only solidify() reads these; the atoms of every option are already in `blueprints`.
+    choices: "tuple[ChoiceAtom, ...]" = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         module_names = {atom.name for atom in self.blueprints}
@@ -224,6 +228,8 @@ class Blueprint:
             raise ValueError(f"Hosted placement references unknown modules: {', '.join(unknown)}")
 
     def cbor_encode(self) -> dict[str, Any]:
+        if self.choices:
+            raise ValueError("Call solidify() before sending a blueprint that has choices")
         state = {f.name: getattr(self, f.name) for f in fields(self)}
         for name in _PROXY_FIELDS:
             state[name] = dict(state[name])
@@ -438,13 +444,143 @@ class Blueprint:
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
 
+    def solidify(self, *, choices: Mapping[str, str] | None = None) -> "Blueprint":
+        """Keep only the atoms whose conditions match the selected (or default) options.
+
+        Raises:
+            ChoiceResolutionError: A selection names an unknown or inactive choice,
+                or an option the choice does not have.
+        """
+        if not self.choices and not choices:
+            return self
+        by_name = {choice.name: choice for choice in self.choices}
+        selected = {name: choice.default for name, choice in by_name.items()}
+        for name, option in (choices or {}).items():
+            if name not in by_name:
+                raise ChoiceResolutionError(f"Unknown or inactive choices: {name}")
+            if option not in by_name[name].choices:
+                raise ChoiceResolutionError(
+                    f"Invalid option {option!r} for choice {name!r}. "
+                    f"Available options: {', '.join(by_name[name].choices)}"
+                )
+            selected[name] = option
+
+        def holds(conditions: tuple[tuple[str, str], ...]) -> bool:
+            return all(selected[name] == option for name, option in conditions)
+
+        inactive = sorted(
+            name
+            for name in choices or {}
+            if not any(holds(c.conditions) for c in self.choices if c.name == name)
+        )
+        if inactive:
+            raise ChoiceResolutionError(f"Unknown or inactive choices: {', '.join(inactive)}")
+        kept = tuple(
+            replace(atom, conditions=()) for atom in self.blueprints if holds(atom.conditions)
+        )
+        dropped = {atom.name for atom in self.blueprints} - {atom.name for atom in kept}
+        placements = (
+            replace(p, module_names=tuple(n for n in p.module_names if n not in dropped))
+            for p in self.hosted_placements
+            if set(p.module_names) - dropped
+        )
+        return replace(
+            self,
+            blueprints=kept,
+            remapping_map=MappingProxyType(
+                {key: value for key, value in self.remapping_map.items() if key[0] not in dropped}
+            ),
+            hosted_placements=tuple(placements),
+            choices=(),
+        )
+
+
+class ChoiceResolutionError(ValueError):
+    """A blueprint choice is invalid, ambiguous, or selected wrongly."""
+
+
+@dataclass(frozen=True)
+class ChoiceAtom:
+    """Alternative blueprints; autoconnect() flattens them into conditional atoms."""
+
+    name: str
+    choices: Mapping[str, Blueprint]
+    # None means the first option.
+    default: str | None = None
+    # The outer (choice, option) pairs under which this choice is reachable.
+    conditions: tuple[tuple[str, str], ...] = ()
+    # Kept by copies, so a reused ChoiceAtom is one choice but two separate ones may not share a name.
+    origin: object = field(default_factory=object, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.name or "=" in self.name:
+            raise ChoiceResolutionError("Choice names must be nonempty and cannot contain '='")
+        if not self.choices or any(not option for option in self.choices):
+            raise ChoiceResolutionError(f"Choice {self.name!r} must have nonempty option names")
+        if self.default is not None and self.default not in self.choices:
+            raise ChoiceResolutionError(
+                f"Invalid default {self.default!r} for choice {self.name!r}. "
+                f"Available options: {', '.join(self.choices)}"
+            )
+        object.__setattr__(self, "choices", MappingProxyType(dict(self.choices)))
+        if self.default is None:
+            object.__setattr__(self, "default", next(iter(self.choices)))
+
+    def flatten(self) -> Blueprint:
+        """Every option's atoms, each conditioned on its option being selected."""
+        for option, blueprint in self.choices.items():
+            if (
+                blueprint.global_config_overrides
+                or blueprint.transport_map
+                or blueprint.requirement_checks
+                or blueprint.configurator_checks
+                or blueprint.disabled_modules_tuple
+            ):
+                raise ChoiceResolutionError(
+                    f"Option {option!r} of choice {self.name!r} sets global_config, transports, "
+                    "requirements, configurators or disabled_modules; set them outside the choice"
+                )
+
+        def conditioned(option: str, blueprint: Blueprint) -> Blueprint:
+            condition = ((self.name, option),)
+            return replace(
+                blueprint,
+                blueprints=tuple(
+                    replace(atom, conditions=condition + atom.conditions)
+                    for atom in blueprint.blueprints
+                ),
+                choices=tuple(
+                    replace(choice, conditions=condition + choice.conditions)
+                    for choice in blueprint.choices
+                ),
+            )
+
+        options = autoconnect(*(conditioned(o, b) for o, b in self.choices.items()))
+        return replace(options, choices=(*options.choices, self))
+
 
 def transport_config_name(cls: type) -> str:
     return cls.__name__.removesuffix("Config").lower()
 
 
-def autoconnect(*blueprints: Blueprint) -> Blueprint:
+def autoconnect(*parts: "Blueprint | ChoiceAtom") -> Blueprint:
+    blueprints = [part.flatten() if isinstance(part, ChoiceAtom) else part for part in parts]
     all_atoms = [atom for blueprint in blueprints for atom in blueprint.blueprints]
+    conditions_by_name: dict[str, tuple[tuple[str, str], ...]] = {}
+    for atom in all_atoms:
+        if conditions_by_name.setdefault(atom.name, atom.conditions) != atom.conditions:
+            raise ChoiceResolutionError(
+                f"Module {atom.name!r} is in more than one option of a choice, or both inside "
+                "and outside one; give each copy its own instance_name"
+            )
+    # A reused ChoiceAtom may be reachable under several conditions; distinct ones may not share a name.
+    all_choices: list[ChoiceAtom] = []
+    origins: dict[str, object] = {}
+    for choice in (c for blueprint in blueprints for c in blueprint.choices):
+        if origins.setdefault(choice.name, choice.origin) is not choice.origin:
+            raise ChoiceResolutionError(f"Duplicate choice name: {choice.name!r}")
+        if choice not in all_choices:
+            all_choices.append(choice)
     all_blueprints = tuple(_eliminate_duplicates(all_atoms))
     all_transports = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.transport_map.items()) for x in blueprints], [])
@@ -487,6 +623,7 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         requirement_checks=all_requirement_checks,
         configurator_checks=all_configurator_checks,
         hosted_placements=all_hosted_placements,
+        choices=tuple(all_choices),
     )
 
 
