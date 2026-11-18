@@ -34,7 +34,9 @@ backs the arm out home on its own, slowly and within a few seconds.
   needs every one of its ports, including the arm you are not calibrating, which
   is held where it is.
 - No other dimos run is active. The calibration owns the arm and refuses to start
-  next to someone else's run (`dimos status` shows it).
+  next to another run: one in your run registry (`dimos status` shows it), any
+  dimos coordinator answering on the bus (a run still starting, or another
+  user's), or another `dimos arm calibrate` of the same robot.
 - The robot has a workspace guard: the table height (`--floor-z-m`) and the line
   the fingertip stays in front of (`--min-x-m`), metres from the arm's base.
   The dual OpenYAM bench has its own. Every other arm needs both flags, and the
@@ -67,13 +69,30 @@ for a first run). Everything the command does not know is passed on to
 | `b601-dm` | `--b601dmconnection.can-port can0 --floor-z-m F --min-x-m X` |
 | `openarm` | `--openarmconnection.left-can-port can0 --openarmconnection.right-can-port can1 --arm left --floor-z-m F --min-x-m X` |
 
-The command starts the robot in the background, talks to it, and stops that run
-when it ends. It never stops a run it did not start.
+The command starts the robot in the background, talks to it, brings the arm home
+and only then stops that run (see Finishing, below). Global options given before
+`arm`, such as `--transport` or `--zenoh-connect`, go to the run too, and the
+command talks to the run on the same bus. While it runs it holds a lock,
+`~/.local/state/dimos/arms/<robot>.calibrate.lock`, so a second walk-through of
+the same robot cannot start next to it.
+
+It signals only the run it started. It knows that run by the `Run ID:` line
+`dimos run` prints, and it starts `dimos run` with a token of its own in the
+environment. Before it stops the run, it checks that the run's process still
+carries that token and started after the launch; a registry entry that names any
+other process is reported, not signalled. If the launch fails, times out or is
+interrupted, it stops what that launch left running, again only processes that
+carry its token.
 
 ## The eight steps
 
 At every prompt: **Enter** goes on, **s** skips what the prompt asks for (one
-pose, one joint, or the rest of the step), **q** or Ctrl-C aborts.
+pose, one joint, or the rest of the step). At any time, not only at a prompt,
+**q** then Enter aborts. So do **p** (the older calibration scripts' "park and
+quit") and **Ctrl-C**. Closing the terminal window sends SIGHUP, and that aborts
+too, as does closing the input. An abort stops sending new targets: the arm
+holds where it is with its motors on. The abort does not move it home; going
+home is offered next (see Finishing).
 
 1. **check.** Confirms the connection works, the joints read sane values and the
    recorder is writing (a test marker must land in the recording within two
@@ -109,40 +128,64 @@ Steps that need the run's recording (gravity_poses, gravity_fit, step_sweep,
 pick_gains) are listed as unavailable by the plan when no recording is on; the
 walk-through's own robot always records.
 
-After the last step, or after a failure or an abort, the arm holds where it is.
-Press **h** to ramp it home (it asks first) or Enter to finish.
+## Finishing
+
+After the last step, a failure or an abort, the arm holds where it is with its
+motors on, and the command asks:
+
+```
+[Enter or h] go home, then finish   [k] finish without going home
+```
+
+**Enter** (or **h**) ramps the arm home. The calibration asks once more before
+it moves; Enter to go. The command stops its run only once the arm is at home.
+
+If going home fails or is refused, or you skip it or press **k**, it asks:
+
+```
+Stop anyway: the arm will go limp where it is. Are you supporting it or is it on its supports? [yes/No]
+```
+
+Only `yes` stops the run; anything else goes back to the offer to go home. Even
+after `yes`, stopping still tries the backstop park (Parking, below), so the arm
+may move toward home on its own for a few seconds before it goes limp. If
+nobody can answer (the input or the terminal was closed, or Ctrl-C at these
+prompts), the command leaves the run running, with the arm held where it is,
+and says so. Support the arm, then stop the run with `dimos stop`.
 
 ## Parking
 
 Two things move the arm home without asking, at up to 20 degrees per second and
 within 8 seconds:
 
-- **Stopping the run** (`dimos stop`, or the command finishing). The arm's
-  connection would otherwise switch the motors off where the arm is, and a
-  stalled arm at a pose would drop onto the table. The calibration first aborts
-  what it was doing and backs the arm out home; the connection waits up to 10
-  seconds for that before it switches the motors off.
+- **Stopping the run** (`dimos stop`, or the command stopping it after your
+  `yes`). The arm's connection would otherwise switch the motors off where the
+  arm is, and a stalled arm at a pose would drop onto the table. The
+  calibration first aborts what it was doing and backs the arm out home; the
+  connection waits up to 10 seconds for that before it switches the motors off.
 - **A prompt left unanswered for 10 minutes.** The run aborts and the arm parks.
 
 The way home is the same guarded path every ramp uses: straight, or through
 home when straight would come too close to the table. When there is no such
 path, or it would take longer than 8 seconds (a pose more than about 85 degrees
 from home), the arm is **not** moved: it holds where it is, the log says why in
-an error line, and it drops when the connection stops. Support it, or press
-**h** before stopping. The status's `park` field says what the last park did.
+an error line, and it drops when the connection stops. The status's `park`
+field says what the last park did.
 
-Parking on stop is a safety net, not the way to end a session: `dimos stop`
-gives the run's processes about 5 seconds before it kills them, so a park that
-needs longer is cut off where the arm is. Bring the arm home with **h** first,
-then stop.
+Parking on stop is a backstop, not the way to end a session: `dimos stop` gives
+the run's processes about 5 seconds before it kills them, so a park that needs
+longer is cut off where the arm is. That is why the command brings the arm home
+itself (Finishing, above) before it stops the run.
 
 ## Safety
 
 - The arm only moves after you confirm, pose by pose unless you gave
   `--no-confirm-each`; parking (above) is the only exception.
-- **q**, Ctrl-C or closing the terminal input aborts: no new targets are sent and
-  the arm holds where it is. It is never moved home by an abort. Support it if a
-  joint was carrying a heavy load.
+- **q**, **p**, Ctrl-C, closing the terminal (SIGHUP) or closing its input aborts,
+  at any time: no new targets are sent and the arm holds where it is, its motors
+  on. It is never moved home by an abort. Going home is offered next, and the
+  run is stopped only with the arm at home or after your `yes`. Support the arm
+  if a joint was carrying a heavy load.
 - A joint that lags its target by more than 10 degrees while holding stops the
   step and holds the arm. While ramping, 5 degrees more than a joint normally
   trails at that speed stops it sooner. So does a fingertip that would cross the
