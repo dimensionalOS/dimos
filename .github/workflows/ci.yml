@@ -827,17 +827,6 @@ jobs:
           fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg0-dev
-      # cyclonedds (the dds extra) has no Linux arm64 wheels, so there it is 0.10.5,
-      # built against Ubuntu's CycloneDDS in the install layout its build expects.
-      - name: Install CycloneDDS (Linux arm64)
-        if: runner.os == 'Linux' && runner.arch == 'ARM64'
-        run: |
-          sudo apt-get install -y --no-install-recommends cyclonedds-dev
-          sudo mkdir -p /opt/cyclonedds
-          sudo ln -s /usr/include /opt/cyclonedds/include
-          sudo ln -s /usr/lib/aarch64-linux-gnu /opt/cyclonedds/lib
-          sudo ln -s /usr/bin /opt/cyclonedds/bin
-          echo "CYCLONEDDS_HOME=/opt/cyclonedds" >> "$GITHUB_ENV"
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
@@ -886,11 +875,8 @@ jobs:
       - name: Provision native modules from Cachix
         if: steps.native-marker.outcome == 'success'
         run: python3 bin/native-modules --link-results .cachix-marker/links.txt
-      # The dds extra lets the DDS tests run. In the tests group it would break dev
-      # installs on Linux arm64 (install.sh syncs that group), which have no CycloneDDS
-      # C library to build against; this job installs one in the arm64 step above.
       - name: Install dependencies
-        run: uv sync --group tests --extra dds --frozen
+        run: uv sync --group tests --frozen
       - name: Run tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       # Serial and after the parallel run: it binds the livox SDK's fixed ports.
