@@ -82,5 +82,9 @@ metal_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_MODEL),
     HeuristicGraspModule.blueprint(**METAL_HEURISTIC_AIM),
     # The wrist camera holds still while the arm waits, so one view confirms an object.
-    ManipulationLocalize.blueprint(world_frame="world", params=LocalizeParams(min_views=1)),
+    # From home it sees the bench objects 0.22 to 0.30 m away and its own jaw within
+    # 0.14 m; localize's desk-scale default drops anything nearer than 0.28 m.
+    ManipulationLocalize.blueprint(
+        world_frame="world", params=LocalizeParams(min_views=1, min_camera_range_m=0.15)
+    ),
 )
