@@ -196,7 +196,7 @@ _PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
 
 
 def _apply_to_subblueprints(method: Callable[..., "Blueprint"]) -> Callable[..., "Blueprint"]:
-    """Apply a fluent operation to this fragment and to every option of its choices."""
+    """Apply a fluent operation to this blueprint and to every option of its choices."""
 
     @wraps(method)
     def apply(self: "Blueprint", *args: Any, **kwargs: Any) -> "Blueprint":
@@ -306,7 +306,7 @@ class Blueprint:
         controlling machine. Globals reach every Host; per-machine ones like
         ``n_workers`` belong in each Host's env.
         """
-        if not any(fragment.blueprints for fragment in self._fragments()):
+        if not any(sub_blueprint.blueprints for sub_blueprint in self._sub_blueprints()):
             raise ValueError("hosted() requires at least one module")
         if host is not None and (not isinstance(host, str) or not host.strip()):
             raise ValueError("host must be a non-empty string")
@@ -368,8 +368,8 @@ class Blueprint:
         names = sorted(
             {
                 b.name
-                for fragment in self._fragments()
-                for b in fragment.blueprints
+                for sub_blueprint in self._sub_blueprints()
+                for b in sub_blueprint.blueprints
                 if b.module is module
             }
         )
@@ -408,10 +408,12 @@ class Blueprint:
         expose_set = frozenset(expose)
 
         effective_names = set()
-        for fragment in self._fragments():
-            for atom in fragment.blueprints:
+        for sub_blueprint in self._sub_blueprints():
+            for atom in sub_blueprint.blueprints:
                 for stream in atom.streams:
-                    effective = fragment.remapping_map.get((atom.name, stream.name), stream.name)
+                    effective = sub_blueprint.remapping_map.get(
+                        (atom.name, stream.name), stream.name
+                    )
                     if isinstance(effective, str):
                         effective_names.add(effective)
 
@@ -492,12 +494,12 @@ class Blueprint:
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
 
-    def _fragments(self) -> "Iterable[Blueprint]":
-        """This fragment and every option of its choices, recursively."""
+    def _sub_blueprints(self) -> "Iterable[Blueprint]":
+        """This blueprint and every option of its choices, recursively."""
         yield self
         for choice in self.choice_atoms:
             for option in choice.choices.values():
-                yield from option._fragments()
+                yield from option._sub_blueprints()
 
     def solidify(self, *, choices: Mapping[str, str] | None = None) -> "Blueprint":
         """Pick an option for every active choice and merge it in.
@@ -556,7 +558,7 @@ class ChoiceResolutionError(ValueError):
 
 @dataclass(frozen=True)
 class ChoiceAtom:
-    """Alternative blueprint fragments, one of which solidify() picks by name."""
+    """Alternative sub-blueprints, one of which solidify() picks by name."""
 
     name: str
     choices: Mapping[str, Blueprint]
