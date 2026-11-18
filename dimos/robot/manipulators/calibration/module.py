@@ -42,9 +42,13 @@ the streams the offline reports (``gravity_fit``, ``step_report``,
 
 Stopping the module parks the arm first (``Procedure.shutdown``): any run is
 aborted and the arm backs out home within ``park_budget_s``, then the session
-ends and the connection may de-energize it. ``config_command`` times out
-after ``STREAMED_CALL_TIMEOUT_S``: a call that slow has already let the
-connection's deadman hold the arm.
+ends and the connection may de-energize it. The calls to the connection time
+out by method name (``CALL_TIMEOUTS_S``): ``config_command`` after
+``STREAMED_CALL_TIMEOUT_S``, since a call that slow has already let the
+connection's deadman hold the arm, and ``config_set``, ``config_get`` and
+``config_reset`` after ``CONFIG_CALL_TIMEOUT_S``, so a connection that
+stopped answering cannot stall closing a session for minutes. A save
+(``config_set`` with scope "persist") waits ``PERSIST_CALL_TIMEOUT_S``.
 """
 
 from __future__ import annotations
@@ -58,7 +62,7 @@ from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
 
-from dimos.control.connection.arm_config import ConfigKeys
+from dimos.control.connection.arm_config import ConfigApplied, ConfigKeys, ConfigPatch
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -98,9 +102,18 @@ logger = setup_logger()
 NOT_RECORDING = "not in a dimos run, so nothing is recorded to read back"
 # The streamed calls fail fast: by then the connection's 0.1 s deadman holds the arm.
 STREAMED_CALL_TIMEOUT_S = 0.5
-# Without the short timeout a stuck call would block the session's tick for
-# the module default of two minutes.
-STREAMED_CALLS = ("config_command",)
+# A session's other calls answer at once; a stuck one ends the session.
+CONFIG_CALL_TIMEOUT_S = 2.0
+# Writing and applying a calibration file.
+PERSIST_CALL_TIMEOUT_S = 10.0
+# Each call's timeout by method name. Without them a stuck call would block
+# the session's tick, or its close, for the module default of two minutes.
+CALL_TIMEOUTS_S: dict[str, float] = {
+    "config_command": STREAMED_CALL_TIMEOUT_S,
+    "config_set": CONFIG_CALL_TIMEOUT_S,
+    "config_get": CONFIG_CALL_TIMEOUT_S,
+    "config_reset": CONFIG_CALL_TIMEOUT_S,
+}
 
 
 class ArmConfigConnectionSpec(Spec, ArmConfigHooks, Protocol):
@@ -188,6 +201,35 @@ class CalibrationModuleConfig(ModuleConfig):
         )
 
 
+class _ModuleProcedure(Procedure):
+    """The module's procedure: a save waits ``PERSIST_CALL_TIMEOUT_S`` for the connection.
+
+    A save is a ``config_set``, whose timeout is ``CONFIG_CALL_TIMEOUT_S``;
+    for the save alone it is raised in the same per-method table, then put
+    back.
+
+    Args:
+        timeouts: The connection client's timeouts by method name, ``None``
+            for a connection without an RPC client.
+    """
+
+    def __init__(self, *args: Any, timeouts: dict[str, float] | None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._timeouts = timeouts
+
+    def persist(
+        self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+    ) -> ConfigApplied:
+        timeouts = self._timeouts
+        if timeouts is None:
+            return super().persist(patch, force=force, apply_now=apply_now)
+        timeouts["config_set"] = PERSIST_CALL_TIMEOUT_S
+        try:
+            return super().persist(patch, force=force, apply_now=apply_now)
+        finally:
+            timeouts["config_set"] = CALL_TIMEOUTS_S["config_set"]
+
+
 class _LatestJointState:
     """The latest ``joint_state`` message: the procedure's ``StateSource``."""
 
@@ -255,10 +297,10 @@ class CalibrationModule(Module):
     def start(self) -> None:
         super().start()
         spec = self.config.arm_spec()
-        self._shorten_streamed_calls()
+        timeouts = self._set_call_timeouts()
         self.register_disposable(Disposable(self.joint_state.subscribe(self._joint_states.put)))
         self._recording = SqliteRecording.of_this_run()
-        procedure = Procedure(
+        procedure = _ModuleProcedure(
             spec,
             self._connection,
             calibration_steps(),
@@ -268,6 +310,7 @@ class CalibrationModule(Module):
             caps=Capabilities(recording_unavailable=self._recording_unavailable()),
             recording=self._recording,
             events=_StreamSink(self),
+            timeouts=timeouts,
         )
         with self._lock:
             self._procedure = procedure
@@ -284,18 +327,20 @@ class CalibrationModule(Module):
             logger.info(f"{procedure.spec.arm_id}: calibration module stopping: {outcome}")
         super().stop()
 
-    def _shorten_streamed_calls(self) -> None:
-        """Give the calls streamed every tick a ``STREAMED_CALL_TIMEOUT_S`` timeout.
+    def _set_call_timeouts(self) -> dict[str, float] | None:
+        """Give the config calls their ``CALL_TIMEOUTS_S``; returns the client's table.
 
         The connection reference's RPC client resolves a call's timeout from
         its ``rpc_timeouts`` by method name, falling back to the module default
-        (two minutes); a fake connection has no client and is left alone.
+        (two minutes); a fake connection has no client and is left alone
+        (``None``).
         """
         client = getattr(self._connection, "rpc", None)
         timeouts = getattr(client, "rpc_timeouts", None)
-        if isinstance(timeouts, dict):
-            for name in STREAMED_CALLS:
-                timeouts[name] = STREAMED_CALL_TIMEOUT_S
+        if not isinstance(timeouts, dict):
+            return None
+        timeouts.update(CALL_TIMEOUTS_S)
+        return timeouts
 
     def _recording_unavailable(self) -> str | None:
         recording = self._recording

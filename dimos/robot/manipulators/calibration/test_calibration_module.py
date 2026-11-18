@@ -27,15 +27,18 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
+from dimos.control.connection.arm_config import ConfigPatch
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.manipulators.calibration._fake_tuning_arm import FakeTuningArm
 from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, generate_poses
 from dimos.robot.manipulators.calibration.module import (
+    CALL_TIMEOUTS_S,
+    CONFIG_CALL_TIMEOUT_S,
     NOT_RECORDING,
+    PERSIST_CALL_TIMEOUT_S,
     STREAMED_CALL_TIMEOUT_S,
-    STREAMED_CALLS,
     CalibrationModule,
     CalibrationModuleConfig,
 )
@@ -180,19 +183,36 @@ def test_markers_go_out_on_the_streams_the_reports_read(make_module, mocker, tmp
     assert outputs["step_events"].sent == [] and outputs["float_events"].sent == []
 
 
-def test_the_streamed_calls_time_out_in_half_a_second(make_module, left_spec, tmp_path):
+def test_the_config_calls_time_out_in_seconds_and_a_save_in_ten(make_module, left_spec, tmp_path):
     fake = FakeTuningArm(left_spec, calibration_root=tmp_path, realtime=True)
     # The per-method timeouts of an RPC client, as a deployed module reference has.
     fake.rpc = SimpleNamespace(rpc_timeouts={"start": 1200.0})
+    seen: list[tuple[str, float]] = []
+    config_set = fake.config_set
 
-    make_module(connection=fake)
+    def timed(patch, scope="session", **kwargs):
+        seen.append((scope, fake.rpc.rpc_timeouts["config_set"]))
+        return config_set(patch, scope, **kwargs)
+
+    fake.config_set = timed  # type: ignore[method-assign]
+
+    module, _ = make_module(connection=fake)
 
     timeouts = fake.rpc.rpc_timeouts
-    assert STREAMED_CALLS == ("config_command",)
-    assert {name: timeouts[name] for name in STREAMED_CALLS} == dict.fromkeys(
-        STREAMED_CALLS, STREAMED_CALL_TIMEOUT_S
-    )
+    assert {name: timeouts[name] for name in CALL_TIMEOUTS_S} == {
+        "config_command": 0.5,
+        "config_set": 2.0,
+        "config_get": 2.0,
+        "config_reset": 2.0,
+    }
     assert STREAMED_CALL_TIMEOUT_S == 0.5 and timeouts["start"] == 1200.0
+    # A save waits longer, then the session's calls are short again.
+    procedure = module._require()
+    procedure.persist(ConfigPatch(arm_id=left_spec.arm_id, notes="x"))
+    with procedure.open_session():
+        pass
+    assert seen == [("persist", PERSIST_CALL_TIMEOUT_S), ("session", CONFIG_CALL_TIMEOUT_S)]
+    assert PERSIST_CALL_TIMEOUT_S == 10.0 and timeouts["config_set"] == 2.0
 
 
 def test_stopping_parks_the_arm_before_the_connection_lets_it_go(make_module, left_spec, tmp_path):
