@@ -33,10 +33,13 @@ import pytest_mock
 from dimos.autoresearch.module import AutoresearchModule
 from dimos.autoresearch.session import Budget, Session
 from dimos.autoresearch.status import AutoresearchStatus
+from dimos.autoresearch.world import PlacementBounds
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand
@@ -71,6 +74,7 @@ JOINTS = [f"arm/joint{i}" for i in range(1, 8)]
 HOME = [0.0, -1.87, 2.15, -1.85, 0.0, 0.0]
 PROGRAM = "def run(robot, task):\n    robot.arm.home()\n"
 ENDLESS = "def run(robot, task):\n    while True:\n        robot.arm.joints()\n"
+BOUNDS = PlacementBounds(x=(0.18, 0.30), y=(0.08, 0.20), z=0.02, yaw=(-0.7, 0.7))
 
 
 class FakeBench:
@@ -226,6 +230,9 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
     module = AutoresearchModule(
         session_dir=tmp_path / "lift",
         task="lift the cube",
+        judge_body="cube",
+        place_body="bowl",
+        placement_bounds=BOUNDS,
         budget=Budget(
             iterations=1, candidates_per_round=2, dev_trials=2, heldout_trials=1, threshold=0.8
         ),
@@ -441,3 +448,11 @@ def test_stop_actor_ends_a_running_actor(lab: Lab, mocker: pytest_mock.MockerFix
     assert (status.actor, status.actor_error) == ("idle", None)
     assert lab.module._actor_thread is None
     assert AutoresearchStatus.model_validate_json(lab.module.stop_actor()).actor == "idle"
+
+
+def test_a_blueprint_without_the_scene_settings_fails_at_build(tmp_path: Path) -> None:
+    blueprint = AutoresearchModule.blueprint(session_dir=tmp_path / "s", task="lift it")
+    with pytest.raises(BlueprintConfigError) as error:
+        BlueprintConfigParser(blueprint).parse([], environ={})
+    for field_name in ("judge_body", "place_body", "placement_bounds"):
+        assert f"{field_name}: Field required" in str(error.value)

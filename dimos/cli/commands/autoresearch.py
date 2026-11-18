@@ -30,10 +30,14 @@ def export(
     root: Path | None = typer.Option(
         None, "--root", help="Where the skill folder goes; default: the agent's user skills folder"
     ),
+    force: bool = typer.Option(
+        False, "--force", help="Export even with no held-out score or a held-out pass rate of 0"
+    ),
 ) -> None:
-    """Export a session's frozen program as an Agent Skill folder. Needs no running stack."""
+    """Export a session's frozen program as an Agent Skill folder. Needs no running stack.
+    Refused while the program has no held-out score or passed no held-out trial, unless --force."""
     # Imported here so `dimos --help` does not load the lab's robot API.
     from dimos.autoresearch.session import Session
     from dimos.autoresearch.skill import USER_SKILLS_DIR, export_skill
 
-    print(export_skill(Session(session_dir), root or USER_SKILLS_DIR, name))
+    print(export_skill(Session(session_dir), root or USER_SKILLS_DIR, name, force=force))

@@ -137,14 +137,18 @@ recorder on a stack without one.
 
 `AutoresearchModule` (`module.py`) puts a robot behind the loop. Its config
 names the session directory, the task, the budget and the judge; `start()`
-creates the session and homes the arm. The actor's tools are its skills,
+creates the session and homes the arm. The scene settings have no default:
+the robot's blueprint names `judge_body` (the object each reset places and
+the judge scores), `place_body` (the place judge's target) and
+`placement_bounds` (where the object may start), and a blueprint without
+them fails at build. The actor's tools are its skills,
 served over MCP: `task`, `scene`, `submit`, `run`, `stop_run`, `results`,
 `leaderboard`, `freeze` and `note`. `run` and `freeze` run the trials on a
 background thread and return at once; `results` is polled. The world is
-`MujocoWorld` (`world.py`): a seeded reset places the cube through
+`MujocoWorld` (`world.py`): a seeded reset places `judge_body` through
 `SimSceneSpec`, drives the arm home through the controller's trajectory task
 (no plan, so it works from any pose), waits for it to hold still and for an
-obstacle map of the new bench, then puts back whatever the last program
+obstacle map of the new scene, then puts back whatever the last program
 cleared from that map and waits for fresh poses; a snapshot stops the arm and
 waits for it to hold still. Programs run on `LIVE_BACKEND`. `TruthSceneModule` (`truth_scene.py`) answers scene scans from the
 simulator's true poses so no detector is needed. The lab publishes an
@@ -194,11 +198,14 @@ A frozen candidate can leave the lab as an Agent Skill folder in the
 ```
 
 ```bash
-dimos autoresearch export <session-dir> [--name NAME] [--root DIR]
+dimos autoresearch export <session-dir> [--name NAME] [--root DIR] [--force]
 ```
 
-needs no running stack; on a running lab the `export_skill(name=None)` RPC
-does the same. Both refuse before a candidate is frozen. The default root is
+needs no running stack; on a running autoresearch module the
+`export_skill(name=None, force=False)` RPC does the same. Both refuse before a
+candidate is frozen, and while it has no held-out score or a held-out pass
+rate of 0, saying the score; `--force` (`force=True`) exports it anyway, and
+SKILL.md states the score. The default root is
 `~/.config/dimos/agent/skills` (`$XDG_CONFIG_HOME/dimos/agent/skills`), the
 agent harness's user skills folder, so the next agent conversation lists the
 skill. SKILL.md's metadata names the program API version as

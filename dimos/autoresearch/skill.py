@@ -112,22 +112,37 @@ def skill_name(text: str) -> str:
     return slug[:NAME_MAX].rstrip("-") or "autoresearch-program"
 
 
-def export_skill(session: Session, root: Path, name: str | None = None) -> Path:
+def export_skill(
+    session: Session, root: Path, name: str | None = None, *, force: bool = False
+) -> Path:
     """Write the frozen candidate of ``session`` as the skill folder
     ``root/<name>`` and return it. ``name`` defaults to a slug of the task.
-    Raises ``ValueError`` before a candidate is frozen or when the result breaks
-    the format, and ``FileExistsError`` when the folder is already there."""
+    Raises ``ValueError`` before a candidate is frozen, when the session has no
+    held-out score or a held-out pass rate of 0 (unless ``force``), or when the
+    result breaks the format; ``FileExistsError`` when the folder is there."""
     candidate = session.frozen()
     if candidate is None:
         raise ValueError(f"session {session.name} has no frozen candidate; freeze one first")
     info = session.info()
+    records = session.results(candidate)
+    heldout = [record for record in records if record.split == "heldout"]
+    dev = [record for record in records if record.split == "dev"]
+    if not force and not info.heldout_rate:
+        tally = _tally(heldout)
+        score = (
+            f"has no held-out score yet ({tally.trials} of "
+            f"{info.budget.heldout_trials} held-out trials run)"
+            if info.heldout_rate is None
+            else f"passed {tally.passed}/{tally.trials} held-out trials (pass rate 0.00)"
+        )
+        raise ValueError(
+            f"candidate {candidate} of session {session.name} {score}; "
+            "pass force=True (--force) to export it anyway"
+        )
     name = name or skill_name(info.task)
     target = root / name
     if target.exists():
         raise FileExistsError(f"{target} exists; remove it or pass another name")
-    records = session.results(candidate)
-    heldout = [record for record in records if record.split == "heldout"]
-    dev = [record for record in records if record.split == "dev"]
     shown = _keyframe_trial(records)
     validation = Validation(
         task=info.task,

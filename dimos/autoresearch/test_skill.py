@@ -90,10 +90,30 @@ def test_export_refuses_before_a_candidate_is_frozen(tmp_path: Path) -> None:
         export_skill(session, tmp_path / "skills")
 
 
+def test_export_refuses_a_program_without_a_passing_heldout_score_unless_forced(
+    tmp_path: Path,
+) -> None:
+    session = _session(tmp_path / "lift", "lift the cube")
+    session.submit(PROGRAM, "first try")
+    session.freeze(1)
+    with pytest.raises(ValueError, match=r"no held-out score yet \(0 of 3 held-out trials run\)"):
+        export_skill(session, tmp_path / "skills")
+    for index in range(3):
+        _record(session, 1, "heldout", index, False)
+    session.set_status("scored", heldout_rate=0.0)
+    with pytest.raises(ValueError, match=r"passed 0/3 held-out trials \(pass rate 0.00\)"):
+        export_skill(session, tmp_path / "skills")
+
+    skill = export_skill(session, tmp_path / "skills", force=True)
+
+    assert validate_skill(skill)["metadata"]["heldout-pass-rate"] == "0.00"
+    assert "Held-out: 0/3 passed." in (skill / "SKILL.md").read_text()
+
+
 @pytest.mark.parametrize("task", ["Pick UP the cube -- and   put it IN the bowl, " * 5, "?!", ""])
 def test_any_task_text_gives_a_valid_name(tmp_path: Path, task: str) -> None:
     session = _session(tmp_path / "s", task or "x")
     session.submit(PROGRAM, "h")
     session.freeze(1)
-    skill = export_skill(session, tmp_path / "skills", skill_name(task))
+    skill = export_skill(session, tmp_path / "skills", skill_name(task), force=True)
     assert len(validate_skill(skill)["name"]) <= 64
