@@ -22,6 +22,7 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.dual_makermods_metal.blueprints.basic import (
@@ -103,7 +104,7 @@ def dual_metal_teleop_control(tasks: list[TaskConfig]) -> Blueprint:
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=DUAL_METAL_QUEST_MODEL.model,
+            connections=[arm_declaration(DualMetalConnection)],
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),
@@ -117,6 +118,8 @@ teleop_webxr_dual_metal = autoconnect(
     ArmTeleopModule.blueprint(zero_button="X"),
     dual_metal_teleop_control(dual_metal_quest_tasks()),
     DualMetalManipulationModule.blueprint(
+        # The Controller app calls the planner by this name, not the subclass's.
+        rpc_name="ManipulationModule",
         model=DUAL_METAL_QUEST_MODEL,
         gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
         kinematics=DUAL_METAL_QUEST_KINEMATICS,
