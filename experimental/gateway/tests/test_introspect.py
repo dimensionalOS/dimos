@@ -68,6 +68,7 @@ class RightCamera(Module):
 def test_remapped_streams_show_their_wired_topic() -> None:
     blueprint = (
         autoconnect(LeftCamera.blueprint(), RightCamera.blueprint())
+        .solidify()
         .remappings(
             [
                 (LeftCamera, "jpeg_out", "head_left_color"),

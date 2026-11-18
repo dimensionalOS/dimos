@@ -21,7 +21,7 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -88,7 +88,7 @@ XARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def xarm_coordinator(arm: XArmType) -> Blueprint:
+def xarm_coordinator(arm: XArmType) -> MetaBlueprint:
     """Run planned joint trajectories on an xArm and open and close its xArm
     Gripper, through ``XArmConnection``.
 
@@ -131,7 +131,7 @@ def xarm_coordinator(arm: XArmType) -> Blueprint:
     )
 
 
-def _planner_coordinator(arm: XArmType) -> Blueprint:
+def _planner_coordinator(arm: XArmType) -> MetaBlueprint:
     """Plan and run motions of an xArm with the xArm Gripper. Wire it up with
     ``.remappings(XARM_REMAPS)``; see ``xarm_coordinator``."""
     dof, robot_type = XARM_ARMS[arm]

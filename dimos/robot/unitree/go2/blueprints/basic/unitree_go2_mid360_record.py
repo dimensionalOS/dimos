@@ -90,8 +90,9 @@ if _RECORD_PCAP:
 
 
 if __name__ == "__main__":
-    parsed_config = BlueprintConfigParser(unitree_go2_mid360_record).parse(
+    blueprint = unitree_go2_mid360_record.solidify()
+    parsed_config = BlueprintConfigParser(blueprint).parse(
         overrides={"go2connection": {"obstacle_avoidance": False}}
     )
-    coordinator = ModuleCoordinator.build(unitree_go2_mid360_record, parsed_config)
+    coordinator = ModuleCoordinator.build(blueprint, parsed_config)
     coordinator.loop()

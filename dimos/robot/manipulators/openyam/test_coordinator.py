@@ -35,16 +35,16 @@ QUEST_ROLLOUT = build_openyam_rollout(quest_control=True)
 @pytest.mark.parametrize(
     ("blueprint", "teach"),
     [
-        (openyam_teach_collection, True),
-        (openyam_quest_collection, False),
-        (ROLLOUT, False),
-        (QUEST_ROLLOUT, False),
+        (openyam_teach_collection.solidify(), True),
+        (openyam_quest_collection.solidify(), False),
+        (ROLLOUT.solidify(), False),
+        (QUEST_ROLLOUT.solidify(), False),
     ],
     ids=["teach", "quest", "rollout", "quest-rollout"],
 )
 def test_can_selector_belongs_to_the_connection(blueprint, teach, tmp_path):
     flags = ["--openyamconnection.can-port", "/dev/ttyACM0"]
-    if blueprint in (openyam_teach_collection, openyam_quest_collection):
+    if blueprint in (openyam_teach_collection.solidify(), openyam_quest_collection.solidify()):
         flags.extend(["--recorder.recording", str(tmp_path / "session"), "--episodes.task", "pick"])
     else:
         flags.extend(["--policy.policy-path", "checkpoint", "--policy.task", "pick"])

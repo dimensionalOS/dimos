@@ -132,7 +132,7 @@ def test_parse_supports_value_forms_types_nested_defaults_and_last_wins() -> Non
 
 
 def test_ambiguous_shorthand_requires_deterministic_qualified_option() -> None:
-    blueprint = autoconnect(PrimaryModule.blueprint(), SecondaryModule.blueprint())
+    blueprint = autoconnect(PrimaryModule.blueprint(), SecondaryModule.blueprint()).solidify()
     parser = BlueprintConfigParser(blueprint)
 
     parser.parse(environ={})
@@ -163,7 +163,7 @@ def test_qualified_option_wins_over_another_fields_relative_alias() -> None:
     class Other(Module):
         config: OtherConfig
 
-    blueprint = autoconnect(Foo.blueprint(), Other.blueprint())
+    blueprint = autoconnect(Foo.blueprint(), Other.blueprint()).solidify()
     parser = BlueprintConfigParser(blueprint)
 
     parsed = parser.parse(["--foo.bar", "root"], environ={})
@@ -270,10 +270,14 @@ def test_namespaced_instance_accepts_slash_qualified_option() -> None:
 
 
 def test_disabled_module_does_not_make_shorthand_ambiguous() -> None:
-    blueprint = autoconnect(
-        PrimaryModule.blueprint(),
-        SecondaryModule.blueprint(),
-    ).disabled_modules(SecondaryModule)
+    blueprint = (
+        autoconnect(
+            PrimaryModule.blueprint(),
+            SecondaryModule.blueprint(),
+        )
+        .solidify()
+        .disabled_modules(SecondaryModule)
+    )
 
     parsed = BlueprintConfigParser(blueprint).parse(["--map-file", "map"], environ={})
 
