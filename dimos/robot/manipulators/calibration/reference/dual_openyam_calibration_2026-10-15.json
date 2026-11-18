@@ -1,0 +1,268 @@
+{
+  "name": "dual_openyam_workcell",
+  "date": "2026-10-15",
+  "status": "provisional: touch calibration; expected camera-to-fingertip error about 7 mm rms, worst about 10 mm",
+  "frames": {
+    "rig": "origin midway between the two arm bases at the bottom face of the base blocks; x forward, y toward the left arm, z up; oriented like the left base",
+    "base": "each arm's URDF {side}_base frame",
+    "camera": "overhead D405 colour optical frame: x right, y down, z out of the lens"
+  },
+  "arms": {
+    "left": {
+      "base_in_rig": {
+        "xyz_m": [
+          -0.00862,
+          0.22219,
+          -0.00559
+        ],
+        "quat_xyzw": [
+          -0.0,
+          -0.0,
+          0.0,
+          1.0
+        ],
+        "rpy_deg": [
+          -0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "joint_zero_offsets_rad": {
+        "joint3": -0.04907
+      },
+      "joint_zero_offsets_note": "add to the encoder reading; joint3 -2.81 +/- 0.36 deg from 8 touches, fit residual 3.1 mm rms"
+    },
+    "right": {
+      "base_in_rig": {
+        "xyz_m": [
+          0.00862,
+          -0.22219,
+          0.00559
+        ],
+        "quat_xyzw": [
+          -0.032517,
+          0.014623,
+          0.010943,
+          0.999304
+        ],
+        "rpy_deg": [
+          -3.71,
+          1.715,
+          1.199
+        ]
+      },
+      "joint_zero_offsets_rad": {
+        "joint3": -0.06793
+      },
+      "joint_zero_offsets_note": "add to the encoder reading; joint3 -3.89 +/- 0.61 deg from 8 touches, fit residual 4.1 mm rms"
+    }
+  },
+  "tool": {
+    "finger_length_from_housing_face_m": 0.0825,
+    "housing_face_z_in_gripper_m": -0.0635,
+    "fingertip_in_gripper_m": [
+      0.0,
+      0.0,
+      -0.146
+    ],
+    "grasp_point_in_gripper_m": [
+      0.0,
+      0.0,
+      -0.141
+    ],
+    "pin_tip_in_gripper_m": [
+      0.0,
+      0.0,
+      -0.156
+    ],
+    "pin_tip_note": "2026-10-16: each gripper closes on a printed block whose screw tip sits exactly 10 mm beyond the closed fingertip end, along the gripper -z; use this point for touches, hovers and the hand-eye validation against the touch grid (fingertip -0.146 minus 0.010)",
+    "note": "printed fingers measure the same as stock (82-83 mm, calipers); grasp point = middle of the 10 mm pinch surface"
+  },
+  "table": {
+    "top_z_in_rig_m": -0.0346,
+    "hand_measured_z_m": -0.03
+  },
+  "overhead_camera": {
+    "serial": "230322272156",
+    "camera_in_rig": {
+      "xyz_m": [
+        -0.01676,
+        0.01263,
+        0.4152
+      ],
+      "quat_xyzw": [
+        0.688681,
+        -0.667454,
+        0.20986,
+        -0.190219
+      ],
+      "rpy_deg": [
+        -147.147,
+        -2.013,
+        -88.8
+      ]
+    },
+    "intrinsics_1280x720": {
+      "fx": 653.3819580078125,
+      "fy": 652.3980102539062,
+      "cx": 640.0418701171875,
+      "cy": 359.3155517578125,
+      "model": "distortion.inverse_brown_conrady",
+      "coeffs": [
+        -0.0545458048582077,
+        0.05949542298913002,
+        -0.0003498499863781035,
+        0.0013387323124334216,
+        -0.02008039318025112
+      ]
+    },
+    "depth_check": "depth agrees with the colour-derived board distance to +0.6 mm mean, 1.6 mm spread at 0.53 m"
+  },
+  "validation": {
+    "held_out": "6 touches on a second board placement, calibration fitted on the first placement only",
+    "before_krishna_model": {
+      "sideways_rms_mm": 31.9,
+      "rms_3d_mm": 32.6,
+      "worst_mm": 42.9
+    },
+    "after_this_method": {
+      "sideways_rms_mm": 4.6,
+      "height_mean_mm": 4.5,
+      "rms_3d_mm": 6.8,
+      "worst_mm": 10.5
+    },
+    "arms_agree_on_one_point_mm": {
+      "before": 43.1,
+      "after": 4.4
+    }
+  },
+  "raw_data": "/home/anvil/.local/share/dimos/calibration/dual_openyam/2026-10-14",
+  "control_gains": {
+    "note": "MIT-mode kp/kd per joint for calibration moves, chosen from step sweeps with the gravity override applied (END-310). kd on DM4310 wrist joints must stay near 1.5: kd 3+ buzzes at 100 Hz. Right arm not swept yet; left values copied as a starting point.",
+    "chosen_on": "2026-10-16",
+    "gravity_override": "dimos/robot/manipulators/dual_openyam/calibration/gravity_both_2026-10-16.json (left from recording 20261016-010922-4571, right from 20261016-014420-3612; both 15 poses, 3 deg dithers)",
+    "left": {
+      "left_joint1": [
+        120,
+        5
+      ],
+      "left_joint2": [
+        120,
+        5
+      ],
+      "left_joint3": [
+        240,
+        5
+      ],
+      "left_joint4": [
+        80,
+        1.5
+      ],
+      "left_joint5": [
+        80,
+        1.5
+      ],
+      "left_joint6": [
+        80,
+        1.5
+      ]
+    },
+    "right": {
+      "right_joint1": [
+        120,
+        5
+      ],
+      "right_joint2": [
+        120,
+        5
+      ],
+      "right_joint3": [
+        240,
+        5
+      ],
+      "right_joint4": [
+        80,
+        1.5
+      ],
+      "right_joint5": [
+        80,
+        1.5
+      ],
+      "right_joint6": [
+        80,
+        1.5
+      ],
+      "status": "confirmed 2026-10-16 (recording 20261016-024912-c7b4): same gains as left pass on the right"
+    },
+    "baseline_before": {
+      "arm": [
+        80,
+        5
+      ],
+      "wrist": [
+        10,
+        1.5
+      ]
+    },
+    "confirmation": {
+      "recording": "20261016-024912-c7b4-dual-openyam-step-test",
+      "note": "both arms, +/-1 and +/-3 deg steps at the chosen gains with gravity_both applied; bias = mean of the +/-3 deg resting errors, deg",
+      "bias_deg": {
+        "left": [
+          -0.05,
+          0.21,
+          -0.04,
+          -0.08,
+          -0.05,
+          -0.03
+        ],
+        "right": [
+          0.0,
+          -0.14,
+          -0.02,
+          0.06,
+          0.0,
+          -0.08
+        ]
+      },
+      "open": "joint 2 on both arms keeps a 0.2 to 0.5 deg residual (gravity ~0.3 Nm plus kd at the MIT frame ceiling)"
+    }
+  },
+  "checks_2026-10-16": {
+    "note": "Re-check after a power cut, table board moved, wrist cameras off. Camera pose and base poses above are unchanged (still the 2026-10-15 values).",
+    "touch_grid": {
+      "data": "~/.local/share/dimos/calibration/dual_openyam/2026-10-16-board2/touch_grid_{left,right}.json",
+      "method": "hand-positioned in float mode, pin tip 10 mm past the fingertip (finger length 92.5 mm), ~1 mm hover",
+      "joint3_zero_deg": {
+        "left": [
+          -3.36,
+          0.39
+        ],
+        "right": [
+          -3.86,
+          0.78
+        ]
+      },
+      "fit_rms_mm": {
+        "left": 2.0,
+        "right": 3.4
+      },
+      "repeat_same_corner_mm": [
+        1.3,
+        2.2
+      ],
+      "right_base_in_left_base_mm": {
+        "spacing": 442.0,
+        "forward": 15.3,
+        "height": 18.0
+      },
+      "leave_one_out_base_height_mm": [
+        15.0,
+        22.1
+      ]
+    },
+    "camera_from_touches_and_table_shot": "11.5 mm, 1.05 deg from camera_in_rig above (within touch noise)",
+    "gripper_board_capture": "14 teleop poses on the right arm REJECTED: the board moved on its mount (implied position on the gripper spread 36 mm along the fingers and 8 deg, tracking wrist roll). Redo with a board screwed to the gripper housing.",
+    "camera_exposure": "auto exposure blows out the table under the current lights; board detection needs a fixed exposure (1200 us worked)"
+  }
+}

@@ -23,12 +23,15 @@ deployment can be reviewed without reading any motor code.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Literal
 
 from dimos.robot.assets.model import RobotModel
 
 GripperOpening = Literal["increasing_position", "decreasing_position"]
 OpenAt = Literal["lower", "upper"]
+
+_ROBOT_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +130,9 @@ class DamiaoRobot:
             stiffness while teaching, by native gripper name.
         home_joints: The canonical arm posture a simulator starts from; the
             grippers start closed.
+        name: The robot's name in its arms' calibration ids, e.g.
+            "dual_openyam"; see :meth:`arm_ids`. Empty for a robot that is
+            never calibrated, such as a test rig.
     """
 
     buses: list[DamiaoBus]
@@ -138,10 +144,15 @@ class DamiaoRobot:
     teach_kd: list[float] | None = None
     passive_grippers: frozenset[str] = frozenset()
     home_joints: list[float] | None = None
+    name: str = ""
 
     def __post_init__(self) -> None:
         if not self.buses:
             raise ValueError("a Damiao robot needs at least one bus")
+        if self.name and not _ROBOT_NAME.fullmatch(self.name):
+            raise ValueError(
+                f"robot name must be letters, digits, '_', '.' or '-', got {self.name!r}"
+            )
         names = [bus.name for bus in self.buses]
         if any(not name for name in names) or len(set(names)) != len(names):
             raise ValueError("bus names must be non-empty and distinct")
@@ -194,6 +205,20 @@ class DamiaoRobot:
     def gripper_joints(self) -> dict[str, str]:
         """Gripper joint names keyed by their native group name."""
         return {gripper.name: gripper.joint for gripper in self.grippers}
+
+    def arm_ids(self) -> list[str]:
+        """Each bus's calibration arm id, in bus order; none for an unnamed robot.
+
+        A single-bus robot's arm is ``name``; on several buses each arm is
+        ``f"{name}/{arm}"``, where ``arm`` is the bus name without its "_arm"
+        suffix, e.g. "dual_openyam/left" for the bus "left_arm". These are the
+        ids the calibration tools save under.
+        """
+        if not self.name:
+            return []
+        if len(self.buses) == 1:
+            return [self.name]
+        return [f"{self.name}/{bus.name.removesuffix('_arm') or bus.name}" for bus in self.buses]
 
     def gripper_travel(self) -> dict[str, tuple[float, float]]:
         """Each gripper joint's (closed, open) positions, from its URDF range in ``model``.
