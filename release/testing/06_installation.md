@@ -1,12 +1,12 @@
 # 6. Installation
 
-Run these checks on fresh machines without an earlier DimOS setup. The Ubuntu check uses a Ubuntu 24.04 VirtualBox VM. Run its commands inside the VM.
+Run these checks on fresh machines without an earlier DimOS setup. The Ubuntu check uses a Ubuntu 26.04 VirtualBox VM. Run its commands inside the VM.
 
 Copy `RELEASE_BRANCH` and the full `RELEASE_COMMIT` SHA from the [release test record](README.md#before-testing) into each terminal used below. The installer script is fetched from that SHA and receives the release branch explicitly. After installation, verify that the checkout still matches the recorded SHA. A mismatch means the branch advanced, and the check must be repeated for the new candidate.
 
 ## 6.1 New Ubuntu install
 
-* Download a [Ubuntu 24.04](https://releases.ubuntu.com/24.04/ubuntu-24.04.4-desktop-amd64.iso) image and install it in VirtualBox.
+* Download a [Ubuntu 26.04](https://releases.ubuntu.com/26.04/ubuntu-26.04.1-desktop-amd64.iso) image and install it in VirtualBox.
 * Follow the guided installation flow from the [Ubuntu guide](../../docs/installation/ubuntu.md), using the release-specific command below. Accept the defaults, including the replay smoke test.
 
 ```bash

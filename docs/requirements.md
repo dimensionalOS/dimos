@@ -12,7 +12,7 @@ Supported Python versions are 3.10 (3.10.12 or newer), 3.11 (3.11.4 or newer), a
 | CPU | 8-core Intel / AMD | 12+ cores |
 | RAM | 16 GB | 32 GB+ |
 | Disk | 10 GB SSD | 25 GB+ SSD |
-| OS | Ubuntu 22.04, macOS 14+ | Ubuntu 24.04 |
+| OS | Ubuntu 22.04, macOS 14+ | Ubuntu 26.04 |
 
 > GPU is optional for basic robot control. Required for perception, VLMs, and AI features.
 
