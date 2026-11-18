@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +69,19 @@ OLD_RECORDING = (
     / "20261015-235349-091c-dual-openyam-step-test"
 )
 LEFT_MEASURED = tuple(f"left_joint{i}" for i in (2, 3, 4, 5))
+# The 2026-10-16 bench gravity runs, one per arm, under this directory, and the
+# fit they gave (calibration/reference/gravity_both_2026-10-16.json).
+RECORDINGS_ENV = "DIMOS_CALIBRATION_RECORDINGS"
+BENCH_RECORDINGS = {
+    "left": "20261016-010922-4571-dual-openyam-step-test",
+    "right": "20261016-014420-3612-dual-openyam-step-test",
+}
+REFERENCE_FIT = Path(__file__).resolve().parent / "reference" / "gravity_both_2026-10-16.json"
+# Held-out RMS (before, after) the October fit reported, Nm, by joint number.
+BENCH_HOLDOUT_RMS_NM = {
+    "left": {2: (2.41, 0.31), 3: (1.48, 0.07)},
+    "right": {2: (2.40, 0.20), 3: (1.71, 0.25)},
+}
 # A camera and bracket on the gripper, a heavier forearm: what the rig likely has.
 PERTURBATION = {
     "left_gripper": (0.25, np.array([-0.02, 0.0, -0.01])),  # d mass (kg), d(m*c) (kg m)
@@ -658,3 +672,45 @@ def test_fit_runs_on_the_single_pose_step_test_recording(
     assert result.train_poses == ["all"] and not result.holdout_poses
     assert result.rank < len(result.parameters)
     assert sum(p.determined for p in result.parameters) <= result.rank
+
+
+def _bench_recording(side: str) -> Path:
+    root = os.environ.get(RECORDINGS_ENV)
+    if not root:
+        pytest.skip(f"set {RECORDINGS_ENV} to the directory of the 2026-10-16 bench recordings")
+    recording = Path(root) / BENCH_RECORDINGS[side]
+    if not (recording / "memory.db").exists():
+        pytest.skip(f"no bench recording at {recording}")
+    return recording
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_the_bench_recordings_reproduce_the_october_fit(
+    side: str, dual_openyam_specs: list[ArmCalibrationSpec]
+) -> None:
+    # Reads the recording only; no report is written next to it.
+    recording = _bench_recording(side)
+    spec = next(s for s in dual_openyam_specs if s.arm_id == f"dual_openyam/{side}")
+    grec = load_gravity_recording(recording)
+    # The bench spec generates exactly the poses the October run visited.
+    visited = [m.data["targets_deg"] for m in grec.markers if m.label.startswith("pose_")]
+    generated = [list(pose.joints_deg) for pose in generate_poses(spec).identification]
+    assert np.allclose(visited, generated, atol=1e-6)
+    measurements = extract_measurements(grec, spec)
+    assert len(measurements) == 60  # 15 poses, 4 measured joints
+    result = fit_gravity(ArmModel(spec), measurements)
+    assert result.holdout_poses == ["pose_05", "pose_10", "pose_15"]
+    reference = json.loads(REFERENCE_FIT.read_text())["links"]
+    assert set(result.links) == set(spec.gravity_links)
+    for link, fitted in result.links.items():
+        assert fitted.mass_kg == pytest.approx(reference[link]["mass_kg"], abs=1e-3), link
+    before = result.rms_by_joint(holdout=True, after=False)
+    after = result.rms_by_joint(holdout=True, after=True)
+    for number, (rms_before, rms_after) in BENCH_HOLDOUT_RMS_NM[side].items():
+        joint = f"{side}_joint{number}"
+        assert before[joint] == pytest.approx(rms_before, abs=0.02), joint
+        assert after[joint] == pytest.approx(rms_after, abs=0.02), joint
+    # The known-good fits pass the save check, the left one with a COM at its bound.
+    assert save_refusals(result) == []
+    if side == "left":
+        assert result.at_bounds == ["left_link3 COM z sits at its bound (upper)"]
