@@ -23,11 +23,15 @@ offline analyses (``gravity_fit``, ``step_report``) read both back. A
 ``recordings/<run-id>/memory.db`` (``dimos.memory.tap.recording_dir``), found
 from the ``DIMOS_RUN_ID`` every module worker inherits. The tap writes from a
 queue, so a reader first waits until the joint samples past the window have
-landed (:meth:`RecordingSource.wait_for`).
+landed (:meth:`RecordingSource.wait_for`). Before the arm moves, the check step
+publishes a probe on ``calibration_events`` and waits for it to land
+(:meth:`RecordingSource.wait_for_probe`), so a recorder that is not writing
+stops the run before any motion, not after the poses.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import time
@@ -51,6 +55,10 @@ DATABASE_NAME = "memory.db"
 # the window's markers were published before them.
 FLUSH_MARGIN_S = 0.3
 FLUSH_TIMEOUT_S = 10.0
+# A probe must land within this; the recorder writes within milliseconds.
+PROBE_TIMEOUT_S = 2.0
+CALIBRATION_EVENTS_STREAM = "calibration_events"
+PROBE_KEY = "probe"
 _POLL_S = 0.1
 
 
@@ -77,6 +85,15 @@ class RecordingSource(Protocol):
     def gravity(self, start: float, end: float) -> GravityRecording:
         """The joint traces, step markers and pose markers between ``start`` and ``end``."""
         ...
+
+    def wait_for_probe(self, token: str, since: float, timeout_s: float = PROBE_TIMEOUT_S) -> None:
+        """Return once the probe ``token``, published after ``since``, is recorded; raise if not."""
+        ...
+
+
+def probe_payload(token: str) -> dict[str, Any]:
+    """What a probe publishes on ``calibration_events``."""
+    return {"stream": PROBE_KEY, PROBE_KEY: token}
 
 
 class SqliteRecording:
@@ -130,6 +147,37 @@ class SqliteRecording:
                 return False
             stream: Any = store.stream(JOINT_STATE_STREAM)
             return bool(stream.after(t).exists())
+        finally:
+            store.stop()
+
+    def wait_for_probe(self, token: str, since: float, timeout_s: float = PROBE_TIMEOUT_S) -> None:
+        deadline = time.monotonic() + timeout_s
+        while not self._has_probe(token, since):
+            if time.monotonic() >= deadline:
+                raise RecordingUnavailableError(
+                    f"the recorder is not writing: a marker sent on {CALIBRATION_EVENTS_STREAM} "
+                    f"did not reach {self.database} within {timeout_s:g} s; run the calibration "
+                    "blueprint with dimos run, which records it to sqlite"
+                )
+            time.sleep(_POLL_S)
+
+    def _has_probe(self, token: str, since: float) -> bool:
+        if not self.database.exists():
+            return False
+        store = SqliteStore(path=str(self.database), must_exist=True)
+        store.start()
+        try:
+            if CALIBRATION_EVENTS_STREAM not in set(store.list_streams()):
+                return False
+            stream: Any = store.stream(CALIBRATION_EVENTS_STREAM)
+            for obs in stream.after(since - 1.0):
+                try:
+                    payload = json.loads(obs.data.data)
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                if isinstance(payload, dict) and payload.get(PROBE_KEY) == token:
+                    return True
+            return False
         finally:
             store.stop()
 

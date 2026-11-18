@@ -18,8 +18,10 @@ Each robot package defines its ``<robot>-calibrate`` blueprint with
 :func:`calibration_blueprint`. There is no control coordinator: the
 calibration module owns the arm through its tuning session, and a coordinator
 streaming position commands would only have them dropped. Recording is pinned
-to sqlite, so the markers and joint states land in
-``recordings/<run-id>/memory.db`` where the fit reads them back.
+to sqlite with the Python engine and to the streams the procedure reads back,
+so the markers and joint states land in ``recordings/<run-id>/memory.db``
+where the fit reads them; the ``check`` step verifies the recorder writes
+before the arm moves.
 """
 
 from __future__ import annotations
@@ -32,6 +34,20 @@ from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection
 
 CALIBRATION_RECORDING = "sqlite"
+# The engine that writes recordings/<run-id>/memory.db as SqliteRecording reads it.
+CALIBRATION_RECORD_ENGINE = "python"
+# What the reports read (joint_state and the three marker streams) and what the
+# operator sees (every marker together, the status).
+CALIBRATION_RECORD_TOPICS = ",".join(
+    (
+        "joint_state",
+        "gravity_events",
+        "step_events",
+        "float_events",
+        "calibration_events",
+        "calibration_status",
+    )
+)
 
 
 def calibration_blueprint(
@@ -47,4 +63,8 @@ def calibration_blueprint(
     return autoconnect(
         arm_connection(connection, tuning=True),
         CalibrationModule.blueprint(robot=robot, **defaults),
-    ).global_config(record=CALIBRATION_RECORDING)
+    ).global_config(
+        record=CALIBRATION_RECORDING,
+        record_engine=CALIBRATION_RECORD_ENGINE,
+        record_topics=CALIBRATION_RECORD_TOPICS,
+    )

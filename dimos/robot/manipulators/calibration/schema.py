@@ -327,7 +327,7 @@ def calibration_from_legacy_gravity(
     if not isinstance(raw_links, Mapping):
         raise ArmCalibrationError("a legacy gravity file needs a 'links' mapping")
     links = {
-        name: LinkInertial(mass_kg=value["mass_kg"], com_m=tuple(value["com_m"]))  # type: ignore[arg-type]
+        name: LinkInertial(mass_kg=value["mass_kg"], com_m=tuple(value["com_m"]))
         for name, value in raw_links.items()
         if name in spec.gravity_links
     }

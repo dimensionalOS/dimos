@@ -76,7 +76,7 @@ def load_inertial_overrides(
         elif isinstance(value, Mapping):
             result[name] = LinkInertial(
                 mass_kg=value["mass_kg"],
-                com_m=tuple(value["com_m"]),  # type: ignore[arg-type]
+                com_m=tuple(value["com_m"]),
             )
         else:
             raise ValueError(f"inertial override for {name!r} must be a mapping")

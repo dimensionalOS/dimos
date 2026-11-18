@@ -33,8 +33,10 @@ from dimos.memory.tap import TransportRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.manipulators.calibration.recording import (
+    CALIBRATION_EVENTS_STREAM,
     RecordingUnavailableError,
     SqliteRecording,
+    probe_payload,
 )
 from dimos.robot.manipulators.calibration.step_analysis import StepEvent
 from dimos.robot.manipulators.calibration.step_report import extract_steps
@@ -154,3 +156,17 @@ def test_the_run_recording_is_found_from_the_run_id(monkeypatch: pytest.MonkeyPa
     )
     monkeypatch.delenv(DIMOS_RUN_ID_ENV)
     assert SqliteRecording.of_this_run() is None
+
+
+def test_a_probe_is_found_once_the_recorder_wrote_it(tmp_path: Path) -> None:
+    with SqliteStore(path=str(tmp_path / "memory.db")) as store:
+        with closing(TransportRecorder(store)) as recorder:
+            events = _Transport()
+            assert recorder.tap(CALIBRATION_EVENTS_STREAM, String, events) is not None
+            events.publish(String(json.dumps({"stream": "gravity_events", "marker": {}})))
+            events.publish(String(json.dumps(probe_payload("check-1"))))
+    recording = SqliteRecording(tmp_path)
+
+    recording.wait_for_probe("check-1", since=0.0, timeout_s=1.0)
+    with pytest.raises(RecordingUnavailableError, match="the recorder is not writing"):
+        recording.wait_for_probe("check-2", since=0.0, timeout_s=0.2)

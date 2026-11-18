@@ -19,8 +19,9 @@ from __future__ import annotations
 import pytest
 
 from dimos.control.connection.mock_joint_connection import MockJointConnection
-from dimos.core.coordination.module_coordinator import resolve_module_refs
+from dimos.core.coordination.module_coordinator import resolve_module_refs, stream_name_types
 from dimos.core.global_config import global_config
+from dimos.memory.tap import matching
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.get_all_blueprints import load_blueprint
 from dimos.robot.manipulators.calibration.module import CalibrationModule
@@ -66,6 +67,12 @@ def test_the_blueprint_opens_the_connection_for_tuning_and_records(name):
     [calibration] = [atom for atom in blueprint.blueprints if atom.module is CalibrationModule]
     assert calibration.kwargs == {"robot": robot, **({"arm": arm} if arm else {})}
     assert blueprint.global_config_overrides["record"] == "sqlite"
+    assert blueprint.global_config_overrides["record_engine"] == "python"
+    # Every stream the procedure reads back is recorded, by the names the recorder sees.
+    topics = blueprint.global_config_overrides["record_topics"]
+    names = {name for name, _ in stream_name_types(blueprint)}
+    read_back = {"joint_state", "gravity_events", "step_events", "float_events"}
+    assert read_back | {"calibration_events"} <= matching(topics, names)
     # The module's _connection reference resolves to the robot's connection.
     assert resolve_module_refs(blueprint) == {(calibration.name, "_connection"): driver.name}
 
