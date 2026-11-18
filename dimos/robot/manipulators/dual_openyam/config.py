@@ -68,11 +68,18 @@ DUAL_OPENYAM_LINKS = [
     ],
 ]
 
-# These pairs overlap by a few mm at the folded rest pose.
+# Link pairs the planner never checks against each other. link1/link3 and link2/link4
+# overlap by a few mm at the folded rest pose; the wrist (link4) nests inside the gripper
+# body in every pose, and the two pads meet at zero.
 DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
-    (f"{side}_link{a}", f"{side}_link{b}")
+    pair
     for side in DUAL_OPENYAM_SIDES
-    for a, b in ((1, 3), (2, 4))
+    for pair in (
+        (f"{side}_link1", f"{side}_link3"),
+        (f"{side}_link2", f"{side}_link4"),
+        (f"{side}_link4", f"{side}_gripper"),
+        (f"{side}_tip_left", f"{side}_tip_right"),
+    )
 ]
 
 # The workcell model's finger joints: the planner's grasp contact check slides them;

@@ -168,12 +168,6 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
         replace(group, tip_link=f"{group.name.split('_')[0]}_tcp")
         for group in config.planning_groups
     ]
-    # The pads meet at zero and the wrist nests in the gripper body, so these hulls always touch.
-    config.collision_exclusion_pairs = [
-        *config.collision_exclusion_pairs,
-        *((f"{arm}_tip_left", f"{arm}_tip_right") for arm in DUAL_OPENYAM_SIDES),
-        *((f"{arm}_link4", f"{arm}_gripper") for arm in DUAL_OPENYAM_SIDES),
-    ]
     return config
 
 
