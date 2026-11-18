@@ -20,8 +20,12 @@ ArmModel` for the workspace. A ramp is a minimum-jerk profile whose peak joint
 speed is the speed cap, so a 10 deg/s ramp never moves any joint faster than
 10 deg/s. A path goes straight when the straight ramp keeps the transition
 clearance, else through home, else nowhere. The tick checks stop the arm when
-a target would leave the workspace (:class:`SegmentGuard`) or the arm stops
-following its targets (:func:`tracking_error`).
+a target would leave the workspace (:class:`SegmentGuard`), would pass a joint
+limit (:func:`limit_error`), or the arm stops following its targets
+(:func:`tracking_error`): by more than ``MAX_POSE_ERROR_DEG`` while it holds,
+and while it ramps (:func:`ramp_lag_limits_deg`) by more than
+``RAMP_LAG_LIMIT_DEG`` beyond the lag it started with and the lag a PD
+follower has at that speed, so a stall shows sooner.
 """
 
 from __future__ import annotations
@@ -33,10 +37,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
+from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, urdf_limits
 
 # The safety limits of the bench-proven step test.
 MAX_STEP_DEG = 5.0
+# How far a joint may lag its target while it holds (a step of MAX_STEP_DEG
+# included), and how much more than it is expected to lag while it ramps.
 MAX_POSE_ERROR_DEG = 10.0
+RAMP_LAG_LIMIT_DEG = 5.0
 MAX_SPEED_DEG_S = 30.0
 DEFAULT_SPEED_DEG_S = 10.0
 # Peak speed of a minimum-jerk ramp over its average speed.
@@ -89,6 +97,34 @@ def ramp(start: Vector, end: Vector, speed: float, period_s: float) -> Iterator[
         yield a + min_jerk(tick / ticks) * (b - a)
 
 
+def joint_limits(spec: ArmCalibrationSpec) -> tuple[Vector, Vector]:
+    """The URDF's lower and upper limit of every arm joint, ``joint_names`` order."""
+    limits = {joint.name: urdf_limits(joint) for joint in spec.model.load().joints}
+    lower = np.asarray([limits[name][0] for name in spec.joint_names], dtype=np.float64)
+    upper = np.asarray([limits[name][1] for name in spec.joint_names], dtype=np.float64)
+    return lower, upper
+
+
+def limit_error(
+    joint_names: Sequence[str], q: Vector, lower: Vector, upper: Vector, margin_rad: float = 0.0
+) -> str | None:
+    """Which joints of ``q`` are past (or within ``margin_rad`` of) a limit, or ``None``."""
+    values = np.asarray(q, dtype=np.float64)
+    out = [
+        f"{name} at {math.degrees(float(v)):.1f} deg "
+        f"(limits {math.degrees(float(lo)):.1f}..{math.degrees(float(hi)):.1f})"
+        for name, v, lo, hi in zip(joint_names, values, lower, upper, strict=True)
+        if not lo + margin_rad <= v <= hi - margin_rad
+    ]
+    return ", ".join(out) or None
+
+
+def limit_margin_rad(q: Vector, lower: Vector, upper: Vector) -> float:
+    """How far the joint of ``q`` nearest a limit is from it, rad (negative past it)."""
+    values = np.asarray(q, dtype=np.float64)
+    return float(np.min(np.minimum(values - lower, upper - values)))
+
+
 def plan_path(arm: ArmModel, current: Vector, target: Vector) -> list[Vector] | None:
     """Waypoints to ``target``: straight when that ramp clears the table, else via home, else None."""
     if arm.transition_ok(current, target):
@@ -99,25 +135,50 @@ def plan_path(arm: ArmModel, current: Vector, target: Vector) -> list[Vector] | 
     return None
 
 
+def ramp_lag_limits_deg(
+    start_lag_deg: Vector, target_speed_deg_s: Vector, follow_s: Vector
+) -> NDArray[np.float64]:
+    """How far each joint may lag its target while ramping, deg.
+
+    ``RAMP_LAG_LIMIT_DEG`` beyond the lag it had when the ramp began (a
+    joint resting on its sag) plus the lag a PD follower has at the target's
+    speed (``follow_s`` = kd / kp), never more than ``MAX_POSE_ERROR_DEG``. A
+    joint that stops following grows past it within half a second at 10 deg/s.
+    """
+    expected = np.abs(start_lag_deg) + np.abs(target_speed_deg_s) * follow_s
+    limits: NDArray[np.float64] = np.minimum(RAMP_LAG_LIMIT_DEG + expected, MAX_POSE_ERROR_DEG)
+    return limits
+
+
 def tracking_error(
     joint_names: Sequence[str],
     commanded: Vector,
     measured: Vector,
-    limit_deg: float = MAX_POSE_ERROR_DEG,
+    limit_deg: float | Vector = MAX_POSE_ERROR_DEG,
 ) -> str | None:
-    """Why the arm is not following its targets, or ``None`` while every joint is within ``limit_deg``."""
+    """Why the arm is not following its targets, or ``None`` while every joint is within its limit.
+
+    ``limit_deg`` is one limit for every joint or one per joint.
+    """
     error = np.degrees(np.asarray(measured) - np.asarray(commanded))
+    limits = np.broadcast_to(np.asarray(limit_deg, dtype=np.float64), error.shape)
     far = [
-        f"{name} {value:+.1f} deg"
-        for name, value in zip(joint_names, error, strict=True)
-        if abs(value) > limit_deg
+        (name, value, limit)
+        for name, value, limit in zip(joint_names, error, limits, strict=True)
+        if abs(value) > limit
     ]
     if not far:
         return None
-    return (
-        f"the arm is more than {limit_deg:g} deg from its target ({', '.join(far)}): "
-        "stalled, blocked or sagging"
-    )
+    shown = {round(float(limit), 1) for _, _, limit in far}
+    if len(shown) == 1:
+        lags = ", ".join(f"{name} {value:+.1f} deg" for name, value, _ in far)
+        what = f"more than {shown.pop():g} deg from its target ({lags})"
+    else:
+        lags = ", ".join(
+            f"{name} {value:+.1f} deg (limit {limit:.1f})" for name, value, limit in far
+        )
+        what = f"too far from its target ({lags})"
+    return f"the arm is {what}: stalled, blocked or sagging"
 
 
 class SegmentGuard:

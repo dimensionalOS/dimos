@@ -139,7 +139,7 @@ def test_markers_go_out_on_the_streams_the_reports_read(make_module, mocker, tmp
     module.confirm()
     wait_until(lambda: module.status()["state"] == "failed", timeout=30.0)
 
-    assert "more than 10 deg from its target" in module.status()["message"]
+    assert "from its target (" in module.status()["message"]
     markers = [json.loads(message.data) for message in outputs["gravity_events"].sent]
     assert [marker["label"] for marker in markers] == ["pose_01", "end"]
     assert markers[0]["data"]["arm"] == "dual_openyam/left"

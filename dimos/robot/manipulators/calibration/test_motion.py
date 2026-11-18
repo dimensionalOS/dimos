@@ -26,10 +26,14 @@ from dimos.robot.manipulators.calibration.motion import (
     MAX_SPEED_DEG_S,
     SegmentGuard,
     check_step,
+    joint_limits,
+    limit_error,
+    limit_margin_rad,
     min_jerk,
     plan_path,
     ramp,
     ramp_duration_s,
+    ramp_lag_limits_deg,
     speed_rad_s,
     tracking_error,
 )
@@ -96,6 +100,35 @@ def test_tracking_error_names_the_lagging_joints():
     lag = tracking_error(names, commanded, commanded + np.radians([0.0, -12.5, 0.0]))
     assert lag is not None
     assert "b -12.5 deg" in lag and "a " not in lag and "10 deg" in lag
+
+
+def test_a_ramping_joint_may_lag_5_deg_more_than_a_pd_follower_does():
+    # A wrist at kp 10, kd 1.5 (0.15 s) and an elbow at kp 80, kd 5, at 20 deg/s,
+    # the wrist starting on a 2 deg sag.
+    limits = ramp_lag_limits_deg(
+        np.array([2.0, 0.0]), np.array([20.0, -20.0]), np.array([0.15, 0.0625])
+    )
+    assert limits == pytest.approx([2.0 + 3.0 + 5.0, 1.25 + 5.0])
+    # At rest 5 deg over the starting sag; never more than the hold limit.
+    assert ramp_lag_limits_deg(np.zeros(2), np.zeros(2), np.ones(2)) == pytest.approx([5.0, 5.0])
+    assert ramp_lag_limits_deg(np.array([9.0]), np.array([30.0]), np.array([1.0]))[0] == 10.0
+    names = ["wrist", "elbow"]
+    lag = tracking_error(names, np.zeros(2), np.radians([9.0, -6.5]), limits)
+    assert lag is not None and "more than 6.2 deg from its target (elbow -6.5 deg)" in lag
+    both = tracking_error(names, np.zeros(2), np.radians([10.5, -6.5]), limits)
+    assert both is not None and "wrist +10.5 deg (limit 10.0), elbow -6.5 deg (limit 6.2)" in both
+
+
+def test_limits_say_which_joint_is_past_or_near_one(arm: ArmModel):
+    lower, upper = joint_limits(arm.spec)
+    home = np.asarray(arm.home)
+    assert limit_error(arm.joint_names, home, lower, upper) is None
+    q = home.copy()
+    q[1] = upper[1] + 0.01
+    assert limit_error(arm.joint_names, q, lower, upper).startswith(f"{arm.joint_names[1]} at ")
+    assert limit_margin_rad(q, lower, upper) == pytest.approx(-0.01)
+    near = limit_error(arm.joint_names, home, lower, upper, math.radians(61.0))
+    assert near is not None and arm.joint_names[1] in near
 
 
 def test_a_path_goes_straight_when_it_can(arm: ArmModel):

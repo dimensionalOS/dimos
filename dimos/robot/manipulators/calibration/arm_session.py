@@ -18,14 +18,20 @@
 manipulators.calibration.hooks.ArmTuningHooks` connection and, while it
 lasts, sends the arm's targets every tick (at least 50 Hz, well inside the
 connection's 0.1 s command deadman, and every call renews the session's
-lease). Each tick reads the arm back and stops it when a target would leave
-the workspace, when a measured point sags out of it, or when a joint lags its
-target by more than ``MAX_POSE_ERROR_DEG``. Ramps are the minimum-jerk ramps
-of :mod:`~dimos.robot.manipulators.calibration.motion`. Leaving the session,
-for any reason, ends the tuning session: the connection then holds floating
-joints where they are, drops feed-forward torques and restores the gains,
-and its deadman holds the arm where it is. Nothing here moves the arm home on
-its own.
+lease). Each tick reads the arm back and stops it when the reading is older
+than ``MAX_READING_AGE_S``, when a target would leave the workspace or pass a
+joint limit, when a measured point sags out of the workspace, or when a joint
+lags its target by more than ``MAX_POSE_ERROR_DEG`` while holding, or while
+ramping by ``RAMP_LAG_LIMIT_DEG`` more than it is expected to
+(``motion.ramp_lag_limits_deg``). A floating joint is held again when it
+moves faster than ``FLOAT_SPEED_LIMIT_DEG_S`` or drifts more than
+``FLOAT_DRIFT_LIMIT_DEG``. Ramps are the minimum-jerk ramps of
+:mod:`~dimos.robot.manipulators.calibration.motion`. Leaving the session, for
+any reason, ends the tuning session: the connection then holds floating joints
+where they are, drops feed-forward torques and restores the gains, and its
+deadman holds the arm where it is. The only motion home without a
+confirmation is :meth:`ArmSession.park`, on a time budget, which the procedure
+runs when its module stops or a prompt goes unanswered.
 
 Joint vectors are in the spec's ``joint_names`` order, radians. Times come
 from a :class:`Clock`, Unix seconds, the same clock the connection stamps its
@@ -34,9 +40,10 @@ readings with, so markers line up with the recorded joint states.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict
+import itertools
 import math
 import threading
 import time
@@ -53,8 +60,12 @@ from dimos.robot.manipulators.calibration.motion import (
     MAX_POSE_ERROR_DEG,
     SegmentGuard,
     check_step,
+    joint_limits,
+    limit_error,
     plan_path,
     ramp,
+    ramp_duration_s,
+    ramp_lag_limits_deg,
     tracking_error,
 )
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
@@ -71,6 +82,14 @@ FLOAT_EVENTS: MarkerStream = "float_events"
 
 Vector = NDArray[np.float64]
 
+# A reading older than this fails the tick: the connection stopped reading the arm.
+MAX_READING_AGE_S = 0.25
+# A floating joint is held again past either of these.
+FLOAT_DRIFT_LIMIT_DEG = 5.0
+FLOAT_SPEED_LIMIT_DEG_S = 20.0
+# Every joint this close to home counts as at home.
+HOME_TOLERANCE_DEG = 3.0
+
 
 class AbortRequestedError(Exception):
     """The operator aborted the procedure."""
@@ -85,7 +104,11 @@ class SessionLostError(StepFailedError):
 
 
 class JointDriftedError(StepFailedError):
-    """A floating joint moved too far; it was held again."""
+    """A floating joint moved too far or too fast; it was held again."""
+
+
+class ParkRefusedError(Exception):
+    """The arm cannot be parked safely; it holds where it is."""
 
 
 class TuningConnection(ArmTuningHooks, Protocol):
@@ -145,33 +168,45 @@ class TrackingLog:
     """Target minus measured position per joint, deg: while ramping and at rest.
 
     A hold contributes the last ``REST_WINDOW_S`` of it, when the arm has settled.
+    Rows are filed under ``pose``, the pose being ramped to or held at, so two
+    logs can be compared at the same poses.
     """
 
     def __init__(self, joint_names: Sequence[str]) -> None:
         self._names = list(joint_names)
-        self._ramp: list[Vector] = []
-        self._rest: list[Vector] = []
+        self._ramp: list[tuple[str | None, Vector]] = []
+        self._rest: list[tuple[str | None, Vector]] = []
+        self.pose: str | None = None
 
     def add_ramp(self, error_deg: Vector) -> None:
-        self._ramp.append(error_deg)
+        self._ramp.append((self.pose, error_deg))
 
     def add_rest(self, error_deg: Vector) -> None:
-        self._rest.append(error_deg)
+        self._rest.append((self.pose, error_deg))
 
-    def rms_deg(self, *, rest: bool) -> dict[str, float]:
+    @property
+    def poses(self) -> list[str]:
+        """The poses held at, in order."""
+        return list(dict.fromkeys(pose for pose, _ in self._rest if pose is not None))
+
+    def _rows(self, *, rest: bool, poses: Collection[str] | None) -> list[Vector]:
         rows = self._rest if rest else self._ramp
+        return [row for pose, row in rows if poses is None or pose in poses]
+
+    def rms_deg(self, *, rest: bool, poses: Collection[str] | None = None) -> dict[str, float]:
+        rows = self._rows(rest=rest, poses=poses)
         if not rows:
             return {}
         rms = np.sqrt(np.mean(np.square(np.vstack(rows)), axis=0))
         return {name: float(value) for name, value in zip(self._names, rms, strict=True)}
 
-    def summary(self) -> dict[str, Any]:
-        """``rest_rms_deg`` and ``ramp_rms_deg`` by joint, and the sample counts."""
+    def summary(self, poses: Collection[str] | None = None) -> dict[str, Any]:
+        """``rest_rms_deg`` and ``ramp_rms_deg`` by joint and the sample counts, at ``poses``."""
         return {
-            "rest_rms_deg": self.rms_deg(rest=True),
-            "ramp_rms_deg": self.rms_deg(rest=False),
-            "rest_samples": len(self._rest),
-            "ramp_samples": len(self._ramp),
+            "rest_rms_deg": self.rms_deg(rest=True, poses=poses),
+            "ramp_rms_deg": self.rms_deg(rest=False, poses=poses),
+            "rest_samples": len(self._rows(rest=True, poses=poses)),
+            "ramp_samples": len(self._rows(rest=False, poses=poses)),
         }
 
 
@@ -210,9 +245,13 @@ class ArmSession:
         self._period = 1.0 / stream_hz
         self._lease_s = lease_s
         self._names = list(spec.joint_names)
+        self._lower, self._upper = joint_limits(spec)
         self._target: Vector = np.zeros(len(self._names))
         self._measured: Vector = np.zeros(len(self._names))
+        self._velocity: Vector = np.zeros(len(self._names))
         self._reading_ts = 0.0
+        # Per joint while ramping; MAX_POSE_ERROR_DEG for every joint otherwise.
+        self._lag_limits_deg: Vector | None = None
         self._gains: dict[str, JointGainsState] = {}
         self._floating: dict[str, float] = {}
         self._guard: SegmentGuard | None = None
@@ -289,10 +328,19 @@ class ArmSession:
         if missing:
             raise StepFailedError(f"the connection does not read {missing}")
         measured = np.asarray([samples[name]["position"] for name in self._names], dtype=float)
+        velocity = np.asarray([samples[name]["velocity"] for name in self._names], dtype=float)
         if not np.isfinite(measured).all():
             raise StepFailedError(f"the connection reads non-finite positions: {measured.tolist()}")
+        reading_ts = float(samples[self._names[0]]["ts"])
+        age = self._clock.now() - reading_ts
+        if age > MAX_READING_AGE_S:
+            raise StepFailedError(
+                f"stopped: the latest reading is {age:.2f} s old (limit {MAX_READING_AGE_S:g} s), "
+                "so the connection is not reading the arm; the arm holds where it is"
+            )
         self._measured = measured
-        self._reading_ts = float(samples[self._names[0]]["ts"])
+        self._velocity = np.where(np.isfinite(velocity), velocity, 0.0)
+        self._reading_ts = reading_ts
 
     def _send(self) -> None:
         commanded = self._target.copy()
@@ -327,15 +375,20 @@ class ArmSession:
             self._clock.sleep(delay)
         return False
 
-    def wait_for(self, event: threading.Event) -> None:
-        """Hold the arm where it is until ``event`` is set."""
+    def wait_for(self, event: threading.Event, deadline: float | None = None) -> bool:
+        """Hold the arm where it is until ``event`` is set; False when ``deadline`` came first."""
         while not self.tick(event):
-            pass
+            if deadline is not None and self._clock.now() >= deadline:
+                return event.is_set()
+        return True
 
     def _check(self) -> None:
         held = [name for name in self._names if name not in self._floating]
         indices = [self._names.index(name) for name in held]
-        lag = tracking_error(held, self._target[indices], self._measured[indices])
+        limits = (
+            MAX_POSE_ERROR_DEG if self._lag_limits_deg is None else self._lag_limits_deg[indices]
+        )
+        lag = tracking_error(held, self._target[indices], self._measured[indices], limits)
         if lag is not None:
             raise StepFailedError(f"stopped: {lag}; the arm holds where it is")
         assert self._guard is not None
@@ -343,20 +396,60 @@ class ArmSession:
         if sag is not None:
             raise StepFailedError(f"stopped: {sag}; the arm holds where it is")
 
-    def ramp_to(self, target: Vector, log: TrackingLog | None = None) -> None:
-        """Ramp straight to ``target``; every target on the way is checked first."""
+    def _refuse_past_limits(self, q: Vector, what: str) -> None:
+        past = limit_error(self._names, q, self._lower, self._upper)
+        if past is not None:
+            raise StepFailedError(
+                f"{what} would pass a joint limit ({past}); it was not sent and the arm holds "
+                "where it is"
+            )
+
+    def ramp_to(
+        self,
+        target: Vector,
+        log: TrackingLog | None = None,
+        *,
+        speed_rad_s: float | None = None,
+        deadline: float | None = None,
+    ) -> None:
+        """Ramp straight to ``target``; every target on the way is checked first.
+
+        ``speed_rad_s`` replaces the session's speed; past ``deadline`` (clock
+        time) the ramp stops and the arm holds where it is.
+        """
         end = np.asarray(target, dtype=np.float64)
+        self._refuse_past_limits(end, "the ramp's end")
         guard = SegmentGuard(self._arm, self._target, end)
         self._guard = guard
-        for q in ramp(self._target, end, self._speed, self._period):
-            refused = guard.check_target(q)
-            if refused is not None:
-                raise StepFailedError(f"stopped before {refused}; the arm holds where it is")
-            self._target = q
-            self.tick()
-            if log is not None:
-                log.add_ramp(np.degrees(self._target - self._measured))
+        start_lag = np.degrees(self._measured - self._target)
+        follow = self._follow_s()
+        try:
+            for q in ramp(self._target, end, speed_rad_s or self._speed, self._period):
+                refused = guard.check_target(q)
+                if refused is not None:
+                    raise StepFailedError(f"stopped before {refused}; the arm holds where it is")
+                if deadline is not None and self._clock.now() > deadline:
+                    raise StepFailedError("the time budget ran out; the arm holds where it is")
+                speed = np.degrees(q - self._target) / self._period
+                self._lag_limits_deg = ramp_lag_limits_deg(start_lag, speed, follow)
+                self._target = q
+                self.tick()
+                if log is not None:
+                    log.add_ramp(np.degrees(self._target - self._measured))
+        finally:
+            self._lag_limits_deg = None
         self._guard = SegmentGuard(self._arm, end, end)
+
+    def _follow_s(self) -> Vector:
+        """Each joint's PD following time, kd / kp, s: how far it lags per unit of speed."""
+        follow = []
+        for name in self._names:
+            state = self._gains.get(name)
+            kp = 0.0 if state is None else float(state["kp"])
+            kd = 0.0 if state is None else float(state["kd"])
+            # A joint without stiffness cannot follow: the hold limit applies once it moves.
+            follow.append(kd / kp if kp > 0.0 else 1e6)
+        return np.asarray(follow, dtype=np.float64)
 
     def move_to(self, target: Vector, log: TrackingLog | None = None) -> None:
         """Go to ``target`` straight when that clears the table, else through home."""
@@ -368,6 +461,44 @@ class ArmSession:
             )
         for waypoint in path:
             self.ramp_to(waypoint, log)
+
+    def hold_here(self) -> None:
+        """Target where the arm is now, so a ramp starts from there."""
+        self._target = self._measured.copy()
+        self._guard = SegmentGuard(self._arm, self._target, self._target)
+
+    def park(self, speed_rad_s: float, deadline: float) -> str:
+        """Back out home at ``speed_rad_s`` by ``deadline`` (clock time); what it did.
+
+        The arm is first held where it is, then ramps home straight or through
+        home's guard-checked path (``motion.plan_path``). Raises
+        ``ParkRefusedError``, without moving, when no path keeps the workspace
+        clearance or the ramps would not end before ``deadline``; a ramp cut
+        short by ``deadline``, a stall or a guard raises ``StepFailedError``.
+        Either way the arm holds where it is.
+        """
+        start = self._clock.now()
+        self.hold_here()
+        home = np.asarray(self._arm.home, dtype=np.float64)
+        if math.degrees(float(np.max(np.abs(self._measured - home)))) <= HOME_TOLERANCE_DEG:
+            return "already at home"
+        path = plan_path(self._arm, self._target, home)
+        if path is None:
+            raise ParkRefusedError(
+                "no ramp home keeps the workspace clearance from here, not even through home"
+            )
+        duration = sum(
+            ramp_duration_s(a, b, speed_rad_s) for a, b in itertools.pairwise([self._target, *path])
+        )
+        left = deadline - start
+        if duration > left:
+            raise ParkRefusedError(
+                f"the way home takes {duration:.1f} s at {math.degrees(speed_rad_s):g} deg/s, "
+                f"more than the {max(left, 0.0):.1f} s of its time budget left"
+            )
+        for waypoint in path:
+            self.ramp_to(waypoint, speed_rad_s=speed_rad_s, deadline=deadline)
+        return f"parked at home in {self._clock.now() - start:.1f} s"
 
     def retrace_home(self, visited: Sequence[Vector]) -> None:
         """Go home, backing out through ``visited`` poses (latest last) when home is not direct."""
@@ -407,6 +538,7 @@ class ArmSession:
         before = float(self._target[index])
         stepped = self._target.copy()
         stepped[index] = before + math.radians(delta_deg)
+        self._refuse_past_limits(stepped, f"the {joint} step of {delta_deg:+g} deg")
         guard = SegmentGuard(self._arm, self._target, stepped)
         refused = guard.check_target(stepped)
         if refused is not None:
@@ -473,12 +605,17 @@ class ArmSession:
             self._guard = SegmentGuard(self._arm, self._target, self._target)
 
     def float_window(
-        self, joint: str, seconds: float, *, max_drift_deg: float = MAX_POSE_ERROR_DEG
+        self,
+        joint: str,
+        seconds: float,
+        *,
+        max_drift_deg: float = FLOAT_DRIFT_LIMIT_DEG,
+        max_speed_deg_s: float = FLOAT_SPEED_LIMIT_DEG_S,
     ) -> tuple[Vector, Vector]:
         """Record ``seconds`` of readings while ``joint`` floats: times and joint rows.
 
-        Raises ``JointDriftedError`` when the joint moves more than ``max_drift_deg`` from
-        where it floated.
+        Raises ``JointDriftedError`` when the joint moves more than ``max_drift_deg``
+        from where it floated, or faster than ``max_speed_deg_s``: it is falling.
         """
         if joint not in self._floating:
             raise ValueError(f"{joint} is not floating")
@@ -491,10 +628,16 @@ class ArmSession:
             times.append(self._reading_ts)
             rows.append(self._measured.copy())
             drift = math.degrees(float(self._measured[index]) - self._floating[joint])
+            speed = math.degrees(float(self._velocity[index]))
             if abs(drift) > max_drift_deg:
                 raise JointDriftedError(
                     f"{joint} drifted {drift:+.1f} deg while floating (limit "
                     f"{max_drift_deg:g} deg); it is held again"
+                )
+            if abs(speed) > max_speed_deg_s:
+                raise JointDriftedError(
+                    f"{joint} drifted at {speed:+.0f} deg/s while floating (limit "
+                    f"{max_speed_deg_s:g} deg/s): it was falling; it is held again"
                 )
         return np.asarray(times), np.vstack(rows)
 

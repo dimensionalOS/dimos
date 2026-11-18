@@ -22,6 +22,7 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+import re
 from typing import Any
 
 import numpy as np
@@ -302,7 +303,8 @@ def test_a_stalled_joint_fails_the_step_and_the_arm_holds(make_rig: Callable[...
     assert status["state"] == "failed"
     message = rig.messages()["gravity_poses"]
     assert rig.statuses()["gravity_poses"] == "failed"
-    assert "left_joint3" in message and "more than 10 deg from its target" in message
+    # Caught while ramping: the elbow fell 5 deg behind more than a PD follower lags.
+    assert "from its target (left_joint3 -5." in message
     assert message.endswith("the arm holds where it is")
     assert not rig.fake.session_active()
     # Nothing is sent any more: the deadman holds the arm where it stopped,
@@ -593,3 +595,47 @@ def test_go_home_can_be_skipped_aborted_and_not_started_while_running(
     with pytest.raises(RuntimeError, match="already"):
         rig.procedure.go_home()
     drive(rig.procedure, rig.recording)
+
+
+@pytest.mark.parametrize(
+    "float_kd,caught",
+    [
+        (0.5, r"drifted at [+-]\d+ deg/s while floating \(limit 20 deg/s\): it was falling"),
+        (5.0, r"drifted [+-]5\.\d deg while floating \(limit 5 deg\)"),
+    ],
+)
+def test_a_falling_joint_is_held_again_on_speed_or_on_drift(
+    make_rig: Callable[..., Rig], float_kd: float, caught: str
+) -> None:
+    # The shoulder carries about 1 N m more than compensated at its float pose:
+    # lightly damped it falls fast, heavily damped it creeps past 5 deg.
+    rig = make_rig(float_window_s=5.0, float_settle_s=0.0, float_kd=float_kd)
+
+    status = rig.run(["float_check"])
+
+    assert status["state"] == "done", status["message"]
+    shoulder = rig.procedure.results()["float_check"]["joints"]["left_joint2"]
+    assert not shoulder["passed"] and re.search(caught, shoulder["reason"]), shoulder["reason"]
+    assert not rig.fake.tuning_get_gains()["left_joint2"]["floating"]
+
+
+def test_a_stale_reading_fails_the_tick_and_holds(make_rig: Callable[..., Rig]) -> None:
+    rig = make_rig(confirm_each=False)
+    read = rig.fake.tuning_read
+
+    def stale() -> dict[str, Any]:
+        samples = read()
+        if rig.fake.commands >= 100:
+            for sample in samples.values():
+                sample["ts"] -= 0.3
+        return dict(samples)
+
+    rig.fake.tuning_read = stale  # type: ignore[method-assign]
+
+    status = rig.run(["check", "gravity_poses"])
+
+    assert status["state"] == "failed"
+    message = rig.messages()["gravity_poses"]
+    assert message.startswith("stopped: the latest reading is 0.30 s old (limit 0.25 s)")
+    # The stale reading stopped the tick before it sent anything.
+    assert rig.fake.commands == 100 and not rig.fake.session_active()
