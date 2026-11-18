@@ -16,7 +16,9 @@
 
 from collections import deque
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from functools import partial
+import json
 from pathlib import Path
 import threading
 import time
@@ -25,13 +27,15 @@ from dimos.core.core import rpc
 from dimos.core.introspection.module.info import RpcInfo, StreamDescriptor
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
-from dimos.core.stream import Transport
+from dimos.core.stream import Out, Transport
+from dimos.msgs.std_msgs.String import String
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind, resolve, streams
 from dimos.orchestration.checks import CheckedDefinition
 from dimos.orchestration.definition import OrchestratorDefinition, StreamValue
 from dimos.orchestration.engine import (
     DEFAULT_LIMITS,
+    AfterTimer,
     Call,
     ClearTimer,
     Effect,
@@ -39,6 +43,7 @@ from dimos.orchestration.engine import (
     Limits,
     QueueItem,
     ReturnItem,
+    Runtime,
     SendCancel,
     SendStart,
     SetTimer,
@@ -63,6 +68,48 @@ def _topic(target: str) -> str:
     return target.replace(".", "/", 1)
 
 
+def _handled(item: QueueItem) -> str:
+    """What a step handled, in words."""
+    match item:
+        case StreamItem(stream):
+            return f"message on {stream}"
+        case ReturnItem(call, _, raised):
+            return f"{call.kind} of {call.rpc} {'raised' if raised else 'returned'}"
+        case TimerItem(AfterTimer(node)):
+            return f"after timer of {node}"
+        case TimerItem(timer):
+            return f"cancel deadline of {timer.node}"
+
+
+def _state(checked: CheckedDefinition, runtime: Runtime, now: float) -> dict[str, Plain]:
+    """The active nodes, the values that change, the RPCs still out and the timers."""
+    constants = checked.definition.constants
+    calls: list[Plain] = [
+        {
+            "node": call.node,
+            "kind": call.kind,
+            "phase": call.phase,
+            "rpc": call.rpc,
+            "args": dict(call.args),
+        }
+        for call in runtime.calls
+    ]
+    timers: list[Plain] = [
+        {
+            "node": timer.node,
+            "kind": "after" if isinstance(timer, AfterTimer) else "cancel_deadline",
+            "due_in_s": timer.due - now,
+        }
+        for timer in runtime.timers
+    ]
+    return {
+        "active": [name for name in checked.tree.nodes if name in runtime.active],
+        "blackboard": {k: v for k, v in runtime.blackboard.items() if k not in constants},
+        "calls": calls,
+        "timers": timers,
+    }
+
+
 class OrchestratorConfig(ModuleConfig):
     file: Path
     cancel_deadline_s: float = DEFAULT_LIMITS.cancel_deadline_s
@@ -73,6 +120,8 @@ class Orchestrator(Module):
     """Runs the state machine of an orchestrator file by calling other modules' RPCs."""
 
     config: OrchestratorConfig
+
+    orchestrator_state: Out[String]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -88,6 +137,7 @@ class Orchestrator(Module):
         self._transports: list[Transport[object]] = []
         self._unsubscribes: list[Callable[[], None]] = []
         self._unreadable: set[str] = set()
+        self._published = 0
 
     @rpc
     def start(self) -> None:
@@ -153,16 +203,59 @@ class Orchestrator(Module):
 
     def _run(self, checked: CheckedDefinition) -> None:
         limits = Limits(self.config.cancel_deadline_s, self.config.transition_cap)
+        runtime = Runtime({})
         try:
-            runtime, effects = engine.start(checked, time.monotonic(), limits)
+            now = time.monotonic()
+            runtime, effects = engine.start(checked, now, limits)
             self._perform(effects)
+            self._publish(checked, runtime, now, "startup", effects)
             while (item := self._next()) is not None:
-                runtime, effects = engine.step(checked, runtime, item, time.monotonic(), limits)
+                before, now = runtime, time.monotonic()
+                runtime, effects = engine.step(checked, runtime, item, now, limits)
                 self._perform(effects)
-        except Exception:
+                # A step that only wrote stream values is not published.
+                if effects or runtime.calls != before.calls or runtime.timers != before.timers:
+                    self._publish(checked, runtime, now, _handled(item), effects)
+        except Exception as error:
             logger.exception("Orchestrator engine stopped on an error")
             self._halt()
             self._cancel_all()
+            stopped = replace(runtime, active=frozenset(), calls=(), timers=())
+            rule = f"an engine error: {type(error).__name__}: {error}"
+            self._publish(checked, stopped, time.monotonic(), "engine error", [], rule)
+
+    def _publish(
+        self,
+        checked: CheckedDefinition,
+        runtime: Runtime,
+        now: float,
+        handled: str,
+        effects: list[Effect],
+        error: str | None = None,
+    ) -> None:
+        """Publish what one step did, the state after it and the definition, as JSON."""
+        self._published += 1
+        transitions: list[Plain] = [
+            {"node": effect.node, "cause": effect.cause, "goto": effect.goto}
+            for effect in effects
+            if isinstance(effect, TransitionRecord)
+        ]
+        faults: list[Plain] = [
+            {"rule": effect.rule, "node": effect.node}
+            for effect in effects
+            if isinstance(effect, FaultReport)
+        ]
+        if error is not None:
+            faults = [{"rule": error, "node": None}]
+        message: dict[str, Plain] = {
+            "seq": self._published,
+            "handled": handled,
+            "transitions": transitions,
+            "fault": faults[0] if faults else None,
+            **_state(checked, runtime, now),
+            "definition": checked.definition.model_dump(mode="json", by_alias=True),
+        }
+        self.orchestrator_state.publish(String(json.dumps(message)))
 
     def _next(self) -> QueueItem | None:
         """The next queue item, after adding the timers that are due. None once stopped."""
