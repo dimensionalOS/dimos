@@ -34,6 +34,22 @@ ALL_ARM_JOINTS = (*ARM_JOINTS["left"], *ARM_JOINTS["right"])
 FINGER_JOINTS = {side: tuple(f"{side}_{joint}" for joint in METAL_FINGER_JOINTS) for side in SIDES}
 
 DUAL_METAL_BASE = RobotModel.from_root_link("dual_metal_base", name="dual_makermods_metal")
+#: Every link of the dual model. The planner puts each on tf as world -> link,
+#: which is where web 3D views draw that link's meshes. The fingers are drawn
+#: closed: the planner's joint state has no finger joint.
+DUAL_METAL_LINKS = [
+    "dual_metal_base",
+    *[
+        f"{side}_{link}"
+        for side in SIDES
+        for link in (
+            "base_link",
+            *[f"link{index}" for index in range(1, 7)],
+            "gripper_base",
+            *[f"link{index}" for index in (7, 8)],
+        )
+    ],
+]
 
 Vector3 = tuple[float, float, float]
 # Example bench layout only; no published official bimanual mount transform was found.
@@ -94,6 +110,7 @@ def dual_metal_model_config(
             # Each jaw's closed fingers touch each other.
             collision_exclusion_pairs=[(f"{side}_link7", f"{side}_link8") for side in SIDES],
             auto_convert_meshes=True,
+            tf_extra_links=list(DUAL_METAL_LINKS),
         ),
         robot,
         fingers=[*FINGER_JOINTS["left"], *FINGER_JOINTS["right"]],

@@ -77,10 +77,11 @@ METAL_BENCH_PATH = Path(__file__).parent / "assets" / "bench.xml"
 #: Free bodies on the bench, by MJCF body name; the sim reports their poses.
 METAL_BENCH_OBJECTS = ("cube", "cylinder", "bowl")
 #: Arm joints, rad, as commanded: the jaw points straight down with its mount
-#: about 0.33 m above the bench and 0.28 m out from the base, where the wrist
-#: camera sees all three objects. Without gravity torque the arm settles a
-#: little below this.
-METAL_SIM_HOME = [0.0, -1.87, 2.15, -1.85, 0.0, 0.0]
+#: about 0.27 m above the bench and 0.28 m out from the base, where the wrist
+#: camera sees all three objects. With the jaw kept pointing down, the hand can
+#: rise about 9 cm from here before joint4 reaches its lower stop. Without
+#: gravity torque the arm settles a little below this.
+METAL_SIM_HOME = [0.0, -1.76, 1.72, -1.52, 0.0, 0.0]
 #: Edge of one cell of the simulated bench's voxel map, metres; the mapper and
 #: the planner's octree share it.
 METAL_SIM_VOXEL_SIZE = 0.025
