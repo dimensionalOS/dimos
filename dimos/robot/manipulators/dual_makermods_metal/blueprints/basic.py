@@ -14,6 +14,8 @@
 
 """The main bimanual Metal planning setup over a direct connection."""
 
+from typing import Any
+
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -90,17 +92,26 @@ def dual_metal_control() -> Blueprint:
     ).remappings(arm_remaps(DualMetalConnection, DamiaoCoordinator))
 
 
-# UrdfManager serves the URDF to web 3D views. The planner already puts every
-# link on tf, so the manager leaves joint tf off (on, links would get two parents).
-dual_makermods_metal_planner_coordinator = autoconnect(
-    dual_metal_control(),
-    DualMetalManipulationModule.blueprint(
-        # The Controller app calls the planner by this name, not the subclass's.
-        rpc_name="ManipulationModule",
-        gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
-        model=_MODEL,
-        visualization={"backend": "viser"},
-        default_speed_scale=0.2,
-    ),
-    UrdfManager.blueprint(model=_MODEL.model, publish_joint_tf=False),
-)
+def dual_metal_planner(**options: Any) -> Blueprint:
+    """The planner for both arms, and the URDF for web 3D views.
+
+    Args:
+        **options: Planner settings of a stack, e.g. ``voxel_map_resolution``.
+    """
+    # UrdfManager serves the URDF to web 3D views. The planner already puts every
+    # link on tf, so the manager leaves joint tf off (on, links would get two parents).
+    return autoconnect(
+        DualMetalManipulationModule.blueprint(
+            # The Controller app calls the planner by this name, not the subclass's.
+            rpc_name="ManipulationModule",
+            gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
+            model=_MODEL,
+            visualization={"backend": "viser"},
+            default_speed_scale=0.2,
+            **options,
+        ),
+        UrdfManager.blueprint(model=_MODEL.model, publish_joint_tf=False),
+    )
+
+
+dual_makermods_metal_planner_coordinator = autoconnect(dual_metal_control(), dual_metal_planner())
