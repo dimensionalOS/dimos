@@ -173,7 +173,7 @@ class RemoteModuleSource(ModuleSource):
         self._coord.call("load_blueprint_by_name", name)
 
     def load_blueprint(self, blueprint: Blueprint) -> None:
-        self._coord.call("load_blueprint", blueprint)
+        self._coord.call("load_blueprint", blueprint.solidify())
 
     def restart_module_by_class_name(self, class_name: str, *, reload_source: bool) -> None:
         self._coord.call("restart_module_by_class_name", class_name, reload_source=reload_source)
