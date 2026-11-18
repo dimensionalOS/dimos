@@ -545,6 +545,15 @@ def test_save_needs_a_held_out_pose_and_no_worse_held_out_error(
     assert reason.startswith("left_joint4 held-out RMS rose from")
     missing = [m for m in fitted.measurements if not (m.joint == "left_joint5")]
     assert "left_joint5 has no held-out measurement" in save_refusals(fit_gravity(arm, missing))
+    # Better than the URDF is not enough when the arm already runs better masses.
+    after = fitted.rms_by_joint(holdout=True, after=True)
+    running = {joint: 0.5 * value for joint, value in after.items()}
+    running["left_joint2"] = 2.0 * after["left_joint2"]
+    refused = save_refusals(fitted, running)
+    assert len(refused) == len(after) - 1
+    assert refused[0].startswith("left_joint3 held-out RMS ")
+    assert "is worse than the running calibration's" in refused[0]
+    assert fitted.rms_of(fitted.residual_after, holdout=True) == after
 
 
 def test_save_cli_refuses_without_force_and_shows_the_bounds(

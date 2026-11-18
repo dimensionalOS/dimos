@@ -16,24 +16,33 @@
 
 1. ``check``: the connection answers, has no fault and drives this arm, its
    readings are finite and inside the joint limits, the arm has an explicit
-   workspace guard; then, after a confirmation, the arm goes home.
+   workspace guard, and the recorder writes (a probe marker lands in the
+   recording within 2 s); then, after a confirmation, the arm goes home.
 2. ``gravity_poses``: the bench-proven sweep. At each identification pose
    (``gravity_poses.generate_poses``) the pose is marked, the arm ramps there
    (through home when the straight ramp would dip), holds, and dithers each
    measured joint +d then -d, holding after each; an end marker closes it.
-3. ``gravity_fit``: fits the sweep's recording (``gravity_fit``), shows the
-   held-out error before and after, and saves and applies the fit when it
-   passes the save gate and the operator agrees.
-4. ``float_check``: floats one measured joint at a time at a float pose (the first
-   gravity pose, or ``float_pose_deg``) and measures
-   how far the fingertip drifts (``float_analysis``); robots that do not
-   compensate gravity cannot float.
-5. ``step_sweep``: steps every joint +1, -1, +3, -3 deg at each kp scale of
-   its robot kp, with its robot kd, holding after each step.
+   What the arm runs meanwhile is taken from the connection
+   (``tuning_applied_calibration``), not from the file on disk.
+3. ``gravity_fit``: fits the sweep's recording (``gravity_fit``) against the
+   masses the arm ran, shows the held-out error of the URDF, of the running
+   file and of the fit, and saves and applies the fit when it is no worse
+   than either on any joint and the operator agrees. It refuses to fit when
+   the arm's calibration file on disk holds other masses than the arm runs.
+4. ``float_check``: floats each measured joint at up to two gravity poses
+   where its model gravity torque is largest and it is clear of its limits
+   (or at ``float_pose_deg``), and measures how far the fingertip drifts
+   (``float_analysis``); a joint with no gravity load anywhere is skipped,
+   and robots that do not compensate gravity cannot float.
+5. ``step_sweep``: at the sweep pose (the gravity pose farthest from every
+   joint limit, or ``sweep_pose_deg``), steps every joint +1, -1, +3, -3 deg
+   at each kp scale of its robot kp, with its robot kd times the square root
+   of the scale, holding after each step.
 6. ``pick_gains``: analyses those steps (``step_analysis.propose_gains``) and
    saves and applies the gains the operator accepts.
-7. ``confirm_tracking``: visits random guard-safe poses with what is applied
-   and compares how well the arm tracks with the run's own gravity sweep.
+7. ``confirm_tracking``: revisits the held-out gravity poses with what is
+   applied and compares how well the arm rests there with the gravity sweep's
+   own rests at the same poses.
 8. ``summary``: the calibration file, its history and what the arm runs.
 
 A step that needs a recording reads it from the run's recording
@@ -45,20 +54,23 @@ to apply there is forced only after a second confirmation.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 import itertools
 import math
 from pathlib import Path
+import time
 from typing import Any
+import uuid
 
 import numpy as np
 from numpy.typing import NDArray
 import pinocchio as pin
 
-from dimos.robot.manipulators.calibration._inertial import apply_inertial_overrides
+from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.robot.manipulators.calibration.arm_session import (
+    HOME_TOLERANCE_DEG,
     ArmSession,
     JointDriftedError,
     StepFailedError,
@@ -75,6 +87,7 @@ from dimos.robot.manipulators.calibration.gravity_fit import (
     FitResult,
     Measurement,
     calibration_from_fit,
+    default_holdout,
     extract_measurements,
     fit_gravity,
     format_report,
@@ -83,27 +96,32 @@ from dimos.robot.manipulators.calibration.gravity_fit import (
     save_refusals,
     write_measurements_csv,
 )
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, generate_poses
+from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, Pose, generate_poses
+from dimos.robot.manipulators.calibration.hooks import AppliedInertials
 from dimos.robot.manipulators.calibration.motion import (
     MIN_JERK_PEAK_RATIO,
+    joint_limits,
+    limit_error,
+    limit_margin_rad,
     plan_path,
     speed_rad_s,
 )
 from dimos.robot.manipulators.calibration.procedure import (
     Capabilities,
+    RunState,
     SkipRequestedError,
     Step,
     StepContext,
     StepResult,
     StepUnavailableError,
 )
+from dimos.robot.manipulators.calibration.recording import RecordingUnavailableError
 from dimos.robot.manipulators.calibration.schema import (
     HISTORY_DIR_NAME,
     ArmCalibration,
     ArmCalibrationError,
     JointGains,
     calibration_path,
-    load_calibration,
     load_for_spec,
     save_calibration,
     to_inertial_overrides,
@@ -123,9 +141,18 @@ from dimos.robot.manipulators.calibration.step_report import (
 END_LABEL = "end"
 # A reading this far past a joint limit fails the check.
 LIMIT_TOLERANCE_DEG = 2.0
-# A calibration is applied with every joint this close to home.
-HOME_TOLERANCE_DEG = 3.0
-TRACKING_POSE_TRIES = 4000
+# The sweep pose keeps every joint this much farther from its limits than the
+# sweep's largest excursion.
+SWEEP_LIMIT_MARGIN_DEG = 2.0
+# Float poses: per joint, this many of the poses where it carries the most
+# gravity torque, with it this far from its limits; a joint whose torque stays
+# below the floor everywhere has nothing to hold up.
+FLOAT_POSES_PER_JOINT = 2
+FLOAT_LIMIT_MARGIN_DEG = 5.0
+MIN_FLOAT_GRAVITY_NM = 0.2
+NO_GRAVITY_LOAD = "no gravity load to test"
+# Two link masses differ when any value differs by more than this.
+SAME_MASS_TOLERANCE = 1e-9
 
 Vector = NDArray[np.float64]
 
@@ -179,6 +206,7 @@ def _ensure_home(ctx: StepContext, why: str) -> None:
 
 def _apply(ctx: StepContext, path: Path) -> dict[str, Any]:
     """Apply ``path`` at home; a gravity change too large is forced only on a second yes."""
+    ctx.check_abort()
     _ensure_home(ctx, "apply the calibration")
     forced = False
     try:
@@ -221,28 +249,81 @@ def _record_check(ctx: StepContext, name: str, value: dict[str, Any]) -> str | N
     return str(path)
 
 
+def _applied_now(ctx: StepContext) -> AppliedInertials | None:
+    """What the arm runs now, as its connection says: file, sha256 and link masses."""
+    try:
+        return ctx.connection.tuning_applied_calibration().get(ctx.spec.arm_id)
+    except Exception as error:
+        raise StepFailedError(f"the connection did not say what the arm runs: {plain_error(error)}")
+
+
+def _links_of(applied: AppliedInertials | None) -> dict[str, LinkInertial]:
+    if applied is None:
+        return {}
+    return {
+        name: LinkInertial(
+            mass_kg=float(link["mass_kg"]),
+            com_m=(float(link["com_m"][0]), float(link["com_m"][1]), float(link["com_m"][2])),
+        )
+        for name, link in applied["links"].items()
+    }
+
+
+def _same_links(a: Mapping[str, LinkInertial], b: Mapping[str, LinkInertial]) -> bool:
+    if set(a) != set(b):
+        return False
+    return all(
+        np.allclose(
+            [a[name].mass_kg, *a[name].com_m],
+            [b[name].mass_kg, *b[name].com_m],
+            rtol=SAME_MASS_TOLERANCE,
+            atol=SAME_MASS_TOLERANCE,
+        )
+        for name in a
+    )
+
+
+def _disk_differs(ctx: StepContext, applied: AppliedInertials | None) -> str | None:
+    """Why the arm's calibration file on disk holds other masses than the arm runs, or ``None``.
+
+    No file on disk is no conflict: a fit then creates it.
+    """
+    path, stored = _stored(ctx)
+    if stored is None or _same_links(to_inertial_overrides(stored), _links_of(applied)):
+        return None
+    runs = (
+        "its URDF masses (no calibration file)"
+        if applied is None
+        else f"the calibration created {applied['created']} ({applied['path']})"
+    )
+    return (
+        f"the arm runs {runs}, the file on disk is the one created "
+        f"{stored.created.isoformat()} ({path}), with other masses: restart the robot or apply "
+        "the file first"
+    )
+
+
 def _compensation_offset(
-    ctx: StepContext, applied: str | None
+    ctx: StepContext, applied: AppliedInertials | None
 ) -> Callable[[Vector], NDArray[np.float64]]:
     """Gravity torque the connection compensated during the sweep minus the URDF's, by joint.
 
     The fit corrects the URDF, but the arm was held with whatever the
     connection compensated: nothing on a robot without gravity compensation,
-    the applied calibration's masses on one that ran a file.
+    the masses it ran (as it reported them, not as a file now says) on one
+    that ran a file.
     """
     arm = ctx.arm
     if not ctx.caps.gravity_compensation:
         return lambda q: -arm.gravity(q)
-    if applied is None:
+    links = _links_of(applied)
+    if not links:
         return lambda q: np.zeros(arm.dof)
     try:
-        links = to_inertial_overrides(load_calibration(Path(applied)))
         model = arm.model.copy()
         apply_inertial_overrides(model, links)
-    except (ArmCalibrationError, ValueError) as error:
-        raise StepFailedError(
-            f"cannot read back the calibration the sweep ran ({applied}): {error}"
-        )
+    except ValueError as error:
+        raise StepFailedError(f"cannot model the masses the sweep ran: {error}")
     data = model.createData()
 
     def offset(q: Vector) -> NDArray[np.float64]:
@@ -263,34 +344,151 @@ def _corrected(
     ]
 
 
-def _rms_table(before: dict[str, float], after: dict[str, float]) -> dict[str, dict[str, float]]:
+def _rms_table(
+    before: dict[str, float], running: dict[str, float], after: dict[str, float]
+) -> dict[str, dict[str, float]]:
     return {
-        joint: {"before": round(before[joint], 4), "after": round(after[joint], 4)}
+        joint: {
+            "before": round(before[joint], 4),
+            "running": round(running.get(joint, math.nan), 4),
+            "after": round(after[joint], 4),
+        }
         for joint in before
     }
 
 
-def random_poses(arm: ArmModel, count: int, seed: int) -> list[Vector]:
-    """Up to ``count`` random poses that pass ``pose_ok``, each reachable from the one before.
+def gravity_poses(ctx: StepContext) -> list[Pose]:
+    """This run's gravity identification poses, generated once when the sweep did not run."""
+    run: RunState = ctx.run
+    pose_set = run.pose_set or run.generated_poses
+    if pose_set is None:
+        try:
+            pose_set = generate_poses(ctx.arm, count=ctx.settings.poses)
+        except NoWorkspaceGuardError as error:
+            raise StepFailedError(f"{error} (the calibration module's floor_z_m and min_x_m)")
+        run.generated_poses = pose_set
+    return list(pose_set.identification)
 
-    Measured joints are drawn inside their ``joint_ranges``; the others stay at
-    home. The first is reachable from home.
+
+def reachable_from_home(arm: ArmModel, poses: Sequence[Pose]) -> list[Pose]:
+    """The poses a straight ramp from home reaches with the clearance.
+
+    ``plan_path`` goes straight or through home, so such a pose is reachable
+    from any pose that can ramp home.
     """
-    rng = np.random.default_rng(seed)
-    columns = list(arm.measured_rows)
-    low = np.asarray([arm.spec.joint_ranges[arm.joint_names[i]][0] for i in columns])
-    high = np.asarray([arm.spec.joint_ranges[arm.joint_names[i]][1] for i in columns])
-    poses: list[Vector] = []
-    previous = np.asarray(arm.home, dtype=np.float64)
-    for _ in range(TRACKING_POSE_TRIES):
-        if len(poses) >= count:
-            break
-        q = np.asarray(arm.home, dtype=np.float64).copy()
-        q[columns] = rng.uniform(low, high)
-        if arm.pose_ok(q) and plan_path(arm, previous, q) is not None:
-            poses.append(q)
-            previous = q
-    return poses
+    return [pose for pose in poses if arm.transition_ok(arm.home, pose.joints_rad)]
+
+
+def _configured_pose(ctx: StepContext, degrees: Sequence[float], setting: str) -> Vector:
+    arm = ctx.arm
+    if len(degrees) != len(arm.joint_names):
+        raise StepFailedError(
+            f"{setting} needs {len(arm.joint_names)} angles for {', '.join(arm.joint_names)}, "
+            f"got {len(degrees)}"
+        )
+    pose = np.radians(np.asarray(degrees, dtype=np.float64))
+    if not arm.pose_ok(pose):
+        raise StepFailedError(
+            f"the {setting} pose [{_angles(pose)}] deg is outside the workspace guard"
+        )
+    return pose
+
+
+def sweep_excursion_deg(deltas: Sequence[float]) -> float:
+    """How far the sweep's steps take a joint from where it started, deg."""
+    return max(abs(total) for total in itertools.accumulate(deltas))
+
+
+def sweep_pose(ctx: StepContext) -> tuple[Vector, str]:
+    """Where the gain sweep steps the joints, and its name.
+
+    ``sweep_pose_deg`` when set, else the gravity pose whose joint nearest a
+    limit is farthest from it; either way every joint must stay at least the
+    sweep's excursion plus ``SWEEP_LIMIT_MARGIN_DEG`` from its limits, or the
+    step fails before the arm moves.
+    """
+    spec, settings = ctx.spec, ctx.settings
+    lower, upper = joint_limits(spec)
+    needed = math.radians(sweep_excursion_deg(settings.step_deltas_deg) + SWEEP_LIMIT_MARGIN_DEG)
+    if settings.sweep_pose_deg is not None:
+        pose = _configured_pose(ctx, settings.sweep_pose_deg, "sweep_pose_deg")
+        close = limit_error(spec.joint_names, pose, lower, upper, needed)
+        if close is not None:
+            raise StepFailedError(
+                f"the sweep pose has joints within {math.degrees(needed):g} deg of a limit: {close}"
+            )
+        return pose, "the configured sweep pose"
+    poses = reachable_from_home(ctx.arm, gravity_poses(ctx))
+    scored = [(limit_margin_rad(np.asarray(p.joints_rad), lower, upper), p) for p in poses]
+    if not scored or max(margin for margin, _ in scored) < needed:
+        raise StepFailedError(
+            f"no gravity pose keeps every joint {math.degrees(needed):g} deg from its limits for "
+            "the sweep; set sweep_pose_deg"
+        )
+    home = np.asarray(ctx.arm.home, dtype=np.float64)
+
+    def preference(item: tuple[float, Pose]) -> tuple[float, float]:
+        # The widest margin, to a tenth of a degree; then the least travel from home.
+        margin, pose = item
+        travel = float(np.max(np.abs(np.asarray(pose.joints_rad) - home)))
+        return (round(math.degrees(margin), 1), -travel)
+
+    _, best = max(scored, key=preference)
+    return np.asarray(best.joints_rad, dtype=np.float64), f"gravity pose {best.name}"
+
+
+def float_plan(
+    ctx: StepContext,
+) -> tuple[dict[str, list[tuple[str, Vector, float]]], dict[str, str]]:
+    """Per measured joint, where to float it: up to ``FLOAT_POSES_PER_JOINT`` of (name, pose, torque).
+
+    The candidates are ``float_pose_deg`` when set, else this run's gravity
+    poses. Each joint floats where its model gravity torque is largest, with
+    it at least ``FLOAT_LIMIT_MARGIN_DEG`` from its limits. A joint whose
+    torque stays under ``MIN_FLOAT_GRAVITY_NM`` at every candidate, or that
+    has no candidate clear of its limits, is returned in the second dict
+    with why.
+    """
+    arm, settings = ctx.arm, ctx.settings
+    if settings.float_pose_deg is not None:
+        pose = _configured_pose(ctx, settings.float_pose_deg, "float_pose_deg")
+        candidates = [("the configured float pose", pose)]
+    else:
+        candidates = [
+            (p.name, np.asarray(p.joints_rad, dtype=np.float64))
+            for p in reachable_from_home(arm, gravity_poses(ctx))
+        ]
+    lower, upper = joint_limits(ctx.spec)
+    margin = math.radians(FLOAT_LIMIT_MARGIN_DEG)
+    torques = [(name, q, arm.gravity(arm.q(q))) for name, q in candidates]
+    plan: dict[str, list[tuple[str, Vector, float]]] = {}
+    skipped: dict[str, str] = {}
+    for joint in arm.measured_joints:
+        i = arm.joint_names.index(joint)
+        largest = max((abs(float(g[i])) for _, _, g in torques), default=0.0)
+        if largest < MIN_FLOAT_GRAVITY_NM:
+            skipped[joint] = (
+                f"{NO_GRAVITY_LOAD}: at most {largest:.2f} Nm of model gravity torque over the "
+                f"poses (floor {MIN_FLOAT_GRAVITY_NM:g} Nm)"
+            )
+            continue
+        usable = sorted(
+            (
+                (name, q, float(g[i]))
+                for name, q, g in torques
+                if abs(float(g[i])) >= MIN_FLOAT_GRAVITY_NM
+                and min(q[i] - lower[i], upper[i] - q[i]) >= margin
+            ),
+            key=lambda row: -abs(row[2]),
+        )
+        if not usable:
+            skipped[joint] = (
+                f"every pose where it carries gravity has it within {FLOAT_LIMIT_MARGIN_DEG:g} deg "
+                "of a limit"
+            )
+            continue
+        plan[joint] = usable[:FLOAT_POSES_PER_JOINT]
+    return plan, skipped
 
 
 class CheckStep(Step):
@@ -299,8 +497,9 @@ class CheckStep(Step):
     instructions = (
         "Checks that the connection is running without a fault and drives this arm, that every "
         "joint reads a finite position inside its limits, and that the arm has a workspace guard "
-        "(the table height and the line its fingertip stays in front of). It reports the "
-        "calibration file the arm runs now. Then the arm moves home: clear the workspace first."
+        "(the table height and the line its fingertip stays in front of), and that the recorder "
+        "is writing. It reports the calibration file the arm runs now. Then the arm moves home: "
+        "clear the workspace first."
     )
 
     def run(self, ctx: StepContext) -> StepResult:
@@ -342,6 +541,7 @@ class CheckStep(Step):
             "calibration": None if applied is None else dict(applied),
             "measured_deg": _deg(spec.joint_names, q),
             "last_error": status.last_error,
+            "recording": self._check_recorder(ctx),
             "home": "reached",
         }
         running = (
@@ -360,6 +560,21 @@ class CheckStep(Step):
         with ctx.session() as session:
             session.move_to(ctx.arm.home)
         return StepResult(f"checks passed; {spec.arm_id} {running}; at home", data)
+
+    @staticmethod
+    def _check_recorder(ctx: StepContext) -> str:
+        """ "writing" once a probe marker lands in the recording; why not when nothing records."""
+        recording = ctx.recording
+        if recording is None or ctx.caps.recording_unavailable is not None:
+            return ctx.caps.recording_unavailable or "nothing is being recorded"
+        token = f"check-{ctx.run.run_id}-{uuid.uuid4().hex[:8]}"
+        since = time.time()
+        ctx.probe_recording(token)
+        try:
+            recording.wait_for_probe(token, since)
+        except RecordingUnavailableError as error:
+            raise StepFailedError(f"{error}; nothing has moved")
+        return "writing"
 
 
 class GravityPosesStep(Step):
@@ -384,7 +599,7 @@ class GravityPosesStep(Step):
         pose_set = generate_poses(arm, count=settings.poses)
         ctx.run.pose_set = pose_set
         poses = pose_set.identification
-        applied = ctx.connection.status().calibration.get(ctx.spec.arm_id)
+        applied = _applied_now(ctx)
         dithers = len(arm.measured_joints) * 2 * settings.dither_hold_s
         stops = [arm.home, *(np.asarray(p.joints_rad) for p in poses), arm.home]
         travel = sum(_ramp_s(a, b, settings.speed_deg_s) for a, b in itertools.pairwise(stops))
@@ -423,6 +638,7 @@ class GravityPosesStep(Step):
                         {"index": index, "targets_deg": [math.degrees(v) for v in target]},
                     )
                     first = t0 if first is None else first
+                    log.pose = pose.name
                     for waypoint in path:
                         session.ramp_to(waypoint, log)
                     visited.append(target)
@@ -436,7 +652,7 @@ class GravityPosesStep(Step):
                 if first is not None:
                     end = session.mark_pose(END_LABEL, {"poses": len(visited)})
                     ctx.run.gravity_span = (first, end)
-                    ctx.run.gravity_applied = None if applied is None else applied["path"]
+                    ctx.run.gravity_applied = applied
             ctx.progress(len(poses), len(poses), "back home")
             session.retrace_home(visited)
         ctx.run.baseline = log
@@ -449,7 +665,8 @@ class GravityPosesStep(Step):
             "condition_number": round(pose_set.condition_number, 2),
             "notes": list(pose_set.notes),
             "span": None if ctx.run.gravity_span is None else list(ctx.run.gravity_span),
-            "calibration": ctx.run.gravity_applied,
+            "calibration": None if applied is None else applied["path"],
+            "calibration_sha256": None if applied is None else applied["sha256"],
         }
         return StepResult(f"visited {len(visited)} of {len(poses)} poses", data)
 
@@ -459,9 +676,10 @@ class GravityFitStep(Step):
     title = "Fit gravity"
     instructions = (
         "Fits the link masses and centres of mass to what the gravity poses recorded, keeping "
-        "some poses out of the fit to score it. It is saved only when it does not make the "
-        "held-out error worse on any joint, and only when you agree; it is then applied with "
-        "the arm at home, and the replaced file is kept in the history."
+        "some poses out of the fit to score it against the URDF and against the file the arm "
+        "runs. It is saved only when it is no worse than either on any joint, and only when you "
+        "agree; it is then applied with the arm at home, and the replaced file is kept in the "
+        "history. It does not fit when the file on disk holds other masses than the arm runs."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -474,23 +692,30 @@ class GravityFitStep(Step):
             raise StepUnavailableError(
                 "the gravity poses were not recorded in this procedure, so there is nothing to fit"
             )
+        applied = ctx.run.gravity_applied
+        differs = _disk_differs(ctx, applied)
+        if differs is not None:
+            raise StepUnavailableError(f"not fitted: {differs}")
         ctx.say("reading the recording")
         recording.wait_for(span[1])
         grec = recording.gravity(span[0], span[1])
         measurements = extract_measurements(grec, ctx.spec)
         if not measurements:
             raise StepFailedError("the recording holds no paired dithers to fit")
-        offset = _compensation_offset(ctx, ctx.run.gravity_applied)
+        offset = _compensation_offset(ctx, applied)
         ctx.say(f"fitting {len(measurements)} measurements")
         result = fit_gravity(ctx.arm, _corrected(ctx.arm, measurements, offset))
         ctx.check_abort()
+        # The raw resting torque is the error of the masses the arm ran.
+        running = result.rms_of(np.asarray([m.tau_pd_nm for m in measurements]), holdout=True)
         refusals = (
-            save_refusals(result)
+            save_refusals(result, running)
             if result.bounds_ok
             else [f"the fit failed its physical bounds: {'; '.join(result.bound_violations)}"]
         )
         holdout = _rms_table(
             result.rms_by_joint(holdout=True, after=False),
+            running,
             result.rms_by_joint(holdout=True, after=True),
         )
         data: dict[str, Any] = {
@@ -506,16 +731,17 @@ class GravityFitStep(Step):
             "saved": None,
         }
         if recording.directory is not None:
-            data["report"] = str(self._write_report(result, recording.directory, refusals))
+            data["report"] = str(self._write_report(result, recording.directory, refusals, running))
         table = ", ".join(
-            f"{joint} {row['before']:.3f} -> {row['after']:.3f}" for joint, row in holdout.items()
+            f"{joint} {row['before']:.3f} -> {row['running']:.3f} -> {row['after']:.3f}"
+            for joint, row in holdout.items()
         )
         if refusals:
             return StepResult(f"not saved: {'; '.join(refusals)}", data)
         bounds = f"; at bounds: {'; '.join(result.at_bounds)}" if result.at_bounds else ""
         try:
             ctx.confirm(
-                f"Held-out RMS (Nm, before -> after): {table}; rank {result.rank}{bounds}. "
+                f"Held-out RMS (Nm, URDF -> running -> new): {table}; rank {result.rank}{bounds}. "
                 "Save and apply? Enter to save"
             )
         except SkipRequestedError:
@@ -527,14 +753,18 @@ class GravityFitStep(Step):
         save_calibration(path, merge_with_stored(path, calibration, ctx.spec))
         data["saved"] = str(path)
         data.update(_apply(ctx, path))
-        applied = "applied" if data["applied"] else "not applied"
-        return StepResult(f"saved {path} and {applied}; held-out RMS {table}", data)
+        outcome = "applied" if data["applied"] else "not applied"
+        return StepResult(f"saved {path} and {outcome}; held-out RMS {table}", data)
 
     @staticmethod
-    def _write_report(result: FitResult, directory: Path, refusals: list[str]) -> Path:
+    def _write_report(
+        result: FitResult, directory: Path, refusals: list[str], running: dict[str, float]
+    ) -> Path:
         out = directory / GRAVITY_REPORT_DIR
         out.mkdir(parents=True, exist_ok=True)
-        (out / "report.md").write_text(format_report(result, None, None, not_saved=refusals))
+        (out / "report.md").write_text(
+            format_report(result, None, None, not_saved=refusals, running_rms=running)
+        )
         write_measurements_csv(result, out / "measurements.csv")
         plot_resting_torque(result, out / "resting_torque.png")
         return out
@@ -544,11 +774,12 @@ class FloatCheckStep(Step):
     id = "float_check"
     title = "Float check"
     instructions = (
-        "The arm moves to the float pose (the first gravity pose, where gravity acts on every "
-        "joint, unless one is set), each joint that carries gravity goes limp in turn, held up "
-        "by gravity compensation alone, and the fingertip's drift is measured; a good gravity "
-        f"model keeps it under {DRIFT_LIMIT_MM:g} mm. Be ready to support the arm: a joint that "
-        "drifts too far is held again at once."
+        "Each joint that carries gravity goes limp in turn, held up by gravity compensation "
+        "alone, at the gravity poses where it carries the most (or at the float pose, if one "
+        "is set), and the fingertip's drift is measured; a good gravity model keeps it under "
+        f"{DRIFT_LIMIT_MM:g} mm. A joint with no gravity load anywhere is skipped. You confirm "
+        "each move. Be ready to support the arm: a joint that drifts or speeds up is held "
+        "again at once."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -556,58 +787,56 @@ class FloatCheckStep(Step):
             return "the robot does not compensate gravity, so a floating joint would fall"
         return True
 
-    @staticmethod
-    def float_pose(ctx: StepContext) -> tuple[Vector, str]:
-        """Where the joints float and why there: the configured pose, else the first gravity pose."""
-        arm, configured = ctx.arm, ctx.settings.float_pose_deg
-        if configured is not None:
-            if len(configured) != len(arm.joint_names):
-                raise StepFailedError(
-                    f"float_pose_deg needs {len(arm.joint_names)} angles for "
-                    f"{', '.join(arm.joint_names)}, got {len(configured)}"
-                )
-            pose = np.radians(np.asarray(configured, dtype=np.float64))
-            if not arm.pose_ok(pose):
-                raise StepFailedError(
-                    f"the float pose [{_angles(pose)}] deg is outside the workspace guard"
-                )
-            return pose, "the configured float pose"
-        pose_set = ctx.run.pose_set
-        if pose_set is None:
-            try:
-                pose_set = generate_poses(arm, count=ctx.settings.poses)
-            except NoWorkspaceGuardError:
-                return np.asarray(arm.home, dtype=np.float64), "home (there is no workspace guard)"
-        if not pose_set.identification:
-            return np.asarray(arm.home, dtype=np.float64), "home (no gravity pose was found)"
-        first = pose_set.identification[0]
-        return np.asarray(first.joints_rad, dtype=np.float64), f"gravity pose {first.name}"
-
     def run(self, ctx: StepContext) -> StepResult:
         settings, arm = ctx.settings, ctx.arm
         fingertip = FingertipModel(arm)
-        pose, where = self.float_pose(ctx)
-        ctx.confirm(
-            f"The arm will move to {where} [{_angles(pose)}] deg at {settings.speed_deg_s:g} "
-            f"deg/s, then each of {', '.join(arm.measured_joints)} will float for "
-            f"{settings.float_settle_s + settings.float_window_s:g} s. Clear the workspace. "
-            "Enter to start"
+        plan, no_load = float_plan(ctx)
+        joints: dict[str, dict[str, Any]] = {
+            joint: {"skipped": True, "reason": why} for joint, why in no_load.items()
+        }
+        where = (
+            "the configured float pose"
+            if settings.float_pose_deg is not None
+            else "the gravity poses where each joint carries the most gravity torque"
         )
-        joints: dict[str, dict[str, Any]] = {}
-        with ctx.session() as session:
-            session.move_to(pose)
-            for index, joint in enumerate(arm.measured_joints, 1):
-                ctx.progress(index - 1, len(arm.measured_joints), f"float {joint}")
-                try:
-                    ctx.confirm(
-                        f"{joint} will go limp; be ready to support the arm. Enter to float it"
-                    )
-                except SkipRequestedError:
-                    joints[joint] = {"skipped": True}
-                    continue
-                joints[joint] = self._float(ctx, session, fingertip, joint, index)
-                # Holds the joint again at the float pose before the next one goes limp.
-                session.move_to(pose)
+        floats = sum(len(poses) for poses in plan.values())
+        if floats:
+            skipped = f"; {', '.join(no_load)} skipped ({NO_GRAVITY_LOAD})" if no_load else ""
+            ctx.confirm(
+                f"{floats} floats of {', '.join(plan)} at {where}, "
+                f"{settings.float_settle_s + settings.float_window_s:g} s each{skipped}. You "
+                "confirm each move. Clear the workspace. Enter to start"
+            )
+            last: str | None = None
+            with ctx.session() as session:
+                number = 0
+                for joint, poses in plan.items():
+                    rows: list[dict[str, Any]] = []
+                    for name, pose, torque in poses:
+                        number += 1
+                        ctx.progress(number - 1, floats, f"float {joint} at {name}")
+                        row = {
+                            "pose": name,
+                            "pose_deg": [round(math.degrees(float(v)), 3) for v in pose],
+                            "gravity_nm": round(torque, 3),
+                        }
+                        try:
+                            ctx.confirm(
+                                f"Float {joint} at {name} [{_angles(pose)}] deg, where it carries "
+                                f"{torque:+.2f} Nm: the arm moves there at "
+                                f"{settings.speed_deg_s:g} deg/s, then {joint} goes limp; be "
+                                "ready to support the arm. Enter to move and float it"
+                            )
+                        except SkipRequestedError:
+                            rows.append({**row, "skipped": True})
+                            continue
+                        session.move_to(pose)
+                        last = name
+                        # Ending the float holds the joint again where it is; the next
+                        # move takes every joint to the next pose.
+                        rows.append({**row, **self._float(ctx, session, fingertip, joint, number)})
+                    joints[joint] = self._summary(rows)
+            ctx.progress(floats, floats, "floats done")
         tried = {joint: row for joint, row in joints.items() if "passed" in row}
         passed = [joint for joint, row in tried.items() if row["passed"]]
         check = {
@@ -615,19 +844,31 @@ class FloatCheckStep(Step):
             "limit_mm": DRIFT_LIMIT_MM,
             "kd": settings.float_kd,
             "window_s": settings.float_window_s,
-            "pose_deg": [round(math.degrees(float(v)), 3) for v in pose],
+            "poses": where,
             "joints": joints,
         }
         data = {
             "joints": joints,
             "pose": where,
-            "pose_deg": check["pose_deg"],
-            "saved": _record_check(ctx, "float", check),
+            "saved": _record_check(ctx, "float", check) if tried else None,
         }
+        held = "" if not floats or last is None else f"; arm holds at {last}"
         return StepResult(
-            f"{len(passed)} of {len(tried)} joints held within the limit; arm holds at {where}",
+            f"{len(passed)} of {len(tried)} joints held within the limit at every pose"
+            f"{f'; {len(no_load)} with no gravity load' if no_load else ''}{held}",
             data,
         )
+
+    @staticmethod
+    def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """One joint's float verdict: its worst pose, every pose's row, and whether all passed."""
+        tried = [row for row in rows if "passed" in row]
+        if not tried:
+            return {"skipped": True, "reason": "skipped at the prompt", "poses": rows}
+        failed = [row for row in tried if not row["passed"]]
+        worst = failed[0] if failed else max(tried, key=lambda row: row["fingertip_drift_mm"])
+        summary = {key: value for key, value in worst.items() if key != "pose_deg"}
+        return {**summary, "passed": not failed, "poses": rows}
 
     @staticmethod
     def _float(
@@ -647,12 +888,24 @@ class FloatCheckStep(Step):
 
 
 class StepSweepStep(Step):
+    """The gain sweep: each joint steps at each kp scale, at a pose clear of every limit.
+
+    Home sits on a joint limit on several arms (the Metal's and B601's
+    shoulder and elbow, the OpenArm's elbow), where half the steps would pass
+    the limit, so the sweep runs at :func:`sweep_pose`. At kp scale ``s`` a
+    joint is held with ``kp0 * s`` and ``kd0 * sqrt(s)``, as the bench sweep
+    did, keeping its damping ratio; the connection clamps kd to the MIT
+    frame's 5 N m s/rad, so a joint already at 5 stays there. ``pick_gains``
+    takes a scale only when every lower scale on that joint passed too.
+    """
+
     id = "step_sweep"
     title = "Gain sweep"
     instructions = (
-        "At home, every joint in turn steps a little, +1, -1, +3 and -3 degrees, at each tried "
-        "stiffness (multiples of its robot kp, with its robot kd), resting after each step. The "
-        "gains go back when each joint is done."
+        "The arm moves to the sweep pose (clear of every joint limit), and every joint in turn "
+        "steps a little, +1, -1, +3 and -3 degrees, at each tried stiffness (multiples of its "
+        "robot kp, its robot kd times the square root of the multiple), resting after each "
+        "step. The gains go back when each joint is done, and the arm returns home."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -665,17 +918,20 @@ class StepSweepStep(Step):
         settings, spec = ctx.settings, ctx.spec
         scales = settings.kp_scales
         deltas = settings.step_deltas_deg
+        pose, where = sweep_pose(ctx)
         per_joint = len(scales) * len(deltas) * settings.step_hold_s
         ctx.confirm(
-            f"Each of the {len(spec.joint_names)} joints will step "
+            f"The arm will move to {where} [{_angles(pose)}] deg at {settings.speed_deg_s:g} "
+            f"deg/s; there each of the {len(spec.joint_names)} joints will step "
             f"{', '.join(f'{d:+g}' for d in deltas)} deg at kp x "
-            f"{', '.join(f'{s:g}' for s in scales)}, about "
-            f"{_minutes(per_joint * len(spec.joint_names))}. Enter to start"
+            f"{', '.join(f'{s:g}' for s in scales)} (kd x the square root), about "
+            f"{_minutes(per_joint * len(spec.joint_names))}, then it returns home. Clear the "
+            "workspace. Enter to start"
         )
         swept: dict[str, list[list[float]]] = {}
         start: float | None = None
         with ctx.session() as session:
-            session.move_to(ctx.arm.home)
+            session.move_to(pose)
             start = ctx.clock.now()
             try:
                 for number, joint in enumerate(spec.joint_names, 1):
@@ -691,7 +947,7 @@ class StepSweepStep(Step):
                     swept[joint] = []
                     try:
                         for scale in scales:
-                            kp, kd = session.set_gains(joint, kp0 * scale, kd0)
+                            kp, kd = session.set_gains(joint, kp0 * scale, kd0 * math.sqrt(scale))
                             swept[joint].append([kp, kd])
                             for delta in deltas:
                                 session.step_joint(joint, delta, settings.step_hold_s)
@@ -702,13 +958,17 @@ class StepSweepStep(Step):
                             pass  # the session ended; ending it restored the gains
             finally:
                 ctx.run.step_span = (start, ctx.clock.now())
+            ctx.progress(len(spec.joint_names), len(spec.joint_names), "back home")
+            session.move_to(ctx.arm.home)
         data = {
             "joints": swept,
             "kp_scales": list(scales),
             "steps_deg": list(deltas),
+            "pose": where,
+            "pose_deg": [round(math.degrees(float(v)), 3) for v in pose],
             "span": list(ctx.run.step_span),
         }
-        return StepResult(f"swept {len(swept)} of {len(spec.joint_names)} joints", data)
+        return StepResult(f"swept {len(swept)} of {len(spec.joint_names)} joints at {where}", data)
 
 
 class PickGainsStep(Step):
@@ -771,45 +1031,76 @@ class ConfirmTrackingStep(Step):
     id = "confirm_tracking"
     title = "Confirm tracking"
     instructions = (
-        "Visits a few random poses inside the workspace guard with the values now applied and "
-        "measures how closely each joint follows its target, while moving and at rest, against "
-        "the same measure from this run's gravity poses, taken before any new values were "
-        "applied."
+        "Revisits the gravity poses the fit held out with the values now applied and measures "
+        "how closely each joint follows its target, while moving and at rest, against the same "
+        "measure at the same poses from this run's gravity sweep, taken before any new values "
+        "were applied."
     )
+
+    @staticmethod
+    def poses(ctx: StepContext) -> tuple[list[Pose], bool]:
+        """The poses to visit, and whether the gravity sweep's rests there are the baseline.
+
+        The held-out poses of this run's fit (else every fifth sweep pose, else
+        every sweep pose), so before and after are paired; without a sweep in
+        this run, the generated poses' held-out ones, with no baseline.
+        """
+        baseline = ctx.run.baseline
+        candidates = {pose.name: pose for pose in gravity_poses(ctx)}
+        held = [name for name in baseline.poses if name in candidates] if baseline else []
+        if held:
+            fitted = (ctx.results.get("gravity_fit") or {}).get("holdout_poses") or []
+            names = [name for name in fitted if name in held] or default_holdout(held) or held
+        else:
+            names = default_holdout(list(candidates)) or list(candidates)
+        names = names[: ctx.settings.tracking_poses]
+        return [candidates[name] for name in names], bool(held)
 
     def run(self, ctx: StepContext) -> StepResult:
         settings, arm = ctx.settings, ctx.arm
-        poses = random_poses(arm, settings.tracking_poses, settings.tracking_seed)
+        poses, paired = self.poses(ctx)
         if not poses:
-            raise StepUnavailableError("no random pose inside the workspace guard was found")
-        ctx.confirm(f"The arm will visit {len(poses)} random poses. Enter to start")
+            raise StepUnavailableError("there is no gravity pose to revisit")
+        ctx.confirm(
+            f"The arm will revisit {len(poses)} held-out gravity poses "
+            f"({', '.join(p.name for p in poses)}). Enter to start"
+        )
         log = TrackingLog(ctx.spec.joint_names)
         visited: list[Vector] = []
+        names: list[str] = []
         with ctx.session() as session:
             session.move_to(arm.home)
             for index, pose in enumerate(poses, 1):
                 ctx.progress(index - 1, len(poses), f"tracking pose {index}/{len(poses)}")
+                target = np.asarray(pose.joints_rad, dtype=np.float64)
                 if settings.confirm_each:
                     try:
                         ctx.confirm(
-                            f"Tracking pose {index}/{len(poses)} [{_angles(pose)}] deg: Enter to "
-                            "move there"
+                            f"Tracking pose {index}/{len(poses)} {pose.name} [{_angles(target)}] "
+                            "deg: Enter to move there"
                         )
                     except SkipRequestedError:
                         continue
-                path = plan_path(arm, session.target, pose)
+                path = plan_path(arm, session.target, target)
                 if path is None:
                     continue
+                log.pose = pose.name
                 for waypoint in path:
                     session.ramp_to(waypoint, log)
-                visited.append(pose)
+                visited.append(target)
+                names.append(pose.name)
                 session.hold(settings.hold_s, log)
             session.retrace_home(visited)
         tracking = log.summary()
-        baseline = None if ctx.run.baseline is None else ctx.run.baseline.summary()
+        baseline = (
+            ctx.run.baseline.summary(poses=names)
+            if paired and ctx.run.baseline is not None
+            else None
+        )
         check = {
             "created": _now().isoformat(),
             "poses": len(visited),
+            "pose_names": names,
             **tracking,
             "baseline": baseline,
         }

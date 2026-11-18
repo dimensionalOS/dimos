@@ -29,6 +29,10 @@ import numpy as np
 import pinocchio as pin
 import pytest
 
+from dimos.robot.manipulators.calibration import (
+    arm_session as arm_session_module,
+    procedure as procedure_module,
+)
 from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     PERTURBATION,
     perturbed_model,
@@ -41,11 +45,13 @@ from dimos.robot.manipulators.calibration._fake_tuning_arm import (
     drive,
 )
 from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
+from dimos.robot.manipulators.calibration.arm_session import StepFailedError
 from dimos.robot.manipulators.calibration.gravity_poses import (
     ArmModel,
     body_joint_id,
     generate_poses,
 )
+from dimos.robot.manipulators.calibration.motion import joint_limits, limit_error, limit_margin_rad
 from dimos.robot.manipulators.calibration.procedure import (
     Capabilities,
     Procedure,
@@ -210,12 +216,22 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     }
     results = rig.procedure.results()
     wrist = results["pick_gains"]["proposals"]["left_joint4"]
-    assert wrist["kp"] is None and "rests" in wrist["rejected"]["kp=20 kd=1.5"]
+    # The sweep's kd follows the square root of the kp scale: 1.5, 1.84, 2.12.
+    assert wrist["kp"] is None and "rests" in wrist["rejected"]["kp=10 kd=1.5"]
+    assert set(wrist["rejected"]) == {"kp=10 kd=1.5", "kp=15 kd=1.83712", "kp=20 kd=2.12132"}
     assert calibration.checks is not None and set(calibration.checks) == {"float", "tracking"}
     floats = calibration.checks["float"]["joints"]
     assert set(floats) == set(LEFT_MEASURED) and all(row["passed"] for row in floats.values())
+    # Each joint floated at the two poses where it carries the most gravity.
+    assert all(len(row["poses"]) == 2 for row in floats.values())
+    assert floats["left_joint2"]["poses"][0]["gravity_nm"] < -5.0
+    # The tracking check revisits the held-out pose, paired with the sweep's rest there.
     tracking = calibration.checks["tracking"]
-    assert tracking["poses"] == 3 and tracking["baseline"]["rest_samples"] > 0
+    assert tracking["pose_names"] == results["gravity_fit"]["holdout_poses"] == ["pose_05"]
+    assert tracking["poses"] == 1 and tracking["baseline"]["rest_samples"] > 0
+    assert set(tracking["baseline"]["rest_rms_deg"]) == set(left_spec.joint_names)
+    # The sweep ran clear of every limit, away from home.
+    assert results["step_sweep"]["pose"] == "gravity pose pose_03"
     # Saved after the fit, then by the float check, the gains and the tracking check.
     assert len(list((path.parent / "history").glob("*.json"))) == 3
     applied = rig.fake.status().calibration[left_spec.arm_id]
@@ -233,7 +249,11 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert rig.labels() == [f"pose_{i:02d}" for i in range(1, 9)] + ["end"]
     steps = rig.recording.markers["step_events"]
     assert len(steps) == 8 * 4 * 2 + 6 * 3 * 4
-    assert len(rig.recording.markers["float_events"]) == 4
+    assert len(rig.recording.markers["float_events"]) == 8
+    # The fit was scored against the URDF, the masses the arm ran (the URDF's
+    # here) and itself.
+    for joint, row in fit["holdout_rms_nm"].items():
+        assert row["running"] == pytest.approx(row["before"]), joint
     assert all(
         m["data"]["arm"] == left_spec.arm_id for m in rig.recording.markers["gravity_events"]
     )
@@ -259,6 +279,8 @@ def test_skip_and_abort_at_a_pose_stop_where_the_arm_is(make_rig: Callable[..., 
         prompts.append(prompt)
         # An answer meant for the prompt before is not taken for this one.
         assert not rig.procedure.confirm(rig.procedure.status()["prompt_id"] - 1)
+        with pytest.raises(TypeError, match="needs the prompt_id"):
+            rig.procedure.confirm(None)  # type: ignore[arg-type]
         if prompt.startswith("Pose 2/"):
             return "skip"
         if prompt.startswith("Pose 3/"):
@@ -291,7 +313,8 @@ def test_skip_and_abort_at_a_pose_stop_where_the_arm_is(make_rig: Callable[..., 
     assert np.degrees(np.abs(rig.fake.q - rig.fake.arm.home)).max() > 30.0
     assert not rig.fake.session_active()
     assert "gravity_poses" not in rig.procedure.results()
-    assert not rig.procedure.confirm() and not rig.procedure.skip() and not rig.procedure.abort()
+    assert not rig.procedure.confirm(0) and not rig.procedure.skip(0)
+    assert not rig.procedure.abort()
 
 
 def test_a_stalled_joint_fails_the_step_and_the_arm_holds(make_rig: Callable[..., Rig]) -> None:
@@ -463,13 +486,34 @@ def test_a_floating_joint_that_drifts_is_held_again_and_fails(
 
     assert status["state"] == "done", status["message"]
     joints = rig.procedure.results()["float_check"]["joints"]
-    assert not joints["left_joint2"]["passed"]
-    assert (
-        "drifted" in joints["left_joint2"]["reason"]
-        or joints["left_joint2"]["fingertip_drift_mm"] > 2.0
-    )
+    shoulder = joints["left_joint2"]
+    assert not shoulder["passed"]
+    assert "drifted" in shoulder["reason"] or shoulder["fingertip_drift_mm"] > 2.0
     assert rig.fake.tuning_get_gains()["left_joint2"]["floating"] is False
     assert rig.procedure.results()["float_check"]["saved"] is None
+
+
+@pytest.mark.parametrize(
+    "float_kd,caught",
+    [
+        (0.5, r"drifted at [+-]\d+ deg/s while floating \(limit 20 deg/s\): it was falling"),
+        (5.0, r"drifted [+-]5\.\d deg while floating \(limit 5 deg\)"),
+    ],
+)
+def test_a_falling_joint_is_held_again_on_speed_or_on_drift(
+    make_rig: Callable[..., Rig], float_kd: float, caught: str
+) -> None:
+    # The shoulder carries about 1 N m more than compensated at its float pose:
+    # lightly damped it falls fast, heavily damped it creeps past 5 deg.
+    rig = make_rig(float_window_s=5.0, float_settle_s=0.0, float_kd=float_kd)
+
+    status = rig.run(["float_check"])
+
+    assert status["state"] == "done", status["message"]
+    shoulder = rig.procedure.results()["float_check"]["joints"]["left_joint2"]
+    first = shoulder["poses"][0]
+    assert not first["passed"] and re.search(caught, first["reason"]), first["reason"]
+    assert not rig.fake.tuning_get_gains()["left_joint2"]["floating"]
 
 
 def test_the_fake_keeps_the_tuning_session_rules(
@@ -514,10 +558,10 @@ def _far_from_home(rig: Rig) -> float:
     return float(np.degrees(np.abs(rig.fake.q - rig.fake.arm.home)).max())
 
 
-def test_the_float_check_floats_at_the_first_gravity_pose_not_at_home(
+def test_the_float_check_floats_each_joint_where_it_carries_the_most_gravity(
     make_rig: Callable[..., Rig],
 ) -> None:
-    rig = make_rig(float_window_s=1.0)
+    rig = make_rig(float_window_s=1.0, float_settle_s=0.0)
     prompts: list[str] = []
 
     def answer(prompt: str) -> str:
@@ -527,28 +571,45 @@ def test_the_float_check_floats_at_the_first_gravity_pose_not_at_home(
     status = rig.run(["float_check"], answer)
 
     assert status["state"] == "done", status["message"]
-    assert prompts[0].startswith("The arm will move to gravity pose pose_01 [")
     result = rig.procedure.results()["float_check"]
-    assert result["pose"] == "gravity pose pose_01"
-    first = generate_poses(rig.procedure.arm, count=8).identification[0]
-    assert np.allclose(result["pose_deg"], first.joints_deg, atol=1e-2)
-    assert len(prompts) == 1 + len(LEFT_MEASURED)
-    # It ends holding at the float pose, far from the folded home.
-    assert _far_from_home(rig) > 20.0
-    assert np.degrees(np.abs(rig.fake.q - np.asarray(first.joints_rad))).max() < 5.0
+    arm = rig.procedure.arm
+    poses = generate_poses(arm, count=8).identification
+    assert set(result["joints"]) == set(LEFT_MEASURED)
+    for joint, row in result["joints"].items():
+        i = arm.joint_names.index(joint)
+        largest = sorted(abs(float(arm.gravity(np.asarray(p.joints_rad))[i])) for p in poses)
+        chosen = [abs(pose["gravity_nm"]) for pose in row["poses"]]
+        # The two poses where the joint carries the most, each a real load.
+        assert chosen == pytest.approx(largest[::-1][:2], abs=1e-3), joint
+        assert min(chosen) >= 0.2
+    # One prompt for the plan, then one before every move.
+    assert len(prompts) == 1 + 2 * len(LEFT_MEASURED)
+    assert prompts[1].startswith("Float left_joint2 at pose_01 [")
+    assert "where it carries -9.87 Nm" in prompts[1]
+    # Without the fit the arm is heavier than compensated: the drift is caught.
+    assert not result["joints"]["left_joint2"]["passed"]
+    assert len(rig.recording.markers["float_events"]) == 2 * len(LEFT_MEASURED)
     assert not rig.fake.session_active()
 
 
-def test_the_float_pose_can_be_set_and_must_be_valid(make_rig: Callable[..., Rig]) -> None:
-    arm = make_rig().procedure.arm
-    chosen = generate_poses(arm, count=8).identification[2]
-    rig = make_rig(float_window_s=1.0, float_pose_deg=tuple(chosen.joints_deg))
+def test_a_joint_with_no_gravity_load_is_not_floated(make_rig: Callable[..., Rig]) -> None:
+    # At the 60/60 home pose the last wrist joint carries nothing.
+    home_deg = tuple(float(v) for v in np.degrees(make_rig().procedure.arm.home))
+    rig = make_rig(float_window_s=1.0, float_settle_s=0.0, float_pose_deg=home_deg)
 
     status = rig.run(["float_check"])
 
     assert status["state"] == "done", status["message"]
-    assert rig.procedure.results()["float_check"]["pose"] == "the configured float pose"
-    assert np.degrees(np.abs(rig.fake.q - np.asarray(chosen.joints_rad))).max() < 5.0
+    result = rig.procedure.results()["float_check"]
+    assert result["pose"] == "the configured float pose"
+    wrist = result["joints"]["left_joint5"]
+    assert wrist["skipped"] and wrist["reason"].startswith("no gravity load to test")
+    assert all(
+        row["poses"][0]["pose"] == "the configured float pose"
+        for joint, row in result["joints"].items()
+        if joint != "left_joint5"
+    )
+    assert len(rig.recording.markers["float_events"]) == len(LEFT_MEASURED) - 1
 
     short = make_rig(float_pose_deg=(0.0, 1.0))
     status = short.run(["float_check"])
@@ -597,26 +658,96 @@ def test_go_home_can_be_skipped_aborted_and_not_started_while_running(
     drive(rig.procedure, rig.recording)
 
 
-@pytest.mark.parametrize(
-    "float_kd,caught",
-    [
-        (0.5, r"drifted at [+-]\d+ deg/s while floating \(limit 20 deg/s\): it was falling"),
-        (5.0, r"drifted [+-]5\.\d deg while floating \(limit 5 deg\)"),
-    ],
-)
-def test_a_falling_joint_is_held_again_on_speed_or_on_drift(
-    make_rig: Callable[..., Rig], float_kd: float, caught: str
+def _abort_at(prompt_start: str) -> Callable[[str], str]:
+    return lambda prompt: "abort" if prompt.startswith(prompt_start) else "confirm"
+
+
+def test_shutdown_parks_an_arm_left_at_a_pose_and_ends_the_session(
+    make_rig: Callable[..., Rig],
 ) -> None:
-    # The shoulder carries about 1 N m more than compensated at its float pose:
-    # lightly damped it falls fast, heavily damped it creeps past 5 deg.
-    rig = make_rig(float_window_s=5.0, float_settle_s=0.0, float_kd=float_kd)
+    rig = make_rig()
+    # Aborted while waiting for pose 4: the arm holds at pose 3, 75 deg from home.
+    status = rig.run(["check", "gravity_poses"], _abort_at("Pose 4/"))
+    assert status["state"] == "aborted" and _far_from_home(rig) > 30.0
+    sessions = len(rig.fake.ended)
 
-    status = rig.run(["float_check"])
+    outcome = rig.procedure.shutdown()
 
-    assert status["state"] == "done", status["message"]
-    shoulder = rig.procedure.results()["float_check"]["joints"]["left_joint2"]
-    assert not shoulder["passed"] and re.search(caught, shoulder["reason"]), shoulder["reason"]
-    assert not rig.fake.tuning_get_gains()["left_joint2"]["floating"]
+    assert outcome.startswith("parked at home in ")
+    assert outcome.endswith("(the calibration module is stopping)")
+    assert _far_from_home(rig) < 3.0
+    status = rig.procedure.status()
+    assert status["park"] == outcome and status["state"] == "aborted"
+    # One more session, the park's, ended by the park itself.
+    assert rig.fake.ended[sessions:] == ["tuning_end"] and not rig.fake.session_active()
+    with pytest.raises(RuntimeError, match="shutting down"):
+        rig.procedure.start(["check"])
+
+
+def test_shutdown_during_a_run_parks_once_the_run_lets_go(make_rig: Callable[..., Rig]) -> None:
+    rig = make_rig()
+    outcomes: list[str] = []
+
+    def answer(prompt: str) -> str:
+        if prompt.startswith("Pose 4/"):
+            # The module stops while the arm waits at pose 3 inside the sweep's session.
+            outcomes.append(rig.procedure.shutdown())
+            return "ignore"
+        return "confirm"
+
+    status = rig.run(["check", "gravity_poses"], answer)
+
+    assert outcomes and outcomes[0].startswith("parked at home")
+    assert status["state"] == "aborted"
+    assert status["message"] == f"aborted during gravity_poses: {outcomes[0]}"
+    assert _far_from_home(rig) < 3.0 and not rig.fake.session_active()
+
+
+def test_a_park_over_its_budget_or_without_a_safe_path_holds_and_says_why(
+    make_rig: Callable[..., Rig], mocker: Any
+) -> None:
+    # Pose 1 is 100 deg from home: 9.4 s at 20 deg/s, over the 8 s budget.
+    rig = make_rig()
+    rig.run(["check", "gravity_poses"], _abort_at("Pose 2/"))
+    held, commands = rig.fake.q.copy(), rig.fake.commands
+    error = mocker.spy(procedure_module.logger, "error")
+
+    outcome = rig.procedure.shutdown()
+
+    assert outcome.startswith("held where it is, not parked (the calibration module is stopping)")
+    assert re.search(r"the way home takes 9\.\d s at 20 deg/s, more than the 8\.0 s", outcome)
+    assert any("Support the arm" in str(call.args[0]) for call in error.call_args_list)
+    # Held, not moved: only the targets that hold it where it is were sent.
+    assert np.degrees(np.abs(rig.fake.q - held)).max() < 1.0
+    assert rig.fake.commands - commands <= 2
+
+    unsafe = make_rig()
+    unsafe.run(["check", "gravity_poses"], _abort_at("Pose 4/"))
+    mocker.patch.object(arm_session_module, "plan_path", return_value=None)
+    outcome = unsafe.procedure.shutdown()
+    assert "no ramp home keeps the workspace clearance" in outcome
+    assert _far_from_home(unsafe) > 30.0
+
+
+def test_an_unanswered_prompt_aborts_and_parks_the_arm(make_rig: Callable[..., Rig]) -> None:
+    rig = make_rig(prompt_timeout_s=5.0)
+    deadlines: list[float | None] = []
+
+    def answer(prompt: str) -> str:
+        deadlines.append(rig.procedure.status()["prompt_deadline"])
+        return "ignore" if prompt.startswith("Pose 4/") else "confirm"
+
+    status = rig.run(["check", "gravity_poses"], answer)
+
+    assert status["state"] == "aborted"
+    assert status["message"].startswith(
+        "aborted during gravity_poses: parked at home in "
+    ) and status["message"].endswith("(the prompt went unanswered for 5 s)")
+    assert status["park"] is not None and status["park"].startswith("parked at home")
+    assert all(deadline is not None for deadline in deadlines)
+    assert _far_from_home(rig) < 3.0 and not rig.fake.session_active()
+    # Not a shutdown: the operator can run again.
+    assert rig.run(["summary"])["state"] == "done"
 
 
 def test_a_stale_reading_fails_the_tick_and_holds(make_rig: Callable[..., Rig]) -> None:
@@ -639,3 +770,131 @@ def test_a_stale_reading_fails_the_tick_and_holds(make_rig: Callable[..., Rig]) 
     assert message.startswith("stopped: the latest reading is 0.30 s old (limit 0.25 s)")
     # The stale reading stopped the tick before it sent anything.
     assert rig.fake.commands == 100 and not rig.fake.session_active()
+
+
+def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
+    make_rig: Callable[..., Rig], b601_spec: ArmCalibrationSpec
+) -> None:
+    # B601 home has joint2 1 deg and joint3 0 deg from a limit: +1 deg steps
+    # there would be refused.
+    model = ArmModel(b601_spec)
+    lower, upper = joint_limits(b601_spec)
+    assert limit_error(b601_spec.joint_names, model.home, lower, upper, math.radians(5.0))
+    rig = make_rig(spec=b601_spec, model=model, confirm_each=False)
+    with rig.procedure.open_session() as session:
+        with pytest.raises(StepFailedError, match="would pass a joint limit"):
+            session.step_joint("joint3", 1.0, 0.5)
+
+    status = rig.run(["check", "step_sweep"])
+
+    assert status["state"] == "done", status["message"]
+    sweep = rig.procedure.results()["step_sweep"]
+    assert set(sweep["joints"]) == set(b601_spec.joint_names)
+    assert sweep["pose"].startswith("gravity pose ")
+    pose = np.radians(sweep["pose_deg"])
+    assert math.degrees(limit_margin_rad(pose, lower, upper)) >= 3.0 + 2.0
+    # Back home after the sweep, every step at kp x 1, 1.5, 2 with kd x sqrt.
+    assert _far_from_home(rig) < 3.0
+    kp0, kd0 = b601_spec.gains["joint4"]
+    assert sweep["joints"]["joint4"] == [
+        [pytest.approx(kp0 * s), pytest.approx(min(kd0 * math.sqrt(s), 5.0))]
+        for s in (1.0, 1.5, 2.0)
+    ]
+
+
+def _heavy_forearm(arm: ArmModel, spec: ArmCalibrationSpec, extra_kg: float) -> ArmCalibration:
+    forearm = arm.model.inertias[body_joint_id(arm.model, "left_link3")]
+    heavy = {
+        "left_link3": LinkInertial(
+            mass_kg=float(forearm.mass) + extra_kg, com_m=tuple(float(v) for v in forearm.lever)
+        )
+    }
+    return ArmCalibration.for_spec(
+        spec, gravity=GravityCalibration(links=gravity_links_from_inertial(spec, heavy))
+    )
+
+
+def test_the_fit_refuses_when_the_file_on_disk_is_not_what_the_arm_runs(
+    make_rig: Callable[..., Rig], arm: ArmModel, left_spec: ArmCalibrationSpec, tmp_path: Path
+) -> None:
+    # The arm starts on its saved file C0, with a forearm 3 kg too heavy.
+    path = calibration_path(left_spec.arm_id, tmp_path / "arms")
+    save_calibration(path, _heavy_forearm(arm, left_spec, 3.0))
+    rig = make_rig(confirm_each=False, fake={"applied": path})
+    c0 = rig.fake.tuning_applied_calibration()[left_spec.arm_id]
+    assert c0 is not None and c0["sha256"]
+
+    # Run 1 fits and saves C1, but the forced apply is declined: the arm keeps C0.
+    status = rig.run(
+        ["check", "gravity_poses", "gravity_fit"],
+        lambda p: "skip" if p.startswith("The connection refused") else "confirm",
+    )
+    assert status["state"] == "done", status["message"]
+    assert rig.procedure.results()["gravity_fit"]["applied"] is False
+    c1 = load_for_spec(left_spec, path)
+    assert rig.fake.tuning_applied_calibration()[left_spec.arm_id] == c0
+
+    # Run 2 records with C0 again; fitting against C1 on disk would be wrong.
+    status = rig.run(["gravity_poses", "gravity_fit"])
+
+    assert status["state"] == "done", status["message"]
+    assert rig.statuses()["gravity_fit"] == "skipped"
+    message = rig.messages()["gravity_fit"]
+    assert message.startswith(f"not fitted: the arm runs the calibration created {c0['created']}")
+    assert f"the file on disk is the one created {c1.created.isoformat()}" in message
+    assert message.endswith("restart the robot or apply the file first")
+    assert "gravity_fit" not in rig.procedure.results()
+    assert load_for_spec(left_spec, path) == c1
+
+
+def test_a_fit_worse_than_the_running_file_is_not_saved(
+    make_rig: Callable[..., Rig], arm: ArmModel, truth: pin.Model, left_spec: ArmCalibrationSpec
+) -> None:
+    # The arm already runs its true masses; a fit from eight poses cannot beat them.
+    exact = {
+        link: LinkInertial(
+            mass_kg=float(truth.inertias[body_joint_id(truth, link)].mass),
+            com_m=tuple(float(v) for v in truth.inertias[body_joint_id(truth, link)].lever),
+        )
+        for link in left_spec.gravity_links
+    }
+    root_path = calibration_path(left_spec.arm_id, make_rig().root)
+    save_calibration(
+        root_path,
+        ArmCalibration.for_spec(
+            left_spec,
+            gravity=GravityCalibration(links=gravity_links_from_inertial(left_spec, exact)),
+        ),
+    )
+    saved = load_for_spec(left_spec, root_path)
+    rig = make_rig(confirm_each=False, fake={"applied": root_path})
+
+    status = rig.run(["check", "gravity_poses", "gravity_fit"])
+
+    assert status["state"] == "done", status["message"]
+    fit = rig.procedure.results()["gravity_fit"]
+    assert fit["saved"] is None and fit["refusals"]
+    assert all("is worse than the running calibration's" in r for r in fit["refusals"])
+    for joint, row in fit["holdout_rms_nm"].items():
+        # URDF -> running -> new: the fit beats the URDF, not what the arm runs.
+        assert row["running"] < row["after"] < row["before"], joint
+    assert load_for_spec(left_spec, root_path) == saved
+
+
+def test_a_recorder_that_is_not_writing_fails_the_check_before_any_motion(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig()
+    rig.recording.drop_probes = True
+
+    status = rig.run(["check"])
+
+    assert status["state"] == "failed"
+    message = rig.messages()["check"]
+    assert "was not recorded" in message and message.endswith("nothing has moved")
+    assert rig.fake.commands == 0
+
+    writing = make_rig()
+    assert writing.run(["check"])["state"] == "done"
+    assert writing.procedure.results()["check"]["recording"] == "writing"
+    assert len(writing.recording.probes) == 1

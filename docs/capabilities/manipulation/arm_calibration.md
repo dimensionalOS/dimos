@@ -13,12 +13,16 @@ the robot loads every time it starts.
   torque it needed. Gravity compensation then holds the arm up more evenly.
 - **Gains.** Every joint steps a degree or three at several stiffnesses. The
   program proposes, per joint, the stiffest kp and kd whose steps settle without
-  overshoot or buzz. A joint where nothing passes keeps its robot gains.
-- **Checks.** A float check lets one joint at a time go limp and measures how far
-  the fingertip drifts, and a tracking check compares how closely the arm follows
-  a few random poses before and after.
+  overshoot or buzz, and only when every softer stiffness passed too. A joint
+  where nothing passes keeps its robot gains.
+- **Checks.** A float check lets one joint at a time go limp where it carries
+  the most weight and measures how far the fingertip drifts, and a tracking
+  check revisits the poses the fit never saw and compares how closely the arm
+  rests there before and after.
 
-Every step asks first. Nothing moves until you press Enter.
+Every step asks first. Nothing moves until you press Enter. The one exception is
+parking, below: when the calibration stops while the arm is away from home, it
+backs the arm out home on its own, slowly and within a few seconds.
 
 ## Before you start
 
@@ -71,23 +75,34 @@ when it ends. It never stops a run it did not start.
 At every prompt: **Enter** goes on, **s** skips what the prompt asks for (one
 pose, one joint, or the rest of the step), **q** or Ctrl-C aborts.
 
-1. **check.** Confirms the connection works and the joints read sane values, then
-   asks to move home. Enter to go home, or `s` to stay where you are.
+1. **check.** Confirms the connection works, the joints read sane values and the
+   recorder is writing (a test marker must land in the recording within two
+   seconds, or the step fails before anything moves), then asks to move home.
+   Enter to go home, or `s` to stay where you are.
 2. **gravity_poses.** Asks once, then asks before every pose. At each pose the arm
    rests, then each joint nudges up and down. Keep clear.
-3. **gravity_fit.** Fits the masses and shows the hold-out error before and after
-   for each joint, plus any link at a bound. Enter saves and applies it. If the
-   fit looks wrong, `s` leaves the old file in place.
-4. **float_check.** The arm moves to the first gravity pose, not home, because at
-   a folded rest pose nothing can drift. Then each joint goes limp in turn for
-   about ten seconds: be ready to support the arm. A joint that drifts is held
-   again at once and fails.
-5. **step_sweep.** Each joint steps at several stiffnesses, asking before each
-   joint.
+3. **gravity_fit.** Fits the masses and shows, per joint, the hold-out error of
+   the URDF, of the file the arm runs now, and of the new fit
+   (`URDF -> running -> new`), plus any link at a bound. The fit is offered only
+   when it is no worse than both on every joint. Enter saves and applies it; `s`
+   leaves the old file in place. If the file on disk holds other masses than the
+   arm runs (a fit saved earlier but never applied), the step does not fit and
+   says so: restart the robot or apply the file first, then run it again.
+4. **float_check.** Each joint goes limp at up to two gravity poses where it
+   carries the most weight (and is at least 5 degrees from its limits), for about
+   ten seconds each. It asks before every move: be ready to support the arm. A
+   joint that carries almost nothing at every pose (under 0.2 Nm) is skipped as
+   "no gravity load to test". A joint that drifts more than 5 degrees, or moves
+   faster than 20 degrees per second, is held again at once and fails.
+5. **step_sweep.** The arm moves to the sweep pose, the gravity pose farthest
+   from every joint limit (home sits on a limit on several arms), and each joint
+   steps at several stiffnesses, asking before each joint; kd grows with the
+   square root of the kp multiple. Then the arm goes home.
 6. **pick_gains.** Shows the proposed gains with the reason for each, and every
    rejected try. Enter saves and applies them.
-7. **confirm_tracking.** The arm visits a few random poses (asking before each)
-   and reports its tracking error against the same measure from step 2.
+7. **confirm_tracking.** The arm revisits the poses the fit held out (asking
+   before each) and reports how closely it rests there, against its rests at the
+   same poses in step 2.
 8. **summary.** Lists the file, the files it replaced and what to do next.
 
 Steps that need the run's recording (gravity_poses, gravity_fit, step_sweep,
@@ -97,15 +112,41 @@ walk-through's own robot always records.
 After the last step, or after a failure or an abort, the arm holds where it is.
 Press **h** to ramp it home (it asks first) or Enter to finish.
 
+## Parking
+
+Two things move the arm home without asking, at up to 20 degrees per second and
+within 8 seconds:
+
+- **Stopping the run** (`dimos stop`, or the command finishing). The arm's
+  connection would otherwise switch the motors off where the arm is, and a
+  stalled arm at a pose would drop onto the table. The calibration first aborts
+  what it was doing and backs the arm out home; the connection waits up to 10
+  seconds for that before it switches the motors off.
+- **A prompt left unanswered for 10 minutes.** The run aborts and the arm parks.
+
+The way home is the same guarded path every ramp uses: straight, or through
+home when straight would come too close to the table. When there is no such
+path, or it would take longer than 8 seconds (a pose more than about 85 degrees
+from home), the arm is **not** moved: it holds where it is, the log says why in
+an error line, and it drops when the connection stops. Support it, or press
+**h** before stopping. The status's `park` field says what the last park did.
+
+Parking on stop is a safety net, not the way to end a session: `dimos stop`
+gives the run's processes about 5 seconds before it kills them, so a park that
+needs longer is cut off where the arm is. Bring the arm home with **h** first,
+then stop.
+
 ## Safety
 
 - The arm only moves after you confirm, pose by pose unless you gave
-  `--no-confirm-each`.
+  `--no-confirm-each`; parking (above) is the only exception.
 - **q**, Ctrl-C or closing the terminal input aborts: no new targets are sent and
   the arm holds where it is. It is never moved home by an abort. Support it if a
   joint was carrying a heavy load.
-- A joint that lags its target by more than 10 degrees, or a fingertip that would
-  cross the guard, stops the step and holds the arm.
+- A joint that lags its target by more than 10 degrees while holding stops the
+  step and holds the arm. While ramping, 5 degrees more than a joint normally
+  trails at that speed stops it sooner. So does a fingertip that would cross the
+  guard, a target past a joint limit, or a reading more than 0.25 seconds old.
 - Ramps are limited to 30 degrees per second.
 
 ## Where the files go

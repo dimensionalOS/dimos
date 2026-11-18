@@ -24,8 +24,16 @@ is. A step that needs the operator stops at a confirmation
 its target while it waits.
 
 A step that fails stops the procedure (``failed``), with the arm held where it
-is; so does ``abort`` (``aborted``). Neither moves the arm home. Everything
-the calls return is plain JSON: strings, numbers, booleans, lists and dicts.
+is; so does ``abort`` (``aborted``). Neither moves the arm home. Two things do,
+without a confirmation and on a time budget (:meth:`ArmSession.park`, at most
+``MAX_PARK_BUDGET_S`` at up to ``MAX_PARK_SPEED_DEG_S``): :meth:`Procedure.
+shutdown`, which the module's ``stop`` calls so the arm is not left at a pose
+when the connection de-energizes it, and a prompt left unanswered for
+``ProcedureSettings.prompt_timeout_s``, which aborts the run. When the way home
+is not guard-safe or would take longer than the budget, the arm holds where it
+is and the reason is logged as an error; ``status()["park"]`` says what the
+last park did. Everything the calls return is plain JSON: strings, numbers,
+booleans, lists and dicts.
 
 Nothing here knows the transport: the arm is a :class:`~dimos.robot.
 manipulators.calibration.arm_session.TuningConnection` (an RPC proxy in a
@@ -38,10 +46,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 from pathlib import Path
 import threading
+import time
 from typing import Any, Literal, Protocol, TypedDict
 import uuid
 
@@ -50,7 +59,9 @@ from dimos.robot.manipulators.calibration.arm_session import (
     ArmSession,
     Clock,
     MarkerStream,
+    ParkRefusedError,
     RealClock,
+    SessionHost,
     StepFailedError,
     TrackingLog,
     TuningConnection,
@@ -61,6 +72,7 @@ from dimos.robot.manipulators.calibration.gravity_poses import (
     ArmModel,
     PoseSet,
 )
+from dimos.robot.manipulators.calibration.hooks import AppliedInertials
 from dimos.robot.manipulators.calibration.motion import (
     DEFAULT_SPEED_DEG_S,
     check_step,
@@ -92,8 +104,17 @@ DEFAULT_TRACKING_POSES = 5
 MIN_STREAM_HZ = 50.0
 DEFAULT_LEASE_S = 2.0
 MAX_LEASE_S = 30.0
-# What ``status()["step"]`` names while the arm goes home, which is no step.
+# Parking: the arm goes home on its own, so slowly-ish and within a budget that
+# fits a module's stop.
+MAX_PARK_BUDGET_S = 8.0
+MAX_PARK_SPEED_DEG_S = 20.0
+DEFAULT_PROMPT_TIMEOUT_S = 600.0
+# How long a stopping procedure waits for its run to let go of the arm before
+# it parks, real seconds; the run lets go within a tick of being aborted.
+PARK_SLOT_WAIT_S = 2.0
+# What ``status()["step"]`` names while the arm goes home or parks, which is no step.
 HOME_ACTION = "home"
+PARK_ACTION = "park"
 _FINISHED: tuple[ProcedureStateName, ...] = ("idle", "done", "failed", "aborted")
 
 
@@ -119,15 +140,22 @@ class ProcedureSettings:
         confirm_each: Ask before every pose (and every joint of the gain sweep).
         kp_scales: Multiples of each joint's robot kp the gain sweep tries.
         step_deltas_deg: The sweep's steps, in order; they sum to zero.
-        float_pose_deg: The pose the joints float at, one angle per arm joint in
-            degrees; ``None`` means the first generated gravity pose.
+        sweep_pose_deg: Where the gain sweep steps the joints, one angle per arm
+            joint in degrees; ``None`` means the gravity pose farthest from
+            every joint limit.
+        float_pose_deg: One pose every joint floats at, one angle per arm joint
+            in degrees; ``None`` means, per joint, the gravity poses where it
+            carries the most gravity torque.
         float_kd: Damping a floating joint keeps, N m s/rad.
         float_settle_s: Wait after a joint starts floating before its window.
         float_window_s: How long a floating joint is watched for drift.
-        tracking_poses: Random poses the tracking check visits.
-        tracking_seed: Seed of those poses.
+        tracking_poses: At most this many held-out gravity poses for the
+            tracking check.
         stream_hz: Targets sent per second during a tuning session.
         lease_s: The tuning session's lease.
+        park_budget_s: How long parking may take, at most ``MAX_PARK_BUDGET_S``.
+        park_speed_deg_s: Peak joint speed of a park, at most ``MAX_PARK_SPEED_DEG_S``.
+        prompt_timeout_s: A prompt unanswered this long aborts the run and parks.
         calibration_root: Where calibration files are saved, by arm id.
     """
 
@@ -140,14 +168,17 @@ class ProcedureSettings:
     confirm_each: bool = True
     kp_scales: tuple[float, ...] = DEFAULT_KP_SCALES
     step_deltas_deg: tuple[float, ...] = DEFAULT_STEP_DELTAS_DEG
+    sweep_pose_deg: tuple[float, ...] | None = None
     float_pose_deg: tuple[float, ...] | None = None
     float_kd: float = DEFAULT_FLOAT_KD
     float_settle_s: float = DEFAULT_FLOAT_SETTLE_S
     float_window_s: float = DEFAULT_FLOAT_WINDOW_S
     tracking_poses: int = DEFAULT_TRACKING_POSES
-    tracking_seed: int = 0
     stream_hz: float = MIN_STREAM_HZ
     lease_s: float = DEFAULT_LEASE_S
+    park_budget_s: float = MAX_PARK_BUDGET_S
+    park_speed_deg_s: float = MAX_PARK_SPEED_DEG_S
+    prompt_timeout_s: float = DEFAULT_PROMPT_TIMEOUT_S
     calibration_root: Path = ARMS_STATE_DIR
 
     def __post_init__(self) -> None:
@@ -170,6 +201,17 @@ class ProcedureSettings:
             raise ValueError(f"stream_hz must be at least {MIN_STREAM_HZ:g}, got {self.stream_hz}")
         if not 0.0 < self.lease_s <= MAX_LEASE_S:
             raise ValueError(f"lease_s must be in (0, {MAX_LEASE_S:g}] s, got {self.lease_s}")
+        if not 0.0 < self.park_budget_s <= MAX_PARK_BUDGET_S:
+            raise ValueError(
+                f"park_budget_s must be in (0, {MAX_PARK_BUDGET_S:g}] s, got {self.park_budget_s}"
+            )
+        if not 0.0 < self.park_speed_deg_s <= MAX_PARK_SPEED_DEG_S:
+            raise ValueError(
+                f"park_speed_deg_s must be in (0, {MAX_PARK_SPEED_DEG_S:g}] deg/s, "
+                f"got {self.park_speed_deg_s}"
+            )
+        if not (math.isfinite(self.prompt_timeout_s) and self.prompt_timeout_s > 0.0):
+            raise ValueError(f"prompt_timeout_s must be positive, got {self.prompt_timeout_s}")
 
 
 @dataclass(frozen=True)
@@ -196,17 +238,21 @@ class RunState:
 
     Attributes:
         run_id: Names this run in its markers.
-        pose_set: The gravity identification poses, once generated.
+        pose_set: The gravity identification poses the sweep visited, once generated.
+        generated_poses: The same poses generated for a later step when the
+            sweep did not run.
         gravity_span: When the gravity sweep's markers start and end.
-        gravity_applied: The calibration file the arm ran during the sweep.
+        gravity_applied: What the arm ran during the sweep, as the connection
+            reported it (``tuning_applied_calibration``); ``None`` for its URDF.
         step_span: When the gain sweep started and ended.
-        baseline: Tracking with the values the arm had before this run.
+        baseline: Tracking with the values the arm had before this run, by pose.
     """
 
     run_id: str
     pose_set: PoseSet | None = None
+    generated_poses: PoseSet | None = None
     gravity_span: tuple[float, float] | None = None
-    gravity_applied: str | None = None
+    gravity_applied: AppliedInertials | None = None
     step_span: tuple[float, float] | None = None
     baseline: TrackingLog | None = None
 
@@ -253,8 +299,12 @@ class ProcedureStatus(TypedDict):
         prompt: What the operator is asked while ``waiting_confirm``.
         prompt_id: Counts the prompts of this procedure; pass it to ``confirm``
             or ``skip`` so a late answer cannot answer the next prompt.
+        prompt_deadline: When the waiting prompt times out, aborting the run
+            and parking the arm, Unix seconds.
         progress: The current step's progress, if it counts.
         steps: Every step and its status.
+        park: What the last park did ("parked at home ...", or why the arm
+            holds where it is), ``None`` before the first.
         updated: When this changed, Unix seconds.
     """
 
@@ -265,8 +315,10 @@ class ProcedureStatus(TypedDict):
     message: str
     prompt: str | None
     prompt_id: int | None
+    prompt_deadline: float | None
     progress: Progress | None
     steps: list[StepState]
+    park: str | None
     updated: float
 
 
@@ -276,6 +328,33 @@ class EventSink(Protocol):
     def marker(self, stream: MarkerStream, payload: dict[str, Any]) -> None: ...
 
     def status(self, status: ProcedureStatus) -> None: ...
+
+    def probe(self, token: str) -> None:
+        """Publish ``token`` where the recorder records it, and nowhere a report reads."""
+        ...
+
+
+@dataclass(frozen=True)
+class _ParkRequest:
+    reason: str
+    # Clock time the park must be done by.
+    deadline: float
+    # Asked for by shutdown: no run starts after it.
+    final: bool
+
+
+class _ParkHost:
+    """A park's session host: only a second abort stops it, and it marks nothing."""
+
+    def __init__(self, cancel: threading.Event) -> None:
+        self._cancel = cancel
+
+    def check_abort(self) -> None:
+        if self._cancel.is_set():
+            raise AbortRequestedError("the park was aborted")
+
+    def marker(self, stream: MarkerStream, payload: dict[str, Any]) -> None:
+        pass
 
 
 class Step:
@@ -345,8 +424,15 @@ class StepContext:
         return self.spec.arm_id.rsplit("/", 1)[-1]
 
     def confirm(self, prompt: str) -> None:
-        """Wait for the operator: returns on ``confirm``, raises ``SkipRequestedError`` or ``AbortRequestedError``."""
+        """Wait for the operator: returns on ``confirm``, raises ``SkipRequestedError`` or ``AbortRequestedError``.
+
+        Unanswered for ``settings.prompt_timeout_s``, it aborts the run and parks the arm.
+        """
         self._procedure.wait_for_operator(prompt)
+
+    def probe_recording(self, token: str) -> None:
+        """Publish ``token`` for the recorder; see ``EventSink.probe``."""
+        self._procedure.probe(token)
 
     def progress(self, done: int, total: int, label: str) -> None:
         self._procedure.set_progress(Progress(done=done, total=total, label=label))
@@ -424,13 +510,23 @@ class Procedure:
         self._decided = threading.Event()
         self._decision: Literal["confirm", "skip"] | None = None
         self._session: ArmSession | None = None
+        # Taken from before a session begins until after it ends.
+        self._slot_taken = False
         self._state: ProcedureStateName = "idle"
         self._run_id: str | None = None
         self._current: str | None = None
         self._message = "ready"
         self._prompt: str | None = None
         self._prompts = 0
+        self._prompt_deadline: float | None = None
         self._progress: Progress | None = None
+        # A park asked for (by shutdown or a prompt timeout), whether a thread
+        # has taken it on, set once it is done, and what it did.
+        self._park_request: _ParkRequest | None = None
+        self._park_claimed = False
+        self._park_done = threading.Event()
+        self._park_cancel = threading.Event()
+        self._park_outcome: str | None = None
         self._step_states: dict[str, StepState] = {}
         self._results: dict[str, dict[str, Any]] = {}
         self._updated = self.clock.now()
@@ -486,6 +582,8 @@ class Procedure:
         with self._lock:
             if self._state not in _FINISHED or self._thread is not previous:
                 raise RuntimeError("the procedure was started meanwhile")
+            if self._park_request is not None:
+                raise RuntimeError("the procedure is shutting down")
             self._abort.clear()
             self._decided.clear()
             self._decision = None
@@ -524,6 +622,8 @@ class Procedure:
         with self._lock:
             if self._state not in _FINISHED or self._thread is not previous:
                 raise RuntimeError("the procedure was started meanwhile")
+            if self._park_request is not None:
+                raise RuntimeError("the procedure is shutting down")
             self._abort.clear()
             self._decided.clear()
             self._decision = None
@@ -537,19 +637,28 @@ class Procedure:
             self._thread.start()
             return self._status_locked()
 
-    def confirm(self, prompt_id: int | None = None) -> bool:
-        """Answer the waiting prompt (``prompt_id``, if given) with "go on"; False when none waits."""
+    def confirm(self, prompt_id: int) -> bool:
+        """Answer prompt ``prompt_id`` (``status()["prompt_id"]``) with "go on".
+
+        False when it is not the prompt waiting. Raises ``TypeError`` without
+        a prompt id: an answer must name the prompt it answers.
+        """
         return self._decide("confirm", prompt_id)
 
-    def skip(self, prompt_id: int | None = None) -> bool:
-        """Answer the waiting prompt (``prompt_id``, if given) with "skip"; False when none waits."""
+    def skip(self, prompt_id: int) -> bool:
+        """Answer prompt ``prompt_id`` with "skip"; False when it is not the one waiting."""
         return self._decide("skip", prompt_id)
 
-    def _decide(self, decision: Literal["confirm", "skip"], prompt_id: int | None) -> bool:
+    def _decide(self, decision: Literal["confirm", "skip"], prompt_id: int) -> bool:
+        if isinstance(prompt_id, bool) or not isinstance(prompt_id, int):
+            raise TypeError(
+                f"{decision} needs the prompt_id of the prompt it answers "
+                f'(status()["prompt_id"]), got {prompt_id!r}'
+            )
         with self._lock:
             if self._state != "waiting_confirm" or self._decision is not None:
                 return False
-            if prompt_id is not None and prompt_id != self._prompts:
+            if prompt_id != self._prompts:
                 return False
             self._decision = decision
             self._decided.set()
@@ -558,13 +667,15 @@ class Procedure:
     def abort(self) -> bool:
         """Stop the run now: no new targets, the tuning session ends, the arm holds where it is.
 
-        The arm is not moved home. False when nothing runs.
+        The arm is not moved home; a park under way stops too. False when nothing runs.
         """
         with self._lock:
             if self._state in _FINISHED:
                 return False
             self._abort.set()
             self._decided.set()
+            if self._park_claimed:
+                self._park_cancel.set()
             self._message = "aborting"
         try:
             # Ends the session at once, even while the run thread waits on a call.
@@ -592,9 +703,141 @@ class Procedure:
         return not thread.is_alive()
 
     def close(self, timeout: float | None = None) -> None:
-        """Abort any run and wait for its thread."""
+        """Abort any run and wait for its thread; the arm holds where it is."""
         self.abort()
         self.join(timeout)
+
+    def shutdown(self, reason: str = "the calibration module is stopping") -> str:
+        """Park the arm, then end: abort any run and back out home on the park budget.
+
+        What a module's ``stop`` calls before its connection may de-energize
+        the arm. A run lets go of the arm within a tick; whichever thread is
+        free first parks it (``ArmSession.park``). Returns what the park did,
+        logged as an error when the arm was left where it is.
+        """
+        settings = self.settings
+        self._request_park(reason, final=True)
+        thread: threading.Thread | None
+        with self._lock:
+            thread = self._thread if self._thread is not None and self._thread.is_alive() else None
+        # Park from here once no run holds the arm, unless the run parks first.
+        waited_until = time.monotonic() + PARK_SLOT_WAIT_S
+        while True:
+            with self._lock:
+                if self._park_claimed:
+                    claimed = False
+                    break
+                if not self._slot_taken:
+                    self._park_claimed = claimed = True
+                    break
+            if time.monotonic() >= waited_until:
+                with self._lock:
+                    # Nobody parks after this: the module is about to stop.
+                    self._park_claimed = True
+                outcome = (
+                    f"held where it is, not parked ({reason}): the run did not let go of the "
+                    f"arm within {PARK_SLOT_WAIT_S:g} s"
+                )
+                logger.error(f"{self.spec.arm_id}: {outcome}")
+                self._finish_park(outcome)
+                claimed = False
+                break
+            time.sleep(0.01)
+        if claimed:
+            self._park_now()
+        self._park_done.wait(settings.park_budget_s + PARK_SLOT_WAIT_S)
+        if thread is not None:
+            thread.join(settings.park_budget_s + PARK_SLOT_WAIT_S)
+        with self._lock:
+            return self._park_outcome or "held where it is: the park did not finish"
+
+    # Parking.
+
+    def _request_park(self, reason: str, *, final: bool) -> None:
+        """Ask for one park: aborts any run, which parks on its way out unless shutdown does.
+
+        A ``final`` park (shutdown's) refuses every later run; another one is
+        released once its run has ended.
+        """
+        with self._lock:
+            if self._park_request is None:
+                self._park_request = _ParkRequest(
+                    reason, self.clock.now() + self.settings.park_budget_s, final
+                )
+                self._park_claimed = False
+                self._park_outcome = None
+                self._park_done.clear()
+                self._park_cancel.clear()
+            elif final:
+                self._park_request = replace(self._park_request, final=True)
+            self._abort.set()
+            self._decided.set()
+
+    def _release_park(self) -> None:
+        """After a run's own park (a prompt timeout's), let the next run start."""
+        with self._lock:
+            if self._park_request is not None and not self._park_request.final:
+                self._park_request = None
+                self._park_claimed = False
+
+    def _park_if_requested(self) -> str | None:
+        """On a run thread's way out: park if asked and nobody has; ``None`` if not asked."""
+        with self._lock:
+            if self._park_request is None:
+                return None
+            claimed = not self._park_claimed
+            self._park_claimed = True
+        if claimed:
+            self._park_now()
+        budget = self.settings.park_budget_s + PARK_SLOT_WAIT_S
+        self._park_done.wait(budget)
+        with self._lock:
+            return self._park_outcome or "held where it is: the park did not finish"
+
+    def _park_now(self) -> None:
+        """Park in a session of its own, then put back the state it found unless a run moved on."""
+        request = self._park_request
+        assert request is not None
+        settings = self.settings
+        with self._lock:
+            before = (self._state, self._message, self._current)
+            self._current = PARK_ACTION
+            self._progress = None
+            self._set_state(
+                "running",
+                f"parking ({request.reason}): the arm goes home at up to "
+                f"{settings.park_speed_deg_s:g} deg/s within {settings.park_budget_s:g} s",
+            )
+        try:
+            with self.open_session(host=_ParkHost(self._park_cancel)) as session:
+                done = session.park(speed_rad_s(settings.park_speed_deg_s), request.deadline)
+            outcome = f"{done} ({request.reason})"
+            logger.info(f"{self.spec.arm_id}: {outcome}")
+        except (ParkRefusedError, StepFailedError, AbortRequestedError) as refused:
+            outcome = f"held where it is, not parked ({request.reason}): {plain_error(refused)}"
+        except Exception as error:
+            outcome = (
+                f"held where it is, not parked ({request.reason}): {type(error).__name__}: "
+                f"{plain_error(error)}"
+            )
+        if outcome.startswith("held"):
+            logger.error(
+                f"{self.spec.arm_id}: {outcome}. Support the arm: it drops when its connection "
+                "stops."
+            )
+        with self._lock:
+            if self._state == "running" and self._current == PARK_ACTION:
+                state, message, self._current = before
+                self._state = state
+                self._message = f"{message}; {outcome}" if state in _FINISHED else message
+        self._finish_park(outcome)
+
+    def _finish_park(self, outcome: str) -> None:
+        with self._lock:
+            if self._park_outcome is None:
+                self._park_outcome = outcome
+            self._touch()
+        self._park_done.set()
 
     # Called from the run thread, through the step context.
 
@@ -612,28 +855,45 @@ class Procedure:
 
     def wait_for_operator(self, prompt: str) -> None:
         self.check_abort()
+        timeout = self.settings.prompt_timeout_s
+        deadline = self.clock.now() + timeout
         with self._lock:
             self._decision = None
             self._decided.clear()
             self._prompt = prompt
             self._prompts += 1
+            self._prompt_deadline = deadline
             self._set_state("waiting_confirm", prompt)
             session = self._session
         try:
             if session is not None:
-                session.wait_for(self._decided)
+                answered = session.wait_for(self._decided, deadline)
             else:
-                while not self.clock.wait(self._decided, 1.0 / MIN_STREAM_HZ):
-                    pass
+                answered = False
+                while self.clock.now() < deadline:
+                    left = min(1.0 / MIN_STREAM_HZ, deadline - self.clock.now())
+                    if self.clock.wait(self._decided, left):
+                        answered = True
+                        break
         finally:
             with self._lock:
                 decision = self._decision
                 self._decision = None
                 self._prompt = None
+                self._prompt_deadline = None
                 self._set_state("running", "running")
         self.check_abort()
+        if not answered:
+            unanswered = f"the prompt went unanswered for {_duration(timeout)}"
+            logger.warning(f"{self.spec.arm_id}: {unanswered}; aborting and parking: {prompt}")
+            self._request_park(unanswered, final=False)
+            raise AbortRequestedError(unanswered)
         if decision == "skip":
             raise SkipRequestedError(prompt)
+
+    def probe(self, token: str) -> None:
+        if self._events is not None:
+            self._events.probe(token)
 
     def set_progress(self, progress: Progress) -> None:
         with self._lock:
@@ -647,28 +907,39 @@ class Procedure:
             self._touch()
 
     @contextmanager
-    def open_session(self) -> Iterator[ArmSession]:
+    def open_session(self, host: SessionHost | None = None) -> Iterator[ArmSession]:
+        """A tuning session on the arm; one at a time, ``host`` this procedure unless given.
+
+        Once aborted (a park asked for included), only a park opens one.
+        """
         with self._lock:
-            if self._session is not None:
+            if host is None:
+                self.check_abort()
+            if self._slot_taken:
                 raise RuntimeError("a step already holds a tuning session")
-        session = ArmSession(
-            self.connection,
-            self.spec,
-            self.arm,
-            self,
-            self.clock,
-            speed_rad_s=speed_rad_s(self.settings.speed_deg_s),
-            stream_hz=self.settings.stream_hz,
-            lease_s=self.settings.lease_s,
-        )
-        with session:
-            with self._lock:
-                self._session = session
-            try:
-                yield session
-            finally:
+            self._slot_taken = True
+        try:
+            session = ArmSession(
+                self.connection,
+                self.spec,
+                self.arm,
+                host or self,
+                self.clock,
+                speed_rad_s=speed_rad_s(self.settings.speed_deg_s),
+                stream_hz=self.settings.stream_hz,
+                lease_s=self.settings.lease_s,
+            )
+            with session:
                 with self._lock:
-                    self._session = None
+                    self._session = session
+                try:
+                    yield session
+                finally:
+                    with self._lock:
+                        self._session = None
+        finally:
+            with self._lock:
+                self._slot_taken = False
 
     # The run thread.
 
@@ -699,19 +970,33 @@ class Procedure:
                 self._set_state("done", "every step has run")
         except AbortRequestedError:
             with self._lock:
-                where = f" during {self._current}" if self._current else ""
-                if self._current is not None:
-                    self._step_states[self._current]["status"] = "aborted"
+                aborted = self._current
+                if aborted is not None:
+                    self._step_states[aborted]["status"] = "aborted"
+            parked = self._park_if_requested()
+            with self._lock:
+                where = f" during {aborted}" if aborted else ""
+                self._current = aborted
                 self._set_state(
                     "aborted",
-                    f"aborted{where}: the arm holds where it is; it was not moved home",
+                    f"aborted{where}: the arm holds where it is; it was not moved home"
+                    if parked is None
+                    else f"aborted{where}: {parked}",
                 )
+            self._release_park()
 
     def _run_home(self) -> None:
         try:
             self._home()
         except AbortRequestedError:
-            self._end_home("aborted", "aborted going home: the arm holds where it is")
+            parked = self._park_if_requested()
+            self._end_home(
+                "aborted",
+                "aborted going home: the arm holds where it is"
+                if parked is None
+                else f"aborted going home: {parked}",
+            )
+            self._release_park()
         except SkipRequestedError:
             self._end_home("done", "not moved home: the arm holds where it is")
         except Exception as error:
@@ -799,7 +1084,13 @@ class Procedure:
             message=self._message,
             prompt=self._prompt,
             prompt_id=None if self._prompt is None else self._prompts,
+            prompt_deadline=None if self._prompt is None else self._prompt_deadline,
             progress=None if self._progress is None else Progress(**self._progress),
             steps=[StepState(**state) for state in self._step_states.values()],
+            park=self._park_outcome,
             updated=self._updated,
         )
+
+
+def _duration(seconds: float) -> str:
+    return f"{seconds / 60.0:g} min" if seconds >= 60.0 else f"{seconds:g} s"

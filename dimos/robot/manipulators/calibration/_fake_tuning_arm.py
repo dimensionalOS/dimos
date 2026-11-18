@@ -25,12 +25,16 @@ states at, like the connection's 100 Hz ``joint_state``. It keeps the tuning
 session's rules: one session, a lease every call renews, a 0.1 s deadman on
 targets, the session ending on lapse, deadman or any raising call (floating
 joints then held where they are, feed-forward dropped, gains restored), and
-position commands dropped while a session lasts.
+position commands dropped while a session lasts. Its :meth:`FakeTuningArm.stop`
+waits for a calibration tool to park, as a connection's stop does, then
+"disables" the arm and records where.
 
 What it does not simulate: inertia (so no overshoot or ringing), velocity
 limits, encoder noise and quantization, torque saturation, the other arm of
 a robot, grippers, CAN timing, and the connection's own threads (everything
-happens in the caller's thread as simulated time advances).
+happens in the caller's thread as simulated time advances). With
+``realtime``, simulated time follows the wall clock instead: every call first
+advances the arm to ``time.time()``.
 
 :class:`SimClock` is that simulated time: ``sleep`` advances the arm.
 :class:`MemoryRecording` keeps the samples and the procedure's markers in
@@ -41,10 +45,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -57,10 +63,12 @@ from dimos.robot.manipulators.calibration.gravity_fit import GravityRecording, P
 from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
 from dimos.robot.manipulators.calibration.hooks import (
     AppliedCalibration,
+    AppliedInertials,
     CalibrationApplied,
     CommandResult,
     JointGainsState,
     JointSample,
+    LinkMass,
     TuningSession,
 )
 from dimos.robot.manipulators.calibration.procedure import Procedure, ProcedureStatus
@@ -89,6 +97,9 @@ STOPPED_RAD_S = 1e-3
 # How long a simulated wait lets other threads answer before time moves on.
 REAL_WAIT_S = 0.002
 START_TIME = 1_800_000_000.0
+# What the fake's stop waits for a tuning session, as a connection's does.
+PARK_WAIT_S = 10.0
+PARK_GRACE_S = 1.0
 
 Vector = NDArray[np.float64]
 
@@ -118,6 +129,9 @@ class MemoryRecording:
         self._velocities: list[Vector] = []
         self.markers: dict[str, list[dict[str, Any]]] = {}
         self.statuses: list[ProcedureStatus] = []
+        self.probes: list[str] = []
+        # A recorder that stopped writing: probes never land.
+        self.drop_probes = False
 
     @property
     def directory(self) -> Path | None:
@@ -144,6 +158,16 @@ class MemoryRecording:
         with self._lock:
             self.statuses.append(json.loads(json.dumps(status)))
             self._lock.notify_all()
+
+    def probe(self, token: str) -> None:
+        with self._lock:
+            if not self.drop_probes:
+                self.probes.append(token)
+
+    def wait_for_probe(self, token: str, since: float, timeout_s: float = 2.0) -> None:
+        with self._lock:
+            if token not in self.probes:
+                raise RecordingUnavailableError(f"the probe {token} was not recorded")
 
     def wait_change(self, seen: int, timeout_s: float) -> bool:
         """Wait until more than ``seen`` statuses arrived; whether they did."""
@@ -201,6 +225,8 @@ class FakeTuningArm:
         calibration_root: Where "auto" calibration files are looked up.
         applied: A calibration file applied at start, as a connection's "auto" would.
         start: Initial joint positions; home when ``None``.
+        realtime: Simulated time follows the wall clock: each call first
+            advances the arm to ``time.time()``.
     """
 
     def __init__(
@@ -215,6 +241,7 @@ class FakeTuningArm:
         calibration_root: Path,
         applied: Path | None = None,
         start: Vector | None = None,
+        realtime: bool = False,
     ) -> None:
         self.spec = spec
         self.arm = arm if arm is not None else ArmModel(spec)
@@ -246,11 +273,18 @@ class FakeTuningArm:
         self._floating: dict[str, float] = {}
         self._feedforward: dict[str, float] = {}
         self._applied: AppliedCalibration | None = None
-        self.now = START_TIME
-        self._next_sample = START_TIME
+        self._inertials: AppliedInertials | None = None
+        self._realtime = realtime
+        self.now = time.time() if realtime else START_TIME
+        self._next_sample = self.now
         self._session: _Session | None = None
         self._sessions = 0
         self.ended: list[str] = []
+        # What stop() saw: when it began, waited and disabled, and the arm then.
+        self.stop_log: list[str] = []
+        self.disabled_at: Vector | None = None
+        # When the last session ended, time.monotonic().
+        self._ended_at: float | None = None
         self._last_command: float | None = None
         self.deadman_fired = False
         self.commands = 0
@@ -336,6 +370,7 @@ class FakeTuningArm:
         if self._session is None:
             return
         self._session = None
+        self._ended_at = time.monotonic()
         self.ended.append(reason)
         for name in self._floating:
             self.target[self._names.index(name)] = self.q[self._names.index(name)]
@@ -345,6 +380,10 @@ class FakeTuningArm:
 
     def _call(self, name: str, call: Callable[[], Any], *, session: bool) -> Any:
         with self._lock:
+            if self._realtime:
+                self.advance(max(0.0, time.time() - self.now))
+            if self.disabled_at is not None:
+                raise RuntimeError("the connection stopped")
             try:
                 if self._session is not None:
                     self._session.last_call = self.now
@@ -420,6 +459,32 @@ class FakeTuningArm:
     def tuning_end(self) -> None:
         with self._lock:
             self._end("tuning_end")
+
+    def stop(self) -> None:
+        """Stop as a connection does: wait for a calibration tool to park, then disable.
+
+        Waits while a tuning session lasts, and ``PARK_GRACE_S`` after the stop
+        began or the last session ended for one about to begin, at most
+        ``PARK_WAIT_S``; then records where the arm was "disabled".
+        """
+        started = time.monotonic()
+        self.stop_log.append("stop")
+        while time.monotonic() - started < PARK_WAIT_S:
+            with self._lock:
+                active = self._session is not None
+                ended = self._ended_at
+            since = max(started, ended if ended is not None else started)
+            if not active and time.monotonic() - since >= PARK_GRACE_S:
+                break
+            if active and "waiting" not in self.stop_log:
+                self.stop_log.append("waiting")
+            time.sleep(0.01)
+        with self._lock:
+            if self._realtime:
+                self.advance(max(0.0, time.time() - self.now))
+            self._end("the connection stopped")
+            self.disabled_at = self.q.copy()
+        self.stop_log.append("disabled")
 
     def tuning_arm_ids(self) -> list[str]:
         return [self.spec.arm_id]
@@ -523,6 +588,14 @@ class FakeTuningArm:
         )
         return result
 
+    def tuning_applied_calibration(self) -> dict[str, AppliedInertials | None]:
+        result: dict[str, AppliedInertials | None] = self._call(
+            "tuning_applied_calibration",
+            lambda: {self.spec.arm_id: self._inertials},
+            session=False,
+        )
+        return result
+
     def _apply_checked(self, path: str | None, force: bool) -> CalibrationApplied:
         if path == "off":
             file: Path | None = None
@@ -561,8 +634,10 @@ class FakeTuningArm:
         if file is None:
             self._calibrated = {}
             self._applied = None
+            self._inertials = None
             return
         calibration = load_for_spec(self.spec, file)
+        links = to_inertial_overrides(calibration)
         self._calibrated = {
             name: (gains.kp, gains.kd) for name, gains in (calibration.gains or {}).items()
         }
@@ -570,7 +645,16 @@ class FakeTuningArm:
             path=str(file),
             created=calibration.created.isoformat(),
             gains=sorted(self._calibrated),
-            links=sorted(to_inertial_overrides(calibration)),
+            links=sorted(links),
+        )
+        self._inertials = AppliedInertials(
+            path=str(file),
+            created=calibration.created.isoformat(),
+            sha256=hashlib.sha256(file.read_bytes()).hexdigest(),
+            links={
+                name: LinkMass(mass_kg=link.mass_kg, com_m=list(link.com_m))
+                for name, link in sorted(links.items())
+            },
         )
 
 
@@ -603,8 +687,8 @@ def drive(
 ) -> ProcedureStatus:
     """Answer every prompt until the run finishes; returns its final status.
 
-    ``answer`` maps a prompt to "confirm", "skip" or "abort"; by default
-    every prompt is confirmed.
+    ``answer`` maps a prompt to "confirm", "skip", "abort" or "ignore" (left
+    unanswered); by default every prompt is confirmed.
     """
     answered: set[int] = set()
     while True:
@@ -620,7 +704,7 @@ def drive(
                 procedure.abort()
             elif decision == "skip":
                 procedure.skip(prompt_id)
-            else:
+            elif decision != "ignore":
                 procedure.confirm(prompt_id)
         if not sink.wait_change(seen, timeout_s):
             raise TimeoutError(f"the procedure stopped changing: {procedure.status()}")

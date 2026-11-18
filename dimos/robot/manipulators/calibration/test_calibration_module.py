@@ -19,8 +19,11 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 import json
 from pathlib import Path
+import threading
+from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 from pydantic import ValidationError
 import pytest
 
@@ -28,8 +31,11 @@ from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.manipulators.calibration._fake_tuning_arm import FakeTuningArm
+from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, generate_poses
 from dimos.robot.manipulators.calibration.module import (
     NOT_RECORDING,
+    STREAMED_CALLS,
+    TUNING_CALL_TIMEOUT_S,
     CalibrationModule,
     CalibrationModuleConfig,
 )
@@ -63,12 +69,16 @@ def make_module(
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     made: list[CalibrationModule] = []
 
-    def make(**config: Any) -> tuple[CalibrationModule, dict[str, LocalTransport]]:
+    def make(
+        connection: Any = None, **config: Any
+    ) -> tuple[CalibrationModule, dict[str, LocalTransport]]:
         module = CalibrationModule(robot="dual-openyam", arm="left", **config)
         outputs = {name: LocalTransport() for name in OUTPUTS}
         for name, transport in outputs.items():
             module.set_transport(name, transport)
-        module.set_module_ref("_connection", FakeTuningArm(left_spec, calibration_root=tmp_path))
+        if connection is None:
+            connection = FakeTuningArm(left_spec, calibration_root=tmp_path, realtime=True)
+        module.set_module_ref("_connection", connection)
         made.append(module)
         module.start()
         return module, outputs
@@ -91,12 +101,18 @@ def test_the_plan_says_why_recorded_steps_cannot_run_outside_a_dimos_run(make_mo
 def test_a_run_answers_over_rpc_and_reports_plain_json(make_module):
     module, outputs = make_module()
 
-    assert module.confirm() is False
+    assert module.confirm(0) is False
+    with pytest.raises(TypeError, match="needs the prompt_id"):
+        module.confirm(None)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="needs the prompt_id"):
+        module.skip(None)  # type: ignore[arg-type]
     started = _plain(module.run(["check"]))
     assert started["state"] == "running" and started["run_id"]
     wait_until(lambda: module.status()["state"] == "waiting_confirm", timeout=10.0)
     waiting = _plain(module.status())
     assert waiting["prompt"].startswith("Arm will move to home at 10 deg/s")
+    # The prompt says when it gives up: ten minutes unanswered aborts and parks.
+    assert waiting["prompt_deadline"] == pytest.approx(waiting["updated"] + 600.0, abs=1.0)
     assert module.confirm(waiting["prompt_id"]) is True
     wait_until(lambda: module.status()["state"] == "done", timeout=10.0)
 
@@ -130,22 +146,63 @@ def test_markers_go_out_on_the_streams_the_reports_read(make_module, mocker, tmp
     with SqliteStore(path=str(tmp_path / "memory.db")):
         pass
     mocker.patch.object(SqliteRecording, "of_this_run", return_value=SqliteRecording(tmp_path))
-    # The fake arm never moves in real time, so the first ramp stalls it.
     module, outputs = make_module(poses=3, speed_deg_s=30.0, confirm_each=False)
+    # A blocked elbow stalls the first ramp, which stops the sweep at once.
+    module._connection.blocked = {"left_joint3"}
     assert all(step["supported"] for step in module.plan())
 
     module.run(["gravity_poses"])
     wait_until(lambda: module.status()["state"] == "waiting_confirm", timeout=30.0)
-    module.confirm()
+    module.confirm(module.status()["prompt_id"])
     wait_until(lambda: module.status()["state"] == "failed", timeout=30.0)
 
-    assert "from its target (" in module.status()["message"]
+    assert "from its target (left_joint3" in module.status()["message"]
     markers = [json.loads(message.data) for message in outputs["gravity_events"].sent]
     assert [marker["label"] for marker in markers] == ["pose_01", "end"]
     assert markers[0]["data"]["arm"] == "dual_openyam/left"
     events = [json.loads(message.data) for message in outputs["calibration_events"].sent]
     assert events == [{"stream": "gravity_events", "marker": marker} for marker in markers]
     assert outputs["step_events"].sent == [] and outputs["float_events"].sent == []
+
+
+def test_the_streamed_calls_time_out_in_half_a_second(make_module, left_spec, tmp_path):
+    fake = FakeTuningArm(left_spec, calibration_root=tmp_path, realtime=True)
+    # The per-method timeouts of an RPC client, as a deployed module reference has.
+    fake.rpc = SimpleNamespace(rpc_timeouts={"start": 1200.0})
+
+    make_module(connection=fake)
+
+    timeouts = fake.rpc.rpc_timeouts
+    assert {name: timeouts[name] for name in STREAMED_CALLS} == dict.fromkeys(
+        STREAMED_CALLS, TUNING_CALL_TIMEOUT_S
+    )
+    assert TUNING_CALL_TIMEOUT_S == 0.5 and timeouts["start"] == 1200.0
+
+
+def test_stopping_parks_the_arm_before_the_connection_lets_it_go(make_module, left_spec, tmp_path):
+    # The arm holds at a gravity pose after a failed run; then the run stops,
+    # the module and the connection in parallel, as dimos stop does.
+    arm = ArmModel(left_spec)
+    nearest = min(
+        generate_poses(arm, count=8).identification,
+        key=lambda p: float(np.abs(np.asarray(p.joints_rad) - arm.home).max()),
+    )
+    # On the straight way there, 30 deg from home: a park of under 3 s.
+    pose = arm.home + 0.4 * (np.asarray(nearest.joints_rad) - arm.home)
+    fake = FakeTuningArm(left_spec, arm=arm, calibration_root=tmp_path, start=pose, realtime=True)
+    module, _ = make_module(connection=fake)
+    assert np.degrees(np.abs(fake.q - arm.home)).max() > 10.0
+
+    connection = threading.Thread(target=fake.stop)
+    connection.start()
+    module.stop()
+    connection.join(timeout=15.0)
+
+    # The connection waited for the park's session, and let go only at home.
+    assert fake.stop_log == ["stop", "waiting", "disabled"]
+    assert fake.ended == ["tuning_end"]
+    assert fake.disabled_at is not None
+    assert np.degrees(np.abs(fake.disabled_at - arm.home)).max() < 3.0
 
 
 @pytest.mark.parametrize(

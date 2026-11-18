@@ -33,6 +33,12 @@ the streams the offline reports (``gravity_fit``, ``step_report``,
 ``calibration_events``. The fit and the gain analysis read the run's own
 ``--record sqlite`` recording, ``recordings/<run-id>/memory.db``
 (``recording.SqliteRecording``); the calibration blueprints pin recording on.
+
+Stopping the module parks the arm first (``Procedure.shutdown``): any run is
+aborted and the arm backs out home within ``park_budget_s``, then the session
+ends and the connection may de-energize it. ``tuning_command`` and
+``tuning_read`` time out after ``TUNING_CALL_TIMEOUT_S``: a call that slow has
+already let the connection's deadman hold the arm.
 """
 
 from __future__ import annotations
@@ -59,19 +65,28 @@ from dimos.robot.manipulators.calibration.procedure import (
     DEFAULT_DITHER_DEG,
     DEFAULT_HOLD_S,
     DEFAULT_KP_SCALES,
+    DEFAULT_PROMPT_TIMEOUT_S,
+    MAX_PARK_BUDGET_S,
+    MAX_PARK_SPEED_DEG_S,
     Capabilities,
     PlannedStep,
     Procedure,
     ProcedureSettings,
     ProcedureStatus,
 )
-from dimos.robot.manipulators.calibration.recording import SqliteRecording
+from dimos.robot.manipulators.calibration.recording import SqliteRecording, probe_payload
 from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS, arm_spec
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
 from dimos.robot.manipulators.calibration.steps import calibration_steps
 from dimos.spec.utils import Spec
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 NOT_RECORDING = "not in a dimos run, so nothing is recorded to read back"
+# The streamed calls fail fast: by then the connection's 0.1 s deadman holds the arm.
+TUNING_CALL_TIMEOUT_S = 0.5
+STREAMED_CALLS = ("tuning_command", "tuning_read")
 
 
 class ArmTuningConnectionSpec(Spec, TuningConnection, Protocol):
@@ -92,10 +107,18 @@ class CalibrationModuleConfig(ModuleConfig):
         dither_deg: Dither of each measured joint at every pose.
         hold_s: Rest at each pose.
         speed_deg_s: Peak joint speed of every ramp.
-        float_pose_deg: Where the float check floats the joints, one angle per
-            arm joint in degrees; the first gravity pose when unset.
+        float_pose_deg: One pose every joint floats at, one angle per arm joint
+            in degrees; when unset, each joint floats at the gravity poses
+            where it carries the most gravity torque.
+        sweep_pose_deg: Where the gain sweep steps the joints, one angle per
+            arm joint in degrees; when unset, the gravity pose farthest from
+            every joint limit.
         confirm_each: Ask before every pose.
         kp_scales: Multiples of each joint's robot kp the gain sweep tries.
+        park_budget_s: How long parking the arm on stop or a prompt timeout
+            may take.
+        park_speed_deg_s: Peak joint speed of a park.
+        prompt_timeout_s: A prompt unanswered this long aborts and parks.
         auto_run: Start every step as soon as the module starts.
     """
 
@@ -108,8 +131,12 @@ class CalibrationModuleConfig(ModuleConfig):
     hold_s: float = Field(default=DEFAULT_HOLD_S, gt=0.0)
     speed_deg_s: float = Field(default=DEFAULT_SPEED_DEG_S, gt=0.0, le=MAX_SPEED_DEG_S)
     float_pose_deg: list[float] | None = None
+    sweep_pose_deg: list[float] | None = None
     confirm_each: bool = True
     kp_scales: list[float] = Field(default_factory=lambda: list(DEFAULT_KP_SCALES), min_length=1)
+    park_budget_s: float = Field(default=MAX_PARK_BUDGET_S, gt=0.0, le=MAX_PARK_BUDGET_S)
+    park_speed_deg_s: float = Field(default=MAX_PARK_SPEED_DEG_S, gt=0.0, le=MAX_PARK_SPEED_DEG_S)
+    prompt_timeout_s: float = Field(default=DEFAULT_PROMPT_TIMEOUT_S, gt=0.0)
     auto_run: bool = False
 
     @model_validator(mode="after")
@@ -139,7 +166,11 @@ class CalibrationModuleConfig(ModuleConfig):
             speed_deg_s=self.speed_deg_s,
             confirm_each=self.confirm_each,
             float_pose_deg=None if self.float_pose_deg is None else tuple(self.float_pose_deg),
+            sweep_pose_deg=None if self.sweep_pose_deg is None else tuple(self.sweep_pose_deg),
             kp_scales=tuple(self.kp_scales),
+            park_budget_s=self.park_budget_s,
+            park_speed_deg_s=self.park_speed_deg_s,
+            prompt_timeout_s=self.prompt_timeout_s,
         )
 
 
@@ -162,6 +193,9 @@ class _StreamSink:
 
     def status(self, status: ProcedureStatus) -> None:
         self._module.calibration_status.publish(String(json.dumps(status)))
+
+    def probe(self, token: str) -> None:
+        self._module.calibration_events.publish(String(json.dumps(probe_payload(token))))
 
 
 class CalibrationModule(Module):
@@ -189,6 +223,7 @@ class CalibrationModule(Module):
     def start(self) -> None:
         super().start()
         spec = self.config.arm_spec()
+        self._shorten_streamed_calls()
         self._recording = SqliteRecording.of_this_run()
         procedure = Procedure(
             spec,
@@ -206,11 +241,26 @@ class CalibrationModule(Module):
 
     @rpc
     def stop(self) -> None:
+        """Park the arm (abort any run, back out home on the park budget), then stop."""
         with self._lock:
             procedure, self._procedure = self._procedure, None
         if procedure is not None:
-            procedure.close(timeout=5.0)
+            outcome = procedure.shutdown()
+            logger.info(f"{procedure.spec.arm_id}: calibration module stopping: {outcome}")
         super().stop()
+
+    def _shorten_streamed_calls(self) -> None:
+        """Give the calls streamed every tick a ``TUNING_CALL_TIMEOUT_S`` timeout.
+
+        The connection reference's RPC client resolves a call's timeout from
+        its ``rpc_timeouts`` by method name, falling back to the module default
+        (two minutes); a fake connection has no client and is left alone.
+        """
+        client = getattr(self._connection, "rpc", None)
+        timeouts = getattr(client, "rpc_timeouts", None)
+        if isinstance(timeouts, dict):
+            for name in STREAMED_CALLS:
+                timeouts[name] = TUNING_CALL_TIMEOUT_S
 
     def _capabilities(self) -> Capabilities:
         robot = KNOWN_ROBOTS[self.config.robot]
@@ -255,13 +305,16 @@ class CalibrationModule(Module):
         return procedure.go_home()
 
     @rpc
-    def confirm(self, prompt_id: int | None = None) -> bool:
-        """Go on at the waiting confirmation (``status()["prompt_id"]``); False when none waits."""
+    def confirm(self, prompt_id: int) -> bool:
+        """Go on at confirmation ``prompt_id`` (``status()["prompt_id"]``); False unless it waits.
+
+        Raises ``TypeError`` without a prompt id.
+        """
         return self._require().confirm(prompt_id)
 
     @rpc
-    def skip(self, prompt_id: int | None = None) -> bool:
-        """Skip what the waiting confirmation asks for; False when none waits."""
+    def skip(self, prompt_id: int) -> bool:
+        """Skip what confirmation ``prompt_id`` asks for; False unless it waits."""
         return self._require().skip(prompt_id)
 
     @rpc

@@ -203,7 +203,16 @@ class FitResult:
         return not self.bound_violations
 
     def rms_by_joint(self, *, holdout: bool, after: bool) -> dict[str, float]:
-        values = self.residual_after if after else self.residual_before
+        return self.rms_of(self.residual_after if after else self.residual_before, holdout=holdout)
+
+    def rms_of(self, values: np.ndarray, *, holdout: bool) -> dict[str, float]:
+        """RMS by measured joint of ``values``, one per measurement, over held-out or fit poses.
+
+        E.g. the raw resting torques, the error of the masses the arm ran.
+        """
+        values = np.asarray(values, dtype=np.float64)
+        if values.shape != (len(self.measurements),):
+            raise ValueError(f"need one value per measurement, got {values.shape}")
         out: dict[str, float] = {}
         for joint in self.measured_joints:
             mask = np.asarray(
@@ -629,13 +638,15 @@ def calibration_from_fit(
     )
 
 
-def save_refusals(result: FitResult) -> list[str]:
+def save_refusals(result: FitResult, running_rms: Mapping[str, float] | None = None) -> list[str]:
     """Why a fit should not become the arm's calibration file; empty when it may.
 
     The solver's hard bounds keep every fit physical, so passing them says
     nothing about whether the fit is right: it must improve, or at least not
-    worsen, the resting error at poses it never saw, on every measured joint.
-    A fit pressed against a bound (``at_bounds``) is not refused for that alone.
+    worsen, the resting error at poses it never saw, on every measured joint,
+    compared with the URDF and, given ``running_rms`` (the held-out RMS of the
+    masses the arm ran while recording, by joint), with those too. A fit
+    pressed against a bound (``at_bounds``) is not refused for that alone.
     """
     if not result.holdout_poses:
         return ["no pose was held out, so the fit was never scored on poses it did not see"]
@@ -645,9 +656,16 @@ def save_refusals(result: FitResult) -> list[str]:
     for joint in result.measured_joints:
         if joint not in before:
             reasons.append(f"{joint} has no held-out measurement")
-        elif after[joint] > before[joint]:
+            continue
+        if after[joint] > before[joint]:
             reasons.append(
                 f"{joint} held-out RMS rose from {before[joint]:.3f} to {after[joint]:.3f} Nm"
+            )
+        running = None if running_rms is None else running_rms.get(joint)
+        if running is not None and after[joint] > running:
+            reasons.append(
+                f"{joint} held-out RMS {after[joint]:.3f} Nm is worse than the running "
+                f"calibration's {running:.3f} Nm"
             )
     return reasons
 
@@ -705,14 +723,28 @@ def compare_with_previous(result: FitResult, previous: Path) -> str:
     return "\n".join(lines)
 
 
-def _rms_table(result: FitResult, *, holdout: bool) -> str:
+def _rms_table(
+    result: FitResult, *, holdout: bool, running: Mapping[str, float] | None = None
+) -> str:
     before = result.rms_by_joint(holdout=holdout, after=False)
     after = result.rms_by_joint(holdout=holdout, after=True)
     if not before:
         return "(no poses)\n"
-    lines = ["| joint | RMS before (Nm) | RMS after (Nm) |", "|---|---|---|"]
+    if running is None:
+        lines = ["| joint | RMS before (Nm) | RMS after (Nm) |", "|---|---|---|"]
+        for joint in before:
+            lines.append(f"| {joint} | {before[joint]:.3f} | {after[joint]:.3f} |")
+        return "\n".join(lines) + "\n"
+    lines = [
+        "| joint | URDF RMS (Nm) | running file RMS (Nm) | new RMS (Nm) |",
+        "|---|---|---|---|",
+    ]
     for joint in before:
-        lines.append(f"| {joint} | {before[joint]:.3f} | {after[joint]:.3f} |")
+        ran = running.get(joint)
+        lines.append(
+            f"| {joint} | {before[joint]:.3f} | {'-' if ran is None else f'{ran:.3f}'} "
+            f"| {after[joint]:.3f} |"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -722,6 +754,7 @@ def format_report(
     json_path: Path | None,
     *,
     not_saved: Sequence[str] = (),
+    running_rms: Mapping[str, float] | None = None,
 ) -> str:
     out = [f"# Gravity-model fit: {result.arm_id}", ""]
     if result.bounds_ok:
@@ -749,10 +782,11 @@ def format_report(
     )
     out.append("")
     out.append(
-        "Resting gravity torque error at poses the fit never saw, before and after the correction."
+        "Resting gravity torque error at poses the fit never saw, before and after the correction"
+        + (", and with the masses the arm ran while recording." if running_rms is not None else ".")
     )
     out.append("")
-    out.append(_rms_table(result, holdout=True))
+    out.append(_rms_table(result, holdout=True, running=running_rms))
     out.append(
         f"## Fit residual ({len(result.train_poses)} pose(s): {', '.join(result.train_poses)})"
     )
