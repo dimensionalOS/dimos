@@ -886,8 +886,9 @@ jobs:
       - name: Provision native modules from Cachix
         if: steps.native-marker.outcome == 'success'
         run: python3 bin/native-modules --link-results .cachix-marker/links.txt
-      # The dds extra lets the DDS tests run. It stays out of the tests group, which
-      # every dev sync installs, because on Linux arm64 it needs the C library above.
+      # The dds extra lets the DDS tests run. In the tests group it would break dev
+      # installs on Linux arm64 (install.sh syncs that group), which have no CycloneDDS
+      # C library to build against; this job installs one in the arm64 step above.
       - name: Install dependencies
         run: uv sync --group tests --extra dds --frozen
       - name: Run tests
