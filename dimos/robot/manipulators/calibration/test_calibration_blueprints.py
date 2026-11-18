@@ -62,7 +62,7 @@ def test_the_blueprint_opens_the_connection_for_tuning_and_records(name):
 
     assert {atom.module for atom in blueprint.blueprints} == {connection, CalibrationModule}
     [driver] = [atom for atom in blueprint.blueprints if atom.module is connection]
-    assert driver.kwargs["tuning"] is True and driver.kwargs["teach"] is False
+    assert driver.kwargs["config_sessions"] is True and driver.kwargs["teach"] is False
     assert driver.kwargs["source"] == "arm"
     [calibration] = [atom for atom in blueprint.blueprints if atom.module is CalibrationModule]
     assert calibration.kwargs == {"robot": robot, **({"arm": arm} if arm else {})}
@@ -80,6 +80,6 @@ def test_the_blueprint_opens_the_connection_for_tuning_and_records(name):
 def test_calibration_never_runs_on_the_simulated_connection(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(global_config, "simulation", "mujoco")
     with pytest.raises(ValueError, match="calibration drives the real arm"):
-        arm_connection(OpenYamConnection, tuning=True)
+        arm_connection(OpenYamConnection, config_sessions=True)
     [mock] = arm_connection(OpenYamConnection).blueprints
     assert mock.module is MockJointConnection

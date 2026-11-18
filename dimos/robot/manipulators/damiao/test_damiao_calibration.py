@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Calibration files applied at start, and the tuning RPCs a calibration tool drives."""
+"""Calibration files applied at start, and the arm config contract a calibration tool drives."""
 
 from __future__ import annotations
 
@@ -23,20 +23,23 @@ import importlib
 import json
 import math
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 import pytest
 
+from dimos.control.connection import connection_module
+from dimos.control.connection.arm_config import AppliedFile, CommandResult, ConfigPatch
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     offline_robot_assets,
     require_model,
 )
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
-from dimos.robot.manipulators.calibration.hooks import ArmTuningHooks
 from dimos.robot.manipulators.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
@@ -45,6 +48,7 @@ from dimos.robot.manipulators.calibration.schema import (
     LinkGravity,
     RobotModelRef,
     gravity_links_from_inertial,
+    load_calibration,
     save_calibration,
 )
 from dimos.robot.manipulators.calibration.spec import model_sha256
@@ -61,6 +65,7 @@ from dimos.robot.manipulators.dual_openyam.calibration_workspace import (
 )
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.utils.testing.cbor import roundtrip
 from dimos.utils.testing.waiting import wait_until
 
 RIG = make_calibrated_test_robot()
@@ -108,13 +113,13 @@ def start(rig_class, boundary, mocker):
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     # No calibration tool parks here; a stop need not wait a second for one.
-    mocker.patch.object(common, "TUNING_PARK_GRACE_S", 0.02)
+    mocker.patch.object(connection_module, "CONFIG_PARK_GRACE_S", 0.02)
     made = []
 
-    def make(connection_type=None, *, commands=None, **kwargs):
+    def make(connection_type=None, *, commands=None, readings=None, **kwargs):
         kwargs.setdefault("deadman_timeout_s", 10)
         module = (connection_type or rig_class)(**kwargs)
-        readings = LocalTransport()
+        readings = readings or LocalTransport()
         module.set_transport("position_command", commands or LocalTransport())
         module.set_transport("joint_state", readings)
         made.append(module)
@@ -323,10 +328,10 @@ def test_off_never_reads_a_saved_file(start, boundary, calibration_root, mocker)
 
 def test_an_unnamed_robot_reads_no_calibration(make_rig, mocker):
     load = mocker.spy(common, "load_calibration")
-    module, _, _ = make_rig(tuning=True)
+    module, _, _ = make_rig(config_sessions=True)
     load.assert_not_called()
     assert module.status().calibration == {}
-    assert module.tuning_arm_ids() == []
+    assert module.config_keys().arms == {} and module.config_get() == {}
 
 
 def test_friction_in_a_file_is_not_applied_yet(start, boundary, calibration_root, mocker):
@@ -341,110 +346,124 @@ def test_friction_in_a_file_is_not_applied_yet(start, boundary, calibration_root
 
 
 def _active(module) -> bool:
-    return module._tuning_session is not None
+    return module._config_session is not None
 
 
-def test_tuning_hooks_round_trip(start, boundary):
-    module = start(tuning=True)
+def _begin(module, **kwargs: Any) -> str:
+    """Start a config session; returns its id."""
+    session = module.config_set(ConfigPatch(arm_id="rig/left"), **kwargs).session_id
+    assert session is not None
+    return session
+
+
+def _left(module, session: str | None, **fields: Any):
+    return module.config_set(ConfigPatch(arm_id="rig/left", **fields), session_id=session)
+
+
+def _right(module, session: str | None, **fields: Any):
+    return module.config_set(ConfigPatch(arm_id="rig/right", **fields), session_id=session)
+
+
+def _float(module, session: str, kd: float = 0.5):
+    return _right(module, session, gains={"joint3": JointGains(kp=0.0, kd=kd)})
+
+
+def _base_messages(mocker, level: str):
+    return mocker.spy(connection_module.logger, level)
+
+
+def test_the_config_contract_round_trip(start, boundary, calibration_root):
+    readings = LocalTransport()
+    module = start(config_sessions=True, readings=readings)
     native = boundary[0]
-    assert isinstance(module, ArmTuningHooks)
-    assert module.tuning_arm_ids() == ["rig/left", "rig/right"]
-    assert module.tuning_joint_names() == ["joint1", "joint2", "joint3"]
-    session = module.tuning_begin()
-    assert session["lease_s"] == 2.0 and len(session["session_id"]) == 32
+    keys = module.config_keys()
+    assert keys.arms == {"rig/left": ["joint1", "joint2"], "rig/right": ["joint3"]}
+    assert keys.session == ["gains", "float", "torque_offset_nm"] and keys.gravity_compensation
+    assert keys.persist_paths["rig/left"] == str(calibration_root / "rig/left/calibration.json")
+    assert keys.source == "arm" and keys.sessions
+    started = module.config_set(ConfigPatch(arm_id="rig/left"))
+    session = started.session_id
+    assert started.lease_s == 2.0 and session is not None and len(session) == 32
 
-    # Each setter returns how the joint is driven now, as clamped.
-    assert module.tuning_set_gains("joint2", 900, 2) == {
-        "kp": 500.0,
-        "kd": 2.0,
-        "floating": False,
-        "float_kd": None,
-        "feedforward_nm": 0.0,
-    }
+    # Each change returns what took effect, as clamped.
+    applied = _left(module, session, gains={"joint2": JointGains(kp=900, kd=2)})
+    assert applied.applied.gains == {"joint2": JointGains(kp=500.0, kd=2.0)}
+    assert applied.clamped == ["gains.joint2.kp"] and applied.session_id == session
     np.testing.assert_equal(_rows(boundary, "left_arm")[1, :2], [500, 2])
-    assert module.tuning_set_float("joint3", True, kd=0.4)["float_kd"] == 0.4
+    # kp 0 floats the joint with that damping, not a gain of 0.
+    assert _float(module, session, kd=0.4).applied.gains == {"joint3": JointGains(kp=0.0, kd=0.4)}
     # A fifth of joint1's rated 28 N m.
-    assert module.tuning_set_feedforward("joint1", 9.0)["feedforward_nm"] == pytest.approx(5.6)
-    gains = module.tuning_get_gains()
-    assert gains["joint3"]["floating"] and gains["joint1"]["feedforward_nm"] == pytest.approx(5.6)
+    offset = _left(module, session, torque_offset_nm={"joint1": 9.0})
+    assert offset.applied.torque_offset_nm == {"joint1": pytest.approx(5.6)}
+    assert offset.clamped == ["torque_offset_nm.joint1"]
+    state = module.config_get()
+    assert state["rig/right"].floating == {"joint3": 0.4}
+    assert state["rig/right"].gains["joint3"] == JointGains(kp=20.0, kd=0.6)
+    assert state["rig/left"].torque_offset_nm == {"joint1": pytest.approx(5.6)}
+    assert state["rig/left"].session_id == session and state["rig/left"].file is None
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [0, 0.4])
-    module.tuning_set_float("joint3", False)
-    module.tuning_set_feedforward("joint1", 0.0)
-    module.tuning_reset_gains()
-    assert module.tuning_get_gains()["joint2"]["kp"] == 10.0
+    _right(module, session, gains={"joint3": JointGains(kp=20.0, kd=0.6)})
+    assert module._arm.floating == {}
+    _left(module, session, torque_offset_nm={"joint1": 0.0})
+    module.config_reset(keep_session=True)
+    assert module.config_get()["rig/left"].gains["joint2"].kp == 10.0
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [20, 0.6])
 
+    # Readings come from the joint_state stream, effort included.
     native.groups["left_arm"].tau[:] = [0.7, -0.3]
-    wait_until(lambda: module.tuning_read()["joint1"]["effort"] == 0.7, timeout=2)
-    sample = module.tuning_read()
-    assert list(sample) == ["joint1", "joint2", "joint3", "left_finger", "right_finger"]
-    assert sample["joint2"]["effort"] == -0.3 and sample["joint2"]["position"] == 0.2
-    assert sample["joint1"]["ts"] > 0
+    wait_until(lambda: readings.sent[-1].effort[0] == 0.7, timeout=2)
+    sample = readings.sent[-1]
+    assert sample.name == [
+        f"arm/{name}" for name in ("joint1", "joint2", "joint3", "left_finger", "right_finger")
+    ]
+    assert sample.effort[1] == -0.3 and sample.position[1] == 0.2 and sample.ts > 0
 
-    assert module.tuning_command({"joint1": 0.3, "left_finger": 0.02}) == {
-        "ok": True,
-        "error": None,
-    }
+    result = module.config_command({"joint1": 0.3, "left_finger": 0.02}, session)
+    assert result == CommandResult(ok=True)
     assert _rows(boundary, "left_arm")[0, 2] == 0.3
     assert native.groups["left_gripper"].commands[-1] == pytest.approx(0.5)
     assert module.status().last_command_time is not None
-    module.tuning_end()
+    assert module.status().config_session_id == session
+    module.config_reset()
     assert not _active(module)
     # Ending a session that is not there does nothing.
-    module.tuning_end()
+    module.config_reset()
 
 
-# Every tuning RPC, with arguments it would accept.
-TUNING_CALLS: dict[str, tuple[Any, ...]] = {
-    "tuning_begin": (),
-    "tuning_end": (),
-    "tuning_arm_ids": (),
-    "tuning_joint_names": (),
-    "tuning_get_gains": (),
-    "tuning_set_gains": ("joint1", 60.0, 3.0),
-    "tuning_reset_gains": (),
-    "tuning_set_float": ("joint3", True),
-    "tuning_set_feedforward": ("joint1", 0.1),
-    "tuning_reset_all": (),
-    "tuning_read": (),
-    "tuning_command": ({"joint1": 0.1},),
-    "tuning_apply_calibration": ("off",),
-    "tuning_applied_calibration": (),
-}
-
-
-def test_every_tuning_rpc_is_refused_unless_the_connection_is_deployed_for_tuning(start, boundary):
-    assert set(TUNING_CALLS) == {name for name in dir(ArmTuningHooks) if name.startswith("tuning_")}
+def test_the_calls_that_change_the_arm_are_refused_unless_deployed_for_calibration(start, boundary):
     module = start()
-    assert not module.config.tuning
+    assert not module.config.config_sessions
+    assert not any(name.startswith("tuning_") for name in module.rpcs)
     sent = len(boundary[0].groups["left_arm"].commands)
-    for name, args in TUNING_CALLS.items():
-        with pytest.raises(RuntimeError, match="tuning is off"):
-            getattr(module, name)(*args)
-    assert len(boundary[0].groups["left_arm"].commands) == sent
-
-
-def test_setters_and_commands_need_a_tuning_session(start, boundary):
-    module = start(tuning=True)
-    for name in (
-        "tuning_set_gains",
-        "tuning_set_float",
-        "tuning_set_feedforward",
-        "tuning_command",
+    for call in (
+        lambda: module.config_set(ConfigPatch(arm_id="rig/left")),
+        lambda: module.config_set(ConfigPatch(arm_id="rig/left", notes="x"), scope="persist"),
+        lambda: module.config_reset(),
+        lambda: module.config_command({"joint1": 0.1}, "0" * 32),
     ):
-        with pytest.raises(RuntimeError, match="no tuning session is active; call tuning_begin"):
-            getattr(module, name)(*TUNING_CALLS[name])
-    # Reading, resetting and applying a calibration do not.
-    module.tuning_get_gains()
-    module.tuning_reset_all()
-    module.tuning_reset_gains()
-    module.tuning_apply_calibration("off")
-    module.tuning_begin()
-    with pytest.raises(RuntimeError, match="already active"):
-        module.tuning_begin()
-    # Like any tuning call that raises, that ended the session.
-    with pytest.raises(RuntimeError, match="the last one ended: tuning_begin raised"):
-        module.tuning_set_gains("joint1", 60.0, 3.0)
+        with pytest.raises(RuntimeError, match="config sessions are off"):
+            call()
+    assert len(boundary[0].groups["left_arm"].commands) == sent
+    # Reading still answers.
+    assert not module.config_keys().sessions
+    assert set(module.config_get()) == {"rig/left", "rig/right"}
+
+
+def test_commands_need_a_config_session(start, boundary):
+    module = start(config_sessions=True)
+    with pytest.raises(RuntimeError, match="no config session is live"):
+        module.config_command({"joint1": 0.1}, "0" * 32)
+    # Reading, resetting and saving do not.
+    module.config_get()
+    module.config_reset()
+    module.config_reset(keep_session=True)
+    module.config_set(ConfigPatch(arm_id="rig/left", notes="x"), scope="persist")
+    session = _begin(module)
+    with pytest.raises(RuntimeError, match="a config session is live"):
+        _begin(module)
+    # Like any config call that raises, that ended the session.
+    with pytest.raises(RuntimeError, match=r"the config session ended \(config_set raised"):
+        _left(module, session, gains={"joint1": JointGains(kp=60.0, kd=3.0)})
 
 
 @pytest.mark.parametrize(
@@ -459,48 +478,79 @@ def test_setters_and_commands_need_a_tuning_session(start, boundary):
     ],
 )
 def test_a_lease_is_a_positive_number_of_seconds_up_to_thirty(start, boundary, lease, error):
-    module = start(tuning=True)
+    module = start(config_sessions=True)
     with pytest.raises(error, match="lease_s"):
-        module.tuning_begin(lease)
+        _begin(module, lease_s=lease)
     assert not _active(module)
 
 
 def test_bad_arguments_are_refused_and_end_the_session(start, boundary):
-    module = start(tuning=True)
+    module = start(config_sessions=True)
     for call, error, match in (
-        (lambda: module.tuning_command({"joint1": 4.0}), ValueError, "limit"),
-        (lambda: module.tuning_command({"nope": 0.0}), ValueError, "not joints"),
-        (lambda: module.tuning_command({"joint1": "0.1"}), TypeError, "must be a number"),
-        (lambda: module.tuning_set_gains("left_finger", 1.0, 1.0), ValueError, "not an arm joint"),
-        (lambda: module.tuning_set_gains("joint1", "80", 1.0), TypeError, "must be a number"),
-        (lambda: module.tuning_set_float("joint3", "false"), TypeError, "True or False"),
-        (lambda: module.tuning_set_float("joint3", 0), TypeError, "True or False"),
-        (lambda: module.tuning_set_feedforward("joint1", float("nan")), ValueError, "finite"),
-        (lambda: module.tuning_apply_calibration(force="yes"), TypeError, "True or False"),
+        (lambda s: module.config_command({"joint1": 4.0}, s), ValueError, "limit"),
+        (lambda s: module.config_command({"nope": 0.0}, s), ValueError, "not position-"),
+        (lambda s: module.config_command({"joint1": "0.1"}, s), TypeError, "must be a number"),
+        (
+            lambda s: _left(module, s, gains={"left_finger": JointGains(kp=1.0, kd=1.0)}),
+            ValueError,
+            "not arm joints of rig/left",
+        ),
+        (
+            lambda s: _left(module, s, gains={"joint3": JointGains(kp=1.0, kd=1.0)}),
+            ValueError,
+            "not arm joints of rig/left",
+        ),
+        (
+            lambda s: module.config_set(
+                {"arm_id": "rig/left", "gains": {"joint1": {"kp": "80", "kd": 1.0}}}, session_id=s
+            ),
+            ValidationError,
+            "valid number",
+        ),
+        (
+            lambda s: module.config_set(
+                {"arm_id": "rig/left", "torque_offset_nm": {"joint1": float("nan")}},
+                session_id=s,
+            ),
+            ValidationError,
+            "finite",
+        ),
+        (
+            lambda s: module.config_set(ConfigPatch(arm_id="rig/nope"), session_id=s),
+            ValueError,
+            "arms",
+        ),
+        (
+            lambda s: module.config_set(
+                ConfigPatch(arm_id="rig/left"), scope="persist", force="yes", session_id=s
+            ),
+            TypeError,
+            "True or False",
+        ),
     ):
-        module.tuning_begin()
-        module.tuning_set_float("joint3", True)
+        session = _begin(module)
+        _float(module, session)
         with pytest.raises(error, match=match):
-            call()
+            call(session)
         assert not _active(module) and module._arm.floating == {}
     assert _rows(boundary, "left_arm")[0, 2] == 0.2
 
 
-def test_a_tuning_session_ignores_position_command_and_says_so_once(start, boundary, mocker):
+def test_a_config_session_drops_position_command_and_says_so_once(start, boundary, mocker):
     commands = LocalTransport()
-    module = start(tuning=True, commands=commands)
-    warning = mocker.spy(common.logger, "warning")
-    info = mocker.spy(common.logger, "info")
+    module = start(config_sessions=True, commands=commands)
+    warning = _base_messages(mocker, "warning")
+    info = _base_messages(mocker, "info")
     commands.publish(JointState(name=["arm/joint1"], position=[0.5]))
     assert _rows(boundary, "left_arm")[0, 2] == 0.5
-    module.tuning_begin()
+    _begin(module)
     for target in (0.6, 0.7, 0.8):
         commands.publish(JointState(name=["arm/joint1"], position=[target]))
     assert _rows(boundary, "left_arm")[0, 2] == 0.5
-    assert len([line for line in _messages(warning) if "ignoring position_command" in line]) == 1
-    module.tuning_end()
-    ended = [line for line in _messages(info) if "ended (tuning_end)" in line]
-    assert len(ended) == 1 and "3 position commands ignored" in ended[0]
+    assert len([line for line in _messages(warning) if "dropping position commands" in line]) == 1
+    module.config_reset()
+    ended = [line for line in _messages(info) if "ended (config_reset)" in line]
+    assert len(ended) == 1 and "3 position commands dropped" in ended[0]
     commands.publish(JointState(name=["arm/joint1"], position=[0.9]))
     assert _rows(boundary, "left_arm")[0, 2] == 0.9
 
@@ -509,24 +559,25 @@ def test_a_released_joint_stays_where_the_hand_left_it_though_a_coordinator_stre
     start, boundary
 ):
     commands = LocalTransport()
-    module = start(tuning=True, commands=commands)
-    module.tuning_begin()
-    module.tuning_set_float("joint3", True)
+    module = start(config_sessions=True, commands=commands)
+    held = module.config_get()["rig/right"].gains["joint3"]
+    session = _begin(module)
+    _float(module, session)
     boundary[0].groups["right_arm"].q[:] = [0.9]
     # A coordinator still streaming the target it had before the float.
     commands.publish(JointState(name=["arm/joint3"], position=[-0.5]))
-    module.tuning_set_float("joint3", False)
+    _right(module, session, gains={"joint3": held})
     commands.publish(JointState(name=["arm/joint3"], position=[-0.5]))
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :3], [20, 0.6, 0.9])
 
 
 def test_a_lapsed_lease_undoes_every_live_change_and_logs_one_line(start, boundary, mocker):
-    module = start(tuning=True)
-    warning = mocker.spy(common.logger, "warning")
-    module.tuning_begin(lease_s=0.2)
-    module.tuning_set_gains("joint2", 40.0, 2.0)
-    module.tuning_set_float("joint3", True)
-    module.tuning_set_feedforward("joint1", 1.0)
+    module = start(config_sessions=True)
+    warning = _base_messages(mocker, "warning")
+    session = _begin(module, lease_s=0.2)
+    _left(module, session, gains={"joint2": JointGains(kp=40.0, kd=2.0)})
+    _float(module, session)
+    _left(module, session, torque_offset_nm={"joint1": 1.0})
     boundary[0].groups["right_arm"].q[:] = [0.7]
     wait_until(lambda: not _active(module), timeout=2)
     arm = module._arm
@@ -536,144 +587,211 @@ def test_a_lapsed_lease_undoes_every_live_change_and_logs_one_line(start, bounda
     np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[80, 5], [10, 1.5]])
     lines = [line for line in _messages(warning) if "ended" in line]
     assert len(lines) == 1
-    assert "no tuning call within its lease of 0.2 s" in lines[0]
+    assert "no config call within its lease of 0.2 s" in lines[0]
     assert "held ['joint3'] where they are" in lines[0]
     assert "dropped the feed-forward of ['joint1']" in lines[0]
     assert "gains of ['joint2'] back to the calibration" in lines[0]
-    with pytest.raises(RuntimeError, match="the last one ended: no tuning call within its lease"):
-        module.tuning_set_gains("joint1", 60.0, 3.0)
+    with pytest.raises(RuntimeError, match="the config session ended \\(no config call within"):
+        _left(module, session, gains={"joint1": JointGains(kp=60.0, kd=3.0)})
 
 
-def test_every_tuning_call_renews_the_lease(start, boundary):
-    module = start(tuning=True)
-    module.tuning_begin(lease_s=0.3)
+def test_every_config_call_renews_the_lease(start, boundary):
+    module = start(config_sessions=True)
+    session = _begin(module, lease_s=0.3)
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
-        module.tuning_read()
+        module.config_get()
         time.sleep(0.05)
     assert _active(module)
-    module.tuning_set_gains("joint1", 60.0, 3.0)
+    _left(module, session, gains={"joint1": JointGains(kp=60.0, kd=3.0)})
 
 
 def test_the_deadman_halting_the_arm_ends_the_session(start, boundary):
-    module = start(tuning=True, deadman_timeout_s=0.05)
-    module.tuning_begin()
-    module.tuning_set_float("joint3", True)
-    assert module.tuning_command({"joint1": 0.3})["ok"]
+    module = start(config_sessions=True, deadman_timeout_s=0.05)
+    session = _begin(module)
+    _float(module, session)
+    assert module.config_command({"joint1": 0.3}, session).ok
     # No more targets: the deadman halts the arm, and a halt ends the session.
     wait_until(lambda: module.status().deadman_fired, timeout=2)
     assert not _active(module) and module._arm.floating == {}
-    with pytest.raises(RuntimeError, match="the last one ended: the connection halted"):
-        module.tuning_set_float("joint3", True)
+    with pytest.raises(RuntimeError, match="the config session ended \\(the connection halted"):
+        _float(module, session)
 
 
 def test_a_command_the_motors_did_not_get_is_not_ok_and_ends_the_session(start, boundary):
-    module = start(tuning=True)
-    module.tuning_begin()
+    module = start(config_sessions=True)
+    session = _begin(module)
     boundary[0].groups["left_arm"].error = RuntimeError("bus off")
-    result = module.tuning_command({"joint1": 0.3})
-    assert not result["ok"] and "bus off" in result["error"]
+    result = module.config_command({"joint1": 0.3}, session)
+    assert not result.ok and result.error is not None and "bus off" in result.error
     assert not _active(module)
     boundary[0].groups["left_arm"].error = None
 
 
 def test_a_fault_ends_the_session(start, boundary):
-    module = start(tuning=True)
-    module.tuning_begin()
-    module.tuning_set_feedforward("joint1", 1.0)
+    module = start(config_sessions=True)
+    session = _begin(module)
+    _left(module, session, torque_offset_nm={"joint1": 1.0})
     boundary[0].refresh_error = RuntimeError("lost feedback")
     wait_until(lambda: module._fault is not None, timeout=2)
     assert not _active(module) and module._arm.feedforward == {}
     boundary[0].refresh_error = None
 
 
-def test_stopping_ends_the_session(start, boundary):
-    module = start(tuning=True)
-    module.tuning_begin()
-    module.tuning_set_float("joint3", True)
+def test_stopping_ends_the_session(start, boundary, mocker):
+    # Nobody parks: the stop gives up waiting at once.
+    mocker.patch.object(connection_module, "CONFIG_PARK_WAIT_S", 0.1)
+    module = start(config_sessions=True)
+    session = _begin(module)
+    _float(module, session)
     arm = module._arm
     module.stop()
     assert not _active(module) and arm.floating == {}
+    assert module._config_ended == "the connection halted"
 
 
-def test_tuning_refuses_a_faulted_or_stopped_connection(start, boundary):
-    module = start(tuning=True)
+def test_a_faulted_or_stopped_connection_is_refused(start, boundary):
+    module = start(config_sessions=True)
     boundary[0].refresh_error = RuntimeError("lost feedback")
     wait_until(lambda: module._fault is not None, timeout=2)
     with pytest.raises(RuntimeError, match="lost feedback"):
-        module.tuning_set_gains("joint1", 1.0, 1.0)
+        _left(module, None, gains={"joint1": JointGains(kp=1.0, kd=1.0)})
+    assert not _active(module)
     boundary[0].refresh_error = None
     module.stop()
     for call in (
-        module.tuning_get_gains,
-        module.tuning_read,
-        module.tuning_begin,
-        lambda: module.tuning_command({"joint1": 0.1}),
+        module.config_get,
+        lambda: _begin(module),
+        lambda: module.config_command({"joint1": 0.1}, "0" * 32),
     ):
-        with pytest.raises(RuntimeError, match="disconnected"):
+        with pytest.raises(RuntimeError, match="disconnected|not running"):
             call()
 
 
-def test_tuning_applies_a_calibration_live_and_off_restores_the_defaults(
-    start, boundary, calibration_root, tmp_path
-):
-    module = start(tuning=True)
-    trial = save_calibration(
-        tmp_path / "trial.json", _calibration(gains={"joint1": (60.0, 3.0)}, masses={"link2": 1.5})
+def test_a_save_merges_into_the_arms_file_and_applies_it_live(start, boundary, calibration_root):
+    module = start(config_sessions=True)
+    path = calibration_root / "rig/left/calibration.json"
+    links = {"link2": LinkGravity(mass_kg=1.5, com_m=(0.1, 0.0, 0.0))}
+    patch = ConfigPatch(
+        arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)}, links=links
     )
-    applied = module.tuning_apply_calibration(str(trial))["arms"]
-    assert applied["rig/left"]["links"] == ["link2"] and applied["rig/right"] is None
+    saved = module.config_set(patch, scope="persist")
+    assert saved.path == str(path) and saved.applied_now and saved.refused is None
+    assert saved.applied == patch and saved.unsupported == []
     # Sent at once, without a command.
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 3])
-    assert module.status().calibration == applied
+    stored = load_calibration(path, expected_model_sha256=model_sha256(RIG.gravity_model))
+    assert stored.gains == patch.gains and stored.gravity is not None
+    assert stored.gravity.links == links
+    state = module.config_get()["rig/left"]
+    assert state.links == links and state.file is not None
+    assert state.file.path == str(path)
+    assert state.file.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert module.status().calibration["rig/left"]["links"] == ["link2"]
+    assert module.status().calibration["rig/right"] is None
 
-    mismatched = save_calibration(tmp_path / "bad.json", _calibration(sha256="0" * 64))
-    with pytest.raises(ArmCalibrationError, match="different robot model"):
-        module.tuning_apply_calibration(str(mismatched))
-    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 3])
-    assert module.status().calibration == applied
+    # A second save merges: joint2's gains join joint1's, the links stay.
+    more = ConfigPatch(arm_id="rig/left", gains={"joint2": JointGains(kp=30.0, kd=1.0)})
+    module.config_set(more, scope="persist")
+    stored = load_calibration(path)
+    assert stored.gains is not None and set(stored.gains) == {"joint1", "joint2"}
+    assert stored.gravity is not None and stored.gravity.links == links
+    np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[60, 3], [30, 1]])
+    assert len(list((path.parent / "history").iterdir())) == 1
 
-    result = module.tuning_apply_calibration("off")
-    assert result["arms"] == {"rig/left": None, "rig/right": None}
-    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [80, 5])
+    # A check alone is written, not applied, and the record follows the file.
+    module.config_set(
+        ConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}}), scope="persist"
+    )
+    assert load_calibration(path).checks == {"float": {"passed": True}}
+    state = module.config_get()["rig/left"]
+    assert state.file is not None
+    assert state.file.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_a_save_leaves_out_what_a_file_cannot_hold(start, boundary, calibration_root):
+    module = start(config_sessions=True)
+    patch = ConfigPatch(
+        arm_id="rig/left",
+        gains={"joint1": JointGains(kp=0.0, kd=0.5), "joint2": JointGains(kp=30.0, kd=1.0)},
+        torque_offset_nm={"joint1": 0.2},
+    )
+    saved = module.config_set(patch, scope="persist")
+    assert saved.unsupported == ["torque_offset_nm.joint1", "gains.joint1.kp", "gains.joint1.kd"]
+    assert "session" in saved.why["torque_offset_nm.joint1"]
+    stored = load_calibration(calibration_root / "rig/left/calibration.json")
+    assert stored.gains == {"joint2": JointGains(kp=30.0, kd=1.0)}
+    assert module._arm.floating == {} and module._arm.feedforward == {}
+
+
+def test_a_session_leaves_out_what_only_a_file_holds(start, boundary, calibration_root):
+    module = start(config_sessions=True)
+    session = _begin(module)
+    links = {"link2": LinkGravity(mass_kg=1.5, com_m=(0.1, 0.0, 0.0))}
+    applied = _left(module, session, links=links, notes="x")
+    assert applied.unsupported == ["links.link2", "notes"]
     assert module._arm.inertial_overrides == {}
+    assert not (calibration_root / "rig/left").exists()
 
-    saved = save_calibration(
-        calibration_root / "rig/right", _calibration("rig/right", gains={"joint3": (30.0, 1.0)})
+
+def test_a_saved_file_that_does_not_fit_is_replaced_not_merged(
+    start, boundary, calibration_root, mocker
+):
+    path = save_calibration(
+        calibration_root / "rig/left", _calibration(sha256="0" * 64, gains={"joint2": (5.0, 1.0)})
     )
-    applied = module.tuning_apply_calibration()["arms"]
-    assert applied["rig/right"]["path"] == str(saved) and applied["rig/left"] is None
-    np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [30, 1])
-
-
-def test_applying_one_arms_file_live_keeps_what_the_other_arm_runs(start, boundary, tmp_path):
-    module = start(tuning=True)
-    right = save_calibration(
-        tmp_path / "right.json", _calibration("rig/right", gains={"joint3": (30.0, 1.0)})
+    module = start(config_sessions=True)
+    warning = mocker.spy(common.logger, "warning")
+    module.config_set(
+        ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)}),
+        scope="persist",
     )
-    left = save_calibration(tmp_path / "left.json", _calibration(gains={"joint1": (60.0, 3.0)}))
-    module.tuning_apply_calibration(str(right))
-    applied = module.tuning_apply_calibration(str(left))["arms"]
-    assert applied["rig/right"]["path"] == str(right) and applied["rig/left"]["path"] == str(left)
+    stored = load_calibration(path)
+    assert stored.gains == {"joint1": JointGains(kp=60.0, kd=3.0)}
+    assert stored.robot_model.sha256 == model_sha256(RIG.gravity_model)
+    assert any("afresh" in line and "different robot model" in line for line in _messages(warning))
+    assert len(list((path.parent / "history").iterdir())) == 1
+
+
+def test_saving_one_arms_file_live_keeps_what_the_other_arm_runs(start, boundary, calibration_root):
+    module = start(config_sessions=True)
+    right = ConfigPatch(arm_id="rig/right", gains={"joint3": JointGains(kp=30.0, kd=1.0)})
+    left = ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)})
+    module.config_set(right, scope="persist")
+    module.config_set(left, scope="persist")
+    applied = module.status().calibration
+    assert applied["rig/right"]["path"] == str(calibration_root / "rig/right/calibration.json")
+    assert applied["rig/left"]["path"] == str(calibration_root / "rig/left/calibration.json")
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [30, 1])
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 3])
-    assert module.status().calibration == applied
 
 
-def test_a_live_calibration_that_steps_gravity_more_than_2_nm_needs_force(
-    start, boundary, tmp_path
+def test_a_save_that_steps_gravity_more_than_2_nm_is_refused_unless_forced(
+    start, boundary, calibration_root
 ):
-    module = start(tuning=True)
-    heavier = save_calibration(tmp_path / "heavier.json", _calibration(masses={"link2": 3.0}))
+    module = start(config_sessions=True)
+    path = calibration_root / "rig/left/calibration.json"
+    heavier = ConfigPatch(
+        arm_id="rig/left", links={"link2": LinkGravity(mass_kg=3.0, com_m=(0.1, 0.0, 0.0))}
+    )
     sent = len(boundary[0].groups["left_arm"].commands)
-    with pytest.raises(
-        ValueError, match=r"more than 2 N m: \{'joint1': .*near home, or pass force=True"
-    ):
-        module.tuning_apply_calibration(str(heavier))
+    refused = module.config_set(heavier, scope="persist")
+    assert refused.refused is not None and not refused.applied_now and refused.path is None
+    assert re.search(
+        r"more than 2 N m: \{'joint1': .*near home, or pass force=True", refused.refused
+    )
+    assert abs(refused.gravity_step_nm["joint1"]) > 2.0
+    assert not path.exists()
     assert len(boundary[0].groups["left_arm"].commands) == sent
     assert module.status().calibration["rig/left"] is None
 
-    result = module.tuning_apply_calibration(str(heavier), force=True)
+    # Skipping writes the file without applying it.
+    skipped = module.config_set(heavier, scope="persist", apply_now=False)
+    assert skipped.path == str(path) and not skipped.applied_now and skipped.refused is None
+    assert path.exists() and module.status().calibration["rig/left"] is None
+    assert len(boundary[0].groups["left_arm"].commands) == sent
+
+    result = module.config_set(heavier, scope="persist", force=True)
     pose = np.full(3, 0.2)
     joints = RIG.arm_joint_names
     before = PhysicalModel(RIG.gravity_model, joints, gravity_comp=True).gravity(pose)
@@ -683,29 +801,34 @@ def test_a_live_calibration_that_steps_gravity_more_than_2_nm_needs_force(
         gravity_comp=True,
         inertial_overrides={"link2": LinkInertial(mass_kg=3.0, com_m=(0.1, 0.0, 0.0))},
     ).gravity(pose)
-    assert result["gravity_step_nm"] == pytest.approx(
+    assert result.applied_now and result.gravity_step_nm == pytest.approx(
         dict(zip(joints, after - before, strict=True))
     )
     # joint3 carries none of link2.
-    assert result["gravity_step_nm"]["joint3"] == 0.0
-    assert result["arms"]["rig/left"]["links"] == ["link2"]
+    assert result.gravity_step_nm["joint3"] == 0.0
+    assert module.status().calibration["rig/left"]["links"] == ["link2"]
     np.testing.assert_allclose(_rows(boundary, "left_arm")[:, 4], after[:2])
 
 
-def test_masses_over_a_motors_rating_at_home_are_refused(start, boundary, tmp_path, rig_class):
+def test_masses_over_a_motors_rating_at_home_are_refused(
+    start, boundary, calibration_root, rig_class
+):
     class HomeRig(rig_class):
         robot = replace(RIG, home_joints=[0.0, 0.0, 0.0])
 
-    module = start(HomeRig, tuning=True)
+    module = start(HomeRig, config_sessions=True)
     # Every link vertical: no gravity torque at the measured pose.
     boundary[0].groups["left_arm"].q[:] = [math.pi / 2, 0.0]
     boundary[0].groups["right_arm"].q[:] = [0.0]
-    heavy = save_calibration(tmp_path / "heavy.json", _calibration(masses={"link2": 10.0}))
+    heavy = ConfigPatch(
+        arm_id="rig/left", links={"link2": LinkGravity(mass_kg=10.0, com_m=(0.1, 0.0, 0.0))}
+    )
     with pytest.raises(
         ArmCalibrationError, match="on joint1 at home, more than its motor's rated 28 N m"
     ):
-        module.tuning_apply_calibration(str(heavy))
+        module.config_set(heavy, scope="persist")
     assert module.status().calibration == {"rig/left": None, "rig/right": None}
+    assert not (calibration_root / "rig/left/calibration.json").exists()
 
 
 def test_files_from_the_calibration_tools_load_into_dual_openyam(
@@ -746,28 +869,24 @@ def test_files_from_the_calibration_tools_load_into_dual_openyam(
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [60, 4])
 
 
-def test_the_applied_calibration_reports_the_masses_and_file_hash_it_runs(
+def test_the_state_reports_the_masses_and_file_hash_each_arm_runs(
     start, boundary, calibration_root
 ):
     path = save_calibration(calibration_root / "rig/left", _calibration(masses={"link2": 2.0}))
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
-    module = start(tuning=True)
+    module = start(config_sessions=True)
 
-    applied = module.tuning_applied_calibration()
+    state = module.config_get()
 
-    assert applied == {
-        "rig/left": {
-            "path": str(path),
-            "created": "2026-11-17T09:30:00+00:00",
-            "sha256": sha,
-            "links": {"link2": {"mass_kg": 2.0, "com_m": [0.1, 0.0, 0.0]}},
-        },
-        "rig/right": None,
-    }
+    assert state["rig/left"].file == AppliedFile(
+        path=str(path), created="2026-11-17T09:30:00+00:00", sha256=sha
+    )
+    assert state["rig/left"].links == {"link2": LinkGravity(mass_kg=2.0, com_m=(0.1, 0.0, 0.0))}
+    assert state["rig/right"].file is None and state["rig/right"].links == {}
     # A file rewritten on disk changes nothing the arm runs until it is applied.
     save_calibration(path, _calibration(masses={"link2": 2.5}))
-    assert module.tuning_applied_calibration() == applied
-    assert json.loads(json.dumps(applied)) == applied
+    assert module.config_get() == state
+    assert roundtrip(state) == state
 
 
 def _park_while_stopping(module, order: list[str], stream_s: float) -> threading.Thread:
@@ -780,24 +899,24 @@ def _park_while_stopping(module, order: list[str], stream_s: float) -> threading
     stopper = threading.Thread(target=stop)
     stopper.start()
     time.sleep(0.05)
-    module.tuning_begin()
+    session = _begin(module)
     order.append("park began")
     deadline = time.monotonic() + stream_s
     try:
         while time.monotonic() < deadline:
-            module.tuning_command({"joint1": 0.2})
+            module.config_command({"joint1": 0.2}, session)
             time.sleep(0.02)
     except RuntimeError:
         order.append("cut off")
     else:
         order.append("parked")
-        module.tuning_end()
+        module.config_reset()
     return stopper
 
 
 def test_stopping_waits_for_the_calibration_tool_to_park_before_disabling(start, boundary, mocker):
-    module = start(tuning=True)
-    mocker.patch.object(common, "TUNING_PARK_GRACE_S", 0.3)
+    module = start(config_sessions=True)
+    mocker.patch.object(connection_module, "CONFIG_PARK_GRACE_S", 0.3)
     order: list[str] = []
     disable = module._arm.disable
 
@@ -806,7 +925,7 @@ def test_stopping_waits_for_the_calibration_tool_to_park_before_disabling(start,
         disable()
 
     mocker.patch.object(module._arm, "disable", disabled)
-    warning = mocker.spy(common.logger, "warning")
+    warning = _base_messages(mocker, "warning")
 
     stopper = _park_while_stopping(module, order, stream_s=0.5)
     stopper.join(timeout=5.0)
@@ -819,15 +938,15 @@ def test_stopping_waits_for_the_calibration_tool_to_park_before_disabling(start,
 
 
 def test_a_park_that_overruns_the_wait_is_cut_off_and_the_arm_disabled(start, boundary, mocker):
-    module = start(tuning=True)
-    mocker.patch.object(common, "TUNING_PARK_GRACE_S", 0.2)
-    mocker.patch.object(common, "TUNING_PARK_WAIT_S", 0.3)
-    error = mocker.spy(common.logger, "error")
+    module = start(config_sessions=True)
+    mocker.patch.object(connection_module, "CONFIG_PARK_GRACE_S", 0.2)
+    mocker.patch.object(connection_module, "CONFIG_PARK_WAIT_S", 0.3)
+    error = _base_messages(mocker, "error")
     order: list[str] = []
 
     stopper = _park_while_stopping(module, order, stream_s=2.0)
     stopper.join(timeout=5.0)
 
     assert order == ["park began", "stopped", "cut off"]
-    assert any("did not end its tuning session within 0.3 s" in line for line in _messages(error))
-    assert module._tuning_ended == "the connection halted"
+    assert any("did not end its config session within 0.3 s" in line for line in _messages(error))
+    assert module._config_ended == "the connection halted"

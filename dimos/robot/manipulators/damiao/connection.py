@@ -23,29 +23,30 @@ At start it applies each arm's saved calibration file, if there is one
 (``DamiaoConnectionConfig.calibration``): the file's gains and fitted link
 masses. Without a file the arm runs exactly its URDF and bus defaults.
 
-A connection deployed with ``tuning=True`` (calibration blueprints only)
-serves the ``tuning_*`` RPCs of :class:`~dimos.robot.manipulators.
-calibration.hooks.ArmTuningHooks`: one calibration tool owns the arm inside a
-tuning session (:meth:`DamiaoConnection.tuning_begin`) and changes gains live.
-Stopping such a connection first gives the calibration tool, stopping at the
-same time, up to ``TUNING_PARK_WAIT_S`` to park the arm and end its session
-(:meth:`DamiaoConnection.stop`): the modules of a run stop in parallel, so
-nothing else orders the two.
+Every connection serves the arm config contract of
+:mod:`dimos.control.connection.arm_config`. One deployed with
+``config_sessions=True`` (calibration blueprints only) lets one calibration
+tool own the arm in a config session and change its gains, float its joints
+(kp 0) and add torque offsets live, and save calibrations to each arm's file
+(scope "persist"). Gains are those of a Damiao MIT frame: kp 0 to 500 N m/rad
+and kd 0 to 5 N m s/rad, the range of the frame's fields, so a larger gain is
+clamped to them. Stopping such a connection first gives the calibration tool,
+stopping at the same time, up to ``CONFIG_PARK_WAIT_S`` to park the arm and
+end its session (:meth:`DamiaoConnection.stop`): the modules of a run stop in
+parallel, so nothing else orders the two.
 """
 
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
-import functools
+from datetime import datetime, timezone
 import hashlib
-import numbers
 from pathlib import Path
 import threading
 import time
-from typing import Any, ClassVar, Concatenate, ParamSpec, TypeVar
+from typing import Any, ClassVar
 import uuid
 
 from pydantic import Field, model_validator
@@ -53,6 +54,15 @@ from reactivex.disposable import Disposable
 from typing_extensions import Self
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.connection.arm_config import (
+    AppliedFile,
+    ArmConfigState,
+    ConfigApplied,
+    ConfigKeys,
+    ConfigPatch,
+    ConfigScope,
+    JointGains,
+)
 from dimos.control.connection.connection_module import (
     ConnectionConfig,
     ConnectionModule,
@@ -62,32 +72,26 @@ from dimos.control.connection.connection_module import (
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import limits as limits_of, movable_joints
-from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._inertial import LinkInertial
-from dimos.robot.manipulators.calibration.hooks import (
-    AppliedCalibration,
-    AppliedInertials,
-    CalibrationApplied,
-    CommandResult,
-    JointGainsState,
-    JointSample,
-    LinkMass,
-    TuningSession,
-)
+from dimos.robot.manipulators.calibration.hooks import AppliedCalibration
 from dimos.robot.manipulators.calibration.schema import (
     ARMS_STATE_DIR,
     ArmCalibration,
     ArmCalibrationError,
+    RobotModelRef,
     calibration_file,
     calibration_path,
+    calibration_text,
     load_calibration,
+    merge_patch,
+    save_calibration,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import model_sha256
+from dimos.robot.manipulators.calibration.spec import model_name, model_sha256
 from dimos.robot.manipulators.damiao.arm import ArmReading, DamiaoArm, TuningReset
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.robot.manipulators.damiao.status import DamiaoConnectionStatus
@@ -98,9 +102,6 @@ logger = setup_logger()
 __all__ = [
     "CALIBRATION_ROOT",
     "MAX_GRAVITY_STEP_NM",
-    "MAX_TUNING_LEASE_S",
-    "TUNING_PARK_GRACE_S",
-    "TUNING_PARK_WAIT_S",
     "DamiaoConnection",
     "DamiaoConnectionConfig",
     "DamiaoConnectionStatus",
@@ -110,20 +111,11 @@ __all__ = [
 #: Where "auto" looks for each arm's calibration, ``<root>/<arm_id>/calibration.json``.
 #: Read at every load, so tests can point it at a scratch directory.
 CALIBRATION_ROOT: Path = ARMS_STATE_DIR
-#: The longest lease a tuning session may ask for, seconds.
-MAX_TUNING_LEASE_S = 30.0
 #: The most any joint's gravity torque at the measured pose may change when a
-#: calibration is applied live without ``force``, N m.
+#: saved calibration is applied live without ``force``, N m.
 MAX_GRAVITY_STEP_NM = 2.0
-#: How long ``stop`` waits for the calibration tool to park the arm and end its
-#: tuning session before it halts and disables the motors, seconds.
-TUNING_PARK_WAIT_S = 10.0
-#: How long ``stop`` waits for a calibration tool that is about to park (no
-#: session yet, or one that just ended) to begin its park session, seconds.
-TUNING_PARK_GRACE_S = 1.0
-
-_P = ParamSpec("_P")
-_T = TypeVar("_T")
+#: Why a session does not take what only a calibration file holds.
+_FILE_ONLY = "saved with scope 'persist' only; a session changes gains, floating and torque offsets"
 
 
 def zero_stiffness_joints(robot: DamiaoRobot, *, teach: bool, source: str = "arm") -> list[str]:
@@ -155,16 +147,14 @@ class DamiaoConnectionConfig(ConnectionConfig):
             "off" applies none; anything else is the path of one calibration
             file, applied to the arm it names. An arm without a file, or whose
             file does not fit this robot, runs its URDF masses and bus gains.
-        tuning: Serve the ``tuning_*`` RPCs, which change how the energized
-            motors are driven. Only a calibration blueprint turns this on;
-            without it every tuning RPC raises.
+            A calibration saved through ``config_set`` always goes to
+            ``calibration_path(arm_id)``, whatever this says.
     """
 
     teach: bool = False
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
     deadman_timeout_s: float = Field(default=0.1, gt=0, allow_inf_nan=False)
     calibration: str = Field(default="auto", min_length=1)
-    tuning: bool = False
 
     @model_validator(mode="after")
     def _position_only(self) -> Self:
@@ -191,63 +181,10 @@ class _ArmFile:
             links=sorted(self.links),
         )
 
-    def inertials(self) -> AppliedInertials:
-        return AppliedInertials(
-            path=str(self.path),
-            created=self.calibration.created.isoformat(),
-            sha256=self.sha256,
-            links={
-                name: LinkMass(mass_kg=link.mass_kg, com_m=list(link.com_m))
-                for name, link in sorted(self.links.items())
-            },
+    def applied_file(self) -> AppliedFile:
+        return AppliedFile(
+            path=str(self.path), created=self.calibration.created.isoformat(), sha256=self.sha256
         )
-
-
-@dataclass(slots=True)
-class _TuningSession:
-    """The calibration tool's hold on the arm, until ``deadline`` (``time.monotonic``)."""
-
-    session_id: str
-    lease_s: float
-    deadline: float
-    # Position commands dropped while the session lasts.
-    ignored: int = 0
-
-
-def _tuning_rpc(
-    method: Callable[Concatenate[DamiaoConnection, _P], _T],
-) -> Callable[Concatenate[DamiaoConnection, _P], _T]:
-    """A tuning RPC: refused unless ``config.tuning``; raising ends the tuning session."""
-
-    def call(self: DamiaoConnection, /, *args: _P.args, **kwargs: _P.kwargs) -> _T:
-        if not self.config.tuning:
-            raise RuntimeError(
-                f"{self._label}: tuning is off; only a connection deployed for "
-                "calibration (tuning=True) serves the tuning_* RPCs"
-            )
-        try:
-            return method(self, *args, **kwargs)
-        except Exception as error:
-            with self._hardware_lock:
-                self._end_tuning(f"{method.__name__} raised {type(error).__name__}: {error}")
-            raise
-
-    functools.update_wrapper(call, method)
-    return call
-
-
-def _real(name: str, value: Any) -> float:
-    """``value`` as a float; a bool, a string or anything else not a number raises ``TypeError``."""
-    if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a number, got {value!r}")
-    return float(value)
-
-
-def _flag(name: str, value: Any) -> bool:
-    """``value`` if it is a real bool; anything else, the string "false" included, raises."""
-    if not isinstance(value, bool):
-        raise TypeError(f"{name} must be True or False, got {value!r}")
-    return value
 
 
 def _merged(
@@ -277,11 +214,11 @@ def _undone(reset: TuningReset) -> str:
 class DamiaoConnection(ConnectionModule):
     """Own one Damiao robot, its measured states and position targets.
 
-    The ``tuning_*`` RPCs implement
-    :class:`~dimos.robot.manipulators.calibration.hooks.ArmTuningHooks`. They
-    change motor gains and torques of the energized arm live, are served only
-    with ``config.tuning`` and are for calibration tools only; see
-    :meth:`tuning_begin` for the session they run in.
+    It serves the arm config contract in full (see ``ConnectionModule``): a
+    config session changes gains (kp 0 floats a joint, gravity still held)
+    and torque offsets of the energized arm live, and a save merges into each
+    arm's calibration file and applies it. Calibration tools only, and only
+    with ``config.config_sessions``.
     """
 
     #: The robot this connection deploys: motors, gains, grippers and models.
@@ -303,17 +240,6 @@ class DamiaoConnection(ConnectionModule):
         # Guarded by _lock: the calibration file each arm runs, None for none.
         self._applied: dict[str, _ArmFile | None] = {}
         self._model_hash: str | None = None
-        # The latest reading and when it was taken, for tuning_read().
-        self._latest: tuple[float, ArmReading] | None = None
-        # Guarded by _lock, and changed only under _hardware_lock as well:
-        # the tuning session, and why the last one ended.
-        self._tuning_session: _TuningSession | None = None
-        self._tuning_ended = ""
-        # When the last session ended, time.monotonic(); None before the first.
-        self._tuning_ended_at: float | None = None
-        # Set on the thread inside tuning_command: write() lets it through a
-        # tuning session and records what became of it.
-        self._tuning_writer = threading.local()
 
     @property
     def joint_names(self) -> list[str]:
@@ -391,8 +317,8 @@ class DamiaoConnection(ConnectionModule):
 
     @rpc
     def stop(self) -> None:
-        if self.config.tuning:
-            self._await_tuning_park()
+        # Before the reader stops: a calibration tool may still be parking the arm.
+        self._await_config_park()
         self._stop_reading.set()
         if (
             self._reader is not None
@@ -405,7 +331,7 @@ class DamiaoConnection(ConnectionModule):
                 super().stop()
             finally:
                 with self._hardware_lock:
-                    self._end_tuning("the connection stopped")
+                    self._end_config_session("the connection stopped")
                     arm, self._arm = self._arm, None
                     try:
                         if arm is not None:
@@ -424,45 +350,6 @@ class DamiaoConnection(ConnectionModule):
                     self._report(error)
                     raise RuntimeError(error)
 
-    def _await_tuning_park(self) -> None:
-        """Before stopping, let the calibration tool park the arm and end its session.
-
-        The modules of a run stop in parallel, so the calibration module may
-        still be backing the arm out home when this connection is told to
-        stop, and disabling the motors then would drop the arm where it is.
-        Waits while a tuning session lasts, and for ``TUNING_PARK_GRACE_S``
-        after the stop began or the last session ended for one about to
-        begin, at most ``TUNING_PARK_WAIT_S`` in all. Readings, the deadman
-        and the session lease run as usual meanwhile.
-        """
-        started = time.monotonic()
-        deadline = started + TUNING_PARK_WAIT_S
-        logged = False
-        while True:
-            with self._lock:
-                active = self._tuning_session is not None
-                ended_at = self._tuning_ended_at
-            if not self._connected or self._fault is not None or self._arm is None:
-                return
-            now = time.monotonic()
-            if not active:
-                since = max(started, ended_at if ended_at is not None else started)
-                if now - since >= TUNING_PARK_GRACE_S:
-                    return
-            elif not logged:
-                logger.warning(
-                    f"{self._label}: stopping; waiting up to {TUNING_PARK_WAIT_S:g} s for the "
-                    "calibration tool to park the arm and end its tuning session"
-                )
-                logged = True
-            if now >= deadline:
-                logger.error(
-                    f"{self._label}: the calibration tool did not end its tuning session within "
-                    f"{TUNING_PARK_WAIT_S:g} s; halting and disabling the arm where it is"
-                )
-                return
-            time.sleep(0.02)
-
     @rpc
     def status(self) -> DamiaoConnectionStatus:
         """A snapshot of the connection and the calibration each arm runs."""
@@ -476,218 +363,163 @@ class DamiaoConnection(ConnectionModule):
             },
         )
 
-    @rpc
-    @_tuning_rpc
-    def tuning_begin(self, lease_s: float = 2.0) -> TuningSession:
-        """Start the one tuning session: until it ends, ``position_command`` is ignored.
-
-        The gain, float and feed-forward setters and ``tuning_command`` need
-        a session; every ``tuning_*`` call renews its lease. It ends with
-        :meth:`tuning_end`, when ``lease_s`` (at most ``MAX_TUNING_LEASE_S``)
-        passes without a tuning call, when the connection halts (the command
-        deadman included: keep streaming ``tuning_command``), faults or stops,
-        and when any tuning call raises. Ending it holds floating joints where
-        they are, drops feed-forward torques and gain overrides (back to the
-        applied calibration, else the bus defaults) and logs one line. Raises
-        while another session is active, and so, like any tuning call that
-        raises, ends that session too. For calibration tools only.
-        """
-        lease = _real("lease_s", lease_s)
-        if not 0.0 < lease <= MAX_TUNING_LEASE_S:
-            raise ValueError(
-                f"lease_s must be above 0 and at most {MAX_TUNING_LEASE_S:g} s, got {lease_s}"
-            )
-        with self._hardware_lock:
-            self._tuning_arm()
-            if not self._connected:
-                raise RuntimeError("the Damiao connection is not running")
-            with self._lock:
-                if self._tuning_session is not None:
-                    raise RuntimeError(
-                        "a tuning session is already active; it ends with tuning_end or "
-                        "when its lease lapses"
-                    )
-                session = _TuningSession(uuid.uuid4().hex, lease, time.monotonic() + lease)
-                self._tuning_session = session
-        logger.info(
-            f"{self._label}: tuning session {session.session_id[:8]} started, lease {lease:g} s; "
-            "position_command is ignored until it ends"
+    def _config_keys(self) -> ConfigKeys:
+        """Each arm's joints, and what a session and a save change; "float" needs gravity."""
+        arms = self._arm_joints_by_id()
+        gravity = self.robot.gravity
+        return ConfigKeys(
+            source=self.config.source,
+            sessions=self.config.config_sessions,
+            arms=arms,
+            readable=["gains", "links", "torque_offset_nm"],
+            session=["gains", *(["float"] if gravity else []), "torque_offset_nm"],
+            persist=["gains", "links", "fit", "friction_nm", "checks", "notes"],
+            persist_paths={
+                arm_id: str(calibration_path(arm_id, CALIBRATION_ROOT)) for arm_id in arms
+            },
+            gravity_compensation=gravity,
         )
-        return TuningSession(session_id=session.session_id, lease_s=lease)
 
-    @rpc
-    @_tuning_rpc
-    def tuning_end(self) -> None:
-        """End the tuning session and undo every live change; without one, nothing happens."""
-        with self._hardware_lock:
-            self._end_tuning("tuning_end", expected=True)
-
-    @rpc
-    @_tuning_rpc
-    def tuning_arm_ids(self) -> list[str]:
-        """The calibration ids of this robot's arms, in bus order. For calibration tools only."""
-        self._renew(required=False)
-        return self.robot.arm_ids()
-
-    @rpc
-    @_tuning_rpc
-    def tuning_joint_names(self) -> list[str]:
-        """The arm joints whose gains can be tuned, in motor order. For calibration tools only."""
-        self._renew(required=False)
-        return self.robot.arm_joint_names
-
-    @rpc
-    @_tuning_rpc
-    def tuning_get_gains(self) -> dict[str, JointGainsState]:
-        """How each arm joint is driven now. For calibration tools only."""
-        with self._tuning_call(session=False) as arm:
-            return {joint: self._gains_state(arm, joint) for joint in self.robot.arm_joint_names}
-
-    @rpc
-    @_tuning_rpc
-    def tuning_set_gains(self, joint: str, kp: float, kd: float) -> JointGainsState:
-        """Hold ``joint`` with these gains for the session, clamped to kp 0..500 and kd 0..5.
-
-        kp in N m/rad, kd in N m s/rad; returns them as applied. Needs a
-        tuning session and changes the energized motor's gains at once; for
-        calibration tools only.
-        """
-        with self._tuning_call(session=True) as arm:
-            arm.set_gains(joint, _real("kp", kp), _real("kd", kd))
-            return self._gains_state(arm, joint)
-
-    @rpc
-    @_tuning_rpc
-    def tuning_reset_gains(self) -> None:
-        """Back to the calibration's gains, else the bus defaults. For calibration tools only."""
-        with self._tuning_call(session=False) as arm:
-            arm.reset_gains()
-
-    @rpc
-    @_tuning_rpc
-    def tuning_set_float(self, joint: str, on: bool, kd: float | None = None) -> JointGainsState:
-        """Let ``joint`` float with zero stiffness, or hold it again where it is.
-
-        Gravity stays compensated; a robot that does not compensate gravity
-        refuses with ``ValueError``. Needs a tuning session and changes the
-        energized motor's gains at once; for calibration tools only.
-        """
-        on = _flag("on", on)
-        damping = None if kd is None else _real("kd", kd)
-        with self._tuning_call(session=True) as arm:
-            arm.set_float(joint, on, damping)
-            return self._gains_state(arm, joint)
-
-    @rpc
-    @_tuning_rpc
-    def tuning_set_feedforward(self, joint: str, tau_nm: float) -> JointGainsState:
-        """Add ``tau_nm`` to ``joint``'s gravity torque, clamped to a fifth of its rated torque.
-
-        For friction-sized terms, not to hold a load. Returns the joint's
-        state with the torque as applied. Needs a tuning session and changes
-        the energized motor's torque at once; for calibration tools only.
-        """
-        with self._tuning_call(session=True) as arm:
-            arm.set_feedforward(joint, _real("tau_nm", tau_nm))
-            return self._gains_state(arm, joint)
-
-    @rpc
-    @_tuning_rpc
-    def tuning_reset_all(self) -> None:
-        """Undo every live change as ending the session does; the session goes on.
-
-        Floating joints are held where they are, feed-forward torques are
-        dropped and gains go back to the calibration, else the bus defaults.
-        For calibration tools only.
-        """
-        with self._tuning_call(session=False) as arm:
-            reset = arm.reset_tuning()
-        logger.info(f"{self._label}: tuning reset: {_undone(reset)}")
-
-    @rpc
-    @_tuning_rpc
-    def tuning_read(self) -> dict[str, JointSample]:
-        """The latest reading of every joint, as published. For calibration tools only."""
-        with self._tuning_call(session=False):
-            latest = self._latest
-        if latest is None:
-            raise RuntimeError("the Damiao robot has not been read yet")
-        ts, reading = latest
-        return {
-            name: JointSample(position=position, velocity=velocity, effort=effort, ts=ts)
-            for name, position, velocity, effort in zip(
-                self.joint_names, reading.position, reading.velocity, reading.effort, strict=True
+    def _config_state(self) -> dict[str, ArmConfigState]:
+        """How each arm is driven now: its gains, floating joints, offsets and file."""
+        arm = self._live_arm()
+        gains, floating, offsets = arm.get_gains(), arm.floating, arm.feedforward
+        with self._lock:
+            applied = dict(self._applied)
+        states: dict[str, ArmConfigState] = {}
+        for arm_id, joints in self._arm_joints_by_id().items():
+            item = applied.get(arm_id)
+            gravity = None if item is None else item.calibration.gravity
+            states[arm_id] = ArmConfigState(
+                arm_id=arm_id,
+                gains={
+                    joint: JointGains(kp=gains[joint][0], kd=gains[joint][1]) for joint in joints
+                },
+                floating={joint: floating[joint] for joint in joints if joint in floating},
+                torque_offset_nm={joint: offsets[joint] for joint in joints if offsets.get(joint)},
+                links={} if gravity is None else dict(gravity.links),
+                file=None if item is None else item.applied_file(),
             )
-        }
+        return states
 
-    @rpc
-    @_tuning_rpc
-    def tuning_command(self, targets: dict[str, float]) -> CommandResult:
-        """Send position targets by joint name, as a ``position_command`` would.
+    def _config_apply(
+        self, patch: ConfigPatch, scope: ConfigScope, force: bool, apply_now: bool
+    ) -> ConfigApplied:
+        """Change one arm live (session) or save its calibration file and apply it (persist).
 
-        Needs a tuning session. The targets are checked against the joint
-        limits and restart the deadman; stop sending and the arm holds, which
-        ends the session. A refused command raises ``ValueError``; one the
-        motors did not get returns ``ok`` False with the reason. Nothing
-        limits how far one command jumps, so step the targets at the rate the
-        arm may move. For calibration tools only.
+        Live, gains are clamped to the MIT frame's range; kp 0 floats the
+        joint with kd damping (``DamiaoArm.set_float``), refused without
+        gravity compensation; kp above 0 holds a floating joint again where it
+        is, then with those gains. A torque offset is clamped to a fifth of
+        the motor's rated torque. Links, fit, friction, checks and notes are
+        for a save only. See ``_save`` for a save.
         """
-        if not isinstance(targets, dict):
-            raise TypeError(f"targets must be a dict of joint name to position, got {targets!r}")
-        unknown = sorted(set(targets) - set(self.joint_names))
-        if unknown:
-            raise ValueError(f"not joints of this Damiao robot: {unknown}")
-        values = {
-            f"{self.config.source}/{name}/{Interface.POSITION.value}": _real(name, value)
-            for name, value in targets.items()
-        }
-        result = validate_command(values, self.limits)
-        if isinstance(result, Rejected):
-            raise ValueError(f"{result.reason}: {result.detail}")
-        with self._tuning_call(session=True):
-            if not self._connected:
-                raise RuntimeError("the Damiao connection is not running")
-        writer = self._tuning_writer
-        writer.active, writer.written, writer.error = True, False, None
-        try:
-            self.command(values)
-        finally:
-            writer.active = False
-        if writer.error is not None:
-            return CommandResult(ok=False, error=writer.error)
-        if not writer.written:
-            return CommandResult(ok=False, error="the Damiao connection is not running")
-        return CommandResult(ok=True, error=None)
-
-    @rpc
-    @_tuning_rpc
-    def tuning_apply_calibration(
-        self, path: str | None = None, force: bool = False
-    ) -> CalibrationApplied:
-        """Apply a calibration now; returns what each arm runs and the gravity torque steps.
-
-        ``None`` re-reads each arm's saved file, as "auto" does at start;
-        "off" returns every arm to its URDF masses and bus gains; any other
-        value is one file, applied to the arm it names while every other arm
-        keeps what it runs. A file that does not fit raises
-        ``ArmCalibrationError`` with nothing changed.
-
-        Apply near home. New masses change the gravity torques at once; when
-        any joint's, at the measured pose, would change by more than
-        ``MAX_GRAVITY_STEP_NM``, nothing is applied and ``ValueError`` is
-        raised, unless ``force``. For calibration tools only.
-        """
-        if path is not None and not isinstance(path, str):
-            raise TypeError(f"path must be a string or None, got {path!r}")
-        force = _flag("force", force)
-        source = "auto" if path is None else path
-        with self._tuning_call(session=False) as arm:
-            with self._lock:
-                running = dict(self._applied)
-            if source in ("auto", "off"):
-                files = self._read_calibrations(arm, source, strict=False)
+        arm = self._live_arm()
+        arms = self._arm_joints_by_id()
+        joints = arms.get(patch.arm_id)
+        if joints is None:
+            raise ValueError(
+                f"{patch.arm_id!r} is not an arm of this Damiao robot; its arms are {list(arms)}"
+            )
+        named = set(patch.gains or {}) | set(patch.torque_offset_nm or {})
+        strangers = sorted(named - set(joints))
+        if strangers:
+            raise ValueError(
+                f"not arm joints of {patch.arm_id}: {strangers}; its joints are {joints}"
+            )
+        if scope == "persist":
+            return self._save(arm, patch, joints, force=force, apply_now=apply_now)
+        unsupported: dict[str, str] = {}
+        file_only = patch.model_copy(update={"gains": None, "torque_offset_nm": None})
+        unsupported.update(dict.fromkeys(file_only.keys(), _FILE_ONLY))
+        gains: dict[str, JointGains] = {}
+        clamped: list[str] = []
+        for joint, asked in (patch.gains or {}).items():
+            keys = [f"gains.{joint}.kp", f"gains.{joint}.kd"]
+            if asked.kp == 0.0:
+                if not self.robot.gravity:
+                    unsupported.update(
+                        dict.fromkeys(
+                            keys,
+                            "this robot does not compensate gravity, so a joint at kp 0 would fall",
+                        )
+                    )
+                    continue
+                arm.set_float(joint, True, asked.kd)
+                gains[joint] = JointGains(kp=0.0, kd=arm.floating[joint])
             else:
-                files = self._read_calibrations(arm, source, strict=True, keep=running)
+                if joint in arm.floating:
+                    arm.set_float(joint, False)
+                kp, kd = arm.set_gains(joint, asked.kp, asked.kd)
+                gains[joint] = JointGains(kp=kp, kd=kd)
+            clamped += [
+                key
+                for key, want, got in zip(
+                    keys, (asked.kp, asked.kd), (gains[joint].kp, gains[joint].kd), strict=True
+                )
+                if want != got
+            ]
+        offsets: dict[str, float] = {}
+        for joint, tau in (patch.torque_offset_nm or {}).items():
+            offsets[joint] = arm.set_feedforward(joint, tau)
+            if offsets[joint] != tau:
+                clamped.append(f"torque_offset_nm.{joint}")
+        return ConfigApplied(
+            arm_id=patch.arm_id,
+            scope="session",
+            applied=ConfigPatch(
+                arm_id=patch.arm_id, gains=gains or None, torque_offset_nm=offsets or None
+            ),
+            clamped=clamped,
+            unsupported=list(unsupported),
+            why=unsupported,
+        )
+
+    def _save(
+        self,
+        arm: DamiaoArm,
+        patch: ConfigPatch,
+        joints: list[str],
+        *,
+        force: bool,
+        apply_now: bool,
+    ) -> ConfigApplied:
+        """Merge ``patch`` into the arm's calibration file, check it, write it and apply it.
+
+        The file is always ``calibration_path(arm_id, CALIBRATION_ROOT)``.
+        Torque offsets and kp 0 are live changes only and are left out. The
+        merged calibration is checked as a file read at start is; applying
+        it must not step any joint's gravity torque at the measured pose by
+        more than ``MAX_GRAVITY_STEP_NM`` unless ``force``, else nothing is
+        written. ``apply_now`` False only writes the file. A save without
+        gains or links changes nothing the arm runs, so it is not applied.
+        """
+        arm_id = patch.arm_id
+        unsupported: dict[str, str] = dict.fromkeys(
+            [key for key in patch.keys() if key.startswith("torque_offset_nm")],
+            "a torque offset is a live change only (scope 'session'); a calibration file "
+            "does not hold it",
+        )
+        floats = [joint for joint, gains in (patch.gains or {}).items() if gains.kp == 0.0]
+        unsupported.update(
+            dict.fromkeys(
+                [f"gains.{joint}.{gain}" for joint in floats for gain in ("kp", "kd")],
+                "kp 0 floats a joint, which only a session does; a calibration holds every joint",
+            )
+        )
+        kept = {joint: gains for joint, gains in (patch.gains or {}).items() if gains.kp != 0.0}
+        saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
+        path = calibration_path(arm_id, CALIBRATION_ROOT)
+        now = datetime.now(timezone.utc)
+        merged = merge_patch(self._stored(path, arm_id, now), saved, created=now)
+        sha256 = hashlib.sha256(calibration_text(merged).encode("utf-8")).hexdigest()
+        item = self._check_calibration(arm, path, merged, joints, sha256)
+        with self._lock:
+            running = dict(self._applied)
+        files = {**running, arm_id: item}
+        live = apply_now and (saved.gains is not None or saved.links is not None)
+        step: dict[str, float] = {}
+        if live:
             _, links = _merged(files)
             before, after = arm.gravity(), arm.gravity(links)
             step = {joint: after[joint] - before[joint] for joint in before}
@@ -697,114 +529,88 @@ class DamiaoConnection(ConnectionModule):
                 if abs(value) > MAX_GRAVITY_STEP_NM
             }
             if large and not force:
-                raise ValueError(
-                    f"applying {source} would change the gravity torque at this pose by more "
-                    f"than {MAX_GRAVITY_STEP_NM:g} N m: {large} (N m); apply calibrations near "
-                    "home, or pass force=True"
+                return ConfigApplied(
+                    arm_id=arm_id,
+                    scope="persist",
+                    applied=ConfigPatch(arm_id=arm_id),
+                    unsupported=list(unsupported),
+                    why=unsupported,
+                    applied_now=False,
+                    refused=(
+                        f"applying it would change the gravity torque at this pose by more than "
+                        f"{MAX_GRAVITY_STEP_NM:g} N m: {large} (N m), so nothing was written; "
+                        "save calibrations near home, or pass force=True"
+                    ),
+                    gravity_step_nm=step,
                 )
-            arms = self._apply_calibrations(arm, files, always=True)
-        return CalibrationApplied(arms=arms, gravity_step_nm=step)
+        target = save_calibration(path, merged)
+        clamped: list[str] = []
+        if live:
+            self._apply_calibrations(arm, files, always=True)
+            running_gains = arm.get_gains()
+            for joint, gains in (saved.gains or {}).items():
+                kp, kd = running_gains[joint]
+                clamped += [f"gains.{joint}.kp"] if kp != gains.kp else []
+                clamped += [f"gains.{joint}.kd"] if kd != gains.kd else []
+        else:
+            current = running.get(arm_id)
+            if (
+                current is not None
+                and current.path == item.path
+                and (current.gains, current.links) == (item.gains, item.links)
+            ):
+                # The arm runs what the file now holds; only its record is new.
+                with self._lock:
+                    self._applied[arm_id] = item
+        return ConfigApplied(
+            arm_id=arm_id,
+            scope="persist",
+            applied=saved,
+            clamped=clamped,
+            unsupported=list(unsupported),
+            why=unsupported,
+            path=str(target),
+            applied_now=live,
+            gravity_step_nm=step,
+        )
 
-    @rpc
-    @_tuning_rpc
-    def tuning_applied_calibration(self) -> dict[str, AppliedInertials | None]:
-        """What each arm runs, by arm id: its file, the file's sha256 and the link masses.
+    def _stored(self, path: Path, arm_id: str, now: datetime) -> ArmCalibration:
+        """The arm's saved calibration, or an empty one for this model if none fits."""
+        if path.exists():
+            try:
+                return load_calibration(
+                    path, expected_model_sha256=self._robot_model_sha256(), expected_arm_id=arm_id
+                )
+            except ArmCalibrationError as error:
+                logger.warning(
+                    f"{self._label}: saving {arm_id}'s calibration afresh; the saved one "
+                    f"goes to history/: {error}"
+                )
+        return ArmCalibration(
+            arm_id=arm_id,
+            robot_model=RobotModelRef(
+                name=model_name(self.robot.gravity_model), sha256=self._robot_model_sha256()
+            ),
+            created=now,
+        )
 
-        ``None`` for an arm on its URDF masses and bus gains. The masses are
-        those read when the file was applied; the file may have changed on
-        disk since. For calibration tools only.
-        """
-        self._renew(required=False)
-        with self._lock:
-            applied = dict(self._applied)
-        return {
-            arm_id: None if item is None else item.inertials() for arm_id, item in applied.items()
-        }
+    def _config_undo(self) -> str:
+        """Hold floating joints where they are and drop offsets and gain overrides."""
+        arm = self._arm
+        if arm is None:
+            return "nothing undone"
+        return _undone(arm.reset_tuning())
 
-    def _tuning_arm(self) -> DamiaoArm:
-        """The connected arm, for a tuning call made under the hardware lock."""
+    def _config_parkable(self) -> bool:
+        return self._connected and self._fault is None and self._arm is not None
+
+    def _live_arm(self) -> DamiaoArm:
+        """The connected arm, for a config hook called under the hardware lock."""
         if self._fault is not None:
             raise RuntimeError(self._fault)
         if self._arm is None:
             raise RuntimeError("Damiao robot is disconnected")
         return self._arm
-
-    @contextmanager
-    def _tuning_call(self, *, session: bool) -> Iterator[DamiaoArm]:
-        """The connected arm under the hardware lock, the session renewed (or ``required``)."""
-        with self._hardware_lock:
-            arm = self._tuning_arm()
-            self._renew(required=session)
-            yield arm
-
-    def _renew(self, *, required: bool) -> None:
-        """Renew the tuning session's lease; without a session raise if one is ``required``."""
-        with self._lock:
-            session = self._tuning_session
-            if session is not None:
-                session.deadline = time.monotonic() + session.lease_s
-                return
-            ended = self._tuning_ended
-        if required:
-            since = f" (the last one ended: {ended})" if ended else ""
-            raise RuntimeError(f"no tuning session is active{since}; call tuning_begin first")
-
-    def _end_tuning(self, reason: str, *, expected: bool = False, lapsed: bool = False) -> None:
-        """End the tuning session, if any (with ``lapsed``, only one past its lease).
-
-        Holds floating joints where they are, drops feed-forward torques and
-        gain overrides, and logs one line. Call with the hardware lock held.
-        """
-        with self._lock:
-            session = self._tuning_session
-            if session is None or (lapsed and time.monotonic() <= session.deadline):
-                return
-            if lapsed:
-                reason = f"{reason} of {session.lease_s:g} s"
-            self._tuning_session = None
-            self._tuning_ended = reason
-            self._tuning_ended_at = time.monotonic()
-        undone = "nothing undone"
-        arm = self._arm
-        if arm is not None:
-            try:
-                undone = _undone(arm.reset_tuning())
-            except Exception as error:
-                undone = f"undoing it failed: {type(error).__name__}: {error}"
-                self._report(f"tuning session end failed: {type(error).__name__}: {error}")
-        message = (
-            f"{self._label}: tuning session {session.session_id[:8]} ended ({reason}): "
-            f"{undone}; {session.ignored} position commands ignored"
-        )
-        if expected:
-            logger.info(message)
-        else:
-            logger.warning(message)
-
-    def _ignored_for_tuning(self) -> bool:
-        """Whether a position command is dropped for the tuning session; warns once per session."""
-        with self._lock:
-            session = self._tuning_session
-            if session is None:
-                return False
-            session.ignored += 1
-            first = session.ignored == 1
-        if first:
-            logger.warning(
-                f"{self._label}: ignoring position_command while a tuning session owns the arm"
-            )
-        return True
-
-    def _gains_state(self, arm: DamiaoArm, joint: str) -> JointGainsState:
-        kp, kd = arm.get_gains()[joint]
-        floating = arm.floating
-        return JointGainsState(
-            kp=kp,
-            kd=kd,
-            floating=joint in floating,
-            float_kd=floating.get(joint),
-            feedforward_nm=arm.feedforward.get(joint, 0.0),
-        )
 
     def _arm_joints_by_id(self) -> dict[str, list[str]]:
         ids = self.robot.arm_ids()
@@ -947,7 +753,7 @@ class DamiaoConnection(ConnectionModule):
 
     def _apply_calibrations(
         self, arm: DamiaoArm, files: dict[str, _ArmFile | None], *, always: bool
-    ) -> dict[str, AppliedCalibration | None]:
+    ) -> None:
         """Put the files' gains and masses in place, log one line per arm, and record them.
 
         Without ``always`` and without a file, the arm is left untouched.
@@ -967,11 +773,8 @@ class DamiaoConnection(ConnectionModule):
             )
         with self._lock:
             self._applied = dict(files)
-        return {arm_id: None if item is None else item.summary() for arm_id, item in files.items()}
 
     def _on_position(self, msg: JointState) -> None:
-        if self._ignored_for_tuning():
-            return
         try:
             values = joint_state_to_values(msg, (Interface.POSITION,))
         except ValueError as error:
@@ -985,37 +788,16 @@ class DamiaoConnection(ConnectionModule):
         arm = self._arm
         if arm is None:
             raise RuntimeError("Damiao robot is inactive")
-        writer = self._tuning_writer
-        tuning = getattr(writer, "active", False)
-        if tuning:
-            with self._lock:
-                ended = self._tuning_session is None
-            if ended:
-                writer.error = f"the tuning session ended ({self._tuning_ended})"
-                return
-        elif self._ignored_for_tuning():
-            # Got past _on_position just as a tuning session began.
-            return
         prefix = f"{self.config.source}/"
-        try:
-            arm.command(
-                {
-                    key.removeprefix(prefix).removesuffix("/position"): value
-                    for key, value in values.items()
-                }
-            )
-        except Exception as error:
-            if tuning:
-                writer.error = (
-                    f"write failed: {type(error).__name__}: {error}; the arm holds and the "
-                    "tuning session ended"
-                )
-            raise
-        if tuning:
-            writer.written = True
+        arm.command(
+            {
+                key.removeprefix(prefix).removesuffix("/position"): value
+                for key, value in values.items()
+            }
+        )
 
     def halt(self) -> None:
-        self._end_tuning("the connection halted")
+        # The config session already ended (ConnectionModule._call_halt).
         if self._fault is not None or self._arm is None:
             return
         self._arm.hold()
@@ -1025,9 +807,7 @@ class DamiaoConnection(ConnectionModule):
             arm = self._arm
             if arm is None:
                 raise RuntimeError("Damiao robot is disconnected")
-            reading = arm.read()
-            self._latest = (time.time(), reading)
-            return reading
+            return arm.read()
         except Exception as error:
             if self._fault is None:
                 self._feedback_failed(error)
@@ -1043,7 +823,7 @@ class DamiaoConnection(ConnectionModule):
             except Exception as disable_error:
                 self._report(f"{self._fault}; disable failed: {disable_error}")
         # Disabled first, so ending it sends nothing to the failed buses.
-        self._end_tuning(self._fault)
+        self._end_config_session(self._fault)
 
     def _read_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz
@@ -1053,7 +833,8 @@ class DamiaoConnection(ConnectionModule):
                 with self._hardware_lock:
                     if self._arm is None or not self._connected:
                         return
-                    self._end_tuning("no tuning call within its lease", lapsed=True)
+                    # Besides the lease timer, which needs the module's loop.
+                    self._end_config_session("no config call within its lease", lapsed=True)
                     reading = self._read_state()
                 if self._stop_reading.is_set():
                     return

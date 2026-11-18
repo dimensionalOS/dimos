@@ -160,6 +160,11 @@ def calibration_file(path: Path) -> Path:
     return path if path.suffix == ".json" else path / CALIBRATION_FILENAME
 
 
+def calibration_text(calibration: ArmCalibration) -> str:
+    """The exact text ``save_calibration`` writes, UTF-8, so its sha256 is the file's."""
+    return calibration.model_dump_json(indent=2) + "\n"
+
+
 def save_calibration(path: Path, calibration: ArmCalibration) -> Path:
     """Write ``calibration`` atomically, keeping the file it replaces in ``history/``.
 
@@ -173,9 +178,14 @@ def save_calibration(path: Path, calibration: ArmCalibration) -> Path:
         history = target.parent / HISTORY_DIR_NAME
         history.mkdir(exist_ok=True)
         shutil.copy2(target, _history_name(history, target))
-    text = calibration.model_dump_json(indent=2) + "\n"
+    text = calibration_text(calibration)
     handle = tempfile.NamedTemporaryFile(
-        "w", dir=target.parent, prefix=f".{target.name}.", suffix=".tmp", delete=False
+        "w",
+        encoding="utf-8",
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        delete=False,
     )
     try:
         with handle:

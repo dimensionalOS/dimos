@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The calibration blueprint of a Damiao arm: its connection, open for tuning, and the procedure.
+"""The calibration blueprint of a Damiao arm: its connection, open for config sessions, and the procedure.
 
 Each robot package defines its ``<robot>-calibrate`` blueprint with
 :func:`calibration_blueprint`. There is no control coordinator: the
-calibration module owns the arm through its tuning session, and a coordinator
+calibration module owns the arm through its config session, and a coordinator
 streaming position commands would only have them dropped. Recording is pinned
 to sqlite with the Python engine and to the streams the procedure reads back,
 so the markers and joint states land in ``recordings/<run-id>/memory.db``
@@ -53,7 +53,7 @@ CALIBRATION_RECORD_TOPICS = ",".join(
 def calibration_blueprint(
     connection: type[DamiaoConnection], robot: str, **defaults: Any
 ) -> Blueprint:
-    """``connection`` deployed with ``tuning=True`` and a calibration module for ``robot``.
+    """``connection`` deployed with ``config_sessions=True`` and a calibration module for ``robot``.
 
     Args:
         connection: The robot's connection class.
@@ -61,7 +61,7 @@ def calibration_blueprint(
         defaults: Calibration module settings, e.g. ``arm="left"``.
     """
     return autoconnect(
-        arm_connection(connection, tuning=True),
+        arm_connection(connection, config_sessions=True),
         CalibrationModule.blueprint(robot=robot, **defaults),
     ).global_config(
         record=CALIBRATION_RECORDING,
