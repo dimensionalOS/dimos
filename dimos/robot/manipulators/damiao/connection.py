@@ -90,7 +90,14 @@ from dimos.robot.manipulators.calibration.schema import (
     to_inertial_overrides,
 )
 from dimos.robot.manipulators.calibration.spec import model_name, model_sha256
-from dimos.robot.manipulators.damiao.arm import ArmReading, DamiaoArm, TuningReset
+from dimos.robot.manipulators.damiao.arm import (
+    MIT_KD_MAX,
+    MIT_KP_MAX,
+    ArmReading,
+    DamiaoArm,
+    TuningReset,
+    _mit_gains,
+)
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.utils.logging_config import setup_logger
 
@@ -462,8 +469,10 @@ class DamiaoConnection(ConnectionModule):
         """Merge ``patch`` into the arm's calibration file, check it, write it and apply it.
 
         The file is always ``calibration_path(arm_id, CALIBRATION_ROOT)``.
-        Torque offsets and kp 0 are live changes only and are left out. The
-        merged calibration is checked as a file read at start is; applying
+        Torque offsets and kp 0 are live changes only and are left out. Gains
+        are clamped to the MIT frame's range before they are merged, so the
+        file holds, and ``applied`` reports, what the arm runs. The merged
+        calibration is checked as a file read at start is; applying
         it must not step any joint's gravity torque at the measured pose by
         more than ``MAX_GRAVITY_STEP_NM`` unless ``force``, else nothing is
         written. ``apply_now`` False only writes the file. A save without
@@ -482,7 +491,15 @@ class DamiaoConnection(ConnectionModule):
                 "kp 0 floats a joint, which only a session does; a calibration holds every joint",
             )
         )
-        kept = {joint: gains for joint, gains in (patch.gains or {}).items() if gains.kp != 0.0}
+        kept: dict[str, JointGains] = {}
+        clamped: list[str] = []
+        for joint, asked in (patch.gains or {}).items():
+            if asked.kp == 0.0:
+                continue
+            (kp, kd), _ = _mit_gains(joint, asked.kp, asked.kd)
+            kept[joint] = JointGains(kp=kp, kd=kd)
+            clamped += [f"gains.{joint}.kp"] if kp != asked.kp else []
+            clamped += [f"gains.{joint}.kd"] if kd != asked.kd else []
         saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
         path = calibration_path(arm_id, CALIBRATION_ROOT)
         now = datetime.now(timezone.utc)
@@ -519,14 +536,8 @@ class DamiaoConnection(ConnectionModule):
                     gravity_step_nm=step,
                 )
         target = save_calibration(path, merged)
-        clamped: list[str] = []
         if live:
             self._apply_calibrations(arm, files, always=True)
-            running_gains = arm.get_gains()
-            for joint, gains in (saved.gains or {}).items():
-                kp, kd = running_gains[joint]
-                clamped += [f"gains.{joint}.kp"] if kp != gains.kp else []
-                clamped += [f"gains.{joint}.kd"] if kd != gains.kd else []
         else:
             current = running.get(arm_id)
             if (
@@ -673,9 +684,11 @@ class DamiaoConnection(ConnectionModule):
     ) -> _ArmFile:
         """The file's gains and masses, once they are safe for the arm that ``joints`` move.
 
-        Every gain must be for one of ``joints`` and every mass for a link
-        they move; the masses must give finite torques, and none above a
-        motor's rated torque at the measured pose or at home.
+        Every gain must be for one of ``joints``, inside the MIT frame's
+        range with kp above 0 (a file holds every joint; kp 0 would float
+        it), and every mass for a link they move; the masses must give
+        finite torques, and none above a motor's rated torque at the
+        measured pose or at home.
         """
         gains = {name: (item.kp, item.kd) for name, item in (calibration.gains or {}).items()}
         foreign = sorted(set(gains) - set(joints))
@@ -683,6 +696,16 @@ class DamiaoConnection(ConnectionModule):
             raise ArmCalibrationError(
                 f"The arm calibration at {path} gives gains to joints of no arm "
                 f"{calibration.arm_id!r} drives: {foreign}."
+            )
+        outside = {
+            joint: {"kp": kp, "kd": kd}
+            for joint, (kp, kd) in gains.items()
+            if not (0.0 < kp <= MIT_KP_MAX and 0.0 <= kd <= MIT_KD_MAX)
+        }
+        if outside:
+            raise ArmCalibrationError(
+                f"The arm calibration at {path} gives gains outside 0 < kp <= {MIT_KP_MAX:g} "
+                f"and 0 <= kd <= {MIT_KD_MAX:g}: {outside}."
             )
         links = to_inertial_overrides(calibration)
         moved = self._links_moved_by(joints)

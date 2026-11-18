@@ -297,6 +297,19 @@ def _write_text(path, text: str) -> None:
             "N m of gravity torque on joint1 at the measured pose, more than its motor's "
             "rated 28 N m",
         ),
+        (
+            # kp 0 would float joint1 for good, and a calibration tool would restore it.
+            lambda root: save_calibration(
+                root / "rig/left", _calibration(gains={"joint1": (0.0, 1.0)})
+            ),
+            "gains outside 0 < kp <= 500 and 0 <= kd <= 5: {'joint1': {'kp': 0.0, 'kd': 1.0}}",
+        ),
+        (
+            lambda root: save_calibration(
+                root / "rig/left", _calibration(gains={"joint2": (900.0, 9.0)})
+            ),
+            "gains outside 0 < kp <= 500 and 0 <= kd <= 5: {'joint2': {'kp': 900.0, 'kd': 9.0}}",
+        ),
     ],
     ids=[
         "other-model",
@@ -306,6 +319,8 @@ def _write_text(path, text: str) -> None:
         "unknown-link",
         "other-arms-link",
         "too-heavy",
+        "kp-zero",
+        "past-the-mit-range",
     ],
 )
 def test_a_file_that_does_not_fit_is_ignored_with_a_warning(
@@ -775,6 +790,24 @@ def test_a_session_leaves_out_what_only_a_file_holds(start, boundary, calibratio
     assert applied.unsupported == ["links.link2", "notes"]
     assert module._arm.inertial_overrides == {}
     assert not (calibration_root / "rig/left").exists()
+
+
+@pytest.mark.parametrize("apply_now", [True, False])
+def test_a_save_stores_and_reports_its_gains_as_clamped(
+    start, boundary, calibration_root, apply_now
+):
+    module = start(config_sessions=True)
+    patch = ConfigPatch(arm_id="rig/left", gains={"joint2": JointGains(kp=900.0, kd=9.0)})
+    saved = module.config_set(patch, scope="persist", apply_now=apply_now)
+    assert saved.applied.gains == {"joint2": JointGains(kp=500.0, kd=5.0)}
+    assert saved.clamped == ["gains.joint2.kp", "gains.joint2.kd"]
+    stored = load_calibration(calibration_root / "rig/left/calibration.json")
+    assert stored.gains == {"joint2": JointGains(kp=500.0, kd=5.0)}
+    if apply_now:
+        assert module._arm.get_gains()["joint2"] == (500.0, 5.0)
+    # The file it wrote loads at start like any other.
+    module.stop()
+    assert start().config_get()["rig/left"].gains["joint2"] == JointGains(kp=500.0, kd=5.0)
 
 
 def test_a_saved_file_that_does_not_fit_is_replaced_not_merged(
