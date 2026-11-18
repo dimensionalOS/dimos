@@ -133,6 +133,10 @@ def build_roboplan_model(
     groups = _validate_group_order(scene, groups)
     all_group = groups[frozenset(all_group.group_ids)]
     _apply_collision_exclusions(scene, srdf)
+    # Joints no group plans, such as a gripper's fingers, keep the scene's own
+    # positions, which start at zero. Zero can be past a joint's limits, and
+    # then no start is valid, so start them at the nearest limit instead.
+    scene.setJointPositions(scene.clampToValidConfiguration(scene.getCurrentJointPositions()))
     return RoboPlanModel(
         scene=scene,
         groups=groups,
