@@ -265,6 +265,13 @@ class FakeScene:
     def setJointPositions(self, q: np.ndarray) -> None:
         self.current_positions = np.asarray(q, dtype=np.float64)
 
+    def getCurrentJointPositions(self) -> np.ndarray:
+        return self.current_positions.copy()
+
+    def clampToValidConfiguration(self, q: np.ndarray) -> np.ndarray:
+        # Every joint of the fake's models starts inside its limits.
+        return np.asarray(q, dtype=np.float64)
+
     def getJointNames(self) -> list[str]:
         return list(self.native_joint_names)
 
