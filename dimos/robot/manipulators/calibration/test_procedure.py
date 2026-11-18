@@ -151,7 +151,7 @@ def make_rig(
             arm_fake,
             calibration_steps(),
             state=arm_fake,
-            settings=ProcedureSettings(**{**FAST, **settings}, calibration_root=root),
+            settings=ProcedureSettings(**{**FAST, **settings}),
             caps=caps,
             recording=recording,
             events=recording,
@@ -918,3 +918,20 @@ def test_a_recorder_that_is_not_writing_fails_the_check_before_any_motion(
     assert writing.run(["check"])["state"] == "done"
     assert writing.procedure.results()["check"]["recording"] == "writing"
     assert len(writing.recording.probes) == 1
+
+
+def test_a_save_inside_a_session_carries_its_id(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig()
+    patch = ConfigPatch(arm_id=left_spec.arm_id, notes="bench")
+    with rig.procedure.open_session():
+        with pytest.raises(RuntimeError, match="a config session is live"):
+            rig.fake.config_set(patch, scope="persist")
+    # That raised, which ended the session; a save from inside one names it.
+    with rig.procedure.open_session() as session:
+        saved = rig.procedure.persist(patch)
+        assert saved.session_id == session.session_id and saved.path is not None
+        session.keepalive()
+    assert load_for_spec(left_spec, Path(saved.path)).notes == "bench"
+    assert rig.fake.ended[-2].startswith("config_set raised RuntimeError: a config session is live")

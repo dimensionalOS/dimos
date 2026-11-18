@@ -49,6 +49,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -83,8 +84,11 @@ from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
 from dimos.robot.manipulators.calibration.procedure import Procedure, ProcedureStatus
 from dimos.robot.manipulators.calibration.recording import RecordingUnavailableError
 from dimos.robot.manipulators.calibration.schema import (
+    ArmCalibration,
     calibration_path,
     load_for_spec,
+    merge_patch,
+    save_calibration,
     to_inertial_overrides,
 )
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, urdf_limits
@@ -231,7 +235,8 @@ class FakeTuningArm:
         friction_nm: Coulomb friction, one value or by joint.
         gravity_compensation: Whether the connection compensates gravity.
         recording: Where joint states are recorded.
-        calibration_root: Where "auto" calibration files are looked up.
+        calibration_root: Where it saves the arm's calibration file, as a
+            connection's ``persist`` does: ``calibration_path(arm_id, root)``.
         applied: A calibration file applied at start, as a connection's "auto" would.
         start: Initial joint positions; home when ``None``.
         realtime: Simulated time follows the wall clock: each call first
@@ -539,9 +544,12 @@ class FakeTuningArm:
                 self._sessions += 1
                 session = _Session(f"fake-{self._sessions}", float(lease_s), self.now)
                 self._session = session
-            if scope == "persist" or session is None:
-                raise NotImplementedError("the fake does not save through config_set yet")
-            applied = self._apply_live(patch)
+            if scope == "persist":
+                applied = self._save(patch, force, apply_now)
+            else:
+                applied = self._apply_live(patch)
+            if session is None:
+                return applied
             return applied.model_copy(
                 update={"session_id": session.session_id, "lease_s": session.lease_s}
             )
@@ -630,50 +638,101 @@ class FakeTuningArm:
         result: CommandResult = self._call("config_command", command)
         return result
 
-    def tuning_apply_calibration(
-        self, path: str | None = None, force: bool = False
-    ) -> dict[str, Any]:
-        """Temporary, until the save steps save through ``config_set``: apply one file."""
-        result: dict[str, Any] = self._call(
-            "tuning_apply_calibration", lambda: self._apply_checked(path, force)
+    def _save(self, patch: ConfigPatch, force: bool, apply_now: bool) -> ConfigApplied:
+        """A save, as a connection's: merged into the arm's file, guarded, written, applied.
+
+        Torque offsets and kp 0 are live changes only and are left out. When
+        applying it would step a joint's gravity torque at this pose by more
+        than ``MAX_GRAVITY_STEP_NM`` and not ``force``, nothing is written. A
+        save without gains or links changes nothing the arm runs, so it is not
+        applied; neither is one with ``apply_now`` False.
+        """
+        arm_id = self.spec.arm_id
+        why = dict.fromkeys(
+            [key for key in patch.keys() if key.startswith("torque_offset_nm")],
+            "a torque offset is a live change only",
         )
-        return result
-
-    def _apply_checked(self, path: str | None, force: bool) -> dict[str, Any]:
-        file = None if path is None else Path(path)
-        before = np.asarray(pin.computeGeneralizedGravity(self._comp, self._comp_data, self.q))
-        comp = self._model(file)
-        after = np.asarray(pin.computeGeneralizedGravity(comp, comp.createData(), self.q))
-        step = {name: float(after[i] - before[i]) for i, name in enumerate(self._names)}
-        large = {
-            joint: round(value, 2)
-            for joint, value in step.items()
-            if abs(value) > MAX_GRAVITY_STEP_NM
-        }
-        if large and not force:
-            raise ValueError(
-                f"applying {path} would change the gravity torque at this pose by more than "
-                f"{MAX_GRAVITY_STEP_NM:g} N m: {large} (N m); apply calibrations near home, or "
-                "pass force=True"
+        floats = [joint for joint, gains in (patch.gains or {}).items() if gains.kp == 0.0]
+        why.update(
+            dict.fromkeys(
+                [f"gains.{joint}.{gain}" for joint in floats for gain in ("kp", "kd")],
+                "kp 0 floats a joint, which only a session does",
             )
-        self._apply(file)
-        return {"gravity_step_nm": step}
+        )
+        kept = {joint: gains for joint, gains in (patch.gains or {}).items() if gains.kp != 0.0}
+        saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
+        path = calibration_path(arm_id, self._root)
+        now = datetime.now(timezone.utc)
+        stored = (
+            load_for_spec(self.spec, path)
+            if path.exists()
+            else ArmCalibration.for_spec(self.spec, created=now)
+        )
+        merged = merge_patch(stored, saved, created=now)
+        live = apply_now and (saved.gains is not None or saved.links is not None)
+        step: dict[str, float] = {}
+        if live:
+            comp = self._model(merged)
+            before = pin.computeGeneralizedGravity(self._comp, self._comp_data, self.q)
+            after = pin.computeGeneralizedGravity(comp, comp.createData(), self.q)
+            step = {name: float(after[i] - before[i]) for i, name in enumerate(self._names)}
+            large = {
+                joint: round(value, 2)
+                for joint, value in step.items()
+                if abs(value) > MAX_GRAVITY_STEP_NM
+            }
+            if large and not force:
+                return ConfigApplied(
+                    arm_id=arm_id,
+                    scope="persist",
+                    applied=ConfigPatch(arm_id=arm_id),
+                    unsupported=list(why),
+                    why=why,
+                    applied_now=False,
+                    refused=(
+                        f"applying it would change the gravity torque at this pose by more "
+                        f"than {MAX_GRAVITY_STEP_NM:g} N m: {large} (N m), so nothing was "
+                        "written; save calibrations near home, or pass force=True"
+                    ),
+                    gravity_step_nm=step,
+                )
+        target = save_calibration(path, merged)
+        running = self._file is not None and Path(self._file.path) == target
+        if live:
+            # As the connection's apply: live gain overrides go.
+            self._overrides.clear()
+            self._apply(target)
+        elif running and self._links == (merged.gravity.links if merged.gravity else {}):
+            same_gains = {name: (g.kp, g.kd) for name, g in (merged.gains or {}).items()}
+            if same_gains == self._calibrated:
+                # The arm runs what the file now holds; only its record is new.
+                self._apply(target)
+        return ConfigApplied(
+            arm_id=arm_id,
+            scope="persist",
+            applied=saved,
+            unsupported=list(why),
+            why=why,
+            path=str(target),
+            applied_now=live,
+            gravity_step_nm=step,
+        )
 
-    def _model(self, file: Path | None) -> pin.Model:
+    def _model(self, calibration: ArmCalibration | None) -> pin.Model:
         model = self.arm.model.copy()
-        if file is not None:
-            apply_inertial_overrides(model, to_inertial_overrides(load_for_spec(self.spec, file)))
+        if calibration is not None:
+            apply_inertial_overrides(model, to_inertial_overrides(calibration))
         return model
 
     def _apply(self, file: Path | None) -> None:
-        self._comp = self._model(file)
+        calibration = None if file is None else load_for_spec(self.spec, file)
+        self._comp = self._model(calibration)
         self._comp_data = self._comp.createData()
-        if file is None:
+        if file is None or calibration is None:
             self._calibrated = {}
             self._file = None
             self._links = {}
             return
-        calibration = load_for_spec(self.spec, file)
         self._calibrated = {
             name: (gains.kp, gains.kd) for name, gains in (calibration.gains or {}).items()
         }

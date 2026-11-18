@@ -50,7 +50,6 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 import math
-from pathlib import Path
 import threading
 import time
 from typing import Any, Literal, Protocol, TypedDict
@@ -60,7 +59,9 @@ from dimos.control.connection.arm_config import (
     DEFAULT_CONFIG_LEASE_S,
     MAX_CONFIG_LEASE_S,
     ArmConfigState,
+    ConfigApplied,
     ConfigKeys,
+    ConfigPatch,
 )
 from dimos.robot.manipulators.calibration.arm_session import (
     AbortRequestedError,
@@ -87,7 +88,6 @@ from dimos.robot.manipulators.calibration.motion import (
     speed_rad_s,
 )
 from dimos.robot.manipulators.calibration.recording import RecordingSource
-from dimos.robot.manipulators.calibration.schema import ARMS_STATE_DIR
 from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -162,7 +162,6 @@ class ProcedureSettings:
         park_budget_s: How long parking may take, at most ``MAX_PARK_BUDGET_S``.
         park_speed_deg_s: Peak joint speed of a park, at most ``MAX_PARK_SPEED_DEG_S``.
         prompt_timeout_s: A prompt unanswered this long aborts the run and parks.
-        calibration_root: Where calibration files are saved, by arm id.
     """
 
     poses: int = DEFAULT_POSE_COUNT
@@ -185,7 +184,6 @@ class ProcedureSettings:
     park_budget_s: float = MAX_PARK_BUDGET_S
     park_speed_deg_s: float = MAX_PARK_SPEED_DEG_S
     prompt_timeout_s: float = DEFAULT_PROMPT_TIMEOUT_S
-    calibration_root: Path = ARMS_STATE_DIR
 
     def __post_init__(self) -> None:
         speed_rad_s(self.speed_deg_s)
@@ -422,6 +420,12 @@ class StepContext:
         """What the connection can read and change; see ``Procedure.keys``."""
         return self._procedure.keys()
 
+    def persist(
+        self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+    ) -> ConfigApplied:
+        """Save ``patch`` to the arm's calibration file; see ``Procedure.persist``."""
+        return self._procedure.persist(patch, force=force, apply_now=apply_now)
+
     @property
     def clock(self) -> Clock:
         return self._procedure.clock
@@ -588,6 +592,25 @@ class Procedure:
             with self._lock:
                 self._keys = keys
         return keys
+
+    def persist(
+        self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+    ) -> ConfigApplied:
+        """Save ``patch`` to the arm's calibration file through the connection (scope "persist").
+
+        The connection merges it into the file and applies it; see
+        ``ConnectionModule.config_set``. Inside a config session the call
+        carries its id, as the connection requires.
+        """
+        with self._lock:
+            session = self._session
+        return self.connection.config_set(
+            patch,
+            scope="persist",
+            force=force,
+            apply_now=apply_now,
+            session_id=None if session is None else session.session_id,
+        )
 
     def plan(self) -> list[PlannedStep]:
         """Every step, its instructions, and whether it can run on this arm."""

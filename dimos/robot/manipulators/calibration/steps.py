@@ -47,9 +47,12 @@
 
 A step that needs a recording reads it from the run's recording
 (``recording.RecordingSource``), cut to the time it ran. Calibrations are saved
-with ``schema.save_calibration`` (the replaced file goes to ``history/``) and
-applied with ``tuning_apply_calibration`` at home; a gravity change too large
-to apply there is forced only after a second confirmation.
+through the connection (``config_set`` with scope "persist"), with the arm at
+home: it merges them into the arm's file (``config_keys().persist_paths``; the
+replaced file goes to ``history/``) and applies it. When applying it would
+change a joint's gravity torque too much there, the connection writes nothing;
+the step then forces it only after a second confirmation, and otherwise saves
+it without applying it.
 """
 
 from __future__ import annotations
@@ -68,7 +71,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pinocchio as pin
 
-from dimos.control.connection.arm_config import ArmConfigState
+from dimos.control.connection.arm_config import ArmConfigState, ConfigApplied, ConfigPatch
 from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.robot.manipulators.calibration.arm_session import (
     HOME_TOLERANCE_DEG,
@@ -93,7 +96,6 @@ from dimos.robot.manipulators.calibration.gravity_fit import (
     extract_measurements,
     fit_gravity,
     format_report,
-    merge_with_stored,
     plot_resting_torque,
     save_refusals,
     write_measurements_csv,
@@ -122,9 +124,7 @@ from dimos.robot.manipulators.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
     JointGains,
-    calibration_path,
     load_for_spec,
-    save_calibration,
     to_inertial_overrides,
 )
 from dimos.robot.manipulators.calibration.spec import (
@@ -202,35 +202,78 @@ def _ensure_home(ctx: StepContext, why: str) -> None:
         session.move_to(ctx.arm.home)
 
 
-def _apply(ctx: StepContext, path: Path) -> dict[str, Any]:
-    """Apply ``path`` at home; a gravity change too large is forced only on a second yes."""
+def _persist(
+    ctx: StepContext, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+) -> ConfigApplied:
+    """Save ``patch`` through the connection; raises ``StepFailedError`` when it cannot.
+
+    A key the connection cannot save fails the step, rather than being left
+    out quietly.
+    """
+    try:
+        saved = ctx.persist(patch, force=force, apply_now=apply_now)
+    except Exception as error:
+        raise StepFailedError(f"the connection did not save the calibration: {plain_error(error)}")
+    if saved.unsupported:
+        reasons = "; ".join(
+            f"{key}: {saved.why.get(key, 'not supported')}" for key in saved.unsupported
+        )
+        where = f"it saved {saved.path} without them" if saved.path else "nothing was saved"
+        raise StepFailedError(f"the connection cannot save {reasons}; {where}")
+    return saved
+
+
+def _save(ctx: StepContext, patch: ConfigPatch) -> dict[str, Any]:
+    """Save ``patch`` at home and apply it; a gravity step too large is forced on a second yes.
+
+    The connection writes nothing when applying the saved file would step a
+    joint's gravity torque too far at this pose. Then, on a yes, the save is
+    forced; skipped, the file is saved without being applied.
+    """
     ctx.check_abort()
     _ensure_home(ctx, "apply the calibration")
-    forced = False
-    # Until the steps save through config_set: only the test fake still applies a file.
-    apply_file: Any = ctx.connection.tuning_apply_calibration  # type: ignore[attr-defined]
-    try:
-        applied = apply_file(str(path))
-    except ValueError as refused:
-        # The connection refuses a gravity change above its limit at this pose.
+    saved = _persist(ctx, patch)
+    refused, forced = saved.refused, False
+    step = saved.gravity_step_nm
+    if refused is not None:
         try:
             ctx.confirm(
-                f"The connection refused: {plain_error(refused)}. Apply anyway? Joints may move "
-                "a little when their gravity torque changes; support the arm. Enter to force it"
+                f"The connection refused: {refused}. Apply anyway? Joints may move a little when "
+                "their gravity torque changes; support the arm. Enter to force it"
             )
         except SkipRequestedError:
-            return {"applied": False, "forced": False, "refused": plain_error(refused)}
-        applied = apply_file(str(path), True)
-        forced = True
-    except Exception as error:
-        raise StepFailedError(f"the connection did not apply {path}: {plain_error(error)}")
-    steps = {joint: round(float(v), 3) for joint, v in applied["gravity_step_nm"].items()}
-    return {"applied": True, "forced": forced, "gravity_step_nm": steps}
+            saved = _persist(ctx, patch, apply_now=False)
+        else:
+            saved = _persist(ctx, patch, force=True)
+            forced = True
+            step = saved.gravity_step_nm
+    data: dict[str, Any] = {
+        "saved": saved.path,
+        "applied": saved.applied_now,
+        "forced": forced,
+        "gravity_step_nm": {joint: round(float(v), 3) for joint, v in step.items()},
+    }
+    if refused is not None and not forced:
+        data["refused"] = refused
+    return data
+
+
+def _persist_path(ctx: StepContext) -> Path:
+    """Where the connection saves the arm's calibration (``config_keys().persist_paths``)."""
+    path = ctx.keys().persist_paths.get(ctx.spec.arm_id)
+    if path is None:
+        raise StepFailedError(
+            f"the connection does not say where it saves {ctx.spec.arm_id}'s calibration"
+        )
+    return Path(path)
 
 
 def _stored(ctx: StepContext) -> tuple[Path, ArmCalibration | None]:
-    """The arm's calibration file and what it holds, ``None`` when there is none."""
-    path = calibration_path(ctx.spec.arm_id, ctx.settings.calibration_root)
+    """The arm's calibration file and what it holds, ``None`` when there is none.
+
+    The file is read where the connection saves it, on this host.
+    """
+    path = _persist_path(ctx)
     if not path.exists():
         return path, None
     try:
@@ -240,13 +283,14 @@ def _stored(ctx: StepContext) -> tuple[Path, ArmCalibration | None]:
 
 
 def _record_check(ctx: StepContext, name: str, value: dict[str, Any]) -> str | None:
-    """Store ``value`` as ``checks[name]`` of the arm's calibration file, if it has one."""
-    path, stored = _stored(ctx)
+    """Save ``value`` as ``checks[name]`` in the arm's calibration file, if it has one.
+
+    A check changes nothing the arm runs, so the connection does not apply it.
+    """
+    _, stored = _stored(ctx)
     if stored is None:
         return None
-    checks = {**(stored.checks or {}), name: value}
-    save_calibration(path, stored.model_copy(update={"created": _now(), "checks": checks}))
-    return str(path)
+    return _persist(ctx, ConfigPatch(arm_id=ctx.spec.arm_id, checks={name: value})).path
 
 
 def _applied_now(ctx: StepContext) -> ArmConfigState | None:
@@ -754,15 +798,22 @@ class GravityFitStep(Step):
             )
         except SkipRequestedError:
             return StepResult("not saved, as asked", data, skipped=True)
-        path = calibration_path(ctx.spec.arm_id, ctx.settings.calibration_root)
         calibration = calibration_from_fit(
             result, ctx.spec, recording_dir=recording.directory, created=_now()
         )
-        save_calibration(path, merge_with_stored(path, calibration, ctx.spec))
-        data["saved"] = str(path)
-        data.update(_apply(ctx, path))
+        gravity = calibration.gravity
+        assert gravity is not None
+        # The connection merges it into the stored file: the gains and notes stay,
+        # the checks only when the masses did not change.
+        patch = ConfigPatch(
+            arm_id=ctx.spec.arm_id,
+            links=gravity.links,
+            fit=gravity.fit,
+            friction_nm=calibration.friction_nm,
+        )
+        data.update(_save(ctx, patch))
         outcome = "applied" if data["applied"] else "not applied"
-        return StepResult(f"saved {path} and {outcome}; held-out RMS {table}", data)
+        return StepResult(f"saved {data['saved']} and {outcome}; held-out RMS {table}", data)
 
     @staticmethod
     def _write_report(
@@ -1023,16 +1074,13 @@ class PickGainsStep(Step):
             ctx.confirm(f"Proposed gains: {listed}. Save and apply? Enter to save")
         except SkipRequestedError:
             return StepResult("not saved, as asked", data, skipped=True)
-        path, stored = _stored(ctx)
-        base = stored or ArmCalibration.for_spec(ctx.spec)
-        gains = {
-            **(base.gains or {}),
-            **{joint: JointGains(kp=kp, kd=kd) for joint, (kp, kd) in chosen.items()},
-        }
-        save_calibration(path, base.model_copy(update={"created": _now(), "gains": gains}))
-        data["saved"] = str(path)
-        data.update(_apply(ctx, path))
-        return StepResult(f"saved gains for {sorted(chosen)} to {path}", data)
+        gains = {joint: JointGains(kp=kp, kd=kd) for joint, (kp, kd) in chosen.items()}
+        # Merged by joint into the stored file and applied from it. Applying a file
+        # (DamiaoArm.apply_calibration) drops every live gain override, so from here
+        # on the arm holds the saved gains, in any session too: confirm_tracking
+        # runs on the file's gains, as it should.
+        data.update(_save(ctx, ConfigPatch(arm_id=ctx.spec.arm_id, gains=gains)))
+        return StepResult(f"saved gains for {sorted(chosen)} to {data['saved']}", data)
 
 
 class ConfirmTrackingStep(Step):
