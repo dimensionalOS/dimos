@@ -20,7 +20,9 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 7. **RPCs are for buttons.** `POST /active/modules/{id}/rpcs/{name}` calls the module directly, not through MCP, so a
    skill's capability holds don't apply; call one only from a user's action. Agents use the python API.
 8. **The catalog is a cache.** It changes only when a `POST /catalog/scan` job finishes (`?timeout=` per blueprint);
-   follow the job at `GET /jobs/{job}`.
+   follow the job at `GET /jobs/{job}`. What is read from the code on demand (a blueprint's or module's detail, source
+   and `config`, and `extras`) is reused for ten minutes, and read again once a scan is asked for or the checkout
+   changes (an edit, a commit, an install).
 
 ## Routes
 

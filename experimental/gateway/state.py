@@ -50,6 +50,8 @@ class State:
     live: Live = field(default_factory=Live)
     process_stats: ProcessStats = field(default_factory=ProcessStats)
     cache: introspect.Cache = field(default_factory=introspect.Cache)
+    # the checkout's fingerprint the cache was filled under
+    cache_fingerprint: str | None = None
     listed: list[dict[str, Any]] | None = None
     exit: Callable[[], None] = lambda: os._exit(0)
     started_at: int = field(default_factory=lambda: int(time.time()))
@@ -64,6 +66,10 @@ class State:
         self, args: list[str], stdin: Any = None, source: RunSource | None = None
     ) -> Any:
         """Introspect the gateway's checkout, or the one a run's dimos came from."""
+        # an edit, a commit or an install changes what the code answers: what was introspected before it is forgotten
+        fingerprint = await asyncio.to_thread(self.scanner.current_fingerprint)
+        if fingerprint != self.cache_fingerprint:
+            self.cache, self.cache_fingerprint = introspect.Cache(), fingerprint
         key = self.introspect_key(args, stdin, source)
         dimos_dir, python = (source.checkout, source.python) if source else (self.dimos_dir, None)
         try:
