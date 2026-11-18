@@ -61,6 +61,19 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      # The test's `dimos graph unitree-go2` imports unitree_webrtc_connect, which imports
+      # sounddevice eagerly. Ubuntu 26.04's PortAudio has the PulseAudio host API and
+      # Pa_Initialize fails outright when no server answers, as in this container (a
+      # desktop has one). A daemon with the null sink is enough. HOME is a bind mount
+      # owned by the runner's user, which PulseAudio refuses, so its directories go in /tmp.
+      - name: Start a PulseAudio server (Ubuntu 26.04)
+        if: matrix.version == '26.04'
+        run: |
+          apt-get install -y --no-install-recommends pulseaudio
+          echo "PULSE_RUNTIME_PATH=/tmp/pulse" >> "$GITHUB_ENV"
+          export PULSE_RUNTIME_PATH=/tmp/pulse PULSE_STATE_PATH=/tmp/pulse-state
+          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/pulseaudio.log ||
+            { cat /tmp/pulseaudio.log; exit 1; }
       - name: Install and verify
         run: |
           # checkout's safe.directory setting uses a temporary HOME. The
