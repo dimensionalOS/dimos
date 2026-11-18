@@ -18,6 +18,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import tarfile
+import tempfile
 import time
 from typing import Any
 
@@ -166,6 +168,32 @@ def test_roundtrip_with_resume_and_manifest(env: tuple[CloudData, FakeTransport,
     assert (
         hashlib.sha256(out.read_bytes()).hexdigest() == hashlib.sha256(db.read_bytes()).hexdigest()
     )
+
+
+def test_directory_upload(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cloud, transport, db = env
+    tree = db.parent / "dataset"
+    scratch = tree / "tmp"
+    scratch.mkdir(parents=True)
+    (tree / ".hidden").write_bytes(b"data")
+    (tree / "link").symlink_to(db)
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+
+    result = cloud.upload(tree, robot_id="go2", kind="dataset", chunk_mb=1)
+    uploaded = transport.uploads[result["upload_id"]]
+    assert uploaded["robot_id"] == "go2"
+    assert uploaded["kind"] == "dataset"
+    assert uploaded["part_size"] == 2**20
+    assert not list(scratch.iterdir())
+    pulled = cloud.pull(result["upload_id"])
+    assert pulled.name.endswith("dataset.tar")
+    with tarfile.open(pulled, "r:") as tar:
+        assert tar.getnames() == ["dataset", "dataset/.hidden", "dataset/link", "dataset/tmp"]
+        assert tar.getmember("dataset/link").issym()
+        hidden = tar.extractfile("dataset/.hidden")
+        assert hidden is not None and hidden.read() == b"data"
 
 
 def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

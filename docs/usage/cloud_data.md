@@ -1,6 +1,6 @@
 # Cloud data
 
-`dimos data` uploads recordings, files, or directories to Dimensional's hosted storage and pulls them back byte-identical on any machine. Authenticate once with `dimos login` (device code; the key lands in the system keyring, or `~/.config/dimos/credentials`).
+`dimos data` uploads recordings, or any file, to Dimensional's hosted storage and pulls them back byte-identical on any machine. Authenticate once with `dimos login` (device code; the key lands in the system keyring, or `~/.config/dimos/credentials`).
 
 ```bash
 dimos login
@@ -19,6 +19,8 @@ dimos data quota
 
 Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_streams` table) or `.mcap` is a `recording`, anything else a `blob`. Override it with `--kind`. `--robot` tags a robot id, `--chunk` sets the multipart part size in MB.
 
+`dimos data upload PATH` also accepts a directory and uploads it as a `.tar` archive, including hidden files. `dimos data pull` downloads the `.tar` without unpacking it; extract it yourself with `tar -xf ARCHIVE.tar`.
+
 - Files are compressed before transfer (lz4 by default, see below), sha256-verified server-side, and deduplicated by content: re-uploading the same bytes reports `already uploaded`.
 - Interrupted uploads resume: the server's part listing is the only resume state, so a killed upload re-sends only the missing parts.
 - Recordings carry a manifest: the stream list from `_streams` plus the blueprint name parsed from the `<stamp>-<blueprint>` run directory. `dimos data ls` shows both.
@@ -26,25 +28,9 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 - Compression stages next to the source file (not `/tmp`), with a free-space check first; point `staging_dir` at a bigger partition if needed.
 - Each successful upload prints a `console:` link to it (production and staging APIs only).
 
-### Directories
-
-```bash
-dimos data upload ./my-folder
-dimos data pull <upload-id> --dest restored-folder
-```
-
-Review the folder before uploading: the whole tree goes up, including hidden
-files and empty folders. Stop anything writing to it first. Symlinks and special
-entries fail the upload. Permissions, ownership, and timestamps are not preserved.
-
-Directory uploads use an uncompressed tar blob (up to 100 GiB and 20,000 entries,
-subject to cloud quotas). Pull verifies the checksum and restores to a **new**
-directory on Linux or macOS. Without `--dest`, it uses the usual download name
-without `.tar`. Uploading a `.tar` file yourself still restores it as a file.
-
 ## Pulls
 
-Pulls land in `downloads/` under the checkout (`~/.local/state/dimos/downloads/` for an installed package), named `<upload-time>-<id-prefix>-<filename>` to distinguish different uploads. `--dest` takes an exact target path. Pulls verify the wire SHA-256 before decoding or extracting.
+Pulls land in `downloads/` under the checkout (`~/.local/state/dimos/downloads/` for an installed package), named `<upload-time>-<id-prefix>-<filename>` so nothing overwrites. `--dest` takes an exact target path. The wire bytes are sha256-verified, decoded, and moved into place atomically; a failed pull never clobbers an existing destination file.
 
 View a pulled recording with [`dimos mem rerun`](/docs/usage/cli.md):
 

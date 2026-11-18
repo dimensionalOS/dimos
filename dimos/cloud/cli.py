@@ -96,7 +96,7 @@ def upload(
     path: Path | None, robot: str | None, kind: str | None, since_s: float | None, chunk: int | None
 ) -> None:
     explicit = path is not None
-    path = None if path == Path("latest") and not path.is_dir() else path
+    path = None if str(path) == "latest" else path
     cloud = CloudData()
     console_url, matched = re.subn(
         r"\Ahttps://api\.(staging\.)?dimensional\.org/?\Z",

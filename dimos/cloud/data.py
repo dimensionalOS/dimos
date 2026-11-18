@@ -22,17 +22,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import contextlib
-import ctypes
 from datetime import datetime
 import functools
 import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sqlite3
-import stat
 import sys
 import tarfile
 import tempfile
@@ -48,11 +45,6 @@ from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
-DIRECTORY_MANIFEST = {"format": "dimos.directory.tar", "version": 1}
-MIN_TAR = 2**20  # Cloud upload minimum (zero padding is valid tar).
-MAX_TAR = 100 * 2**30
-MAX_TAR_MEMBERS = 20_000
-MAX_TAR_DEPTH = 128  # Bound the open directory descriptors and scratch-tree cleanup.
 
 
 class DataApi:
@@ -119,11 +111,10 @@ class MultipartBackend:
                     raise RuntimeError(f"{what} failed after {attempt} attempts: {e}") from e
                 time.sleep(attempt)
 
-    def _staging(self, beside: Path, *, reap: bool = True) -> tempfile.TemporaryDirectory[str]:
+    def _staging(self, beside: Path) -> tempfile.TemporaryDirectory[str]:
         parent = self.staging_dir or beside.parent
         parent.mkdir(parents=True, exist_ok=True)
-        if reap:
-            _reap_stale(parent)
+        _reap_stale(parent)
         return tempfile.TemporaryDirectory(prefix=".dimos-staging-", dir=parent)
 
     def upload(
@@ -136,24 +127,14 @@ class MultipartBackend:
         progress: Progress | None,
     ) -> dict[str, Any]:
         tick = progress or (lambda phase, done, total: None)
-        directory = path.is_dir()
-        recording = not directory and kind_of(path) == "recording"
-        manifest = DIRECTORY_MANIFEST if directory else _manifest(path)
-        if not directory and (bp := _blueprint(path)):
+        manifest = _manifest(path)
+        if bp := _blueprint(path):
             manifest = dict(manifest or {}, blueprint=bp)
-        with self._staging(path.absolute() if directory else path, reap=not directory) as tmp:
+        with self._staging(path) as tmp:
             # A file already carrying the codec's suffix uploads as-is; it must not be
             # stamped, or pull would decompress bytes we never compressed.
-            compress = (
-                not directory
-                and bool(self.codec_id)
-                and path.suffix != codecs.suffix(self.codec_id)
-            )
-            if directory:
-                tick("pack", 0, 0)
-                artifact = Path(tmp) / "directory.tar"
-                _pack_directory(path, artifact)
-            elif compress:
+            compress = bool(self.codec_id) and path.suffix != codecs.suffix(self.codec_id)
+            if compress:
                 _require_space(Path(tmp), path.stat().st_size)
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
                 tick("compress", 0, 0)
@@ -162,9 +143,7 @@ class MultipartBackend:
                 artifact = path
             size = artifact.stat().st_size
             spec = dict(
-                filename=f"{Path(os.path.abspath(path)).name or 'root'}.tar"
-                if directory
-                else artifact.name,
+                filename=artifact.name,
                 size=size,
                 sha256=_sha256(artifact),
                 kind=kind,
@@ -173,22 +152,18 @@ class MultipartBackend:
                 manifest=manifest,
                 part_size=part_size,
             )
-
             create = self.api.create(**spec)
-            uid = create["upload_id"]
-            # Dedup is by wire digest. Only a plain tar can alias a directory upload.
-            if directory or (not compress and _starts_like_tar(artifact)):
-                prior = next((row for row in self.api.list() if row["id"] == uid), None)
-                if prior is None or _is_directory(prior.get("manifest")) != directory:
-                    raise RuntimeError("identical wire bytes already have a different upload type")
             if create["state"] == "complete":
                 # already uploaded: (re)send the preview, so a failed send is repaired
                 # by simply running the upload again
                 return {
                     **create,
                     "skipped": True,
-                    "preview": self._preview(uid, path, Path(tmp)) if recording else None,
+                    "preview": self._preview(create["upload_id"], path, Path(tmp))
+                    if kind_of(path) == "recording"
+                    else None,
                 }
+            uid = create["upload_id"]
             have = {p["part_number"] for p in self.status(uid)["parts"]}
             ps = create["part_size"]
             done = min(len(have) * ps, size)
@@ -212,8 +187,6 @@ class MultipartBackend:
                         # S3 answers 403. create is idempotent by sha256 and
                         # re-signs every URL.
                         fresh = self.api.create(**spec)
-                        if fresh["upload_id"] != uid:
-                            raise RuntimeError("upload ID changed while refreshing part URLs")
                         if fresh["state"] == "complete":
                             return {**fresh, "skipped": True}
                         urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
@@ -228,7 +201,9 @@ class MultipartBackend:
                 **done,
                 "upload_id": uid,
                 "skipped": False,
-                "preview": self._preview(uid, path, Path(tmp)) if recording else None,
+                "preview": self._preview(uid, path, Path(tmp))
+                if kind_of(path) == "recording"
+                else None,
             }
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
@@ -268,51 +243,27 @@ class MultipartBackend:
         tag: str = "",
         progress: Progress | None = None,
         size: int = 0,
-        directory: bool = False,
     ) -> Path:
         tick = progress or (lambda phase, done, total: None)
-        if directory and not re.fullmatch(r"[A-Za-z0-9_-]+", upload_id):
-            raise RuntimeError("invalid directory upload id")
         d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
-        name = _plain_name(d["filename"], wire) if directory or dest is None else ""
-        if directory:
-            if wire or not name.endswith(".tar") or not 0 < size <= MAX_TAR:
-                raise RuntimeError("invalid directory download descriptor")
-            name = name.removesuffix(".tar")
-        out = dest or DOWNLOADS_DIR / f"{tag}{name}"
-
-        def downloaded(done: int, total: int) -> None:
-            if directory and (done > size or (total and total != size)):
-                raise RuntimeError("directory wire size mismatch")
-            tick("download", done, total)
-
+        out = dest or DOWNLOADS_DIR / f"{tag}{_plain_name(d['filename'], wire)}"
         out.parent.mkdir(parents=True, exist_ok=True)
-        with self._staging(out, reap=not directory) as tmp:
+        with self._staging(out) as tmp:
             if size:
                 # wire and decompressed copies coexist in staging before the move
                 _require_space(Path(tmp), size * 2 if wire else size)
             raw = Path(tmp) / "wire"
             tick("download", 0, 0)
             self._retry(
-                functools.partial(self.api.fetch, d["url"], raw, downloaded),
+                functools.partial(
+                    self.api.fetch, d["url"], raw, lambda done, total: tick("download", done, total)
+                ),
                 "download",
             )
             tick("verify", 0, 0)
             if _sha256(raw) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
-            if directory:
-                if raw.stat().st_size != size:
-                    raise RuntimeError("directory wire size mismatch")
-                # Stage the directory on the destination filesystem, even if wire
-                # staging is configured on another mount.
-                with tempfile.TemporaryDirectory(prefix=".dimos-restore-", dir=out.parent) as stage:
-                    tree = Path(stage) / "tree"
-                    tree.mkdir()
-                    tick("extract", 0, 0)
-                    _extract_directory(raw, tree, size)
-                    _publish_directory(tree, out)
-                return out
             if wire:
                 tick("decompress", 0, 0)
                 codecs.decompress(wire, raw, plain := Path(tmp) / "plain")
@@ -361,21 +312,37 @@ class CloudData:
         skip_recent: bool = False,
     ) -> dict[str, Any]:
         path = path.expanduser()
-        directory = path.is_dir()
-        if directory:
-            if kind not in (None, "blob"):
-                raise RuntimeError("directories can only be uploaded as blobs")
-        elif not path.is_file():
+        is_dir = path.is_dir()
+        if not is_dir and not path.is_file():
             raise FileNotFoundError(path)
-        if not directory and _is_sidecar(path):
+        if not is_dir and _is_sidecar(path):
             raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
         if skip_recent and time.time() - path.stat().st_mtime < self.config.upload_quiet_s:
             raise RuntimeError("file still being written — skipped")
+        if is_dir:
+            root = path.resolve()
+            name = path.name if path.name not in ("", "..") else root.name or "root"
+            with tempfile.TemporaryDirectory() as tmp:
+                scratch = Path(tmp).resolve()
+                archive = scratch / f"{name}.tar"
+                # The temp root may itself be inside the directory being uploaded.
+                exclude = (
+                    (Path(name) / scratch.relative_to(root)).as_posix()
+                    if scratch.is_relative_to(root)
+                    else None
+                )
+                with tarfile.open(archive, "w") as tar:
+                    tar.add(
+                        path,
+                        arcname=name,
+                        filter=lambda entry: None if entry.name == exclude else entry,
+                    )
+                return self.upload(archive, robot_id, kind, chunk_mb, progress)
         chunk_mb = chunk_mb if chunk_mb is not None else self.config.upload_chunk_mb
         return self.backend.upload(
             path,
             robot_id=robot_id,
-            kind=kind or ("blob" if directory else kind_of(path)),
+            kind=kind or kind_of(path),
             part_size=chunk_mb * 2**20 if chunk_mb else None,
             progress=progress,
         )
@@ -394,16 +361,12 @@ class CloudData:
         self, upload_id: str | None, dest: Path | None = None, progress: Progress | None = None
     ) -> Path:
         row = self.resolve(upload_id)
-        directory = _is_directory(row.get("manifest"))
-        if directory and row.get("kind") != "blob":
-            raise RuntimeError("directory archive must be a blob")
         return self.backend.pull(
             str(row["id"]),
             dest,
             tag=_tag(row),
             progress=progress,
             size=int(row.get("size") or 0),
-            directory=directory,
         )
 
     def ls(self) -> list[dict[str, Any]]:
@@ -481,154 +444,6 @@ def _move_into_place(src: Path, out: Path) -> None:
         os.close(fd)
         shutil.move(str(src), tmp)
         Path(tmp).replace(out)
-
-
-def _is_directory(manifest: Any) -> bool:
-    if not isinstance(manifest, dict) or manifest.get("format") != DIRECTORY_MANIFEST["format"]:
-        return False
-    if type(manifest.get("version")) is not int or manifest["version"] != 1:
-        raise RuntimeError("unsupported directory archive marker")
-    return True
-
-
-def _starts_like_tar(path: Path) -> bool:
-    with path.open("rb") as stream:
-        header = stream.read(tarfile.BLOCKSIZE)
-    try:
-        tarfile.TarInfo.frombuf(header, sys.getfilesystemencoding(), "surrogateescape")
-    except tarfile.HeaderError:
-        return header == bytes(tarfile.BLOCKSIZE)  # Empty archive.
-    return True
-
-
-def _pack_directory(root: Path, target: Path) -> None:
-    scratch = target.parent.stat()
-    count = 0
-
-    def add_tree(archive: tarfile.TarFile, fd: int, prefix: str, depth: int) -> None:
-        nonlocal count
-        # Bound the sorted list too, not just the number of written members.
-        entries_by_name = {}
-        with os.scandir(fd) as entries:
-            for entry in entries:
-                info = entry.stat(follow_symlinks=False)
-                if os.path.samestat(info, scratch):
-                    continue
-                count += 1
-                if count > MAX_TAR_MEMBERS or depth > MAX_TAR_DEPTH:
-                    raise RuntimeError("directory archive member or depth limit exceeded")
-                entries_by_name[entry.name] = info
-        for leaf, info in sorted(entries_by_name.items()):
-            name = prefix + leaf
-            mode = info.st_mode
-            directory = stat.S_ISDIR(mode)
-            if not (directory or stat.S_ISREG(mode)) or len(os.fsencode(name)) > 4095:
-                raise RuntimeError(f"unsupported directory member: {name!r}")
-            flags = os.O_DIRECTORY if directory else os.O_NONBLOCK
-            child = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | flags, dir_fd=fd)
-            try:
-                st = os.fstat(child)
-                if not os.path.samestat(st, info):
-                    raise RuntimeError(f"directory member changed while packing: {name!r}")
-                member = tarfile.TarInfo(name)
-                member.type = tarfile.DIRTYPE if directory else tarfile.REGTYPE
-                member.size = 0 if directory else st.st_size
-                # Leave room for the GNU name header and tar end padding.
-                if archive.offset + member.size + 2 * tarfile.RECORDSIZE > MAX_TAR:
-                    raise RuntimeError("directory archive exceeds size limit")
-                if directory:
-                    archive.addfile(member)
-                    add_tree(archive, child, name + "/", depth + 1)
-                else:
-                    with open(child, "rb", closefd=False) as stream:
-                        archive.addfile(member, stream)
-            finally:
-                os.close(child)
-
-    # Open each component without following links, then walk by directory fd.
-    anchor, *parts = root.absolute().parts
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    fd = os.open(anchor, flags)
-    try:
-        for part in parts:
-            child = os.open(part, flags, dir_fd=fd)
-            os.close(fd)
-            fd = child
-        with target.open("xb") as stream:
-            with tarfile.open(fileobj=stream, mode="w", format=tarfile.GNU_FORMAT) as archive:
-                add_tree(archive, fd, "", 1)
-            if stream.tell() < MIN_TAR:
-                stream.truncate(MIN_TAR)
-    finally:
-        os.close(fd)
-
-
-class _DirectoryMember(tarfile.TarInfo):
-    @classmethod
-    def frombuf(cls, buf: bytes | bytearray, encoding: str, errors: str) -> _DirectoryMember:
-        member = super().frombuf(buf, encoding, errors)
-        # Reject extensions before tarfile reads their payload. Only GNU long names
-        # are needed; PAX/sparse entries could allocate or expand beyond wire size.
-        if (
-            not (
-                (member.type in (tarfile.REGTYPE, tarfile.AREGTYPE) and member.size >= 0)
-                or (member.isdir() and member.size == 0)
-                or (member.type == tarfile.GNUTYPE_LONGNAME and 0 < member.size <= 4097)
-            )
-            or member.linkname
-        ):
-            raise tarfile.ReadError(f"unsupported directory tar member: {member.name!r}")
-        return member
-
-
-def _extract_directory(wire: Path, tree: Path, size: int) -> None:
-    try:
-        with (
-            wire.open("rb") as stream,
-            tarfile.open(fileobj=stream, mode="r:", tarinfo=_DirectoryMember) as archive,
-        ):
-            for i, member in enumerate(archive):
-                parts = member.name.split("/")
-                if (
-                    i >= MAX_TAR_MEMBERS
-                    or len(parts) > MAX_TAR_DEPTH
-                    or any(p in ("", ".", "..") for p in parts)
-                    or member.offset_data + member.size > size
-                ):
-                    raise RuntimeError(f"unsafe or oversized directory member: {member.name!r}")
-                target = tree.joinpath(*parts)
-                if member.isdir():
-                    target.mkdir()
-                else:
-                    src = archive.extractfile(member)
-                    assert src is not None  # Only regular files reach this branch.
-                    with src, target.open("xb") as dst:
-                        shutil.copyfileobj(src, dst)
-            stream.seek(archive.offset)
-            trailer = stream.read(MIN_TAR + 1)
-            if (
-                not 2 * tarfile.BLOCKSIZE <= len(trailer) <= MIN_TAR
-                or len(trailer) % tarfile.BLOCKSIZE
-                or any(trailer)
-            ):
-                raise RuntimeError("invalid directory tar trailer")
-    except (tarfile.TarError, RecursionError) as exc:
-        raise RuntimeError(f"invalid directory tar: {exc}") from exc
-
-
-def _publish_directory(source: Path, target: Path) -> None:
-    # Path.rename() can replace an empty directory even after an existence check.
-    libc = ctypes.CDLL(None, use_errno=True)
-    src, dst = os.fsencode(source), os.fsencode(target)
-    if sys.platform == "linux" and hasattr(libc, "renameat2"):
-        result = libc.renameat2(-100, src, -100, dst, 1)  # AT_FDCWD, RENAME_NOREPLACE
-    elif sys.platform == "darwin":
-        result = libc.renamex_np(src, dst, 4)  # RENAME_EXCL
-    else:
-        raise RuntimeError("atomic directory restore requires Linux or macOS")
-    if result:
-        err = ctypes.get_errno()
-        raise OSError(err, os.strerror(err), target)
 
 
 def _is_sidecar(path: Path) -> bool:
