@@ -330,7 +330,7 @@ def blueprint_modules(blueprint: Any, registry_names: dict[str, str]) -> list[di
 def blueprint_detail(name: str) -> dict[str, Any]:
     from dimos.robot.get_all_blueprints import get_by_name
 
-    blueprint = get_by_name(name)
+    blueprint = get_by_name(name).solidify()
     modules = []
     for atom, entry in zip(
         blueprint.active_blueprints, blueprint_modules(blueprint, {}), strict=True
@@ -491,7 +491,7 @@ def targets(name: str, global_values: dict[str, Any] | None = None) -> dict[str,
     global_config.update(
         **{key: value for key, value in (global_values or {}).items() if value is not None}
     )
-    return target_paths(parser_schema(get_by_name(name)))
+    return target_paths(parser_schema(get_by_name(name).solidify()))
 
 
 def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
@@ -516,7 +516,7 @@ def config(name: str) -> dict[str, Any]:
     from dimos.core.module import ModuleConfig
     from dimos.robot.get_all_blueprints import get_by_name
 
-    schema = parser_schema(get_by_name(name))
+    schema = parser_schema(get_by_name(name).solidify())
     modules: dict[str, Any] = {}
     for module in schema.modules:
         atom = module.atom
@@ -646,7 +646,7 @@ def scan(request: Any) -> dict[str, Any]:
             "builtin": ref is not None,
         }
         try:
-            blueprint = load_blueprint(name) if ref is not None else get_by_name(name)
+            blueprint = (load_blueprint(name) if ref is not None else get_by_name(name)).solidify()
             file = ref.split(":")[0] if ref else None
             doc = first_line(importlib.import_module(file)) if file and per_file[file] == 1 else ""
             modules = blueprint_modules(blueprint, registry_names)

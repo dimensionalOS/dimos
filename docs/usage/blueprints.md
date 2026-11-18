@@ -84,6 +84,56 @@ expanded_blueprint = autoconnect(
 
 Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
 
+## Choices
+
+`ChoiceAtom` holds alternative fragments, and `solidify()` picks one of them by name:
+
+```python session=blueprint-choices
+from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
+from dimos.core.module import Module
+
+class VisModule(Module):
+    pass
+
+class RaytracerModule(Module):
+    pass
+
+class VoxelMapper(Module):
+    pass
+
+mapping = autoconnect(
+    VisModule.blueprint(),
+    ChoiceAtom(
+        name="PointClearing",
+        default="raycasting",
+        choices={
+            "raycasting": RaytracerModule.blueprint(),
+            "column_carving": VoxelMapper.blueprint(),
+        },
+    ),
+).global_config(n_workers=4)
+
+default_mapping = mapping.solidify()
+voxel_mapping = mapping.solidify(choices={"PointClearing": "column_carving"})
+```
+
+`mapping` is still a `Blueprint`. Methods such as `.global_config()`, `.namespace()`,
+`.remappings()` and `.hosted()` apply right away to its own modules and to every
+option, so a mistake raises where it is written, whichever option is later picked.
+A blueprint without choices is already solid: `solidify()` returns it unchanged.
+`ModuleCoordinator.build()` solidifies with the default choices; select others at launch:
+
+```bash
+dimos run mapping --choice PointClearing=column_carving
+```
+
+Repeat `--choice NAME=OPTION` for multiple choices. A choice without a default
+requires a selection. Invalid options, unknown or inactive names, and repeated
+selections are errors. Nested choices are resolved only inside the picked option.
+Two choices may share a name only if they have the same options and default; one
+selection then picks for both. The picked option is merged after the blueprint's
+own modules, so a module in both takes the option's arguments.
+
 ## Publishing external blueprints
 
 dimOS can discover runnable blueprints from installed Python packages. External

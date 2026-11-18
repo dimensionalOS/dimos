@@ -443,7 +443,7 @@ def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModule
             source.load_blueprint(target.blueprint())
         return
     if isinstance(target, Blueprint):
-        source.load_blueprint(target)
+        source.load_blueprint(target.solidify())
         return
     raise TypeError(
         f"run() expects a blueprint name (str), Blueprint, or Module class, "
@@ -490,9 +490,9 @@ def _resolve_target(target: str | Blueprint | type[ModuleBase]) -> Blueprint:
     """Convert a run() argument into a Blueprint."""
 
     if isinstance(target, str):
-        return get_by_name(target)
+        return get_by_name(target).solidify()
     if isinstance(target, Blueprint):
-        return target
+        return target.solidify()
     if inspect.isclass(target) and issubclass(target, ModuleBase):
         return target.blueprint()  # type: ignore[no-any-return]
     raise TypeError(

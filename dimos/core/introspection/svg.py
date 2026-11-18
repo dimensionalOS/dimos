@@ -52,6 +52,6 @@ def to_svg(
     elif isinstance(target, Blueprint):
         from dimos.core.introspection.blueprint import dot as blueprint_dot
 
-        blueprint_dot.render_svg(target, output_path, layout=layout)
+        blueprint_dot.render_svg(target.solidify(), output_path, layout=layout)
     else:
         raise TypeError(f"Expected ModuleInfo or Blueprint, got {type(target).__name__}")

@@ -14,7 +14,7 @@
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
-from functools import cached_property, reduce
+from functools import cached_property, reduce, wraps
 import operator
 import re
 import sys
@@ -30,6 +30,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+import uuid
 
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
@@ -105,6 +106,8 @@ class HostedPlacement:
     prefer: str | None = None
     # Numeric tag to the least value a Host must advertise.
     minimum: Mapping[str, float] = field(default_factory=dict)
+    # Ties the pieces of one hosted() call that was pushed into choice options.
+    group: str | None = None
 
     def __post_init__(self) -> None:
         if not self.module_names:
@@ -192,6 +195,29 @@ class BlueprintAtom:
 _PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
 
 
+def _also_in_choices(method: Callable[..., "Blueprint"]) -> Callable[..., "Blueprint"]:
+    """Apply a fluent operation to this fragment and to every option of its choices."""
+
+    @wraps(method)
+    def apply(self: "Blueprint", *args: Any, **kwargs: Any) -> "Blueprint":
+        result = method(self, *args, **kwargs)
+        return replace(
+            result,
+            choice_atoms=tuple(
+                replace(
+                    choice,
+                    choices={
+                        name: apply(option, *args, **kwargs)
+                        for name, option in choice.choices.items()
+                    },
+                )
+                for choice in result.choice_atoms
+            ),
+        )
+
+    return apply
+
+
 @dataclass(frozen=True)
 class Blueprint:
     blueprints: tuple[BlueprintAtom, ...]
@@ -209,6 +235,8 @@ class Blueprint:
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
     hosted_placements: tuple[HostedPlacement, ...] = field(default_factory=tuple)
+    # Alternatives picked by solidify(); fluent operations are applied to every option eagerly.
+    choice_atoms: "tuple[ChoiceAtom, ...]" = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         module_names = {atom.name for atom in self.blueprints}
@@ -224,6 +252,8 @@ class Blueprint:
             raise ValueError(f"Hosted placement references unknown modules: {', '.join(unknown)}")
 
     def cbor_encode(self) -> dict[str, Any]:
+        if self.choice_atoms:
+            raise ValueError("Call solidify() before sending a blueprint that has choices")
         state = {f.name: getattr(self, f.name) for f in fields(self)}
         for name in _PROXY_FIELDS:
             state[name] = dict(state[name])
@@ -240,14 +270,17 @@ class Blueprint:
         blueprint = BlueprintAtom.create(module, kwargs)
         return cls(blueprints=(blueprint,))
 
+    @_also_in_choices
     def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
 
+    @_also_in_choices
     def transports(
         self, transports: dict[tuple[str, type], TransportSpec | Transport[Any]]
     ) -> "Blueprint":
         return replace(self, transport_map=MappingProxyType({**self.transport_map, **transports}))
 
+    @_also_in_choices
     def global_config(self, **kwargs: Any) -> "Blueprint":
         return replace(
             self,
@@ -273,7 +306,7 @@ class Blueprint:
         controlling machine. Globals reach every Host; per-machine ones like
         ``n_workers`` belong in each Host's env.
         """
-        if not self.blueprints:
+        if not any(fragment.blueprints for fragment in self._fragments()):
             raise ValueError("hosted() requires at least one module")
         if host is not None and (not isinstance(host, str) or not host.strip()):
             raise ValueError("host must be a non-empty string")
@@ -300,15 +333,18 @@ class Blueprint:
         if local and (tags or minimum or host is not None):
             raise ValueError("local=True cannot be combined with host or tags")
 
-        placement = HostedPlacement(
-            module_names=tuple(atom.name for atom in self.blueprints),
-            host=host,
-            tags=tags,
-            local=local,
-            prefer=prefer,
-            minimum=minimum,
+        group = uuid.uuid4().hex if self.choice_atoms else None
+        return self._placed(
+            host=host, tags=tags, local=local, prefer=prefer, minimum=minimum, group=group
         )
-        return replace(self, hosted_placements=(*self.hosted_placements, placement))
+
+    @_also_in_choices
+    def _placed(self, **placement: Any) -> "Blueprint":
+        if not self.blueprints:
+            return self
+        names = tuple(atom.name for atom in self.blueprints)
+        hosted = HostedPlacement(module_names=names, **placement)
+        return replace(self, hosted_placements=(*self.hosted_placements, hosted))
 
     def remappings(
         self,
@@ -316,15 +352,27 @@ class Blueprint:
             tuple[type[ModuleBase] | str, str, str | type[ModuleBase] | type[Spec]]
         ],
     ) -> "Blueprint":
-        remappings_dict = dict(self.remapping_map)
-        for module, old, new in remappings:
-            remappings_dict[(self._instance_key(module), old)] = new
-        return replace(self, remapping_map=MappingProxyType(remappings_dict))
+        return self._remapped(
+            {(self._instance_key(module), old): new for module, old, new in remappings}
+        )
+
+    @_also_in_choices
+    def _remapped(
+        self, remappings: Mapping[tuple[str, str], str | type[ModuleBase] | type[Spec]]
+    ) -> "Blueprint":
+        return replace(self, remapping_map=MappingProxyType({**self.remapping_map, **remappings}))
 
     def _instance_key(self, module: type[ModuleBase] | str) -> str:
         if isinstance(module, str):
             return module
-        names = [b.name for b in self.blueprints if b.module is module]
+        names = sorted(
+            {
+                b.name
+                for fragment in self._fragments()
+                for b in fragment.blueprints
+                if b.module is module
+            }
+        )
         if len(names) > 1:
             raise ValueError(
                 f"{module.__name__} has multiple instances in this blueprint "
@@ -360,11 +408,12 @@ class Blueprint:
         expose_set = frozenset(expose)
 
         effective_names = set()
-        for atom in self.blueprints:
-            for stream in atom.streams:
-                effective = self.remapping_map.get((atom.name, stream.name), stream.name)
-                if isinstance(effective, str):
-                    effective_names.add(effective)
+        for fragment in self._fragments():
+            for atom in fragment.blueprints:
+                for stream in atom.streams:
+                    effective = fragment.remapping_map.get((atom.name, stream.name), stream.name)
+                    if isinstance(effective, str):
+                        effective_names.add(effective)
 
         unknown = expose_set - effective_names
         if unknown:
@@ -372,7 +421,10 @@ class Blueprint:
                 f"expose names {sorted(unknown)} do not match any stream in the "
                 f"namespaced blueprint (available: {sorted(effective_names)})"
             )
+        return self._namespaced(prefix, expose_set)
 
+    @_also_in_choices
+    def _namespaced(self, prefix: str, expose_set: frozenset[str]) -> "Blueprint":
         new_atoms = []
         new_remap: dict[tuple[str, str], str | type[ModuleBase] | type[Spec]] = {}
 
@@ -425,9 +477,11 @@ class Blueprint:
             ),
         )
 
+    @_also_in_choices
     def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
         return replace(self, requirement_checks=self.requirement_checks + tuple(checks))
 
+    @_also_in_choices
     def configurators(self, *checks: "SystemConfigurator") -> "Blueprint":
         return replace(self, configurator_checks=self.configurator_checks + tuple(checks))
 
@@ -438,12 +492,119 @@ class Blueprint:
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
 
+    def _fragments(self) -> "Iterable[Blueprint]":
+        """This fragment and every option of its choices, recursively."""
+        yield self
+        for choice in self.choice_atoms:
+            for option in choice.choices.values():
+                yield from option._fragments()
+
+    def solidify(self, *, choices: Mapping[str, str] | None = None) -> "Blueprint":
+        """Pick an option for every active choice and merge it in.
+
+        Unpicked options are not traversed, so their nested choices need no value.
+        Selections must name active choices, so misspellings and unused ones fail.
+
+        Raises:
+            ChoiceResolutionError: A required choice is missing, an option is
+                invalid, a name is used by two different choices, or a selection
+                is unused.
+        """
+        selections = dict(choices or {})
+        active_choices: dict[str, ChoiceAtom] = {}
+
+        def resolve(blueprint: Blueprint) -> Blueprint:
+            picked = []
+            for choice in blueprint.choice_atoms:
+                previous = active_choices.setdefault(choice.name, choice)
+                if (previous.choices.keys(), previous.default) != (
+                    choice.choices.keys(),
+                    choice.default,
+                ):
+                    raise ChoiceResolutionError(f"Duplicate choice name: {choice.name!r}")
+                option = selections.get(choice.name, choice.default)
+                available = f"Available options: {', '.join(choice.choices)}"
+                if option is None:
+                    raise ChoiceResolutionError(
+                        f"Choice {choice.name!r} is required. {available}. "
+                        f"Select it with --choice {choice.name}=<option>"
+                    )
+                if option not in choice.choices:
+                    raise ChoiceResolutionError(
+                        f"Invalid option {option!r} for choice {choice.name!r}. {available}"
+                    )
+                picked.append(resolve(choice.choices[option]))
+            return (
+                autoconnect(replace(blueprint, choice_atoms=()), *picked) if picked else blueprint
+            )
+
+        blueprint = resolve(self)
+        unused = selections.keys() - active_choices.keys()
+        if unused:
+            raise ChoiceResolutionError(f"Unknown or inactive choices: {', '.join(sorted(unused))}")
+        if not active_choices:
+            return blueprint
+        return replace(
+            blueprint,
+            # Every option got the outer checks too; keep each check once.
+            requirement_checks=tuple({id(c): c for c in blueprint.requirement_checks}.values()),
+            configurator_checks=tuple({id(c): c for c in blueprint.configurator_checks}.values()),
+            hosted_placements=_join_placement_groups(blueprint.hosted_placements),
+        )
+
+
+class ChoiceResolutionError(ValueError):
+    """A blueprint choice is missing, invalid, or ambiguous."""
+
+
+@dataclass(frozen=True)
+class ChoiceAtom:
+    """Alternative blueprint fragments, one of which solidify() picks by name."""
+
+    name: str
+    choices: Mapping[str, Blueprint]
+    default: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name or "=" in self.name:
+            raise ChoiceResolutionError("Choice names must be nonempty and cannot contain '='")
+        if not self.choices or any(not option for option in self.choices):
+            raise ChoiceResolutionError(f"Choice {self.name!r} must have nonempty option names")
+        if self.default is not None and self.default not in self.choices:
+            raise ChoiceResolutionError(
+                f"Invalid default {self.default!r} for choice {self.name!r}. "
+                f"Available options: {', '.join(self.choices)}"
+            )
+        object.__setattr__(self, "choices", MappingProxyType(dict(self.choices)))
+
+
+def _join_placement_groups(placements: tuple[HostedPlacement, ...]) -> tuple[HostedPlacement, ...]:
+    """Merge the pieces of each hosted() call that was pushed into choice options."""
+    joined: dict[object, HostedPlacement] = {}
+    for placement in placements:
+        key = placement.group or object()
+        previous = joined.get(key)
+        module_names = (
+            (*previous.module_names, *placement.module_names)
+            if previous
+            else placement.module_names
+        )
+        joined[key] = replace(
+            placement, module_names=tuple(dict.fromkeys(module_names)), group=None
+        )
+    return tuple(joined.values())
+
 
 def transport_config_name(cls: type) -> str:
     return cls.__name__.removesuffix("Config").lower()
 
 
-def autoconnect(*blueprints: Blueprint) -> Blueprint:
+def autoconnect(*parts: "Blueprint | ChoiceAtom") -> Blueprint:
+    blueprints = [part for part in parts if isinstance(part, Blueprint)]
+    choice_atoms = (
+        *(choice for blueprint in blueprints for choice in blueprint.choice_atoms),
+        *(part for part in parts if isinstance(part, ChoiceAtom)),
+    )
     all_atoms = [atom for blueprint in blueprints for atom in blueprint.blueprints]
     all_blueprints = tuple(_eliminate_duplicates(all_atoms))
     all_transports = dict(  # type: ignore[var-annotated]
@@ -487,6 +648,7 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         requirement_checks=all_requirement_checks,
         configurator_checks=all_configurator_checks,
         hosted_placements=all_hosted_placements,
+        choice_atoms=choice_atoms,
     )
 
 
