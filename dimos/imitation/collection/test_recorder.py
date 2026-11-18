@@ -96,7 +96,7 @@ def test_factory_exposes_all_typed_inputs_before_autoconnect(count, tmp_path):
         *[_CameraPublisher.blueprint(instance_name=f"publisher_{i}") for i in range(count)],
     ).remappings([(f"publisher_{i}", "color_image", f"camera_{i}") for i in range(count)])
     atom = stack.active_blueprints[0]
-    assert {s.name: s.type for s in atom.streams if s.name != "tf"} == {
+    assert {s.name: s.type for s in atom.streams if s.name not in {"tf", "clip"}} == {
         **{f"camera_{i}": Image for i in range(count)},
         "measured": JointState,
         "status": String,
