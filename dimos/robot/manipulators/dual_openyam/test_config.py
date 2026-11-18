@@ -22,6 +22,7 @@ from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnecti
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
 )
+from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
 
@@ -34,6 +35,15 @@ def test_dual_openyam_model_has_canonical_groups_and_reference_posture() -> None
         ("left_manipulator", "left_grasp_frame"),
         ("right_manipulator", "right_grasp_frame"),
     ]
+
+
+def test_planner_puts_every_urdf_link_on_tf_from_the_root() -> None:
+    description = DUAL_OPENYAM_MODEL.load()
+    links = dual_openyam_model_config(robot="arm").tf_extra_links
+
+    assert sorted(links) == sorted(
+        [description.root_link, *(joint.child_link for joint in description.joints)]
+    )
 
 
 def test_dual_openyam_reuses_the_single_arm_home_posture() -> None:

@@ -38,6 +38,7 @@ from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnecti
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 DUAL_OPENYAM_WEBXR_TASK_NAME = "teleop_dual_openyam"
@@ -77,6 +78,8 @@ def build_dual_openyam_webxr(
     *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
 ) -> Blueprint:
     """Compose dual-arm teleop with deployment-specific visualization."""
+    # UrdfManager serves the URDF to web 3D views. The planner already puts every
+    # link on tf, so the manager leaves joint tf off (on, links would get two parents).
     return autoconnect(
         ArmTeleopModule.blueprint(zero_button="B"),
         autoconnect(
@@ -114,6 +117,7 @@ def build_dual_openyam_webxr(
             kinematics=_dual_openyam_webxr_pink,
             visualization=visualization,
         ),
+        UrdfManager.blueprint(model=_dual_openyam_webxr_model.model, publish_joint_tf=False),
     ).remappings(
         [
             (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
