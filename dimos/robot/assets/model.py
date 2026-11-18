@@ -139,7 +139,8 @@ class PlanarBaseDefinition:
 
     The three coordinates are ordered ``x``, ``y``, then ``yaw``. Linear
     coordinates use meters and angular coordinates use radians. Translation is
-    unbounded and yaw is periodic.
+    unbounded and yaw is periodic. These are geometric position coordinates,
+    not velocity-only body action resources or derivatives of body-frame rates.
     """
 
     velocity_limits: _PositiveVector3
@@ -198,6 +199,7 @@ class RobotModel:
     _added_joints: tuple[JointDescription, ...] = ()
     # (follower, leader, multiplier, offset) per joint that copies another.
     _mimic_joints: tuple[tuple[str, str, float, float], ...] = ()
+    _mesh_path_replacements: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_file(
@@ -425,6 +427,13 @@ class RobotModel:
             raise ValueError("Default joint acceleration limit must be positive and finite")
         return replace(self, _default_joint_acceleration_limit=float(value))
 
+    def with_mesh_paths_replaced(self, old: str, new: str) -> RobotModel:
+        """Return a model whose mesh files are found by replacing ``old`` with
+        ``new`` in each mesh's path, e.g. ".dae" with ".stl"."""
+        if not old:
+            raise ValueError("The text to replace in mesh paths must not be empty")
+        return replace(self, _mesh_path_replacements=(*self._mesh_path_replacements, (old, new)))
+
     def load(self) -> LoadedRobotModel:
         """Materialize and memoize the model for a backend adapter.
 
@@ -483,6 +492,8 @@ class RobotModel:
                 *package_paths.values(),
             ),
         )
+        if self._mesh_path_replacements:
+            xml = _replace_mesh_paths(xml, self._mesh_path_replacements)
         if self._planar_base is not None:
             xml = _add_planar_base(xml, self._planar_base)
         if self._fixed_frames:
@@ -984,6 +995,24 @@ def _triple(value: str | None) -> tuple[float, float, float]:
 
 def _vector_text(vector: tuple[float, float, float]) -> str:
     return " ".join(str(value) for value in vector)
+
+
+def _replace_mesh_paths(xml: str, replacements: tuple[tuple[str, str], ...]) -> str:
+    """Apply each (old, new) replacement, in order, to every mesh's file path.
+
+    Raises:
+        FileNotFoundError: If a replaced path names no file.
+    """
+
+    def replace_path(match: re.Match[str]) -> str:
+        path = match.group(2)
+        for old, new in replacements:
+            path = path.replace(old, new)
+        if path != match.group(2) and not Path(path).exists():
+            raise FileNotFoundError(f"Mesh not found: {path} (was {match.group(2)})")
+        return f"{match.group(1)}{path}{match.group(3)}"
+
+    return re.sub(r'(<mesh\b[^>]*\bfilename=")([^"]*)(")', replace_path, xml)
 
 
 def _resolve_package_uris(xml: str, package_paths: Mapping[str, Path]) -> str:

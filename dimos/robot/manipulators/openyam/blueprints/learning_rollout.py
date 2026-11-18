@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.policy.module import (
@@ -29,6 +29,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     DamiaoTeleopCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
@@ -51,12 +52,12 @@ OPENYAM_ROLLOUT_JOINTS = [*_MODEL.joint_names, OPENYAM_GRIPPER_JOINT]
 def _rollout_control(
     tasks: list[TaskConfig],
     coordinator: type[ControlCoordinator] = DamiaoCoordinator,
-) -> Blueprint:
+) -> MetaBlueprint:
     """A trajectory coordinator named ControlCoordinator over the connection."""
     return autoconnect(
         coordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=_MODEL.model,
+            connections=[arm_declaration(OpenYamConnection)],
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),
@@ -71,7 +72,7 @@ def build_openyam_rollout(
     camera_device: int | str = 0,
     device: str | None = None,
     quest_control: bool = False,
-) -> Blueprint:
+) -> MetaBlueprint:
     """Build an OpenYAM rollout; Quest control is an optional takeover layer."""
     policy = PolicyModule.blueprint(
         instance_name="policy",

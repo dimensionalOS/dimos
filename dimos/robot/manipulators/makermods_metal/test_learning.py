@@ -51,10 +51,12 @@ def test_collection_and_rollout_share_observation_and_joint_contract(dual, roles
     rollout = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
     schema = next(
         a.kwargs["recording_schema"]
-        for a in collection.blueprints
+        for a in collection.solidify().blueprints
         if "recording_schema" in a.kwargs
     )
-    policy = next(a.kwargs for a in rollout.blueprints if issubclass(a.module, PolicyModule))
+    policy = next(
+        a.kwargs for a in rollout.solidify().blueprints if issubclass(a.module, PolicyModule)
+    )
     camera_streams = {f.stream for f in schema.observation.values() if f.dtype == "video"}
     assert camera_streams == set(policy["image_mapping"])
     assert set(policy["image_mapping"].values()) == set(roles)
@@ -70,10 +72,14 @@ def test_collection_and_rollout_share_observation_and_joint_contract(dual, roles
 @pytest.mark.parametrize("dual, roles", SETUPS)
 def test_rollout_routes_manual_takeover_and_uses_one_rig_model(dual, roles):
     blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
-    coordinator = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
+    coordinator = next(
+        a for a in blueprint.solidify().blueprints if issubclass(a.module, ControlCoordinator)
+    )
     assert spec_annotation_compliance(coordinator.module, PolicyControlSpec)
-    planner = next(a for a in blueprint.blueprints if a.module is ManipulationModule)
-    policy = next(a.kwargs for a in blueprint.blueprints if issubclass(a.module, PolicyModule))
+    planner = next(a for a in blueprint.solidify().blueprints if a.module is ManipulationModule)
+    policy = next(
+        a.kwargs for a in blueprint.solidify().blueprints if issubclass(a.module, PolicyModule)
+    )
     tasks = {task.name: task for task in coordinator.kwargs["tasks"]}
     eef = tasks["eef_trajectory"]
     assert eef.params["robot_model"] is planner.kwargs["model"]
@@ -120,7 +126,7 @@ def test_station_camera_and_can_selectors_parse_without_loading_assets(
     )
     for key, value in selectors.items():
         args.extend([f"--{key.replace('_', '-')}", value])
-    parsed = BlueprintConfigParser(blueprint).parse(args, environ={})
+    parsed = BlueprintConfigParser(blueprint.solidify()).parse(args, environ={})
     for role in roles:
         assert parsed.module_kwargs(names[role])["device"] == f"/dev/{role}"
     connection = parsed.module_kwargs("dualmetalconnection" if dual else "metalconnection")
@@ -133,9 +139,11 @@ def test_station_camera_and_can_selectors_parse_without_loading_assets(
 def test_standard_station_declares_model_tcp_without_loading_assets(dual, roles, mocker):
     load = mocker.patch("dimos.robot.assets.model.RobotModel.load")
     blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
-    policy = next(a.kwargs for a in blueprint.blueprints if issubclass(a.module, PolicyModule))
+    policy = next(
+        a.kwargs for a in blueprint.solidify().blueprints if issubclass(a.module, PolicyModule)
+    )
     planner = next(
-        a.kwargs["model"] for a in blueprint.blueprints if a.module is ManipulationModule
+        a.kwargs["model"] for a in blueprint.solidify().blueprints if a.module is ManipulationModule
     )
     for side, arm in policy["dreamlabs"].arms.items():
         assert arm.sdk_tcp_frame == (f"{side}_dreamlabs_tcp" if dual else "dreamlabs_tcp")
@@ -150,7 +158,9 @@ def test_standard_station_declares_model_tcp_without_loading_assets(dual, roles,
 def test_model_tcp_mapping_survives_worker_cbor_round_trip(dual, roles):
     blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
     config = next(
-        a.kwargs["dreamlabs"] for a in blueprint.blueprints if issubclass(a.module, PolicyModule)
+        a.kwargs["dreamlabs"]
+        for a in blueprint.solidify().blueprints
+        if issubclass(a.module, PolicyModule)
     )
     restored = decode(encode(config))
     assert restored.arms == config.arms
@@ -174,7 +184,9 @@ def test_protocol_tcp_matches_deployed_playground_fk_in_each_arm_base(dual):
     )
     blueprint = build_metal_learning(dual=dual, collection=False, model=model)
     config = next(
-        a.kwargs["dreamlabs"] for a in blueprint.blueprints if issubclass(a.module, PolicyModule)
+        a.kwargs["dreamlabs"]
+        for a in blueprint.solidify().blueprints
+        if issubclass(a.module, PolicyModule)
     )
     fk = DreamlabsKinematics(config)
     fixture = json.loads((Path(__file__).parent / "fixtures/playground_metal_fk.json").read_text())
@@ -221,12 +233,16 @@ def test_legacy_tool_override_becomes_a_link_shared_with_every_model_consumer(du
         tcp_transforms=dict.fromkeys(sides, transform),
     )
     config = next(
-        a.kwargs["dreamlabs"] for a in blueprint.blueprints if issubclass(a.module, PolicyModule)
+        a.kwargs["dreamlabs"]
+        for a in blueprint.solidify().blueprints
+        if issubclass(a.module, PolicyModule)
     )
     planner = next(
-        a.kwargs["model"] for a in blueprint.blueprints if a.module is ManipulationModule
+        a.kwargs["model"] for a in blueprint.solidify().blueprints if a.module is ManipulationModule
     )
-    coordinator = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
+    coordinator = next(
+        a for a in blueprint.solidify().blueprints if issubclass(a.module, ControlCoordinator)
+    )
     eef = next(task for task in coordinator.kwargs["tasks"] if task.type == "eef_trajectory")
     assert eef.params["robot_model"] is planner
     assert planner.model is config.model
@@ -249,8 +265,12 @@ def test_legacy_tool_override_becomes_a_link_shared_with_every_model_consumer(du
 @pytest.mark.parametrize("dual, roles", SETUPS)
 def test_mock_station_instantiates_real_tasks_and_executes_both_output_paths(dual, roles, mocker):
     blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
-    atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
-    policy = next(a.kwargs for a in blueprint.blueprints if issubclass(a.module, PolicyModule))
+    atom = next(
+        a for a in blueprint.solidify().blueprints if issubclass(a.module, ControlCoordinator)
+    )
+    policy = next(
+        a.kwargs for a in blueprint.solidify().blueprints if issubclass(a.module, PolicyModule)
+    )
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     coordinator = atom.module(**atom.kwargs, publish_joint_state=False)
@@ -306,7 +326,9 @@ def test_mock_station_instantiates_real_tasks_and_executes_both_output_paths(dua
 @pytest.mark.parametrize("dual, roles", SETUPS)
 def test_metal_never_accepts_yam_joint_output(dual, roles):
     blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
-    policy = next(a.kwargs for a in blueprint.blueprints if issubclass(a.module, PolicyModule))
+    policy = next(
+        a.kwargs for a in blueprint.solidify().blueprints if issubclass(a.module, PolicyModule)
+    )
     policy["dreamlabs"] = policy["dreamlabs"].model_copy(update={"mode": "joint"})
     config = SimpleNamespace(**policy, fps=None, execution_steps=None, policy_joint_names=None)
     with pytest.raises(ValueError, match="canonical dual YAM"):

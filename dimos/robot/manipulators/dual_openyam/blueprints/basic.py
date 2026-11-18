@@ -16,15 +16,15 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
+    arm_declaration,
     arm_remaps,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
-    dual_openyam_control_model,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
@@ -54,12 +54,12 @@ def _gripper_tasks() -> list[TaskConfig]:
     ]
 
 
-def dual_openyam_control() -> Blueprint:
+def dual_openyam_control() -> MetaBlueprint:
     """Trajectories and both jaws over the two-bus connection."""
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=dual_openyam_control_model(robot="arm"),
+            connections=[arm_declaration(DualOpenYamConnection)],
             tasks=[dual_openyam_trajectory_task(), *_gripper_tasks()],
             zero_stiffness_joints=[],
         ),

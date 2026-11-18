@@ -35,14 +35,16 @@ _JOINTS = [*[f"arm/joint{i}" for i in range(1, 7)], "arm/joint7"]
 
 
 def _atom(blueprint: Blueprint, module_type: type) -> BlueprintAtom:
-    return next(atom for atom in blueprint.blueprints if issubclass(atom.module, module_type))
+    return next(
+        atom for atom in blueprint.solidify().blueprints if issubclass(atom.module, module_type)
+    )
 
 
 def test_default_rollout_is_quest_free() -> None:
     blueprint = build_metal_rollout(
         checkpoint="checkpoint", task="pick up the cube", camera_device="/dev/video3", device="cuda"
     )
-    modules = [atom.module for atom in blueprint.active_blueprints]
+    modules = [atom.module for atom in blueprint.solidify().active_blueprints]
     coordinator = _atom(blueprint, ControlCoordinator)
     [trajectory] = coordinator.kwargs["tasks"]
     policy = _atom(blueprint, PolicyModule).kwargs
@@ -73,12 +75,12 @@ def test_quest_rollout_adds_higher_priority_takeover() -> None:
     assert trajectory.joint_names == _JOINTS
     assert trajectory.priority < teleop.priority
     assert trajectory.priority < gripper.priority
-    assert ArmTeleopModule in [atom.module for atom in blueprint.active_blueprints]
+    assert ArmTeleopModule in [atom.module for atom in blueprint.solidify().active_blueprints]
     assert _atom(blueprint, ManipulationModule).kwargs["gripper_tasks"] == {"arm": "metal_gripper"}
 
 
 def test_rollout_takes_checkpoint_task_camera_and_can_port_from_the_cli() -> None:
-    parsed = BlueprintConfigParser(metal_lerobot_rollout).parse(
+    parsed = BlueprintConfigParser(metal_lerobot_rollout.solidify()).parse(
         [
             "--can-port",
             "can0",

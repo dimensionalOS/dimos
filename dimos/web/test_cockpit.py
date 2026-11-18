@@ -537,7 +537,7 @@ def test_chat_panel_blueprint() -> None:
     assert panel["channels"] == ["human_input", "agent", "agent_idle", "audio_in"]
     assert parse_manifest(manifest).model_dump() == manifest
     # The agent and mic streams ride a generated subclass whose ports
-    # autoconnect to McpClient's and VoiceInput's by name + type.
+    # autoconnect to Agent's and VoiceInput's by name + type.
     ports = {(s.name, s.direction): s.type for s in atom.streams}
     assert ports[("agent", "in")] is BaseMessage
     assert ports[("agent_idle", "in")] is bool
@@ -785,7 +785,7 @@ def test_stats_panel_switches_stats_publishing_on() -> None:
     # it, composition keeps it, and the CLI's own sources still win.
     blueprint = cockpit(layout=Stats())
     assert dict(blueprint.global_config_overrides) == {"dtop": True}
-    composed = autoconnect(blueprint).global_config(n_workers=9)
+    composed = autoconnect(blueprint).solidify().global_config(n_workers=9)
     assert dict(composed.global_config_overrides) == {"dtop": True, "n_workers": 9}
     assert dict(cockpit(layout=Video("color_image")).global_config_overrides) == {}
     parser = BlueprintConfigParser(blueprint)

@@ -20,46 +20,45 @@ Control:
 ## What it Provides
 
 ### Inputs (Subscribed Topics)
-- `robot_pose` (PoseStamped): Current robot position and orientation
+- `odom` (PoseStamped): Current robot position and orientation
 - `gps_location` (LatLon): GPS coordinates of the robot
 - `path` (Path): Planned navigation path
 - `global_costmap` (OccupancyGrid): Global costmap for visualization
 
 ### Outputs (Published Topics)
-- `click_goal` (PoseStamped): Goal positions set by user clicks in the web interface
+- `goal_request` (PoseStamped): Goal positions set by user clicks in the web interface
 - `gps_goal` (LatLon): GPS goal coordinates set through the interface
 - `explore_cmd` (Bool): Command to start autonomous exploration
 - `stop_explore_cmd` (Bool): Command to stop exploration
-- `movecmd` (Twist): Direct movement commands from the interface
+- `tele_cmd_vel` (Twist): Direct movement commands from the interface
 - `movecmd_stamped` (TwistStamped): Timestamped movement commands
 
 ## How to Use
 
 ### Basic Usage
 
-```python
+This example adds the interface to the Go2 navigation stack using replay data.
+`autoconnect` wires matching stream names and types on the active transport.
+
+```python skip
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.core.transport import LCMTransport, pLCMTransport
 
-# Deploy the WebSocket visualization module
-websocket_vis = dimos.deploy(WebsocketVisModule, port=7779)
+blueprint = autoconnect(
+    unitree_go2,
+    WebsocketVisModule.blueprint(show_rerun_dashboard=True),
+).global_config(replay=True)
 
-# Receive control commands.
-websocket_vis.click_goal.transport = LCMTransport("/goal_request", PoseStamped)
-websocket_vis.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
-websocket_vis.stop_explore_cmd.transport = LCMTransport("/stop_explore_cmd", Bool)
-websocket_vis.movecmd.transport = LCMTransport("/cmd_vel", Twist)
-websocket_vis.gps_goal.transport = pLCMTransport("/gps_goal")
-
-# Send visualization data.
-websocket_vis.robot_pose.connect(connection.odom)
-websocket_vis.path.connect(global_planner.path)
-websocket_vis.global_costmap.connect(mapper.global_costmap)
-websocket_vis.gps_location.connect(connection.gps_location)
-
-# Start the module
-websocket_vis.start()
+if __name__ == "__main__":
+    ModuleCoordinator.build(blueprint).loop()
 ```
+
+For another robot stack, compose `WebsocketVisModule.blueprint()` with its
+blueprint. It must supply the input streams and consume the relevant control
+outputs above; GPS controls require a stack with GPS support. Replay displays
+recorded sensor data and does not move a physical robot.
 
 ### Accessing the Interface
 

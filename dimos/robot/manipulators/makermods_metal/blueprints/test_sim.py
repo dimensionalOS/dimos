@@ -36,10 +36,10 @@ from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSi
 def _topics(blueprint: Blueprint) -> dict[tuple[type, str], str]:
     """The name each module's stream connects on, keyed by (module, stream)."""
     return {
-        (atom.module, stream.name): blueprint.remapping_map.get(
+        (atom.module, stream.name): blueprint.solidify().remapping_map.get(
             (atom.name, stream.name), stream.name
         )
-        for atom in blueprint.active_blueprints
+        for atom in blueprint.solidify().active_blueprints
         for stream in atom.streams
     }
 
@@ -50,7 +50,7 @@ def _topics(blueprint: Blueprint) -> dict[tuple[type, str], str]:
 def test_the_sim_cloud_becomes_the_planner_map_through_the_self_and_box_filters(
     blueprint: Blueprint,
 ) -> None:
-    atoms = blueprint.active_blueprints
+    atoms = blueprint.solidify().active_blueprints
     topics = _topics(blueprint)
     [sim] = [atom for atom in atoms if atom.module is MujocoSimModule]
     [planner] = [atom for atom in atoms if atom.module is ManipulationModule]

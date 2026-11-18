@@ -41,6 +41,7 @@ from dimos.core.global_config import global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.topic_descriptors import with_topic_metadata
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -98,6 +99,8 @@ def _run_registered(
 
 def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     """Append one relay bridge to an enabled CLI run after blueprint resolution."""
+    if global_config.topic_metadata:
+        blueprint = with_topic_metadata(blueprint)
     if not (global_config.local_relay or global_config.relay_url):
         return blueprint
 
@@ -179,6 +182,9 @@ def run(
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    choice: list[str] = typer.Option(
+        [], "--choice", help="Select a blueprint alternative as NAME=OPTION; may be repeated"
+    ),
     config_path: Path = typer.Option(
         DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config file"
     ),
@@ -207,8 +213,11 @@ def run(
         BlueprintConfigParser,
         split_run_arguments,
     )
-    from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import stream_name_types
+    from dimos.core.coordination.blueprints import ChoiceResolutionError, autoconnect
+    from dimos.core.coordination.module_coordinator import (
+        check_module_dependencies,
+        stream_name_types,
+    )
     from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
     from dimos.core.run_registry import RunEntry, cleanup_stale, generate_run_id
     from dimos.memory.tap import check_topics
@@ -219,6 +228,14 @@ def run(
 
     try:
         blueprint_names, config_tokens = split_run_arguments(robot_types)
+        choices: dict[str, str] = {}
+        for selection in choice:
+            name, separator, option = selection.partition("=")
+            if not separator or not name or not option:
+                raise BlueprintConfigError(f"Invalid --choice {selection!r}: expected NAME=OPTION")
+            if name in choices:
+                raise BlueprintConfigError(f"Choice {name!r} was specified more than once")
+            choices[name] = option
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
@@ -255,7 +272,13 @@ def run(
         typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
         raise typer.Exit(2) from error
 
-    blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
+    try:
+        blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names)).solidify(
+            choices=choices
+        )
+    except ChoiceResolutionError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
 
     if disable:
         disabled_classes = tuple(
@@ -297,6 +320,14 @@ def run(
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
+
+    # Hosted fragments check on their executing host, where dependencies live.
+    if not blueprint.hosted_placements:
+        try:
+            check_module_dependencies(blueprint, parsed_config)
+        except ImportError as error:
+            typer.echo(f"Error: {error}", err=True)
+            raise typer.Exit(1) from error
 
     # Clean stale registry entries only after the full command has validated.
     stale = cleanup_stale()
@@ -401,9 +432,7 @@ def run(
             # forked image.
             os._exit(1)
     else:
-        # Foreground: SIGINT stays at default so Ctrl+C raises KeyboardInterrupt with a
-        # visible traceback.
-        _run_registered(blueprint, parsed_config, entry, sigint=False)
+        _run_registered(blueprint, parsed_config, entry)
 
 
 def status() -> None:
@@ -447,7 +476,7 @@ def stop(
 
 def log_cmd(
     follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
-    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+    lines: int = typer.Option(50, "--lines", "-n", min=0, help="Number of lines to show"),
     all_lines: bool = typer.Option(False, "--all", "-a", help="Show full log"),
     json_output: bool = typer.Option(False, "--json", help="Raw JSONL output"),
     run_id: str = typer.Option("", "--run", "-r", help="Specific run ID"),
@@ -460,6 +489,7 @@ def log_cmd(
         typer.echo("No log files found", err=True)
         raise typer.Exit(1)
 
+    count = None if all_lines else lines
     if follow:
         _stop = False
 
@@ -469,12 +499,11 @@ def log_cmd(
 
         prev = signal.signal(signal.SIGINT, _on_sigint)
         try:
-            for line in follow_log(path, stop=lambda: _stop):
+            for line in follow_log(path, stop=lambda: _stop, count=count):
                 typer.echo(format_line(line, json_output=json_output))
         finally:
             signal.signal(signal.SIGINT, prev)
     else:
-        count = None if all_lines else lines
         for line in read_log(path, count):
             typer.echo(format_line(line, json_output=json_output))
 

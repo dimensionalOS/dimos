@@ -47,7 +47,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.blueprints import Blueprint
+    from dimos.core.coordination.blueprints import MetaBlueprint
 
 # Poll the db on this cadence while the replay drains the pcap.
 _POLL_SEC = 1.0
@@ -304,7 +304,7 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
 
 def _build_blueprint(
     args: argparse.Namespace, db_path: Path, overrides: dict[str, Any]
-) -> Blueprint:
+) -> MetaBlueprint:
     """autoconnect(Mid360 pcap replay + PointLio + PointlioRecorder).
 
     The driver's raw cloud is renamed to ``lidar_raw`` so Point-LIO's ``lidar``
@@ -496,7 +496,11 @@ def main(argv: list[str]) -> int:
         "--rate", type=float, default=1.0, help="replay-speed multiplier (default 1.0)"
     )
     parser.add_argument(
-        "--odom-freq", type=float, default=30.0, help="Point-LIO odometry rate Hz (default 30)"
+        "--odom-freq",
+        type=float,
+        default=30.0,
+        help="upper limit on the Point-LIO odometry rate in Hz (default 30). "
+        "One pose comes out per lidar scan, so a value above the scan rate changes nothing",
     )
     parser.add_argument(
         "--max-sensor-sec",

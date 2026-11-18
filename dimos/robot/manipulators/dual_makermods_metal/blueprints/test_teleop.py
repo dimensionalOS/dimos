@@ -85,7 +85,7 @@ def _grips(*, left: bool, right: bool) -> Buttons:
 def _coordinator_atom() -> BlueprintAtom:
     [atom] = [
         atom
-        for atom in teleop_webxr_dual_metal.blueprints
+        for atom in teleop_webxr_dual_metal.solidify().blueprints
         if issubclass(atom.module, ControlCoordinator)
     ]
     return atom
@@ -109,13 +109,13 @@ def _arm_positions(rig: MockConnectionRig, side: str) -> np.ndarray:
 
 
 def test_blueprint_routes_each_controller_to_its_own_arm_and_jaw() -> None:
-    assert [atom.name for atom in teleop_webxr_dual_metal.active_blueprints] == [
+    assert [atom.name for atom in teleop_webxr_dual_metal.solidify().active_blueprints] == [
         "armteleopmodule",
         "ControlCoordinator",
         "dualmetalconnection",
         "dualmetalmanipulationmodule",
     ]
-    assert teleop_webxr_dual_metal.remapping_map == {
+    assert teleop_webxr_dual_metal.solidify().remapping_map == {
         ("armteleopmodule", "left_controller_output"): "left_cartesian_command",
         ("armteleopmodule", "left_gripper_command"): "left_gripper_command",
         ("armteleopmodule", "right_controller_output"): "right_cartesian_command",
@@ -155,15 +155,19 @@ def test_simulation_swaps_the_can_connection_for_the_echo_mock(monkeypatch) -> N
     monkeypatch.setattr(global_config, "simulation", "mock")
     simulated = build_dual_metal_webxr()
 
-    assert "dualmetalconnection" not in [atom.name for atom in simulated.active_blueprints]
-    [connection] = [atom for atom in simulated.blueprints if atom.module is MockJointConnection]
+    assert "dualmetalconnection" not in [
+        atom.name for atom in simulated.solidify().active_blueprints
+    ]
+    [connection] = [
+        atom for atom in simulated.solidify().blueprints if atom.module is MockJointConnection
+    ]
     assert connection.kwargs["source"] == "arm"
     # The mock names joints as the robot model does, without the coordinator's
     # "arm/" prefix: the connection strips it on the way in and re-adds it out.
     assert connection.kwargs["initial_positions"] == {
         name: 0.0 for side in SIDES for name in (*ARM_JOINTS[side], FINGER_JOINTS[side][0])
     }
-    assert simulated.remapping_map[("mockjointconnection", "position_command")] == (
+    assert simulated.solidify().remapping_map[("mockjointconnection", "position_command")] == (
         "arm_position_command"
     )
 

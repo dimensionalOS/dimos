@@ -62,7 +62,7 @@ def test_profile_records_seven_joints_and_the_wrist_camera() -> None:
 
 
 def test_collection_takes_recording_task_camera_and_can_port(tmp_path: Path) -> None:
-    parsed = BlueprintConfigParser(metal_quest_collection).parse(
+    parsed = BlueprintConfigParser(metal_quest_collection.solidify()).parse(
         [
             "--recorder.recording",
             str(tmp_path / "session"),
@@ -75,15 +75,18 @@ def test_collection_takes_recording_task_camera_and_can_port(tmp_path: Path) -> 
         ],
         environ={},
     )
-    atoms = metal_quest_collection.active_blueprints
+    atoms = metal_quest_collection.solidify().active_blueprints
     [coordinator] = [atom for atom in atoms if issubclass(atom.module, ControlCoordinator)]
     teleop, gripper, trajectory = coordinator.kwargs["tasks"]
 
     assert issubclass(atoms[0].module, CollectionModule)
     assert parsed.module_configs["recorder"]["recording"] == tmp_path / "session"
     assert parsed.module_configs["wrist"]["hardware"]["camera_index"] == "/dev/video3"
-    assert metal_quest_collection.remapping_map[("recorder", "wrist_image")] == "color_image"
-    assert ("wrist", "color_image") not in metal_quest_collection.remapping_map
+    assert (
+        metal_quest_collection.solidify().remapping_map[("recorder", "wrist_image")]
+        == "color_image"
+    )
+    assert ("wrist", "color_image") not in metal_quest_collection.solidify().remapping_map
     assert parsed.module_kwargs("metalconnection")["can_port"] == "test-can"
     assert (teleop.type, teleop.priority, teleop.joint_names) == ("teleop_ik", 20, _ARM_JOINTS)
     assert teleop.params["solver_type"] is PinkPoseTargetSolver
@@ -108,12 +111,16 @@ def test_simulation_swaps_the_connection_for_the_echo_mock(
 
     blueprint = metal_teleop_control(metal_quest_tasks())
 
-    assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
-    [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
+    assert not any(
+        issubclass(atom.module, DamiaoConnection) for atom in blueprint.solidify().blueprints
+    )
+    [mock] = [
+        atom for atom in blueprint.solidify().blueprints if atom.module is MockJointConnection
+    ]
     assert mock.kwargs["source"] == "arm"
     assert list(mock.kwargs["initial_positions"]) == [*[f"joint{i}" for i in range(1, 7)], "joint7"]
     assert mock.kwargs["initial_positions"]["joint7"] == 0.0
-    assert blueprint.remapping_map == {
+    assert blueprint.solidify().remapping_map == {
         (mock.name, "position_command"): "arm_position_command",
         ("ControlCoordinator", "arm_joint_state"): "joint_state",
     }

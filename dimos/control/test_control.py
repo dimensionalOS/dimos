@@ -31,12 +31,10 @@ from dimos.control.components import (
     HardwareComponent,
     HardwareType,
     make_joints,
-    make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.hardware_interface import (
     ConnectedHardware,
-    ConnectedTwistBase,
     ConnectedWholeBody,
 )
 from dimos.control.task import (
@@ -372,27 +370,12 @@ class TestControlCoordinatorLifecycle:
         unsubscribe.assert_called_once_with()
         assert coordinator._stream_unsubs == {}
 
-    def test_map_twist_to_base_joints_routes_planar_twist_via_joint_command(
-        self, make_coordinator, mocker
-    ):
+    def test_stream_callback_only_dispatches_the_original_message(self, make_coordinator, mocker):
         coordinator = make_coordinator()
-        component = HardwareComponent(
-            hardware_id="base",
-            hardware_type=HardwareType.BASE,
-            joints=make_twist_base_joints("base"),
-        )
-        coordinator._hardware = {"base": ConnectedTwistBase(MagicMock(), component)}
         dispatch = mocker.patch.object(coordinator, "_dispatch")
-
-        coordinator._map_twist_to_base_joints(
-            Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
-        )
-
-        stream, joint_state = dispatch.call_args.args
-        assert stream == "joint_command"
-        assert isinstance(joint_state, JointState)
-        assert joint_state.name == ["base/vx", "base/vy", "base/wz"]
-        assert joint_state.velocity == [1.0, 2.0, 3.0]
+        msg = Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+        coordinator._make_stream_cb("twist_command")(msg)
+        dispatch.assert_called_once_with("twist_command", msg)
 
     def test_reset_runtime_state_calls_task_hooks(self, make_coordinator):
         class ResettableTask(BaseControlTask):

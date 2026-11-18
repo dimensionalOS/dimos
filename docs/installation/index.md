@@ -10,7 +10,7 @@ The installer asks for a mode and project directory, sets up system dependencies
 
 | Platform | Installation path | Validation |
 | --- | --- | --- |
-| [Ubuntu 22.04/24.04](/docs/installation/ubuntu.md), x86_64/ARM64 | apt | Both modes pass CPU installation CI |
+| [Ubuntu 22.04/24.04/26.04](/docs/installation/ubuntu.md), x86_64/ARM64 | apt | Both modes pass CPU installation CI |
 | [macOS](/docs/installation/osx.md), Apple Silicon | Homebrew | CI paused; local testing needed |
 | [NixOS / other Linux](/docs/installation/nix.md), including Arch | Nix | Not covered by installation CI |
 
@@ -34,7 +34,7 @@ uv run dimos --help
 
 Use `--mode dev --project-dir ./dimos` for a source checkout. Use `--extras base,unitree` to select capabilities (developer mode defaults to `all` with platform exclusions). See [dependency tiers](/docs/requirements.md#dependency-tiers).
 
-`--skip-tests` skips replay only (installation verification still runs). `--no-sysctl` skips network tuning. These commands can install system packages on your host.
+`--skip-tests` skips replay only (installation verification still runs). `--no-sysctl` skips network tuning and the locked-memory limit. These commands can install system packages on your host.
 
 For all options:
 

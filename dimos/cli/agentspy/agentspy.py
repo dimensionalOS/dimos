@@ -32,6 +32,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, RichLog
 
 from dimos.cli import theme
+from dimos.cli.tui_args import parse_tui_args
 from dimos.core.transport_factory import apply_transport_arg, make_transport
 
 # Type alias for all message types we might receive
@@ -119,21 +120,21 @@ def get_message_type_and_style(msg: AnyMessage) -> tuple[str, str]:
 def format_message_content(msg: AnyMessage) -> str:
     """Format message content for display."""
     if isinstance(msg, ToolMessage):
-        return f"{msg.name}() -> {msg.content}"
+        return f"{msg.name}() -> {msg.text}"
     elif isinstance(msg, AIMessage) and msg.tool_calls:
         # Include tool calls in content
         tool_info = []
         for tc in msg.tool_calls:
             args_str = str(tc.get("args", {}))
             tool_info.append(f"{tc.get('name')}({args_str})")
-        content = msg.content or ""
+        content = msg.text
         if content and tool_info:
             return f"{content}\n[Tool Calls: {', '.join(tool_info)}]"
         elif tool_info:
             return f"[Tool Calls: {', '.join(tool_info)}]"
-        return content  # type: ignore[return-value]
+        return content
     else:
-        return str(msg.content) if hasattr(msg, "content") else str(msg)
+        return msg.text
 
 
 class AgentSpyApp(App):  # type: ignore[type-arg]
@@ -220,9 +221,10 @@ class AgentSpyApp(App):  # type: ignore[type-arg]
 
 
 def main() -> None:
+    args = parse_tui_args("Monitor messages from the running DimOS agent.")
     apply_transport_arg(sys.argv)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "web":
+    if args.mode == "web":
         from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")

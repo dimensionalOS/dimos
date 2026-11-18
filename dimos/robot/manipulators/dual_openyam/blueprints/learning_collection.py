@@ -16,7 +16,7 @@
 
 from copy import deepcopy
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -29,13 +29,16 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
+# The connection publishes every joint under its robot name, "arm".
+DUAL_OPENYAM_COLLECTION_JOINTS = [f"arm/{name}" for name in DUAL_OPENYAM_JOINTS]
+
 _state = FeatureSpec(
     stream="coordinator_joint_state",
     message_type=JointState,
     field="position",
     dtype="float32",
-    shape=(len(DUAL_OPENYAM_JOINTS),),
-    names=list(DUAL_OPENYAM_JOINTS),
+    shape=(len(DUAL_OPENYAM_COLLECTION_JOINTS),),
+    names=DUAL_OPENYAM_COLLECTION_JOINTS,
 )
 _profile = CollectionProfile(
     observations={
@@ -70,7 +73,7 @@ _profile = CollectionProfile(
 )
 
 
-def build_dual_openyam_collection(*, overhead: bool = False) -> Blueprint:
+def build_dual_openyam_collection(*, overhead: bool = False) -> MetaBlueprint:
     """Collect wrist views, optionally adding the Dreamlabs overhead view."""
     profile = deepcopy(_profile)
     cameras = [("left_wrist", 0), ("right_wrist", 1)]

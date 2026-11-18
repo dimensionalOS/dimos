@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from weakref import ReferenceType, ref
 
 from dimos.control.components import JointName
+from dimos.control.contract.keys import Interface
 from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
@@ -79,12 +80,14 @@ class JointStateSnapshot:
         joint_velocities: Joint name -> velocity (rad/s)
         joint_efforts: Joint name -> effort (Nm)
         timestamp: Unix timestamp when state was read
+        joint_command_interfaces: Declared interfaces, available even when feedback is stale.
     """
 
     joint_positions: dict[JointName, float] = field(default_factory=dict)
     joint_velocities: dict[JointName, float] = field(default_factory=dict)
     joint_efforts: dict[JointName, float] = field(default_factory=dict)
     timestamp: float = 0.0
+    joint_command_interfaces: dict[JointName, frozenset[Interface]] = field(default_factory=dict)
 
     def get_position(self, joint_name: JointName) -> float | None:
         """Get position for a specific joint."""
@@ -301,8 +304,10 @@ class ControlTask(Protocol):
         """
         ...
 
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        """Compute output command given current state.
+    def compute(
+        self, state: CoordinatorState
+    ) -> JointCommandOutput | list[JointCommandOutput] | None:
+        """Compute output command(s) given current state.
 
         Called by coordinator for active tasks each tick.
 
@@ -316,8 +321,10 @@ class ControlTask(Protocol):
                    - dt: Time since last tick
 
         Returns:
-            JointCommandOutput with joint_names and values, or None if
-            no command should be sent this tick.
+            One JointCommandOutput, a list of outputs for distinct joint groups
+            using different modes, or None to send no command this tick.
+            Every output shares this task's claim priority; arbitration uses
+            each output's mode, not ResourceClaim.mode.
         """
         ...
 

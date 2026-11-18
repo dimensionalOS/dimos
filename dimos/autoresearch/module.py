@@ -35,6 +35,9 @@ from dimos.agents.mcp.spec import McpServerSpec
 from dimos.autoresearch.actor import provider_key, run_actor
 from dimos.autoresearch.judge import Judge, LiftJudge, PlaceAtJudge
 from dimos.autoresearch.program import RunStoppedError
+from dimos.autoresearch.scene_spec import (
+    ObjectSceneRegistrationSpec,
+)
 from dimos.autoresearch.session import Budget, Session, SessionStatus, Split
 from dimos.autoresearch.status import ActorState, AutoresearchStatus
 from dimos.autoresearch.trial import run_trial
@@ -53,9 +56,6 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.perception.experimental.object_scene_registration_spec import (
-    ObjectSceneRegistrationSpec,
-)
 from dimos.simulation.engines.sim_scene_spec import SimSceneSpec
 from dimos.utils.logging_config import setup_logger
 

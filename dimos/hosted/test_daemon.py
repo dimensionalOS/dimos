@@ -99,6 +99,21 @@ def host_setup(tmp_path: Path, mocker: MockerFixture) -> dict[str, Any]:
     }
 
 
+def test_run_logs_when_the_host_goes_down(
+    host_setup: dict[str, Any], mocker: MockerFixture
+) -> None:
+    """The log has to tell a Host that stopped from one that died."""
+    daemon = host_setup["daemon"]
+    mocker.patch.object(daemon, "serve")
+    info = mocker.patch("dimos.hosted.daemon.logger.info")
+    stop = threading.Event()
+    stop.set()
+
+    daemon.run(stop)
+
+    assert [call.args[0] for call in info.call_args_list] == ["Host up", "Host down"]
+
+
 def test_describe_reports_available_host(host_setup: dict[str, Any]) -> None:
     descriptor = host_setup["daemon"].describe()
 

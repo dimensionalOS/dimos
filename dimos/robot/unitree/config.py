@@ -16,3 +16,10 @@
 def connection_type(*, replay: bool, simulation: str) -> str:
     """Choose the Unitree connection from the stack's execution mode."""
     return "replay" if replay else simulation or "webrtc"
+
+
+def require_robot_ip(ip: str | None, guidance: str) -> str:
+    """Require an address for a hardware connection, with caller-specific guidance."""
+    if ip is None or not ip.strip():
+        raise ValueError(f"No robot IP specified. {guidance}")
+    return ip

@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 import os
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field, field_validator, model_validator
 from typing_extensions import Self
@@ -47,7 +47,7 @@ def _ships_dimos(directory: str) -> bool:
     return (d / "dimos").exists() or "dimos" in d.parts
 
 
-class AgentConfig(BaseConfig):
+class SubjectConfig(BaseConfig):
     modules: tuple[str, ...] = ()
     allowed_tools: tuple[str, ...] | None = None
     # Tool calls whose arguments mention any of these (case-insensitive, whole token) are denied.
@@ -81,7 +81,7 @@ class AgentConfig(BaseConfig):
         return names
 
 
-class ModelAgentConfig(AgentConfig):
+class ModelSubjectConfig(SubjectConfig):
     model: str = "gpt-5.6-luna"
 
 
@@ -97,7 +97,9 @@ class EvalSubject(Configurable, ABC):
     agent; empty means only what the environment already provides.
     """
 
-    config: AgentConfig
+    config: SubjectConfig
+    requires_mcp: ClassVar[bool] = False
+    """Whether this agent drives the robot through an McpServer the environment must serve."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

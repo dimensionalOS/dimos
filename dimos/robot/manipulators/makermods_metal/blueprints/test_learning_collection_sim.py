@@ -48,12 +48,12 @@ def _task_shapes(atom: BlueprintAtom) -> list[tuple[Any, ...]]:
 
 
 def test_twin_records_the_quest_profile_from_the_simulated_metal(tmp_path: Path) -> None:
-    parsed = BlueprintConfigParser(metal_quest_collection_sim).parse(
+    parsed = BlueprintConfigParser(metal_quest_collection_sim.solidify()).parse(
         ["--recorder.recording", str(tmp_path / "session"), "--episodes.task", "pick up the cube"],
         environ={},
     )
-    atoms = metal_quest_collection_sim.active_blueprints
-    real = metal_quest_collection.active_blueprints
+    atoms = metal_quest_collection_sim.solidify().active_blueprints
+    real = metal_quest_collection.solidify().active_blueprints
     [sim] = [atom for atom in atoms if atom.module is MujocoSimModule]
     [planner] = [atom for atom in atoms if atom.module is ManipulationModule]
     coordinator = _coordinator(atoms)
@@ -61,8 +61,11 @@ def test_twin_records_the_quest_profile_from_the_simulated_metal(tmp_path: Path)
     assert issubclass(atoms[0].module, CollectionModule)
     assert atoms[0].kwargs["recording_schema"] == real[0].kwargs["recording_schema"]
     assert parsed.module_configs["recorder"]["recording"] == tmp_path / "session"
-    assert metal_quest_collection_sim.remapping_map[("recorder", "wrist_image")] == "color_image"
-    assert (sim.name, "color_image") not in metal_quest_collection_sim.remapping_map
+    assert (
+        metal_quest_collection_sim.solidify().remapping_map[("recorder", "wrist_image")]
+        == "color_image"
+    )
+    assert (sim.name, "color_image") not in metal_quest_collection_sim.solidify().remapping_map
     camera = MujocoSimModuleConfig.model_validate(parsed.module_kwargs(sim.name))
     image = METAL_QUEST_PROFILE.observations["observation.images.wrist"]
     assert (camera.height, camera.width, 3) == image.shape

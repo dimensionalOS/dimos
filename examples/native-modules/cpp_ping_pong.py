@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import argparse
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -65,12 +65,14 @@ class PongModule(NativeModule):
     confirm: Out[Twist]
 
 
-def blueprint() -> Blueprint:
+def blueprint() -> MetaBlueprint:
     return autoconnect(PingModule.blueprint(), PongModule.blueprint())
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--transport", choices=["lcm", "zenoh"], default="lcm")
     args = parser.parse_args()
 

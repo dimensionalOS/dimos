@@ -74,7 +74,7 @@ def test_profile_records_fourteen_joints_and_both_wrist_cameras() -> None:
 
 
 def test_collection_takes_recording_task_cameras_and_can_ports(tmp_path: Path) -> None:
-    parsed = BlueprintConfigParser(dual_metal_quest_collection).parse(
+    parsed = BlueprintConfigParser(dual_metal_quest_collection.solidify()).parse(
         [
             "--recorder.recording",
             str(tmp_path / "session"),
@@ -91,7 +91,7 @@ def test_collection_takes_recording_task_cameras_and_can_ports(tmp_path: Path) -
         ],
         environ={},
     )
-    atoms = dual_metal_quest_collection.active_blueprints
+    atoms = dual_metal_quest_collection.solidify().active_blueprints
     [coordinator] = [atom for atom in atoms if issubclass(atom.module, ControlCoordinator)]
     left_teleop, right_teleop, left_gripper, right_gripper, trajectory = coordinator.kwargs["tasks"]
     connection = parsed.module_kwargs("dualmetalconnection")
@@ -137,13 +137,17 @@ def test_simulation_swaps_the_connection_for_the_echo_mock(
 
     blueprint = dual_metal_teleop_control(dual_metal_quest_tasks())
 
-    assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
-    [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
+    assert not any(
+        issubclass(atom.module, DamiaoConnection) for atom in blueprint.solidify().blueprints
+    )
+    [mock] = [
+        atom for atom in blueprint.solidify().blueprints if atom.module is MockJointConnection
+    ]
     assert mock.kwargs["source"] == "arm"
     assert len(mock.kwargs["initial_positions"]) == 14
     assert mock.kwargs["initial_positions"]["left_joint7"] == 0.0
     assert mock.kwargs["initial_positions"]["right_joint7"] == 0.0
-    assert blueprint.remapping_map == {
+    assert blueprint.solidify().remapping_map == {
         (mock.name, "position_command"): "arm_position_command",
         ("ControlCoordinator", "arm_joint_state"): "joint_state",
     }

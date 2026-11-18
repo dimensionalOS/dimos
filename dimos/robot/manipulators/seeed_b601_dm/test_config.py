@@ -134,7 +134,7 @@ def test_connection_builds_seeed_motor_table(mocker) -> None:
 
 def test_simulation_composes_a_mock_connection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "simulation", "mujoco")
-    blueprint = seeed_b601_dm_control()
+    blueprint = seeed_b601_dm_control().solidify()
 
     assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
     [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
@@ -146,11 +146,11 @@ def test_simulation_composes_a_mock_connection(monkeypatch: pytest.MonkeyPatch) 
 
 def test_planner_blueprint_requires_a_can_port() -> None:
     with pytest.raises(BlueprintConfigError, match="b601dmconnection.can_port: Field required"):
-        BlueprintConfigParser(seeed_b601_dm_planner_coordinator).parse([], environ={})
+        BlueprintConfigParser(seeed_b601_dm_planner_coordinator.solidify()).parse([], environ={})
 
 
 def test_planner_coordinator_drives_arm_and_gripper() -> None:
-    blueprint = seeed_b601_dm_planner_coordinator
+    blueprint = seeed_b601_dm_planner_coordinator.solidify()
     parsed = BlueprintConfigParser(blueprint).parse(["--can-port", "/dev/ttyACM0"], environ={})
     coordinator_atom = next(
         a for a in blueprint.active_blueprints if issubclass(a.module, SeeedB601DMCoordinator)
@@ -219,7 +219,7 @@ def test_mock_coordinator_executes_trajectory_and_gripper_command(tmp_path, mock
     clock = mocker.patch("dimos.control.tick_loop.time.perf_counter", return_value=100.0)
     atom = next(
         a
-        for a in seeed_b601_dm_planner_coordinator.blueprints
+        for a in seeed_b601_dm_planner_coordinator.solidify().blueprints
         if issubclass(a.module, ControlCoordinator)
     )
     coordinator = atom.module(publish_joint_state=False, **atom.kwargs)

@@ -37,6 +37,9 @@ from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from dimos.autoresearch.scene_spec import (
+    ObjectSceneRegistrationSpec,
+)
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
@@ -51,9 +54,6 @@ from dimos.msgs.geometry_msgs.Pose import Pose as PoseMsg
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.experimental.object_scene_registration_spec import (
-    ObjectSceneRegistrationSpec,
-)
 from dimos.porcelain.dimos import Dimos
 
 T = TypeVar("T")

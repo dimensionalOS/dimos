@@ -13,7 +13,11 @@
 # limitations under the License.
 
 from dimos.core.global_config import GlobalConfig
-from dimos.navigation.go2.loop_closure.module import PGOVoxelMapperConfig, _pgo_config
+from dimos.navigation.go2.loop_closure.module import (
+    PGOVoxelMapper,
+    PGOVoxelMapperConfig,
+    _pgo_config,
+)
 from dimos.navigation.go2.loop_closure.pgo import PGOConfig
 
 
@@ -35,3 +39,8 @@ def test_loop_closure_flag_overrides_the_simulation_default() -> None:
 
     assert _pgo_config(sim_on) is sim_on.pgo
     assert _pgo_config(real_off) is real_off.pgo
+
+
+def test_stop_without_start() -> None:
+    # the coordinator stops every deployed module when another one fails to start
+    PGOVoxelMapper().stop()

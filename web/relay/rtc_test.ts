@@ -1,5 +1,6 @@
 // RtcHub over a fake SFU client and fake peers. No network.
 import { assert, assertEquals } from "@std/assert";
+import { FakeTime } from "jsr:@std/testing@1/time";
 import type { ChannelSpec, IceServer, Msg, RobotInfo, RtcOfferMsg } from "@dimos/shared";
 import { TRACK_ENCODING } from "@dimos/shared/manifest";
 import type { CarrierStats } from "./carrier.ts";
@@ -211,10 +212,12 @@ const NOT_FOUND: TracksResponse = {
 };
 
 const instant = () => Promise.resolve();
+// Drain async work even while a test holds the hub's timers on a fake clock.
+const realSetTimeout = globalThis.setTimeout;
 
 /** Let every chained microtask (fake API calls, hub loops) run. */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => realSetTimeout(resolve, 0));
 }
 
 function hub(sfu: FakeSfu, options: RtcHubOptions = {}): RtcHub {
@@ -514,21 +517,40 @@ Deno.test("a hard per-track error reports rtc_failed for that track; the others 
 });
 
 Deno.test("no rtc_answer in time: the pulls are released and the retry re-pulls", async () => {
+  using time = new FakeTime(0);
+  const answerTimeoutMs = 20;
   const sfu = new FakeSfu();
-  const h = hub(sfu, { answerTimeoutMs: 20 });
-  const { viewer } = await connected(h, ["color_image"]);
-  assertEquals(viewer.offers().length, 1);
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  await settle();
-  assertEquals(sfu.of("closeTracks")[0], ["s2", ["p1"]]);
-  assertEquals(viewer.errors()[0], "rtc_failed");
-  assert(viewer.offers().length >= 2, "re-pulled after the timeout");
-  assertEquals(sfu.of("renegotiate"), []);
-  // Answering the latest offer completes it.
-  h.viewerAnswer(viewer, "late-but-fine");
-  await settle();
-  assertEquals(sfu.of("renegotiate").length, 1);
-  assertEquals(h.stats().pulls, 1);
+  const h = hub(sfu, { answerTimeoutMs });
+  try {
+    const { viewer } = await connected(h, ["color_image"]);
+    time.tick(answerTimeoutMs - 1);
+    await settle();
+    assertEquals(viewer.offers().length, 1);
+    assertEquals(viewer.errors(), []);
+    assertEquals(sfu.of("closeTracks"), []);
+
+    time.tick(1);
+    await settle();
+    assertEquals(sfu.of("closeTracks"), [["s2", ["p1"]]]);
+    assertEquals(viewer.errors(), ["rtc_failed"]);
+    assertEquals(sfu.pulls().length, 2);
+    assertEquals(viewer.offers().length, 2);
+    assertEquals(viewer.offers()[1].tracks, [{ ch: "color_image", mid: "p2" }]);
+    assertEquals(sfu.of("renegotiate"), []);
+
+    // Answer the retry, then cross its deadline to verify its timer was cleared.
+    h.viewerAnswer(viewer, "late-but-fine");
+    await settle();
+    time.tick(answerTimeoutMs);
+    await settle();
+    assertEquals(sfu.of("renegotiate"), [["s2", "late-but-fine"]]);
+    assertEquals(h.stats().pulls, 1);
+    assertEquals(viewer.offers().length, 2);
+    assertEquals(viewer.errors(), ["rtc_failed"]);
+    assertEquals(sfu.of("closeTracks"), [["s2", ["p1"]]]);
+  } finally {
+    await done(h);
+  }
 });
 
 Deno.test("a failed renegotiation releases the pulls and retries", async () => {

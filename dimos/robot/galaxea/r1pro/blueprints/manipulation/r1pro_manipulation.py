@@ -43,7 +43,8 @@ _manipulation_tasks = [
     joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
     TaskConfig(
         name="vel_chassis",
-        type="velocity",
+        type="twist_velocity",
+        params={"axes": ["linear.x", "linear.y", "angular.z"]},
         joint_names=make_twist_base_joints("chassis"),
         priority=10,
     ),

@@ -74,7 +74,7 @@ def _grip(held: bool) -> Buttons:
 def _coordinator_atom() -> BlueprintAtom:
     [atom] = [
         atom
-        for atom in teleop_webxr_metal.blueprints
+        for atom in teleop_webxr_metal.solidify().blueprints
         if issubclass(atom.module, ControlCoordinator)
     ]
     return atom
@@ -98,13 +98,13 @@ def _arm_positions(rig: MockConnectionRig) -> np.ndarray:
 
 
 def test_blueprint_wires_one_right_hand_arm_and_a_separate_jaw() -> None:
-    assert [atom.name for atom in teleop_webxr_metal.active_blueprints] == [
+    assert [atom.name for atom in teleop_webxr_metal.solidify().active_blueprints] == [
         "armteleopmodule",
         "ControlCoordinator",
         "metalconnection",
         "manipulationmodule",
     ]
-    assert teleop_webxr_metal.remapping_map == {
+    assert teleop_webxr_metal.solidify().remapping_map == {
         ("armteleopmodule", "right_controller_output"): "right_cartesian_command",
         ("metalconnection", "position_command"): "arm_position_command",
         ("ControlCoordinator", "arm_joint_state"): "joint_state",
@@ -131,11 +131,13 @@ def test_blueprint_wires_one_right_hand_arm_and_a_separate_jaw() -> None:
 
 def test_quest_input_takes_the_right_hand_and_x_returns_to_zero() -> None:
     [input_atom] = [
-        atom for atom in teleop_webxr_metal.blueprints if atom.module is ArmTeleopModule
+        atom for atom in teleop_webxr_metal.solidify().blueprints if atom.module is ArmTeleopModule
     ]
     assert input_atom.kwargs["zero_button"] == "X"
     [planner] = [
-        atom for atom in teleop_webxr_metal.blueprints if atom.name == "manipulationmodule"
+        atom
+        for atom in teleop_webxr_metal.solidify().blueprints
+        if atom.name == "manipulationmodule"
     ]
     assert planner.kwargs["gripper_tasks"] == {"arm": "metal_gripper"}
 
@@ -144,14 +146,16 @@ def test_simulation_swaps_the_can_connection_for_the_echo_mock(monkeypatch) -> N
     monkeypatch.setattr(global_config, "simulation", "mock")
     simulated = build_metal_webxr()
 
-    assert "metalconnection" not in [atom.name for atom in simulated.active_blueprints]
-    [connection] = [atom for atom in simulated.blueprints if atom.module is MockJointConnection]
+    assert "metalconnection" not in [atom.name for atom in simulated.solidify().active_blueprints]
+    [connection] = [
+        atom for atom in simulated.solidify().blueprints if atom.module is MockJointConnection
+    ]
     assert connection.kwargs["source"] == "arm"
     # The mock names joints as the robot model does, without the coordinator's
     # "arm/" prefix: the connection applies that prefix on its way in.
     assert connection.kwargs["initial_positions"] == {f"joint{index}": 0.0 for index in range(1, 8)}
     # The remap names the mock, so the coordinator still drives its position stream.
-    assert simulated.remapping_map[("mockjointconnection", "position_command")] == (
+    assert simulated.solidify().remapping_map[("mockjointconnection", "position_command")] == (
         "arm_position_command"
     )
 

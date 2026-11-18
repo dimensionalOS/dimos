@@ -102,8 +102,8 @@ def test_bench_composes_with_the_arm_the_way_the_sim_module_reads_it() -> None:
 
 
 def test_sim_blueprint_wires_the_arm_the_jaw_and_the_bench() -> None:
-    parsed = BlueprintConfigParser(metal_sim).parse([], environ={})
-    atoms = metal_sim.blueprints
+    parsed = BlueprintConfigParser(metal_sim.solidify()).parse([], environ={})
+    atoms = metal_sim.solidify().blueprints
     [sim] = [a for a in atoms if a.module is MujocoSimModule]
     [coordinator] = [a for a in atoms if issubclass(a.module, ControlCoordinator)]
     [planner] = [a for a in atoms if a.module is ManipulationModule]

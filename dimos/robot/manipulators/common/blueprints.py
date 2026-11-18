@@ -23,7 +23,7 @@ from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -197,7 +197,7 @@ def manipulation_mapping(
     world_frame: str = "world",
     grace_depth: float | None = None,
     self_filter_padding: float | None = None,
-) -> Blueprint:
+) -> MetaBlueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
     Three modules in a row: a self filter drops the robot's own returns, a

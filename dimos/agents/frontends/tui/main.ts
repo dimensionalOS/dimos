@@ -7,7 +7,6 @@ import type { CallId } from "#dimos/agents/shared/protocol/conversation/calls.ts
 import type { Component, OverlayHandle } from "@earendil-works/pi-tui";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
 import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
-import type { Gallery } from "#dimos/agents/frontends/tui/views/gallery.ts";
 import type { ImageAddress } from "#dimos/agents/shared/protocol/conversation/images.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
@@ -210,13 +209,18 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     tui,
     cwd,
     () => (showing === null ? null : { rows: rows(), omitted: showing.conversation.transcript.value.omitted }),
-    (gallery, index) => openPanel(gallery, index),
+    (gallery, index) => {
+      gallery.select(index);
+      if (gallery.interactive)
+        fullScreen(gallery.details.views[index - 1]?.label ?? "Overview", gallery, true, () => gallery.select(0));
+    },
   );
   const chatScroll = new ScrollView(transcript, { follow: "end", primary: true });
   const editor = new PromptEditor(
     tui,
     commands.map((command) => command.name),
     cwd(),
+    () => ui.gateway.streams.value,
   );
   const login = new LoginPanel(tui, ui);
   const progressSlot = new Container();
@@ -275,7 +279,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
           (candidate) => candidate.call === call,
         );
         fullScreen(
-          clean(row?.label ?? call),
+          clean(row?.label ?? "Background output"),
           movedOutput(showing.id, call),
           true,
           () => {
@@ -288,7 +292,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         if (showing === null) return;
         const { conversation } = showing;
         try {
-          void ui.actions.observe(`stop call ${call}`, owner(conversation).stopBackground({ call })).catch(note);
+          void ui.actions.observe("stop background call", owner(conversation).stopBackground({ call })).catch(note);
         } catch (error) {
           note(error);
         }
@@ -493,12 +497,6 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     );
     tui.setFocus(focused);
     tui.requestRender();
-  };
-
-  const openPanel = (gallery: Gallery, index: number) => {
-    gallery.select(index);
-    if (gallery.interactive)
-      fullScreen(gallery.details.views[index - 1]?.label ?? "view", gallery, true, () => gallery.select(0));
   };
 
   /** The unsent text of each conversation that is not shown; it returns to the editor when its conversation shows. */
@@ -736,7 +734,6 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     openMenu: () => {
       closeSwitcher();
       const view = new MenuView({
-        inventory,
         ui,
         current: showing?.id ?? null,
         attach: (conversation) => {
@@ -758,7 +755,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       const gallery = transcript.latestGallery;
       if (gallery === null) throw new Error("No rendering yet.");
       if (index > gallery.details.views.length) throw new Error(`Choose /panel 0–${gallery.details.views.length}.`);
-      openPanel(gallery, index);
+      gallery.openPanel(index);
     },
     exit: (code) => resolveExit(code),
   };
