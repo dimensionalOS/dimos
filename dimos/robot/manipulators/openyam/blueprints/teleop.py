@@ -34,6 +34,7 @@ from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
@@ -132,6 +133,8 @@ def openyam_quest_tasks() -> list[TaskConfig]:
     ]
 
 
+# UrdfManager serves the URDF to web 3D views. The planner already puts every
+# link on tf, so the manager leaves joint tf off (on, links would get two parents).
 teleop_webxr_openyam = autoconnect(
     ArmTeleopModule.blueprint(zero_button="B"),
     _teleop_control(openyam_quest_tasks()),
@@ -141,6 +144,7 @@ teleop_webxr_openyam = autoconnect(
         kinematics=OPENYAM_QUEST_KINEMATICS,
         visualization={"backend": "viser"},
     ),
+    UrdfManager.blueprint(model=_openyam_model.model, publish_joint_tf=False),
 ).remappings([(ArmTeleopModule, "right_controller_output", "right_cartesian_command")])
 
 keyboard_teleop_openyam_planner = autoconnect(

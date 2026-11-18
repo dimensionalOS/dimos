@@ -56,6 +56,17 @@ OPENYAM_GRIPPER_NAME = "gripper"
 #: it. The managed model calls them hand_finger_joint1 and hand_finger_joint2;
 #: both are fully open at their lower end and closed at their upper end.
 OPENYAM_FINGER_JOINTS = ("joint7", "joint8")
+#: Every link of the OpenYAM model. The planner puts each on tf as world ->
+#: link, which is where web 3D views draw that link's meshes.
+OPENYAM_LINKS = [
+    "base",
+    *[f"arm_link_{index}" for index in range(1, OPENYAM_DOF + 1)],
+    "hand",
+    "hand_right_finger",
+    "hand_left_finger",
+    "arm_tcp",
+    "gripper_tip",
+]
 # The jaw's parts touch at every opening: each finger's hull reaches into the
 # hand's, and the two fingers' hulls overlap.
 OPENYAM_GRIPPER_COLLISION_EXCLUSIONS = [
@@ -116,6 +127,7 @@ def make_openyam_model_config(
             auto_convert_meshes=True,
             collision_exclusion_pairs=list(OPENYAM_GRIPPER_COLLISION_EXCLUSIONS),
             home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
+            tf_extra_links=list(OPENYAM_LINKS),
         ),
         robot,
         fingers=OPENYAM_FINGER_JOINTS,
