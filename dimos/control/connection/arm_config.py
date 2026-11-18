@@ -40,7 +40,6 @@ __all__ = [
     "MAX_CONFIG_LEASE_S",
     "AppliedFile",
     "ArmConfigState",
-    "CommandResult",
     "ConfigApplied",
     "ConfigKeys",
     "ConfigPatch",
@@ -244,15 +243,3 @@ class ConfigKeys(BaseConfig):
     persist_paths: dict[str, str] = Field(default_factory=dict)
     gravity_compensation: bool = False
     max_lease_s: float = MAX_CONFIG_LEASE_S
-
-
-class CommandResult(BaseConfig):
-    """Whether position targets reached the motors.
-
-    Attributes:
-        ok: The targets were sent.
-        error: Why they were not, else ``None``.
-    """
-
-    ok: bool
-    error: str | None = None

@@ -25,12 +25,15 @@ says it can read and change (``config_keys``, asked at every ``plan``,
 module belongs to, so a client that started a run can tell it is talking to
 that one before it drives the arm.
 
-The arm is reached through the ``_connection`` module reference: the
+The arm is configured through the ``_connection`` module reference: the
 blueprint injects the robot's connection (a ``DamiaoConnection`` deployed
 with ``config_sessions=True``) and every call is an RPC to it over the bus,
-through the arm config contract (``hooks.ArmConfigHooks``). Targets are
-streamed as ``config_command`` calls at ``ProcedureSettings.stream_hz``, 50
-per second by default. The arm is read back from the connection's
+through the arm config contract (``hooks.ArmConfigHooks``). Targets go out
+on ``calibration_joint_command`` at ``ProcedureSettings.stream_hz``, 50 per
+second by default, to the control coordinator's pass-through task
+(``coordinator.CalibrationCoordinator``), which sends each one to the
+connection on its next tick, unchanged; ``hold`` reaches that task through
+the ``_coordinator`` reference. The arm is read back from the connection's
 ``joint_state`` stream, of which the module keeps the latest message.
 
 Markers go out on ``gravity_events``, ``step_events`` and ``float_events``,
@@ -43,12 +46,11 @@ the streams the offline reports (``gravity_fit``, ``step_report``,
 Stopping the module parks the arm first (``Procedure.shutdown``): any run is
 aborted and the arm backs out home within ``park_budget_s``, then the session
 ends and the connection may de-energize it. The calls to the connection time
-out by method name (``CALL_TIMEOUTS_S``): ``config_command`` after
-``STREAMED_CALL_TIMEOUT_S``, since a call that slow has already let the
-connection's deadman hold the arm, and ``config_set``, ``config_get`` and
-``config_reset`` after ``CONFIG_CALL_TIMEOUT_S``, so a connection that
-stopped answering cannot stall closing a session for minutes. A save
-(``config_set`` with scope "persist") waits ``PERSIST_CALL_TIMEOUT_S``.
+out by method name (``CALL_TIMEOUTS_S``) after ``CONFIG_CALL_TIMEOUT_S``, so a
+connection that stopped answering cannot stall closing a session for
+minutes; a save (``config_set`` with scope "persist") waits
+``PERSIST_CALL_TIMEOUT_S``. A ``hold`` waits ``HOLD_CALL_TIMEOUT_S``: by then
+the targets have gone stale and the coordinator sends the arm nothing anyway.
 """
 
 from __future__ import annotations
@@ -70,6 +72,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.manipulators.calibration.arm_session import MarkerStream
+from dimos.robot.manipulators.calibration.coordinator import CALIBRATION_PASSTHROUGH_TASK
 from dimos.robot.manipulators.calibration.gravity_poses import DEFAULT_POSE_COUNT
 from dimos.robot.manipulators.calibration.hooks import ArmConfigHooks
 from dimos.robot.manipulators.calibration.motion import (
@@ -100,24 +103,33 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 NOT_RECORDING = "not in a dimos run, so nothing is recorded to read back"
-# The streamed calls fail fast: by then the connection's 0.1 s deadman holds the arm.
-STREAMED_CALL_TIMEOUT_S = 0.5
-# A session's other calls answer at once; a stuck one ends the session.
+# A session's calls answer at once; a stuck one ends the session.
 CONFIG_CALL_TIMEOUT_S = 2.0
 # Writing and applying a calibration file.
 PERSIST_CALL_TIMEOUT_S = 10.0
+# A hold that takes longer has been overtaken by the targets going stale.
+HOLD_CALL_TIMEOUT_S = 0.5
 # Each call's timeout by method name. Without them a stuck call would block
 # the session's tick, or its close, for the module default of two minutes.
 CALL_TIMEOUTS_S: dict[str, float] = {
-    "config_command": STREAMED_CALL_TIMEOUT_S,
     "config_set": CONFIG_CALL_TIMEOUT_S,
     "config_get": CONFIG_CALL_TIMEOUT_S,
     "config_reset": CONFIG_CALL_TIMEOUT_S,
+    "status": CONFIG_CALL_TIMEOUT_S,
 }
+COORDINATOR_CALL_TIMEOUTS_S: dict[str, float] = {"task_invoke": HOLD_CALL_TIMEOUT_S}
 
 
 class ArmConfigConnectionSpec(Spec, ArmConfigHooks, Protocol):
     """The connection a calibration module drives: one deployed with ``config_sessions=True``."""
+
+
+class PassthroughCoordinatorSpec(Spec, Protocol):
+    """The coordinator that forwards the module's targets: its calibration pass-through task."""
+
+    def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any] | None = None) -> Any:
+        """Run one command of a coordinator task; ``None`` when there is no such task."""
+        ...
 
 
 class CalibrationModuleConfig(ModuleConfig):
@@ -246,6 +258,19 @@ class _LatestJointState:
             return self._msg
 
 
+class _CoordinatorDriver:
+    """Targets out on ``calibration_joint_command``; ``hold`` through the coordinator's task."""
+
+    def __init__(self, module: CalibrationModule) -> None:
+        self._module = module
+
+    def send(self, targets: JointState) -> None:
+        self._module.calibration_joint_command.publish(targets)
+
+    def hold(self) -> None:
+        self._module._coordinator.task_invoke(CALIBRATION_PASSTHROUGH_TASK, "hold")
+
+
 class _StreamSink:
     """Publishes the procedure's markers and status on the module's streams."""
 
@@ -279,7 +304,9 @@ class CalibrationModule(Module):
 
     config: CalibrationModuleConfig
     _connection: ArmConfigConnectionSpec
+    _coordinator: PassthroughCoordinatorSpec
     joint_state: In[JointState]
+    calibration_joint_command: Out[JointState]
     gravity_events: Out[String]
     step_events: Out[String]
     float_events: Out[String]
@@ -297,13 +324,15 @@ class CalibrationModule(Module):
     def start(self) -> None:
         super().start()
         spec = self.config.arm_spec()
-        timeouts = self._set_call_timeouts()
+        timeouts = _set_call_timeouts(self._connection, CALL_TIMEOUTS_S)
+        _set_call_timeouts(getattr(self, "_coordinator", None), COORDINATOR_CALL_TIMEOUTS_S)
         self.register_disposable(Disposable(self.joint_state.subscribe(self._joint_states.put)))
         self._recording = SqliteRecording.of_this_run()
         procedure = _ModuleProcedure(
             spec,
             self._connection,
             calibration_steps(),
+            driver=_CoordinatorDriver(self),
             state=self._joint_states,
             settings=self.config.settings(),
             # The connection may still be starting: its keys are asked at plan and run.
@@ -326,21 +355,6 @@ class CalibrationModule(Module):
             outcome = procedure.shutdown()
             logger.info(f"{procedure.spec.arm_id}: calibration module stopping: {outcome}")
         super().stop()
-
-    def _set_call_timeouts(self) -> dict[str, float] | None:
-        """Give the config calls their ``CALL_TIMEOUTS_S``; returns the client's table.
-
-        The connection reference's RPC client resolves a call's timeout from
-        its ``rpc_timeouts`` by method name, falling back to the module default
-        (two minutes); a fake connection has no client and is left alone
-        (``None``).
-        """
-        client = getattr(self._connection, "rpc", None)
-        timeouts = getattr(client, "rpc_timeouts", None)
-        if not isinstance(timeouts, dict):
-            return None
-        timeouts.update(CALL_TIMEOUTS_S)
-        return timeouts
 
     def _recording_unavailable(self) -> str | None:
         recording = self._recording
@@ -426,3 +440,18 @@ class CalibrationModule(Module):
     def dimos_run_id(self) -> str | None:
         """The ``dimos run`` this module runs in (its ``DIMOS_RUN_ID``), ``None`` outside one."""
         return os.environ.get(DIMOS_RUN_ID_ENV)
+
+
+def _set_call_timeouts(reference: Any, calls: dict[str, float]) -> dict[str, float] | None:
+    """Give ``calls`` their timeouts on a module reference's RPC client; returns its table.
+
+    The client resolves a call's timeout from its ``rpc_timeouts`` by method
+    name, falling back to the module default (two minutes); a fake without a
+    client is left alone (``None``).
+    """
+    client = getattr(reference, "rpc", None)
+    timeouts = getattr(client, "rpc_timeouts", None)
+    if not isinstance(timeouts, dict):
+        return None
+    timeouts.update(calls)
+    return timeouts

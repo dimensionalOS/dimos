@@ -16,9 +16,13 @@
 
 :class:`ArmSession` opens a config session on an :class:`~dimos.robot.
 manipulators.calibration.hooks.ArmConfigHooks` connection and, while it
-lasts, sends the arm's targets every tick with ``config_command`` (at least
-50 Hz, well inside the connection's 0.1 s command deadman, and each call
-carries the session's id, so it renews the session's lease). Each tick reads the arm back from the latest
+lasts, publishes the arm's targets every tick (at least 50 Hz) to an
+:class:`ArmDriver`: the control coordinator's pass-through task, which sends
+each one to the connection on its next tick, unchanged. Before the session
+begins it streams the arm's measured position until the connection takes it,
+so the coordinator is commanding the arm when the session starts. An empty
+``config_set`` carrying the session's id renews the lease every
+``LEASE_RENEW_S``. Each tick reads the arm back from the latest
 ``joint_state`` message (a :class:`StateSource`) and stops it when the
 reading is older than ``MAX_READING_AGE_S``, when a target would leave the
 workspace or pass a joint limit, when a measured point sags out of the
@@ -28,11 +32,14 @@ workspace, or when a joint lags its target by more than
 (``motion.ramp_lag_limits_deg``). A floating joint (a gain of kp 0) is held
 again when it moves faster than ``FLOAT_SPEED_LIMIT_DEG_S`` or drifts more
 than ``FLOAT_DRIFT_LIMIT_DEG``. Ramps are the minimum-jerk ramps of
-:mod:`~dimos.robot.manipulators.calibration.motion`. Leaving the session, for
-any reason, ends the config session (``config_reset``): the connection then
-undoes every live change (floating joints held where they are, torque
-offsets dropped, gains restored), and its deadman holds the arm where it is.
-The only motion home without a confirmation is :meth:`ArmSession.park`, on a
+:mod:`~dimos.robot.manipulators.calibration.motion`. A session method that
+raises first has the driver hold the arm where it is (``ArmDriver.hold``), so
+the coordinator stops sending the last target. Leaving the session, for any
+reason, holds the arm and then ends the config session (``config_reset``):
+the connection undoes every live change (floating joints held where they are,
+torque offsets dropped, gains restored), and its deadman holds the arm where
+it is once the coordinator sends nothing. The only motion home without a
+confirmation is :meth:`ArmSession.park`, on a
 time budget, which the procedure runs when its module stops or a prompt goes
 unanswered.
 
@@ -46,12 +53,13 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict
+import functools
 import itertools
 import math
 import threading
 import time
 from types import TracebackType
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeVar, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -98,6 +106,14 @@ FLOAT_DRIFT_LIMIT_DEG = 5.0
 FLOAT_SPEED_LIMIT_DEG_S = 20.0
 # Every joint this close to home counts as at home.
 HOME_TOLERANCE_DEG = 3.0
+# The longest a session goes without renewing its lease.
+LEASE_RENEW_S = 0.5
+# Before a session begins, the measured position is streamed at least this
+# long, and until the connection has taken it, at most PRIME_TIMEOUT_S.
+PRIME_S = 0.1
+PRIME_TIMEOUT_S = 1.0
+
+_Method = TypeVar("_Method", bound=Callable[..., Any])
 
 
 class AbortRequestedError(Exception):
@@ -129,6 +145,18 @@ class StateSource(Protocol):
 
     def latest(self) -> JointState | None:
         """The latest message, ``None`` before the first."""
+        ...
+
+
+class ArmDriver(Protocol):
+    """Where a session's targets go: the control coordinator's pass-through task."""
+
+    def send(self, targets: JointState) -> None:
+        """Publish one sample of position targets."""
+        ...
+
+    def hold(self) -> None:
+        """Hold the arm where it is now, until the next sample."""
         ...
 
 
@@ -263,11 +291,26 @@ class TrackingLog:
         }
 
 
+def _holds_on_failure(method: _Method) -> _Method:
+    """Hold the arm before an error from ``method`` goes on."""
+
+    @functools.wraps(method)
+    def wrapper(self: ArmSession, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return method(self, *args, **kwargs)
+        except Exception as error:
+            self._hold_after(error)
+            raise
+
+    return cast("_Method", wrapper)
+
+
 class ArmSession:
     """A config session on one arm, streamed every tick until the ``with`` block ends.
 
     Args:
         connection: The arm's connection.
+        driver: Where its targets go.
         state: Its joint readings.
         source: Its robot name, the prefix of the readings' joint names.
         spec: The arm.
@@ -276,12 +319,13 @@ class ArmSession:
         clock: Time and waiting.
         speed_rad_s: Peak joint speed of every ramp.
         stream_hz: Ticks per second.
-        lease_s: The config session's lease; every tick renews it.
+        lease_s: The config session's lease, renewed every ``LEASE_RENEW_S`` or half of it.
     """
 
     def __init__(
         self,
         connection: ArmConfigHooks,
+        driver: ArmDriver,
         state: StateSource | None,
         source: str,
         spec: ArmCalibrationSpec,
@@ -294,6 +338,7 @@ class ArmSession:
         lease_s: float,
     ) -> None:
         self._connection = connection
+        self._driver = driver
         self._state = state
         self._source = source
         self._spec = spec
@@ -303,7 +348,10 @@ class ArmSession:
         self._speed = speed_rad_s
         self._period = 1.0 / stream_hz
         self._lease_s = lease_s
+        self._renew_s = min(LEASE_RENEW_S, lease_s / 2.0)
+        self._renewed = 0.0
         self._names = list(spec.joint_names)
+        self._command_names = [f"{source}/{name}" for name in self._names]
         self._lower, self._upper = joint_limits(spec)
         self._target: Vector = np.zeros(len(self._names))
         self._measured: Vector = np.zeros(len(self._names))
@@ -317,25 +365,31 @@ class ArmSession:
         self._guard: SegmentGuard | None = None
         self._next_tick = 0.0
         self._open = False
+        self._held_for: BaseException | None = None
 
     def __enter__(self) -> ArmSession:
         self._host.check_abort()
+        try:
+            self._prime()
+        except BaseException:
+            self._hold_arm()
+            raise
         try:
             started = self._connection.config_set(
                 ConfigPatch(arm_id=self._spec.arm_id), scope="session", lease_s=self._lease_s
             )
         except Exception as error:
+            self._hold_arm()
             raise SessionLostError(f"the connection refused a config session: {plain_error(error)}")
         if not started.session_id:
+            self._hold_arm()
             raise SessionLostError("the connection started no config session")
         self._session_id = started.session_id
+        self._renewed = self._clock.now()
         self._open = True
         try:
             self._read()
-            self._target = self._measured.copy()
             self._gains = dict(self._arm_state().gains)
-            self._guard = SegmentGuard(self._arm, self._target, self._target)
-            self._next_tick = self._clock.now()
             self._send()
         except BaseException:
             self._close()
@@ -354,6 +408,7 @@ class ArmSession:
         if not self._open:
             return
         self._open = False
+        self._hold_arm()
         try:
             self._connection.config_reset()
         except Exception as error:
@@ -391,6 +446,51 @@ class ArmSession:
             return call(*args, **kwargs)
         except Exception as error:
             raise SessionLostError(f"{name} failed: {plain_error(error)}") from error
+
+    def _hold_arm(self) -> None:
+        """Have the driver hold the arm where it is now; a failure is logged."""
+        try:
+            self._driver.hold()
+        except Exception as error:
+            logger.warning(
+                f"holding the arm failed; the coordinator stops sending targets once they go "
+                f"stale: {plain_error(error)}"
+            )
+
+    def _hold_after(self, error: BaseException) -> None:
+        """Hold the arm once for ``error``, however many session methods it passes through."""
+        if error is not self._held_for:
+            self._held_for = error
+            self._hold_arm()
+
+    def _prime(self) -> None:
+        """Stream the measured position until the connection takes it, before the session begins.
+
+        At least ``PRIME_S``, until the connection reports a command taken
+        since the first target went out. Raises ``SessionLostError`` when none
+        is within ``PRIME_TIMEOUT_S``: nothing forwards the targets.
+        """
+        self._read()
+        self._target = self._measured.copy()
+        self._guard = SegmentGuard(self._arm, self._target, self._target)
+        start = self._clock.now()
+        self._next_tick = start
+        while True:
+            self._host.check_abort()
+            self._send()
+            self._wait_tick(None)
+            self._read()
+            elapsed = self._clock.now() - start
+            if elapsed >= PRIME_S:
+                status = self._call("status", self._connection.status)
+                taken = status.last_command_time
+                if taken is not None and taken >= start:
+                    return
+            if elapsed >= PRIME_TIMEOUT_S:
+                raise SessionLostError(
+                    f"the connection took no target within {PRIME_TIMEOUT_S:g} s: the control "
+                    "coordinator is not forwarding the calibration's targets"
+                )
 
     def _arm_state(self) -> ArmConfigState:
         states = self._call("config_get", self._connection.config_get)
@@ -432,23 +532,47 @@ class ArmSession:
         commanded = self._target.copy()
         for joint in self._floating:
             commanded[self._names.index(joint)] = self._measured[self._names.index(joint)]
-        targets = {name: float(value) for name, value in zip(self._names, commanded, strict=True)}
-        result = self._call(
-            "config_command", self._connection.config_command, targets, self._session_id
+        targets = JointState(
+            ts=self._clock.now(),
+            name=list(self._command_names),
+            position=[float(value) for value in commanded],
         )
-        if not result.ok:
-            raise SessionLostError(f"the connection stopped taking targets: {result.error}")
+        try:
+            self._driver.send(targets)
+        except Exception as error:
+            raise SessionLostError(f"the targets could not be sent: {plain_error(error)}")
 
+    def _renew(self) -> None:
+        """Renew the lease with an empty ``config_set``, ``LEASE_RENEW_S`` after the last renewal."""
+        now = self._clock.now()
+        if now - self._renewed < self._renew_s:
+            return
+        self._renewed = now
+        self._call(
+            "config_set",
+            self._connection.config_set,
+            ConfigPatch(arm_id=self._spec.arm_id),
+            scope="session",
+            session_id=self._session_id,
+        )
+
+    @_holds_on_failure
     def keepalive(self) -> None:
-        """One tick without the wait: read, check, and send the current target."""
+        """One tick without the wait: read, check, send the current target, renew the lease."""
         self._host.check_abort()
         self._read()
         self._check()
         self._send()
+        self._renew()
 
+    @_holds_on_failure
     def tick(self, until: threading.Event | None = None) -> bool:
         """One tick, then wait for the next; with ``until``, whether it was set meanwhile."""
         self.keepalive()
+        return self._wait_tick(until)
+
+    def _wait_tick(self, until: threading.Event | None) -> bool:
+        """Wait for the next tick; with ``until``, whether it was set meanwhile."""
         self._next_tick += self._period
         delay = self._next_tick - self._clock.now()
         if delay < -self._period:
@@ -463,6 +587,7 @@ class ArmSession:
             self._clock.sleep(delay)
         return False
 
+    @_holds_on_failure
     def wait_for(self, event: threading.Event, deadline: float | None = None) -> bool:
         """Hold the arm where it is until ``event`` is set; False when ``deadline`` came first."""
         while not self.tick(event):
@@ -492,6 +617,7 @@ class ArmSession:
                 "where it is"
             )
 
+    @_holds_on_failure
     def ramp_to(
         self,
         target: Vector,
@@ -539,6 +665,7 @@ class ArmSession:
             follow.append(kd / kp if kp > 0.0 else 1e6)
         return np.asarray(follow, dtype=np.float64)
 
+    @_holds_on_failure
     def move_to(self, target: Vector, log: TrackingLog | None = None) -> None:
         """Go to ``target`` straight when that clears the table, else through home."""
         path = plan_path(self._arm, self._target, np.asarray(target, dtype=np.float64))
@@ -555,6 +682,7 @@ class ArmSession:
         self._target = self._measured.copy()
         self._guard = SegmentGuard(self._arm, self._target, self._target)
 
+    @_holds_on_failure
     def park(self, speed_rad_s: float, deadline: float) -> str:
         """Back out home at ``speed_rad_s`` by ``deadline`` (clock time); what it did.
 
@@ -588,6 +716,7 @@ class ArmSession:
             self.ramp_to(waypoint, speed_rad_s=speed_rad_s, deadline=deadline)
         return f"parked at home in {self._clock.now() - start:.1f} s"
 
+    @_holds_on_failure
     def retrace_home(self, visited: Sequence[Vector]) -> None:
         """Go home, backing out through ``visited`` poses (latest last) when home is not direct."""
         home = np.asarray(self._arm.home, dtype=np.float64)
@@ -600,6 +729,7 @@ class ArmSession:
                 self.ramp_to(previous)
         self.move_to(home)
 
+    @_holds_on_failure
     def hold(self, seconds: float, log: TrackingLog | None = None) -> None:
         """Hold the current target for ``seconds``."""
         start = self._clock.now()
@@ -608,6 +738,7 @@ class ArmSession:
             if log is not None and self._clock.now() - start >= seconds - REST_WINDOW_S:
                 log.add_rest(np.degrees(self._target - self._measured))
 
+    @_holds_on_failure
     def set_gains(self, joint: str, kp: float, kd: float) -> tuple[float, float]:
         """Hold ``joint`` with these gains for the session; returns them as applied (clamped).
 
@@ -620,11 +751,13 @@ class ArmSession:
         self._gains[joint] = state
         return (float(state.kp), float(state.kd))
 
+    @_holds_on_failure
     def reset_gains(self) -> None:
         """Undo every live change, keeping the session: the calibration's gains, else the robot's."""
         self._call("config_reset", self._connection.config_reset, keep_session=True)
         self._gains = dict(self._arm_state().gains)
 
+    @_holds_on_failure
     def step_joint(self, joint: str, delta_deg: float, hold_s: float) -> StepEvent:
         """Move ``joint``'s target by ``delta_deg`` at once, mark it, and hold ``hold_s``."""
         check_step(delta_deg)
@@ -704,6 +837,7 @@ class ArmSession:
             self._target[index] = self._measured[index]
             self._guard = SegmentGuard(self._arm, self._target, self._target)
 
+    @_holds_on_failure
     def float_window(
         self,
         joint: str,

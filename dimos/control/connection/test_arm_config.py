@@ -25,7 +25,6 @@ import pytest
 from dimos.control.connection.arm_config import (
     AppliedFile,
     ArmConfigState,
-    CommandResult,
     ConfigApplied,
     ConfigKeys,
     ConfigPatch,
@@ -83,7 +82,6 @@ VALUES: list[BaseModel] = [
         persist_paths={"rig/left": "/arms/rig/left/calibration.json"},
         gravity_compensation=True,
     ),
-    CommandResult(ok=False, error="dropped"),
 ]
 
 

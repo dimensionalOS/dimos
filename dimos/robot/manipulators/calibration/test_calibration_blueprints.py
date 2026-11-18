@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Every Damiao arm has a calibration blueprint: its connection open for config sessions, no coordinator."""
+"""Every Damiao arm has a calibration blueprint: its connection open for config sessions, the
+calibration coordinator driving it through a pass-through task, and the calibration module."""
 
 from __future__ import annotations
 
@@ -24,6 +25,11 @@ from dimos.core.global_config import global_config
 from dimos.memory.tap import matching
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.get_all_blueprints import load_blueprint
+from dimos.robot.manipulators.calibration.coordinator import (
+    CALIBRATION_COMMAND_PORT,
+    CALIBRATION_PASSTHROUGH_TASK,
+    CalibrationCoordinator,
+)
 from dimos.robot.manipulators.calibration.module import CalibrationModule
 from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
@@ -60,21 +66,36 @@ def test_the_blueprint_opens_the_connection_for_config_sessions_and_records(name
 
     blueprint = load_blueprint(name)
 
-    assert {atom.module for atom in blueprint.blueprints} == {connection, CalibrationModule}
+    assert {atom.module for atom in blueprint.blueprints} == {
+        CalibrationCoordinator,
+        connection,
+        CalibrationModule,
+    }
     [driver] = [atom for atom in blueprint.blueprints if atom.module is connection]
     assert driver.kwargs["config_sessions"] is True and driver.kwargs["teach"] is False
     assert driver.kwargs["source"] == "arm"
     [calibration] = [atom for atom in blueprint.blueprints if atom.module is CalibrationModule]
     assert calibration.kwargs == {"robot": robot, **({"arm": arm} if arm else {})}
+    # One pass-through task over every arm joint, fed by the calibration's targets.
+    [coordinator] = [atom for atom in blueprint.blueprints if atom.module is CalibrationCoordinator]
+    assert coordinator.kwargs["instance_name"] == "ControlCoordinator"
+    [task] = coordinator.kwargs["tasks"]
+    assert (task.name, task.type) == (CALIBRATION_PASSTHROUGH_TASK, "passthrough")
+    assert task.joint_names == [f"arm/{joint}" for joint in connection.robot.arm_joint_names]
+    assert task.stream_bind == {"joint_command": CALIBRATION_COMMAND_PORT}
     assert blueprint.global_config_overrides["record"] == "sqlite"
     assert blueprint.global_config_overrides["record_engine"] == "python"
     # Every stream the procedure reads back is recorded, by the names the recorder sees.
     topics = blueprint.global_config_overrides["record_topics"]
     names = {name for name, _ in stream_name_types(blueprint)}
-    read_back = {"joint_state", "gravity_events", "step_events", "float_events"}
-    assert read_back | {"calibration_events"} <= matching(topics, names)
-    # The module's _connection reference resolves to the robot's connection.
-    assert resolve_module_refs(blueprint) == {(calibration.name, "_connection"): driver.name}
+    read_back = {"joint_state", "arm_position_command", "gravity_events", "step_events"}
+    assert read_back | {"float_events", "calibration_events"} <= matching(topics, names)
+    assert CALIBRATION_COMMAND_PORT in names
+    # The module reaches the connection for its config and the coordinator for a hold.
+    assert resolve_module_refs(blueprint) == {
+        (calibration.name, "_connection"): driver.name,
+        (calibration.name, "_coordinator"): coordinator.name,
+    }
 
 
 def test_calibration_never_runs_on_the_simulated_connection(monkeypatch: pytest.MonkeyPatch):

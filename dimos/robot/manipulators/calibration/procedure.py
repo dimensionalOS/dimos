@@ -39,7 +39,9 @@ booleans, lists and dicts.
 
 Nothing here knows the transport: the arm is a :class:`~dimos.robot.
 manipulators.calibration.hooks.ArmConfigHooks` connection (an RPC proxy in a
-``dimos run``, a fake in tests), its readings come from a :class:`~dimos.
+``dimos run``, a fake in tests), its targets go to an :class:`~dimos.robot.
+manipulators.calibration.arm_session.ArmDriver` (the control coordinator's
+pass-through task), its readings come from a :class:`~dimos.
 robot.manipulators.calibration.arm_session.StateSource` (the connection's
 ``joint_state`` stream), markers and status go to an :class:`EventSink`, and
 analyses read a :class:`~dimos.robot.manipulators.calibration.recording.
@@ -67,6 +69,7 @@ from dimos.control.connection.arm_config import (
 )
 from dimos.robot.manipulators.calibration.arm_session import (
     AbortRequestedError,
+    ArmDriver,
     ArmSession,
     Clock,
     MarkerStream,
@@ -490,6 +493,7 @@ class Procedure:
         spec: The arm.
         connection: Its connection.
         steps: The steps, in order (``steps.calibration_steps()``).
+        driver: Where the arm's targets go; without one no session opens.
         state: The arm's joint readings, the connection's ``joint_state``.
         settings: How it moves and waits.
         caps: What the arm and the run offer.
@@ -505,6 +509,7 @@ class Procedure:
         connection: ArmConfigHooks,
         steps: Sequence[Step],
         *,
+        driver: ArmDriver | None = None,
         state: StateSource | None = None,
         settings: ProcedureSettings | None = None,
         caps: Capabilities | None = None,
@@ -518,6 +523,7 @@ class Procedure:
             raise ValueError(f"step ids must be distinct and non-empty, got {ids}")
         self.spec = spec
         self.connection = connection
+        self.driver = driver
         self.state = state
         self.settings = settings or ProcedureSettings()
         self.caps = caps or Capabilities()
@@ -741,7 +747,7 @@ class Procedure:
             return True
 
     def abort(self) -> bool:
-        """Stop the run now: no new targets, the config session ends, the arm holds where it is.
+        """Stop the run now: the arm is held, the config session ends, the arm holds where it is.
 
         The arm is not moved home; a park under way stops too. False when nothing runs.
         """
@@ -753,6 +759,11 @@ class Procedure:
             if self._park_claimed:
                 self._park_cancel.set()
             self._message = "aborting"
+        if self.driver is not None:
+            try:
+                self.driver.hold()
+            except Exception as error:
+                logger.warning(f"holding the arm on abort failed: {plain_error(error)}")
         try:
             # Ends the session at once, even while the run thread waits on a call;
             # config_reset needs no session id, so this thread may end it.
@@ -996,8 +1007,11 @@ class Procedure:
                 raise RuntimeError("a step already holds a config session")
             self._slot_taken = True
         try:
+            if self.driver is None:
+                raise StepFailedError("nothing forwards targets to the arm: there is no driver")
             session = ArmSession(
                 self.connection,
+                self.driver,
                 self.state,
                 self.keys().source,
                 self.spec,

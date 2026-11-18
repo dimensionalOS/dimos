@@ -36,9 +36,9 @@ from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, generat
 from dimos.robot.manipulators.calibration.module import (
     CALL_TIMEOUTS_S,
     CONFIG_CALL_TIMEOUT_S,
+    HOLD_CALL_TIMEOUT_S,
     NOT_RECORDING,
     PERSIST_CALL_TIMEOUT_S,
-    STREAMED_CALL_TIMEOUT_S,
     CalibrationModule,
     CalibrationModuleConfig,
 )
@@ -82,11 +82,17 @@ def make_module(
         if connection is None:
             connection = FakeTuningArm(left_spec, calibration_root=tmp_path, realtime=True)
         # The arm's readings reach the module on its joint_state input, as a
-        # connection's joint_state output does in a blueprint.
+        # connection's joint_state output does in a blueprint; its targets
+        # reach the fake, which stands in for the coordinator's pass-through.
         readings = LocalTransport()
         module.set_transport("joint_state", readings)
         connection.joint_state = readings
+        targets = LocalTransport()
+        targets.subscribe(connection.send)
+        module.set_transport("calibration_joint_command", targets)
+        outputs["calibration_joint_command"] = targets
         module.set_module_ref("_connection", connection)
+        module.set_module_ref("_coordinator", connection)
         made.append(module)
         module.start()
         return module, outputs
@@ -134,6 +140,16 @@ def test_a_run_answers_over_rpc_and_reports_plain_json(make_module):
     assert module.abort() is False
     with pytest.raises(ValueError, match="unknown steps"):
         module.run(["nope"])
+    # The targets went out as the coordinator names the arm's joints, about 50 a second,
+    # and the arm was held before the session ended.
+    sent = outputs["calibration_joint_command"].sent
+    assert {tuple(msg.name) for msg in sent} == {
+        tuple(f"arm/{joint}" for joint in module.config.arm_spec().joint_names)
+    }
+    gaps = np.diff([msg.ts for msg in sent])
+    assert len(sent) >= 5 and float(np.median(gaps)) == pytest.approx(0.02, abs=0.005)
+    fake = module._connection
+    assert fake.call_log[-2:] == ["hold", "config_reset"]
 
 
 def test_go_home_is_an_rpc_that_confirms_first_and_float_pose_reaches_the_settings(make_module):
@@ -200,12 +216,14 @@ def test_the_config_calls_time_out_in_seconds_and_a_save_in_ten(make_module, lef
 
     timeouts = fake.rpc.rpc_timeouts
     assert {name: timeouts[name] for name in CALL_TIMEOUTS_S} == {
-        "config_command": 0.5,
         "config_set": 2.0,
         "config_get": 2.0,
         "config_reset": 2.0,
+        "status": 2.0,
     }
-    assert STREAMED_CALL_TIMEOUT_S == 0.5 and timeouts["start"] == 1200.0
+    # The coordinator reference here is the same fake: its hold waits half a second.
+    assert timeouts["task_invoke"] == HOLD_CALL_TIMEOUT_S == 0.5
+    assert timeouts["start"] == 1200.0
     # A save waits longer, then the session's calls are short again.
     procedure = module._require()
     procedure.persist(ConfigPatch(arm_id=left_spec.arm_id, notes="x"))

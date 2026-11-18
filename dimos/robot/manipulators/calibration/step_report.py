@@ -16,8 +16,10 @@
 
     python -m dimos.robot.manipulators.calibration.step_report recordings/<run-id>
 
-Reads ``memory.db``, cuts the joint stream at each ``step_events`` marker and
-writes ``step_report/`` next to it: ``steps.csv``, ``report.md`` (with the gains
+Reads ``memory.db``, cuts the joint stream at each ``step_events`` marker, from
+the first recorded command (``arm_position_command``) that carries the step's
+target when there is one, and writes ``step_report/`` next to it:
+``steps.csv``, ``report.md`` (with the gains
 ``propose_gains`` picks per joint), one PNG per joint (a panel per gain set,
 the steps overlaid) and two summary PNGs (settle time and overshoot against kp,
 a panel per joint). Joints are taken by name from the recorded joint states.
@@ -26,9 +28,9 @@ a panel per joint). Joints are taken by name from the recorded joint states.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from pathlib import Path
 import sys
@@ -57,9 +59,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 JOINT_STATE_STREAM = "joint_state"
-JOINT_COMMAND_STREAM = "joint_command"
+JOINT_COMMAND_STREAM = "arm_position_command"
 STEP_EVENTS_STREAM = "step_events"
 REPORT_DIR_NAME = "step_report"
+# A recorded command this close to a step's target carries it.
+COMMAND_MATCH_RAD = 1e-6
 
 # Fixed categorical order for the four sweep steps; never cycled.
 _STEP_COLORS = {1.0: "#2a78d6", -1.0: "#eb6834", 3.0: "#1baf7a", -3.0: "#eda100"}
@@ -79,10 +83,19 @@ class JointTrace:
 
 
 @dataclass(frozen=True)
+class CommandTrace:
+    """Commanded positions of one joint over time, in degrees."""
+
+    t: np.ndarray
+    q_deg: np.ndarray
+
+
+@dataclass(frozen=True)
 class Recording:
     traces: dict[str, JointTrace]  # by recorded joint name, in joint-state order
     events: list[StepEvent]
     t_end: float
+    commands: dict[str, CommandTrace] = field(default_factory=dict)  # by recorded joint name
 
 
 @dataclass(frozen=True)
@@ -139,11 +152,38 @@ def load_recording(recording_dir: Path, window: tuple[float, float] | None = Non
         }
         event_stream: Any = store.stream(STEP_EVENTS_STREAM)
         events = [StepEvent.from_json(obs.data.data) for obs in event_stream]
+        commands: dict[str, CommandTrace] = {}
+        if JOINT_COMMAND_STREAM in names:
+            command_stream: Any = store.stream(JOINT_COMMAND_STREAM)
+            if window is not None:
+                command_stream = command_stream.time_range(*window)
+            commands = command_traces(command_stream)
     finally:
         store.stop()
     if window is not None:
         events = [event for event in events if window[0] <= event.t0 <= window[1]]
-    return Recording(traces=traces, events=events, t_end=float(t[-1]))
+    return Recording(traces=traces, events=events, t_end=float(t[-1]), commands=commands)
+
+
+def command_traces(observations: Iterable[Any]) -> dict[str, CommandTrace]:
+    """Each joint's recorded commands, in time order, from ``JointState`` observations."""
+    times: dict[str, list[float]] = defaultdict(list)
+    positions: dict[str, list[float]] = defaultdict(list)
+    for obs in observations:
+        msg = obs.data
+        if len(msg.name) != len(msg.position):
+            continue
+        stamp = float(msg.ts or obs.ts)
+        for name, position in zip(msg.name, msg.position, strict=True):
+            times[name].append(stamp)
+            positions[name].append(float(position))
+    traces: dict[str, CommandTrace] = {}
+    for name, stamps in times.items():
+        t = np.asarray(stamps)
+        order = np.argsort(t, kind="stable")
+        q_deg = np.degrees(np.asarray(positions[name]))
+        traces[name] = CommandTrace(t=t[order], q_deg=q_deg[order])
+    return traces
 
 
 def recorded_trace(recording: Recording, joint: str) -> JointTrace | None:
@@ -155,14 +195,42 @@ def recorded_trace(recording: Recording, joint: str) -> JointTrace | None:
     return recording.traces[prefixed[0]] if len(prefixed) == 1 else None
 
 
+def recorded_command(recording: Recording, joint: str) -> CommandTrace | None:
+    """The commands of ``joint``: by its name, else the only one with a ``robot/`` prefix on it."""
+    trace = recording.commands.get(joint)
+    if trace is not None:
+        return trace
+    prefixed = [name for name in recording.commands if name.rsplit("/", 1)[-1] == joint]
+    return recording.commands[prefixed[0]] if len(prefixed) == 1 else None
+
+
+def step_start(recording: Recording, event: StepEvent, stop: float) -> float:
+    """When the step's target went out: its first recorded command from ``t0`` to ``stop``.
+
+    That is the first within ``COMMAND_MATCH_RAD`` of ``target_after_deg``;
+    ``t0`` when none was recorded.
+    """
+    trace = recorded_command(recording, event.joint)
+    if trace is None:
+        return event.t0
+    tolerance = math.degrees(COMMAND_MATCH_RAD)
+    hits = np.flatnonzero(
+        (trace.t >= event.t0)
+        & (trace.t <= stop)
+        & (np.abs(trace.q_deg - event.target_after_deg) <= tolerance)
+    )
+    return float(trace.t[hits[0]]) if hits.size else event.t0
+
+
 def extract_steps(
     recording: Recording, on_step: Callable[[StepEvent], None] | None = None
 ) -> list[StepRecord]:
-    """One record per step marker, measured from the sample before the command."""
+    """One record per step marker, from when its target went out (``step_start``)."""
     records: list[StepRecord] = []
-    for event, start, stop in segment_steps(recording.events, recording.t_end):
+    for event, _, stop in segment_steps(recording.events, recording.t_end):
         if on_step is not None:
             on_step(event)
+        start = step_start(recording, event, stop)
         trace = recorded_trace(recording, event.joint)
         if trace is None:
             continue

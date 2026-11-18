@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual OpenYAM calibration: the connection open for config sessions and the calibration module.
+"""Dual OpenYAM calibration: the connection open for config sessions, its coordinator and the calibration module.
 
     dimos run dual-openyam-calibrate --dualopenyamconnection.left-can-port can0 --dualopenyamconnection.right-can-port can1
 
 The left arm is calibrated unless ``--calibrationmodule.arm right``; the other arm
-is held where it is by the connection meanwhile. The bench guard of
+is held where it is by the coordinator meanwhile. The bench guard of
 ``calibration_workspace`` keeps each arm on its own half of the table.
 See ``dimos.robot.manipulators.calibration.blueprints``.
 """

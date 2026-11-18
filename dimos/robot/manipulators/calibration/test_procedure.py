@@ -42,6 +42,8 @@ from dimos.robot.manipulators.calibration._calibration_test_helpers import (
     robot_specs_or_skip,
 )
 from dimos.robot.manipulators.calibration._fake_tuning_arm import (
+    DEADMAN_S,
+    STALE_S,
     FakeTuningArm,
     MemoryRecording,
     SimClock,
@@ -156,6 +158,7 @@ def make_rig(
             spec,
             arm_fake,
             calibration_steps(),
+            driver=arm_fake,
             state=arm_fake,
             settings=ProcedureSettings(**{**FAST, **settings}),
             caps=caps,
@@ -270,11 +273,16 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     # Every session streamed a target at least 50 times a second and ended on
     # config_reset: no lease lapsed and no deadman fired while one lasted.
     # One session each for the check, the poses, the floats, the sweep and the
-    # tracking; the fit and the gains are applied at home without one.
-    assert len(sent) == 5 and None not in sent
-    for times in sent.values():
+    # tracking; the fit and the gains are applied at home without one. Each
+    # streamed the arm where it was before it began, and held it before it ended.
+    sessions = {key: times for key, times in sent.items() if key is not None}
+    assert len(sessions) == 5 and len(sent[None]) >= 5 * 5
+    for times in sessions.values():
         assert np.diff(times).max() <= 1.0 / 50.0 + 1e-6
     assert rig.fake.ended == ["config_reset"] * 5
+    log = rig.fake.call_log
+    assert log.count("config_reset") == 5
+    assert all(log[i - 1] == "hold" for i, call in enumerate(log) if call == "config_reset")
     assert not rig.fake.session_active()
     for value in (rig.procedure.plan(), rig.procedure.status(), results):
         assert json.loads(json.dumps(value)) == value
@@ -347,10 +355,59 @@ def test_a_stalled_joint_fails_the_step_and_the_arm_holds(make_rig: Callable[...
     assert rig.fake.commands == commands and rig.fake.deadman_fired
     assert np.degrees(np.abs(rig.fake.q - held)).max() < 3.0
     assert np.degrees(np.abs(rig.fake.q - rig.fake.arm.home)).max() > 4.0
+    # Held the moment the step failed, and again before the session ended.
+    assert rig.fake.call_log[-3:] == ["hold", "hold", "config_reset"]
+
+
+def test_a_session_renews_its_lease_with_an_empty_patch_every_half_second(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig()
+    renewals: list[tuple[float, list[str], str | None]] = []
+    config_set = rig.fake.config_set
+
+    def recorded(patch: ConfigPatch, scope: str = "session", **kwargs: Any) -> Any:
+        renewals.append((rig.fake.now, patch.keys(), kwargs.get("session_id")))
+        return config_set(patch, scope, **kwargs)  # type: ignore[arg-type]
+
+    rig.fake.config_set = recorded  # type: ignore[method-assign]
+
+    with rig.procedure.open_session() as session:
+        session.hold(3.0)
+
+    started, *renewed = renewals
+    assert started[2] is None
+    assert renewed and all(keys == [] and sid == session.session_id for _, keys, sid in renewed)
+    times = [started[0]] + [t for t, _, _ in renewed]
+    assert max(np.diff(times)) <= arm_session_module.LEASE_RENEW_S + 1.0 / 50.0 + 1e-6
+    assert len(renewed) >= 5
+    assert rig.fake.ended == ["config_reset"]
+
+
+def test_no_session_begins_until_the_connection_takes_the_targets(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig()
+
+    class Lost:
+        def send(self, targets: JointState) -> None:
+            pass
+
+        def hold(self) -> None:
+            pass
+
+    rig.procedure.driver = Lost()
+
+    with pytest.raises(StepFailedError, match="the control coordinator is not forwarding"):
+        with rig.procedure.open_session():
+            pass
+
+    assert rig.fake.ended == [] and not rig.fake.session_active()
 
 
 def test_a_lost_session_fails_the_step_without_raising(make_rig: Callable[..., Rig]) -> None:
     rig = make_rig(confirm_each=False)
+    # The bus goes silent: every later write fails, and each halts the arm.
     rig.fake.fail_after_commands = 400
 
     status = rig.run(["check", "gravity_poses", "gravity_fit"])
@@ -358,14 +415,13 @@ def test_a_lost_session_fails_the_step_without_raising(make_rig: Callable[..., R
     assert status["state"] == "failed"
     assert rig.statuses()["gravity_poses"] == "failed"
     assert rig.statuses()["gravity_fit"] == "pending"
-    assert rig.messages()["gravity_poses"] == (
-        "config_command failed: feedback failed: the bus went silent"
-    )
-    assert status["message"].startswith("Gravity poses failed: config_command failed")
-    assert (
-        rig.fake.ended[-1]
-        == "config_command raised RuntimeError: feedback failed: the bus went silent"
-    )
+    message = rig.messages()["gravity_poses"]
+    assert re.search(
+        r"config_set failed: the config session ended \(the connection halted\)|from its target",
+        message,
+    ), message
+    assert status["message"].startswith("Gravity poses failed: ")
+    assert rig.fake.ended[-1] == "the connection halted"
     assert not rig.fake.session_active()
     assert rig.labels()[-1] == "end"
 
@@ -619,6 +675,13 @@ def test_a_falling_joint_is_held_again_on_speed_or_on_drift(
     first = shoulder["poses"][0]
     assert not first["passed"] and re.search(caught, first["reason"]), first["reason"]
     assert "left_joint2" not in rig.fake.config_get()[rig.fake.spec.arm_id].floating
+    # Held the moment it drifted, inside the session, as well as before it ended.
+    log = rig.fake.call_log
+    assert log[: log.index("config_reset")].count("hold") >= 2
+
+
+def _targets(names: list[str], values: Any) -> JointState:
+    return JointState(name=[f"arm/{name}" for name in names], position=[float(v) for v in values])
 
 
 def test_the_fake_keeps_the_config_session_rules(
@@ -626,38 +689,59 @@ def test_the_fake_keeps_the_config_session_rules(
 ) -> None:
     fake = FakeTuningArm(left_spec, arm=arm, calibration_root=tmp_path)
     arm_id = left_spec.arm_id
-    home = dict(zip(left_spec.joint_names, (float(v) for v in arm.home), strict=True))
+    names = list(left_spec.joint_names)
 
     def begin() -> str:
         session = fake.config_set(ConfigPatch(arm_id=arm_id), lease_s=1.0).session_id
         assert session is not None
         return session
 
-    with pytest.raises(RuntimeError, match="needs the session_id"):
-        fake.config_command(home, "")
-    with pytest.raises(RuntimeError, match="no config session"):
-        fake.config_command(home, "fake-0")
     begin()
     with pytest.raises(RuntimeError, match="a config session is live"):
         begin()
     assert not fake.session_active()
 
     session = begin()
-    assert not fake.position_command({"left_joint1": 0.1})
-    assert fake.dropped_position_commands == 1
-    # Reading carries no session id, so it renews nothing.
-    fake.advance(0.75)
+    # Targets are taken in a session as outside one.
+    fake.send(_targets(["left_joint1"], [0.1]))
+    assert math.isclose(fake.target[0], 0.1) and fake.commands == 1
+    # Reading carries no session id, so it renews nothing; an empty patch with it does.
+    for _ in range(15):
+        fake.send(_targets(["left_joint1"], [0.1]))
+        fake.advance(0.05)
     fake.config_get()
     fake.config_keys()
-    fake.advance(0.75)
+    assert fake.session_active()
+    fake.config_set(ConfigPatch(arm_id=arm_id), session_id=session)
+    for _ in range(15):
+        fake.send(_targets(["left_joint1"], [0.1]))
+        fake.advance(0.05)
+    assert fake.session_active()
+    for _ in range(10):
+        fake.send(_targets(["left_joint1"], [0.1]))
+        fake.advance(0.05)
     assert not fake.session_active() and fake.ended[-1].startswith("no config call within")
     with pytest.raises(RuntimeError, match=r"the config session ended \(no config call"):
-        fake.config_command(home, session)
+        fake.config_set(ConfigPatch(arm_id=arm_id), session_id=session)
 
-    session = begin()
-    fake.config_command(home, session)
-    fake.advance(0.2)
-    assert not fake.session_active() and fake.ended[-1] == "the command deadman fired"
+    # Fresh targets are commanded every tick; stale ones are not, and the deadman halts.
+    begin()
+    fake.send(_targets(names, arm.home))
+    fake.advance(STALE_S)
+    assert fake.session_active() and not fake.deadman_fired
+    fake.advance(DEADMAN_S + 0.02)
+    assert not fake.session_active() and fake.ended[-1] == "the connection halted"
+    assert fake.deadman_fired
+    # A hold stops the commands at once.
+    begin()
+    fake.send(_targets(names, arm.home))
+    fake.hold()
+    fake.advance(DEADMAN_S + 0.02)
+    assert not fake.session_active() and fake.ended[-1] == "the connection halted"
+    # A sample past a limit is refused whole.
+    before = fake.target.copy()
+    fake.send(_targets(["left_joint1", "left_joint2"], [0.2, 10.0]))
+    assert fake.refused_samples == 1 and np.array_equal(fake.target, before)
 
     session = begin()
     floated = fake.config_set(
@@ -673,11 +757,11 @@ def test_the_fake_keeps_the_config_session_rules(
     assert floated.clamped == ["gains.left_joint3.kd"]
     assert fake.config_get()[arm_id].floating == {"left_joint2": 0.5}
     with pytest.raises(ValueError):
-        fake.config_command({"left_joint1": 10.0}, session)
+        fake.config_set(ConfigPatch(arm_id="nope/left"), session_id=session)
     assert not fake.session_active()
     state = fake.config_get()[arm_id]
     assert state.floating == {} and state.gains["left_joint3"] == JointGains(kp=80.0, kd=1.0)
-    assert fake.position_command({"left_joint1": 0.0})
+    fake.send(_targets(["left_joint1"], [0.0]))
     assert math.isclose(fake.target[0], 0.0)
 
 
@@ -731,7 +815,6 @@ def test_the_fake_checks_and_saves_as_the_connection_does(
     for call in (
         lambda: closed.config_set(ConfigPatch(arm_id=arm_id)),
         closed.config_reset,
-        lambda: closed.config_command({}, "fake-1"),
     ):
         with pytest.raises(RuntimeError, match="config sessions are off"):
             call()
@@ -898,11 +981,12 @@ def test_a_park_over_its_budget_or_without_a_safe_path_holds_and_says_why(
     outcome = rig.procedure.shutdown()
 
     assert outcome.startswith("held where it is, not parked (the calibration module is stopping)")
-    assert re.search(r"the way home takes 9\.\d s at 20 deg/s, more than the 8\.0 s", outcome)
+    # The budget left is less the session's start, which streams the arm where it is first.
+    assert re.search(r"the way home takes 9\.\d s at 20 deg/s, more than the 7\.9 s", outcome)
     assert any("Support the arm" in str(call.args[0]) for call in error.call_args_list)
     # Held, not moved: only the targets that hold it where it is were sent.
     assert np.degrees(np.abs(rig.fake.q - held)).max() < 1.0
-    assert rig.fake.commands - commands <= 2
+    assert rig.fake.commands - commands <= round(arm_session_module.PRIME_S * 50) + 2
 
     unsafe = make_rig()
     unsafe.run(["check", "gravity_poses"], _abort_at("Pose 4/"))

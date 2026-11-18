@@ -28,6 +28,12 @@ from dimos.robot.manipulators.calibration.step_analysis import (
     propose_gains,
     segment_steps,
 )
+from dimos.robot.manipulators.calibration.step_report import (
+    CommandTrace,
+    JointTrace,
+    Recording,
+    extract_steps,
+)
 
 DT = 0.005  # 200 Hz samples
 HOLD_S = 2.0
@@ -279,3 +285,35 @@ def test_propose_gains_does_not_pick_a_stiff_pass_above_a_failing_softer_kp() ->
     # ... and with every softer scale passing, the stiffest is chosen.
     clean = propose_gains([*steps(80.0, 0.05, kd=3.0), *steps(200.0, 0.04, kd=4.24)])
     assert clean["j"].gains == (200.0, 4.24)
+
+
+def _recorded_step(commands: dict[str, CommandTrace]) -> Recording:
+    """A +1 deg step of left_joint1 marked at 100 s whose target went out at 100.012 s."""
+    t = 100.0 - 0.1 + np.arange(0.0, HOLD_S + 0.2, DT)
+    start = 100.012
+    q = np.where(
+        t >= start, 10.0 + 1.0 * (1.0 - np.exp(-np.clip(t - start, 0.0, None) / 0.05)), 10.0
+    )
+    trace = JointTrace(t=t, q_deg=q, dq_deg_s=np.gradient(q, t))
+    return Recording(
+        traces={"arm/left_joint1": trace}, events=[_event()], t_end=float(t[-1]), commands=commands
+    )
+
+
+def test_a_step_window_starts_at_the_first_recorded_command_of_its_target() -> None:
+    sent_t = 100.0 + np.arange(-0.05, 0.2, 0.01) + 0.002
+    sent_q = np.where(sent_t >= 100.0115, 11.0, 10.0)
+    commands = {"arm/left_joint1": CommandTrace(t=sent_t, q_deg=sent_q)}
+
+    [aligned] = extract_steps(_recorded_step(commands))
+    [unaligned] = extract_steps(_recorded_step({}))
+
+    assert aligned.t[0] >= 0.0 and aligned.t[0] < DT
+    assert aligned.metrics.first_motion_s is not None and aligned.metrics.first_motion_s < 0.01
+    # Without commands the window starts at the marker, 12 ms before the target went out.
+    assert unaligned.metrics.first_motion_s is not None
+    assert unaligned.metrics.first_motion_s >= 0.012
+    # A command that never carries the target leaves the marker as the start.
+    stray = {"arm/left_joint1": CommandTrace(t=sent_t, q_deg=np.full(sent_t.shape, 10.5))}
+    [fallback] = extract_steps(_recorded_step(stray))
+    assert fallback.metrics.first_motion_s == unaligned.metrics.first_motion_s

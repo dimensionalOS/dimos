@@ -19,16 +19,16 @@ Every ``ConnectionModule`` serves the contract of
 part a calibration tool calls. ``config_keys`` says what the connection can
 read and change, ``config_get`` how each arm is driven now. With
 ``config_sessions`` on (calibration blueprints only), ``config_set`` with
-scope "session" starts the one config session: while it lasts the
-connection drops every other position command and the tool moves the arm
-with ``config_command``; each call that carries the session's id
-(``config_set``, ``config_command``) renews its lease, reading and
+scope "session" starts the one config session; each ``config_set`` that
+carries its id renews its lease (an empty patch only renews it), reading and
 ``config_reset`` do not. When it ends, for any reason, every live change is
-undone. ``config_set`` with
-scope "persist" saves a calibration to the arm's file and applies it.
+undone. ``config_set`` with scope "persist" saves a calibration to the arm's
+file and applies it.
 
-The arm's joint readings are not part of the contract: the tool reads them
-from the connection's ``joint_state`` stream.
+The arm is not moved through the contract, nor read: the tool's targets go
+through the control coordinator's pass-through task to the connection's
+``position_command``, as any position command does, and the tool reads the
+arm from the connection's ``joint_state`` stream.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ from typing import Protocol, runtime_checkable
 from dimos.control.connection.arm_config import (
     DEFAULT_CONFIG_LEASE_S,
     ArmConfigState,
-    CommandResult,
     ConfigApplied,
     ConfigKeys,
     ConfigPatch,
@@ -76,10 +75,6 @@ class ArmConfigHooks(Protocol):
 
     def config_reset(self, keep_session: bool = False) -> None:
         """Undo every live change and end the config session, unless ``keep_session``."""
-        ...
-
-    def config_command(self, targets: dict[str, float], session_id: str) -> CommandResult:
-        """Send position targets by joint name inside the config session."""
         ...
 
     def status(self) -> ConnectionStatus:

@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterator
 from contextlib import closing
 from dataclasses import asdict
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -80,28 +81,36 @@ def _step(t0: float, delta: float, before: float) -> StepEvent:
 
 @pytest.fixture
 def recorded(tmp_path: Path) -> Iterator[Path]:
-    """A run that recorded 4 s of joint states as a connection publishes them, and markers.
+    """A run that recorded 4 s of joint states and commands as a calibration run does, and markers.
 
     A pose marker at 1 s, steps at 1.2 s and 2.4 s, the end marker at 3.6 s,
-    and one step outside that window, at 0.1 s.
+    and one step outside that window, at 0.1 s. Each step's target goes out on
+    ``arm_position_command`` 3 ms after its marker, and the joint moves 10 ms after it.
     """
     with SqliteStore(path=str(tmp_path / "memory.db")) as store:
         with closing(TransportRecorder(store)) as recorder:
-            transports = {
-                name: _Transport() for name in ("joint_state", "step_events", "gravity_events")
-            }
+            names = ("joint_state", "arm_position_command", "step_events", "gravity_events")
+            transports = {name: _Transport() for name in names}
             for name, transport in transports.items():
-                payload = JointState if name == "joint_state" else String
+                payload = String if name.endswith("_events") else JointState
                 assert recorder.tap(name, payload, transport) is not None
             for k in range(401):
                 t = 100.0 + k / 100.0
-                # Joint 2 steps up 1 deg at 1.2 s and back at 2.4 s.
-                q2 = 10.0 + (1.0 if 101.2 <= t < 102.4 else 0.0)
+                target = 10.0 + (1.0 if 101.195 <= t < 102.395 else 0.0)
+                transports["arm_position_command"].publish(
+                    JointState(
+                        ts=t + 0.003,
+                        name=[f"arm/{name}" for name in JOINTS],
+                        position=[0.0, math.radians(target)],
+                    )
+                )
+                # Joint 2 steps up 1 deg at 1.21 s and back at 2.41 s.
+                q2 = 10.0 + (1.0 if 101.205 <= t < 102.405 else 0.0)
                 transports["joint_state"].publish(
                     JointState(
                         ts=t,
                         name=[f"arm/{name}" for name in JOINTS],
-                        position=[0.0, q2 * 3.141592653589793 / 180.0],
+                        position=[0.0, math.radians(q2)],
                         velocity=[0.0, 0.0],
                         effort=[0.0, 0.0],
                     )
@@ -126,10 +135,14 @@ def test_a_window_holds_only_its_own_samples_and_markers(recorded: Path) -> None
     trace = steps.traces["arm/left_joint2"]
     assert trace.t[0] == pytest.approx(101.0) and trace.t[-1] == pytest.approx(103.6)
     assert steps.t_end == pytest.approx(103.6)
-    # The step analysis finds the joint behind the connection's "arm/" prefix.
+    # The step analysis finds the joint behind the connection's "arm/" prefix, and
+    # times each step from its first recorded command, 3 ms after the marker.
     records = extract_steps(steps)
     assert [r.event.delta_deg for r in records] == [1.0, -1.0]
     assert all(r.metrics.passed for r in records)
+    assert set(steps.commands) == {f"arm/{name}" for name in JOINTS}
+    assert [r.t[0] for r in records] == pytest.approx([0.007, 0.007])
+    assert [r.metrics.first_motion_s for r in records] == pytest.approx([0.007, 0.007])
     gravity = recording.gravity(101.0, 103.6)
     assert [m.label for m in gravity.markers] == ["pose_01", "end"]
     assert [m.label for m in recording.gravity(100.0, 102.0).markers] == ["pose_01"]

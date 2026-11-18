@@ -15,7 +15,8 @@
 """Test helpers: a simulated arm behind the arm config contract, its clock and its recording.
 
 :class:`FakeTuningArm` is an ``ArmConfigHooks`` connection for one arm of a
-spec, and its ``StateSource``: ``latest`` is its reading now, and with
+spec, the calibration coordinator's pass-through in front of it (an
+``ArmDriver``), and its ``StateSource``: ``latest`` is its reading now, and with
 ``joint_state`` set it publishes that reading there as time advances. Each
 joint follows its PD target with first-order dynamics, ``(b + kd) dq/dt =
 kp (target - q) + g_comp(q) - g_true(q) + ff - friction``: the connection
@@ -25,11 +26,15 @@ friction holds a joint that has stopped until the drive exceeds its stiction.
 Gravity is evaluated once every 10 ms, the period it also records joint
 states at, like the connection's 100 Hz ``joint_state``. It keeps the config
 session's rules: one session, started by ``config_set`` and named by the id
-it returns, which ``config_set`` and ``config_command`` must then carry; a
-lease only calls carrying that id renew, a 0.1 s deadman on targets, the
-session ending on ``config_reset``, lapse, deadman or any raising call
-(floating joints then held where they are, torque offsets dropped, gains
-restored), and position commands dropped while a session lasts. Its :meth:`FakeTuningArm.stop`
+it returns, which ``config_set`` must then carry; a lease only calls carrying
+that id renew, the session ending on ``config_reset``, lapse, a halt (the
+deadman's included) or any raising call (floating joints then held where they
+are, torque offsets dropped, gains restored). As the coordinator does,
+:meth:`FakeTuningArm.send` takes a sample of targets, refused whole past a
+limit, and commands it at once and every 10 ms while it is fresh: until
+``STALE_S`` passed without one, or ``hold``. Then nothing is commanded, and
+``DEADMAN_S`` after the last command the arm is halted where it is. Every
+command is recorded, as ``arm_position_command`` is. Its :meth:`FakeTuningArm.stop`
 waits for a calibration tool to park, as a connection's stop does, then
 "disables" the arm and records where. It checks and clamps what it is sent
 as a Damiao connection does: patches validated by the connection's own
@@ -73,7 +78,6 @@ from dimos.control.connection.arm_config import (
     MAX_CONFIG_LEASE_S,
     AppliedFile,
     ArmConfigState,
-    CommandResult,
     ConfigApplied,
     ConfigKeys,
     ConfigPatch,
@@ -90,6 +94,7 @@ from dimos.control.connection.connection_module import (
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._inertial import apply_inertial_overrides
 from dimos.robot.manipulators.calibration.arm_session import MarkerStream
+from dimos.robot.manipulators.calibration.coordinator import CALIBRATION_PASSTHROUGH_TASK
 from dimos.robot.manipulators.calibration.gravity_fit import GravityRecording, PoseMarker
 from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
 from dimos.robot.manipulators.calibration.procedure import Procedure, ProcedureStatus
@@ -110,11 +115,16 @@ from dimos.robot.manipulators.calibration.spec import (
     urdf_limits,
 )
 from dimos.robot.manipulators.calibration.step_analysis import StepEvent
-from dimos.robot.manipulators.calibration.step_report import JointTrace, Recording
+from dimos.robot.manipulators.calibration.step_report import (
+    CommandTrace,
+    JointTrace,
+    Recording,
+)
 
 # The robot name the fake's joint states carry, "arm/left_joint2".
 SOURCE = "arm"
 DEADMAN_S = 0.1
+STALE_S = 0.1
 SAMPLE_PERIOD_S = 0.01
 MAX_GRAVITY_STEP_NM = 2.0
 MAX_KP = 500.0
@@ -160,6 +170,8 @@ class MemoryRecording:
         self._names: list[str] = []
         self._positions: list[Vector] = []
         self._velocities: list[Vector] = []
+        self._command_times: list[float] = []
+        self._commands: list[Vector] = []
         self.markers: dict[str, list[dict[str, Any]]] = {}
         self.statuses: list[ProcedureStatus] = []
         self.probes: list[str] = []
@@ -181,6 +193,12 @@ class MemoryRecording:
             self._times.append(t)
             self._positions.append(q.copy())
             self._velocities.append(dq.copy())
+
+    def add_command(self, t: float, names: list[str], q: Vector) -> None:
+        with self._lock:
+            self._names = names
+            self._command_times.append(t)
+            self._commands.append(q.copy())
 
     def marker(self, stream: MarkerStream, payload: dict[str, Any]) -> None:
         # Through JSON, as the markers reach a recording over the wire.
@@ -225,6 +243,8 @@ class MemoryRecording:
                 if start <= m["t0"] <= end
             ]
             names = list(self._names)
+            sent_t = np.asarray(self._command_times)
+            sent = np.vstack(self._commands) if self._commands else np.zeros((0, len(names)))
         times = t[mask]
         if not times.size:
             raise RecordingUnavailableError(f"nothing was recorded between {start} and {end}")
@@ -232,7 +252,14 @@ class MemoryRecording:
             f"{self._source}/{name}": JointTrace(t=times, q_deg=q[:, i], dq_deg_s=dq[:, i])
             for i, name in enumerate(names)
         }
-        return Recording(traces=traces, events=events, t_end=float(times[-1]))
+        window = (sent_t >= start) & (sent_t <= end)
+        commands = {
+            f"{self._source}/{name}": CommandTrace(
+                t=sent_t[window], q_deg=np.degrees(sent[window, i])
+            )
+            for i, name in enumerate(names)
+        }
+        return Recording(traces=traces, events=events, t_end=float(times[-1]), commands=commands)
 
     def gravity(self, start: float, end: float) -> GravityRecording:
         with self._lock:
@@ -259,8 +286,8 @@ class FakeTuningArm:
             connection's ``persist`` does: ``calibration_path(arm_id, root)``.
         applied: A calibration file applied at start, as a connection's "auto" would.
         sessions: Whether it serves config sessions: without them
-            ``config_set``, ``config_reset`` and ``config_command`` raise, as a
-            connection deployed without ``config_sessions`` does.
+            ``config_set`` and ``config_reset`` raise, as a connection
+            deployed without ``config_sessions`` does.
         persist: What ``config_keys`` says can be saved; a save of anything
             else is refused as unsupported.
         start: Initial joint positions; home when ``None``.
@@ -336,12 +363,16 @@ class FakeTuningArm:
         self.disabled_at: Vector | None = None
         # When the last session ended, time.monotonic().
         self._ended_at: float | None = None
+        self._sample: dict[str, float] = {}
+        self._sample_at: float | None = None
+        self._held = True
         self._last_command: float | None = None
+        self._last_accepted: float | None = None
         self.deadman_fired = False
         self.commands = 0
-        self.dropped_position_commands = 0
-        # Fault injection: config_command raises once this many were taken; joints
-        # in ``blocked`` cannot move.
+        self.refused_samples = 0
+        self.holds = 0
+        self.call_log: list[str] = []
         self.fail_after_commands: int | None = None
         self.blocked: set[str] = set()
         self.on_command: Callable[[FakeTuningArm], None] | None = None
@@ -367,11 +398,12 @@ class FakeTuningArm:
                 self.joint_state.publish(self._reading())
 
     def _timeouts(self) -> None:
+        if self._forwarding():
+            self._command(self._sample)
         if self._last_command is not None and self.now - self._last_command > DEADMAN_S:
             self._last_command = None
             self.deadman_fired = True
-            self._end("the command deadman fired")
-            self.target = self.q.copy()
+            self._halt()
         session = self._session
         if session is not None and self.now - session.last_call > session.lease_s:
             self._end(f"no config call within its lease of {session.lease_s:g} s")
@@ -433,6 +465,32 @@ class FakeTuningArm:
         self._ended_at = time.monotonic()
         self.ended.append(reason)
         self._undo()
+
+    def _halt(self) -> None:
+        """As the connection halts: the session ends, then every joint holds where it is."""
+        self._end("the connection halted")
+        self.target = self.q.copy()
+
+    def _forwarding(self) -> bool:
+        """Whether the coordinator commands the latest sample: fresh, and no hold since."""
+        return (
+            self._sample_at is not None and not self._held and self.now - self._sample_at <= STALE_S
+        )
+
+    def _command(self, targets: Mapping[str, float]) -> bool:
+        """One command taken; past ``fail_after_commands`` taken, its write fails and halts."""
+        if self.fail_after_commands is not None and self.commands >= self.fail_after_commands:
+            self._last_command = None
+            self._halt()
+            return False
+        for joint, value in targets.items():
+            if joint not in self._floating:
+                self.target[self._names.index(joint)] = value
+        self._last_command = self.now
+        self._last_accepted = self.now
+        if self._recording is not None:
+            self._recording.add_command(self.now, self._names, self.target)
+        return True
 
     def _call(self, name: str, call: Callable[[], Any]) -> Any:
         with self._lock:
@@ -513,16 +571,46 @@ class FakeTuningArm:
         with self._lock:
             return None if self._session is None else self._session.session_id
 
-    def position_command(self, targets: Mapping[str, float]) -> bool:
-        """A normal position command: dropped while a config session lasts."""
+    # The coordinator's pass-through.
+
+    def send(self, targets: JointState) -> None:
+        """A sample of the pass-through: refused whole past a limit, else commanded at once."""
         with self._lock:
-            if self._session is not None:
-                self.dropped_position_commands += 1
-                return False
-            for joint, value in targets.items():
-                self.target[self._joint(joint)] = value
-            self._last_command = self.now
-            return True
+            if self._realtime:
+                self.advance(max(0.0, time.time() - self.now))
+            prefix = f"{SOURCE}/"
+            sample: dict[str, float] = {}
+            for name, value in zip(targets.name, targets.position, strict=True):
+                joint = name.removeprefix(prefix)
+                if joint not in self._limits:
+                    continue
+                low, high = self._limits[joint]
+                if not (math.isfinite(value) and low <= value <= high):
+                    self.refused_samples += 1
+                    return
+                sample[joint] = float(value)
+            if not sample:
+                return
+            self._sample, self._sample_at, self._held = sample, self.now, False
+            if self._command(sample):
+                self.commands += 1
+            if self.on_command is not None:
+                self.on_command(self)
+
+    def hold(self) -> None:
+        """The pass-through's hold: nothing is commanded until the next sample."""
+        with self._lock:
+            if self._realtime:
+                self.advance(max(0.0, time.time() - self.now))
+            self._held = True
+            self.holds += 1
+            self.call_log.append("hold")
+
+    def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any] | None = None) -> Any:
+        """The coordinator's ``task_invoke``, which serves the pass-through's ``hold`` only."""
+        if (task_name, method, kwargs or {}) != (CALIBRATION_PASSTHROUGH_TASK, "hold", {}):
+            raise ValueError(f"the fake serves only hold, not {task_name}.{method}({kwargs})")
+        self.hold()
 
     # ArmConfigHooks and StateSource.
 
@@ -531,7 +619,7 @@ class FakeTuningArm:
             return ConnectionStatus(
                 session_id="fake",
                 connected=True,
-                last_command_time=self._last_command,
+                last_command_time=self._last_accepted,
                 deadman_fired=self.deadman_fired,
                 last_rejection=None,
                 last_error=None,
@@ -664,37 +752,13 @@ class FakeTuningArm:
 
     def config_reset(self, keep_session: bool = False) -> None:
         self._gate("config_reset")
+        with self._lock:
+            self.call_log.append("config_reset(keep_session)" if keep_session else "config_reset")
         if not keep_session:
             with self._lock:
                 self._end("config_reset")
             return
         self._call("config_reset", self._undo)
-
-    def config_command(self, targets: dict[str, float], session_id: str) -> CommandResult:
-        self._gate("config_command")
-
-        def command() -> CommandResult:
-            if not session_id:
-                raise RuntimeError("config_command needs the session_id config_set returned")
-            if self._check(session_id) is None:
-                raise RuntimeError("no config session is live")
-            for joint, value in targets.items():
-                low, high = self._limits[self._names[self._joint(joint)]]
-                if not low <= value <= high:
-                    raise ValueError(f"{joint} target {value} is outside {low}..{high}")
-            if self.fail_after_commands is not None and self.commands >= self.fail_after_commands:
-                raise RuntimeError("feedback failed: the bus went silent")
-            for joint, value in targets.items():
-                if joint not in self._floating:
-                    self.target[self._names.index(joint)] = value
-            self.commands += 1
-            self._last_command = self.now
-            if self.on_command is not None:
-                self.on_command(self)
-            return CommandResult(ok=True)
-
-        result: CommandResult = self._call("config_command", command)
-        return result
 
     def _save(self, patch: ConfigPatch, force: bool, apply_now: bool) -> ConfigApplied:
         """A save, as a connection's: merged into the arm's file, guarded, written, applied.
