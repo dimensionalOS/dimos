@@ -161,6 +161,7 @@ all_blueprints = {
     "teleop-webxr-piper": "dimos.teleop.webxr.blueprints:teleop_webxr_piper",
     "teleop-webxr-rerun": "dimos.teleop.webxr.blueprints:teleop_webxr_rerun",
     "teleop-webxr-xarm6": "dimos.teleop.webxr.blueprints:teleop_webxr_xarm6",
+    "teleop-webxr-xarm6-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:teleop_webxr_xarm6_sim",
     "teleop-webxr-xarm7": "dimos.teleop.webxr.blueprints:teleop_webxr_xarm7",
     "teleop-webxr-xarm7-video": "dimos.teleop.webxr.blueprints:teleop_webxr_xarm7_video",
     "unitree-g1": "dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1:unitree_g1",

@@ -30,6 +30,7 @@ from dimos.robot.manipulators.common.blueprints import (
     trajectory_task,
 )
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
+from dimos.robot.manipulators.xarm.blueprints.teleop import xarm6_teleop_control
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
@@ -45,6 +46,7 @@ from dimos.robot.manipulators.xarm.config import (
 from dimos.robot.raw_robot_bridge import RawRobotBridge
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_model = make_xarm7_sim_robot_config()
@@ -136,4 +138,18 @@ xarm6_sim = autoconnect(
         ],
     ),
     UrdfManager.blueprint(model=_xarm6_sim_model.model, publish_joint_tf=False),
+)
+
+# teleop-webxr-xarm6 over the arm in MuJoCo: the Quest's right controller drives
+# the arm and its trigger the gripper. Drawn in web 3D views like xarm6_sim.
+teleop_webxr_xarm6_sim = autoconnect(
+    ArmTeleopModule.blueprint(),
+    xarm6_teleop_control(_xarm6_sim_hw, _xarm6_sim_model),
+    MujocoSimModule.blueprint(**make_xarm_sim_module_kwargs(6, XARM6_SIM_PATH)),
+    UrdfManager.blueprint(model=_xarm6_sim_model.model, publish_joint_tf=False),
+).remappings(
+    [
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+    ]
 )
