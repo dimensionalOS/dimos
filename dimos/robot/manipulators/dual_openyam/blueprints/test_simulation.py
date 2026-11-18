@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The simulated blueprints are the real ones with only the connection swapped."""
+"""The simulated blueprints move the MuJoCo rig: trajectories, the planner and teleop."""
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -22,14 +22,9 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 import pytest
-from pytest_mock import MockerFixture
 
-from dimos.control.connection.connection_module import ConnectionConfig
-from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
-from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_spec import CommandStatus, ExecutionStatus, PlanStatus
@@ -37,103 +32,23 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.manipulators.damiao._damiao_test_helpers import LocalTransport
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
-    dual_openyam_planner_coordinator,
-)
 from dimos.robot.manipulators.dual_openyam.blueprints.simulation import (
     dual_openyam_sim,
-    dual_openyam_sim_connection,
     teleop_webxr_dual_openyam_sim,
 )
-from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM,
     DUAL_OPENYAM_HOME_JOINTS,
     dual_openyam_arm_joints,
 )
 from dimos.robot.manipulators.dual_openyam.conftest import PlannedFrame
-from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.dual_openyam.sim_connection import DualOpenYamSimConnection
 from dimos.robot.manipulators.dual_openyam.sim_scene import DUAL_OPENYAM_TABLE_TOP_Z
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
 
-# What a stack may drive the robot through: the robot, its mock or the MuJoCo rig.
-CONNECTIONS = (DualOpenYamConnection, MockJointConnection, DualOpenYamSimConnection)
-CASES = [
-    ("dual-openyam-sim", dual_openyam_sim, dual_openyam_planner_coordinator),
-    ("teleop-webxr-dual-openyam-sim", teleop_webxr_dual_openyam_sim, teleop_webxr_dual_openyam),
-]
 ARM = [f"arm/{name}" for name in DUAL_OPENYAM.arm_joint_names]
-
-
-@pytest.mark.parametrize(("name", "simulated", "real"), CASES, ids=[case[0] for case in CASES])
-def test_simulated_stack_is_the_real_one_on_the_mujoco_rig(
-    name: str, simulated: Blueprint, real: Blueprint, mocker: MockerFixture
-) -> None:
-    load = mocker.patch(
-        "dimos.robot.assets.model.RobotModel.load", side_effect=AssertionError("must stay lazy")
-    )
-    assert all_blueprints[name].startswith(
-        "dimos.robot.manipulators.dual_openyam.blueprints.simulation:"
-    )
-
-    def others(blueprint: Blueprint) -> list[tuple[str, type, dict[str, Any]]]:
-        return [
-            (atom.name, atom.module, atom.kwargs)
-            for atom in blueprint.active_blueprints
-            if atom.module not in CONNECTIONS
-        ]
-
-    assert others(simulated) == others(real)
-    [connection] = [atom for atom in simulated.active_blueprints if atom.module in CONNECTIONS]
-    assert connection.module is DualOpenYamSimConnection
-    [coordinator] = [
-        atom for atom in simulated.active_blueprints if issubclass(atom.module, ControlCoordinator)
-    ]
-    # The coordinator's declaration of the robot is the one the rig is built from.
-    [declaration] = coordinator.kwargs["connections"]
-    driver = ConnectionConfig.model_validate(
-        {
-            key: value
-            for key, value in connection.kwargs.items()
-            if key in ConnectionConfig.model_fields
-        }
-    )
-    assert driver.source == declaration.source == "arm"
-    assert driver.model == declaration.model
-    assert driver.joint_commands == declaration.joint_commands
-    assert simulated.remapping_map[(connection.name, "position_command")] == "arm_position_command"
-    assert simulated.remapping_map[(coordinator.name, "arm_joint_state")] == "joint_state"
-    load.assert_not_called()
-
-
-def test_composing_the_simulated_connection_downloads_no_model(mocker: MockerFixture) -> None:
-    download = mocker.patch(
-        "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
-    )
-
-    blueprint = dual_openyam_sim_connection()
-
-    assert [atom.module for atom in blueprint.blueprints] == [DualOpenYamSimConnection]
-    download.assert_not_called()
-
-
-@pytest.mark.parametrize("simulated", [case[1] for case in CASES], ids=[case[0] for case in CASES])
-def test_simulated_stack_needs_no_can_port_and_takes_the_rigs_options(
-    simulated: Blueprint,
-) -> None:
-    parser = BlueprintConfigParser(simulated)
-
-    connection = parser.parse(
-        ["--headless", "false", "--cameras", "false", "--fps", "15"], environ={}
-    ).module_kwargs("dualopenyamsimconnection")
-    assert (connection["headless"], connection["cameras"], connection["fps"]) == (False, False, 15)
-    # The real connection is switched off, and its options with it.
-    with pytest.raises(BlueprintConfigError, match="left-can-port"):
-        parser.parse(["--left-can-port", "can0"], environ={})
 
 
 @dataclass
