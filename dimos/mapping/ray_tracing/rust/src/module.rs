@@ -74,7 +74,7 @@ pub struct RayTracingVoxelMap {
     global_map: Output<PointCloud2>,
 
     // In diff mode, the voxels changed since the last publish, with a `change`
-    // field (1 added, 0 removed) beside `premap`.
+    // field (1 added, 0 removed) beside `flags`.
     #[output(encode = PointCloud2::encode)]
     map_update: Output<PointCloud2>,
 

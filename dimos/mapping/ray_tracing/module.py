@@ -111,7 +111,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     cloud_keyframe_request: In[Bool]
     global_map: Out[PointCloud2]
     # In diff mode, the voxels changed since the last publish: a u8 `change` field (1 added,
-    # 0 removed) beside `premap`.
+    # 0 removed) beside `flags`.
     map_update: Out[PointCloud2]
     local_map: Out[PointCloud2]
     local_map_fine: Out[PointCloud2]
