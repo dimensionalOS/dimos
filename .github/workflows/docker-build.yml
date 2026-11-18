@@ -112,7 +112,7 @@ jobs:
     with:
       should-run: true
       dockerfile:  python
-      from-image: ubuntu:22.04
+      from-image: ubuntu:26.04
       to-image: dimensional/python:${{ needs.check-changes.outputs.branch-tag }}
 
   dev:
