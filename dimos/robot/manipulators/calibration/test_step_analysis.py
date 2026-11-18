@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -172,7 +173,8 @@ def test_propose_gains_picks_the_highest_passing_kp_and_explains_the_rest() -> N
     proposal = propose_gains(steps, candidates)["arm/joint2"]
     assert proposal.gains == (120.0, 5.0)
     assert "highest kp" in proposal.reason and "4 step(s) all pass" in proposal.reason
-    assert set(proposal.rejected) == {"kp=160 kd=5", "kp=200 kd=5"}
+    assert set(proposal.rejected) == {"kp=40 kd=2", "kp=160 kd=5", "kp=200 kd=5"}
+    assert "settled in" in proposal.rejected["kp=40 kd=2"]
     assert "overshot" in proposal.rejected["kp=160 kd=5"]
     assert proposal.rejected["kp=200 kd=5"] == "not tested"
     # Without explicit candidates every tested pair counts.
@@ -182,22 +184,22 @@ def test_propose_gains_picks_the_highest_passing_kp_and_explains_the_rest() -> N
 
 
 def test_propose_gains_needs_every_step_to_pass() -> None:
-    good = _sweep_step("j", 80.0, 5.0, 1.0)
+    good = [_sweep_step("j", 80.0, 5.0, delta) for delta in (1.0, -1.0)]
     t, y, dy = _first_order(1.0, 0.05)
     stuck = analyze_step(_event(-1.0, joint="j", kp=120.0, kd=5.0), t, 10.0 - (y - 10.0) + 0.3, -dy)
     fine = analyze_step(_event(1.0, joint="j", kp=120.0, kd=5.0), t, y, dy)
-    proposal = propose_gains([good, stuck, fine])["j"]
+    proposal = propose_gains([*good, stuck, fine])["j"]
     assert proposal.gains == (80.0, 5.0)
     assert "off target" in proposal.rejected["kp=120 kd=5"]
 
 
 def test_propose_gains_prefers_the_faster_kd_at_equal_kp_and_reports_none_passing() -> None:
     t = np.arange(0.0, HOLD_S, DT)
-    slow = _first_order(1.0, 0.08)
-    fast = _first_order(1.0, 0.04)
     steps = [
-        analyze_step(_event(1.0, joint="j", kp=80.0, kd=2.0), t, slow[1], slow[2]),
-        analyze_step(_event(1.0, joint="j", kp=80.0, kd=5.0), t, fast[1], fast[2]),
+        analyze_step(_event(delta, joint="j", kp=80.0, kd=kd), t, y, dy)
+        for kd, tau in ((2.0, 0.08), (5.0, 0.04))
+        for delta in (1.0, -1.0)
+        for _, y, dy in [_first_order(delta, tau)]
     ]
     assert propose_gains(steps)["j"].gains == (80.0, 5.0)
     ringing = _second_order(1.0, wn=60.0, zeta=0.2)
@@ -205,3 +207,65 @@ def test_propose_gains_prefers_the_faster_kd_at_equal_kp_and_reports_none_passin
     none = propose_gains(failing)["k"]
     assert none.gains is None and none.kp is None
     assert "no candidate passed" in none.reason and "kp=300 kd=1" in none.rejected
+
+
+def test_a_non_finite_metric_fails_the_step_and_its_gains() -> None:
+    t, y, dy = _first_order(1.0, 0.05)
+    dy = dy.copy()
+    dy[-3] = np.nan  # one velocity sample lost in the rest window
+    metrics = analyze_step(_event(1.0, joint="j"), t, y, dy)
+    assert math.isnan(metrics.buzz_rms_deg_s)
+    assert not metrics.passed
+    assert metrics.failures() == ["+1 deg step metric buzz_rms_deg_s is not finite"]
+    assert metrics.as_row()["passed"] is False
+    t_neg, y_neg, dy_neg = _first_order(-1.0, 0.05)
+    other_direction = analyze_step(_event(-1.0, joint="j"), t_neg, y_neg, dy_neg)
+    assert other_direction.passed
+    proposal = propose_gains([metrics, other_direction])["j"]
+    assert proposal.gains is None
+    assert "not finite" in proposal.rejected["kp=80 kd=5"]
+    overshoot = replace(other_direction, overshoot_pct=math.inf)
+    assert overshoot.failures() == ["-1 deg step metric overshoot_pct is not finite"]
+
+
+def test_a_hold_cut_short_fails_the_step() -> None:
+    t, y, dy = _first_order(1.0, 0.05)
+    keep = t < 0.8  # the next step (or the recording's end) came after 0.8 of 2 s
+    metrics = analyze_step(_event(1.0), t[keep], y[keep], dy[keep])
+    assert metrics.hold_s == HOLD_S and metrics.recorded_s == pytest.approx(0.795)
+    assert not metrics.hold_complete and not metrics.passed
+    assert metrics.failures() == ["+1 deg step hold was cut short: 0.80 of 2 s recorded"]
+    assert analyze_step(_event(1.0), t, y, dy).hold_complete  # the last sample is one dt short
+
+
+def test_propose_gains_needs_a_step_each_way() -> None:
+    up = [_sweep_step("j", kp, 5.0, 1.0) for kp in (80.0, 120.0)]
+    down = _sweep_step("j", 80.0, 5.0, -1.0)
+    proposal = propose_gains([*up, down])["j"]
+    assert proposal.gains == (80.0, 5.0)
+    assert proposal.rejected == {"kp=120 kd=5": "no negative step recorded"}
+    only_up = propose_gains(up)["j"]
+    assert only_up.gains is None
+    assert only_up.rejected["kp=80 kd=5"] == "no negative step recorded"
+
+
+def test_propose_gains_does_not_pick_a_stiff_pass_above_a_failing_softer_kp() -> None:
+    def steps(kp: float, tau: float, kd: float = 5.0) -> list[StepMetrics]:
+        return [
+            analyze_step(_event(delta, joint="j", kp=kp, kd=kd), *_first_order(delta, tau))
+            for delta in (1.0, -1.0)
+        ]
+
+    # kp 120 settles too slowly (a bad run); kp 200 happens to pass above it.
+    results = [*steps(80.0, 0.05), *steps(120.0, 0.3), *steps(200.0, 0.04)]
+    proposal = propose_gains(results)["j"]
+    assert proposal.gains == (80.0, 5.0)
+    assert "settled in" in proposal.rejected["kp=120 kd=5"]
+    assert proposal.rejected["kp=200 kd=5"] == ("its steps pass, but kp=120 kd=5 below it failed")
+    # The rule holds per kd: at kd 2 the failing kp 40 blocks kp 200 too ...
+    other_kd = propose_gains([*results, *steps(40.0, 0.3, kd=2.0), *steps(200.0, 0.04, kd=2.0)])
+    assert other_kd["j"].gains == (80.0, 5.0)
+    assert "kp=40 kd=2" in other_kd["j"].rejected["kp=200 kd=2"]
+    # ... and with nothing failing at kd 2, its kp 200 is chosen.
+    clean = propose_gains([*steps(80.0, 0.05), *steps(200.0, 0.04, kd=2.0)])
+    assert clean["j"].gains == (200.0, 2.0)
