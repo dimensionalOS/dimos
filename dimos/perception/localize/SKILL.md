@@ -1,6 +1,6 @@
 ---
 name: perception-localize
-description: Locate objects with a running PerceptionLocalize stack over MCP (`state`, `localize`) - probe the machine, build the time window, watch labels on a schedule, narrow an object's position, change params per call, and tell where a failure comes from. Use whenever a blueprint with PerceptionLocalize and McpServer runs, such as go2-localize or xarm-localize-live.
+description: Locate objects with a running PerceptionLocalize stack over MCP (`state`, `localize`, `find_surface`) - probe the machine, build the time window, watch labels on a schedule, narrow an object's position, change params per call, find the table, and tell where a failure comes from. Use whenever a blueprint with PerceptionLocalize and McpServer runs, such as go2-localize or xarm-localize-live.
 ---
 
 # Localize over MCP
@@ -129,6 +129,29 @@ At a table, a walking robot's room-scale params are coarse for small objects:
 
 Pass desk-scale field overrides on every call for that label while working at the
 table. A window first read at room scale is read again under desk params.
+
+## Finding the table
+
+    uv run dimos mcp call find_surface -j '{"start": -10, "duration": 10, "frame": "link_base"}'
+
+- `find_surface(start=-10, duration=10, frame="", max_tilt_deg=25)` fits the
+  flat surfaces in the window's depth (or the lidar map), biggest first. It
+  runs no detector and answers in about a second.
+- One line per surface:
+  `surface 1: height 0.021 m under the origin of link_base, centre (0.48, 0.02, 0.021), 0.78 x 0.49 m, long side at 3 deg, level, 4300 points, rms 2.1 mm`.
+  `height` is the plane's z at the frame's x = y = 0. On a tilted surface, read
+  the height at a point from the centre and the tilt instead.
+- `frame` is any frame tf reaches, such as the arm's base; empty is the world
+  frame. Level means level to the world frame's +z.
+- A tilted surface reads `tilted T deg, down towards H deg`: H is the heading,
+  in the frame, the surface goes down towards.
+- Size runs about 2% short and covers only what the camera saw: look over the
+  whole table first for its full size.
+- The floor or a shelf can be a second line. Planes narrower than 10 cm, such as
+  a block's top, are not surfaces.
+- Python API: `app.PerceptionLocalize.surfaces(...)` (or the class in the
+  blueprint, e.g. `ManipulationLocalize`) returns the same as dicts, with the
+  plane's `coefficients` (a, b, c, d of ax + by + cz + d = 0) and `normal`.
 
 ## Changing params per call
 
