@@ -40,6 +40,7 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingSession
 from dimos.experimental.memory.rust_recorder import (
+    RustMcapAttachment,
     RustMcapStoreConfig,
     RustRecorder,
     RustRecordingStoreConfig,
@@ -144,22 +145,25 @@ def _free_port() -> int:
 
 
 @pytest.mark.parametrize(
-    "store_kind",
+    ("store_kind", "attachment_mode"),
     [
-        "sqlite",
-        pytest.param(
-            "mcap",
-            marks=pytest.mark.skipif(not _MCAP_AVAILABLE, reason="mcap not installed"),
-        ),
+        ("sqlite", None),
+        ("mcap", None),
+        ("mcap", "empty"),
+        ("mcap", "two-files"),
+        ("mcap", "missing-file"),
     ],
 )
 def test_rust_artifact_is_readable_by_python_memory2(
     tmp_path: Path,
     rust_recorder_executable: Path,
     store_kind: str,
+    attachment_mode: str | None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _capture_native_artifact(tmp_path, rust_recorder_executable, store_kind, monkeypatch)
+    _capture_native_artifact(
+        tmp_path, rust_recorder_executable, store_kind, monkeypatch, attachment_mode=attachment_mode
+    )
 
 
 @pytest.mark.parametrize("store_kind", ["sqlite", "mcap"])
@@ -208,14 +212,32 @@ def _capture_native_artifact(
     store_kind: str,
     monkeypatch: pytest.MonkeyPatch,
     profile: CollectionProfile | None = None,
+    *,
+    attachment_mode: str | None = None,
 ) -> Path:
     suffix = ".db" if store_kind == "sqlite" else ".mcap"
     artifact = tmp_path / f"recording{suffix}"
     store: RustRecordingStoreConfig
+    expected_attachments: list[tuple[str, str, bytes]] = []
     if store_kind == "sqlite":
         store = RustSqliteStoreConfig(path=str(artifact))
-    else:
+    elif attachment_mode is None:
         store = RustMcapStoreConfig(path=str(artifact))
+    else:
+        attachments = []
+        if attachment_mode in {"two-files", "missing-file"}:
+            expected_attachments = [
+                ("capture-notes.json", "application/json", '{ "robot": "例" }\r\n'.encode()),
+                ("calibration.bin", "application/octet-stream", b"\x00\xff\x80\n"),
+            ]
+            for index, (name, media_type, data) in enumerate(expected_attachments):
+                source = tmp_path / f"input-{index}"
+                attachments.append(
+                    RustMcapAttachment(name=name, media_type=media_type, path=str(source))
+                )
+                if attachment_mode != "missing-file" or index == 0:
+                    source.write_bytes(data)
+        store = RustMcapStoreConfig(path=str(artifact), attachments=attachments)
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = InteropRustRecorder(
@@ -254,7 +276,6 @@ def _capture_native_artifact(
         ).active_blueprints[0]
         recorder = atom.module(**atom.kwargs, **kwargs)
         artifact = Path(recorder.config.store.path)
-        recorder.status.transport = FakeTransport("dimos/collection_status")
     elif store_kind == "mcap":
         # Generic recording must not pick up unrelated neighboring sidecars.
         (tmp_path / "schema.json").write_bytes(b"{}\n")
@@ -311,6 +332,13 @@ def _capture_native_artifact(
         stderr=subprocess.PIPE,
     )
     try:
+        if attachment_mode == "missing-file":
+            _, stderr = process.communicate(input=launch, timeout=10)
+            assert process.returncode != 0
+            assert b"failed to read MCAP attachment" in stderr, stderr
+            assert str(tmp_path / "input-1").encode() in stderr
+            assert not artifact.exists()
+            return artifact
         assert process.stdin is not None
         process.stdin.write(launch)
         process.stdin.close()
@@ -368,13 +396,15 @@ def _capture_native_artifact(
             assert summary.statistics.message_count == 4
             attachments = list(reader.iter_attachments())
             assert summary.statistics.attachment_count == len(attachments)
-            if profile is None:
-                assert attachments == []
-            else:
-                [attachment] = attachments
-                assert attachment.name == "schema.json"
-                assert attachment.media_type == "application/json"
-                assert attachment.data == (artifact.parent / "schema.json").read_bytes()
+            if profile is not None:
+                expected_attachments = [
+                    (
+                        "schema.json",
+                        "application/json",
+                        (artifact.parent / "schema.json").read_bytes(),
+                    )
+                ]
+            assert [(a.name, a.media_type, a.data) for a in attachments] == expected_attachments
             channels = {channel.topic: channel for channel in summary.channels.values()}
             assert set(channels) == {"imu", "color_image", "status"}
             assert channels["imu"].message_encoding == "lz4+lcm"
