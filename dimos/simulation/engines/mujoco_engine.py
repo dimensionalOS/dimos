@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -37,6 +37,7 @@ from dimos.simulation.engines.robot_sim_binding import (
     RobotSimSpec,
     resolve_robot_sim_binding,
 )
+from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
@@ -91,12 +92,14 @@ class CameraConfig:
     max_geom: int | None = 10000
     geom_groups: tuple[int, ...] | None = None
     base_body_name: str | None = None
+    #: False renders colour only; the frame's ``depth`` is then None.
+    depth: bool = True
 
 
 @dataclass
 class CameraFrame:
     rgb: NDArray[np.uint8]
-    depth: NDArray[np.float32]
+    depth: NDArray[np.float32] | None
     cam_pos: NDArray[np.float64]
     cam_mat: NDArray[np.float64]
     fovy: float
@@ -120,8 +123,13 @@ class RaycastLidarConfig:
 
 @dataclass
 class RaycastLidarFrame:
+    """One cast: world-frame hit points (N x 3, metres), the cast time, and the
+    camera's world position (metres) and 3 x 3 rotation at that time."""
+
     points: NDArray[np.float32]
     timestamp: float
+    origin: NDArray[np.float64] | None = None
+    rotation: NDArray[np.float64] | None = None
 
 
 @dataclass
@@ -129,7 +137,7 @@ class _CameraRendererState:
     cfg: CameraConfig
     cam_id: int
     rgb_renderer: mujoco.Renderer
-    depth_renderer: mujoco.Renderer
+    depth_renderer: mujoco.Renderer | None
     scene_option: mujoco.MjvOption | None
     interval: float
     base_body_id: int | None = None
@@ -212,9 +220,12 @@ class MujocoEngine(SimulationEngine):
             self._joint_mappings = list(self._robot_binding.joint_mappings)
         self._joint_names = [mapping.name for mapping in self._joint_mappings]
         self._num_joints = len(self._joint_names)
-        self._root_qpos_adr = self._robot_binding.root_qpos_adr if self._robot_binding else None
-        self._root_qvel_adr = self._robot_binding.root_qvel_adr if self._robot_binding else None
-        if self._root_qpos_adr is None:
+        # A bound robot's root is whatever its spec names, which may be nothing
+        # for a fixed arm; only a model without a spec takes the first free joint.
+        if self._robot_binding is not None:
+            self._root_qpos_adr = self._robot_binding.root_qpos_adr
+            self._root_qvel_adr = self._robot_binding.root_qvel_adr
+        else:
             self._root_qpos_adr, self._root_qvel_adr = self._find_first_freejoint_adrs()
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
@@ -223,6 +234,8 @@ class MujocoEngine(SimulationEngine):
         self._lock = threading.Lock()
         self._reset_requested = False
         self._reset_done_events: list[threading.Event] = []
+        # Free bodies to place at the next reset: joint addresses and the pose, cleared once applied.
+        self._placements: dict[str, tuple[tuple[int, int], BodyPlacement]] = {}
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
 
@@ -381,13 +394,15 @@ class MujocoEngine(SimulationEngine):
                 width=cfg.width,
                 max_geom=max_geom,
             )  # type: ignore[call-arg]
-            depth_renderer = mujoco.Renderer(
-                self._model,
-                height=cfg.height,
-                width=cfg.width,
-                max_geom=max_geom,
-            )  # type: ignore[call-arg]
-            depth_renderer.enable_depth_rendering()
+            depth_renderer = None
+            if cfg.depth:
+                depth_renderer = mujoco.Renderer(
+                    self._model,
+                    height=cfg.height,
+                    width=cfg.width,
+                    max_geom=max_geom,
+                )  # type: ignore[call-arg]
+                depth_renderer.enable_depth_rendering()
             scene_option = None
             if cfg.geom_groups is not None:
                 scene_option = mujoco.MjvOption()
@@ -463,14 +478,16 @@ class MujocoEngine(SimulationEngine):
             )
             rgb = state.rgb_renderer.render().copy()
 
-            state.depth_renderer.update_scene(
-                self._data, camera=state.cam_id, scene_option=state.scene_option
-            )
-            depth = state.depth_renderer.render().copy()
+            depth = None
+            if state.depth_renderer is not None:
+                state.depth_renderer.update_scene(
+                    self._data, camera=state.cam_id, scene_option=state.scene_option
+                )
+                depth = state.depth_renderer.render().astype(np.float32)
 
             frame = CameraFrame(
                 rgb=rgb,
-                depth=depth.astype(np.float32),
+                depth=depth,
                 cam_pos=self._data.cam_xpos[state.cam_id].copy(),
                 cam_mat=self._data.cam_xmat[state.cam_id].copy(),
                 fovy=float(self._model.cam_fovy[state.cam_id]),
@@ -540,13 +557,16 @@ class MujocoEngine(SimulationEngine):
                 self._raycast_lidar_frames[state.cfg.name] = RaycastLidarFrame(
                     points=arr,
                     timestamp=now,
+                    origin=origin,
+                    rotation=camera_mat,
                 )
 
     @staticmethod
     def _close_cam_renderers(cam_renderers: dict[str, _CameraRendererState]) -> None:
         for state in cam_renderers.values():
             state.rgb_renderer.close()
-            state.depth_renderer.close()
+            if state.depth_renderer is not None:
+                state.depth_renderer.close()
 
     def _reset_unlocked(self) -> None:
         if self._model.nkey > 0:
@@ -554,6 +574,7 @@ class MujocoEngine(SimulationEngine):
         else:
             mujoco.mj_resetData(self._model, self._data)  # type: ignore[attr-defined]
         self._apply_spawn_pose_unlocked()
+        self._apply_placements_unlocked()
         self._apply_reset_joint_positions_unlocked()
         for i, mapping in enumerate(self._joint_mappings):
             self._joint_position_targets[i] = self._current_position(mapping)
@@ -593,6 +614,30 @@ class MujocoEngine(SimulationEngine):
         if qvel_adr is not None:
             self._data.qvel[qvel_adr : qvel_adr + 6] = 0.0
         mujoco.mj_forward(self._model, self._data)
+
+    def _apply_placements_unlocked(self) -> None:
+        for (qpos_adr, dof_adr), (x, y, z, yaw) in self._placements.values():
+            self._data.qpos[qpos_adr : qpos_adr + 3] = [x, y, z]
+            self._data.qpos[qpos_adr + 3 : qpos_adr + 7] = [
+                math.cos(yaw * 0.5),
+                0.0,
+                0.0,
+                math.sin(yaw * 0.5),
+            ]
+            self._data.qvel[dof_adr : dof_adr + 6] = 0.0
+        if self._placements:
+            self._placements = {}
+            mujoco.mj_forward(self._model, self._data)
+
+    def _free_joint_adrs(self, body: str) -> tuple[int, int]:
+        """The qpos and dof addresses of ``body``'s free joint; ValueError when the model has no free body of that name."""
+        body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body)
+        if body_id < 0:
+            raise ValueError(f"the model has no body named {body!r}")
+        joint = int(self._model.body_jntadr[body_id])
+        if self._model.body_jntnum[body_id] < 1 or int(self._model.jnt_type[joint]) != _MJJNT_FREE:
+            raise ValueError(f"body {body!r} has no free joint, so it cannot be placed")
+        return int(self._model.jnt_qposadr[joint]), int(self._model.jnt_dofadr[joint])
 
     def _apply_reset_joint_positions_unlocked(self) -> None:
         if self._reset_joint_positions is None:
@@ -804,9 +849,18 @@ class MujocoEngine(SimulationEngine):
         *,
         wait: bool = False,
         timeout: float = _RESET_WAIT_TIMEOUT_S,
+        body_poses: Mapping[str, BodyPlacement] | None = None,
     ) -> bool:
+        """Have the sim thread reset the scene at its next step. ``body_poses`` puts
+        named free bodies at (x, y, z, yaw), metres and radians in the world frame,
+        for this reset only; an unknown or fixed body raises ValueError here. With
+        ``wait`` the call returns once the reset is applied, False after ``timeout`` seconds."""
+        placements = {
+            name: (self._free_joint_adrs(name), pose) for name, pose in (body_poses or {}).items()
+        }
         done_event = threading.Event() if wait else None
         with self._lock:
+            self._placements = placements
             if done_event is not None:
                 self._reset_done_events.append(done_event)
             self._reset_requested = True

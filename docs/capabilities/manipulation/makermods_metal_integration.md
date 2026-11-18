@@ -7,6 +7,27 @@ strings. Mock operation uses a separate module selected by `--simulation`.
 
 ## Run without hardware
 
+One Metal in MuJoCo, standing on a bench with a cube, a cylinder and a bowl:
+
+```bash
+uv run dimos --simulation run metal-sim
+uv run dimos --simulation run metal-perception-sim   # + object detection and pick-and-place
+```
+
+`metal-sim` runs the coordinator on the `sim_mujoco` adapter, the planner and
+the URDF server. The wrist camera publishes `color_image`, `depth_image` and
+`camera_info`; the three objects' true poses come out on `body_poses`; a fixed
+camera over the far corner of the bench publishes the whole bench on
+`scene_image`, which the Controller's camera panel offers as a tab next to the
+wrist camera. The bench top is the world's z = 0 and the arm's base is at the
+origin. The arm MJCF is `makermods_metal/assets/metal.xml`, generated from the
+pinned URDF by `python -m dimos.robot.manipulators.makermods_metal.mjcf`; its
+meshes load from the pinned description at run time. Pass
+`--mujocosimmodule.headless true` to run without the MuJoCo window.
+
+The mock connection, which echoes accepted joint positions without dynamics,
+gripper contact or calibration:
+
 ```bash
 uv run dimos --simulation run makermods-metal-planner-coordinator
 uv run dimos --simulation run dual-makermods-metal-planner-coordinator
@@ -16,9 +37,7 @@ The existing main entry names are retained: `coordinator-makermods-metal`,
 `makermods-metal-planner-coordinator`, and
 `dual-makermods-metal-planner-coordinator`. Single-arm trajectory and gripper
 control without a planner is also available as `makermods-metal-connection-control`.
-
-Mock feedback echoes accepted joint positions. It does not simulate dynamics,
-gripper contact, or calibration. See the [connection test runbook](/docs/capabilities/manipulation/damiao-connections.md)
+See the [connection test runbook](/docs/capabilities/manipulation/damiao-connections.md)
 for repository setup, command checks, and deadman checks.
 
 ## Select native hardware
@@ -68,6 +87,81 @@ The grippers can be commanded independently through those tasks or their
 left/right gripper streams. `ManipulationModuleConfig.gripper_tasks` explicitly
 binds `left_arm` and `right_arm` to those task names for both commands and
 feedback. The single-Metal planner binds `arm` to `metal_gripper`.
+
+## Quest teleop and collection
+
+`teleop-webxr-metal` drives the arm from the right Quest controller: hold the
+grip to engage, the trigger closes the jaw, X plans back to the zero pose (B and Y
+belong to the episode monitor: start or save, and discard). The
+IK target is `gripper_base`, the jaw mount; the URDF has no fingertip frame.
+`metal-quest-collection` adds the episode monitor, a wrist webcam and the
+recorder. It records `observation.images.wrist` (480x640 RGB),
+`observation.state` from `coordinator_joint_state` and `action` from
+`coordinator_joint_command`, both over `arm/joint1` to `arm/joint6` and
+`arm/joint7`.
+
+```bash
+dimos run teleop-webxr-metal --can-port can0
+dimos run metal-quest-collection --can-port can0 \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "pick up the cube"
+dimos imitation control
+```
+
+`--wrist.hardware.camera-index /dev/video2` selects another camera.
+`--simulation` swaps the connection for the echo mock; the camera is still a
+real device. `metal-quest-collection-sim` rehearses the same collection with
+the Metal in MuJoCo, its wrist camera standing in for the webcam, so no CAN
+port or camera is needed:
+
+```bash
+dimos --simulation run metal-quest-collection-sim \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "pick up the cube"
+```
+
+There is no hand-guided teaching entry: the Metal runs without gravity
+compensation, so a zero-stiffness arm drops.
+
+## Bimanual Quest teleop and collection
+
+`teleop-webxr-dual-metal` drives both arms, the left controller on the left
+arm and the right on the right, each targeting its own `gripper_base`; grip,
+trigger and B work as on one Metal. It takes the dual planner's mount flags.
+`dual-metal-quest-collection` adds the episode monitor, two wrist webcams and
+the recorder. It records `observation.images.left_wrist` and
+`observation.images.right_wrist` (480x640 RGB), `observation.state` and
+`action` over `arm/left_joint1` to `arm/left_joint7`, then `arm/right_joint1`
+to `arm/right_joint7`.
+
+```bash
+dimos run teleop-webxr-dual-metal --left-can-port can0 --right-can-port can1
+dimos run dual-metal-quest-collection --left-can-port can0 --right-can-port can1 \
+  --left-wrist.hardware.camera-index 0 --right-wrist.hardware.camera-index 1 \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "hand over the cube"
+dimos imitation control
+```
+
+## Run a checkpoint
+
+`metal-lerobot-rollout` lets a trained LeRobot checkpoint drive the arm. The
+policy sees the wrist webcam and `coordinator_joint_state` over the same seven
+joints the collection recorded, and sends joint trajectories to the
+coordinator. `metal-lerobot-quest-rollout` adds the Quest teleop on top, so
+holding the grip takes the arm away from the policy.
+
+```bash
+dimos run metal-lerobot-rollout --can-port can0 \
+  --policy.policy-path outputs/metal-act/checkpoints/last/pretrained_model \
+  --policy.task "pick up the cube"
+dimos imitation control
+```
+
+Select **Start policy** in the panel; **Stop policy** halts the policy with the
+stack still running. `--policy.device cuda` runs it on the GPU. See the
+[run a checkpoint guide](/docs/capabilities/manipulation/learning/guides/run-a-checkpoint.md)
+for preflight and the panel's controls.
 
 ## Validation scope
 

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 import sys
 import threading
@@ -26,13 +27,59 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
     MujocoEngine,
+    RaycastLidarFrame,
     _CameraRendererState,
 )
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _WholeBodySimHooks,
+)
+from dimos.simulation.engines.sim_scene_spec import BodyPlacement
+
+
+def _gripper_round_trip(
+    command: float,
+    joint: float,
+    *,
+    ctrl_range: tuple[float, float],
+    joint_range: tuple[float, float],
+) -> tuple[float, float]:
+    """The control the hooks send for a gripper ``command``, and what they publish for a ``joint`` value."""
+    shm = MagicMock()
+    for reader in ("position", "velocity", "kp", "kd", "tau"):
+        getattr(shm, f"read_{reader}_command").return_value = None
+    shm.read_gripper_command.return_value = command
+    engine = MagicMock()
+    engine.joint_positions = [0.0] * 6 + [joint]
+    hooks = _WholeBodySimHooks(
+        shm, dof=6, gripper_idx=6, gripper_ctrl_range=ctrl_range, gripper_joint_range=joint_range
+    )
+    hooks.pre_step(engine)
+    hooks.post_step(engine)
+    engine.set_position_target.assert_called_once()
+    shm.write_gripper_state.assert_called_once()
+    return (
+        float(engine.set_position_target.call_args.args[1]),
+        float(shm.write_gripper_state.call_args.args[0]),
+    )
+
+
+def test_a_position_actuator_on_the_gripper_joint_commands_and_reports_it_as_is() -> None:
+    metal = {"ctrl_range": (-0.05, 0.0), "joint_range": (-0.05, 0.0)}
+    assert _gripper_round_trip(-0.05, -0.05, **metal) == (-0.05, -0.05)
+    assert _gripper_round_trip(0.0, 0.0, **metal) == (0.0, 0.0)
+
+
+def test_a_tendon_gripper_runs_the_other_way_in_both_directions() -> None:
+    xarm = {"ctrl_range": (0.0, 255.0), "joint_range": (0.0, 0.85)}
+    assert _gripper_round_trip(0.85, 0.0, **xarm) == (0.0, 0.85)
+    assert _gripper_round_trip(0.0, 0.85, **xarm) == (255.0, 0.0)
 
 
 class _FakeData:
@@ -51,7 +98,9 @@ class _FakeRespawnEngine:
         self.reset_requested = False
         self.reset_to_kwargs: dict[str, Any] | None = None
 
-    def request_reset(self, *, wait: bool) -> bool:
+    def request_reset(
+        self, *, wait: bool, body_poses: Mapping[str, BodyPlacement] | None = None
+    ) -> bool:
         self.reset_requested = wait
         return True
 
@@ -173,6 +222,43 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         assert camera_link_tf.frame_id == "link7"
         assert camera_link_tf.child_frame_id == "wrist_camera_link"
         assert np.allclose(camera_link_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+    finally:
+        module.stop()
+
+
+def test_lidar_in_camera_frame_puts_the_camera_at_the_cloud_origin_on_tf() -> None:
+    config = {"enable_mujoco_lidar": True, "mujoco_lidar_in_camera_frame": True}
+    module = MujocoSimModule(**config)
+    try:
+        module.config = MujocoSimModuleConfig(**config)
+        # The camera at (0.1, 0, 0.4), turned 90 degrees about z.
+        rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        origin = np.array([0.1, 0.0, 0.4])
+        hits = np.array([[0.3, 0.05, 0.02], [0.25, -0.1, 0.0]], dtype=np.float32)
+
+        class _FakeLidarEngine:
+            def read_raycast_lidar(self, camera_name: str) -> RaycastLidarFrame:
+                return RaycastLidarFrame(hits, 5.0, origin, rotation)
+
+            def disconnect(self) -> None:
+                pass
+
+        tf: list[Any] = []
+        clouds: list[Any] = []
+        module._engine = _FakeLidarEngine()
+        module.tf.subscribe(tf.append)
+        module.pointcloud.subscribe(clouds.append)
+
+        module._generate_pointcloud()
+
+        [cloud] = clouds
+        [camera] = tf[-1].transforms
+        assert cloud.frame_id == camera.child_frame_id == "wrist_camera_lidar_frame"
+        assert camera.frame_id == "world"
+        assert cloud.ts == camera.ts == 5.0
+        world_points = cloud.points_f32() @ rotation.T + camera.translation.to_numpy()
+        assert np.allclose(np.sort(world_points, axis=0), np.sort(hits, axis=0), atol=1e-5)
+        assert np.allclose(camera.to_matrix()[:3, :3], rotation)
     finally:
         module.stop()
 
@@ -444,6 +530,50 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         _run_publish_loop(module, frame_ts)
         elapsed = time.monotonic() - start
         assert elapsed >= (len(frame_ts) - 1) / fps
+    finally:
+        module.stop()
+
+
+class _FakeSceneCameraEngine(_FakeCameraEngine):
+    """``_FakeCameraEngine``'s wrist frames plus one colour-only frame from a fixed scene camera."""
+
+    def read_camera(self, camera_name: str) -> CameraFrame | None:
+        if camera_name != "scene_camera":
+            return super().read_camera(camera_name)
+        return CameraFrame(
+            rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+            depth=None,
+            cam_pos=np.array([1.0, -0.5, 0.75]),
+            cam_mat=np.eye(3),
+            fovy=50.0,
+            timestamp=1_000_000.0,
+        )
+
+
+def test_scene_camera_publishes_its_image_and_world_tf_only_when_configured() -> None:
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(fps=1000)
+        scene: list[Any] = []
+        tf: list[Any] = []
+        module.scene_image.subscribe(scene.append)
+        module.tf.subscribe(tf.append)
+
+        _run_publish_loop(module, [1_000_000.0])
+        assert scene == []
+
+        module.config = MujocoSimModuleConfig(fps=1000, scene_camera="scene_camera")
+        module._stop_event.clear()
+        module._engine = _FakeSceneCameraEngine([1_000_000.0], module._stop_event)
+        module._publish_loop()
+
+        [image] = scene
+        assert image.frame_id == "scene_camera"
+        assert image.format is ImageFormat.RGB
+        scene_tf = [t for msg in tf for t in msg.transforms if t.child_frame_id == "scene_camera"]
+        assert len(scene_tf) == 1
+        assert scene_tf[0].frame_id == "world"
+        assert np.allclose(scene_tf[0].translation.to_numpy(), [1.0, -0.5, 0.75])
     finally:
         module.stop()
 

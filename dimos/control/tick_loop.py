@@ -519,20 +519,7 @@ class TickLoop:
                             )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
-        if joint_commands and self._publish_command_callback is not None:
-            try:
-                self._publish_command_callback(
-                    JointState(
-                        ts=time.time(),
-                        frame_id=self._frame_id,
-                        name=list(joint_commands),
-                        position=list(joint_commands.values()),
-                        velocity=[],
-                        effort=[],
-                    )
-                )
-            except Exception:
-                logger.exception("Failed to publish joint commands")
+        self._publish_joint_commands(joint_commands)
 
     def _write_all_connections(
         self,
@@ -542,12 +529,15 @@ class TickLoop:
 
         Every robot that has reported gets one, every tick, whether or not a
         task drives it, so its connection module's deadman never fires while
-        the coordinator runs. One whose readings are stale gets none.
+        the coordinator runs. One whose readings are stale gets none. The
+        positions tasks asked for also go out on the joint command stream,
+        as they do for adapter-driven hardware.
         """
         publish = self._connection_command_callback
         if publish is None:
             return
         now = time.monotonic()
+        positions: dict[str, float] = {}
         with self._hardware_lock:
             for name, source in self._connections.items():
                 if not source.ready_for_control(now):
@@ -558,10 +548,40 @@ class TickLoop:
                     for joint, (value, mode, _) in joint_commands.items()
                     if self._joint_to_hardware.get(joint) == name
                 }
+                positions.update(
+                    (joint, winners[joint][0])
+                    for joint in source.joint_names
+                    if joint in winners
+                    and winners[joint][1] in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
+                )
                 try:
                     publish(name, source.command(winners))
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
+        self._publish_joint_commands(positions)
+
+    def _publish_joint_commands(self, commands: dict[str, float]) -> None:
+        """Publish the joint positions tasks asked for this tick; nothing when there are none.
+
+        Args:
+            commands: Position by joint name, in the joint's own unit (radians
+                or metres), in the order the joints are to be listed.
+        """
+        if not commands or self._publish_command_callback is None:
+            return
+        try:
+            self._publish_command_callback(
+                JointState(
+                    ts=time.time(),
+                    frame_id=self._frame_id,
+                    name=list(commands),
+                    position=list(commands.values()),
+                    velocity=[],
+                    effort=[],
+                )
+            )
+        except Exception:
+            logger.exception("Failed to publish joint commands")
 
     def _note_silence(self, name: str, source: ConnectionSource, now: float) -> None:
         """Log once that a robot has never reported, naming its silent ports and the likely cause.

@@ -123,6 +123,12 @@ def run(
     ),
     tags: str = typer.Option("", help="Comma-separated tag filter"),
     limit: int = typer.Option(0, min=0, help="Run at most N cases"),
+    timeout_s: float | None = typer.Option(
+        None,
+        "--timeout-s",
+        min=0.0,
+        help="Override every selected case's wall-clock budget (agent plus settling), seconds",
+    ),
     docker: bool = typer.Option(
         False, "--docker", help="Run in a detached container (docker/evals/compose.yaml)"
     ),
@@ -134,7 +140,7 @@ def run(
     --docker the status only says whether the container started.
     """
     if docker:
-        _run_in_docker(suite, agent, set_, allow, exclude, tags, limit)
+        _run_in_docker(suite, agent, set_, allow, exclude, tags, limit, timeout_s)
         return
 
     from dimos.evals.runner import EvalRunner, summarize
@@ -158,6 +164,7 @@ def run(
         agent_class(agent)(**kwargs),
         tags=frozenset(t for t in tags.split(",") if t) if tags else frozenset(),
         limit=limit,
+        timeout_s=timeout_s,
         provenance=run_provenance({"kind": "suite_module", "value": suite}, agent, kwargs),
     )
 
@@ -182,6 +189,7 @@ def _run_in_docker(
     exclude: str | None,
     tags: str,
     limit: int,
+    timeout_s: float | None,
 ) -> None:
     """The same ``dimos evals run`` in a one-off worker of docker/evals/compose.yaml.
 
@@ -204,6 +212,8 @@ def _run_in_docker(
         argv += ["--tags", tags]
     if limit:
         argv += ["--limit", str(limit)]
+    if timeout_s is not None:
+        argv += ["--timeout-s", str(timeout_s)]
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     name = f"evals-{stamp}-{secrets.token_hex(2)}-{suite.rsplit('.', 1)[-1]}"

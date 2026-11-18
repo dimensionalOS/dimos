@@ -53,12 +53,12 @@ def start_heartbeat(writer: ManipShmWriter) -> tuple[threading.Event, threading.
 
 
 def sim_settles_at(command: float) -> float:
-    """The raw MJCF joint value the sim reaches for a gripper ``command``.
+    """What the sim publishes for the gripper once it has followed a gripper ``command``.
 
-    Runs the real command mapping, then the actuator. Measured on data/xarm7:
-    ctrl 0 leaves the joint at 0.003 with the jaws 14cm apart, ctrl 255 drives
-    it to 0.848 with the jaws closed, so the joint tracks the ctrl endpoints
-    while the command mapping inverts.
+    Runs the real command mapping, then the actuator, then the real readback
+    mapping. Measured on data/xarm7: ctrl 0 leaves the joint at 0.003 with the
+    jaws 14cm apart, ctrl 255 drives it to 0.848 with the jaws closed, so the
+    joint tracks the ctrl endpoints while both mappings invert.
     """
     sim = SimpleNamespace(
         _gripper_joint_range=GRIPPER_RANGE,
@@ -67,7 +67,8 @@ def sim_settles_at(command: float) -> float:
     ctrl = _WholeBodySimHooks._gripper_joint_to_ctrl(sim, command)
     low, high = GRIPPER_RANGE
     ctrl_low, ctrl_high = GRIPPER_CTRL_RANGE
-    return low + (high - low) * (ctrl - ctrl_low) / (ctrl_high - ctrl_low)
+    joint = low + (high - low) * (ctrl - ctrl_low) / (ctrl_high - ctrl_low)
+    return _WholeBodySimHooks._gripper_joint_to_command(sim, joint)
 
 
 @pytest.fixture
@@ -272,12 +273,12 @@ class TestGripperRoundTrip:
     ):
         """The bug this guards: closed jaws normalized to 1.00 (fully open)."""
         adapter_with_gripper.write_joint_positions([0.0] * ARM_DOF + [GRIPPER_CLOSED])
-        settled = sim_settles_at(writer_with_gripper.read_gripper_command())
-        # Closing drives the raw MJCF joint to the top of its range...
-        assert settled == pytest.approx(GRIPPER_OPEN)
-        writer_with_gripper.write_gripper_state(settled)
+        # Closing drives the raw MJCF joint to the top of its range, which
+        # must still read back as the closed end of the range.
+        writer_with_gripper.write_gripper_state(
+            sim_settles_at(writer_with_gripper.read_gripper_command())
+        )
 
-        # ...which must still read back as the closed end of the range.
         lower, upper = (
             adapter_with_gripper.get_limits().position_lower[-1],
             (adapter_with_gripper.get_limits().position_upper[-1]),

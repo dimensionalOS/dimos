@@ -91,11 +91,15 @@ class EvalRunner(Configurable):
         *,
         tags: frozenset[str] = frozenset(),
         limit: int = 0,
+        timeout_s: float | None = None,
         provenance: dict[str, Any] | None = None,
     ) -> list[EvalResult]:
+        """``timeout_s`` replaces every selected case's wall-clock budget, seconds."""
         selected = [c for c in cases if not tags or tags & c.tags]
         if limit:
             selected = selected[:limit]
+        if timeout_s is not None:
+            selected = [replace(case, timeout_s=timeout_s) for case in selected]
         ids = [case.id for case in selected]
         reserved = {".", "..", "manifest.json", "summary.json", "results.jsonl"}
         for case_id in ids:
@@ -110,7 +114,7 @@ class EvalRunner(Configurable):
             "source": provenance["source"],
             "selection": {"tags": sorted(tags), "limit": limit, "case_ids": ids},
             "agent": provenance["agent"],
-            "runner": {"strict": self.config.strict},
+            "runner": {"strict": self.config.strict, "timeout_s": timeout_s},
             "code": _git_record(),
         }
         with (self.run_dir / "manifest.json").open("x") as stream:
