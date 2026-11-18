@@ -33,7 +33,9 @@ def _since_s(s: str | None) -> float | None:
 
 @data_app.command()
 def upload(
-    path: Path | None = typer.Argument(None, help="Recording or file; default: newest recording"),
+    path: Path | None = typer.Argument(
+        None, help="File or LeRobot v3 directory; default: newest recording"
+    ),
     robot: str | None = typer.Option(None, "--robot", help="Robot id for attribution"),
     kind: str | None = typer.Option(None, "--kind", help="Override the inferred kind"),
     since: str | None = typer.Option(None, "--since", help="Upload everything newer than e.g. 1h"),
@@ -57,7 +59,9 @@ def data_ls() -> None:
 @data_app.command()
 def pull(
     upload_id: str | None = typer.Argument(None, help="Id or prefix from `ls`; default: newest"),
-    dest: Path | None = typer.Option(None, "--dest"),
+    dest: Path | None = typer.Option(
+        None, "--dest", help="Exact file or new dataset directory path"
+    ),
 ) -> None:
     from dimos.cloud import cli
 

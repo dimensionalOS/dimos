@@ -1,6 +1,6 @@
 # Cloud data
 
-`dimos data` uploads recordings, or any file, to Dimensional's hosted storage and pulls them back byte-identical on any machine. Authenticate once with `dimos login` (device code; the key lands in the system keyring, or `~/.config/dimos/credentials`).
+`dimos data` uploads recordings, files, or finalized LeRobot datasets, to Dimensional's hosted storage and pulls them back byte-identical on any machine. Authenticate once with `dimos login` (device code; the key lands in the system keyring, or `~/.config/dimos/credentials`).
 
 ```bash
 dimos login
@@ -25,6 +25,34 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 - Discovery modes (no argument, `--since`) skip files modified within the last `upload_quiet_s` seconds (default 30) so a store that is still being written is not shipped mid-run. Naming a path or `latest` is explicit intent and uploads immediately.
 - Compression stages next to the source file (not `/tmp`), with a free-space check first; point `staging_dir` at a bigger partition if needed.
 - Each successful upload prints a `console:` link to it (production and staging APIs only).
+
+### LeRobot directories
+
+```bash
+dimos data upload lerobot_data1
+dimos data pull <upload-id> --dest restored-lerobot
+```
+
+Use a finalized LeRobot **v3.0** directory with standard shard paths, numeric
+observations/actions and optional RGB MP4 cameras. Install `dimos[learning]`
+for the Parquet reader and `ffmpeg` for video uploads. The CLI uploads a `blob`
+with manifest `dimos.lerobot.directory` v1, an uncompressed tar. It includes
+only referenced shards and public dataset metadata, omitting cache files,
+annotation sidecars, extra columns and private metadata fields. Clean numeric
+Parquet shards are copied; video is stream-copied without encoding, dropping
+non-video tracks, chapters and container metadata. Review dataset values, task
+labels and video pixels before sharing: this is not content redaction.
+
+Pull restores to a **new** directory on Linux or macOS (no overwrite); omit
+`--dest` for the usual download location, without the `.tar` suffix. Limits are
+20,000 files, 100 GiB total, just under 8 GiB per USTAR member, and 16 MiB per
+metadata file. Cloud quota and size limits still apply (including the 1 MiB
+minimum; the CLI does not pad small bundles). Ordinary `.tar` uploads still
+pull as files.
+
+Desktop's `dimos.lerobot.bundle` v1 requires source lineage and a hashed inventory.
+The CLI can restore standard v3.0 Desktop bundles with that envelope; it does
+not create lineage or make CLI uploads importable by the retained Desktop app.
 
 ## Pulls
 
