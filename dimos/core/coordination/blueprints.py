@@ -522,8 +522,11 @@ class ChoiceAtom:
     origin: str = field(default_factory=lambda: uuid.uuid4().hex, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if not self.name or "=" in self.name:
-            raise ChoiceResolutionError("Choice names must be nonempty and cannot contain '='")
+        if not re.fullmatch(r"[A-Za-z0-9_]+", self.name):
+            raise ChoiceResolutionError(
+                f"Invalid choice name {self.name!r}; like namespaces, use letters, digits "
+                "and underscores"
+            )
         if not self.choices or any(not option for option in self.choices):
             raise ChoiceResolutionError(f"Choice {self.name!r} must have nonempty option names")
         if self.default is not None and self.default not in self.choices:

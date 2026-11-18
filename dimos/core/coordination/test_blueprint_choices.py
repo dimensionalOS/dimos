@@ -346,8 +346,9 @@ def test_arguments_are_snapshotted_and_reusable(clearing: ChoiceAtom) -> None:
 @pytest.mark.parametrize(
     ("name", "choices", "default", "message"),
     [
-        ("", {"a": autoconnect()}, None, "names must be nonempty"),
-        ("Invalid=Name", {"a": autoconnect()}, None, "cannot contain '='"),
+        ("", {"a": autoconnect()}, None, "Invalid choice name ''"),
+        ("Invalid=Name", {"a": autoconnect()}, None, "Invalid choice name 'Invalid=Name'"),
+        ("robot/clearing", {"a": autoconnect()}, None, "letters, digits and underscores"),
         ("Empty", {}, None, "nonempty option names"),
         ("Empty", {"": autoconnect()}, None, "nonempty option names"),
         ("Default", {"a": autoconnect()}, "b", "Invalid default.*b.*Default.*a"),
