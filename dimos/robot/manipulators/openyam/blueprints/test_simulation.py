@@ -126,9 +126,9 @@ def test_planner_plans_and_the_rig_executes(planning_stack: Deployed) -> None:
     # (0.33, 0.28) on the rig. The planner's world is the arm's base.
     x, y, z = OPENYAM_ROOT_POSITION
     above_cup = [0.33 - x, 0.28 - y, DUAL_OPENYAM_TABLE_TOP_Z - z + 0.15]
-    # The fingers point along the tip frame's x: a quarter turn about y points them down.
+    # The fingers point along the tip frame's z: a half turn about x points them down.
     fingers_down = PoseStamped(
-        frame_id="world", position=above_cup, orientation=[0.0, 0.70710678, 0.0, 0.70710678]
+        frame_id="world", position=above_cup, orientation=[1.0, 0.0, 0.0, 0.0]
     )
     assert planner.plan_to_poses({"manipulator": fingers_down}).status is PlanStatus.SUCCEEDED
     assert planner.execute(timeout=60.0).status is ExecutionStatus.COMPLETED
