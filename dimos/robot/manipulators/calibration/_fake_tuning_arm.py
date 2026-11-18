@@ -653,7 +653,8 @@ class FakeTuningArm:
         applying it would step a joint's gravity torque at this pose by more
         than ``MAX_GRAVITY_STEP_NM`` and not ``force``, nothing is written. A
         save without gains or links changes nothing the arm runs, so it is not
-        applied; neither is one with ``apply_now`` False.
+        applied; neither is one with ``apply_now`` False. One with nothing a
+        file holds writes nothing.
         """
         arm_id = self.spec.arm_id
         why = dict.fromkeys(
@@ -670,7 +671,8 @@ class FakeTuningArm:
         kept = {joint: gains for joint, gains in (patch.gains or {}).items() if gains.kp != 0.0}
         saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
         refused = [key for key in saved.keys() if key.split(".")[0] not in self._persist]
-        if refused:
+        if refused or not saved.keys():
+            # Nothing it may save, or nothing a file holds: nothing is written.
             why.update(dict.fromkeys(refused, "this fake saves none of it"))
             return ConfigApplied(
                 arm_id=arm_id,

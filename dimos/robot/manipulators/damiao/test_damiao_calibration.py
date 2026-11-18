@@ -782,6 +782,23 @@ def test_a_save_leaves_out_what_a_file_cannot_hold(start, boundary, calibration_
     assert module._arm.floating == {} and module._arm.feedforward == {}
 
 
+def test_a_save_of_nothing_a_file_holds_writes_nothing(start, boundary, calibration_root):
+    module = start(config_sessions=True)
+    path = calibration_root / "rig/left/calibration.json"
+    module.config_set(ConfigPatch(arm_id="rig/left", notes="a"), scope="persist")
+    before = path.read_bytes()
+    for patch in (
+        ConfigPatch(arm_id="rig/left", torque_offset_nm={"joint1": 1.0}),
+        ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=0.0, kd=0.5)}),
+        ConfigPatch(arm_id="rig/left"),
+    ):
+        saved = module.config_set(patch, scope="persist")
+        assert saved.path is None and not saved.applied_now
+        assert saved.unsupported == patch.keys()
+    assert path.read_bytes() == before
+    assert not (path.parent / "history").exists()
+
+
 def test_a_session_leaves_out_what_only_a_file_holds(start, boundary, calibration_root):
     module = start(config_sessions=True)
     session = _begin(module)

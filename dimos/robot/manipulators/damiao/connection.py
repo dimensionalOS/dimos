@@ -476,7 +476,8 @@ class DamiaoConnection(ConnectionModule):
         it must not step any joint's gravity torque at the measured pose by
         more than ``MAX_GRAVITY_STEP_NM`` unless ``force``, else nothing is
         written. ``apply_now`` False only writes the file. A save without
-        gains or links changes nothing the arm runs, so it is not applied.
+        gains or links changes nothing the arm runs, so it is not applied; one
+        with nothing a file holds writes nothing.
         """
         arm_id = patch.arm_id
         unsupported: dict[str, str] = dict.fromkeys(
@@ -501,6 +502,16 @@ class DamiaoConnection(ConnectionModule):
             clamped += [f"gains.{joint}.kp"] if kp != asked.kp else []
             clamped += [f"gains.{joint}.kd"] if kd != asked.kd else []
         saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
+        if not saved.keys():
+            # Nothing a file holds: the file and its history stay as they are.
+            return ConfigApplied(
+                arm_id=arm_id,
+                scope="persist",
+                applied=ConfigPatch(arm_id=arm_id),
+                unsupported=list(unsupported),
+                why=unsupported,
+                applied_now=False,
+            )
         path = calibration_path(arm_id, CALIBRATION_ROOT)
         now = datetime.now(timezone.utc)
         merged = merge_patch(self._stored(path, arm_id, now), saved, created=now)
