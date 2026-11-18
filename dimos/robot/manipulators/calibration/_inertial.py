@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Per-link inertial overrides: the gravity-fit JSON schema and its application to a pinocchio model.
+"""Per-link inertial overrides and their application to a pinocchio model.
 
-Ported unchanged from ``dimos.hardware.whole_body.damiao`` (``config.LinkInertial``,
-``config.load_inertial_overrides``, ``adapter.apply_inertial_overrides``), which no longer
-exists on main; the calibration math still needs them.
+``LinkInertial`` is one fitted body (mass and centre of mass in the link frame);
+``schema.to_inertial_overrides`` turns an arm's calibration file into these, and
+``apply_inertial_overrides`` puts them into a model, as the gravity compensation
+will on connect. ``load_inertial_overrides`` still reads the flat
+``{"links": ...}`` files gravity fits wrote before the calibration schema.
 """
 
 from __future__ import annotations
