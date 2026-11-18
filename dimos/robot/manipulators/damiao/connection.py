@@ -84,6 +84,7 @@ from dimos.robot.manipulators.calibration.schema import (
     calibration_file,
     calibration_path,
     calibration_text,
+    check_arm_fits,
     load_calibration,
     merge_patch,
     save_calibration,
@@ -737,31 +738,16 @@ class DamiaoConnection(ConnectionModule):
         finite torques, and none above a motor's rated torque at the
         measured pose or at home.
         """
+        check_arm_fits(
+            calibration,
+            path,
+            joints,
+            self._links_moved_by(joints),
+            kp_max=MIT_KP_MAX,
+            kd_max=MIT_KD_MAX,
+        )
         gains = {name: (item.kp, item.kd) for name, item in (calibration.gains or {}).items()}
-        foreign = sorted(set(gains) - set(joints))
-        if foreign:
-            raise ArmCalibrationError(
-                f"The arm calibration at {path} gives gains to joints of no arm "
-                f"{calibration.arm_id!r} drives: {foreign}."
-            )
-        outside = {
-            joint: {"kp": kp, "kd": kd}
-            for joint, (kp, kd) in gains.items()
-            if not (0.0 < kp <= MIT_KP_MAX and 0.0 <= kd <= MIT_KD_MAX)
-        }
-        if outside:
-            raise ArmCalibrationError(
-                f"The arm calibration at {path} gives gains outside 0 < kp <= {MIT_KP_MAX:g} "
-                f"and 0 <= kd <= {MIT_KD_MAX:g}: {outside}."
-            )
         links = to_inertial_overrides(calibration)
-        moved = self._links_moved_by(joints)
-        strangers = sorted(set(links) - moved)
-        if strangers:
-            raise ArmCalibrationError(
-                f"The arm calibration at {path} gives masses to links arm "
-                f"{calibration.arm_id!r} does not move: {strangers}; it moves {sorted(moved)}."
-            )
         arm.check_calibration(gains, links)
         self._check_rated_torques(arm, path, links, joints)
         # TODO(calibration): calibration.friction_nm is read but not applied;

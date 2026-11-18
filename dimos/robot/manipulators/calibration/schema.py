@@ -34,7 +34,7 @@ URDF the calibration was made against.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime, timezone
 import json
 import os
@@ -269,6 +269,52 @@ def load_for_spec(spec: ArmCalibrationSpec, path: Path | None = None) -> ArmCali
         expected_model_sha256=spec.model_sha256(),
         expected_arm_id=spec.arm_id,
     )
+
+
+def check_arm_fits(
+    calibration: ArmCalibration,
+    path: Path,
+    joints: Sequence[str],
+    moved_links: Collection[str],
+    *,
+    kp_max: float,
+    kd_max: float,
+) -> None:
+    """Refuse a calibration that names other joints or links, or gains a held joint cannot take.
+
+    Every gain must be for one of ``joints``, with 0 < kp <= ``kp_max`` (a
+    file holds every joint; kp 0 would float it) and 0 <= kd <= ``kd_max``,
+    and every fitted link one that ``joints`` move (``moved_links``). What a
+    connection checks of a file before it loads or saves it, beside what
+    only its motors can say (finite torques, ratings).
+
+    Raises:
+        ArmCalibrationError: Naming what does not fit, and ``path``.
+    """
+    gains = {name: (item.kp, item.kd) for name, item in (calibration.gains or {}).items()}
+    foreign = sorted(set(gains) - set(joints))
+    if foreign:
+        raise ArmCalibrationError(
+            f"The arm calibration at {path} gives gains to joints of no arm "
+            f"{calibration.arm_id!r} drives: {foreign}."
+        )
+    outside = {
+        joint: {"kp": kp, "kd": kd}
+        for joint, (kp, kd) in gains.items()
+        if not (0.0 < kp <= kp_max and 0.0 <= kd <= kd_max)
+    }
+    if outside:
+        raise ArmCalibrationError(
+            f"The arm calibration at {path} gives gains outside 0 < kp <= {kp_max:g} "
+            f"and 0 <= kd <= {kd_max:g}: {outside}."
+        )
+    links = set(calibration.gravity.links) if calibration.gravity is not None else set()
+    strangers = sorted(links - set(moved_links))
+    if strangers:
+        raise ArmCalibrationError(
+            f"The arm calibration at {path} gives masses to links arm "
+            f"{calibration.arm_id!r} does not move: {strangers}; it moves {sorted(moved_links)}."
+        )
 
 
 def merge_patch(stored: ArmCalibration, patch: ConfigPatch, *, created: datetime) -> ArmCalibration:

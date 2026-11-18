@@ -27,9 +27,10 @@ from typing import Any
 
 import numpy as np
 import pinocchio as pin
+from pydantic import ValidationError
 import pytest
 
-from dimos.control.connection.arm_config import ConfigPatch, JointGains
+from dimos.control.connection.arm_config import ConfigPatch, JointGains, LinkGravity
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration import (
     arm_session as arm_session_module,
@@ -61,6 +62,7 @@ from dimos.robot.manipulators.calibration.procedure import (
 )
 from dimos.robot.manipulators.calibration.schema import (
     ArmCalibration,
+    ArmCalibrationError,
     GravityCalibration,
     calibration_path,
     gravity_links_from_inertial,
@@ -68,7 +70,11 @@ from dimos.robot.manipulators.calibration.schema import (
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, WorkspaceGuard
+from dimos.robot.manipulators.calibration.spec import (
+    DEFAULT_TORQUE_SAFETY_FACTOR,
+    ArmCalibrationSpec,
+    WorkspaceGuard,
+)
 from dimos.robot.manipulators.calibration.steps import calibration_steps
 from dimos.robot.manipulators.makermods_metal.config import METAL
 
@@ -333,12 +339,13 @@ def test_a_stalled_joint_fails_the_step_and_the_arm_holds(make_rig: Callable[...
     assert "from its target (left_joint3 -5." in message
     assert message.endswith("the arm holds where it is")
     assert not rig.fake.session_active()
-    # Nothing is sent any more: the deadman holds the arm where it stopped,
-    # give or take its sag, far from home.
+    # Nothing is sent any more: ending the session held the arm where it
+    # stopped, and the deadman holds it there again, give or take its sag
+    # (each hold gives up the PD's steady error once more), far from home.
     commands, held = rig.fake.commands, rig.fake.q.copy()
     rig.fake.advance(1.0)
     assert rig.fake.commands == commands and rig.fake.deadman_fired
-    assert np.degrees(np.abs(rig.fake.q - held)).max() < 2.0
+    assert np.degrees(np.abs(rig.fake.q - held)).max() < 3.0
     assert np.degrees(np.abs(rig.fake.q - rig.fake.arm.home)).max() > 4.0
 
 
@@ -672,6 +679,62 @@ def test_the_fake_keeps_the_config_session_rules(
     assert state.floating == {} and state.gains["left_joint3"] == JointGains(kp=80.0, kd=1.0)
     assert fake.position_command({"left_joint1": 0.0})
     assert math.isclose(fake.target[0], 0.0)
+
+
+def test_the_fake_checks_and_saves_as_the_connection_does(
+    left_spec: ArmCalibrationSpec, arm: ArmModel, tmp_path: Path
+) -> None:
+    fake = FakeTuningArm(left_spec, arm=arm, calibration_root=tmp_path)
+    arm_id = left_spec.arm_id
+    path = calibration_path(arm_id, tmp_path)
+    session = fake.config_set(ConfigPatch(arm_id=arm_id)).session_id
+    # A torque offset past a fifth of the motor's rated torque is clamped, and says so.
+    offset = fake.config_set(
+        ConfigPatch(arm_id=arm_id, torque_offset_nm={"left_joint2": 100.0}), session_id=session
+    )
+    rated = left_spec.max_torque_nm["left_joint2"] / DEFAULT_TORQUE_SAFETY_FACTOR
+    assert offset.applied.torque_offset_nm == {"left_joint2": pytest.approx(0.2 * rated)}
+    assert offset.clamped == ["torque_offset_nm.left_joint2"]
+    # A patch is validated as the connection validates it, and a bad one ends the session.
+    with pytest.raises(ValidationError):
+        fake.config_set(
+            {"arm_id": arm_id, "gains": {"left_joint2": {"kp": "80", "kd": 1.0}}},  # type: ignore[arg-type]
+            session_id=session,
+        )
+    assert not fake.session_active()
+
+    # A save clamps its gains and keeps the connection's file rules.
+    saved = fake.config_set(
+        ConfigPatch(arm_id=arm_id, gains={"left_joint2": JointGains(kp=900.0, kd=9.0)}),
+        scope="persist",
+    )
+    assert saved.clamped == ["gains.left_joint2.kp", "gains.left_joint2.kd"]
+    assert load_for_spec(left_spec, path).gains == {"left_joint2": JointGains(kp=500.0, kd=5.0)}
+    with pytest.raises(ArmCalibrationError, match="gives gains to joints of no arm"):
+        fake.config_set(
+            ConfigPatch(arm_id=arm_id, gains={"right_joint2": JointGains(kp=10.0, kd=1.0)}),
+            scope="persist",
+        )
+    stranger = {"right_link3": LinkGravity(mass_kg=1.0, com_m=(0.0, 0.0, 0.0))}
+    with pytest.raises(ArmCalibrationError, match=r"does not move: \['right_link3'\]"):
+        fake.config_set(ConfigPatch(arm_id=arm_id, links=stranger), scope="persist")
+    # A stored file made for another model is saved afresh, not merged.
+    stored = load_for_spec(left_spec, path)
+    other = stored.robot_model.model_copy(update={"sha256": "0" * 64})
+    save_calibration(path, stored.model_copy(update={"robot_model": other}))
+    fake.config_set(ConfigPatch(arm_id=arm_id, notes="afresh"), scope="persist")
+    fresh = load_for_spec(left_spec, path)
+    assert fresh.gains is None and fresh.notes == "afresh"
+
+    # Without config sessions it refuses every call that changes the arm.
+    closed = FakeTuningArm(left_spec, arm=arm, calibration_root=tmp_path, sessions=False)
+    for call in (
+        lambda: closed.config_set(ConfigPatch(arm_id=arm_id)),
+        closed.config_reset,
+        lambda: closed.config_command({}, "fake-1"),
+    ):
+        with pytest.raises(RuntimeError, match="config sessions are off"):
+            call()
 
 
 def _far_from_home(rig: Rig) -> float:

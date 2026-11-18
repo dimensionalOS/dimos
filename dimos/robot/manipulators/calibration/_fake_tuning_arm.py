@@ -31,7 +31,13 @@ session ending on ``config_reset``, lapse, deadman or any raising call
 (floating joints then held where they are, torque offsets dropped, gains
 restored), and position commands dropped while a session lasts. Its :meth:`FakeTuningArm.stop`
 waits for a calibration tool to park, as a connection's stop does, then
-"disables" the arm and records where.
+"disables" the arm and records where. It checks and clamps what it is sent
+as a Damiao connection does: patches validated by the connection's own
+``_patch_of``, gains clamped to kp 500 and kd 5, torque offsets to a fifth of
+the motor's rated torque (the spec's pose cap over
+``DEFAULT_TORQUE_SAFETY_FACTOR``), a save checked by ``check_arm_fits`` and
+started afresh over a stored file made for another model or arm, and a
+check refused unless the arm runs the file as it is on disk.
 
 What it does not simulate: inertia (so no overshoot or ringing), velocity
 limits, encoder noise and quantization, torque saturation, the other arm of
@@ -75,7 +81,12 @@ from dimos.control.connection.arm_config import (
     JointGains,
     LinkGravity,
 )
-from dimos.control.connection.connection_module import ConnectionStatus
+from dimos.control.connection.connection_module import (
+    ConnectionStatus,
+    _flag,
+    _patch_of,
+    _real,
+)
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._inertial import apply_inertial_overrides
 from dimos.robot.manipulators.calibration.arm_session import MarkerStream
@@ -85,13 +96,19 @@ from dimos.robot.manipulators.calibration.procedure import Procedure, ProcedureS
 from dimos.robot.manipulators.calibration.recording import RecordingUnavailableError
 from dimos.robot.manipulators.calibration.schema import (
     ArmCalibration,
+    ArmCalibrationError,
     calibration_path,
+    check_arm_fits,
     load_for_spec,
     merge_patch,
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, urdf_limits
+from dimos.robot.manipulators.calibration.spec import (
+    DEFAULT_TORQUE_SAFETY_FACTOR,
+    ArmCalibrationSpec,
+    urdf_limits,
+)
 from dimos.robot.manipulators.calibration.step_analysis import StepEvent
 from dimos.robot.manipulators.calibration.step_report import JointTrace, Recording
 
@@ -102,6 +119,9 @@ SAMPLE_PERIOD_S = 0.01
 MAX_GRAVITY_STEP_NM = 2.0
 MAX_KP = 500.0
 MAX_KD = 5.0
+# A torque offset is clamped to this share of the motor's rated torque, as a
+# Damiao connection clamps it.
+FEEDFORWARD_RATED_FRACTION = 0.2
 VISCOUS_NM_S = 0.05
 DEFAULT_FRICTION_NM = 0.05
 STICTION_RATIO = 1.2
@@ -238,8 +258,9 @@ class FakeTuningArm:
         calibration_root: Where it saves the arm's calibration file, as a
             connection's ``persist`` does: ``calibration_path(arm_id, root)``.
         applied: A calibration file applied at start, as a connection's "auto" would.
-        sessions: What ``config_keys`` says of config sessions; the fake serves
-            them either way.
+        sessions: Whether it serves config sessions: without them
+            ``config_set``, ``config_reset`` and ``config_command`` raise, as a
+            connection deployed without ``config_sessions`` does.
         persist: What ``config_keys`` says can be saved; a save of anything
             else is refused as unsupported.
         start: Initial joint positions; home when ``None``.
@@ -280,10 +301,15 @@ class FakeTuningArm:
             self._friction = np.asarray([friction_nm[name] for name in self._names])
         else:
             self._friction = np.full(len(self._names), float(friction_nm))
+        joints = spec.model.load().joints
         self._limits = {
-            joint.name: urdf_limits(joint)
-            for joint in spec.model.load().joints
-            if joint.name in self._names
+            joint.name: urdf_limits(joint) for joint in joints if joint.name in self._names
+        }
+        # The links its joints move, the only ones a file may give masses to.
+        self._moved = {joint.child_link for joint in joints if joint.name in self._names}
+        # Each motor's rated torque: the spec's pose cap is that times the safety factor.
+        self._rated = {
+            name: spec.max_torque_nm[name] / DEFAULT_TORQUE_SAFETY_FACTOR for name in self._names
         }
         self.q: Vector = np.array(self.arm.home if start is None else start, dtype=np.float64)
         self.v: Vector = np.zeros(len(self._names))
@@ -394,9 +420,8 @@ class FakeTuningArm:
     # The session rules.
 
     def _undo(self) -> None:
-        """Hold floating joints where they are, drop torque offsets and gain overrides."""
-        for name in self._floating:
-            self.target[self._names.index(name)] = self.q[self._names.index(name)]
+        """Drop torque offsets, gain overrides and floating; hold every joint where it is."""
+        self.target = self.q.copy()
         self._floating.clear()
         self._feedforward.clear()
         self._overrides.clear()
@@ -420,6 +445,14 @@ class FakeTuningArm:
             except Exception as error:
                 self._end(f"{name} raised {type(error).__name__}: {error}")
                 raise
+
+    def _gate(self, name: str) -> None:
+        """Refuse ``name`` unless it serves config sessions, as a connection does."""
+        if not self._serves_sessions:
+            raise RuntimeError(
+                f"FakeTuningArm: config sessions are off; only a connection deployed for "
+                f"calibration (config_sessions=True) serves {name}"
+            )
 
     def _check(self, session_id: str | None) -> _Session | None:
         """The live session, renewed, once ``session_id`` names it; ``None`` without either.
@@ -544,20 +577,28 @@ class FakeTuningArm:
         session_id: str | None = None,
         lease_s: float = DEFAULT_CONFIG_LEASE_S,
     ) -> ConfigApplied:
+        self._gate("config_set")
+
         def apply() -> ConfigApplied:
-            if not 0.0 < lease_s <= MAX_CONFIG_LEASE_S:
+            # Checked as a connection checks them: the codec rebuilds models unvalidated.
+            checked = _patch_of(patch)
+            if scope not in ("session", "persist"):
+                raise ValueError(f"scope must be 'session' or 'persist', got {scope!r}")
+            forced, at_once = _flag("force", force), _flag("apply_now", apply_now)
+            lease = _real("lease_s", lease_s)
+            if not 0.0 < lease <= MAX_CONFIG_LEASE_S:
                 raise ValueError(f"lease_s must be in (0, {MAX_CONFIG_LEASE_S:g}] s, got {lease_s}")
-            if patch.arm_id != self.spec.arm_id:
-                raise ValueError(f"{patch.arm_id!r} is not this fake's arm")
+            if checked.arm_id != self.spec.arm_id:
+                raise ValueError(f"{checked.arm_id!r} is not this fake's arm")
             session = self._check(session_id)
             if session is None and scope == "session":
                 self._sessions += 1
-                session = _Session(f"fake-{self._sessions}", float(lease_s), self.now)
+                session = _Session(f"fake-{self._sessions}", lease, self.now)
                 self._session = session
             if scope == "persist":
-                applied = self._save(patch, force, apply_now)
+                applied = self._save(checked, forced, at_once)
             else:
-                applied = self._apply_live(patch)
+                applied = self._apply_live(checked)
             if session is None:
                 return applied
             return applied.model_copy(
@@ -599,13 +640,17 @@ class FakeTuningArm:
                 if want != got
             ]
         offsets: dict[str, float] = {}
-        for joint, tau in (patch.torque_offset_nm or {}).items():
+        for joint, asked_tau in (patch.torque_offset_nm or {}).items():
             self._joint(joint)
+            limit = FEEDFORWARD_RATED_FRACTION * self._rated[joint]
+            tau = min(max(float(asked_tau), -limit), limit)
             if tau:
-                self._feedforward[joint] = float(tau)
+                self._feedforward[joint] = tau
             else:
                 self._feedforward.pop(joint, None)
-            offsets[joint] = float(tau)
+            offsets[joint] = tau
+            if tau != asked_tau:
+                clamped.append(f"torque_offset_nm.{joint}")
         return ConfigApplied(
             arm_id=patch.arm_id,
             scope="session",
@@ -618,6 +663,7 @@ class FakeTuningArm:
         )
 
     def config_reset(self, keep_session: bool = False) -> None:
+        self._gate("config_reset")
         if not keep_session:
             with self._lock:
                 self._end("config_reset")
@@ -625,6 +671,8 @@ class FakeTuningArm:
         self._call("config_reset", self._undo)
 
     def config_command(self, targets: dict[str, float], session_id: str) -> CommandResult:
+        self._gate("config_command")
+
         def command() -> CommandResult:
             if not session_id:
                 raise RuntimeError("config_command needs the session_id config_set returned")
@@ -670,12 +718,19 @@ class FakeTuningArm:
                 "kp 0 floats a joint, which only a session does",
             )
         )
-        kept = {joint: gains for joint, gains in (patch.gains or {}).items() if gains.kp != 0.0}
+        kept: dict[str, JointGains] = {}
+        clamped: list[str] = []
+        for joint, asked in (patch.gains or {}).items():
+            if asked.kp == 0.0:
+                continue
+            kept[joint] = JointGains(kp=min(asked.kp, MAX_KP), kd=min(asked.kd, MAX_KD))
+            clamped += [f"gains.{joint}.kp"] if kept[joint].kp != asked.kp else []
+            clamped += [f"gains.{joint}.kd"] if kept[joint].kd != asked.kd else []
         saved = patch.model_copy(update={"gains": kept or None, "torque_offset_nm": None})
         path = calibration_path(arm_id, self._root)
         on_disk = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
-        running = None if self._file is None else self._file.sha256
-        if patch.checks is not None and running != on_disk:
+        runs = None if self._file is None else self._file.sha256
+        if patch.checks is not None and runs != on_disk:
             # As the connection: a check belongs only in the file the arm runs.
             why.update(
                 dict.fromkeys(
@@ -697,12 +752,14 @@ class FakeTuningArm:
                 applied_now=False,
             )
         now = datetime.now(timezone.utc)
-        stored = (
-            load_for_spec(self.spec, path)
-            if path.exists()
-            else ArmCalibration.for_spec(self.spec, created=now)
-        )
+        stored = ArmCalibration.for_spec(self.spec, created=now)
+        if path.exists():
+            try:
+                stored = load_for_spec(self.spec, path)
+            except ArmCalibrationError:
+                pass  # As the connection: saved afresh, the old file goes to history/.
         merged = merge_patch(stored, saved, created=now)
+        check_arm_fits(merged, path, self._names, self._moved, kp_max=MAX_KP, kd_max=MAX_KD)
         live = apply_now and (saved.gains is not None or saved.links is not None)
         step: dict[str, float] = {}
         if live:
@@ -745,6 +802,7 @@ class FakeTuningArm:
             arm_id=arm_id,
             scope="persist",
             applied=saved,
+            clamped=clamped,
             unsupported=list(why),
             why=why,
             path=str(target),
