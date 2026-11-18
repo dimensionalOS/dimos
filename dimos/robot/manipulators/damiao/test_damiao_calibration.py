@@ -33,7 +33,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.control.connection import connection_module
-from dimos.control.connection.arm_config import AppliedFile, CommandResult, ConfigPatch
+from dimos.control.connection.arm_config import AppliedFile, ConfigPatch
 from dimos.control.connection.connection_module import ConnectionStatus
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.calibration._calibration_test_helpers import (
@@ -439,8 +439,7 @@ def test_the_config_contract_round_trip(start, boundary, calibration_root):
     ]
     assert sample.effort[1] == -0.3 and sample.position[1] == 0.2 and sample.ts > 0
 
-    result = module.config_command({"joint1": 0.3, "left_finger": 0.02}, session)
-    assert result == CommandResult(ok=True)
+    module.command({"arm/joint1/position": 0.3, "arm/left_finger/position": 0.02})
     assert _rows(boundary, "left_arm")[0, 2] == 0.3
     assert native.groups["left_gripper"].commands[-1] == pytest.approx(0.5)
     assert module.status().last_command_time is not None
@@ -477,7 +476,6 @@ def test_the_calls_that_change_the_arm_are_refused_unless_deployed_for_calibrati
         lambda: module.config_set(ConfigPatch(arm_id="rig/left")),
         lambda: module.config_set(ConfigPatch(arm_id="rig/left", notes="x"), scope="persist"),
         lambda: module.config_reset(),
-        lambda: module.config_command({"joint1": 0.1}, "0" * 32),
     ):
         with pytest.raises(RuntimeError, match="config sessions are off"):
             call()
@@ -487,11 +485,8 @@ def test_the_calls_that_change_the_arm_are_refused_unless_deployed_for_calibrati
     assert set(module.config_get()) == {"rig/left", "rig/right"}
 
 
-def test_commands_need_a_config_session(start, boundary):
+def test_reading_resetting_and_saving_need_no_config_session(start, boundary):
     module = start(config_sessions=True)
-    with pytest.raises(RuntimeError, match="no config session is live"):
-        module.config_command({"joint1": 0.1}, "0" * 32)
-    # Reading, resetting and saving do not.
     module.config_get()
     module.config_reset()
     module.config_reset(keep_session=True)
@@ -525,9 +520,6 @@ def test_a_lease_is_a_positive_number_of_seconds_up_to_thirty(start, boundary, l
 def test_bad_arguments_are_refused_and_end_the_session(start, boundary):
     module = start(config_sessions=True)
     for call, error, match in (
-        (lambda s: module.config_command({"joint1": 4.0}, s), ValueError, "limit"),
-        (lambda s: module.config_command({"nope": 0.0}, s), ValueError, "not position-"),
-        (lambda s: module.config_command({"joint1": "0.1"}, s), TypeError, "must be a number"),
         (
             lambda s: _left(module, s, gains={"left_finger": JointGains(kp=1.0, kd=1.0)}),
             ValueError,
@@ -574,26 +566,24 @@ def test_bad_arguments_are_refused_and_end_the_session(start, boundary):
     assert _rows(boundary, "left_arm")[0, 2] == 0.2
 
 
-def test_a_config_session_drops_position_command_and_says_so_once(start, boundary, mocker):
+def test_a_config_session_takes_position_commands_as_ever(start, boundary, mocker):
     commands = LocalTransport()
     module = start(config_sessions=True, commands=commands)
     warning = _base_messages(mocker, "warning")
-    info = _base_messages(mocker, "info")
     commands.publish(JointState(name=["arm/joint1"], position=[0.5]))
     assert _rows(boundary, "left_arm")[0, 2] == 0.5
     _begin(module)
     for target in (0.6, 0.7, 0.8):
         commands.publish(JointState(name=["arm/joint1"], position=[target]))
-    assert _rows(boundary, "left_arm")[0, 2] == 0.5
-    assert len([line for line in _messages(warning) if "dropping position commands" in line]) == 1
+        assert _rows(boundary, "left_arm")[0, 2] == target
+    assert _active(module)
+    assert not [line for line in _messages(warning) if "drop" in line]
     module.config_reset()
-    ended = [line for line in _messages(info) if "ended (config_reset)" in line]
-    assert len(ended) == 1 and "3 position commands dropped" in ended[0]
     commands.publish(JointState(name=["arm/joint1"], position=[0.9]))
     assert _rows(boundary, "left_arm")[0, 2] == 0.9
 
 
-def test_a_released_joint_stays_where_the_hand_left_it_though_a_coordinator_streams(
+def test_a_released_joint_stays_where_the_hand_left_it_though_a_coordinator_streamed(
     start, boundary
 ):
     commands = LocalTransport()
@@ -602,10 +592,9 @@ def test_a_released_joint_stays_where_the_hand_left_it_though_a_coordinator_stre
     session = _begin(module)
     _float(module, session)
     boundary[0].groups["right_arm"].q[:] = [0.9]
-    # A coordinator still streaming the target it had before the float.
+    # A target streamed while it floats is not where it is held again.
     commands.publish(JointState(name=["arm/joint3"], position=[-0.5]))
     _right(module, session, gains={"joint3": held})
-    commands.publish(JointState(name=["arm/joint3"], position=[-0.5]))
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :3], [20, 0.6, 0.9])
 
 
@@ -650,14 +639,14 @@ def test_a_reset_after_a_command_holds_the_arm_where_it_is(start, boundary):
     module = start(config_sessions=True)
     session = _begin(module)
     _left(module, session, gains={"joint1": JointGains(kp=0.5, kd=0.1)})
-    assert module.config_command({"joint1": 0.3}, session).ok
+    module.command({"arm/joint1/position": 0.3})
     # joint1 never reached 0.3: it is at 1.0.
     boundary[0].groups["left_arm"].q[:] = [1.0, 0.2]
     module.config_reset()
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :3], [80, 5, 1.0])
     # The same with no live change to undo: the commanded target goes too.
-    session = _begin(module)
-    assert module.config_command({"joint1": 0.3}, session).ok
+    _begin(module)
+    module.command({"arm/joint1/position": 0.3})
     module.config_reset()
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :3], [80, 5, 1.0])
 
@@ -667,7 +656,7 @@ def test_only_calls_with_the_session_id_renew_the_lease(start, boundary):
     session = _begin(module, lease_s=0.3)
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
-        assert module.config_command({"joint1": 0.2}, session).ok
+        _left(module, session)
         time.sleep(0.05)
     assert _active(module)
     _left(module, session, gains={"joint1": JointGains(kp=60.0, kd=3.0)})
@@ -686,7 +675,7 @@ def test_the_deadman_halting_the_arm_ends_the_session(start, boundary):
     module = start(config_sessions=True, deadman_timeout_s=0.05)
     session = _begin(module)
     _float(module, session)
-    assert module.config_command({"joint1": 0.3}, session).ok
+    module.command({"arm/joint1/position": 0.3})
     # No more targets: the deadman halts the arm, and a halt ends the session.
     wait_until(lambda: module.status().deadman_fired, timeout=2)
     assert not _active(module) and module._arm.floating == {}
@@ -694,13 +683,13 @@ def test_the_deadman_halting_the_arm_ends_the_session(start, boundary):
         _float(module, session)
 
 
-def test_a_command_the_motors_did_not_get_is_not_ok_and_ends_the_session(start, boundary):
+def test_a_command_the_motors_did_not_get_halts_and_ends_the_session(start, boundary):
     module = start(config_sessions=True)
-    session = _begin(module)
+    _begin(module)
     boundary[0].groups["left_arm"].error = RuntimeError("bus off")
-    result = module.config_command({"joint1": 0.3}, session)
-    assert not result.ok and result.error is not None and "bus off" in result.error
-    assert not _active(module)
+    module.command({"arm/joint1/position": 0.3})
+    assert "bus off" in (module.status().last_error or "")
+    assert not _active(module) and module._config_ended == "the connection halted"
     boundary[0].groups["left_arm"].error = None
 
 
@@ -777,7 +766,6 @@ def test_a_faulted_or_stopped_connection_is_refused(start, boundary):
     for call in (
         module.config_get,
         lambda: _begin(module),
-        lambda: module.config_command({"joint1": 0.1}, "0" * 32),
     ):
         with pytest.raises(RuntimeError, match="disconnected|not running"):
             call()
@@ -1099,7 +1087,8 @@ def _park_while_stopping(module, order: list[str], stream_s: float) -> threading
     deadline = time.monotonic() + stream_s
     try:
         while time.monotonic() < deadline:
-            module.config_command({"joint1": 0.2}, session)
+            module.command({"arm/joint1/position": 0.2})
+            _left(module, session)
             time.sleep(0.02)
     except RuntimeError:
         order.append("cut off")

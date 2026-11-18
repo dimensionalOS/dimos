@@ -26,7 +26,7 @@ masses. Without a file the arm runs exactly its URDF and bus defaults.
 Every connection serves the arm config contract of
 :mod:`dimos.control.connection.arm_config`. One deployed with
 ``config_sessions=True`` (calibration blueprints only) lets one calibration
-tool own the arm in a config session and change its gains, float its joints
+tool hold a config session and change its gains, float its joints
 (kp 0) and add torque offsets live, and save calibrations to each arm's file
 (scope "persist"). Gains are those of a Damiao MIT frame: kp 0 to 500 N m/rad
 and kd 0 to 5 N m s/rad, the range of the frame's fields, so a larger gain is

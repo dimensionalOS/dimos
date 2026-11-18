@@ -33,7 +33,6 @@ from dimos.control._control_test_helpers import FAKE_ARM_JOINTS, FakeArm
 from dimos.control.connection import connection_module
 from dimos.control.connection.arm_config import (
     ArmConfigState,
-    CommandResult,
     ConfigApplied,
     ConfigKeys,
     ConfigPatch,
@@ -335,7 +334,7 @@ def test_the_session_id_is_new_each_start_and_steady_in_between(
 # --- The arm config contract -------------------------------------------------
 
 ARM = "fake/arm"
-CONFIG_RPCS = {"config_keys", "config_get", "config_set", "config_reset", "config_command"}
+CONFIG_RPCS = {"config_keys", "config_get", "config_set", "config_reset"}
 DEFAULT_GAINS = JointGains(kp=50.0, kd=1.0)
 
 
@@ -437,7 +436,6 @@ def test_without_config_sessions_only_the_reads_answer(rig: Callable[..., Rig]) 
     for call in (
         lambda: r.module.config_set(ConfigPatch(arm_id=ARM)),
         lambda: r.module.config_reset(),
-        lambda: r.module.config_command({"joint1": 0.1}, "x"),
     ):
         with pytest.raises(RuntimeError, match="config sessions are off"):
             call()
@@ -477,7 +475,7 @@ def test_a_config_session_round_trip(rig: Callable[..., Rig], quick_park: None) 
     state = r.module.config_get()[ARM]
     assert state.gains["joint2"].kp == 100.0 and state.session_id == session
 
-    assert r.module.config_command({"joint1": 0.3}, session) == CommandResult(ok=True)
+    r.move(joint1=0.3)
     assert writes(r) == [{JOINT1: 0.3}]
     assert r.module.status().last_command_time is not None
 
@@ -508,14 +506,12 @@ def test_a_live_session_needs_its_id_and_a_wrong_one_ends_it(rig: Callable[..., 
     # Like any config call that raises, that ended the session and undid it.
     assert not _live(r.module) and r.module.overrides == {}
     with pytest.raises(RuntimeError, match="the config session ended \\(config_set raised"):
-        r.module.config_command({"joint1": 0.1}, session)
+        r.module.config_set(ConfigPatch(arm_id=ARM), session_id=session)
 
-    session = _begin(r.module)
+    _begin(r.module)
     with pytest.raises(RuntimeError, match="is not the live config session"):
-        r.module.config_command({"joint1": 0.1}, "0" * 32)
+        r.module.config_set(ConfigPatch(arm_id=ARM), session_id="0" * 32)
     assert not _live(r.module)
-    with pytest.raises(RuntimeError, match="needs the session_id"):
-        r.module.config_command({"joint1": 0.1}, None)  # type: ignore[arg-type]
     assert writes(r) == []
 
 
@@ -568,7 +564,7 @@ def test_only_calls_with_the_session_id_renew_the_lease(rig: Callable[..., Rig])
     gains = ConfigPatch(arm_id=ARM, gains={"joint1": JointGains(kp=60.0, kd=2.0)})
     session = _begin(r.module, lease_s=0.3)
     calls = [
-        lambda: r.module.config_command({"joint1": 0.1}, session),
+        lambda: r.module.config_set(ConfigPatch(arm_id=ARM), session_id=session),
         lambda: r.module.config_set(gains, session_id=session),
     ]
     deadline = time.monotonic() + 1.0
@@ -592,87 +588,65 @@ def test_only_calls_with_the_session_id_renew_the_lease(rig: Callable[..., Rig])
     assert "no config call within its lease" in r.module._config_ended
 
 
-def test_a_config_session_drops_position_commands_and_says_so_once(
+def test_a_config_session_takes_position_commands_as_ever(
     rig: Callable[..., Rig], mocker: Any
 ) -> None:
     r = rig(TunableArm, config_sessions=True, deadman_timeout_s=10)
     warning = mocker.spy(connection_module.logger, "warning")
-    info = mocker.spy(connection_module.logger, "info")
     r.move(joint1=0.5)
-    _begin(r.module)
+    session = _begin(r.module)
     for target in (0.6, 0.7, 0.8):
         r.move(joint1=target)
-    assert writes(r) == [{JOINT1: 0.5}]
-    assert len([line for line in _messages(warning) if "dropping position commands" in line]) == 1
+    assert writes(r) == [{JOINT1: target} for target in (0.5, 0.6, 0.7, 0.8)]
+    assert r.module.status().config_session_id == session
+    assert _messages(warning) == []
     r.module.config_reset()
-    ended = [line for line in _messages(info) if "ended (config_reset)" in line]
-    assert len(ended) == 1 and "3 position commands dropped" in ended[0]
     r.move(joint1=0.9)
     assert writes(r)[-1] == {JOINT1: 0.9}
-
-
-def test_a_command_checked_just_before_a_session_began_is_still_dropped(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
-    r = rig(TunableArm, config_sessions=True, deadman_timeout_s=10)
-    check = connection_module.validate_command
-
-    def session_begins_meanwhile(*args: Any) -> Any:
-        result = check(*args)
-        if not _live(r.module):
-            _begin(r.module)
-        return result
-
-    mocker.patch.object(connection_module, "validate_command", session_begins_meanwhile)
-    r.move(joint1=0.5)
-    assert writes(r) == [] and _live(r.module)
-    r.module.config_reset()
 
 
 def test_the_deadman_halting_the_arm_ends_the_session(rig: Callable[..., Rig]) -> None:
     r = rig(TunableArm, config_sessions=True)
     session = _begin(r.module)
-    assert r.module.config_command({"joint1": 0.3}, session).ok
+    r.move(joint1=0.3)
     # No more targets: the deadman halts the arm, and a halt ends the session.
     assert wait_until(lambda: r.module.status().deadman_fired)
     assert not _live(r.module) and r.module.halts == 1
     with pytest.raises(RuntimeError, match="the config session ended \\(the connection halted\\)"):
-        r.module.config_command({"joint1": 0.3}, session)
+        r.module.config_set(ConfigPatch(arm_id=ARM), session_id=session)
 
 
-def test_a_deadman_armed_before_the_session_does_not_end_it(rig: Callable[..., Rig]) -> None:
+def test_a_deadman_armed_before_the_session_halts_and_ends_it(rig: Callable[..., Rig]) -> None:
     r = rig(TunableArm, config_sessions=True)
     r.move(joint1=0.5)
     session = _begin(r.module, lease_s=5.0)
-    time.sleep(6 * DEADMAN_S)
-    assert _live(r.module) and r.module.halts == 0
-    assert not r.module.status().deadman_fired
-    # The session's own commands arm it again.
-    assert r.module.config_command({"joint1": 0.3}, session).ok
+    # Streamed commands keep it from firing, through the session as before it.
+    deadline = time.monotonic() + 6 * DEADMAN_S
+    while time.monotonic() < deadline:
+        r.move(joint1=0.3)
+        time.sleep(DEADMAN_S / 5)
+    assert r.module.status().config_session_id == session and r.module.halts == 0
     assert wait_until(lambda: r.module.status().deadman_fired)
     assert not _live(r.module) and r.module.halts == 1
+    assert r.module._config_ended == "the connection halted"
 
 
-def test_a_command_the_hardware_did_not_take_is_not_ok_and_ends_the_session(
+def test_a_command_the_hardware_did_not_take_halts_and_ends_the_session(
     rig: Callable[..., Rig],
 ) -> None:
     r = rig(TunableArm, config_sessions=True, deadman_timeout_s=10)
-    session = _begin(r.module)
+    _begin(r.module)
     r.module.fail_writes = True
-    result = r.module.config_command({"joint1": 0.3}, session)
-    assert not result.ok and result.error is not None and "bus off" in result.error
-    assert "the config session ended" in result.error
+    r.move(joint1=0.3)
+    assert "bus off" in (r.module.status().last_error or "")
     assert not _live(r.module) and r.module.halts == 1
+    assert r.module._config_ended == "the connection halted"
 
 
 def test_bad_arguments_are_refused_and_end_the_session(rig: Callable[..., Rig]) -> None:
     r = rig(TunableArm, config_sessions=True, deadman_timeout_s=10)
     gains = {"joint3": JointGains(kp=60.0, kd=2.0)}
     for call, error, match in (
-        (lambda s: r.module.config_command({"joint1": 4.0}, s), ValueError, "limit"),
-        (lambda s: r.module.config_command({"nope": 0.0}, s), ValueError, "not position-"),
-        (lambda s: r.module.config_command({"joint1": "0.1"}, s), TypeError, "must be a number"),
-        (lambda s: r.module.config_command([0.1], s), TypeError, "targets must be a dict"),
         (
             lambda s: r.module.config_set(
                 {"arm_id": ARM, "gains": {"joint1": {"kp": "80", "kd": 1.0}}}, session_id=s
@@ -805,7 +779,8 @@ def _park_while_stopping(module: TunableArm, order: list[str], stream_s: float) 
     deadline = time.monotonic() + stream_s
     try:
         while time.monotonic() < deadline:
-            module.config_command({"joint1": 0.2}, session)
+            module.command({JOINT1: 0.2})
+            module.config_set(ConfigPatch(arm_id=ARM), session_id=session)
             time.sleep(0.02)
     except RuntimeError:
         order.append("cut off")
@@ -871,7 +846,6 @@ def test_config_results_cross_processes(rig: Callable[..., Rig]) -> None:
         r.module.config_keys(),
         r.module.config_get(),
         r.module.config_set(ConfigPatch(arm_id=ARM, gains=gains), session_id=session),
-        r.module.config_command({"joint1": 0.1}, session),
         r.module.status(),
     ]
     for result in results:

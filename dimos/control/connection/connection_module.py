@@ -23,9 +23,10 @@ joint readings. Vendor geometry and frame conversion stay inside that implementa
 Every connection also serves the arm config contract
 (``dimos.control.connection.arm_config``): ``config_keys`` and ``config_get``
 say what it can change and how its arms are driven now; with
-``config_sessions`` on (calibration blueprints only) ``config_set``,
-``config_reset`` and ``config_command`` let one calibration tool own the arm
-in a config session and change how it is driven. A driver that can change
+``config_sessions`` on (calibration blueprints only) ``config_set`` and
+``config_reset`` let one calibration tool hold a config session and change
+how the arm is driven. Position commands keep arriving on the module's own
+ports meanwhile, e.g. from a control coordinator. A driver that can change
 something overrides the underscore hooks (``_config_keys``, ``_config_state``,
 ``_config_apply``, ``_config_undo``, ``_config_parkable``, ``_config_fault``);
 by default it can change nothing.
@@ -50,7 +51,6 @@ from dimos.control.connection.arm_config import (
     DEFAULT_CONFIG_LEASE_S,
     MAX_CONFIG_LEASE_S,
     ArmConfigState,
-    CommandResult,
     ConfigApplied,
     ConfigKeys,
     ConfigPatch,
@@ -88,9 +88,9 @@ class ConnectionConfig(ModuleConfig):
             listed joints are commanded; planar axes are ordinary joints.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
-        config_sessions: Serve ``config_set``, ``config_reset`` and
-            ``config_command``, which change how the energized arm is driven.
-            Only a calibration blueprint turns this on; without it they raise.
+        config_sessions: Serve ``config_set`` and ``config_reset``, which
+            change how the energized arm is driven. Only a calibration
+            blueprint turns this on; without it they raise.
     """
 
     source: str
@@ -134,8 +134,6 @@ class _ConfigSession:
     session_id: str
     lease_s: float
     deadline: float
-    # Position commands dropped while the session lasts.
-    dropped: int = 0
 
 
 def _real(name: str, value: Any) -> float:
@@ -195,12 +193,12 @@ class ConnectionModule(Module, ABC):
     The ``config_*`` RPCs are the arm config contract and are final; a driver
     fills in the underscore hooks instead, which are called with
     ``_hardware_lock`` held. A config session (``config_set`` with scope
-    "session") belongs to one calibration tool: while it lasts every other
-    position command is dropped, and it ends, undoing its live changes
-    (``_config_undo``), on ``config_reset``, when its lease passes without a
-    call that carries its id (``config_set`` with its ``session_id``,
-    ``config_command``), when the robot halts (the command deadman included),
-    when a ``config_*`` call raises, and when the module stops. When the undo
+    "session") belongs to one calibration tool. Position commands are taken
+    as at any other time, and the deadman runs as usual. The session ends,
+    undoing its live changes (``_config_undo``), on ``config_reset``, when its
+    lease passes without a ``config_set`` that carries its ``session_id``,
+    when the robot halts (the command deadman included), when a ``config_*``
+    call raises, and when the module stops. When the undo
     raises the robot is halted, and when that fails too ``_config_fault`` is
     called. A driver that can fault ends it with ``_end_config_session``, and
     one that serves sessions calls ``_await_config_park`` first in its own
@@ -319,50 +317,25 @@ class ConnectionModule(Module, ABC):
         Call it from a port subscription, on any thread. A refused command
         (an unknown key, a value past a limit that does not clamp) is dropped
         and shown in ``status()``; an accepted one restarts the deadman and
-        goes to ``write``. If ``write`` raises, the robot is halted. While a
-        config session lasts, commands are dropped: the calibration tool owns
-        the arm and moves it with ``config_command``.
+        goes to ``write``. If ``write`` raises, the robot is halted, which
+        ends any config session. A config session changes nothing here.
 
         Args:
             values: Named values in each key's unit, e.g.
                 ``{"arm/joint1/position": 0.3}``. Keys of other robots are
                 skipped; a command with none of this robot's does nothing.
         """
-        self._command(values, None)
-
-    def _command(self, values: Values, session_id: str | None) -> CommandResult:
-        """Check one command against the limits and write it, restarting the deadman.
-
-        With ``session_id`` ``None`` it is a position command: a refused one
-        is shown in ``status()``, and while a config session lasts it is
-        dropped and counted. Otherwise it is ``config_command``'s: a refused
-        one raises ``ValueError``, and it is written only while the session
-        it names lasts. Both are decided under ``_hardware_lock``, which a
-        session's start and end also hold, so no command slips past one.
-        """
         prefix = f"{self.config.source}{SEPARATOR}"
         own = {key: value for key, value in values.items() if key.startswith(prefix)}
         if not own:
-            return CommandResult(ok=False, error=f"no keys of {self.config.source!r}")
+            return
         result = validate_command(own, self.limits)
         if isinstance(result, Rejected):
-            message = f"{result.reason}: {result.detail}"
-            if session_id is not None:
-                raise ValueError(message)
-            self._report(message, rejection=True)
-            return CommandResult(ok=False, error=message)
+            self._report(f"{result.reason}: {result.detail}", rejection=True)
+            return
         with self._hardware_lock:
             if not self._connected:
-                if session_id is not None:
-                    raise RuntimeError(f"{self._label} is not running")
-                return CommandResult(ok=False, error=f"{self._label} is not running")
-            if session_id is None:
-                if self._dropped_for_config_session():
-                    return CommandResult(ok=False, error="dropped: a config session owns the arm")
-            elif self._check_config_session(session_id) is None:
-                raise RuntimeError(
-                    "no config session is live; config_set with scope 'session' starts one"
-                )
+                return
             with self._lock:
                 self._last_command_time = time.time()
                 self._deadman_fired = False
@@ -372,14 +345,9 @@ class ConnectionModule(Module, ABC):
             try:
                 self.write(result.values)
             except Exception as error:
-                message = f"write failed: {type(error).__name__}: {error}"
-                self._report(message)
+                self._report(f"write failed: {type(error).__name__}: {error}")
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
-                if session_id is not None:
-                    message += "; the arm holds and the config session ended"
-                return CommandResult(ok=False, error=message)
-        return CommandResult(ok=True)
 
     @rpc
     @final
@@ -433,10 +401,10 @@ class ConnectionModule(Module, ABC):
         """Change how one arm is driven: for the config session, or saved to its file.
 
         With scope "session" and no session live, this starts the one config
-        session (an empty patch only starts it): until it ends every other
-        position command is dropped, and its live changes are undone when it
-        ends. While one is live, every ``config_set`` must carry its
-        ``session_id``. With scope "persist" the patch is merged into the
+        session (an empty patch only starts it), whose live changes are undone
+        when it ends. While one is live, every ``config_set`` must carry its
+        ``session_id``, and an empty patch with it only renews the lease.
+        With scope "persist" the patch is merged into the
         arm's calibration file and applied from it; ``force`` applies it even
         when a joint's gravity torque would step too far at this pose, and
         ``apply_now`` False only writes the file. What the connection cannot
@@ -494,40 +462,6 @@ class ConnectionModule(Module, ABC):
                     return
                 undone = self._config_undo()
             logger.info(f"{self._label}: config reset, the session goes on: {undone}")
-
-    @rpc
-    @final
-    def config_command(self, targets: dict[str, float], session_id: str) -> CommandResult:
-        """Send position targets by joint name inside the config session, as a command would.
-
-        The targets are checked against the joint limits and restart the
-        deadman; stop sending and the robot halts, which ends the session. A
-        refused command raises ``ValueError``; one the hardware did not take
-        returns ``ok`` False with the reason. Nothing limits how far one
-        command jumps, so step the targets at the rate the arm may move.
-        Refused unless ``config_sessions``.
-        """
-        with self._config_call("config_command"):
-            if not isinstance(targets, dict):
-                raise TypeError(
-                    f"targets must be a dict of joint name to position, got {targets!r}"
-                )
-            if not isinstance(session_id, str) or not session_id:
-                raise RuntimeError("config_command needs the session_id config_set returned")
-            prefix = f"{self.config.source}{SEPARATOR}"
-            suffix = f"{SEPARATOR}{Interface.POSITION.value}"
-            known = {
-                key.removeprefix(prefix).removesuffix(suffix)
-                for key in self.limits
-                if key.startswith(prefix) and key.endswith(suffix)
-            }
-            unknown = sorted(set(targets) - known)
-            if unknown:
-                raise ValueError(f"not position-commanded joints of {self._label}: {unknown}")
-            values = {
-                f"{prefix}{name}{suffix}": _real(name, value) for name, value in targets.items()
-            }
-            return self._command(values, session_id)
 
     def _config_keys(self) -> ConfigKeys:
         """What this driver lets a calibration tool read and change; by default nothing.
@@ -619,22 +553,13 @@ class ConnectionModule(Module, ABC):
         )
 
     def _begin_config_session(self, lease_s: float) -> _ConfigSession:
-        """Start the config session. Call with ``_hardware_lock`` held and none live.
-
-        The deadman a position command armed before it is disarmed: those
-        commands are dropped now, so their pause must not halt the robot and
-        end the session. The session's own ``config_command`` arms it again.
-        """
+        """Start the config session. Call with ``_hardware_lock`` held and none live."""
         session = _ConfigSession(uuid.uuid4().hex, lease_s, time.monotonic() + lease_s)
         with self._lock:
             self._config_session = session
-            # A timer already due sees a newer command and does nothing.
-            self._command_seq += 1
-        self._on_loop(self._disarm_deadman)
         self._on_loop(self._arm_config_lease)
         logger.info(
-            f"{self._label}: config session {session.session_id[:8]} started, lease "
-            f"{lease_s:g} s; position commands are dropped until it ends"
+            f"{self._label}: config session {session.session_id[:8]} started, lease {lease_s:g} s"
         )
         return session
 
@@ -643,9 +568,9 @@ class ConnectionModule(Module, ABC):
     ) -> bool:
         """End the config session, if any (with ``lapsed``, only one past its lease).
 
-        Undoes its live changes (``_config_undo``) and logs one line: why,
-        what was undone and how many position commands were dropped. Call
-        with ``_hardware_lock`` held. Returns whether a session ended.
+        Undoes its live changes (``_config_undo``) and logs one line: why and
+        what was undone. Call with ``_hardware_lock`` held. Returns whether a
+        session ended.
         """
         with self._lock:
             session = self._config_session
@@ -666,8 +591,7 @@ class ConnectionModule(Module, ABC):
                 f"{self._halt_after_failed_undo(error)}"
             )
         message = (
-            f"{self._label}: config session {session.session_id[:8]} ended ({reason}): "
-            f"{undone}; {session.dropped} position commands dropped"
+            f"{self._label}: config session {session.session_id[:8]} ended ({reason}): {undone}"
         )
         if expected:
             logger.info(message)
@@ -704,23 +628,6 @@ class ConnectionModule(Module, ABC):
         reported. Called with ``_hardware_lock`` held, the session already
         ended.
         """
-
-    def _dropped_for_config_session(self) -> bool:
-        """Whether a position command is dropped for the config session; warns once per session.
-
-        Call with ``_hardware_lock`` held.
-        """
-        with self._lock:
-            session = self._config_session
-            if session is None:
-                return False
-            session.dropped += 1
-            first = session.dropped == 1
-        if first:
-            logger.warning(
-                f"{self._label}: dropping position commands while a config session owns the arm"
-            )
-        return True
 
     def _await_config_park(self) -> None:
         """Before stopping, let the calibration tool park the arm and end its config session.
