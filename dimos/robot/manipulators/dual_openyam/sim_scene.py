@@ -35,6 +35,7 @@ import xml.etree.ElementTree as ET
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.model import RobotModel
@@ -187,13 +188,19 @@ class SimWorkcell:
     Attributes:
         name: What messages call the robot, e.g. "Dual OpenYAM".
         urdf: The URDF the arms are built from, with every link and mesh; its
-            root sits at the workcell's origin.
+            root is the workcell's origin.
         arms: One layout per bus of the robot, in bus order.
+        root_position: Where the URDF's root stands on the Dual OpenYAM's
+            rig, metres from the middle of the top of the plate its arms are
+            bolted to, x towards the table and z up. The root stays the
+            workcell's origin: the table, its objects and the overhead camera
+            are placed around it. Too low a root sinks the arms into the plate.
     """
 
     name: str
     urdf: RobotModel
     arms: tuple[ArmLayout, ...]
+    root_position: Vector = (0.0, 0.0, 0.0)
 
 
 def _dual_openyam_arm(side: str) -> ArmLayout:
@@ -254,8 +261,9 @@ def scene_spec(robot: DamiaoRobot, workcell: SimWorkcell) -> mujoco.MjSpec:
     for index, (arm, bus) in enumerate(arms):
         _add_jaw(spec, arm, bus, _arm_bits(index, len(arms)))
         _add_wrist_camera(spec, arm)
-    _add_workcell(spec)
-    _add_objects(spec)
+    root = np.asarray(workcell.root_position)
+    _add_workcell(spec, root)
+    _add_objects(spec, root)
     return spec
 
 
@@ -485,37 +493,44 @@ def _add_box(
     name: str,
     corners: tuple[Sequence[float], Sequence[float]],
     rgba: Sequence[float],
+    root: NDArray[np.float64],
 ) -> None:
+    """A box between two corners on the rig, with the URDF's root at ``root``."""
     lower, upper = np.asarray(corners[0]), np.asarray(corners[1])
     body.add_geom(
         name=name,
         type=mujoco.mjtGeom.mjGEOM_BOX,
         size=(upper - lower) / 2,
-        pos=(upper + lower) / 2,
+        pos=(upper + lower) / 2 - root,
         rgba=rgba,
     )
 
 
-def _add_workcell(spec: mujoco.MjSpec) -> None:
-    """The table, the arms' mounting plate, the wall, a floor, light and the overhead camera."""
+def _add_workcell(spec: mujoco.MjSpec, root: NDArray[np.float64]) -> None:
+    """The table, the arms' mounting plate, the wall, a floor, light and the overhead camera.
+
+    Placed as on the rig, with the URDF's root at ``root``.
+    """
     world = spec.worldbody
-    _add_box(world, "table", _TABLE, (0.93, 0.93, 0.95, 1.0))
-    _add_box(world, "mount", _MOUNT, (0.05, 0.05, 0.06, 1.0))
-    _add_box(world, "wall", _WALL, (0.80, 0.80, 0.78, 1.0))
+    _add_box(world, "table", _TABLE, (0.93, 0.93, 0.95, 1.0), root)
+    _add_box(world, "mount", _MOUNT, (0.05, 0.05, 0.06, 1.0), root)
+    _add_box(world, "wall", _WALL, (0.80, 0.80, 0.78, 1.0), root)
     # Catches whatever is knocked off the table.
     world.add_geom(
         name="floor",
         type=mujoco.mjtGeom.mjGEOM_PLANE,
         size=(2.0, 2.0, 0.1),
-        pos=(0.0, 0.0, _FLOOR_Z),
+        pos=np.array([0.0, 0.0, _FLOOR_Z]) - root,
         rgba=(0.35, 0.35, 0.37, 1.0),
     )
-    world.add_light(pos=(0.3, 0.0, 1.5), dir=(0.1, 0.1, -1.0), diffuse=(0.7, 0.7, 0.7))
+    world.add_light(
+        pos=np.array([0.3, 0.0, 1.5]) - root, dir=(0.1, 0.1, -1.0), diffuse=(0.7, 0.7, 0.7)
+    )
     spec.visual.headlight.ambient = (0.35, 0.35, 0.35)
     spec.visual.headlight.diffuse = (0.3, 0.3, 0.3)
     world.add_camera(
         name=OVERHEAD_CAMERA,
-        pos=OVERHEAD_CAMERA_XYZ,
+        pos=np.asarray(OVERHEAD_CAMERA_XYZ) - root,
         quat=_camera_quat(Rotation.from_quat(OVERHEAD_CAMERA_XYZW)),
         fovy=CAMERA_FOVY,
     )
@@ -523,12 +538,20 @@ def _add_workcell(spec: mujoco.MjSpec) -> None:
 
 
 def _add_object(
-    spec: mujoco.MjSpec, name: str, xy: tuple[float, float], height: float, yaw: float = 0.0
+    spec: mujoco.MjSpec,
+    name: str,
+    xy: tuple[float, float],
+    height: float,
+    root: NDArray[np.float64],
+    yaw: float = 0.0,
 ) -> Any:
-    """A free body standing on the table, its frame ``height`` above the table top."""
+    """A free body standing on the table, its frame ``height`` above the table top.
+
+    ``xy`` is where it stands on the rig, with the URDF's root at ``root``.
+    """
     body = spec.worldbody.add_body(
         name=name,
-        pos=(*xy, DUAL_OPENYAM_TABLE_TOP_Z + height),
+        pos=np.array([*xy, DUAL_OPENYAM_TABLE_TOP_Z + height]) - root,
         quat=(math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)),
     )
     body.add_freejoint(name=name)
@@ -540,13 +563,16 @@ def _add_decoration(body: Any, **geom: Any) -> None:
     body.add_geom(contype=0, conaffinity=0, density=0.0, **geom)
 
 
-def _add_objects(spec: mujoco.MjSpec) -> None:
-    """The cup, the bottle and the Rubik's cube, at the rig's sizes and places."""
+def _add_objects(spec: mujoco.MjSpec, root: NDArray[np.float64]) -> None:
+    """The cup, the bottle and the Rubik's cube, at the rig's sizes and places.
+
+    Placed as on the rig, with the URDF's root at ``root``.
+    """
     cylinder = mujoco.mjtGeom.mjGEOM_CYLINDER
     box = mujoco.mjtGeom.mjGEOM_BOX
 
     # A plastic cup, 8 cm wide and 10 cm tall, drawn open at the top.
-    cup = _add_object(spec, "cup", _CUP_XY, 0.05)
+    cup = _add_object(spec, "cup", _CUP_XY, 0.05, root)
     cup.add_geom(
         name="cup", type=cylinder, size=(0.04, 0.05, 0.0), mass=0.03, rgba=(0.80, 0.08, 0.10, 1.0)
     )
@@ -560,7 +586,7 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
     )
 
     # A bottle, 6 cm wide and 17 cm tall with its neck.
-    bottle = _add_object(spec, "bottle", _BOTTLE_XY, 0.0)
+    bottle = _add_object(spec, "bottle", _BOTTLE_XY, 0.0, root)
     bottle.add_geom(
         name="bottle",
         type=cylinder,
@@ -587,7 +613,7 @@ def _add_objects(spec: mujoco.MjSpec) -> None:
     )
 
     # A 5.7 cm Rubik's cube: a black core with nine stickers drawn on each face.
-    cube = _add_object(spec, "rubiks_cube", _CUBE_XY, _CUBE_HALF, _CUBE_YAW)
+    cube = _add_object(spec, "rubiks_cube", _CUBE_XY, _CUBE_HALF, root, _CUBE_YAW)
     cube.add_geom(
         name="rubiks_cube",
         type=box,
