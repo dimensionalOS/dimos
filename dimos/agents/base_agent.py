@@ -204,7 +204,16 @@ class BaseAgent(Module, Generic[I, O]):
         """A value from agent_input: the same call as infer, with the answer on agent_output."""
         # ponytail: runs on the transport's callback thread, so one input at a time and the
         # next waits. An agent with long turns queues them itself, as Agent does.
-        self.agent_output.publish(self.infer(x))
+        self.agent_idle.publish(False)
+        try:
+            self.agent_output.publish(self.infer(x))
+        finally:
+            self.agent_idle.publish(True)
+
+    @rpc
+    def agent_types(self) -> tuple[Any, Any]:
+        """(input_type, output_type), for a caller that only holds a proxy to this agent."""
+        return self.input_type, self.output_type
 
     @rpc
     def agent_transports(self) -> dict[str, Any]:
