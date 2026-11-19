@@ -413,6 +413,12 @@ shared `Coordinator` service before deploying modules. To run a companion stack 
 bus, set `serve_coordinator_rpc=False` on that stack. `dimos shell` attaches to the stack
 that serves `Coordinator`.
 
+A stack started from Python with `ModuleCoordinator.build(...).loop()` claims the service in
+`loop()`, after its modules have started and published on the shared stream topics. If the
+service is taken, `loop()` stops the modules and raises `CoordinatorAlreadyRunningError`. Pass
+`reserve_rpc_name=CoordinatorRPC.NAME` to `build()` to be rejected before any module starts,
+as with `dimos run`.
+
 Launches sharing a local runtime directory take turns claiming the service. Across hosts,
 the check uses bus discovery, so simultaneous launches can both miss the other's claim.
 

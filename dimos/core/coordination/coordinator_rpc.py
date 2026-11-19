@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -154,12 +155,17 @@ class CoordinatorRPC:
     def _ensure_no_existing_service(rpc: RPCSpec, name: str) -> None:
         # Older Coordinators answer only ping. A Coordinator still starting
         # answers reserved and leaves ping unavailable to readiness probes.
-        for method in ("ping", "reserved"):
-            try:
-                rpc.call_sync(f"{name}/{method}", ([], {}), rpc_timeout=0.5)
-            except TimeoutError:
-                continue
-            raise CoordinatorAlreadyRunningError(
-                f"another {name} service is already running on the "
-                f"{global_config.transport} bus. Run `dimos stop` first."
-            )
+        answered = threading.Event()
+        cancels = [
+            rpc.call(f"{name}/{method}", ([], {}), lambda _: answered.set())
+            for method in ("ping", "reserved")
+        ]
+        try:
+            if answered.wait(0.5):
+                raise CoordinatorAlreadyRunningError(
+                    f"another {name} service is already running on the "
+                    f"{global_config.transport} bus. Run `dimos stop` first."
+                )
+        finally:
+            for cancel in cancels:
+                cancel()

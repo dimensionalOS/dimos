@@ -56,7 +56,12 @@ T = TypeVar("T")
 
 class Point(NamedTuple):
     x: int
-    y: str = ""
+    y: str
+
+
+class Versioned(NamedTuple):
+    name: str
+    added: str = "default"
 
 
 class Color(enum.Enum):
@@ -278,8 +283,13 @@ def test_nested_container_types_survive() -> None:
 
 
 def test_namedtuple_from_older_sender_gets_trailing_default() -> None:
-    old_point = CBORTag(TAG_NAMEDTUPLE, [f"{__name__}:Point", [3]])
-    assert decode(dumps(old_point)) == Point(3, "")
+    older = CBORTag(TAG_NAMEDTUPLE, [f"{__name__}:Versioned", ["a"]])
+    assert decode(dumps(older)) == Versioned("a", "default")
+
+
+def test_namedtuple_missing_a_required_field_is_rejected() -> None:
+    with pytest.raises(CborDecodeError, match="Expected 2 arguments, got 1"):
+        decode(dumps(CBORTag(TAG_NAMEDTUPLE, [f"{__name__}:Point", [1]])))
 
 
 def test_dict_with_non_primitive_keys() -> None:
