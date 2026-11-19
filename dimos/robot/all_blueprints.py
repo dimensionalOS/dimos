@@ -394,6 +394,7 @@ all_modules = {
     "rerun-bridge-module": "dimos.visualization.rerun.bridge.RerunBridgeModule",
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
     "rgbd-mesh": "dimos.perception.stereo.rgbd_mesh.RgbdMesh",
+    "riding-box-filter": "dimos.mapping.pointclouds.riding_box_filter.RidingBoxFilter",
     "rust-recorder": "dimos.experimental.memory.rust_recorder.RustRecorder",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "seeed-b601-dm-coordinator": "dimos.robot.manipulators.seeed_b601_dm.coordinator.SeeedB601DMCoordinator",
