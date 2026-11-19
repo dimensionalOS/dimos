@@ -315,7 +315,13 @@ def stubbed_run(
 
         @classmethod
         def build(
-            cls, blueprint: Any, parsed_config: Any = None, *, remote_module_refs: Any = None
+            cls,
+            blueprint: Any,
+            parsed_config: Any = None,
+            *,
+            reserve_rpc_name: str | None = None,
+            module_rpc_namespace: str | None = None,
+            remote_module_refs: Any = None,
         ) -> "FakeCoordinator":
             recorded["blueprint"] = blueprint
             recorded["parsed_config"] = parsed_config

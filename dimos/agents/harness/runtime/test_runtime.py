@@ -39,6 +39,7 @@ from dimos.agents.annotation import skill
 from dimos.agents.harness.runtime import load as runtime_load
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.agents.harness.runtime.agent_module_manager import AgentModuleManager, _Record
+from dimos.agents.harness.runtime.harness_runtime import HarnessRuntime
 from dimos.agents.harness.runtime.inventory import environment, relay_endpoint
 from dimos.agents.harness.runtime.load import mcp_server_blueprint
 from dimos.agents.skill_result import SkillResult
@@ -55,7 +56,21 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.agent_msgs.AgentStep import AgentStep
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.porcelain.dimos import Dimos
 from dimos.spec.utils import Spec
+
+
+def test_harness_refuses_to_manage_another_stack(mocker) -> None:
+    mocker.patch("dimos.agents.harness.runtime.harness_runtime.AgentModuleManager")
+    other = mocker.patch.object(Dimos, "connect").return_value
+    other.get_module.return_value.remote_name = "runs/other/modules/HarnessRuntime"
+    runtime = HarnessRuntime(rpc_name="runs/mine/modules/HarnessRuntime")
+    try:
+        with pytest.raises(RuntimeError, match="another stack"):
+            runtime._connect()
+        other.stop.assert_called_once_with()
+    finally:
+        runtime.stop()
 
 
 def test_module_owner_remains_readable_during_record_updates(tmp_path, monkeypatch) -> None:
