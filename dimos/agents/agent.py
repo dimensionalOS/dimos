@@ -15,7 +15,7 @@
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Event, RLock, Thread
+from threading import Condition, Event, RLock, Thread
 import time
 from typing import Any
 import uuid
@@ -110,6 +110,8 @@ class Agent(BaseAgent[str, str]):
     _agent_tools: list[StructuredTool] | None
     _tool_registry: dict[str, dict[str, Any]]
     _history: list[BaseMessage]
+    _background: set[str]
+    _settled: Condition
     _thread: Thread
     _stop_event: Event
     _http_client: requests.Session
@@ -124,6 +126,9 @@ class Agent(BaseAgent[str, str]):
         self._agent_tools = None
         self._tool_registry = {}
         self._history = []
+        # Background skills this agent started that have not stopped yet.
+        self._background = set()
+        self._settled = Condition()
         self._thread = Thread(
             target=self._thread_loop,
             name=f"{self.__class__.__name__}-thread",
@@ -181,6 +186,11 @@ class Agent(BaseAgent[str, str]):
     def _on_tool_stream_message(self, msg: dict[str, Any]) -> None:
         method = msg.get("method")
         params = msg.get("params") or {}
+        if method == tool_stream.TOOL_STREAM_STOPPED_METHOD:
+            with self._settled:
+                self._background.discard(str(params.get("tool_name")))
+                self._settled.notify_all()
+            return
         if method == tool_stream.NOTIFICATIONS_PROGRESS_METHOD:
             text = params.get("message") or ""
             tool_name = (params.get("_meta") or {}).get("tool_name") or "tool"
@@ -229,8 +239,24 @@ class Agent(BaseAgent[str, str]):
         description = mcp_tool.get("description", "")
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
+        background = (mcp_tool.get("_meta") or {}).get("dimos/lifecycle") == "background"
+
         def call_tool(**kwargs: Any) -> str:
-            result = self._mcp_tool_call(name, kwargs)
+            if background:
+                # Before the call: a short skill can stop before the call returns.
+                with self._settled:
+                    self._background.add(name)
+            try:
+                result = self._mcp_tool_call(name, kwargs)
+                started = not result.get("isError")
+            except Exception:
+                started = False
+                raise
+            finally:
+                if background and not started:
+                    with self._settled:
+                        self._background.discard(name)
+                        self._settled.notify_all()
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
@@ -338,15 +364,19 @@ class Agent(BaseAgent[str, str]):
 
     @rpc
     def infer(self, x: str) -> str:
-        """Run one turn on x and return the agent's final answer.
+        """Send x as a turn and return the agent's final answer.
 
-        Blocks until the turn ends. The turn is published on the agent stream like
-        one from human_input. A failed turn raises RuntimeError.
+        Blocks until the agent is done: every queued message has been processed and
+        every background skill it started has stopped. A failed turn raises RuntimeError.
         """
-        with self._lock:
-            if self._state_graph is None:
-                raise RuntimeError("Agent has no model yet; it is built when the blueprint starts")
-            last = self._process_message(self._state_graph, HumanMessage(content=x))
+        if not self._thread.is_alive():
+            raise RuntimeError("Agent is not running; it starts with the blueprint")
+        self._message_queue.put(HumanMessage(content=x))
+        with self._settled:
+            self._settled.wait_for(
+                lambda: not self._background and self._message_queue.unfinished_tasks == 0
+            )
+        last = self._history[-1]
         if TURN_FAILED_KEY in last.additional_kwargs:
             raise RuntimeError(str(last.text))
         return str(last.text)
@@ -417,15 +447,19 @@ class Agent(BaseAgent[str, str]):
             except Empty:
                 continue
 
-            with self._lock:
-                if not self._state_graph:
-                    raise ValueError("No state graph initialized")
-                self._process_message(self._state_graph, message)
+            try:
+                with self._lock:
+                    if not self._state_graph:
+                        raise ValueError("No state graph initialized")
+                    self._process_message(self._state_graph, message)
+            finally:
+                self._message_queue.task_done()
+                with self._settled:
+                    self._settled.notify_all()
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
-    ) -> BaseMessage:
-        """Run one turn on message and return the last message it recorded."""
+    ) -> None:
         self.agent_idle.publish(False)
         turn_start = len(self._history)
         self._record(message)
@@ -463,7 +497,6 @@ class Agent(BaseAgent[str, str]):
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)
-        return self._history[-1]
 
     def _record(self, message: BaseMessage) -> None:
         self._history.append(message)

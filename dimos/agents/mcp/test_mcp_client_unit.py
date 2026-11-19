@@ -514,42 +514,101 @@ def test_a_tool_call_the_mcp_server_never_answers_does_not_stop_the_agent(
 
 
 class _AnswersGraph:
-    """Fake agent graph that streams `turn` for every message."""
+    """Fake agent graph that streams `turn` for every message, then "turn N" once it runs out."""
 
     def __init__(self, *turn: BaseMessage) -> None:
         self.turn = turn
+        self.turns = 0
 
     def stream(
         self, state: dict[str, list[BaseMessage]], stream_mode: str
     ) -> Iterator[dict[str, Any]]:
-        for message in self.turn:
+        self.turns += 1
+        for message in self.turn or (AIMessage(content=f"turn {self.turns}"),):
             yield {"model": {"messages": [message]}}
 
 
+@pytest.fixture
+def running_agent(
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> Agent:
+    """An agent whose message loop runs, as it does once its blueprint has started."""
+    monkeypatch.setattr(mcp_client, "_thread", agent_thread)
+    return mcp_client
+
+
 def test_infer_returns_the_final_answer_of_its_turn(
-    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     graph = _AnswersGraph(
         AIMessage(content="", tool_calls=[_call("add", "c1", x=1, y=2)]),
         ToolMessage(content="3", tool_call_id="c1"),
         AIMessage(content=[{"type": "text", "text": "It is "}, {"type": "text", "text": "3."}]),
     )
-    monkeypatch.setattr(mcp_client, "_state_graph", graph)
+    monkeypatch.setattr(running_agent, "_state_graph", graph)
 
-    assert mcp_client.infer("what is 1 + 2?") == "It is 3."
-    assert mcp_client._history[0].content == "what is 1 + 2?"
+    assert running_agent.infer("what is 1 + 2?") == "It is 3."
+    assert running_agent._history[0].content == "what is 1 + 2?"
 
 
 def test_infer_raises_when_its_turn_fails(
-    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(mcp_client, "_state_graph", _FailsOnceGraph([]))
+    monkeypatch.setattr(running_agent, "_state_graph", _FailsOnceGraph([]))
 
     with pytest.raises(RuntimeError, match="TimeoutError: LLM API timed out"):
-        mcp_client.infer("first")
-    assert mcp_client.infer("second") == "done"
+        running_agent.infer("first")
+    assert running_agent.infer("second") == "done"
 
 
-def test_infer_needs_the_model_to_be_built(mcp_client: Agent) -> None:
-    with pytest.raises(RuntimeError, match="no model yet"):
+def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
+    with pytest.raises(RuntimeError, match="not running"):
         mcp_client.infer("too early")
+
+
+def test_infer_waits_for_a_background_skill_to_stop(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A background skill keeps reporting after its call returns; infer answers once it stops."""
+    monkeypatch.setattr(running_agent, "_state_graph", _AnswersGraph())
+    running_agent._background.add("explore")
+    answers: list[str] = []
+    caller = Thread(target=lambda: answers.append(running_agent.infer("explore the room")))
+    caller.start()
+
+    wait_until(lambda: len(running_agent._history) == 2, timeout=5, interval=0.01)
+    assert caller.is_alive(), "the first turn ended, but explore still runs"
+
+    running_agent._on_tool_stream_message(
+        {"method": "notifications/message", "params": {"logger": "explore", "data": "found a door"}}
+    )
+    running_agent._on_tool_stream_message(
+        {"method": "dimos/tool_stopped", "params": {"tool_name": "explore"}}
+    )
+    caller.join(timeout=5)
+
+    assert answers == ["turn 2"]
+    assert [m.content for m in running_agent._history] == [
+        "explore the room",
+        "turn 1",
+        "[tool:explore] found a door",
+        "turn 2",
+    ]
+
+
+def test_a_background_tool_counts_as_running_until_its_stop_frame(mcp_client: Agent) -> None:
+    explore = mcp_client._mcp_tool_to_langchain(
+        {"name": "add", "_meta": {"dimos/lifecycle": "background"}}
+    )
+    instant = mcp_client._mcp_tool_to_langchain({"name": "greet"})
+
+    assert instant.func is not None and explore.func is not None
+    instant.func(name="Alice")
+    assert mcp_client._background == set()
+    explore.func(x=1, y=2)
+    assert mcp_client._background == {"add"}
+
+    mcp_client._on_tool_stream_message(
+        {"method": "dimos/tool_stopped", "params": {"tool_name": "add"}}
+    )
+    assert mcp_client._background == set()
