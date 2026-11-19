@@ -90,6 +90,11 @@ DEPTH_STEP_M = 0.20  # trust region in metres of standoff per step
 DEPTH_STEP_MIN_M = 0.02
 DEPTH_RIDGE = 1e-3
 CENTRE_SPAN_RAD = 0.8  # the centre never wanders further than this from home, per joint
+# A fixed camera stands well past PROBE_M, so its run holds the first view's distance instead and
+# keeps the draw near it: the real xArm7's board-in-hand scatter grew from 2.7 mm over a 12 cm
+# draw to 7 mm over 30 cm (2026-11-18), the arm's error, not the camera's.
+SCENE_CENTRE_SPAN_RAD = 0.3
+SCENE_STANDOFF_SPAN_M = 0.10
 STEP_MAX_RAD = 0.25
 MISS_RETREAT = 2  # consecutive blind or refused poses that call off an approach
 OBS_W = np.array([50.0, 50.0, 50.0, 50.0, 50.0, 10.0])  # 1/tolerance per observable
@@ -278,17 +283,23 @@ def _observe(T_cam_board: FloatArray, R0: FloatArray) -> FloatArray:
     return np.array([r[0, 0], r[1, 0], r[2, 0], t[0] / z, t[1] / z, float(np.linalg.norm(t))])
 
 
-def _standoff_target(standoffs: FloatArray, remaining: int) -> float | None:
+def _standoff_target(
+    standoffs: FloatArray,
+    remaining: int,
+    goal_m: float = PROBE_M,
+    lo_m: float = STANDOFF_MIN_M,
+    hi_m: float = STANDOFF_MAX_M,
+) -> float | None:
     """The distance to ask the next views for so that the mean standoff over the whole run lands
-    on PROBE_M: the views already banked too far away, or too close, are paid back by the ones
+    on goal_m: the views already banked too far away, or too close, are paid back by the ones
     still to come. On the mean, the sweep asks for nearer and farther views in turn."""
     n = len(standoffs)
     if n == 0 or remaining < 1:
         return None
-    deficit = float(np.mean(standoffs)) - PROBE_M
+    deficit = float(np.mean(standoffs)) - goal_m
     if abs(deficit) < DEPTH_TOL_M:
-        return PROBE_M + (DEPTH_SWEEP_M if n % 2 else -DEPTH_SWEEP_M)
-    return float(np.clip(PROBE_M - n * deficit / remaining, STANDOFF_MIN_M, STANDOFF_MAX_M))
+        return goal_m + (DEPTH_SWEEP_M if n % 2 else -DEPTH_SWEEP_M)
+    return float(np.clip(goal_m - n * deficit / remaining, lo_m, hi_m))
 
 
 def _view_jacobian(Q: FloatArray, U: FloatArray) -> tuple[FloatArray, FloatArray]:
@@ -312,6 +323,7 @@ def _walk_centre(
     bounds: tuple[FloatArray, FloatArray],
     step_cap: float,
     target_m: float,
+    span_rad: float = CENTRE_SPAN_RAD,
 ) -> FloatArray:
     """Move the centre of the draw toward a standoff of target_m, holding the board's attitude
     and place in the frame, so the approach keeps its views. Clipped to a trust region."""
@@ -334,8 +346,8 @@ def _walk_centre(
     lo, hi = bounds
     out: FloatArray = np.clip(
         centre + step,
-        np.maximum(lo, home - CENTRE_SPAN_RAD),
-        np.minimum(hi, home + CENTRE_SPAN_RAD),
+        np.maximum(lo, home - span_rad),
+        np.minimum(hi, home + span_rad),
     )
     return out
 
@@ -642,10 +654,23 @@ def solve_hand_eye(
         Q.append(q)
         U.append(_observe(det.T_cam_board, R0))
         if step_cap >= DEPTH_STEP_MIN_M and len(Q) >= DEPTH_FIT_MIN:
-            target = _standoff_target(np.array(U)[:, 5], max_poses - tried)
+            standoffs = np.array(U)[:, 5]
+            if eye_to_hand:
+                goal = float(standoffs[0])
+                target = _standoff_target(
+                    standoffs,
+                    max_poses - tried,
+                    goal,
+                    goal - SCENE_STANDOFF_SPAN_M,
+                    goal + SCENE_STANDOFF_SPAN_M,
+                )
+                span = SCENE_CENTRE_SPAN_RAD
+            else:
+                target = _standoff_target(standoffs, max_poses - tried)
+                span = CENTRE_SPAN_RAD
             if target is not None:
                 centre = _walk_centre(
-                    centre, np.array(Q), np.array(U), home, bounds, step_cap, target
+                    centre, np.array(Q), np.array(U), home, bounds, step_cap, target, span
                 )
         T_base_flange = robot.get_flange_pose()
         A.append(T_inv(T_base_flange) if eye_to_hand else T_base_flange)
