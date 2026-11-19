@@ -82,7 +82,8 @@ def test_classmethods(navigation) -> None:
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
     assert "get_stream_descriptors" in class_rpcs
-    assert len(class_rpcs) == 10
+    assert "get_config" in class_rpcs
+    assert len(class_rpcs) == 11
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -93,6 +94,12 @@ def test_classmethods(navigation) -> None:
         "navigate_to should have __rpc__ attribute"
     )
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
+
+
+def test_get_config_is_the_running_config(navigation: Navigation) -> None:
+    assert navigation.get_config() is navigation.config
+    # it crosses the RPC wire whole
+    assert decode(encode(navigation.get_config())) == navigation.config
 
 
 def test_rpc_signatures_keep_plain_and_message_types(navigation: Navigation) -> None:
