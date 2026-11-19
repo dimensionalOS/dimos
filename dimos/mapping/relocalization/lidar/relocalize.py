@@ -217,13 +217,13 @@ class LidarRelocalizer:
         local_map: PointCloud,
         world_frame: str,
         map_frame: str,
-        near: Transform | None = None,
+        initial_fix: Transform | None = None,
     ) -> RelocAttempt:
         """The fix if accepted, ready to publish, with the registration it was scored on.
 
-        With ``near`` (a ``world_frame -> map_frame`` fix) it is refined from there instead of searched for.
+        With ``initial_fix`` (a ``world_frame -> map_frame`` fix) it is refined from there instead of searched for.
         """
-        initial = None if near is None else np.asarray(near.inverse().to_matrix())
+        initial = None if initial_fix is None else np.asarray(initial_fix.inverse().to_matrix())
         result = self.align(local_map, initial)
         logger.info(f"align: fitness={result.fitness:.3f} rmse={result.inlier_rmse:.3f}")
         if result.fitness < self.config.fitness_threshold:

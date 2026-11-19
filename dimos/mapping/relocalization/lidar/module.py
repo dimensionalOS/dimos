@@ -33,8 +33,6 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.module import Config, PremapModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import FLAG_NAMES, PointCloud2
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -64,6 +62,8 @@ class LidarConfig(Config):
     min_local_points: int = 2_000
     # Rig preset to align with, see relocalize.PRESETS
     relocalize: RelocalizeConfig = MID360
+    # After the first fix, refine it by ICP alone instead of searching the whole premap again
+    refine_fix: bool = False
 
 
 class CloudRelocalization(PremapModule):
@@ -125,16 +125,13 @@ class CloudRelocalization(PremapModule):
     def _has_enough_points(self, msg: PointCloud2) -> bool:
         return len(msg) >= self.config.min_local_points
 
-    def near(self) -> Transform | None:
-        """The fix to refine from instead of searching the whole premap, or None to search."""
-        return None
-
     def _relocalize(self, msg: PointCloud2) -> None:
         assert self._relocalizer is not None
         t0 = time.monotonic()
         try:
+            initial_fix = self.fix if self.config.refine_fix else None
             tf = self._relocalizer.attempt(
-                msg.pointcloud, self.config.world_frame, self.map_frame, self.near()
+                msg.pointcloud, self.config.world_frame, self.map_frame, initial_fix
             ).fix
         except Exception:
             logger.exception("relocalize() failed")
@@ -194,22 +191,8 @@ def _pack(points: np.ndarray, voxel: float) -> np.ndarray:
     return packed
 
 
-def _in_cylinder(points: np.ndarray, bounds: PoseStamped) -> np.ndarray:
-    """Which points the ray tracer's bounds cylinder holds (orientation x, y, z = radius, z_min, z_max)."""
-    radius, z_min, z_max = bounds.orientation.x, bounds.orientation.y, bounds.orientation.z
-    dx = points[:, 0] - bounds.position.x
-    dy = points[:, 1] - bounds.position.y
-    inside: np.ndarray = (
-        (dx * dx + dy * dy <= radius * radius) & (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
-    )
-    return inside
-
-
 class LiveMap:
-    """The live (non-premap) part of the ray tracer's local maps, kept one point per voxel.
-
-    Each local map replaces what its bounds cylinder held, so what live rays carved goes too.
-    """
+    """The live (non-premap) part of the ray tracer's local maps, kept one point per voxel."""
 
     def __init__(self, voxel: float) -> None:
         self.voxel = voxel
@@ -220,18 +203,17 @@ class LiveMap:
     def __len__(self) -> int:
         return len(self._keys)
 
-    def fold(self, local_map: PointCloud2, bounds: PoseStamped | None) -> None:
-        points = local_map.points_f32().reshape(-1, 3)
+    def fold(self, local_map: PointCloud2) -> None:
         flags = local_map.flags_u32()
-        if flags is not None:
-            points = points[(flags & _PREMAP_BIT) == 0]
+        if flags is None:
+            raise ValueError(
+                "local_map has no flags, so premap voxels cannot be told apart: run the ray tracer with a premap"
+            )
+        points = local_map.points_f32().reshape(-1, 3)[(flags & _PREMAP_BIT) == 0]
         keys = _pack(points, self.voxel)
         with self._lock:
-            kept = np.ones(len(self._keys), dtype=bool)
-            if bounds is not None:
-                kept = ~_in_cylinder(self._points, bounds)
-            all_keys = np.concatenate([keys, self._keys[kept]])
-            all_points = np.concatenate([points, self._points[kept]])
+            all_keys = np.concatenate([keys, self._keys])
+            all_points = np.concatenate([points, self._points])
             # First occurrence wins, so a voxel's newest point is kept.
             self._keys, first = np.unique(all_keys, return_index=True)
             self._points = all_points[first]
@@ -251,6 +233,7 @@ class LiveMap:
 
 class ContinuousConfig(LidarConfig):
     relocalize_once: bool = False
+    refine_fix: bool = True
     # Fold the ray tracer's local_map into the kept live map at most this often (s)
     accumulate_interval: float = 1.0
     # The kept live map's voxel edge (m)
@@ -265,19 +248,16 @@ class ContinuousRelocalization(CloudRelocalization):
     It keeps the live (non-premap) voxels of the ray tracer's local maps, so the premap never
     confirms itself. The first fix searches the whole premap and places it in the ray tracer;
     every later one refines the current fix by ICP and only moves ``world -> map``.
-    world_frame must be the frame the ray tracer maps in.
+    world_frame must be the frame the ray tracer maps in, and its local_map must carry the premap bit.
     """
 
     config: ContinuousConfig
 
     local_map: In[PointCloud2]
-    region_bounds: In[PoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.live = LiveMap(self.config.live_voxel_m)
-        # region_bounds by stamp, which local_map pairs on
-        self._bounds: deque[PoseStamped] = deque(maxlen=32)
         self._center: tuple[float, float] | None = None
 
     @rpc
@@ -285,18 +265,19 @@ class ContinuousRelocalization(CloudRelocalization):
         super().start()
         if self.premap is None:
             return
-        self.register_disposable(self.region_bounds.observable().subscribe(self._bounds.append))  # type: ignore[no-untyped-call]
         self.register_disposable(
             self.local_map.observable()  # type: ignore[no-untyped-call]
             .pipe(ops.throttle_first(self.config.accumulate_interval))
-            .subscribe(self.on_local_map)
+            .subscribe(self._on_local_map)
         )
 
-    def on_local_map(self, cloud: PointCloud2) -> None:
-        bounds = next((b for b in reversed(self._bounds) if b.ts == cloud.ts), None)
-        self.live.fold(cloud, bounds)
-        if bounds is not None:
-            self._center = (bounds.position.x, bounds.position.y)
+    def _on_local_map(self, cloud: PointCloud2) -> None:
+        self.live.fold(cloud)
+        points = cloud.points_f32().reshape(-1, 3)
+        if len(points):
+            # The local map is a window around the robot, so its xy middle is close enough.
+            low, high = points[:, :2].min(axis=0), points[:, :2].max(axis=0)
+            self._center = (float(low[0] + high[0]) / 2, float(low[1] + high[1]) / 2)
 
     def clouds(self) -> Observable[PointCloud2]:
         return rx.interval(self.config.reloc_interval).pipe(
@@ -306,6 +287,3 @@ class ContinuousRelocalization(CloudRelocalization):
                 )
             )
         )
-
-    def near(self) -> Transform | None:
-        return self.fix

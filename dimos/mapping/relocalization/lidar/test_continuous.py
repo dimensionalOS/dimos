@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 
 from dimos.mapping.relocalization.lidar.module import LiveMap
 from dimos.mapping.relocalization.lidar.relocalize import MID360, LidarRelocalizer
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -27,14 +27,12 @@ PREMAP = 1
 
 def local_map(points, flags=None):
     points = np.asarray(points, dtype=np.float32)
-    flags = None if flags is None else np.asarray(flags, dtype=np.uint32)
-    return PointCloud2.from_numpy(points, frame_id="world", flags=flags)
-
-
-def bounds(x, y, radius, z_min=-5.0, z_max=5.0):
-    return PoseStamped(
-        position=Vector3(x, y, 0.0), orientation=Quaternion(radius, z_min, z_max, 0.0)
+    flags = (
+        np.zeros(len(points), dtype=np.uint32)
+        if flags is None
+        else np.asarray(flags, dtype=np.uint32)
     )
+    return PointCloud2.from_numpy(points, frame_id="world", flags=flags)
 
 
 def held(live):
@@ -43,27 +41,25 @@ def held(live):
 
 def test_live_map_keeps_only_live_voxels():
     live = LiveMap(0.1)
-    live.fold(local_map([[1, 0, 0], [2, 0, 0], [3, 0, 0]], [0, PREMAP, 0]), None)
+    live.fold(local_map([[1, 0, 0], [2, 0, 0], [3, 0, 0]], [0, PREMAP, 0]))
     assert held(live) == [(1, 0, 0), (3, 0, 0)]
 
 
-def test_a_local_map_replaces_what_its_bounds_held():
-    live = LiveMap(0.1)
-    live.fold(local_map([[1, 0, 0], [10, 0, 0]]), None)
-    # The voxel at x=1 was carved: the next local map around it no longer has it.
-    live.fold(local_map([[2, 0, 0]]), bounds(0, 0, 5))
-    assert held(live) == [(2, 0, 0), (10, 0, 0)]
+def test_a_local_map_without_the_premap_bit_is_an_error():
+    cloud = PointCloud2.from_numpy(np.asarray([[1, 0, 0]], dtype=np.float32), frame_id="world")
+    with pytest.raises(ValueError, match="premap"):
+        LiveMap(0.1).fold(cloud)
 
 
 def test_one_point_per_voxel():
     live = LiveMap(1.0)
-    live.fold(local_map([[1.2, 0.2, 0.2], [1.4, 0.4, 0.4]]), None)
+    live.fold(local_map([[1.2, 0.2, 0.2], [1.4, 0.4, 0.4]]))
     assert len(live) == 1
 
 
 def test_the_match_cloud_keeps_near_the_robot():
     live = LiveMap(0.1)
-    live.fold(local_map([[1, 0, 0], [50, 0, 0]]), None)
+    live.fold(local_map([[1, 0, 0], [50, 0, 0]]))
     near = live.cloud("world", (0.0, 0.0), 10.0).points_f32().tolist()
     assert near == [[1, 0, 0]]
 
