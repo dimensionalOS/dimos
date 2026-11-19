@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
@@ -63,7 +64,11 @@ def main(
         7.5, "--smoothing-window", help="Buffer window for averaged-track pass (s); 0 disables"
     ),
 ) -> None:
-    """Dump an AprilTag detection replay to .rrd and open it in rerun."""
+    """Dump an AprilTag detection replay to .rrd and open it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
     from dimos.memory.cli.dataset import open_store, resolve_dataset
@@ -90,8 +95,9 @@ def main(
     rr.log("world/camera", pinhole, static=True)
 
     with store:
-        color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
-        lidar = store.stream("lidar", PointCloud2).from_time(seek or None).to_time(duration)
+        window = RecordingWindow.from_store(store, seek, duration)
+        color_image = window.apply(store.stream("color_image", Image))
+        lidar = window.apply(store.stream("lidar", PointCloud2))
 
         # Pass 1: robot base pose over time (from lidar.pose).
         for lidar_obs in lidar:
@@ -143,8 +149,9 @@ def main(
         # Each 3D detection gets its own entity path so it persists from its
         # ts onward — earlier detections stay visible as new ones appear.
         # Color by ts (turbo) across the recording's full image-time range.
-        ts_min = color_image.first().ts
-        ts_max = color_image.last().ts
+        # The shared window can end before the camera's first frame.
+        ts_min = color_image.first().ts if n_img else 0.0
+        ts_max = color_image.last().ts if n_img else 0.0
         ts_span = ts_max - ts_min if ts_max > ts_min else 1.0
         n_det = 0
         for det_obs in pipeline.transform(xf):

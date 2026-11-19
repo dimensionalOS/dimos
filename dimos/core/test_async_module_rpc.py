@@ -51,7 +51,7 @@ class StartModule(Module):
 
 @pytest.fixture
 def start_cube_module(each_transport):
-    blueprint = autoconnect(StartModule.blueprint(), MakeCube.blueprint())
+    blueprint = autoconnect(StartModule.blueprint(), MakeCube.blueprint()).solidify()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
     coordinator.stop()

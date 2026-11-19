@@ -104,11 +104,13 @@ def test_nav_resumes_after_cooldown(manager_and_captured):
 
 
 def test_valid_click_publishes_goal(manager_and_captured):
-    """A valid click should publish to both goal and way_point."""
+    """A valid click publishes a goal with no heading and the way point itself."""
     manager, captured = manager_and_captured
     click = _click(x=5.0, y=3.0, z=0.1)
     manager._on_click(click)
-    assert captured.goal == [click]
+    (goal,) = captured.goal
+    assert (goal.x, goal.y, goal.z, goal.frame_id, goal.ts) == (5.0, 3.0, 0.1, "map", click.ts)
+    assert goal.orientation.is_zero()
     assert captured.way_point == [click]
 
 

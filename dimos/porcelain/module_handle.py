@@ -34,9 +34,12 @@ class RemoteModuleProxy:
         remote_name: str,
         rpc_names: set[str],
         stream_lookup: Callable[[str], RemoteOut[Any]] | None = None,
+        *,
+        instance_name: str | None = None,
     ) -> None:
         self._rpc = rpc
         self._remote_name = remote_name
+        self.instance_name = instance_name or remote_name
         self._rpc_names = rpc_names
         self._stream_lookup = stream_lookup
         self._unsub_fns: list[Callable[[], None]] = []
@@ -45,8 +48,15 @@ class RemoteModuleProxy:
         if name.startswith("_"):
             raise AttributeError(name)
         if name not in self._rpc_names:
-            raise AttributeError(f"{self._remote_name!r} has no @rpc method named {name!r}")
-        return RpcCall(None, self._rpc, name, self._remote_name, self._unsub_fns, None)
+            raise AttributeError(f"{self.instance_name!r} has no @rpc method named {name!r}")
+        return RpcCall(
+            None,
+            self._rpc,
+            name,
+            self._remote_name,
+            self._unsub_fns,
+            instance_name=self.instance_name,
+        )
 
     def get_stream(self, name: str) -> RemoteOut[Any]:
         """Get a subscription handle for an advertised stream."""
@@ -59,7 +69,7 @@ class RemoteModuleProxy:
 
     @property
     def remote_name(self) -> str:
-        """The exact deployed module-instance name."""
+        """The RPC address advertised by the coordinator."""
         return self._remote_name
 
 

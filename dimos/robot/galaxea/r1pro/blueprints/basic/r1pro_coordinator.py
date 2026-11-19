@@ -31,7 +31,7 @@ from typing import Any
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import TransportSpec
 from dimos.core.transport import ZenohTransport
@@ -140,7 +140,7 @@ rerun_config = {
 }
 
 
-def r1pro_visualization() -> Blueprint:
+def r1pro_visualization() -> Blueprint | MetaBlueprint:
     if global_config.viewer == "rerun":
         return autoconnect(
             RerunBridgeModule.blueprint(**rerun_config),
@@ -208,7 +208,7 @@ def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
     **connection: Any,
-) -> Blueprint:
+) -> MetaBlueprint:
     """R1ProConnection, ControlCoordinator and the head and wrist cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
@@ -315,7 +315,7 @@ def r1pro_control(
     )
 
 
-def r1pro_lidar_odometry() -> Blueprint:
+def r1pro_lidar_odometry() -> MetaBlueprint:
     """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
     lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
     return autoconnect(

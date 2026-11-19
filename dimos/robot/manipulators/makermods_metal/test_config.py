@@ -35,7 +35,7 @@ def test_connection_model_does_not_materialize_assets(mocker) -> None:
 
 
 def test_coordinator_uses_connection_and_registers_both_tasks() -> None:
-    atoms = coordinator_makermods_metal.active_blueprints
+    atoms = coordinator_makermods_metal.solidify().active_blueprints
     coordinator = next(atom for atom in atoms if issubclass(atom.module, ControlCoordinator))
     assert not coordinator.kwargs.get("hardware")
     assert [task.name for task in coordinator.kwargs["tasks"]] == [
@@ -47,7 +47,7 @@ def test_coordinator_uses_connection_and_registers_both_tasks() -> None:
 
 
 def test_cli_only_requires_can_selector() -> None:
-    parsed = BlueprintConfigParser(coordinator_makermods_metal).parse(
+    parsed = BlueprintConfigParser(coordinator_makermods_metal.solidify()).parse(
         ["--can-port", "test-can"], environ={}
     )
     config = parsed.module_kwargs("metalconnection")

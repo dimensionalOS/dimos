@@ -32,6 +32,8 @@ Upgrade audit for the aioquic==1.3.0 pin:
 * Reset releases ``sender._buffer``; ``on_data_delivery`` must ignore reset senders.
 * ``datagram_received``/``transmit`` overrides batch flushes while preserving timers.
 Re-audit these together and run the real relay suites before changing the pin.
+The aiortc==1.14.0 pin has its own audit list in topic_video.py (the private
+sender keyframe hook and the pre-encoded packet path).
 """
 
 from __future__ import annotations

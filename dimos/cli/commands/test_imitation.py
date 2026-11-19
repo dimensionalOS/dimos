@@ -15,6 +15,9 @@
 
 import hashlib
 import json
+from pathlib import Path
+import subprocess
+import sys
 
 from click import unstyle
 import pytest
@@ -28,7 +31,7 @@ from dimos.utils.data import get_project_root
 
 OPENYAM_TEACH_COLLECTION = next(
     atom.kwargs["recording_schema"]
-    for atom in openyam_teach_collection.active_blueprints
+    for atom in openyam_teach_collection.solidify().active_blueprints
     if atom.name == "recorder"
 )
 
@@ -97,12 +100,103 @@ def test_prepare_uses_saved_schema_not_robot_lookup(recording, tmp_path, mocker)
     assert config.output.path == output
 
 
+def test_prepare_reports_failure_without_install_log_or_traceback(recording, tmp_path, mocker):
+    output = tmp_path / "dataset"
+    reason = (
+        f"No successful episodes extracted from '{recording / 'recording.mcap'}' "
+        "using extractor='episode_status'. Available streams: ['status']."
+    )
+    mocker.patch(
+        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [],
+            1,
+            stdout="",
+            stderr=(
+                "Creating virtual environment\nDownloading torch\nInstalled 157 packages\n"
+                "Traceback (most recent call last):\n"
+                '  File "dataprep.py", line 195, in main\n'
+                f"RuntimeError: {reason}\n"
+            ),
+        ),
+    )
+
+    result = CliRunner().invoke(imitation_app, ["prepare", str(recording), "--output", str(output)])
+
+    assert result.exit_code == 1
+    failure_lines = [line for line in result.stderr.splitlines() if "Preparation failed:" in line]
+    assert len(failure_lines) == 1
+    assert reason in failure_lines[0]
+    assert "Downloading" not in result.output
+    assert "Traceback" not in result.output
+    assert "Wrote dataset" not in result.output
+    assert not output.exists()
+
+
+def test_prepare_announces_environment_before_launch(recording, tmp_path, mocker):
+    output = tmp_path / "dataset"
+
+    def run(*args, **kwargs):
+        progress = sys.stderr.buffer.getvalue().decode()
+        assert "Preparing LeRobot environment" in progress
+        assert "several GB" in progress
+        assert "minutes" in progress
+        return subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"command": "build", "path": str(output)}), stderr=""
+        )
+
+    mocker.patch("dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run", side_effect=run)
+
+    result = CliRunner().invoke(imitation_app, ["prepare", str(recording), "--output", str(output)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"Wrote dataset: {output}\n"
+
+
 def test_prepare_rejects_existing_output(recording, tmp_path):
     result = CliRunner().invoke(
         imitation_app, ["prepare", str(recording), "--output", str(tmp_path)]
     )
     assert result.exit_code == 2
     assert "already exists" in result.output
+
+
+@pytest.mark.parametrize(
+    "source", ["collect.db", "collect.mcap", "missing", "empty", "schema-directory"]
+)
+def test_prepare_requires_collection_directory_with_schema(source, tmp_path, mocker):
+    (tmp_path / "collect.db").touch()
+    (tmp_path / "collect.mcap").touch()
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "schema-directory" / "schema.json").mkdir(parents=True)
+    output = tmp_path / "dataset"
+    prepare = mocker.patch("dimos.cli.commands.imitation.run_lerobot_dataprep")
+
+    result = CliRunner().invoke(
+        imitation_app, ["prepare", str(tmp_path / source), "--output", str(output)]
+    )
+
+    assert result.exit_code == 2
+    assert "Expected a collection directory containing" in unstyle(result.output)
+    assert "schema.json" in result.output
+    assert "[Errno" not in result.output
+    prepare.assert_not_called()
+    assert not output.exists()
+
+
+def test_prepare_reports_inaccessible_schema(recording, tmp_path, mocker):
+    output = tmp_path / "dataset"
+    prepare = mocker.patch("dimos.cli.commands.imitation.run_lerobot_dataprep")
+    mocker.patch.object(Path, "is_file", side_effect=PermissionError("Permission denied"))
+
+    result = CliRunner().invoke(imitation_app, ["prepare", str(recording), "--output", str(output)])
+
+    message = " ".join(unstyle(result.output).replace("│", "").split())
+    assert result.exit_code == 2
+    assert "Invalid value for recording" in message
+    assert "Cannot access recording schema: Permission denied" in message
+    prepare.assert_not_called()
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("flags", [["--json"], ["--json", "--verbose"]])
@@ -147,6 +241,46 @@ def test_inspect_preserves_failure_exit_code(recording, mocker, flags):
     result = CliRunner().invoke(imitation_app, ["inspect", str(recording), *flags])
     assert result.exit_code == 1
     assert "Inspection failed: bad payload" in result.output
+
+
+def test_inspect_dataset_json_keeps_environment_progress_on_stderr(tmp_path, mocker):
+    (tmp_path / "meta").mkdir()
+    (tmp_path / "meta" / "info.json").write_text("{}")
+    mocker.patch(
+        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [], 0, stdout='{"command":"inspect","info":{"format":"lerobot"}}', stderr=""
+        ),
+    )
+
+    result = CliRunner().invoke(imitation_app, ["inspect", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"format": "lerobot"}
+    assert "Preparing LeRobot environment" in result.stderr
+
+
+def test_inspect_dataset_reports_error_separately_from_install_log(tmp_path, mocker):
+    (tmp_path / "meta").mkdir()
+    (tmp_path / "meta" / "info.json").write_text("{}")
+    mocker.patch(
+        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [],
+            1,
+            stdout='{"error":"Dataset metadata is invalid"}',
+            stderr="Creating virtual environment\nDownloading torch\nInstalled 157 packages\n",
+        ),
+    )
+
+    result = CliRunner().invoke(imitation_app, ["inspect", str(tmp_path), "--json"])
+
+    assert result.exit_code == 1
+    assert result.stderr.splitlines()[-1] == (
+        "Inspection failed: LeRobot dataprep exited with status 1: Dataset metadata is invalid"
+    )
+    assert "Downloading" not in result.output
+    assert result.stdout == ""
 
 
 def test_train_forwards_arguments_and_exit_code(mocker, monkeypatch, tmp_path):

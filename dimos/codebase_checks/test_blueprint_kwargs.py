@@ -20,7 +20,7 @@ from typing import get_type_hints
 from pydantic import BaseModel
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.robot.all_blueprints import all_blueprints
@@ -30,7 +30,7 @@ from dimos.robot.test_all_blueprints import SELF_HOSTED_BLUEPRINTS
 
 def _get_blueprint_or_skip(blueprint_name: str) -> Blueprint:
     try:
-        return load_blueprint(blueprint_name)
+        return autoconnect(load_blueprint(blueprint_name)).solidify()
     except OptionalDependencyError as e:
         pytest.skip(f"Skipping due to missing optional dependency: {e}")
 

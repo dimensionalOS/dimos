@@ -31,17 +31,17 @@ registration -- is the same stack either way.
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     manipulation_mapping,
@@ -124,7 +124,7 @@ def _sensing(simulated: bool) -> tuple[Blueprint, ...]:
                     "base_frame_id": "world",
                     "reset_joint_positions": XARM_GRASP_SCAN_JOINTS,
                     # Off by default, and the voxel chain has nothing to map
-                    # without it. Scene registration reads colour and depth.
+                    # without it. Localize reads colour and depth.
                     "enable_pointcloud": True,
                 }
             ),
@@ -136,37 +136,7 @@ def _sensing(simulated: bool) -> tuple[Blueprint, ...]:
     )
 
 
-def _scene_registration(simulated: bool) -> Blueprint:
-    """Detector settings differ: synthetic renders score far below real images."""
-    if simulated:
-        return ObjectSceneRegistrationModule.blueprint(
-            target_frame="world",
-            detector_backend="owlv2",
-            # OWLv2 is box-only; YOLO-E visual prompts refine its boxes into masks.
-            segmentation_backend="yolo",
-            detector_confidence=0.07,
-            segmentation_confidence=0.05,
-            # Keep adjacent tabletop targets distinct instead of merging by label.
-            distance_threshold=0.05,
-            detect_on_request=True,
-            # The obstacle stream carries permanent objects only, so one explicit
-            # scan must promote its first sightings immediately.
-            min_detections_for_permanent=1,
-        )
-    return ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
-        distance_threshold=0.08,
-        min_detections_for_permanent=3,
-        max_distance=1.0,
-        use_aabb=True,
-        max_obstacle_width=0.06,
-    )
-
-
-def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
+def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlueprint, ...]:
     """Everything in the grasping stack but the grasp provider.
 
     Exactly one provider may be composed in: PickAndPlaceModule resolves its
@@ -181,6 +151,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
             its wrist.
     """
     dof, robot_type = XARM_ARMS[arm]
+    control: Blueprint | MetaBlueprint
     if simulated and arm != "xarm7":
         raise ValueError(f"only the xArm7 has a simulated grasping scene, not the {arm}")
     if simulated:
@@ -228,7 +199,8 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint, ...]:
         ManipulationSkills.blueprint(),
         PickAndPlaceModule.blueprint(planning_frame="world", robot=model),
         *_sensing(simulated),
-        _scene_registration(simulated),
+        # Finds the objects pick_object takes by id, and the dense scene its contact check needs.
+        ManipulationLocalize.blueprint(world_frame="world"),
         manipulation_mapping(
             # Filter only the arm; gripper returns may remain in the map.
             self_filter_model=self_filter_model,

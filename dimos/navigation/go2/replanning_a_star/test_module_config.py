@@ -32,7 +32,7 @@ def test_robot_geometry_comes_from_the_shared_global_unless_overridden() -> None
 
 def test_one_global_flag_reaches_the_planner_and_the_patrol_module() -> None:
     parser = BlueprintConfigParser(
-        autoconnect(ReplanningAStarPlanner.blueprint(), PatrollingModule.blueprint())
+        autoconnect(ReplanningAStarPlanner.blueprint(), PatrollingModule.blueprint()).solidify()
     )
     parsed = parser.parse(["--robot-width", "0.5"], environ={})
     g = GlobalConfig(**parsed.global_config_values())

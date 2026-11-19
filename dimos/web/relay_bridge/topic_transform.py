@@ -15,14 +15,16 @@
 """Bounded optional media worker boundary; raw forwarding imports no codecs."""
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 import importlib
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from dimos.web.relay_bridge.topic_media import MediaOutput
+
+_T = TypeVar("_T")
 
 
 def _encode(profile: str, data: bytes, settings: Mapping[str, Any] | None) -> "MediaOutput":
@@ -43,16 +45,20 @@ class TopicTransforms:
     def __init__(self) -> None:
         self.slots = asyncio.Semaphore(2)
 
-    async def encode(
-        self, profile: str, data: bytes, settings: Mapping[str, Any] | None = None
-    ) -> "MediaOutput":
-        started = time.monotonic()
-        task = asyncio.create_task(asyncio.to_thread(_encode, profile, data, settings))
+    async def run(self, fn: Callable[..., _T], *args: Any) -> _T:
+        """One worker job; the caller holds a permit from ``slots``."""
+        task = asyncio.create_task(asyncio.to_thread(fn, *args))
         try:
-            result = await asyncio.shield(task)
+            return await asyncio.shield(task)
         except asyncio.CancelledError:
             with suppress(Exception):
                 await task
             raise
+
+    async def encode(
+        self, profile: str, data: bytes, settings: Mapping[str, Any] | None = None
+    ) -> "MediaOutput":
+        started = time.monotonic()
+        result = await self.run(_encode, profile, data, settings)
         result.metadata["encodeMs"] = (time.monotonic() - started) * 1000
         return result

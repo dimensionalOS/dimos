@@ -22,7 +22,7 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
-from dimos.web.relay_bridge.topic_media import encode_media
+from dimos.web.relay_bridge.topic_media import decode_color, encode_media
 from dimos.web.relay_bridge.topic_profiles import (
     MEDIA_PROFILES,
     PROFILE_OPTIONS,
@@ -138,6 +138,23 @@ def test_color_layouts_encode_the_same_visible_red(name):
         assert pixels[..., 1:].max() <= 5
 
 
+@pytest.mark.parametrize("encoding", ["mono8", "8UC1"])
+def test_grayscale_layouts_decode_to_rgb_for_every_shared_encoder(encoding):
+    message = Image.lcm_decode(
+        bytes.fromhex(next(v for v in VECTORS if v["name"] == "color_rgb")["lcm"])
+    )
+    message.height, message.width, message.encoding = 2, 2, encoding
+    message.step = 2
+    message.data = bytes([0, 80, 160, 240])
+    message.data_length = 4
+    payload = message.lcm_encode()
+    image, _ = decode_color(payload)
+    assert image.mode == "RGB"
+    assert np.asarray(image).tolist() == [[[0] * 3, [80] * 3], [[160] * 3, [240] * 3]]
+    result = encode_media("image.jpeg.balanced.v1", payload)
+    assert result.encoding == "image/jpeg"
+
+
 def test_camera_profile_resizes_before_jpeg_encoding():
     vector = next(v for v in VECTORS if v["name"] == "color_rgb")
     message = Image.lcm_decode(bytes.fromhex(vector["lcm"]))
@@ -216,3 +233,22 @@ def test_media_rejects_truncation_wrong_fingerprint_and_trailing_bytes(vector):
     for corrupt in (data[:-1], b"wrong-fp" + data[8:], data + b"\0"):
         with pytest.raises(ValueError):
             encode_media(vector["profile"], corrupt)
+
+
+@pytest.mark.parametrize(
+    ("box", "requested", "expected"),
+    [
+        ([1280, 720], 10_000_000, 2_500_000),
+        ([640, 360], None, 1_000_000),
+        ([1920, 1080], 200_000, 200_000),
+    ],
+)
+def test_video_bitrate_is_clamped_to_the_resolution_class(box, requested, expected):
+    settings = normalize_settings("video.h264.v1", {"maxResolution": box, "maxBitrate": requested})
+    assert settings["maxBitrate"] == expected
+
+
+@pytest.mark.parametrize("bitrate", [0, 99_999, True, 200_000.5])
+def test_video_bitrate_rejects_invalid_targets(bitrate):
+    with pytest.raises(ValueError, match="option_out_of_range"):
+        normalize_settings("video.h264.v1", {"maxBitrate": bitrate})

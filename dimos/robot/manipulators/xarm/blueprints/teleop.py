@@ -21,7 +21,7 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
@@ -94,6 +94,7 @@ keyboard_teleop_xarm6 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 keyboard_teleop_xarm7 = autoconnect(
@@ -126,6 +127,7 @@ keyboard_teleop_xarm7 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
 _lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
@@ -274,7 +276,7 @@ coordinator_teleop_xarm7 = autoconnect(
     ),
     # Serves the URDF and its meshes to viewers; the planner already puts the links on tf.
     UrdfManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_xarm7_teleop_hw.joints)),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
 coordinator_teleop_xarm6 = autoconnect(
@@ -315,7 +317,7 @@ coordinator_teleop_xarm6 = autoconnect(
         model=_xarm6_teleop_model,
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_xarm6_teleop_hw.joints)),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 
@@ -337,7 +339,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def _teleop(arm: XArmType) -> Blueprint:
+def _teleop(arm: XArmType) -> MetaBlueprint:
     """Jog an xArm's end and open and close its xArm Gripper from the Desktop
     Manipulation app, through ``XArmConnection``. ``UrdfManager`` serves the
     arm's URDF and puts its joints on tf, so the app can draw it.
