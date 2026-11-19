@@ -47,13 +47,6 @@ def test_declared_frames_publish_and_get(odom: Odom) -> None:
     assert odom.tfbuffer.get("world", "base_link", time_point=1.0) is not None
 
 
-def test_undeclared_frame_is_refused(odom: Odom) -> None:
-    with pytest.raises(ValueError, match=r"undeclared tf frames \['lidar'\]"):
-        odom.tfbuffer.publish(Transform(frame_id="base_link", child_frame_id="lidar", ts=1.0))
-    with pytest.raises(ValueError, match=r"undeclared tf frames \['map'\]"):
-        odom.tfbuffer.get("map", "base_link")
-
-
 def test_frames_are_configurable() -> None:
     module = Odom(tf_frames_local={"body": "robot0/base_link"})
     module._tf = module._create_tfbuffer(None)
@@ -61,8 +54,8 @@ def test_frames_are_configurable() -> None:
         module.tfbuffer.publish(
             Transform(frame_id="world", child_frame_id="robot0/base_link", ts=1.0)
         )
-        with pytest.raises(ValueError):
-            module.tfbuffer.get("world", "base_link")
+        with pytest.raises(ValueError, match="undeclared tf edges"):
+            module.tfbuffer.publish(Transform(frame_id="world", child_frame_id="base_link", ts=1.0))
     finally:
         module._tf = None
         module.stop()
@@ -71,6 +64,16 @@ def test_frames_are_configurable() -> None:
 def test_undeclared_edge_is_refused(odom: Odom) -> None:
     with pytest.raises(ValueError, match="undeclared tf edges"):
         odom.tfbuffer.publish(Transform(frame_id="base_link", child_frame_id="world", ts=1.0))
+
+
+def test_skip_tf_checks_publishes_any_edge() -> None:
+    module = Odom(skip_tf_checks=True)
+    module._tf = module._create_tfbuffer(None)
+    try:
+        module.tfbuffer.publish(Transform(frame_id="base_link", child_frame_id="lidar", ts=1.0))
+    finally:
+        module._tf = None
+        module.stop()
 
 
 def test_edges_must_use_declared_roles() -> None:

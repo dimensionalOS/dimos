@@ -19,6 +19,8 @@ from typing import Any, TypeAlias
 from pydantic import Field, model_validator
 
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import IO
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
 
 # A frame that belongs to one robot (base_link, lidar); a namespaced blueprint prefixes it.
@@ -33,6 +35,8 @@ class TfModuleConfig(ModuleConfig):
     tf_frames_global: dict[str, TransformFrameGlobal] = Field(default_factory=dict)
     # (parent role, child role) for every edge this module publishes; its tfbuffer refuses any other.
     tf_edges: list[tuple[str, str]] = Field(default_factory=list)
+    # Opt this module out of tf checks (its tfbuffer publishes any edge).
+    skip_tf_checks: bool = False
 
     @model_validator(mode="after")
     def _check_roles(self) -> "TfModuleConfig":
@@ -54,19 +58,10 @@ class TfModuleConfig(ModuleConfig):
 
 
 class TfModule(Module):
-    """Its ``tfbuffer`` looks up only the tf frames it declares, and publishes only the edges in ``tf_edges``."""
+    """Its ``tfbuffer`` publishes only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
-
-    @property
-    def tf_frames(self) -> set[str]:
-        return {*self.config.tf_frames_local.values(), *self.config.tf_frames_global.values()}
+    tf: IO[TFMessage]
 
     def _create_tfbuffer(self, port: Any) -> TF:
-        """TF itself refuses undeclared frames and edges, so ``self.tfbuffer`` is always checked."""
-        return TF(
-            port,
-            frames=self.tf_frames,
-            edges=self.config.tf_edge_frames,
-            owner=type(self).__name__,
-        )
+        return TF(port, edges=None if self.config.skip_tf_checks else self.config.tf_edge_frames)
