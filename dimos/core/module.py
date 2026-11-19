@@ -204,16 +204,14 @@ class ModuleBase(Configurable, CompositeResource):
         return base
 
     @classmethod
-    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it (once per level, innermost first).
+    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        """Only the config fields to change once ``Blueprint.namespace(prefix)`` wraps this module (once per level, innermost first).
 
-        The default stacks ``frame_id_prefix`` the way instance names stack: ``prefix/old``.
+        *config* is the module's kwargs over its config defaults. The default stacks
+        ``frame_id_prefix`` the way instance names stack: ``prefix/old``.
         """
-        frame_id_prefix = kwargs.get("frame_id_prefix")
-        return {
-            **kwargs,
-            "frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix,
-        }
+        frame_id_prefix = config.get("frame_id_prefix")
+        return {"frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix}
 
     @rpc
     def build(self) -> None:

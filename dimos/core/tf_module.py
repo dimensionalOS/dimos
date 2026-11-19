@@ -71,13 +71,12 @@ class TfModule(Module):
     tf: IO[TFMessage]
 
     @classmethod
-    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
         """Also prefix the local frames, so namespaced copies don't share frames."""
-        kwargs = super().handle_blueprint_namespace(kwargs, prefix=prefix)
         return {
-            **kwargs,
+            **super().handle_blueprint_namespace(config, prefix=prefix),
             "tf_frames_local": {
-                role: f"{prefix}/{frame}" for role, frame in kwargs["tf_frames_local"].items()
+                role: f"{prefix}/{frame}" for role, frame in config["tf_frames_local"].items()
             },
         }
 

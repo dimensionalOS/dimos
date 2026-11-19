@@ -222,7 +222,7 @@ class BlueprintProtocol(Protocol):
         ],
     ) -> Self: ...
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self: ...
+    def namespace(self, prefix: str, *, expose: Iterable[str] = ("tf",)) -> Self: ...
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self: ...
 
@@ -369,7 +369,7 @@ class Blueprint(BlueprintProtocol):
             )
         return names[0] if names else module.name
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self:
+    def namespace(self, prefix: str, *, expose: Iterable[str] = ("tf",)) -> Self:
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
         Instance names, stream names (and so their topics), and RPC topics all get
@@ -377,17 +377,16 @@ class Blueprint(BlueprintProtocol):
         its own config (TF frame ids), which disconnects the namespaced
         modules from everything outside.
 
-        The stream named ``tf`` always stays global: its frame ids are namespaced instead,
-        so every robot's transforms share one tf tree. Other TFMessage streams are namespaced.
-
         Stream names listed in *expose* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
-        namespace boundary:
+        namespace boundary. *expose* defaults to ``("tf",)``, so every robot's transforms
+        share one tf tree (their frame ids are namespaced instead); pass an *expose*
+        without ``"tf"`` to namespace tf too:
 
             fleet = autoconnect(
                 AggregateMapper.blueprint(),  # shared: sees every robot's pointcloud
                 *[
-                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", expose={"tf", "pointcloud"})
                     for i, ip in enumerate(ips)
                 ],
             )
@@ -407,7 +406,8 @@ class Blueprint(BlueprintProtocol):
                 if isinstance(effective, str):
                     effective_names.add(effective)
 
-        unknown = expose_set - effective_names
+        # "tf" is exposed by default, so a blueprint without a tf stream isn't an error.
+        unknown = expose_set - effective_names - {"tf"}
         if unknown:
             raise ValueError(
                 f"expose names {sorted(unknown)} do not match any stream in the "
@@ -419,24 +419,22 @@ class Blueprint(BlueprintProtocol):
 
         for atom in self.blueprints:
             new_name = f"{prefix}/{atom.name}"
-            defaults = config_defaults(atom.module)
-            handled = atom.module.handle_blueprint_namespace(
-                {**defaults, **atom.kwargs}, prefix=prefix
-            )
-            # Keep what was set or what the hook changed; untouched defaults stay unpinned.
-            kwargs = {
-                name: value
-                for name, value in handled.items()
-                if name in atom.kwargs or name not in defaults or value is not defaults[name]
-            }
-            kwargs["instance_name"] = new_name
+            config = {**config_defaults(atom.module), **atom.kwargs}
+            changes = atom.module.handle_blueprint_namespace(config, prefix=prefix)
+            unchanged = sorted(name for name, value in changes.items() if value is config.get(name))
+            if unchanged:
+                raise ValueError(
+                    f"{atom.module.__name__}.handle_blueprint_namespace returned {unchanged} "
+                    "unchanged; return only the fields it changes"
+                )
+            kwargs = {**atom.kwargs, **changes, "instance_name": new_name}
             new_atoms.append(replace(atom, kwargs=kwargs, instance_name=new_name))
 
             for stream in atom.streams:
                 effective = self.remapping_map.get((atom.name, stream.name), stream.name)
                 if not isinstance(effective, str):
                     continue
-                if effective in expose_set or effective == "tf":
+                if effective in expose_set:
                     if (atom.name, stream.name) in self.remapping_map:
                         new_remap[new_name, stream.name] = effective
                 else:
@@ -449,7 +447,7 @@ class Blueprint(BlueprintProtocol):
 
         new_transports = {}
         for (name, type_), transport in self.transport_map.items():
-            if name in expose_set or name == "tf":
+            if name in expose_set:
                 new_transports[name, type_] = transport
             else:
                 new_transports[f"{prefix}/{name}", type_] = _reprefix_transport(transport, prefix)
@@ -588,7 +586,7 @@ class MetaBlueprint(BlueprintProtocol):
     ) -> Self:
         return self._defer(Blueprint.remappings, tuple(remappings))
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ()) -> Self:
+    def namespace(self, prefix: str, *, expose: Iterable[str] = ("tf",)) -> Self:
         return self._defer(Blueprint.namespace, prefix, expose=tuple(expose))
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self:
