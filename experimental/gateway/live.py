@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+import enum
 import importlib
 import inspect
 import threading
-from typing import Any
+import types
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from fastapi.encoders import jsonable_encoder
 import psutil
@@ -87,6 +89,58 @@ def load_class(path: str) -> Any:
     """A module class from its class path (what Dimos.restart and Dimos.unload take)."""
     module, name = path.rsplit(".", 1)
     return getattr(importlib.import_module(module), name)
+
+
+def is_message(kind: Any) -> bool:
+    """A dimos message class (what an RPC sends whole over the wire: JointState, PoseStamped, ...)."""
+    return inspect.isclass(kind) and callable(getattr(kind, "lcm_encode", None))
+
+
+def from_json(value: Any, hint: Any) -> Any:
+    """`value` as JSON gave it, built into what `hint` asks for: a dimos message from its fields (an object, or what
+    the message's own constructor takes), inside dicts, lists, tuples and optionals too. Anything else is unchanged."""
+    origin = get_origin(hint)
+    if origin in (Union, types.UnionType):
+        for option in get_args(hint):
+            if option is not type(None) and value is not None:
+                built = from_json(value, option)
+                if built is not value:
+                    return built
+        return value
+    if isinstance(value, dict) and origin is not None and len(get_args(hint)) == 2:
+        if origin in (dict,) or (inspect.isclass(origin) and issubclass(origin, Mapping)):
+            item_hint = get_args(hint)[1]
+            return {key: from_json(item, item_hint) for key, item in value.items()}
+    if isinstance(value, list) and origin in (list, tuple, Sequence, set, frozenset):
+        hints = get_args(hint)
+        if origin is tuple and hints and hints[-1] is not Ellipsis:
+            return tuple(
+                from_json(item, item_hint) for item, item_hint in zip(value, hints, strict=False)
+            )
+        return [from_json(item, hints[0]) for item in value] if hints else value
+    if is_message(hint) and isinstance(value, dict | list):
+        try:
+            return hint(**value) if isinstance(value, dict) else hint(*value)
+        except (TypeError, ValueError):
+            return hint(value)
+    return value
+
+
+def json_call_args(
+    rpc: Any, args: list[Any], kwargs: dict[str, Any]
+) -> tuple[list[Any], dict[str, Any]]:
+    """An RPC's JSON args and kwargs built into the messages its signature names (unchanged where it names none, or
+    when its hints can't be read)."""
+    try:
+        hints = get_type_hints(rpc)
+        params = [name for name in inspect.signature(rpc).parameters if name != "self"]
+    except Exception:
+        return args, kwargs
+    built_args = [
+        from_json(value, hints.get(params[index])) if index < len(params) else value
+        for index, value in enumerate(args)
+    ]
+    return built_args, {name: from_json(value, hints.get(name)) for name, value in kwargs.items()}
 
 
 def live_run_id() -> str | None:
@@ -201,6 +255,13 @@ class Live:
         handle = self.app().get_module(
             module_id.replace(":", "/") if ":" in module_id else module["class"]
         )
+        # JSON can't carry a dimos message: build the ones the RPC's signature names (JointState, PoseStamped, ...)
+        try:
+            rpc = getattr(load_class(module["catalogId"]), name, None)
+        except Exception:
+            rpc = None
+        if callable(rpc):
+            args, kwargs = json_call_args(rpc, args, kwargs)
         try:
             result = getattr(handle, name)(*args, **kwargs)
         except TimeoutError:
@@ -208,7 +269,10 @@ class Live:
         except Exception as error:
             return {"ok": False, "result": None, "error": f"{type(error).__name__}: {error}"}
         try:
-            encoded = jsonable_encoder(result)
+            # an enum by its name: a plain value (often auto()'s 1, 2, ...) says nothing to a caller
+            encoded = jsonable_encoder(
+                result, custom_encoder={enum.Enum: lambda member: member.name}
+            )
         except ValueError:  # jsonable_encoder's error for a value with no fields it can read (no __dict__, not iterable)
             encoded = str(result)
         return {"ok": True, "result": encoded, "error": None}

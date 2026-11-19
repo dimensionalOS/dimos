@@ -295,3 +295,93 @@ def test_connect_uses_the_active_runs_transport_not_the_last_launchs(
     assert live.connect_dimos() == "lcm"
     registered(terminal_run.pid, original_argv=["dimos", "--transport=lcm", "run", "demo"])
     assert live.connect_dimos() == "lcm"
+
+
+def test_json_args_become_the_messages_an_rpc_names() -> None:
+    from collections.abc import Mapping
+
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.sensor_msgs.JointState import JointState
+
+    class Planner:
+        def plan_to_joints(
+            self, targets: Mapping[str, JointState], speed_scale: float | None = None
+        ) -> None: ...
+        def plan_to_poses(self, targets: dict[str, PoseStamped]) -> None: ...
+        def pick(
+            self, pose: PoseStamped | None = None, labels: list[str] | None = None
+        ) -> None: ...
+
+    args, kwargs = live.json_call_args(
+        Planner.plan_to_joints,
+        [{"arm": {"name": ["j1", "j2"], "position": [0.1, 0.2]}}],
+        {"speed_scale": 0.5},
+    )
+    joints = args[0]["arm"]
+    assert (
+        isinstance(joints, JointState)
+        and joints.name == ["j1", "j2"]
+        and joints.position == [0.1, 0.2]
+    )
+    assert kwargs == {"speed_scale": 0.5}
+
+    _, kwargs = live.json_call_args(
+        Planner.plan_to_poses,
+        [],
+        {
+            "targets": {
+                "arm": {"frame_id": "world", "position": [1, 2, 3], "orientation": [0, 0, 0, 1]}
+            }
+        },
+    )
+    pose = kwargs["targets"]["arm"]
+    assert isinstance(pose, PoseStamped) and pose.frame_id == "world"
+    assert [pose.position.x, pose.position.y, pose.position.z, pose.orientation.w] == [1, 2, 3, 1]
+
+    # an optional message, None, and plain values pass through as they are
+    _, kwargs = live.json_call_args(Planner.pick, [], {"pose": None, "labels": ["cup"]})
+    assert kwargs == {"pose": None, "labels": ["cup"]}
+
+
+def test_an_rpc_gets_messages_built_from_json(
+    client: TestClient, dimos: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dimos.msgs.sensor_msgs.JointState import JointState
+
+    class Speaker:
+        def speak(self, text: str, joints: JointState | None = None) -> None: ...
+
+    monkeypatch.setattr(live, "load_class", lambda path: Speaker)
+    client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        json={"kwargs": {"text": "hi", "joints": {"name": ["a"], "position": [1.0]}}},
+    )
+    ((_, kwargs),) = dimos["apps"][-1].calls
+    assert kwargs["text"] == "hi" and isinstance(kwargs["joints"], JointState)
+
+
+def test_an_rpcs_enums_come_back_by_name(
+    client: TestClient, dimos: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import dataclass
+    from enum import Enum, auto
+
+    class Status(Enum):
+        SUCCEEDED = auto()
+        FAILED = auto()
+
+    @dataclass
+    class Result:
+        status: Status
+        message: str
+
+    def get_module(self: FakeDimos, name: str) -> Any:
+        class Handle:
+            def __getattr__(self, rpc: str) -> Any:
+                return lambda *args, **kwargs: Result(Status.FAILED, "no path")
+
+        return Handle()
+
+    monkeypatch.setattr(FakeDimos, "get_module", get_module)
+    called = client.post("/active/modules/robot0:speaker/rpcs/speak").json()
+    assert called["result"] == {"status": "FAILED", "message": "no path"}
