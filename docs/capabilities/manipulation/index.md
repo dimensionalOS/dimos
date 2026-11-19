@@ -5,6 +5,9 @@ the default world and native path planner.
 
 For typed client RPCs, see [Manipulation from Python](/docs/capabilities/manipulation/python_api.md).
 
+To measure a wrist camera's pose relative to its mounting link, see
+[Eye-in-hand calibration](/docs/capabilities/manipulation/hand_eye_calibration.md).
+
 For demonstration collection, dataset preparation, training, and compatible
 checkpoint rollout, see [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md).
 Start with the OpenYAM hand-teaching tutorial or choose a guide for your task.
