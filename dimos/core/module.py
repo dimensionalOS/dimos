@@ -322,8 +322,11 @@ class ModuleBase(Configurable, CompositeResource):
                     f"{type(self).__name__}.tf port has no transport yet — "
                     "deploy via a blueprint or call set_transport('tf', ...) first"
                 )
-            self._tf = TF(port)
+            self._tf = self._create_tfbuffer(port)
         return self._tf
+
+    def _create_tfbuffer(self, port: Any) -> TF:
+        return TF(port)
 
     @classproperty
     def rpcs(self) -> dict[str, Callable[..., Any]]:
