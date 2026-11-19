@@ -119,6 +119,7 @@ class PremapModule(Module):
     named_locations: IO[InteractiveMarkerUpdate]
     named_locations_request: In[String]
     local_map: In[PointCloud2]
+    # TODO: clean up relocalization once the ray tracer outputs a CloudUpdate message: remove the scan input and only use that
     lidar: In[PointCloud2]
 
     _placed: bool = False
