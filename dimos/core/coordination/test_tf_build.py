@@ -202,3 +202,28 @@ def test_every_base_keeps_its_blueprint_check() -> None:
     )
     coordinator.stop()
     assert sorted(calls) == [-1, 1]
+
+
+class FailingCheck(Module):
+    @staticmethod
+    def blueprint_checks(atoms: list[BlueprintAtom]) -> None:
+        raise ValueError("first check failed")
+
+
+class OtherFailingCheck(Module):
+    @staticmethod
+    def blueprint_checks(atoms: list[BlueprintAtom]) -> None:
+        raise ValueError("second check failed")
+
+
+def test_every_failed_check_is_reported() -> None:
+    blueprint = autoconnect(FailingCheck.blueprint(), OtherFailingCheck.blueprint()).solidify()
+    with pytest.raises(ExceptionGroup) as raised:
+        ModuleCoordinator.build(
+            blueprint,
+            BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}}),
+        )
+    assert sorted(str(error) for error in raised.value.exceptions) == [
+        "first check failed",
+        "second check failed",
+    ]
