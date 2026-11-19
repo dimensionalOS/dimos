@@ -80,6 +80,8 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
             return SimpleNamespace(fix=None)
 
     monkeypatch.setattr(relocalization, "LidarRelocalizer", FakeRelocalizer)
+    # Synchronous, so the attempts land before the assert and no worker thread is left behind
+    monkeypatch.setattr(relocalization, "backpressure", lambda clouds: clouds)
     tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
     cloud = PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32))
     for once in (True, False):
@@ -90,10 +92,6 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
         m._start_matching()
         m.submit(tf)
         clouds.on_next(cloud)
-    deadline = time.monotonic() + 5.0
-    while not attempts and time.monotonic() < deadline:
-        time.sleep(0.01)
-    time.sleep(0.1)
     assert attempts == [tf]
 
 
