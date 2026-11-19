@@ -17,7 +17,7 @@
 Everything here works on plain arrays in degrees and seconds, keyed by joint
 name, so it can be tested on synthetic responses and reused by the offline
 report for any arm. A step passes when its whole hold was recorded, every
-metric is finite, and it settles within 0.5 s to within 0.1 deg, overshoots
+sample and metric is finite, and it settles within 0.5 s to within 0.1 deg, overshoots
 less than 20 % and leaves the joint quiet at rest. ``propose_gains`` picks,
 per joint, the stiffest tried gains whose steps all pass in both directions
 and below which every tried candidate (every lower kp scale, whatever its kd)
@@ -79,6 +79,9 @@ class StepMetrics:
     ``hold_s`` is the hold the step asked for, ``recorded_s`` the time of its
     last recorded sample; a hold cut short (by the next step or the end of the
     recording) leaves the rest metrics unreliable, and the step fails.
+    ``samples`` counts the finite samples the metrics come from;
+    ``nonfinite_samples`` those left out for a NaN or infinite value, which
+    fail the step too, as does a step with no samples at all.
     """
 
     joint: str
@@ -93,6 +96,7 @@ class StepMetrics:
     buzz_rms_deg_s: float
     hold_s: float
     recorded_s: float
+    nonfinite_samples: int = 0
 
     @property
     def hold_complete(self) -> bool:
@@ -107,6 +111,13 @@ class StepMetrics:
         """Why this step fails the pass criteria, in plain words; empty when it passes."""
         reasons: list[str] = []
         step = f"{self.delta_deg:+g} deg step"
+        if self.nonfinite_samples:
+            reasons.append(f"{step} has {self.nonfinite_samples} non-finite sample(s)")
+        if self.samples == 0:
+            reasons.append(
+                f"{step} has no {'finite' if self.nonfinite_samples else 'recorded'} samples"
+            )
+            return reasons
         if not self.hold_complete:
             reasons.append(
                 f"{step} hold was cut short: {self.recorded_s:.2f} of {self.hold_s:g} s recorded"
@@ -203,12 +214,33 @@ def analyze_step(
     dy_deg_s: np.ndarray,
     y0_deg: float | None = None,
 ) -> StepMetrics:
-    """Metrics of one step from samples ``t`` (seconds since the command), ``y`` and ``dy``."""
+    """Metrics of one step from samples ``t`` (seconds since the command), ``y`` and ``dy``.
+
+    A sample with a non-finite value is left out of the metrics and fails the
+    step; with no samples left the step fails and its metrics are NaN.
+    """
     t = np.asarray(t, dtype=np.float64)
     y_deg = np.asarray(y_deg, dtype=np.float64)
     dy_deg_s = np.asarray(dy_deg_s, dtype=np.float64)
+    finite = np.isfinite(t) & np.isfinite(y_deg) & np.isfinite(dy_deg_s)
+    nonfinite = int(finite.size - finite.sum())
+    t, y_deg, dy_deg_s = t[finite], y_deg[finite], dy_deg_s[finite]
     if t.size == 0:
-        raise ValueError(f"no samples for the {event.joint} step at t0={event.t0}")
+        return StepMetrics(
+            joint=event.joint,
+            delta_deg=event.delta_deg,
+            kp=event.kp,
+            kd=event.kd,
+            samples=0,
+            first_motion_s=None,
+            settle_time_s=None,
+            overshoot_pct=math.nan,
+            steady_state_error_deg=math.nan,
+            buzz_rms_deg_s=math.nan,
+            hold_s=event.hold_s,
+            recorded_s=0.0,
+            nonfinite_samples=nonfinite,
+        )
     y0 = event.target_before_deg if y0_deg is None else y0_deg
     target = event.target_after_deg
     return StepMetrics(
@@ -224,6 +256,7 @@ def analyze_step(
         buzz_rms_deg_s=buzz_rms(t, dy_deg_s),
         hold_s=event.hold_s,
         recorded_s=float(t[-1]),
+        nonfinite_samples=nonfinite,
     )
 
 
@@ -305,7 +338,7 @@ def propose_gains(
     Candidates are ``(kp, kd)`` pairs; by default every pair with a recorded
     step. A candidate passes when it has at least one positive and one
     negative step on the joint and every one of its steps passes (whole hold
-    recorded, finite metrics, settles under 0.5 s to 0.1 deg, overshoots under
+    recorded, finite samples and metrics, settles under 0.5 s to 0.1 deg, overshoots under
     20 %, rests on target and does not buzz). It is accepted only when every
     tried candidate with a lower kp passed too, whatever its kd: the sweep
     scales kd with the square root of the kp scale, so the candidates are
