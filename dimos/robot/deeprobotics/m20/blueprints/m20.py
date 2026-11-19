@@ -29,7 +29,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as Zen
 from dimos.robot.deeprobotics.m20.blueprints._nav import VOXEL_SIZE_M, m20_nav_stack
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
-from dimos.robot.deeprobotics.m20.constants import MAP_FRAME
+from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
 from dimos.robot.urdf_manager import UrdfManager
 
@@ -41,7 +41,7 @@ m20 = (
         M20StandingJointState.blueprint(),
         m20_nav_stack().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
         PremapModule.blueprint(
-            world_frame=MAP_FRAME,
+            world_frame=WORLD_FRAME,
             map_frame="premap",
             # matches against the office premap top out near 0.7 fitness, under the nav preset's 0.8
             relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65}),

@@ -29,6 +29,7 @@ import time
 from typing import Any, Literal
 import uuid
 
+import numpy as np
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
 
@@ -134,10 +135,10 @@ class PremapModule(Module):
         super().__init__(**kwargs)
         self.fixes: Subject[Transform] = Subject()
         self.premap: PointCloud2 | None = None
-        # The last accepted world_frame -> map fix.
+        # The last accepted world_frame -> map fix; split, where the first one placed the premap for good
         self.fix: Transform | None = None
-        # The first fix, as map -> premap: where the premap was placed in the map frame for good
-        self._placement: Transform | None = None
+        # Split: the latest map -> premap fix, which world -> map follows
+        self._map_fix: Transform | None = None
         self._lock = threading.Lock()
         self._locations: dict[str, PoseStamped] = {}
         self._server_id = uuid.uuid4().hex
@@ -149,7 +150,6 @@ class PremapModule(Module):
         self._first_sparse_cloud: float | None = None
         self._last_skip_log: float | None = None
         self.live = LiveMap(self.config.live_voxel_m)
-        self._live_frame = self.config.world_frame
         self._center: tuple[float, float] | None = None
         self._refusals = 0
 
@@ -213,13 +213,21 @@ class PremapModule(Module):
         )
 
     def _on_local_map(self, cloud: PointCloud2) -> None:
-        self.live.fold(cloud)
-        self._live_frame = cloud.frame_id
+        to_live = self.frame_to(self._live_frame, cloud.frame_id)
+        if to_live is None:
+            logger.warning(
+                f"local_map skipped: no transform from {cloud.frame_id!r} to {self._live_frame!r}"
+            )
+            return
+        self.live.fold(cloud, to_live)
         points = cloud.points_f32().reshape(-1, 3)
         if len(points):
             # The local map is a window around the robot, so its xy middle is close enough.
             low, high = points[:, :2].min(axis=0), points[:, :2].max(axis=0)
-            self._center = (float(low[0] + high[0]) / 2, float(low[1] + high[1]) / 2)
+            middle = to_live.to_matrix() @ np.array(
+                [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, 0.0, 1.0]
+            )
+            self._center = (float(middle[0]), float(middle[1]))
 
     def _maybe_log_skip(self, msg: PointCloud2) -> None:
         if self._has_enough_points(msg):
@@ -283,9 +291,6 @@ class PremapModule(Module):
             return
         self._refusals = 0
         logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={len(msg)}")
-        if lost and self._split:
-            # The fix jumped world -> map, so live voxels already kept sit where the old frame put them.
-            self.live.mark_stale()
         self.submit(tf, "lidar")
 
     def _start_tf(self) -> None:
@@ -297,15 +302,19 @@ class PremapModule(Module):
 
     @property
     def _split(self) -> bool:
-        """world -> map and map -> premap are separate edges (neither frame is the map itself)."""
+        """Odometry is in map, a frame apart from world and the premap: world -> map and world -> premap."""
         return DEFAULT_MAP_FRAME not in (self.config.world_frame, self.map_frame)
 
+    @property
+    def _live_frame(self) -> str:
+        """Split: live voxels are kept in map, the odometry frame no fix moves, so they never go stale."""
+        return DEFAULT_MAP_FRAME if self._split else self.config.world_frame
+
     def _world_to_map(self) -> Transform:
-        """world -> map: identity until the first fix, then each fix's change since it."""
-        identity = Transform(frame_id=self.config.world_frame, child_frame_id=DEFAULT_MAP_FRAME)
-        if self.fix is None or self._placement is None:
-            return identity
-        return self.fix + self._placement.inverse()
+        """world -> map: identity until the first fix, then whatever puts the latest map -> premap fix on the placed premap."""
+        if self.fix is None or self._map_fix is None:
+            return Transform(frame_id=self.config.world_frame, child_frame_id=DEFAULT_MAP_FRAME)
+        return self.fix + self._map_fix.inverse()
 
     @property
     def map_frame(self) -> str:
@@ -337,7 +346,7 @@ class PremapModule(Module):
         premap.frame_id = self.map_frame
         self.premap = premap
 
-        # Only the first fix places the premap: later ones move world -> map, and the map moves with it.
+        # Only the first fix places the premap: split, later ones move world -> map instead.
         self.register_disposable(
             fix_stream(self.fixes.pipe(ops.take(1)), self.config.republish_loaded_map).subscribe(
                 lambda _: self.loaded_map.publish(premap)
@@ -345,11 +354,9 @@ class PremapModule(Module):
         )
 
     def publish_tf(self) -> None:
-        """Split: world -> map always, map -> premap once placed. Otherwise world -> premap once fixed."""
+        """Split: world -> map always, world -> premap once placed. Otherwise world -> premap once fixed."""
         if self._split:
-            edges = [self._world_to_map()]
-            if self._placement is not None:
-                edges.append(self._placement)
+            edges = [self._world_to_map()] + ([self.fix] if self.fix is not None else [])
             self.tf.publish(TFMessage(*(edge.now() for edge in edges)))
         elif self.fix is not None:
             self.tf.publish(TFMessage(self.fix.now()))
@@ -374,14 +381,13 @@ class PremapModule(Module):
             translation=str(tf.translation),
             yaw_deg=round(yaw_deg(tf), 1),
         )
-        if self._placement is None:
-            self._placement = Transform(
-                translation=tf.translation,
-                rotation=tf.rotation,
-                frame_id=DEFAULT_MAP_FRAME,
-                child_frame_id=map_frame,
-            )
-        self.fix = tf
+        if self._split:
+            # tf is world -> premap under the current world -> map; keep its map -> premap part
+            self._map_fix = self._world_to_map().inverse() + tf
+            if self.fix is None:
+                self.fix = tf
+        else:
+            self.fix = tf
         self.fixes.on_next(tf)
         if not self._placed and self.config.relocalize_once:
             logger.info(f"relocalize {source}: placed, no further attempts (relocalize_once)")

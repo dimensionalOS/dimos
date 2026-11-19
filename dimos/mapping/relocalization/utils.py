@@ -74,36 +74,29 @@ class LiveMap:
         self.voxel = voxel
         self._keys = np.empty(0, dtype=np.int64)
         self._points = np.empty((0, 3), dtype=np.float32)
-        # Voxels built under a frame a later fix moved; the ray tracer keeps republishing them
-        self._stale = np.empty(0, dtype=np.int64)
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
         return len(self._keys)
 
-    def fold(self, local_map: PointCloud2) -> None:
+    def fold(self, local_map: PointCloud2, to_frame: Transform | None = None) -> None:
+        """Keep *local_map*'s non-premap voxels, moved by *to_frame* (frame -> local_map's frame) first."""
         flags = local_map.flags_u32()
         if flags is None:
             raise ValueError(
                 "local_map has no flags, so premap voxels cannot be told apart: run the ray tracer with a premap"
             )
         points = local_map.points_f32().reshape(-1, 3)[(flags & _PREMAP_BIT) == 0]
+        if to_frame is not None:
+            matrix = to_frame.to_matrix()
+            points = (points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
         keys = _pack(points, self.voxel)
         with self._lock:
-            fresh = ~np.isin(keys, self._stale)
-            keys, points = keys[fresh], points[fresh]
             all_keys = np.concatenate([keys, self._keys])
             all_points = np.concatenate([points, self._points])
             # First occurrence wins, so a voxel's newest point is kept.
             self._keys, first = np.unique(all_keys, return_index=True)
             self._points = all_points[first]
-
-    def mark_stale(self) -> None:
-        """Drop every kept voxel and ignore it from now on: it was built under a frame that moved."""
-        with self._lock:
-            self._stale = np.union1d(self._stale, self._keys)
-            self._keys = np.empty(0, dtype=np.int64)
-            self._points = np.empty((0, 3), dtype=np.float32)
 
     def cloud(
         self, frame_id: str, center: tuple[float, float] | None, radius: float
