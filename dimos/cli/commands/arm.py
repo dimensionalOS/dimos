@@ -15,7 +15,7 @@
 """The `dimos arm` commands: calibrate an arm, show its calibration, bake it into a URDF.
 
 ``dimos arm calibrate`` is a terminal walk-through of the calibration module
-(``dimos.robot.manipulators.calibration``). It starts ``dimos run
+(``dimos.control.calibration``). It starts ``dimos run
 <robot>-calibrate --daemon`` as a subprocess (recording only happens on the
 ``dimos run`` path), reaches the running ``CalibrationModule`` through
 ``Dimos.connect()``, and answers its confirmations from the keyboard.
@@ -132,7 +132,7 @@ def echo(text: str = "", *, nl: bool = True, err: bool = False) -> None:
 
 
 def arms_root() -> Path:
-    from dimos.robot.manipulators.calibration.schema import ARMS_STATE_DIR
+    from dimos.control.calibration.schema import ARMS_STATE_DIR
 
     return ARMS_STATE_DIR
 
@@ -827,7 +827,7 @@ def _split_steps(steps: str | None, known: list[str]) -> list[str] | None:
 
 
 def _check_robot(robot: str) -> None:
-    from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS
+    from dimos.control.calibration.robots import KNOWN_ROBOTS
 
     if robot not in KNOWN_ROBOTS:
         echo(f"Unknown robot {robot!r}. Available: {', '.join(KNOWN_ROBOTS)}", err=True)
@@ -836,8 +836,8 @@ def _check_robot(robot: str) -> None:
 
 def _arm_ids(robot: str, arm: str | None) -> list[str]:
     """The robot's arm ids ``arm`` names: "left", its bus "left_arm" or its id; all when None."""
-    from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS
-    from dimos.robot.manipulators.calibration.spec import arm_name
+    from dimos.control.calibration.robots import KNOWN_ROBOTS
+    from dimos.control.calibration.spec import arm_name
 
     machine = KNOWN_ROBOTS[robot]
     ids = machine.arm_ids()
@@ -874,11 +874,11 @@ def _precheck(
     """
     from pydantic import ValidationError
 
-    from dimos.robot.manipulators.calibration.module import CalibrationModuleConfig
-    from dimos.robot.manipulators.calibration.procedure import Capabilities, Procedure
-    from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS, calibration_keys
-    from dimos.robot.manipulators.calibration.spec import NoWorkspaceGuardError
-    from dimos.robot.manipulators.calibration.steps import calibration_steps
+    from dimos.control.calibration.module import CalibrationModuleConfig
+    from dimos.control.calibration.procedure import Capabilities, Procedure
+    from dimos.control.calibration.robots import KNOWN_ROBOTS, calibration_keys
+    from dimos.control.calibration.spec import NoWorkspaceGuardError
+    from dimos.control.calibration.steps import calibration_steps
 
     given: dict[str, Any] = {"poses": poses, "speed_deg_s": speed_deg_s}
     try:
@@ -1032,7 +1032,7 @@ def calibrate_cmd(
     Extra flags go to `dimos run <robot>-calibrate`, e.g.
     --dualopenyamconnection.left-can-port can0.
     """
-    from dimos.robot.manipulators.calibration.steps import calibration_steps
+    from dimos.control.calibration.steps import calibration_steps
 
     _check_robot(robot)
     known = [step.id for step in calibration_steps()]
@@ -1134,7 +1134,7 @@ def _fmt_time(value: datetime) -> str:
 
 
 def print_calibration(arm_id: str, root: Path) -> None:
-    from dimos.robot.manipulators.calibration.schema import (
+    from dimos.control.calibration.schema import (
         HISTORY_DIR_NAME,
         ArmCalibrationError,
         calibration_path,
@@ -1224,7 +1224,7 @@ def bake_cmd(
     out: Path = typer.Option(..., "--out", help="URDF to write"),
 ) -> None:
     """Write a URDF with the arm's fitted link masses and centres of mass."""
-    from dimos.robot.manipulators.calibration.schema import (
+    from dimos.control.calibration.schema import (
         ArmCalibrationError,
         bake_into_urdf,
         calibration_path,
