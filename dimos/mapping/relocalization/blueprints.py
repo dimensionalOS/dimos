@@ -32,14 +32,12 @@ from dimos.core.stream import Out
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.memory.replay import ReplayStream
+from dimos.memory.replay_progress import ReplayProgress
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import resolve_named_path
-from dimos.utils.logging_config import setup_logger
 from dimos.visualization.vis_module import vis_module
-
-logger = setup_logger()
 
 WORLD = "odom"
 
@@ -75,14 +73,12 @@ class RecordingPlayer(Module):
             duration=self.config.duration,
         )
         lidar: ReplayStream[PointCloud2] = replay.stream(self.config.stream)
-        logger.info(
-            f"Replaying {path.name}:{self.config.stream} "
-            f"({lidar.count()} frames at {self.config.speed}x)"
-        )
-        subscriptions.add(lidar.observable().subscribe(self.lidar.publish))
-
         tf: ReplayStream[TFMessage] = replay.stream("tf")
-        subscriptions.add(tf.observable().subscribe(self.tf.publish))
+        progress = ReplayProgress(str(path))
+        progress.start(replay, [lidar, tf])
+        subscriptions.add(progress.track(lidar.observable()).subscribe(self.lidar.publish))
+        subscriptions.add(progress.track(tf.observable()).subscribe(self.tf.publish))
+        progress.seal()
 
 
 def _fine_points(cloud: Any) -> Any:

@@ -28,7 +28,7 @@ from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
@@ -215,7 +215,7 @@ def dual_openyam_leaders(
     ).remappings([(connection, "joint_state", "leader_joint_command")])
 
 
-def dual_openyam_leader_control() -> Blueprint:
+def dual_openyam_leader_control() -> MetaBlueprint:
     """The trajectory task fed by the leader port, plus a jaw per side, over the two-bus connection."""
     return autoconnect(
         DualOpenYamLeaderCoordinator.blueprint(

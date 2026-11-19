@@ -52,32 +52,36 @@ def _remappings(
 
 
 def test_sim_composes_the_navigation_the_robot_runs() -> None:
-    sim, robot = _atoms(go2_sim_nav), _atoms(go2_nav)
-    for name in _atoms(_go2_nav):
+    sim, robot = _atoms(go2_sim_nav.solidify()), _atoms(go2_nav.solidify())
+    for name in _atoms(_go2_nav.solidify()):
         assert (sim[name].module, sim[name].kwargs) == (robot[name].module, robot[name].kwargs)
-        assert _remappings(go2_sim_nav, name) == _remappings(go2_nav, name)
+        assert _remappings(go2_sim_nav.solidify(), name) == _remappings(go2_nav.solidify(), name)
 
 
 def test_teleop_cancel_reaches_the_planner() -> None:
     def goal_topic(module: type[ModuleBase]) -> tuple[str | type[ModuleBase] | type[Spec], type]:
-        (atom,) = (a for a in go2_nav.active_blueprints if a.module is module)
+        (atom,) = (a for a in go2_nav.solidify().active_blueprints if a.module is module)
         (stream,) = (s for s in atom.streams if s.name == "goal")
-        return go2_nav.remapping_map.get((atom.name, "goal"), "goal"), stream.type
+        return go2_nav.solidify().remapping_map.get((atom.name, "goal"), "goal"), stream.type
 
     assert goal_topic(MLSPlannerNative) == goal_topic(MovementManager)
 
 
 def test_one_movement_manager() -> None:
-    assert [a.module for a in go2_sim_nav.active_blueprints].count(MovementManager) == 1
+    assert [a.module for a in go2_sim_nav.solidify().active_blueprints].count(MovementManager) == 1
 
 
 def test_viewer_gets_the_navigation_config() -> None:
-    (bridge,) = (a for a in go2_sim_nav.active_blueprints if a.module is RerunBridgeModule)
+    (bridge,) = (
+        a for a in go2_sim_nav.solidify().active_blueprints if a.module is RerunBridgeModule
+    )
     assert go2_nav_overrides().keys() <= bridge.kwargs["visual_override"].keys()
     assert go2_nav_static().keys() <= bridge.kwargs["static"].keys()
 
 
-@pytest.mark.parametrize("blueprint", [go2_sim, go2_sim_nav, go2_sim_patrol])
+@pytest.mark.parametrize(
+    "blueprint", [go2_sim.solidify(), go2_sim_nav.solidify(), go2_sim_patrol.solidify()]
+)
 def test_one_worker_per_module_with_gossip_off(blueprint: Blueprint) -> None:
     overrides = blueprint.global_config_overrides
     assert overrides["n_workers"] == len(blueprint.active_blueprints)
@@ -85,7 +89,7 @@ def test_one_worker_per_module_with_gossip_off(blueprint: Blueprint) -> None:
 
 
 def test_an_episode_world_waits_for_the_driver_to_load_its_scene() -> None:
-    assert _atoms(go2_sim_nav_episode)["simgo2world"].kwargs["wait_for_scene"] is True
+    assert _atoms(go2_sim_nav_episode.solidify())["simgo2world"].kwargs["wait_for_scene"] is True
 
 
 def test_dimos_run_takes_the_flags_the_bench_runner_passes(tmp_path: Path) -> None:
@@ -109,4 +113,4 @@ def test_dimos_run_takes_the_flags_the_bench_runner_passes(tmp_path: Path) -> No
         GlobalConfig.model_fields
     )
     assert command[run + 1] == "go2-sim-nav-episode"
-    BlueprintConfigParser(go2_sim_nav_episode).parse(command[run + 2 :], environ={})
+    BlueprintConfigParser(go2_sim_nav_episode.solidify()).parse(command[run + 2 :], environ={})

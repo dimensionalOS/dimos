@@ -13,14 +13,15 @@
 // limitations under the License.
 
 use std::collections::{HashMap, VecDeque};
+use std::f32::consts::PI;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::goal_status::{
     clear_if_held, stop_on_arrival, Blocked, Goal, GoalId, LatestStatus, Report, Stall,
-    StatusReporter, NO_GOAL_FRAME, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED,
-    PREEMPT_REPLACED,
+    StatusReporter, HEADING_NOT_REACHED, NO_GOAL_FRAME, NO_POSE, NO_PROGRESS, NO_SAFE_PATH,
+    PREEMPT_CANCELED, PREEMPT_REPLACED,
 };
 use crate::mls_planner::{ms_since, Config, Plan, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::planner::snap_pose_to_cell;
@@ -32,7 +33,7 @@ use dimos_module::{
     debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
 };
 use lcm_msgs::actionlib_msgs::GoalStatus;
-use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
+use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -250,8 +251,8 @@ pub struct MlsPlanner {
     #[input(decode = PoseStamped::decode, handler = on_seed_bounds)]
     seed_bounds: Input<PoseStamped>,
 
-    #[input(decode = PointStamped::decode, handler = on_goal)]
-    goal: Input<PointStamped>,
+    #[input(decode = PoseStamped::decode, handler = on_goal)]
+    goal: Input<PoseStamped>,
 
     #[tf]
     tf: Tf,
@@ -421,8 +422,15 @@ impl MlsPlanner {
 
     /// Set or cancel the active goal, then wake the worker. A goal this
     /// displaces is reported preempted under its own id.
-    async fn on_goal(&mut self, msg: PointStamped) {
-        match goal_position(&msg.point) {
+    async fn on_goal(&mut self, msg: PoseStamped) {
+        let yaw = match goal_yaw(&msg.pose.orientation) {
+            Ok(yaw) => yaw,
+            Err(why) => {
+                warn!(why, "Ignored a goal");
+                return;
+            }
+        };
+        match goal_position(&msg.pose.position) {
             Some(position) => {
                 let id = self.next_goal_id(&msg.header.stamp);
                 let held = self.active_goal.lock().expect("goal mutex").clone();
@@ -437,6 +445,7 @@ impl MlsPlanner {
                 self.set_active_goal(Some(Goal {
                     id,
                     position,
+                    yaw,
                     frame,
                 }));
             }
@@ -486,15 +495,44 @@ fn goal_position(p: &Point) -> Option<Xyz> {
     (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal)
 }
 
+/// The goal heading: None for the all-zero quaternion, else its yaw. A quaternion
+/// that is neither zero nor unit is an error, so it is neither a heading nor a cancel.
+fn goal_yaw(q: &Quaternion) -> Result<Option<f32>, &'static str> {
+    let (x, y, z, w) = (q.x, q.y, q.z, q.w);
+    if !(x.is_finite() && y.is_finite() && z.is_finite() && w.is_finite()) {
+        return Err("non-finite quaternion");
+    }
+    if x == 0.0 && y == 0.0 && z == 0.0 && w == 0.0 {
+        return Ok(None);
+    }
+    if ((x * x + y * y + z * z + w * w).sqrt() - 1.0).abs() > 1e-3 {
+        return Err("non-unit quaternion");
+    }
+    let yaw = (2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z));
+    Ok(Some(yaw as f32))
+}
+
+fn angle_diff(a: f32, b: f32) -> f32 {
+    (a - b + PI).rem_euclid(2.0 * PI) - PI
+}
+
 /// Viewer clicks carry rerun entity paths (leading "/"); those and "" mean the world frame.
 fn is_tf_frame(frame: &str) -> bool {
     !frame.is_empty() && !frame.starts_with('/')
 }
 
-fn goal_in_world(at: Xyz, frame_to_world: &Transform) -> Xyz {
+/// The goal with its position and heading moved into the world frame.
+fn goal_in_world(goal: &Goal, frame_to_world: &Transform) -> Goal {
+    let at = goal.position;
     let p = frame_to_world.rotation() * Vector3::new(at.0 as f64, at.1 as f64, at.2 as f64)
         + frame_to_world.translation();
-    (p.x as f32, p.y as f32, p.z as f32)
+    let turn = frame_to_world.rotation().euler_angles().2 as f32;
+    Goal {
+        id: goal.id,
+        position: (p.x as f32, p.y as f32, p.z as f32),
+        yaw: goal.yaw.map(|yaw| yaw + turn),
+        frame: None,
+    }
 }
 
 /// The worker's record of the active goal between passes.
@@ -502,6 +540,7 @@ struct GoalProgress {
     blocked_timeout: Duration,
     stall_timeout: Duration,
     min_move_m: f32,
+    min_turn_rad: f32,
     blocked: Option<Blocked>,
     followed: Option<GoalId>,
     stall: Option<Stall>,
@@ -514,6 +553,7 @@ impl GoalProgress {
             blocked_timeout: Duration::from_secs_f32(config.blocked_timeout_s),
             stall_timeout: Duration::from_secs_f32(config.progress_timeout_s),
             min_move_m: config.progress_min_m,
+            min_turn_rad: config.goal_yaw_tolerance,
             blocked: None,
             followed: None,
             stall: None,
@@ -553,13 +593,15 @@ impl GoalProgress {
         Some(stalled)
     }
 
-    /// Note where the robot stands on its way to the goal.
-    fn track(&mut self, goal: Goal, position: Xyz) {
+    /// Note where the robot stands on its way to the goal, and how far it is from facing its heading.
+    fn track(&mut self, goal: Goal, position: Xyz, heading_error: Option<f32>) {
         self.stall = Some(Stall::track(
             goal,
             position,
+            heading_error,
             self.stall.take(),
             self.min_move_m,
+            self.min_turn_rad,
             Instant::now(),
         ));
     }
@@ -597,13 +639,19 @@ impl GoalProgress {
 
     /// Follow the goal's new path from this position. Milliseconds since the
     /// last path, or -1.
-    fn follow(&mut self, goal: Goal, position: Xyz, produced: Instant) -> f64 {
+    fn follow(
+        &mut self,
+        goal: Goal,
+        position: Xyz,
+        heading_error: Option<f32>,
+        produced: Instant,
+    ) -> f64 {
         let since_last_ms = self
             .last_path_at
             .map_or(-1.0, |t| (produced - t).as_secs_f64() * 1e3);
         self.last_path_at = Some(produced);
         self.followed = Some(goal.id);
-        self.track(goal, position);
+        self.track(goal, position, heading_error);
         since_last_ms
     }
 }
@@ -862,18 +910,19 @@ impl Worker {
         }
     }
 
-    /// None while the goal's frame is not on tf yet (e.g. before relocalization), so it waits.
+    /// The goal in the world frame, or None while its frame is not on tf yet (e.g. before
+    /// relocalization), so it waits.
     // DIM-638: read only on a replan, so a new relocalization fix waits for the next live region.
-    fn goal_world_position(&self, goal: &Goal) -> Option<Xyz> {
+    fn world_goal(&self, goal: &Goal) -> Option<Goal> {
         let frame = goal
             .frame
             .as_deref()
             .filter(|frame| is_tf_frame(frame) && *frame != &*self.config.world_frame);
         let Some(frame) = frame else {
-            return Some(goal.position);
+            return Some(goal.clone());
         };
         let frame_to_world = self.tf.get_latest(&self.config.world_frame, frame)?;
-        Some(goal_in_world(goal.position, &frame_to_world))
+        Some(goal_in_world(goal, &frame_to_world))
     }
 
     /// The base frame position in the world frame, from the latest tf.
@@ -883,6 +932,13 @@ impl Worker {
             .get_latest(&self.config.world_frame, &self.config.base_frame)?
             .translation();
         Some((t.x as f32, t.y as f32, t.z as f32))
+    }
+
+    fn base_yaw(&self) -> Option<f32> {
+        let t = self
+            .tf
+            .get_latest(&self.config.world_frame, &self.config.base_frame)?;
+        Some(t.rotation().euler_angles().2 as f32)
     }
 
     /// Abort a goal that could not be planned for the whole timeout.
@@ -904,9 +960,13 @@ impl Worker {
     /// Abort a followed goal once the robot has not moved for the whole
     /// timeout, and stop the follower.
     async fn abort_if_stalled(&self, progress: &mut GoalProgress) {
-        if let (Some(stall), Some(position)) = (progress.stall.as_ref(), self.base_position()) {
+        let position = self.base_position();
+        if let (Some(stall), Some(position)) = (progress.stall.as_ref(), position) {
             let goal = stall.goal.clone();
-            progress.track(goal, position);
+            let heading_error = self
+                .world_goal(&goal)
+                .and_then(|world| heading_error(&world, self.base_yaw()));
+            progress.track(goal, position, heading_error);
         }
         let Some(stalled) = progress.take_stalled() else {
             return;
@@ -916,12 +976,12 @@ impl Worker {
         }
         progress.followed = None;
         publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
+        let reason = match (position, self.world_goal(&stalled.goal)) {
+            (Some(p), Some(world)) => stall_reason(&world, p, &self.config),
+            _ => NO_PROGRESS,
+        };
         self.status
-            .report(Report::new(
-                stalled.goal.id,
-                GoalStatus::ABORTED,
-                NO_PROGRESS,
-            ))
+            .report(Report::new(stalled.goal.id, GoalStatus::ABORTED, reason))
             .await;
     }
 
@@ -945,8 +1005,8 @@ impl Worker {
                 publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             }
             GoalStep::NoPose(goal) => progress.block(goal, NO_POSE),
-            GoalStep::Plan { start, goal } => match self.goal_world_position(&goal) {
-                Some(at) => self.plan(planner, start, goal, at, progress).await,
+            GoalStep::Plan { start, goal } => match self.world_goal(&goal) {
+                Some(world) => self.plan(planner, start, goal, world, progress).await,
                 None => progress.block(goal, NO_GOAL_FRAME),
             },
         }
@@ -959,13 +1019,17 @@ impl Worker {
         planner: &mut Planner,
         start: Xyz,
         goal: Goal,
-        at: Xyz,
+        world: Goal,
         progress: &mut GoalProgress,
     ) {
         let plan_start = Instant::now();
-        let outcome = tokio::task::block_in_place(|| replan(planner, start, at, &self.config));
+        let facing = self.base_yaw();
+        let outcome =
+            tokio::task::block_in_place(|| replan(planner, start, facing, &world, &self.config));
         let (status, reason) = outcome.status();
-        let report = Report::new(goal.id, status, reason).with_remaining(distance(start, at));
+        let heading = path_heading(&outcome, &world);
+        let report =
+            Report::new(goal.id, status, reason).with_remaining(distance(start, world.position));
         let waypoints = match outcome {
             Replan::Reached => {
                 progress.unblock();
@@ -983,14 +1047,17 @@ impl Worker {
                 self.status.report(report).await;
                 return;
             }
+            Replan::Turning => vec![start, world.position],
             Replan::Planned(Plan::Full(waypoints) | Plan::Truncated(waypoints)) => waypoints,
         };
         progress.unblock();
         let plan_ms = ms_since(plan_start);
-        let since_last_ms = progress.follow(goal, start, Instant::now());
+        let since_last_ms =
+            progress.follow(goal, start, heading_error(&world, facing), Instant::now());
 
         let stamp = now();
-        let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
+        let path_msg =
+            build_path_from_waypoints(&waypoints, heading, &self.config.world_frame, stamp);
         debug_throttled!(
             DEBUG_LOG_PERIOD,
             waypoints = waypoints.len(),
@@ -1043,6 +1110,8 @@ fn goal_step(
 #[derive(Debug, PartialEq)]
 enum Replan {
     Reached,
+    /// Within the goal tolerance but not yet facing the goal heading.
+    Turning,
     Planned(Plan),
 }
 
@@ -1051,6 +1120,7 @@ impl Replan {
     fn status(&self) -> (i8, &'static str) {
         match self {
             Replan::Reached => (GoalStatus::SUCCEEDED, "reached"),
+            Replan::Turning => (GoalStatus::ACTIVE, "at the goal, turning to its heading"),
             Replan::Planned(Plan::Full(_)) => (GoalStatus::ACTIVE, "following the path"),
             Replan::Planned(Plan::Truncated(_)) => (
                 GoalStatus::ACTIVE,
@@ -1061,13 +1131,51 @@ impl Replan {
     }
 }
 
-/// Decide a replan pass. A goal already within tolerance needs no path. A
-/// reached goal keeps its path out, so the follower settles on its own.
-fn replan(planner: &mut Planner, start: Xyz, goal: Xyz, config: &Config) -> Replan {
-    if is_at_goal(planner, start, goal, config) {
-        return Replan::Reached;
+/// Decide a replan pass. A goal within tolerance is reached once the robot faces its
+/// heading, if it has one, and a reached goal keeps its path out for the follower.
+fn replan(
+    planner: &mut Planner,
+    start: Xyz,
+    facing: Option<f32>,
+    goal: &Goal,
+    config: &Config,
+) -> Replan {
+    if !is_at_goal(planner, start, goal.position, config) {
+        return Replan::Planned(planner.plan_or_truncate(start, goal.position, config));
     }
-    Replan::Planned(planner.plan_or_truncate(start, goal, config))
+    match goal.yaw {
+        None => Replan::Reached,
+        Some(yaw) => match facing {
+            Some(f) if angle_diff(yaw, f).abs() < config.goal_yaw_tolerance => Replan::Reached,
+            _ => Replan::Turning,
+        },
+    }
+}
+
+/// The heading the published path carries: the goal's, except on a truncated path,
+/// which does not end at the goal.
+fn path_heading(outcome: &Replan, goal: &Goal) -> Option<f32> {
+    match outcome {
+        Replan::Planned(Plan::Truncated(_)) => None,
+        _ => goal.yaw,
+    }
+}
+
+/// Why a stalled goal is aborted: standing at a heading goal without facing it is
+/// the heading not reached, anything else is no progress.
+fn stall_reason(goal: &Goal, position: Xyz, config: &Config) -> &'static str {
+    let near =
+        (position.0 - goal.position.0).hypot(position.1 - goal.position.1) < config.goal_tolerance;
+    if goal.yaw.is_some() && near {
+        HEADING_NOT_REACHED
+    } else {
+        NO_PROGRESS
+    }
+}
+
+/// How far the robot faces from the goal's heading, when the goal has one.
+fn heading_error(world: &Goal, facing: Option<f32>) -> Option<f32> {
+    Some(angle_diff(world.yaw?, facing?).abs())
 }
 
 fn distance(a: Xyz, b: Xyz) -> f32 {
@@ -1194,6 +1302,20 @@ fn pose_at(xyz: (f32, f32, f32), orient_w: f64) -> Pose {
     }
 }
 
+/// A pose on the plane facing `yaw`.
+fn pose_facing(xyz: Xyz, yaw: f32) -> Pose {
+    let (s, c) = (yaw as f64 / 2.0).sin_cos();
+    Pose {
+        orientation: Quaternion {
+            x: 0.0,
+            y: 0.0,
+            z: s,
+            w: c,
+        },
+        ..pose_at(xyz, 1.0)
+    }
+}
+
 fn pose_stamped(xyz: (f32, f32, f32), orient_w: f64, frame_id: &str, stamp: Time) -> PoseStamped {
     PoseStamped {
         header: header(frame_id, stamp),
@@ -1208,10 +1330,25 @@ fn empty_path(frame_id: &str, stamp: Time) -> Path {
     }
 }
 
-fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> Path {
+/// The route as a path. Its poses carry no orientation (an all-zero quaternion), except
+/// the last when there is a goal heading, which faces it.
+fn build_path_from_waypoints(
+    waypoints: &[Xyz],
+    heading: Option<f32>,
+    frame_id: &str,
+    stamp: Time,
+) -> Path {
+    let last = waypoints.len().saturating_sub(1);
     let poses: Vec<PoseStamped> = waypoints
         .iter()
-        .map(|&w| pose_stamped(w, 1.0, frame_id, stamp.clone()))
+        .enumerate()
+        .map(|(k, &w)| PoseStamped {
+            header: header(frame_id, stamp.clone()),
+            pose: match heading {
+                Some(yaw) if k == last => pose_facing(w, yaw),
+                _ => pose_at(w, 0.0),
+            },
+        })
         .collect();
     Path {
         header: header(frame_id, stamp),
@@ -1397,8 +1534,89 @@ mod tests {
                 arrival: n as u64,
             },
             position,
+            yaw: None,
             frame: None,
         }
+    }
+
+    fn goal_facing(n: i32, position: Xyz, yaw: f32) -> Goal {
+        Goal {
+            yaw: Some(yaw),
+            ..goal_at(n, position)
+        }
+    }
+
+    #[test]
+    fn a_heading_goal_is_reached_only_facing_it() {
+        let mut planner = Planner::new(1);
+        let config = test_config();
+        let goal = goal_facing(1, (0.1, 0.0, 0.0), PI);
+        let mut at = |facing: Option<f32>, goal: &Goal| {
+            replan(&mut planner, (0.0, 0.0, 0.0), facing, goal, &config)
+        };
+        assert_eq!(at(Some(0.0), &goal), Replan::Turning);
+        assert_eq!(at(None, &goal), Replan::Turning);
+        assert_eq!(at(Some(PI - 0.1), &goal), Replan::Reached);
+        assert_eq!(at(Some(-PI + 0.1), &goal), Replan::Reached);
+        assert_eq!(at(Some(0.0), &goal_at(1, (0.1, 0.0, 0.0))), Replan::Reached);
+    }
+
+    #[test]
+    fn the_path_carries_the_heading_unless_truncated() {
+        let goal = goal_facing(1, (5.0, 0.0, 0.0), 0.0);
+        let wp = vec![(0.0, 0.0, 0.0), (5.0, 0.0, 0.0)];
+        let full = Replan::Planned(Plan::Full(wp.clone()));
+        let cut = Replan::Planned(Plan::Truncated(wp.clone()));
+        assert_eq!(path_heading(&full, &goal), Some(0.0));
+        assert_eq!(path_heading(&Replan::Turning, &goal), Some(0.0));
+        assert_eq!(path_heading(&cut, &goal), None);
+        assert_eq!(path_heading(&full, &goal_at(1, (5.0, 0.0, 0.0))), None);
+
+        let stamp = Time { sec: 0, nsec: 0 };
+        let facing = build_path_from_waypoints(
+            &wp,
+            Some(std::f32::consts::FRAC_PI_2),
+            "odom",
+            stamp.clone(),
+        );
+        let last = &facing.poses[1].pose.orientation;
+        let half = std::f64::consts::FRAC_PI_4;
+        assert!((last.z - half.sin()).abs() < 1e-6 && (last.w - half.cos()).abs() < 1e-6);
+        assert_eq!(goal_yaw(&facing.poses[0].pose.orientation), Ok(None));
+        let plain = build_path_from_waypoints(&wp, None, "odom", stamp);
+        assert!(plain
+            .poses
+            .iter()
+            .all(|p| goal_yaw(&p.pose.orientation) == Ok(None)));
+    }
+
+    #[test]
+    fn a_goal_quaternion_is_a_heading_a_placeholder_or_rejected() {
+        let q = |x, y, z, w| Quaternion { x, y, z, w };
+        assert_eq!(goal_yaw(&q(0.0, 0.0, 0.0, 0.0)), Ok(None));
+        assert_eq!(goal_yaw(&q(0.0, 0.0, 0.0, 1.0)), Ok(Some(0.0)));
+        let half = std::f64::consts::FRAC_PI_4;
+        let yaw = goal_yaw(&q(0.0, 0.0, half.sin(), half.cos()))
+            .unwrap()
+            .unwrap();
+        assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-6, "{yaw}");
+        assert!(goal_yaw(&q(0.0, 0.0, 0.5, 0.5)).is_err());
+        assert!(goal_yaw(&q(f64::NAN, 0.0, 0.0, 1.0)).is_err());
+    }
+
+    #[test]
+    fn a_stall_at_a_heading_goal_is_the_heading_not_reached() {
+        let config = test_config();
+        let facing = goal_facing(1, (5.0, 0.0, 0.0), 1.0);
+        assert_eq!(
+            stall_reason(&facing, (5.1, 0.0, 0.0), &config),
+            HEADING_NOT_REACHED
+        );
+        assert_eq!(stall_reason(&facing, (3.0, 0.0, 0.0), &config), NO_PROGRESS);
+        assert_eq!(
+            stall_reason(&goal_at(1, (5.0, 0.0, 0.0)), (5.1, 0.0, 0.0), &config),
+            NO_PROGRESS
+        );
     }
 
     #[test]
@@ -1410,19 +1628,27 @@ mod tests {
                 arrival,
             },
             position: (5.0, 0.0, 0.0),
+            yaw: None,
             frame: None,
         };
         let timeout = Duration::from_secs(10);
         let t0 = Instant::now();
         let later = t0 + Duration::from_secs(4);
         let end = t0 + timeout;
-        let stall = Stall::track(goal(1), (0.0, 0.0, 0.0), None, 0.2, t0);
-        // Creeping, or standing higher, is not progress.
-        let still = Stall::track(goal(1), (0.1, 0.0, 0.5), Some(stall.clone()), 0.2, later);
+        let track =
+            |id, at, error, earlier| Stall::track(goal(id), at, error, earlier, 0.2, 0.25, later);
+        let stall = Stall::track(goal(1), (0.0, 0.0, 0.0), Some(3.0), None, 0.2, 0.25, t0);
+        // Creeping, standing higher, or a small turn is not progress.
+        let still = track(1, (0.1, 0.0, 0.5), Some(2.9), Some(stall.clone()));
         assert!(still.remaining(timeout, end).is_zero());
-        let moved = Stall::track(goal(1), (0.3, 0.0, 0.0), Some(stall.clone()), 0.2, later);
+        let moved = track(1, (0.3, 0.0, 0.0), Some(3.0), Some(stall.clone()));
         assert_eq!(moved.remaining(timeout, end), Duration::from_secs(4));
-        let replaced = Stall::track(goal(2), (0.0, 0.0, 0.0), Some(stall), 0.2, later);
+        // Turning toward the heading in place is progress, turning away is not.
+        let turned = track(1, (0.0, 0.0, 0.0), Some(2.0), Some(stall.clone()));
+        assert_eq!(turned.remaining(timeout, end), Duration::from_secs(4));
+        let away = track(1, (0.0, 0.0, 0.0), Some(3.1), Some(stall.clone()));
+        assert!(away.remaining(timeout, end).is_zero());
+        let replaced = track(2, (0.0, 0.0, 0.0), Some(3.0), Some(stall));
         assert_eq!(replaced.remaining(timeout, end), Duration::from_secs(4));
     }
 
@@ -1441,7 +1667,7 @@ mod tests {
             Some(goal.clone())
         );
         assert!(progress.take_timed_out().is_none());
-        progress.track(goal.clone(), (0.0, 0.0, 0.0));
+        progress.track(goal.clone(), (0.0, 0.0, 0.0), None);
         assert_eq!(progress.take_stalled().map(|s| s.goal), Some(goal.clone()));
         assert!(progress.take_stalled().is_none());
     }
@@ -1452,7 +1678,8 @@ mod tests {
         let outcome = replan(
             &mut planner,
             (0.0, 0.0, 0.0),
-            (0.0, 0.0, 3.0),
+            None,
+            &goal_at(1, (0.0, 0.0, 3.0)),
             &test_config(),
         );
         assert_eq!(outcome, Replan::Planned(Plan::Blocked));
@@ -1464,7 +1691,8 @@ mod tests {
         let outcome = replan(
             &mut planner,
             (0.0, 0.0, 0.0),
-            (0.1, 0.0, 0.0),
+            None,
+            &goal_at(1, (0.1, 0.0, 0.0)),
             &test_config(),
         );
         assert_eq!(outcome, Replan::Reached);
@@ -1486,11 +1714,11 @@ mod tests {
         let mut planner = Planner::new(1);
         planner.update_global_map(&floor, &config);
         // Further above the floor than goal_z_tolerance, yet within the snap.
-        let goal = (5.0, 1.0, cell + 0.62);
+        let goal = goal_at(1, (5.0, 1.0, cell + 0.62));
 
-        let far = replan(&mut planner, (1.0, 1.0, cell), goal, &config);
+        let far = replan(&mut planner, (1.0, 1.0, cell), None, &goal, &config);
         assert!(matches!(far, Replan::Planned(Plan::Full(_))), "{far:?}");
-        let arrived = replan(&mut planner, (5.0, 1.0, cell), goal, &config);
+        let arrived = replan(&mut planner, (5.0, 1.0, cell), None, &goal, &config);
         assert_eq!(arrived, Replan::Reached);
     }
 
@@ -1729,7 +1957,7 @@ mod tests {
         let goal = goal_at(1, (5.0, 0.0, 0.0));
         let mut progress = GoalProgress::new(&test_config());
         let id = goal.id;
-        progress.follow(goal, (0.0, 0.0, 0.0), Instant::now());
+        progress.follow(goal, (0.0, 0.0, 0.0), None, Instant::now());
         // The follower is on this goal's path, so it settles on its own.
         assert!(!progress.arrive(id));
         assert_eq!(progress.followed, Some(id));
@@ -1752,11 +1980,14 @@ mod tests {
             Translation3::new(10.0, 0.0, 0.0),
             UnitQuaternion::from_euler_angles(0.0, 0.0, std::f64::consts::FRAC_PI_2),
         );
-        let (x, y, z) = goal_in_world(
-            (1.0, 0.0, 0.0),
-            &Transform::new("odom", "map", 0.0, quarter_turn),
-        );
+        let goal = Goal {
+            yaw: Some(0.0),
+            ..goal_at(1, (1.0, 0.0, 0.0))
+        };
+        let world = goal_in_world(&goal, &Transform::new("odom", "map", 0.0, quarter_turn));
+        let (x, y, z) = world.position;
         assert!((x - 10.0).abs() < 1e-5 && (y - 1.0).abs() < 1e-5 && z.abs() < 1e-5);
+        assert!((world.yaw.unwrap() - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
     }
 
     #[test]

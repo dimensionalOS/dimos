@@ -27,7 +27,7 @@ from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolv
 
 [_TELEOP_TASK] = [
     task
-    for atom in teleop_webxr_openyam.active_blueprints
+    for atom in teleop_webxr_openyam.solidify().active_blueprints
     if atom.name == "ControlCoordinator"
     for task in atom.kwargs["tasks"]
     if task.type == "teleop_ik"

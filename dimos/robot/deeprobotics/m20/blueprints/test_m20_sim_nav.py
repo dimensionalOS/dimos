@@ -49,8 +49,11 @@ def _remappings(
 
 
 def test_sim_composes_the_navigation_the_robot_runs() -> None:
-    sim, robot = _atoms(m20_sim_nav), _atoms(m20)
-    sim_stack, robot_stack = _atoms(m20_nav_stack(SIM_M20)), _atoms(m20_nav_stack())
+    sim, robot = _atoms(m20_sim_nav.solidify()), _atoms(m20.solidify())
+    sim_stack, robot_stack = (
+        _atoms(m20_nav_stack(SIM_M20).solidify()),
+        _atoms(m20_nav_stack().solidify()),
+    )
     for name in robot_stack:
         assert (robot[name].module, robot[name].kwargs) == (
             robot_stack[name].module,
@@ -62,10 +65,10 @@ def test_sim_composes_the_navigation_the_robot_runs() -> None:
         )
         robot_remappings = {
             key: target
-            for key, target in _remappings(m20, name).items()
+            for key, target in _remappings(m20.solidify(), name).items()
             if key not in _ROBOT_ONLY_REMAPPINGS
         }
-        assert _remappings(m20_sim_nav, name) == robot_remappings
+        assert _remappings(m20_sim_nav.solidify(), name) == robot_remappings
 
 
 def test_the_sim_plans_only_steps_its_policy_climbs() -> None:
@@ -74,7 +77,7 @@ def test_the_sim_plans_only_steps_its_policy_climbs() -> None:
 
 
 def test_the_world_feeds_the_streams_the_vendor_lio_and_the_urdf_manager_read() -> None:
-    assert _remappings(m20_sim_nav, "simm20world") == {
+    assert _remappings(m20_sim_nav.solidify(), "simm20world") == {
         ("simm20world", "lidar"): "slam_body_points",
         ("simm20world", "odometry"): "slam_odom",
         ("simm20world", "joint_state"): "coordinator_joint_state",
@@ -83,9 +86,9 @@ def test_the_world_feeds_the_streams_the_vendor_lio_and_the_urdf_manager_read() 
 
 def test_teleop_cancel_reaches_the_planner() -> None:
     def goal_topic(module: type[ModuleBase]) -> tuple[str | type[ModuleBase] | type[Spec], type]:
-        (atom,) = (a for a in m20.active_blueprints if a.module is module)
+        (atom,) = (a for a in m20.solidify().active_blueprints if a.module is module)
         (stream,) = (s for s in atom.streams if s.name == "goal")
-        return m20.remapping_map.get((atom.name, "goal"), "goal"), stream.type
+        return m20.solidify().remapping_map.get((atom.name, "goal"), "goal"), stream.type
 
     assert goal_topic(MLSPlannerNative) == goal_topic(MovementManager)
 
@@ -93,26 +96,28 @@ def test_teleop_cancel_reaches_the_planner() -> None:
 def test_only_the_connection_sends_velocity_to_the_robot() -> None:
     senders = [
         atom.module
-        for atom in m20.active_blueprints
+        for atom in m20.solidify().active_blueprints
         for stream in atom.streams
         if stream.type is Twist
         and stream.direction == "out"
-        and m20.remapping_map.get((atom.name, stream.name), stream.name) == "cmd_vel"
+        and m20.solidify().remapping_map.get((atom.name, stream.name), stream.name) == "cmd_vel"
     ]
     assert senders == [M20Connection]
 
 
 def test_one_movement_manager() -> None:
-    assert [a.module for a in m20_sim_nav.active_blueprints].count(MovementManager) == 1
+    assert [a.module for a in m20_sim_nav.solidify().active_blueprints].count(MovementManager) == 1
 
 
 def test_viewer_gets_the_navigation_config() -> None:
-    (bridge,) = (a for a in m20_sim_nav.active_blueprints if a.module is RerunBridgeModule)
+    (bridge,) = (
+        a for a in m20_sim_nav.solidify().active_blueprints if a.module is RerunBridgeModule
+    )
     assert m20_nav_overrides().keys() <= bridge.kwargs["visual_override"].keys()
     assert m20_nav_static().keys() <= bridge.kwargs["static"].keys()
 
 
-@pytest.mark.parametrize("blueprint", [m20_sim_nav, m20_sim_nav_episode])
+@pytest.mark.parametrize("blueprint", [m20_sim_nav.solidify(), m20_sim_nav_episode.solidify()])
 def test_one_worker_per_module_with_gossip_off(blueprint: Blueprint) -> None:
     overrides = blueprint.global_config_overrides
     assert overrides["n_workers"] == len(blueprint.active_blueprints)

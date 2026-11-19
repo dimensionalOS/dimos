@@ -63,7 +63,11 @@ def main(
         7.5, "--smoothing-window", help="Buffer window for averaged-track pass (s); 0 disables"
     ),
 ) -> None:
-    """Dump an AprilTag detection replay to .rrd and open it in rerun."""
+    """Dump an AprilTag detection replay to .rrd and open it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
     from dimos.memory.cli.dataset import open_store, resolve_dataset

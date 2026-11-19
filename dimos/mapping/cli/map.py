@@ -443,7 +443,11 @@ def main(
         "std_ratio=2.0): drops sparse floaters before rendering/export",
     ),
 ) -> None:
-    """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
+    """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
     from dimos.memory.cli.dataset import open_store, resolve_dataset

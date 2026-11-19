@@ -37,7 +37,7 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 
 
 def test_default_rollout_is_quest_free() -> None:
-    blueprint = build_openyam_rollout(checkpoint="checkpoint", task="pick up block")
+    blueprint = build_openyam_rollout(checkpoint="checkpoint", task="pick up block").solidify()
     modules = [atom.module for atom in blueprint.active_blueprints]
     coordinator = _module_kwargs(blueprint, ControlCoordinator)
     policy = next(task for task in coordinator["tasks"] if task.name == JOINT_TRAJECTORY_TASK_NAME)
@@ -51,7 +51,7 @@ def test_default_rollout_is_quest_free() -> None:
 def test_quest_rollout_adds_higher_priority_takeover() -> None:
     blueprint = build_openyam_rollout(
         checkpoint="checkpoint", task="pick up block", quest_control=True
-    )
+    ).solidify()
     coordinator = _module_kwargs(blueprint, ControlCoordinator)
     policy = next(task for task in coordinator["tasks"] if task.name == JOINT_TRAJECTORY_TASK_NAME)
     teleop = next(task for task in coordinator["tasks"] if task.name == "teleop_openyam")
@@ -75,7 +75,7 @@ def test_quest_rollout_adds_higher_priority_takeover() -> None:
 def test_rollout_uses_the_shared_learning_profile() -> None:
     blueprint = build_openyam_rollout(
         checkpoint="checkpoint", task="pick up block", camera_device="/dev/camera", device="cuda"
-    )
+    ).solidify()
     policy = _module_kwargs(blueprint, LeRobotPolicyModule)
     camera = _module_kwargs(blueprint, WebcamModule)
 

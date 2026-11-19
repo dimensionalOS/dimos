@@ -19,13 +19,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.experimental.dannav.local_planner.module import (
     DanLocalPlannerConfig,
     _ReplanGate,
 )
+from dimos.navigation.spec import NO_HEADING
 
 
 def _path_from_points(points: list[tuple[float, float]]) -> Path:
@@ -47,8 +47,8 @@ def _odom(x: float, y: float, *, ts: float = 1.0) -> PoseStamped:
     )
 
 
-def _point(x: float, y: float) -> PointStamped:
-    return PointStamped(x=x, y=y, z=0.0, frame_id="world")
+def _point(x: float, y: float) -> PoseStamped:
+    return PoseStamped(frame_id="world", position=[x, y, 0.0], orientation=NO_HEADING)
 
 
 def _gate(**config: Any) -> _ReplanGate:

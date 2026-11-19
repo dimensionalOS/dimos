@@ -83,11 +83,31 @@ class RustSqliteStoreConfig(RustStoreConfig):
     path: str = "recording.db"
 
 
+class RustMcapAttachment(BaseModel):
+    """A source file and its name and media type inside the MCAP."""
+
+    name: str
+    media_type: str
+    path: str
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _resolve_path(cls, value: str | os.PathLike[str]) -> str:
+        return RustStoreConfig._resolve_path(value)
+
+
 class RustMcapStoreConfig(RustStoreConfig):
-    """Write storage-encoded observations to an indexed, compressed MCAP artifact."""
+    """Write storage-encoded observations to an indexed, compressed MCAP artifact.
+
+    ``attachments`` optionally embeds source files as-is under the supplied names
+    and media types. Relative source paths are resolved against the project root.
+    A missing or unreadable source file prevents the native writer from opening
+    the MCAP.
+    """
 
     kind: Literal["mcap"] = "mcap"
     path: str = "recording.mcap"
+    attachments: list[RustMcapAttachment] = Field(default_factory=list)
 
 
 RustRecordingStoreConfig: TypeAlias = Annotated[
