@@ -216,6 +216,7 @@ async def watch_modules(
     `module_ids` is the running blueprint's instance ids, empty when nothing runs."""
     known: set[str] | None = None
     while True:
+        now: set[str] | None
         try:
             now = await asyncio.to_thread(module_ids)
         except Exception:
