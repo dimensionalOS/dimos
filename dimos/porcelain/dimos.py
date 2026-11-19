@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import atexit
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import importlib
 import inspect
 import threading
@@ -127,6 +127,54 @@ class Dimos:
             assert self._coordinator is not None
             self._source.invalidate(module_class.__name__)
             self._coordinator.restart_module(module_class, reload_source=reload_source)
+
+    def restart_instance(
+        self,
+        name: str,
+        *,
+        reload_source: bool = True,
+        config: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Restart one running module by its instance name (``robot0/go2connection`` in a
+        namespace, else the lowercase class name), e.g. so a changed config takes effect.
+
+        Args:
+            name: The instance name, as the coordinator keys it.
+            reload_source: If True (default), reload the module's source file.
+            config: Config fields (name -> value) merged over the module's config first.
+        """
+        with self._lock:
+            if self._source is None:
+                raise RuntimeError("No modules are running")
+            if self._source.is_remote:
+                assert isinstance(self._source, RemoteModuleSource)
+                self._source.restart_module_by_name(
+                    name, reload_source=reload_source, config=config
+                )
+                return
+            assert isinstance(self._source, LocalModuleSource)
+            assert self._coordinator is not None
+            self._coordinator.restart_module(name, reload_source=reload_source, config=config)
+            self._source.invalidate(name)
+
+    def unload_instance(self, name: str) -> None:
+        """Stop and remove one running module by its instance name (``robot0/go2connection`` in a namespace, else
+        the lowercase class name).
+
+        Args:
+            name: The instance name, as the coordinator keys it.
+        """
+        with self._lock:
+            if self._source is None:
+                raise RuntimeError("No modules are running")
+            if self._source.is_remote:
+                assert isinstance(self._source, RemoteModuleSource)
+                self._source.unload_module_by_name(name)
+                return
+            assert isinstance(self._source, LocalModuleSource)
+            assert self._coordinator is not None
+            self._coordinator.unload_module(name)
+            self._source.invalidate(name)
 
     def unload(self, module_class: type[ModuleBase]) -> None:
         """Stop and remove a running module.

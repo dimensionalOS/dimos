@@ -208,6 +208,27 @@ async def watch_logs(
         logger.exception("watching the logs failed")
 
 
+async def watch_modules(
+    bus: Bus, module_ids: Callable[[], set[str]], check_s: float = constants.MODULES_CHECK_S
+) -> None:
+    """Publishes a `modules` event ({added, removed}: instance ids) when a module of the running blueprint is deployed
+    or removed (a restart, a reload, a run starting or ending), so a page can show the RPCs of one just added.
+    `module_ids` is the running blueprint's instance ids, empty when nothing runs."""
+    known: set[str] | None = None
+    while True:
+        try:
+            now = await asyncio.to_thread(module_ids)
+        except Exception:
+            logger.exception("listing the running modules failed")
+            now = known
+        if now is not None and known is not None and now != known:
+            bus.send(
+                {"type": "modules", "added": sorted(now - known), "removed": sorted(known - now)}
+            )
+        known = now
+        await asyncio.sleep(check_s)
+
+
 def is_blueprint_source(_change: watchfiles.Change, path: str) -> bool:
     """A .py file or a directory (a deleted one has no suffix either), outside __pycache__."""
     changed = Path(path)

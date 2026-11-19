@@ -170,9 +170,18 @@ async def module(state: GatewayState, id: str) -> dict[str, Any]:
     return await asyncio.to_thread(state.live.module, state.scanner.cache(), id)
 
 
+class RestartRequest(BaseModel):
+    # config fields (name -> value) merged over the module's config before it's deployed again
+    config: dict[str, JsonValue] | None = None
+    reloadSource: bool = True
+
+
 @router.post("/modules/{id}/restart", response_model=responses.ModuleAction)
-async def restart_module(state: GatewayState, id: str) -> dict[str, Any]:
-    return await asyncio.to_thread(state.live.restart, id)
+async def restart_module(
+    state: GatewayState, id: str, request: RestartRequest | None = None
+) -> dict[str, Any]:
+    request = request or RestartRequest()
+    return await asyncio.to_thread(state.live.restart, id, request.config, request.reloadSource)
 
 
 @router.post("/modules/{id}/stop", response_model=responses.ModuleAction)
