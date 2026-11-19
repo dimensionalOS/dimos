@@ -23,7 +23,7 @@ until it returns; ``ProgressBar`` ticks over a known number of items;
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 import sys
 import time
 from typing import IO, TypeVar
@@ -67,10 +67,10 @@ def countdown(
             remaining = max(expected_s - elapsed, 0.0)
             stream.write(f"\r{label}  {elapsed:5.1f} s elapsed, {remaining:5.1f} s remaining")
             stream.flush()
-            try:
-                result = future.result(timeout=_REFRESH_S)
-            except TimeoutError:
+            done, _ = wait([future], timeout=_REFRESH_S)
+            if not done:
                 continue
+            result = future.result()
             stream.write(f"\r{label}  done in {time.monotonic() - start:.1f} s" + " " * 20 + "\n")
             stream.flush()
             return result
