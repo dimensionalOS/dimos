@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any, TypeAlias, get_type_hints
 from pydantic import Field, model_validator
 
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import IO
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
@@ -40,6 +42,8 @@ class TfModuleConfig(ModuleConfig):
     tf_frames_global: dict[str, TransformFrameGlobal] = Field(default_factory=dict)
     # (parent role, child role) for every edge this module publishes; its tfbuffer refuses any other.
     tf_edges: list[tuple[str, str]] = Field(default_factory=list)
+    # Opt this module out of tf checks (its tfbuffer publishes any edge).
+    skip_tf_checks: bool = False
 
     @model_validator(mode="after")
     def _check_roles(self) -> "TfModuleConfig":
@@ -61,9 +65,10 @@ class TfModuleConfig(ModuleConfig):
 
 
 class TfModule(Module):
-    """Its ``tfbuffer`` looks up only the tf frames it declares, and publishes only the edges in ``tf_edges``."""
+    """Its ``tfbuffer`` publishes only the edges in ``tf_edges``, unless ``skip_tf_checks``."""
 
     config: TfModuleConfig
+    tf: IO[TFMessage]
 
     @classmethod
     def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
@@ -77,10 +82,10 @@ class TfModule(Module):
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
-        """Refuse a frame with two parents, or declared edges that form a cycle or several trees; warn on an edge with two owners."""
+        """Refuse a frame with two parents, or declared edges that form a cycle or several trees; warn on an edge with two owners. Modules with skip_tf_checks are left out."""
         publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         for atom in atoms:
-            if not issubclass(atom.module, TfModule):
+            if not _is_checked(atom):
                 continue
             frames = {
                 **_atom_field(atom, "tf_frames_global"),
@@ -133,12 +138,12 @@ class TfModule(Module):
             undeclared_publishers = sorted(
                 atom.name
                 for atom in atoms
-                if not issubclass(atom.module, TfModule)
+                if not _is_checked(atom)
                 and any(stream.name == "tf" and stream.direction != "in" for stream in atom.streams)
             )
             if undeclared_publishers:
                 logger.warning(
-                    f"{message}; {', '.join(undeclared_publishers)} may join them (not TfModules)"
+                    f"{message}; {', '.join(undeclared_publishers)} may join them (not checked TfModules)"
                 )
             else:
                 errors.append(f"    - {message}")
@@ -148,24 +153,18 @@ class TfModule(Module):
                 "\n".join(["Blueprint cannot start because its tf tree is broken.", *errors])
             )
 
-    @property
-    def tf_frames(self) -> set[str]:
-        return {*self.config.tf_frames_local.values(), *self.config.tf_frames_global.values()}
-
     def _create_tfbuffer(self, port: Any) -> TF:
-        """TF itself refuses undeclared frames and edges, so ``self.tfbuffer`` is always checked."""
-        return TF(
-            port,
-            frames=self.tf_frames,
-            edges=self.config.tf_edge_frames,
-            owner=type(self).__name__,
-        )
+        return TF(port, edges=None if self.config.skip_tf_checks else self.config.tf_edge_frames)
 
 
 def _config_default(module: type[TfModule], name: str) -> Any:
     return (
         get_type_hints(module)["config"].model_fields[name].get_default(call_default_factory=True)
     )
+
+
+def _is_checked(atom: "BlueprintAtom") -> bool:
+    return issubclass(atom.module, TfModule) and not _atom_field(atom, "skip_tf_checks")
 
 
 def _atom_field(atom: "BlueprintAtom", name: str) -> Any:

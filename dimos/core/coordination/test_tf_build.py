@@ -129,6 +129,15 @@ def test_cycle_is_refused() -> None:
         )
 
 
+def test_skip_tf_checks_leaves_a_module_out_of_the_tree_check() -> None:
+    second_parent = Lidar.blueprint(
+        tf_frames_local={"body": "base_link", "lidar": "odom_frame"},
+        tf_edges=[("lidar", "body")],
+        skip_tf_checks=True,
+    )
+    _verify(autoconnect(Odom.blueprint(), second_parent))
+
+
 def test_separate_trees_are_refused_unless_a_legacy_module_may_join_them() -> None:
     lidar_alone = Lidar.blueprint(tf_frames_local={"body": "mount", "lidar": "lidar"})
     with pytest.raises(ValueError, match="2 separate trees"):
