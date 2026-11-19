@@ -149,12 +149,7 @@ class PremapModule(Module):
         super().start()
         if self.config.map_file:
             self._resolve_map(self.config.map_file)
-        # world -> map always exists: identity until the first fix (map_frame is resolved by now)
-        self.register_disposable(
-            fix_stream(
-                self.fixes.pipe(ops.start_with(self._identity())), self.config.tf_interval
-            ).subscribe(lambda _: self.publish_tf())
-        )
+        self._start_tf()
         self.open_locations()
         # Clients connected before start() would otherwise never hear the list
         self.named_locations.publish(self.locations_snapshot())
@@ -261,6 +256,22 @@ class PremapModule(Module):
         logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={len(msg)}")
         self.submit(tf, "lidar")
 
+    def _start_tf(self) -> None:
+        # world -> premap waits for the first fix: an unplaced premap would show where it is not
+        self.register_disposable(
+            fix_stream(self.fixes, self.config.tf_interval).subscribe(lambda _: self.publish_tf())
+        )
+        # world -> map is always there, identity, unless one of them is the map itself
+        if DEFAULT_MAP_FRAME not in (self.config.world_frame, self.map_frame):
+            world_to_map = Transform(
+                frame_id=self.config.world_frame, child_frame_id=DEFAULT_MAP_FRAME
+            )
+            self.register_disposable(
+                rx.interval(self.config.tf_interval)
+                .pipe(ops.start_with(0))
+                .subscribe(lambda _: self.tf.publish(TFMessage(world_to_map.now())))
+            )
+
     @property
     def map_frame(self) -> str:
         return self.config.map_frame or self._map_frame or DEFAULT_MAP_FRAME
@@ -299,7 +310,9 @@ class PremapModule(Module):
         )
 
     def publish_tf(self) -> None:
-        self.tf.publish(TFMessage((self.fix or self._identity()).now()))
+        if self.fix is None:
+            return
+        self.tf.publish(TFMessage(self.fix.now()))
 
     @property
     def placed(self) -> bool:
@@ -369,11 +382,10 @@ class PremapModule(Module):
     def frame_to(self, frame: str, child: str) -> Transform | None:
         """``frame -> child``, preferring our own fix over tf for world/map."""
         world, map_frame = self.config.world_frame, self.map_frame
-        if (frame, child) in ((world, map_frame), (map_frame, world)):
-            # Before the first fix tf carries only our placeholder identity, which places nothing
-            if self.fix is None:
-                return None
-            return self.fix if frame == world else self.fix.inverse()
+        if self.fix is not None and (frame, child) == (world, map_frame):
+            return self.fix
+        if self.fix is not None and (frame, child) == (map_frame, world):
+            return self.fix.inverse()
         return self.tfbuffer.get(frame, child)
 
     def reexpress(self, pose: PoseStamped, frame: str) -> PoseStamped | None:

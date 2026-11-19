@@ -43,7 +43,8 @@ m20 = (
         PremapModule.blueprint(
             world_frame=WORLD_FRAME,
             map_frame="premap",
-            relocalize=MID360_NAV,
+            # matches against the office premap top out near 0.7 fitness, under the nav preset's 0.8
+            relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65}),
             live_cloud="local_map",
             relocalize_once=False,
             new_map=True,

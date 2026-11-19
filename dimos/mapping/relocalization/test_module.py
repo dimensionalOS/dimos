@@ -398,13 +398,23 @@ def test_a_near_fix_is_refined_by_icp_alone():
     assert (fix.translation - truth.translation).length() < 0.05
 
 
-def test_world_to_map_is_identity_until_the_first_fix(module):
+def test_world_to_map_waits_for_the_first_fix(module):
     m = module()
     sent = []
     m.tf = SimpleNamespace(publish=sent.append)
     m.publish_tf()
-    (placeholder,) = sent[-1].transforms
-    assert (placeholder.frame_id, placeholder.child_frame_id) == ("world", "map")
-    np.testing.assert_allclose(placeholder.to_matrix(), np.eye(4))
-    # ... which places no named location
-    assert m.frame_to("map", "world") is None
+    assert sent == []
+    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map"))
+    m.publish_tf()
+    (fix,) = sent[-1].transforms
+    assert (fix.frame_id, fix.child_frame_id) == ("world", "map")
+
+
+def test_world_to_map_is_always_on_tf_beside_the_premap(module):
+    m = module(map_frame="premap", tf_interval=3600.0)
+    sent = []
+    m.tf = SimpleNamespace(publish=sent.append)
+    m.register_disposable = lambda _: None
+    m._start_tf()
+    edges = [(t.frame_id, t.child_frame_id) for msg in sent for t in msg.transforms]
+    assert edges == [("world", "map")]
