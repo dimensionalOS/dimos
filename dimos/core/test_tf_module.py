@@ -54,7 +54,7 @@ def test_frames_are_configurable() -> None:
         module.tfbuffer.publish(
             Transform(frame_id="world", child_frame_id="robot0/base_link", ts=1.0)
         )
-        with pytest.raises(ValueError, match="undeclared tf edge"):
+        with pytest.raises(ValueError, match="Odom publishes undeclared tf edge"):
             module.tfbuffer.publish(Transform(frame_id="world", child_frame_id="base_link", ts=1.0))
     finally:
         module._tf = None
@@ -62,7 +62,7 @@ def test_frames_are_configurable() -> None:
 
 
 def test_undeclared_edge_is_refused(odom: Odom) -> None:
-    with pytest.raises(ValueError, match="undeclared tf edge"):
+    with pytest.raises(ValueError, match="Odom publishes undeclared tf edge"):
         odom.tfbuffer.publish(Transform(frame_id="base_link", child_frame_id="world", ts=1.0))
 
 

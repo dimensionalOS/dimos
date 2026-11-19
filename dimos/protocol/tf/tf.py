@@ -335,7 +335,7 @@ class TF(MultiTBuffer):
     ``publish()`` stores locally and sends out on the stream. Without a stream
     it is a purely local buffer.
 
-    Given *edges*, publishes refuse any other (parent, child) pair.
+    Given *edges*, publishes refuse any other (parent, child) pair, naming *module_name* in the error.
     """
 
     def __init__(
@@ -344,10 +344,12 @@ class TF(MultiTBuffer):
         buffer_size: float = 10.0,
         *,
         edges: "Collection[tuple[str, str]] | None" = None,
+        module_name: str = "TF",
     ) -> None:
         super().__init__(buffer_size)
         self._stream = stream
         self._edges = None if edges is None else frozenset(edges)
+        self._module_name = module_name
         self._unsubscribe: Callable[[], None] | None = None
         if stream is not None:
             self._unsubscribe = stream.subscribe(self.receive_tfmessage)
@@ -357,7 +359,7 @@ class TF(MultiTBuffer):
             for t in transforms:
                 if (t.frame_id, t.child_frame_id) not in self._edges:
                     raise ValueError(
-                        f"undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
+                        f"{self._module_name} publishes undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
                     )
         self.receive_transform(*transforms)
         if self._stream is not None:
