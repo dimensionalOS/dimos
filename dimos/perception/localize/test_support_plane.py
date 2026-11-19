@@ -192,3 +192,20 @@ def test_what_stands_on_a_surface_is_counted(rng, level):
     assert floor_surface.points_above == 0
     on_table_only = find_surfaces(np.concatenate([table, *blocks]), level=level)[0].points_above
     assert table_surface.points_above == pytest.approx(on_table_only, rel=0.05)
+
+
+def test_level_mode_takes_no_ramp_as_parallel(rng):
+    """Reported level, a 20 degree ramp would be its own points standing on itself."""
+    ramp = _slab(0.8, 0.5, 0.0, 20.0, 0.0, (0.5, 0.0, 0.1), rng)
+
+    assert find_surfaces(ramp, level=True) == []
+    (surface,) = find_surfaces(ramp, level=False)
+    assert surface.points_above == 0
+
+
+def test_what_stands_on_a_slightly_tilted_table_is_only_what_is_on_it(rng):
+    table = _slab(1.0, 1.0, 0.0, 3.0, 0.0, (0.5, 0.0, 0.12), rng)
+
+    (bare,) = find_surfaces(table, level=True)
+    assert bare.tilt_deg == 0.0
+    assert bare.points_above == 0

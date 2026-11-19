@@ -38,6 +38,7 @@ MIN_SURFACE_SIDE = 0.10  # m - a narrower plane, such as a block's top, is not a
 PIECE_CELL = 0.02  # m - inliers this close in the plane are one patch
 DEDUPE_CELL = 0.01  # m - find_surfaces counts points closer than this once
 STANDING_LOW, STANDING_HIGH = 0.01, 0.30  # m - over a surface, what stands on it
+LEVEL_MAX_TILT_DEG = 5.0  # find_surfaces(level=True) takes nothing steeper as parallel
 
 
 @dataclass
@@ -145,6 +146,9 @@ class Surface:
     rms_m: float
     # Points standing on it: inside its outline, STANDING_LOW to STANDING_HIGH over it.
     points_above: int = 0
+    # The plane fitted to it, when ``plane`` is reported level instead; what stands on
+    # it is measured from this one, so a slope's own points do not count.
+    fitted: SupportPlane | None = None
 
     @property
     def normal(self) -> tuple[float, float, float]:
@@ -223,7 +227,9 @@ def describe_surface(model: np.ndarray, inliers: np.ndarray, level: bool = False
     yaw = yaw - 180.0 if yaw > 90.0 else yaw + 180.0 if yaw <= -90.0 else yaw
     # The centre, on the plane: the point along the normal that the plane passes.
     center = center_uv @ axes - normal * plane.coefficients[3]
+    fitted = None
     if level:
+        fitted = plane
         plane = SupportPlane(coefficients=(0.0, 0.0, 1.0, -float(center[2])))
         normal = np.array([0.0, 0.0, 1.0])
         distances = plane.height_above(inliers)
@@ -238,6 +244,7 @@ def describe_surface(model: np.ndarray, inliers: np.ndarray, level: bool = False
         downhill_deg=float(np.degrees(np.arctan2(b, a))) if not level else 0.0,
         points=len(inliers),
         rms_m=float(np.sqrt(np.mean((distances - np.median(distances)) ** 2))),
+        fitted=fitted,
     )
 
 
@@ -256,10 +263,11 @@ def find_surfaces(
 
     ``level`` takes every surface as parallel to that frame's xy plane, such as a
     table top square to the arm's base, and reports it at the height of its centre
-    with no tilt. The fit still allows ``max_tilt_deg``, so a table a degree or two
-    off its base stays one surface; past about half a degree its two ends sit a
-    centimetre either side of the reported height over a metre. Otherwise the tilt
-    is fitted, level to the world frame.
+    with no tilt. The fit allows ``LEVEL_MAX_TILT_DEG`` at most, so a table a degree
+    or two off its base stays one surface and a ramp is no surface; past about half
+    a degree a table's two ends sit a centimetre either side of the reported height
+    over a metre. Otherwise the tilt is fitted, level to the world frame, up to
+    ``max_tilt_deg``.
     """
     points = np.asarray(points, dtype=np.float64)
     _, first = np.unique(np.floor(points / DEDUPE_CELL).astype(np.int64), axis=0, return_index=True)
@@ -267,6 +275,8 @@ def find_surfaces(
     if level and to_frame is not None:
         points = points @ to_frame[:3, :3].T + to_frame[:3, 3]
     surfaces = []
+    if level:
+        max_tilt_deg = min(max_tilt_deg, LEVEL_MAX_TILT_DEG)
     for model, inliers in peel_planes(points, float(np.cos(np.radians(max_tilt_deg)))):
         if to_frame is not None and not level:
             model = np.append(to_frame[:3, :3] @ model[:3], 0.0)
@@ -288,7 +298,7 @@ def standing_on(surface: Surface, points: np.ndarray) -> int:
     ``STANDING_LOW`` and ``STANDING_HIGH`` over it."""
     normal = np.asarray(surface.normal, dtype=np.float64)
     axes = _plane_axes(normal)
-    above = surface.plane.height_above(points)
+    above = (surface.fitted or surface.plane).height_above(points)
     near = (above > STANDING_LOW) & (above < STANDING_HIGH)
     if not near.any():
         return 0
