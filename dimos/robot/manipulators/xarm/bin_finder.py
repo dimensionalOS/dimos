@@ -18,8 +18,9 @@ Green pixels with depth are lifted into the arm's base frame through the camera'
 result (``STATE_DIR/calibration/<calibration>.json``, written by the xarm7 scene calibration),
 grouped on a 1 cm grid, and each group is fitted with a bin: footprint centre, long axis, and
 which end is the tall back wall. ``load_from_scan`` and ``cycle_from_scan`` tell the kitting
-module which slots hold a bin and hand it the empty bin in the middle zone, so the cycle runs on
-the camera's numbers instead of a tape measure's.
+module which slots hold a bin and hand it the empty bin in the middle zone, and
+``unload_from_scan`` carries the bin in the loading slot to a done slot no bin is in, so the cycle
+runs on the camera's numbers instead of a tape measure's.
 """
 
 from __future__ import annotations
@@ -61,8 +62,13 @@ MIN_CELLS = 40
 RIM_FRACTION = 0.75
 MIN_RIM_POINTS = 50
 MAX_LIP_M = 0.02
-# A bin this close to a done slot's centre fills it.
-SLOT_TOL_M = 0.08
+# A done slot is taken when a seen bin comes within this of the slot's footprint. The done slots
+# leave 26 mm between bins, so a neighbour standing on its own slot does not take this one.
+SLOT_CLEAR_M = 0.015
+# The unload grips the bin where the loading slot says it stands; further off than this, it would
+# miss the wall.
+LOADING_TOL_M = 0.025
+LOADING_TOL_DEG = 8.0
 END_FRACTION = 0.5
 # Measured footprint further than this from the bin's own size is reported as suspect.
 SIZE_TOL_M = 0.04
@@ -71,6 +77,7 @@ SIZE_TOL_M = 0.04
 class KittingSpec(Spec, Protocol):
     def load(self, x: float, y: float, yaw_deg: float) -> str: ...
     def run_cycle(self, x: float, y: float, yaw_deg: float) -> str: ...
+    def unload(self) -> str: ...
     def set_done_taken(self, slots: list[int]) -> None: ...
     def set_loading_full(self, full: bool) -> None: ...
 
@@ -174,26 +181,58 @@ class XArm7BinFinder(Module):
         """Scan, then run the full cycle with the empty bin in the middle zone."""
         return self._hand_over(lambda b: self._kitting.run_cycle(b["x"], b["y"], b["yaw_deg"]))
 
+    @rpc
+    def unload_from_scan(self) -> dict[str, Any]:
+        """Scan, then carry the bin in the loading slot to the first done slot no bin is in."""
+        scan, state = self._tell_kitting()
+        bench = XArm7KittingConfig()
+        loading = [b for b in scan["bins"] if b["zone"] == "loading"]
+        if len(loading) != 1:
+            reason = f"{len(loading)} bins in the loading zone, need one"
+            return {"started": reason, "bench": state, "scan": scan}
+        b, slot = loading[0], bench.loading_slot
+        off_m = float(np.hypot(b["x"] - slot.x, b["y"] - slot.y))
+        off_deg = abs((b["yaw_deg"] - slot.yaw_deg + 180) % 360 - 180)
+        if off_m > LOADING_TOL_M or off_deg > LOADING_TOL_DEG or not b["size_ok"]:
+            reason = (
+                f"the loading bin is {off_m * 1000:.0f} mm and {off_deg:.0f} deg from the slot"
+                f" (size_ok {b['size_ok']}); set it straight"
+            )
+            return {"started": reason, "bin": b, "bench": state, "scan": scan}
+        free = [i for i in range(len(bench.done_slots)) if i not in state["done_taken"]]
+        if not free:
+            return {"started": "every done slot is taken", "bench": state, "scan": scan}
+        return {
+            "started": self._kitting.unload(),
+            "bin": b,
+            "done_slot": free[0],
+            "bench": state,
+            "scan": scan,
+        }
+
     def _hand_over(self, start: Any) -> dict[str, Any]:
+        scan, state = self._tell_kitting()
+        # a blob that is not a stack bin's size (two bins touching, a stray object) is never handed on
+        empties = [b for b in scan["bins"] if b["zone"] == "middle" and b["size_ok"]]
+        if not empties:
+            return {"started": "no empty bin in the middle zone", "bench": state, "scan": scan}
+        slot = XArm7KittingConfig().loading_slot
+        pick = min(empties, key=lambda b: np.hypot(b["x"] - slot.x, b["y"] - slot.y))
+        return {"started": start(pick), "bin": pick, "bench": state, "scan": scan}
+
+    def _tell_kitting(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Scan, and replace what the kitting module was told about the slots with what is seen."""
         scan = self.find_bins()
         bench = XArm7KittingConfig()
-        # what the camera sees replaces what the kitting module was told
         loading_full = any(b["zone"] == "loading" for b in scan["bins"])
         taken = [
             i
             for i, slot in enumerate(bench.done_slots)
-            if any(np.hypot(b["x"] - slot.x, b["y"] - slot.y) < SLOT_TOL_M for b in scan["bins"])
+            if any(blocks_slot(b, slot.x, slot.y, slot.yaw_deg) for b in scan["bins"])
         ]
         self._kitting.set_loading_full(loading_full)
         self._kitting.set_done_taken(taken)
-        # a blob that is not a stack bin's size (two bins touching, a stray object) is never handed on
-        empties = [b for b in scan["bins"] if b["zone"] == "middle" and b["size_ok"]]
-        state = {"loading_full": loading_full, "done_taken": taken}
-        if not empties:
-            return {"started": "no empty bin in the middle zone", "bench": state, "scan": scan}
-        slot = bench.loading_slot
-        pick = min(empties, key=lambda b: np.hypot(b["x"] - slot.x, b["y"] - slot.y))
-        return {"started": start(pick), "bin": pick, "bench": state, "scan": scan}
+        return scan, {"loading_full": loading_full, "done_taken": taken}
 
     def _camera_pose(self) -> FloatArray:
         path = STATE_DIR / "calibration" / f"{self.config.calibration}.json"
@@ -335,6 +374,19 @@ class XArm7BinFinder(Module):
         out.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(out), img)
         return str(out)
+
+
+def blocks_slot(b: dict[str, Any], x: float, y: float, yaw_deg: float) -> bool:
+    """Whether a seen bin stands in, or within SLOT_CLEAR_M of, the bin footprint at a slot."""
+    grow = 2 * SLOT_CLEAR_M
+    slot = ((x, y), (BIN_LENGTH_M + grow, BIN_WIDTH_M + grow), yaw_deg)
+    seen = (
+        (b["x"], b["y"]),
+        (max(b["length_m"], BIN_LENGTH_M), max(b["width_m"], BIN_WIDTH_M)),
+        b["yaw_deg"],
+    )
+    kind, _ = cv2.rotatedRectangleIntersection(slot, seen)
+    return bool(kind != cv2.INTERSECT_NONE)
 
 
 def _rgb(msg: Image) -> NDArray[Any]:

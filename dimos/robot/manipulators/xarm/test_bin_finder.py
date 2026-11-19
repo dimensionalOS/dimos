@@ -20,8 +20,17 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from dimos.robot.manipulators.xarm.bin_finder import XArm7BinFinder, XArm7BinFinderConfig
-from dimos.robot.manipulators.xarm.kitting import BIN_HEIGHT_M, BIN_LENGTH_M, BIN_WIDTH_M
+from dimos.robot.manipulators.xarm.bin_finder import (
+    XArm7BinFinder,
+    XArm7BinFinderConfig,
+    blocks_slot,
+)
+from dimos.robot.manipulators.xarm.kitting import (
+    BIN_HEIGHT_M,
+    BIN_LENGTH_M,
+    BIN_WIDTH_M,
+    XArm7KittingConfig,
+)
 
 TABLE_Z = XArm7BinFinderConfig().table_top_z
 FRONT_HEIGHT_M = 0.07
@@ -73,3 +82,26 @@ def test_two_bins_as_close_as_the_done_slots_stay_two_and_zone_by_slot() -> None
     assert [b["zone"] for b in bins] == ["middle", "loading"]
     assert abs(bins[1]["y"] - 0.505) < 0.005
     assert all(b["size_ok"] for b in bins)
+
+
+def _seen(x: float, y: float, yaw_deg: float) -> dict[str, float]:
+    return {"x": x, "y": y, "yaw_deg": yaw_deg, "length_m": BIN_LENGTH_M, "width_m": BIN_WIDTH_M}
+
+
+@pytest.mark.parametrize(
+    ("seen", "blocks"),
+    [
+        # a neighbour on its own slot leaves this one free
+        (_seen(0.40, -0.457, -90.0), False),
+        (_seen(0.04, -0.457, -90.0), False),
+        # a bin on the slot, or pushed 2 cm off a neighbour toward it, takes it
+        (_seen(0.22, -0.457, -90.0), True),
+        (_seen(0.38, -0.457, -90.0), True),
+        # a bin turned across the gap between two slots takes it
+        (_seen(0.31, -0.40, 0.0), True),
+        (_seen(0.33, -0.14, 0.0), False),
+    ],
+)
+def test_a_done_slot_is_taken_by_any_bin_in_its_way(seen: dict[str, float], blocks: bool) -> None:
+    slot = XArm7KittingConfig().done_slots[0]
+    assert blocks_slot(seen, slot.x, slot.y, slot.yaw_deg) is blocks
