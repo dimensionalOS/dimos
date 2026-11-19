@@ -28,9 +28,9 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig, stack_frame_id_prefix
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.memory.cli.dataset import open_store, resolve_dataset
 from dimos.memory.replay import Replay, ReplayStream
 from dimos.memory.replay_progress import ReplayProgress
@@ -42,7 +42,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.config import connection_type, require_robot_ip
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
@@ -70,9 +69,24 @@ class Go2Mode(str, Enum):
     RAGE = "rage"
 
 
-class ConnectionConfig(ModuleConfig):
-    # Set by .namespace(): robot-local frames (base_link, camera) get "<prefix>/".
-    frame_id_prefix: str | None = None
+class ConnectionConfig(TfModuleConfig):
+    tf_frames_local: dict[str, str] = Field(
+        default_factory=lambda: {
+            "body": "base_link",
+            "camera_link": "camera_link",
+            "camera_optical": "camera_optical",
+        }
+    )
+    # Parent of the internal odometry (world -> base_link). Rename (e.g. "go2_odom") when
+    # another odom source owns the tree root.
+    tf_frames_global: dict[str, str] = Field(default_factory=lambda: {"world": "world"})
+    tf_edges: list[tuple[str, str]] = Field(
+        default_factory=lambda: [
+            ("world", "body"),
+            ("body", "camera_link"),
+            ("camera_link", "camera_optical"),
+        ]
+    )
     ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
@@ -87,9 +101,6 @@ class ConnectionConfig(ModuleConfig):
     replay_loop: bool = False
     mujoco: MujocoConfig = Field(default_factory=MujocoConfig)
     dimsim: DimSimConfig = Field(default_factory=DimSimConfig)
-    # TF parent frame of the internal odometry (odom_frame_id -> base_link).
-    # Rename (e.g. "go2_odom") when another odom source owns the tree root
-    odom_frame_id: str = "world"
     # Turn off where another module owns the base_link edge. The odom port
     # keeps publishing either way.
     publish_tf: bool = True
@@ -146,13 +157,6 @@ _FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
 def _camera_info_static() -> CameraInfo:
     with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
         return CameraInfo.from_yaml(str(yaml_path))
-
-
-def _prefixed(prefix: str | None, name: str) -> str:
-    """Apply a TF namespace prefix (ConnectionConfig.frame_id_prefix) to a frame name."""
-    if not prefix or not name:
-        return name
-    return f"{prefix}/{name}"
 
 
 # Static camera mount chain: base_link -> camera_link -> camera_optical.
@@ -351,17 +355,10 @@ class ReplayConnection(CompositeResource):
 _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 
-class GO2Connection(Module, Camera, Pointcloud):
+class GO2Connection(TfModule, Camera, Pointcloud):
     dedicated_worker = True
 
     config: ConnectionConfig
-
-    @classmethod
-    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return {
-            **super().handle_blueprint_namespace(config, prefix=prefix),
-            **stack_frame_id_prefix(config, prefix),
-        }
 
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
@@ -369,7 +366,6 @@ class GO2Connection(Module, Camera, Pointcloud):
     lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
-    tf: Out[TFMessage]
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
@@ -401,12 +397,9 @@ class GO2Connection(Module, Camera, Pointcloud):
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
 
-        if self.config.frame_id_prefix and self.camera_info_static.frame_id:
-            # Copy so the class-level default is not mutated.
-            self.camera_info_static = copy.copy(self.camera_info_static)
-            self.camera_info_static.frame_id = _prefixed(
-                self.config.frame_id_prefix, self.camera_info_static.frame_id
-            )
+        # Copy so the class-level default is not mutated.
+        self.camera_info_static = copy.copy(self.camera_info_static)
+        self.camera_info_static.frame_id = self.config.tf_frames_local["camera_optical"]
 
     @rpc
     def start(self) -> None:
@@ -417,7 +410,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection.start()
 
         def onimage(image: Image) -> None:
-            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
+            image.frame_id = self.config.tf_frames_local["camera_optical"]
             self.color_image.publish(image)
 
         if self.config.lidar:
@@ -476,37 +469,31 @@ class GO2Connection(Module, Camera, Pointcloud):
                 except Exception:
                     logger.warning("connection stop failed", exc_info=True)
 
-    @classmethod
-    def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
-        # The odom parent frame (odom.frame_id) stays unprefixed so namespaced
-        # robots still hang off one shared tree root.
+    @staticmethod
+    def _odom_to_tf(odom: PoseStamped, frames: dict[str, str]) -> list[Transform]:
+        """``odom`` (its frame_id is the parent) -> body -> camera_link -> camera_optical."""
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id=_prefixed(prefix, "base_link"),
-            child_frame_id=_prefixed(prefix, "camera_link"),
+            frame_id=frames["body"],
+            child_frame_id=frames["camera_link"],
             ts=odom.ts,
         )
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id=_prefixed(prefix, "camera_link"),
-            child_frame_id=_prefixed(prefix, "camera_optical"),
+            frame_id=frames["camera_link"],
+            child_frame_id=frames["camera_optical"],
             ts=odom.ts,
         )
 
-        return [
-            Transform.from_pose(_prefixed(prefix, "base_link"), odom),
-            camera_link,
-            camera_optical,
-        ]
+        return [Transform.from_pose(frames["body"], odom), camera_link, camera_optical]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        msg.frame_id = self.config.odom_frame_id
+        msg.frame_id = self.config.tf_frames_global["world"]
         if self.config.publish_tf:
-            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
-            self.tf.publish(TFMessage(*transforms))
+            self.tfbuffer.publish(*self._odom_to_tf(msg, self.config.tf_frames_local))
         if self.odom.transport:
             self.odom.publish(msg)
 
