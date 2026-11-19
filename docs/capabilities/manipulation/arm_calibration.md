@@ -107,7 +107,7 @@ A `<robot>-calibrate` blueprint runs three modules: the arm's connection, a cont
 
 The calibration module publishes the arm's targets 50 times a second on `calibration_joint_command`. The coordinator's pass-through task sends each one to the connection's `position_command` on its next tick, unchanged: nothing limits, interpolates or smooths it, so a step stays a step. When no target has come for 0.1 s, or the wizard asks it to `hold`, the coordinator sends the arm nothing, and 0.1 s later the connection's deadman holds the arm where it is. If the wizard stops, the arm is held within about 0.2 s.
 
-The wizard changes how the arm is driven through the arm config contract, four calls every connection has:
+The wizard changes how the arm is driven through the config contract, four calls every connection has. A patch names a target, the arm id, and values whose keys the connection defines; an arm's keys are those of `ArmConfigPatch` in `dimos/control/calibration/schema.py`:
 
 | Call | What it does |
 |------|--------------|

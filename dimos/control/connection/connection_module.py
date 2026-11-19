@@ -20,16 +20,17 @@ says what the robot is told, and fills in ``connect``, ``write`` and
 named values (``dimos.control.contract.convert``), and publishes canonical
 joint readings. Vendor geometry and frame conversion stay inside that implementation.
 
-Every connection also serves the arm config contract
-(``dimos.control.connection.arm_config``): ``config_keys`` and ``config_get``
-say what it can change and how its arms are driven now; with
-``config_sessions`` on (calibration blueprints only) ``config_set`` and
-``config_reset`` let one calibration tool hold a config session and change
-how the arm is driven. Position commands keep arriving on the module's own
-ports meanwhile, e.g. from a control coordinator. A driver that can change
-something overrides the underscore hooks (``_config_keys``, ``_config_state``,
-``_config_apply``, ``_config_undo``, ``_config_parkable``, ``_config_fault``);
-by default it can change nothing.
+Every connection also serves the config contract
+(``dimos.control.connection.module_config``): ``config_keys`` and
+``config_get`` say what it can change and how each of its targets is driven
+now; with ``config_sessions`` on (calibration blueprints only) ``config_set``
+and ``config_reset`` let one tool hold a config session and change how the
+robot is driven. Position commands keep arriving on the module's own ports
+meanwhile, e.g. from a control coordinator. A driver that can change
+something defines its keys and overrides the underscore hooks
+(``_config_keys``, ``_config_state``, ``_config_check``, ``_config_apply``,
+``_config_undo``, ``_config_parkable``, ``_config_fault``); by default it can
+change nothing.
 """
 
 from __future__ import annotations
@@ -47,14 +48,14 @@ import uuid
 
 from pydantic import BaseModel
 
-from dimos.control.connection.arm_config import (
+from dimos.control.connection.module_config import (
     DEFAULT_CONFIG_LEASE_S,
     MAX_CONFIG_LEASE_S,
-    ArmConfigState,
     ConfigApplied,
     ConfigKeys,
     ConfigPatch,
     ConfigScope,
+    ConfigState,
 )
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import Limits, limits as limits_of
@@ -68,12 +69,11 @@ logger = setup_logger()
 
 Values = dict[str, float]
 
-#: How long ``_await_config_park`` waits for the calibration tool to park the
-#: arm and end its config session before the stop goes on, seconds.
+#: How long ``_await_config_park`` waits for the tool holding the config
+#: session to park the robot and end it before the stop goes on, seconds.
 CONFIG_PARK_WAIT_S = 10.0
-#: How long ``_await_config_park`` waits for a calibration tool that is about
-#: to park (no session yet, or one that just ended) to begin its park
-#: session, seconds.
+#: How long ``_await_config_park`` waits for a tool that is about to park (no
+#: session yet, or one that just ended) to begin its park session, seconds.
 CONFIG_PARK_GRACE_S = 1.0
 
 
@@ -89,7 +89,7 @@ class ConnectionConfig(ModuleConfig):
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
         config_sessions: Serve ``config_set`` and ``config_reset``, which
-            change how the energized arm is driven. Only a calibration
+            change how the energized robot is driven. Only a calibration
             blueprint turns this on; without it they raise.
     """
 
@@ -129,7 +129,7 @@ class ConnectionStatus:
 
 @dataclass(slots=True)
 class _ConfigSession:
-    """A calibration tool's hold on the arm, until ``deadline`` (``time.monotonic``)."""
+    """A tool's hold on the robot's config, until ``deadline`` (``time.monotonic``)."""
 
     session_id: str
     lease_s: float
@@ -151,7 +151,10 @@ def _flag(name: str, value: Any) -> bool:
 
 
 def _patch_of(patch: Any) -> ConfigPatch:
-    """``patch`` validated strictly: the RPC codec rebuilds models without validating them."""
+    """``patch``'s shape validated strictly: the RPC codec rebuilds models without validating them.
+
+    Its values are the driver's to check (``ConnectionModule._config_check``).
+    """
     if isinstance(patch, BaseModel):
         data: Any = patch.model_dump(warnings=False)
     elif isinstance(patch, Mapping):
@@ -190,11 +193,11 @@ class ConnectionModule(Module, ABC):
     other is within ``deadman_timeout_s``, ``halt`` is called once. To close
     the hardware, override ``stop`` and close it after ``super().stop()``.
 
-    The ``config_*`` RPCs are the arm config contract and are final; a driver
-    fills in the underscore hooks instead, which are called with
-    ``_hardware_lock`` held. A config session (``config_set`` with scope
-    "session") belongs to one calibration tool. Position commands are taken
-    as at any other time, and the deadman runs as usual. The session ends,
+    The ``config_*`` RPCs are the config contract and are final; a driver
+    fills in the underscore hooks instead, all but ``_config_check`` called
+    with ``_hardware_lock`` held. A config session (``config_set`` with scope
+    "session") belongs to one tool. Position commands are taken as at any
+    other time, and the deadman runs as usual. The session ends,
     undoing its live changes (``_config_undo``), on ``config_reset``, when its
     lease passes without a ``config_set`` that carries its ``session_id``,
     when the robot halts (the command deadman included), when a ``config_*``
@@ -352,7 +355,7 @@ class ConnectionModule(Module, ABC):
     @rpc
     @final
     def config_keys(self) -> ConfigKeys:
-        """What this connection lets a calibration tool read and change. See ``ConfigKeys``.
+        """What this connection lets a tool read and change. See ``ConfigKeys``.
 
         Answers whether or not config sessions are served. It carries no
         session id, so it renews no session's lease.
@@ -370,8 +373,8 @@ class ConnectionModule(Module, ABC):
 
     @rpc
     @final
-    def config_get(self) -> dict[str, ArmConfigState]:
-        """How each arm is driven now, by arm id. See ``ArmConfigState``.
+    def config_get(self) -> dict[str, ConfigState]:
+        """How each target is driven now, by target. See ``ConfigState``.
 
         Answers whether or not config sessions are served. It carries no
         session id, so it renews no session's lease.
@@ -383,8 +386,8 @@ class ConnectionModule(Module, ABC):
                 states = self._config_state()
             session_id = None if session is None else session.session_id
             return {
-                arm_id: state.model_copy(update={"session_id": session_id})
-                for arm_id, state in states.items()
+                target: state.model_copy(update={"session_id": session_id})
+                for target, state in states.items()
             }
 
     @rpc
@@ -398,23 +401,24 @@ class ConnectionModule(Module, ABC):
         session_id: str | None = None,
         lease_s: float = DEFAULT_CONFIG_LEASE_S,
     ) -> ConfigApplied:
-        """Change how one arm is driven: for the config session, or saved to its file.
+        """Change how one target is driven: for the config session, or saved to its file.
 
-        With scope "session" and no session live, this starts the one config
+        The driver checks the patch's values first (``_config_check``). With
+        scope "session" and no session live, this starts the one config
         session (an empty patch only starts it), whose live changes are undone
         when it ends. While one is live, every ``config_set`` must carry its
         ``session_id``, and an empty patch with it only renews the lease.
-        With scope "persist" the patch is merged into the
-        arm's calibration file and applied from it; ``force`` applies it even
-        when a joint's gravity torque would step too far at this pose, and
-        ``apply_now`` False only writes the file. What the connection cannot
-        change is listed in ``unsupported``, unchanged. For calibration tools
-        only; refused unless ``config_sessions``.
+        With scope "persist" the patch is merged into the target's file and
+        applied from it; ``force`` applies it even past the driver's guard on
+        applying a file live, and ``apply_now`` False only writes the file.
+        What the connection cannot change is listed in ``unsupported``,
+        unchanged. For calibration tools only; refused unless
+        ``config_sessions``.
 
         Args:
             patch: What to change; see ``ConfigPatch``.
             scope: "session" or "persist".
-            force: Persist even past the gravity-step guard.
+            force: Persist even past the driver's guard.
             apply_now: Persist: apply the saved file at once.
             session_id: The live session, as the call that started it returned.
             lease_s: The lease of a session this call starts, above 0 and at
@@ -422,6 +426,7 @@ class ConnectionModule(Module, ABC):
         """
         with self._config_call("config_set"):
             checked = _patch_of(patch)
+            self._config_check(checked)
             if scope not in ("session", "persist"):
                 raise ValueError(f"scope must be 'session' or 'persist', got {scope!r}")
             force = _flag("force", force)
@@ -451,7 +456,7 @@ class ConnectionModule(Module, ABC):
 
         Needs no session id, so any thread may end the session; without one
         it does nothing. For the same reason it renews no session's lease. A
-        saved calibration stays as the arm runs it: no file is read again.
+        saved file stays as the robot runs it: no file is read again.
         Refused unless ``config_sessions``.
         """
         with self._config_call("config_reset"):
@@ -464,21 +469,29 @@ class ConnectionModule(Module, ABC):
             logger.info(f"{self._label}: config reset, the session goes on: {undone}")
 
     def _config_keys(self) -> ConfigKeys:
-        """What this driver lets a calibration tool read and change; by default nothing.
+        """What this driver lets a tool read and change; by default nothing.
 
         Called with ``_hardware_lock`` held. ``config_keys`` fills in
         ``source``, ``sessions`` and ``max_lease_s``.
         """
         return ConfigKeys(source=self.config.source, sessions=self.config.config_sessions)
 
-    def _config_state(self) -> dict[str, ArmConfigState]:
-        """How each arm is driven now, by arm id; by default no arm. ``_hardware_lock`` held."""
+    def _config_state(self) -> dict[str, ConfigState]:
+        """How each target is driven now, by target; by default none. ``_hardware_lock`` held."""
         return {}
+
+    def _config_check(self, patch: ConfigPatch) -> None:
+        """Raise for a patch whose values this driver could never take; by default none.
+
+        Called before ``_hardware_lock`` is taken and before a session
+        begins, so a refused patch changes nothing; a live session still
+        ends. The driver defines the keys and how strictly it checks them.
+        """
 
     def _config_apply(
         self, patch: ConfigPatch, scope: ConfigScope, force: bool, apply_now: bool
     ) -> ConfigApplied:
-        """Apply a validated patch in ``scope``; by default every key is unsupported.
+        """Apply a patch ``_config_check`` passed in ``scope``; by default every key is unsupported.
 
         Called with ``_hardware_lock`` held, inside the config session for
         scope "session". Raise to refuse the patch as a whole: that ends the
@@ -486,9 +499,8 @@ class ConnectionModule(Module, ABC):
         """
         keys = patch.keys()
         return ConfigApplied(
-            arm_id=patch.arm_id,
+            target=patch.target,
             scope=scope,
-            applied=ConfigPatch(arm_id=patch.arm_id),
             unsupported=keys,
             why=dict.fromkeys(keys, f"{self._label} cannot change it"),
             applied_now=False,
@@ -503,7 +515,7 @@ class ConnectionModule(Module, ABC):
         return "nothing to undo"
 
     def _config_parkable(self) -> bool:
-        """Whether the arm can still be parked, so a stop waits for it. ``_hardware_lock`` held."""
+        """Whether the robot can still be parked, so a stop waits. ``_hardware_lock`` held."""
         return self._connected
 
     @contextmanager
@@ -630,17 +642,17 @@ class ConnectionModule(Module, ABC):
         """
 
     def _await_config_park(self) -> None:
-        """Before stopping, let the calibration tool park the arm and end its config session.
+        """Before stopping, let the tool holding the config session park the robot and end it.
 
         The modules of a run stop in parallel, so a calibration tool may still
-        be backing the arm out home when its connection is told to stop, and
-        cutting the motors then would drop the arm where it is. A driver that
+        be backing the robot out home when its connection is told to stop, and
+        cutting the motors then would drop it where it is. A driver that
         serves config sessions calls this first in its own ``stop``, before
         its readings stop; ``stop`` here never does. Without
         ``config_sessions`` it returns at once. Waits while a session lasts,
         and for ``CONFIG_PARK_GRACE_S`` after the stop began or the last
         session ended for one about to begin, at most ``CONFIG_PARK_WAIT_S``
-        in all, and not once the arm cannot be parked (``_config_parkable``).
+        in all, and not once the robot cannot be parked (``_config_parkable``).
         The deadman and the session lease run as usual meanwhile.
         """
         if not self.config.config_sessions:
@@ -664,13 +676,13 @@ class ConnectionModule(Module, ABC):
             elif not logged:
                 logger.warning(
                     f"{self._label}: stopping; waiting up to {CONFIG_PARK_WAIT_S:g} s for the "
-                    "calibration tool to park the arm and end its config session"
+                    "calibration tool to park the robot and end its config session"
                 )
                 logged = True
             if now >= deadline:
                 logger.error(
                     f"{self._label}: the calibration tool did not end its config session within "
-                    f"{CONFIG_PARK_WAIT_S:g} s; stopping with the arm where it is"
+                    f"{CONFIG_PARK_WAIT_S:g} s; stopping with the robot where it is"
                 )
                 return
             time.sleep(0.02)
