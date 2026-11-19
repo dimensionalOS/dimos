@@ -165,8 +165,7 @@ jobs:
   # two WebTransport stacks differ.
   browser-tests-linux:
     timeout-minutes: 30
-    # Not ubuntu-latest: see the tests job in ci.yml.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       # See self-hosted-large-tests above.
       PYTHONFAULTHANDLER: "1"

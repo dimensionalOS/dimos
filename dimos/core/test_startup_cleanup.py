@@ -71,7 +71,7 @@ def build(*args, **kwargs):
     return coordinator
 
 with patch("dimos.core.coordination.module_coordinator.ModuleCoordinator.build", side_effect=build):
-    run_coordinator(autoconnect(), None, run_id=run_id, log_dir=Path(pid_file).parent)
+    run_coordinator(autoconnect().solidify(), None, run_id=run_id, log_dir=Path(pid_file).parent)
 """
     output = tmp_path / "startup.log"
     with output.open("w") as log:

@@ -24,7 +24,8 @@ the gravity model the connection compensated (friction, which flips sign with
 the approach direction, cancels) and half their difference is the Coulomb
 friction. The pose markers record that compensation (``Compensation``: none,
 the URDF or the masses of a calibration file), which turns the PD torque into
-the error of the URDF; a recording that does not say is refused. The error is
+the error of the URDF; a recording that does not say needs ``--compensation``
+(``urdf`` or ``none``) and is refused without it. The error is
 fitted with pinocchio's torque regressor to corrections of the mass and first
 moment ``(m, m*c)`` of the spec's ``gravity_links``, ridge-regularised toward
 the URDF values, so directions the poses cannot determine stay at the URDF.
@@ -50,6 +51,7 @@ from collections.abc import Mapping, Sequence
 import csv
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
+from enum import Enum
 import json
 import math
 from pathlib import Path
@@ -179,6 +181,16 @@ class Compensation:
         return cls(
             gravity=bool(raw["gravity"]), links=load_inertial_overrides(raw.get("links", {}))
         )
+
+
+class AssumedCompensation(str, Enum):
+    """What the connection compensated in a recording whose pose markers do not say."""
+
+    urdf = "urdf"
+    none = "none"
+
+    def as_compensation(self) -> Compensation:
+        return Compensation(gravity=self is AssumedCompensation.urdf)
 
 
 @dataclass(frozen=True)
@@ -1087,12 +1099,14 @@ def generate_gravity_report(
     now: datetime | None = None,
     save_to: Path | None = None,
     force: bool = False,
+    assumed_compensation: Compensation | None = None,
 ) -> tuple[FitResult, Path, ArmCalibration | None]:
     """Fit one arm's recording and write ``gravity_report/`` inside it.
 
     The resting torques are taken against what the pose markers record the
     connection compensated (``to_urdf_error``); a recording that does not
-    record it raises ``ValueError``. A passing fit also writes
+    record it is taken against ``assumed_compensation``, and raises
+    ``ValueError`` without one. A passing fit also writes
     ``gravity_<arm>_<date>.json``, an ``ArmCalibration``; with ``save_to`` it
     is saved there too, keeping the gains and notes of a calibration already
     there for the same model (see ``merge_with_stored``), unless
@@ -1103,12 +1117,13 @@ def generate_gravity_report(
         raise ValueError(f"arm model is for {arm.arm_id}, not {spec.arm_id}")
     now = now or datetime.now(timezone.utc)
     grec = load_gravity_recording(recording_dir)
-    compensation = recorded_compensation(grec)
+    compensation = recorded_compensation(grec) or assumed_compensation
     if compensation is None:
         raise ValueError(
             f"{recording_dir} does not record the gravity the connection compensated at its "
-            "poses, so the fit cannot tell the model's error from the gravity torque; record "
-            "the poses again with the calibration procedure"
+            "poses, so the fit cannot tell the model's error from the gravity torque; give the "
+            "compensation it ran with (--compensation urdf or none) or record the poses again "
+            "with the calibration procedure"
         )
     measurements = to_urdf_error(arm, extract_measurements(grec, spec), compensation)
     result = fit_gravity(arm, measurements, ridge_nm=ridge_nm, holdout=holdout)
@@ -1189,6 +1204,11 @@ def main(
     force: bool = typer.Option(
         False, "--force", help="With --save: store the fit even if its held-out check fails"
     ),
+    compensation: AssumedCompensation | None = typer.Option(
+        None,
+        help="The gravity the connection compensated, for a recording whose pose markers "
+        "do not record it (urdf: the URDF gravity feed-forward; none: the PD alone)",
+    ),
 ) -> None:
     """Fit the gravity model from a recording and write gravity_report/ next to it."""
     labels = [p.strip() for p in holdout.split(",") if p.strip()] or None
@@ -1205,6 +1225,7 @@ def main(
         previous=previous,
         save_to=target,
         force=force,
+        assumed_compensation=None if compensation is None else compensation.as_compensation(),
     )
     typer.echo((out_dir / "report.md").read_text())
     typer.echo(f"Wrote {out_dir}")

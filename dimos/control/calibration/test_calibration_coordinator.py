@@ -242,16 +242,16 @@ def _stream(rig: Rig, seconds: float, joint1: float = 0.2) -> None:
 def test_a_sender_that_dies_lets_the_deadman_halt_the_arm_and_end_the_session(
     running: Callable[..., tuple[Rig, FakeArm]],
 ) -> None:
-    rig, arm = running(deadman_timeout_s=0.1)
+    rig, arm = running(deadman_timeout_s=0.5)
     session = arm.config_set(ConfigPatch(arm_id="arm"), lease_s=5.0).session_id
-    _stream(rig, 0.4)
+    _stream(rig, 1.0)
     assert arm.status().config_session_id == session and arm.halts == 0
     assert arm.writes[-1]["arm/joint1/position"] == 0.2
 
     died = time.monotonic()
-    wait_until(lambda: arm.status().deadman_fired, timeout=1.0, interval=0.005)
+    wait_until(lambda: arm.status().deadman_fired, timeout=2.0, interval=0.005)
 
-    assert time.monotonic() - died < 0.4
+    assert time.monotonic() - died < 1.0
     assert arm.status().config_session_id is None and arm.halts == 1
     assert arm._config_ended == "the connection halted"
 

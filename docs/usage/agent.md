@@ -78,7 +78,9 @@ A long-running tool call that allows it, such as `bash`, shows `Ctrl+B or /backg
 
 While calls run in the background, one line under the editor shows the newest with its command, how long it has run and its newest output line, and how many more there are. With an empty editor, Down opens the list there and selects a call. Enter shows its output full screen as it grows, `x` stops it, and Esc returns to the editor. A stopped call's output so far comes back as a notice. The agent can also start a call in the background itself, with the call's `run_in_background` argument, and list, read and stop these calls with its `background` tool.
 
-`/menu` opens the main menu full screen. Its Jobs tab shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time; `r` runs the selected job now and `d` deletes it.
+`/menu` opens three sections: Conversations, Agent modules, and Jobs. Left and Right switch sections from a list. Up and Down select entries, and typing filters the list. Enter on a conversation resumes it immediately. Enter on a module or job opens its actions. Use Up and Down to choose an action and Enter to run it. Job actions include a scrolling history view. Escape returns one level and restores the list selection and search; from a list it returns to chat.
+
+Jobs shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time. Use its focused actions to inspect runs, run a job now, or delete it.
 
 | Key | What it does |
 |---|---|

@@ -27,6 +27,7 @@ from dimos.control.calibration.coordinator import (
 from dimos.control.calibration.module import CalibrationModule
 from dimos.control.calibration.robots import KNOWN_ROBOTS
 from dimos.control.connection.mock_joint_connection import MockJointConnection
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import resolve_module_refs, stream_name_types
 from dimos.core.global_config import global_config
 from dimos.memory.tap import matching
@@ -64,7 +65,7 @@ def test_the_blueprint_opens_the_connection_for_config_sessions_and_records(name
     connection, robot, arm = CALIBRATE[name]
     assert name in all_blueprints
 
-    blueprint = load_blueprint(name)
+    blueprint = autoconnect(load_blueprint(name)).solidify()
 
     assert {atom.module for atom in blueprint.blueprints} == {
         CalibrationCoordinator,

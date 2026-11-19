@@ -615,14 +615,15 @@ def test_the_deadman_halting_the_arm_ends_the_session(rig: Callable[..., Rig]) -
 
 
 def test_a_deadman_armed_before_the_session_halts_and_ends_it(rig: Callable[..., Rig]) -> None:
-    r = rig(TunableArm, config_sessions=True)
+    deadman = 0.5
+    r = rig(TunableArm, config_sessions=True, deadman_timeout_s=deadman)
     r.move(joint1=0.5)
     session = _begin(r.module, lease_s=5.0)
     # Streamed commands keep it from firing, through the session as before it.
-    deadline = time.monotonic() + 6 * DEADMAN_S
+    deadline = time.monotonic() + 3 * deadman
     while time.monotonic() < deadline:
         r.move(joint1=0.3)
-        time.sleep(DEADMAN_S / 5)
+        time.sleep(deadman / 10)
     assert r.module.status().config_session_id == session and r.module.halts == 0
     assert wait_until(lambda: r.module.status().deadman_fired)
     assert not _live(r.module) and r.module.halts == 1

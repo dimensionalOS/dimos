@@ -35,7 +35,7 @@ from dimos.control.calibration.coordinator import (
     calibration_passthrough_task,
 )
 from dimos.control.calibration.module import CalibrationModule
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_connection,
@@ -63,7 +63,7 @@ CALIBRATION_RECORD_TOPICS = ",".join(
 
 def calibration_blueprint(
     connection: type[DamiaoConnection], robot: str, **defaults: Any
-) -> Blueprint:
+) -> MetaBlueprint:
     """``connection`` open for config sessions, driven by a calibration coordinator, and a calibration module for ``robot``.
 
     Args:

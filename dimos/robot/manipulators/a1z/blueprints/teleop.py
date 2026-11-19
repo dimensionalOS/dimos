@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -107,7 +107,7 @@ def _teleop(
     arm_task: TaskConfig,
     gripper_stream: str,
     *inputs: Blueprint,
-) -> Blueprint:
+) -> MetaBlueprint:
     """Move an A1Z's end and open and close its gripper, through ``A1ZConnection``.
     ``UrdfManager`` serves the A1Z's URDF and puts its joints on tf, so it can be drawn.
 
@@ -150,7 +150,10 @@ a1z_teleop = _teleop(A1ZTwistCoordinator, _eef_twist_task(), "right_gripper_comm
 )
 # From the keyboard, in a pygame window.
 a1z_keyboard_teleop = _teleop(
-    A1ZKeyboardCoordinator, _eef_twist_task(), "gripper_command", KeyboardTeleopModule.blueprint()
+    A1ZKeyboardCoordinator,
+    _eef_twist_task(),
+    "gripper_command",
+    KeyboardTeleopModule.blueprint(),
 ).remappings(_remaps(A1ZKeyboardCoordinator))
 # From a VR headset's left controller; teleop_webxr_a1z adds the WebXR module.
 coordinator_teleop_a1z = _teleop(
