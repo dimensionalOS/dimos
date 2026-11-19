@@ -42,6 +42,7 @@ exclude = [
     "**/*.yml",
     "**/*.json",
     "**/*.urdf",
+    "**/*.srdf",
     "**/*.html",
     "**/*.css",
     "**/*.js",
@@ -308,6 +309,12 @@ planning = [
     "viser[urdf]>=1.0.29",
     "yourdfpy>=0.0.60",
     "pyyaml>=6.0",
+]
+
+# Experimental cuRobo V2 planner; use the project's CUDA 12.8 PyTorch index.
+curobo = [
+    "dimos[planning]",
+    "nvidia-curobo[cu12-torch]==0.9.0; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version >= '3.11'",
 ]
 
 # Complete manipulation workflow: control, planning, perception, agents, and simulation.
@@ -580,6 +587,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+nvidia-curobo = { git = "https://github.com/NVlabs/curobo.git", tag = "v0.9.0" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
@@ -663,6 +671,7 @@ GitPython = "git"
 gtsam-extended = "gtsam"
 hydra-core = "hydra"
 ipython = "IPython"
+nvidia-curobo = "curobo"
 openai-whisper = "whisper"
 opencv-contrib-python = "cv2"
 Pillow = "PIL"

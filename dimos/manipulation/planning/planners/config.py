@@ -33,10 +33,16 @@ class RRTConnectPlannerConfig(BaseConfig):
     backend: Literal["rrt_connect"] = "rrt_connect"
 
 
+class CuRoboPlannerConfig(BaseConfig):
+    """Configuration selecting the CuRobo-native planner."""
+
+    backend: Literal["curobo"] = "curobo"
+
+
 CartesianPathConfig = _RoboPlanCartesianPathConfig
 
 
 ManipulationPlannerConfig = Annotated[
-    RRTConnectPlannerConfig | _RoboPlanPlannerConfig,
+    RRTConnectPlannerConfig | _RoboPlanPlannerConfig | CuRoboPlannerConfig,
     Field(discriminator="backend"),
 ]

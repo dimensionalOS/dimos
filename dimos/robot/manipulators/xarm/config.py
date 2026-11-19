@@ -427,6 +427,9 @@ def make_xarm_model_config(
         (f"{prefix}{left}", f"{prefix}{right}") for left, right in XARM_GRIPPER_COLLISION_EXCLUSIONS
     ]
     xarm_gripper = add_gripper and robot_type == "xarm"
+    if arm == "xarm7" and xarm_gripper and not prefix:
+        # The wrist and gripper base are rigidly joined through link_eef.
+        collision_exclusions.append(("link7", "xarm_gripper_base_link"))
     return RobotModelConfig(
         model=xarm_model(
             arm, "xarm" if add_gripper else None, robot=robot, prefix=prefix
