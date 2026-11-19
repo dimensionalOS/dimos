@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test helpers: a simulated arm behind the arm config contract, its clock and its recording.
+"""Test helpers: a simulated arm behind the config contract, its clock and its recording.
 
 :class:`FakeTuningArm` is an ``ArmConfigHooks`` connection for one arm of a
 spec, the calibration coordinator's pass-through in front of it (an
@@ -38,7 +38,7 @@ command is recorded, as ``arm_position_command`` is. Its :meth:`FakeTuningArm.st
 waits for a calibration tool to park, as a connection's stop does, then
 "disables" the arm and records where. It checks and clamps what it is sent
 as a Damiao connection does: patches validated by the connection's own
-``_patch_of``, gains clamped to kp 500 and kd 5, torque offsets to a fifth of
+``_patch_of`` and read strictly as ``ArmConfigPatch``, gains clamped to kp 500 and kd 5, torque offsets to a fifth of
 the motor's rated torque (the spec's pose cap over
 ``DEFAULT_TORQUE_SAFETY_FACTOR``), a save checked by ``check_arm_fits`` and
 started afresh over a stored file made for another model or arm, and a
@@ -83,6 +83,10 @@ from dimos.control.calibration.recording import RecordingUnavailableError
 from dimos.control.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
+    ArmConfigPatch,
+    ArmConfigState,
+    JointGains,
+    LinkGravity,
     calibration_path,
     check_arm_fits,
     load_for_spec,
@@ -101,23 +105,21 @@ from dimos.control.calibration.step_report import (
     JointTrace,
     Recording,
 )
-from dimos.control.connection.arm_config import (
-    DEFAULT_CONFIG_LEASE_S,
-    MAX_CONFIG_LEASE_S,
-    AppliedFile,
-    ArmConfigState,
-    ConfigApplied,
-    ConfigKeys,
-    ConfigPatch,
-    ConfigScope,
-    JointGains,
-    LinkGravity,
-)
 from dimos.control.connection.connection_module import (
     ConnectionStatus,
     _flag,
     _patch_of,
     _real,
+)
+from dimos.control.connection.module_config import (
+    DEFAULT_CONFIG_LEASE_S,
+    MAX_CONFIG_LEASE_S,
+    AppliedFile,
+    ConfigApplied,
+    ConfigKeys,
+    ConfigPatch,
+    ConfigScope,
+    ConfigState,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -273,7 +275,7 @@ class MemoryRecording:
 
 
 class FakeTuningArm:
-    """One simulated arm behind the arm config contract; see the module doc for what it simulates.
+    """One simulated arm behind the config contract; see the module doc for what it simulates.
 
     Args:
         spec: The arm.
@@ -639,20 +641,20 @@ class FakeTuningArm:
             return ConfigKeys(
                 source=SOURCE,
                 sessions=self._serves_sessions,
-                arms={arm_id: list(self._names)},
+                targets={arm_id: list(self._names)},
                 readable=["gains", "links", "torque_offset_nm"],
                 session=["gains", *(["float"] if self._gravity_comp else []), "torque_offset_nm"],
                 persist=list(self._persist),
                 persist_paths={arm_id: str(calibration_path(arm_id, self._root))},
-                gravity_compensation=self._gravity_comp,
+                features={"gravity_compensation": self._gravity_comp},
             )
 
         result: ConfigKeys = self._call("config_keys", keys)
         return result
 
-    def config_get(self) -> dict[str, ArmConfigState]:
-        result: dict[str, ArmConfigState] = self._call(
-            "config_get", lambda: {self.spec.arm_id: self._arm_state()}
+    def config_get(self) -> dict[str, ConfigState]:
+        result: dict[str, ConfigState] = self._call(
+            "config_get", lambda: {self.spec.arm_id: self._arm_state().to_state()}
         )
         return result
 
@@ -669,7 +671,7 @@ class FakeTuningArm:
 
         def apply() -> ConfigApplied:
             # Checked as a connection checks them: the codec rebuilds models unvalidated.
-            checked = _patch_of(patch)
+            checked = ArmConfigPatch.from_patch(_patch_of(patch))
             if scope not in ("session", "persist"):
                 raise ValueError(f"scope must be 'session' or 'persist', got {scope!r}")
             forced, at_once = _flag("force", force), _flag("apply_now", apply_now)
@@ -696,7 +698,7 @@ class FakeTuningArm:
         result: ConfigApplied = self._call("config_set", apply)
         return result
 
-    def _apply_live(self, patch: ConfigPatch) -> ConfigApplied:
+    def _apply_live(self, patch: ArmConfigPatch) -> ConfigApplied:
         """A session's change: gains (kp 0 floats the joint) and torque offsets, clamped."""
         file_only = patch.model_copy(update={"gains": None, "torque_offset_nm": None})
         why = dict.fromkeys(file_only.keys(), "saved with scope 'persist' only")
@@ -740,11 +742,13 @@ class FakeTuningArm:
             if tau != asked_tau:
                 clamped.append(f"torque_offset_nm.{joint}")
         return ConfigApplied(
-            arm_id=patch.arm_id,
+            target=patch.arm_id,
             scope="session",
-            applied=ConfigPatch(
+            applied=ArmConfigPatch(
                 arm_id=patch.arm_id, gains=gains or None, torque_offset_nm=offsets or None
-            ),
+            )
+            .to_patch()
+            .values,
             clamped=clamped,
             unsupported=list(why),
             why=why,
@@ -760,7 +764,7 @@ class FakeTuningArm:
             return
         self._call("config_reset", self._undo)
 
-    def _save(self, patch: ConfigPatch, force: bool, apply_now: bool) -> ConfigApplied:
+    def _save(self, patch: ArmConfigPatch, force: bool, apply_now: bool) -> ConfigApplied:
         """A save, as a connection's: merged into the arm's file, guarded, written, applied.
 
         Torque offsets and kp 0 are live changes only and are left out. When
@@ -808,9 +812,8 @@ class FakeTuningArm:
             # Nothing it may save, or nothing a file holds: nothing is written.
             why.update(dict.fromkeys(refused, "this fake saves none of it"))
             return ConfigApplied(
-                arm_id=arm_id,
+                target=arm_id,
                 scope="persist",
-                applied=ConfigPatch(arm_id=arm_id),
                 unsupported=list(why),
                 why=why,
                 applied_now=False,
@@ -838,9 +841,8 @@ class FakeTuningArm:
             }
             if large and not force:
                 return ConfigApplied(
-                    arm_id=arm_id,
+                    target=arm_id,
                     scope="persist",
-                    applied=ConfigPatch(arm_id=arm_id),
                     unsupported=list(why),
                     why=why,
                     applied_now=False,
@@ -849,7 +851,7 @@ class FakeTuningArm:
                         f"than {MAX_GRAVITY_STEP_NM:g} N m: {large} (N m), so nothing was "
                         "written; save calibrations near home, or pass force=True"
                     ),
-                    gravity_step_nm=step,
+                    details={"gravity_step_nm": step},
                 )
         target = save_calibration(path, merged)
         running = self._file is not None and Path(self._file.path) == target
@@ -863,15 +865,15 @@ class FakeTuningArm:
                 # The arm runs what the file now holds; only its record is new.
                 self._apply(target)
         return ConfigApplied(
-            arm_id=arm_id,
+            target=arm_id,
             scope="persist",
-            applied=saved,
+            applied=saved.to_patch().values,
             clamped=clamped,
             unsupported=list(why),
             why=why,
             path=str(target),
             applied_now=live,
-            gravity_step_nm=step,
+            details={"gravity_step_nm": step},
         )
 
     def _model(self, calibration: ArmCalibration | None) -> pin.Model:

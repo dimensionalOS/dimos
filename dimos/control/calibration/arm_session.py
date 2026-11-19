@@ -79,14 +79,10 @@ from dimos.control.calibration.motion import (
     ramp_lag_limits_deg,
     tracking_error,
 )
+from dimos.control.calibration.schema import ArmConfigPatch, ArmConfigState, JointGains
 from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.control.calibration.step_analysis import REST_WINDOW_S, StepEvent
-from dimos.control.connection.arm_config import (
-    ArmConfigState,
-    ConfigApplied,
-    ConfigPatch,
-    JointGains,
-)
+from dimos.control.connection.module_config import ConfigApplied
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
@@ -376,7 +372,9 @@ class ArmSession:
             raise
         try:
             started = self._connection.config_set(
-                ConfigPatch(arm_id=self._spec.arm_id), scope="session", lease_s=self._lease_s
+                ArmConfigPatch(arm_id=self._spec.arm_id).to_patch(),
+                scope="session",
+                lease_s=self._lease_s,
             )
         except Exception as error:
             self._hold_arm()
@@ -494,17 +492,17 @@ class ArmSession:
 
     def _arm_state(self) -> ArmConfigState:
         states = self._call("config_get", self._connection.config_get)
-        state: ArmConfigState | None = states.get(self._spec.arm_id)
+        state = states.get(self._spec.arm_id)
         if state is None:
             raise StepFailedError(f"the connection does not report {self._spec.arm_id}")
-        return state
+        return ArmConfigState.from_state(state)
 
     def _set_gains(self, gains: dict[str, JointGains], what: str) -> ConfigApplied:
         """``gains`` for the session; raises ``StepFailedError`` when the connection cannot."""
         applied: ConfigApplied = self._call(
             "config_set",
             self._connection.config_set,
-            ConfigPatch(arm_id=self._spec.arm_id, gains=gains),
+            ArmConfigPatch(arm_id=self._spec.arm_id, gains=gains).to_patch(),
             scope="session",
             session_id=self._session_id,
         )
@@ -551,7 +549,7 @@ class ArmSession:
         self._call(
             "config_set",
             self._connection.config_set,
-            ConfigPatch(arm_id=self._spec.arm_id),
+            ArmConfigPatch(arm_id=self._spec.arm_id).to_patch(),
             scope="session",
             session_id=self._session_id,
         )
@@ -745,7 +743,7 @@ class ArmSession:
         Raises ``StepFailedError`` when the connection cannot change them.
         """
         applied = self._set_gains({joint: JointGains(kp=kp, kd=kd)}, f"change {joint}'s gains")
-        state = (applied.applied.gains or {}).get(joint)
+        state = (ArmConfigPatch.from_applied(applied).gains or {}).get(joint)
         if state is None:
             raise StepFailedError(f"the connection did not say which gains {joint} got")
         self._gains[joint] = state
@@ -819,14 +817,16 @@ class ArmSession:
         index = self._names.index(joint)
         self._floating[joint] = float(self._measured[index])
         try:
-            floated = (applied.applied.gains or {}).get(joint)
+            floated = (ArmConfigPatch.from_applied(applied).gains or {}).get(joint)
             yield float(kd if floated is None else floated.kd)
         finally:
             del self._floating[joint]
             try:
                 # Its gains as this session holds it; floating never changed them.
                 self._connection.config_set(
-                    ConfigPatch(arm_id=self._spec.arm_id, gains={joint: self._gains[joint]}),
+                    ArmConfigPatch(
+                        arm_id=self._spec.arm_id, gains={joint: self._gains[joint]}
+                    ).to_patch(),
                     scope="session",
                     session_id=self._session_id,
                 )

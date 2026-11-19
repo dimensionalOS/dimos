@@ -63,7 +63,11 @@ from dimos.control.calibration.procedure import (
 from dimos.control.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
+    ArmConfigPatch,
+    ArmConfigState,
     GravityCalibration,
+    JointGains,
+    LinkGravity,
     calibration_path,
     gravity_links_from_inertial,
     load_for_spec,
@@ -76,7 +80,7 @@ from dimos.control.calibration.spec import (
     WorkspaceGuard,
 )
 from dimos.control.calibration.steps import calibration_steps
-from dimos.control.connection.arm_config import ConfigPatch, JointGains, LinkGravity
+from dimos.control.connection.module_config import ConfigPatch
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.makermods_metal.config import METAL
 
@@ -650,7 +654,7 @@ def test_a_floating_joint_that_drifts_is_held_again_and_fails(
     shoulder = joints["left_joint2"]
     assert not shoulder["passed"]
     assert "drifted" in shoulder["reason"] or shoulder["fingertip_drift_mm"] > 2.0
-    assert "left_joint2" not in rig.fake.config_get()[rig.fake.spec.arm_id].floating
+    assert "left_joint2" not in _arm_state(rig.fake).floating
     assert rig.procedure.results()["float_check"]["saved"] is None
 
 
@@ -674,10 +678,14 @@ def test_a_falling_joint_is_held_again_on_speed_or_on_drift(
     shoulder = rig.procedure.results()["float_check"]["joints"]["left_joint2"]
     first = shoulder["poses"][0]
     assert not first["passed"] and re.search(caught, first["reason"]), first["reason"]
-    assert "left_joint2" not in rig.fake.config_get()[rig.fake.spec.arm_id].floating
+    assert "left_joint2" not in _arm_state(rig.fake).floating
     # Held the moment it drifted, inside the session, as well as before it ended.
     log = rig.fake.call_log
     assert log[: log.index("config_reset")].count("hold") >= 2
+
+
+def _arm_state(fake: FakeTuningArm) -> ArmConfigState:
+    return ArmConfigState.from_state(fake.config_get()[fake.spec.arm_id])
 
 
 def _targets(names: list[str], values: Any) -> JointState:
@@ -692,7 +700,7 @@ def test_the_fake_keeps_the_config_session_rules(
     names = list(left_spec.joint_names)
 
     def begin() -> str:
-        session = fake.config_set(ConfigPatch(arm_id=arm_id), lease_s=1.0).session_id
+        session = fake.config_set(ArmConfigPatch(arm_id=arm_id).to_patch(), lease_s=1.0).session_id
         assert session is not None
         return session
 
@@ -712,7 +720,7 @@ def test_the_fake_keeps_the_config_session_rules(
     fake.config_get()
     fake.config_keys()
     assert fake.session_active()
-    fake.config_set(ConfigPatch(arm_id=arm_id), session_id=session)
+    fake.config_set(ArmConfigPatch(arm_id=arm_id).to_patch(), session_id=session)
     for _ in range(15):
         fake.send(_targets(["left_joint1"], [0.1]))
         fake.advance(0.05)
@@ -722,7 +730,7 @@ def test_the_fake_keeps_the_config_session_rules(
         fake.advance(0.05)
     assert not fake.session_active() and fake.ended[-1].startswith("no config call within")
     with pytest.raises(RuntimeError, match=r"the config session ended \(no config call"):
-        fake.config_set(ConfigPatch(arm_id=arm_id), session_id=session)
+        fake.config_set(ArmConfigPatch(arm_id=arm_id).to_patch(), session_id=session)
 
     # Fresh targets are commanded every tick; stale ones are not, and the deadman halts.
     begin()
@@ -745,21 +753,21 @@ def test_the_fake_keeps_the_config_session_rules(
 
     session = begin()
     floated = fake.config_set(
-        ConfigPatch(
+        ArmConfigPatch(
             arm_id=arm_id,
             gains={
                 "left_joint2": JointGains(kp=0.0, kd=0.5),
                 "left_joint3": JointGains(kp=40.0, kd=9.0),
             },
-        ),
+        ).to_patch(),
         session_id=session,
     )
     assert floated.clamped == ["gains.left_joint3.kd"]
-    assert fake.config_get()[arm_id].floating == {"left_joint2": 0.5}
+    assert _arm_state(fake).floating == {"left_joint2": 0.5}
     with pytest.raises(ValueError):
-        fake.config_set(ConfigPatch(arm_id="nope/left"), session_id=session)
+        fake.config_set(ArmConfigPatch(arm_id="nope/left").to_patch(), session_id=session)
     assert not fake.session_active()
-    state = fake.config_get()[arm_id]
+    state = _arm_state(fake)
     assert state.floating == {} and state.gains["left_joint3"] == JointGains(kp=80.0, kd=1.0)
     fake.send(_targets(["left_joint1"], [0.0]))
     assert math.isclose(fake.target[0], 0.0)
@@ -771,49 +779,56 @@ def test_the_fake_checks_and_saves_as_the_connection_does(
     fake = FakeTuningArm(left_spec, arm=arm, calibration_root=tmp_path)
     arm_id = left_spec.arm_id
     path = calibration_path(arm_id, tmp_path)
-    session = fake.config_set(ConfigPatch(arm_id=arm_id)).session_id
+    session = fake.config_set(ArmConfigPatch(arm_id=arm_id).to_patch()).session_id
     # A torque offset past a fifth of the motor's rated torque is clamped, and says so.
     offset = fake.config_set(
-        ConfigPatch(arm_id=arm_id, torque_offset_nm={"left_joint2": 100.0}), session_id=session
+        ArmConfigPatch(arm_id=arm_id, torque_offset_nm={"left_joint2": 100.0}).to_patch(),
+        session_id=session,
     )
     rated = left_spec.max_torque_nm["left_joint2"] / DEFAULT_TORQUE_SAFETY_FACTOR
-    assert offset.applied.torque_offset_nm == {"left_joint2": pytest.approx(0.2 * rated)}
+    assert ArmConfigPatch.from_applied(offset).torque_offset_nm == {
+        "left_joint2": pytest.approx(0.2 * rated)
+    }
     assert offset.clamped == ["torque_offset_nm.left_joint2"]
     # A patch is validated as the connection validates it, and a bad one ends the session.
     with pytest.raises(ValidationError):
         fake.config_set(
-            {"arm_id": arm_id, "gains": {"left_joint2": {"kp": "80", "kd": 1.0}}},  # type: ignore[arg-type]
+            {"target": arm_id, "values": {"gains": {"left_joint2": {"kp": "80", "kd": 1.0}}}},  # type: ignore[arg-type]
             session_id=session,
         )
     assert not fake.session_active()
 
     # A save clamps its gains and keeps the connection's file rules.
     saved = fake.config_set(
-        ConfigPatch(arm_id=arm_id, gains={"left_joint2": JointGains(kp=900.0, kd=9.0)}),
+        ArmConfigPatch(
+            arm_id=arm_id, gains={"left_joint2": JointGains(kp=900.0, kd=9.0)}
+        ).to_patch(),
         scope="persist",
     )
     assert saved.clamped == ["gains.left_joint2.kp", "gains.left_joint2.kd"]
     assert load_for_spec(left_spec, path).gains == {"left_joint2": JointGains(kp=500.0, kd=5.0)}
     with pytest.raises(ArmCalibrationError, match="gives gains to joints of no arm"):
         fake.config_set(
-            ConfigPatch(arm_id=arm_id, gains={"right_joint2": JointGains(kp=10.0, kd=1.0)}),
+            ArmConfigPatch(
+                arm_id=arm_id, gains={"right_joint2": JointGains(kp=10.0, kd=1.0)}
+            ).to_patch(),
             scope="persist",
         )
     stranger = {"right_link3": LinkGravity(mass_kg=1.0, com_m=(0.0, 0.0, 0.0))}
     with pytest.raises(ArmCalibrationError, match=r"does not move: \['right_link3'\]"):
-        fake.config_set(ConfigPatch(arm_id=arm_id, links=stranger), scope="persist")
+        fake.config_set(ArmConfigPatch(arm_id=arm_id, links=stranger).to_patch(), scope="persist")
     # A stored file made for another model is saved afresh, not merged.
     stored = load_for_spec(left_spec, path)
     other = stored.robot_model.model_copy(update={"sha256": "0" * 64})
     save_calibration(path, stored.model_copy(update={"robot_model": other}))
-    fake.config_set(ConfigPatch(arm_id=arm_id, notes="afresh"), scope="persist")
+    fake.config_set(ArmConfigPatch(arm_id=arm_id, notes="afresh").to_patch(), scope="persist")
     fresh = load_for_spec(left_spec, path)
     assert fresh.gains is None and fresh.notes == "afresh"
 
     # Without config sessions it refuses every call that changes the arm.
     closed = FakeTuningArm(left_spec, arm=arm, calibration_root=tmp_path, sessions=False)
     for call in (
-        lambda: closed.config_set(ConfigPatch(arm_id=arm_id)),
+        lambda: closed.config_set(ArmConfigPatch(arm_id=arm_id).to_patch()),
         closed.config_reset,
     ):
         with pytest.raises(RuntimeError, match="config sessions are off"):
@@ -1194,10 +1209,10 @@ def test_a_save_inside_a_session_carries_its_id(
     make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
 ) -> None:
     rig = make_rig()
-    patch = ConfigPatch(arm_id=left_spec.arm_id, notes="bench")
+    patch = ArmConfigPatch(arm_id=left_spec.arm_id, notes="bench")
     with rig.procedure.open_session():
         with pytest.raises(RuntimeError, match="a config session is live"):
-            rig.fake.config_set(patch, scope="persist")
+            rig.fake.config_set(patch.to_patch(), scope="persist")
     # That raised, which ended the session; a save from inside one names it.
     with rig.procedure.open_session() as session:
         saved = rig.procedure.persist(patch)
