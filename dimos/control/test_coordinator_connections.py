@@ -189,7 +189,7 @@ class FakeBase(ConnectionModule):
         self.joint_state.publish(
             JointState(
                 ts=time.time(),
-                frame_id=self.frame("base_link"),
+                frame_id=self.frame.base_link,
                 name=list(self._base),
                 velocity=[body_velocity.linear.x, body_velocity.linear.y, body_velocity.angular.z],
             )
@@ -199,7 +199,7 @@ class FakeBase(ConnectionModule):
                 Odometry(
                     ts=pose.ts,
                     frame_id=pose.frame_id,
-                    child_frame_id=self.frame("base_link"),
+                    child_frame_id=self.frame.base_link,
                     pose=Pose(position=pose.position, orientation=pose.orientation),
                     twist=body_velocity,
                 )
@@ -212,7 +212,7 @@ class FakeBase(ConnectionModule):
                 Twist(),
                 PoseStamped(
                     ts=time.time(),
-                    frame_id=self.frame("odom"),
+                    frame_id=self.frame.odom,
                     orientation=Quaternion.from_euler(Vector3(0.0, 0.0, self.config.initial_yaw)),
                 ),
             )
