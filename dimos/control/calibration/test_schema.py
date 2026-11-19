@@ -32,6 +32,8 @@ from dimos.control.calibration.schema import (
     LEGACY_NOTES,
     ArmCalibration,
     ArmCalibrationError,
+    ArmConfigPatch,
+    ArmConfigState,
     GravityCalibration,
     JointGains,
     LinkGravity,
@@ -46,8 +48,8 @@ from dimos.control.calibration.schema import (
     to_inertial_overrides,
 )
 from dimos.control.calibration.spec import ArmCalibrationSpec, urdf_sha256
-from dimos.control.connection import arm_config
-from dimos.control.connection.arm_config import ConfigPatch
+from dimos.control.connection.module_config import AppliedFile, ConfigApplied, ConfigPatch
+from dimos.utils.testing.cbor import roundtrip
 
 REFERENCE = Path(__file__).resolve().parent / "reference" / "gravity_both_2026-10-16.json"
 SHA = "a" * 64
@@ -137,29 +139,118 @@ def test_calibration_round_trips_through_its_file(tmp_path: Path) -> None:
 LATER = CREATED + timedelta(hours=1)
 
 
-def test_the_contract_types_are_the_files_own() -> None:
-    assert JointGains is arm_config.JointGains and LinkGravity is arm_config.LinkGravity
-    assert schema.NonNegativeFloat is arm_config.NonNegativeFloat
+ARM_PATCH = ArmConfigPatch(
+    arm_id="rig/left",
+    gains={"joint1": JointGains(kp=60.0, kd=3.0), "joint2": JointGains(kp=0.0, kd=0.5)},
+    torque_offset_nm={"joint1": -0.2},
+    links={"link2": LinkGravity(mass_kg=1.5, com_m=(0.1, 0.0, 0.0), merged_links=["tool"])},
+    fit={"ridge_nm": 0.1, "holdout_poses": ["pose_05"]},
+    friction_nm={"joint1": 0.3},
+    checks={"float": {"passed": True}},
+    notes="bench",
+)
+
+
+def test_an_arm_patch_crosses_as_the_patch_a_connection_takes() -> None:
+    patch = ARM_PATCH.to_patch()
+    assert patch.target == "rig/left" and "arm_id" not in patch.values
+    assert patch.values["links"]["link2"]["com_m"] == [0.1, 0.0, 0.0]
+    back = roundtrip(patch)
+    assert back == patch and ArmConfigPatch.from_patch(back) == ARM_PATCH
+    assert ArmConfigPatch(arm_id="rig/left").to_patch() == ConfigPatch(target="rig/left")
+
+
+def test_an_arm_patch_names_every_value_it_gives() -> None:
+    assert ARM_PATCH.keys() == [
+        "gains.joint1.kp",
+        "gains.joint1.kd",
+        "gains.joint2.kp",
+        "gains.joint2.kd",
+        "torque_offset_nm.joint1",
+        "links.link2",
+        "friction_nm.joint1",
+        "checks.float",
+        "fit",
+        "notes",
+    ]
+    assert ArmConfigPatch(arm_id="rig/left").keys() == []
+    assert ArmConfigPatch(arm_id="rig/left", links={}, gains={}).keys() == ["gains", "links"]
+
+
+def test_what_a_connection_applied_reads_back_as_an_arm_patch() -> None:
+    gains = {"joint1": JointGains(kp=500.0, kd=2.0)}
+    values = ArmConfigPatch(arm_id="rig/left", gains=gains).to_patch().values
+    applied = roundtrip(ConfigApplied(target="rig/left", scope="session", applied=values))
+    assert ArmConfigPatch.from_applied(applied) == ArmConfigPatch(arm_id="rig/left", gains=gains)
+
+
+def test_an_arm_state_crosses_as_the_state_a_connection_reports() -> None:
+    state = ArmConfigState(
+        arm_id="rig/left",
+        gains={"joint1": JointGains(kp=60.0, kd=3.0)},
+        floating={"joint2": 0.5},
+        torque_offset_nm={"joint1": -0.2},
+        links={"link2": LinkGravity(mass_kg=1.5, com_m=(0.1, 0.0, 0.0))},
+        file=AppliedFile(
+            path="/arms/rig/left/calibration.json",
+            created="2026-11-18T09:30:00+00:00",
+            sha256="a" * 64,
+        ),
+        session_id="s" * 32,
+    )
+    reported = roundtrip(state.to_state())
+    assert reported.target == "rig/left" and reported.file == state.file
+    assert set(reported.values) == {"gains", "floating", "torque_offset_nm", "links"}
+    assert ArmConfigState.from_state(reported) == state
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"gains": {"joint1": {"kp": -1.0, "kd": 0.0}}},
+        {"gains": {"joint1": {"kp": 1.0}}},
+        {"gains": {"joint1": {"kp": "80", "kd": 1.0}}},
+        {"torque_offset_nm": {"joint1": float("nan")}},
+        {"links": {"link2": {"mass_kg": 0.0, "com_m": [0.0, 0.0, 0.0]}}},
+        {"links": {"link2": {"mass_kg": True, "com_m": [0.0, 0.1, 0.2]}}},
+        {"links": {"link2": {"mass_kg": 1.0, "com_m": ["0", 0.1, 0.2]}}},
+        {"links": {"link2": {"mass_kg": 1.0, "com_m": [0.0, 0.1]}}},
+        {"friction_nm": {"joint1": -0.1}},
+        {"stiffness": {}},
+    ],
+)
+def test_an_arm_patch_refuses_values_no_arm_could_take(values: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        ArmConfigPatch.from_patch(ConfigPatch(target="rig/left", values=values))
+
+
+def test_an_arm_patch_takes_json_arrays_and_its_arm_from_the_target() -> None:
+    link = {"mass_kg": 1.0, "com_m": [0, 0.1, 0.2]}
+    patch = ConfigPatch(target="rig/left", values={"links": {"link2": link}})
+    checked = ArmConfigPatch.from_patch(patch)
+    assert checked.links is not None and checked.links["link2"].com_m == (0.0, 0.1, 0.2)
+    with pytest.raises(ValueError, match="target"):
+        ArmConfigPatch.from_patch(ConfigPatch(target="rig/left", values={"arm_id": "rig/right"}))
 
 
 def test_a_patch_changes_only_what_it_gives() -> None:
     stored = calibration()
-    merged = merge_patch(stored, ConfigPatch(arm_id="toy/arm"), created=LATER)
+    merged = merge_patch(stored, ArmConfigPatch(arm_id="toy/arm"), created=LATER)
     assert merged == stored.model_copy(update={"created": LATER})
-    notes = merge_patch(stored, ConfigPatch(arm_id="toy/arm", notes="refit"), created=LATER)
+    notes = merge_patch(stored, ArmConfigPatch(arm_id="toy/arm", notes="refit"), created=LATER)
     assert notes.notes == "refit" and notes.gravity == stored.gravity
     assert notes.checks == stored.checks
 
 
 def test_gains_merge_by_joint() -> None:
     stored = calibration(gains={"shoulder": JointGains(kp=80.0, kd=5.0)})
-    patch = ConfigPatch(arm_id="toy/arm", gains={"elbow": JointGains(kp=30.0, kd=1.0)})
+    patch = ArmConfigPatch(arm_id="toy/arm", gains={"elbow": JointGains(kp=30.0, kd=1.0)})
     merged = merge_patch(stored, patch, created=LATER)
     assert merged.gains == {
         "shoulder": JointGains(kp=80.0, kd=5.0),
         "elbow": JointGains(kp=30.0, kd=1.0),
     }
-    patch = ConfigPatch(arm_id="toy/arm", gains={"shoulder": JointGains(kp=60.0, kd=2.0)})
+    patch = ArmConfigPatch(arm_id="toy/arm", gains={"shoulder": JointGains(kp=60.0, kd=2.0)})
     assert merge_patch(stored, patch, created=LATER).gains == {
         "shoulder": JointGains(kp=60.0, kd=2.0)
     }
@@ -170,13 +261,13 @@ def test_new_links_replace_the_stored_set_and_drop_its_checks() -> None:
     stored = calibration()
     links = {"tool": LinkGravity(mass_kg=0.6, com_m=(0.0, 0.0, 0.04))}
     merged = merge_patch(
-        stored, ConfigPatch(arm_id="toy/arm", links=links, fit={"ridge_nm": 0.2}), created=LATER
+        stored, ArmConfigPatch(arm_id="toy/arm", links=links, fit={"ridge_nm": 0.2}), created=LATER
     )
     assert merged.gravity == GravityCalibration(links=links, fit={"ridge_nm": 0.2})
     # The checks ran with the old masses.
     assert merged.checks is None
     # Links without a fit carry no fit of the old links.
-    bare = merge_patch(stored, ConfigPatch(arm_id="toy/arm", links=links), created=LATER)
+    bare = merge_patch(stored, ArmConfigPatch(arm_id="toy/arm", links=links), created=LATER)
     assert bare.gravity == GravityCalibration(links=links, fit={})
     # The gains, friction and notes stay.
     assert (merged.gains, merged.friction_nm, merged.notes) == (
@@ -189,10 +280,10 @@ def test_new_links_replace_the_stored_set_and_drop_its_checks() -> None:
 def test_the_same_links_keep_the_stored_checks_and_fit() -> None:
     stored = calibration()
     assert stored.gravity is not None
-    patch = ConfigPatch(arm_id="toy/arm", links=dict(stored.gravity.links))
+    patch = ArmConfigPatch(arm_id="toy/arm", links=dict(stored.gravity.links))
     merged = merge_patch(stored, patch, created=LATER)
     assert merged.checks == stored.checks and merged.gravity == stored.gravity
-    patch = ConfigPatch(
+    patch = ArmConfigPatch(
         arm_id="toy/arm",
         links=dict(stored.gravity.links),
         fit={"ridge_nm": 0.3},
@@ -205,7 +296,7 @@ def test_the_same_links_keep_the_stored_checks_and_fit() -> None:
 
 def test_checks_merge_by_name_and_friction_replaces() -> None:
     stored = calibration()
-    patch = ConfigPatch(
+    patch = ArmConfigPatch(
         arm_id="toy/arm",
         checks={"float": {"passed": False}, "tracking": {"rms_deg": 0.4}},
         friction_nm={"elbow": 0.1},
@@ -219,28 +310,30 @@ def test_checks_merge_by_name_and_friction_replaces() -> None:
 
 def test_a_fit_alone_replaces_the_stored_fit() -> None:
     stored = calibration()
-    merged = merge_patch(stored, ConfigPatch(arm_id="toy/arm", fit={"x": 1}), created=LATER)
+    merged = merge_patch(stored, ArmConfigPatch(arm_id="toy/arm", fit={"x": 1}), created=LATER)
     assert stored.gravity is not None and merged.gravity is not None
     assert merged.gravity.links == stored.gravity.links and merged.gravity.fit == {"x": 1}
     assert merged.checks == stored.checks
     with pytest.raises(ValueError, match="a fit needs its fitted links"):
-        merge_patch(calibration(gravity=None), ConfigPatch(arm_id="toy/arm", fit={}), created=LATER)
+        merge_patch(
+            calibration(gravity=None), ArmConfigPatch(arm_id="toy/arm", fit={}), created=LATER
+        )
 
 
 @pytest.mark.parametrize(
     "patch,match",
     [
-        (ConfigPatch(arm_id="toy/other"), "for arm 'toy/other'"),
-        (ConfigPatch(arm_id="toy/arm", torque_offset_nm={"shoulder": 0.1}), "live change only"),
+        (ArmConfigPatch(arm_id="toy/other"), "for arm 'toy/other'"),
+        (ArmConfigPatch(arm_id="toy/arm", torque_offset_nm={"shoulder": 0.1}), "live change only"),
     ],
 )
-def test_a_patch_the_file_cannot_take_is_refused(patch: ConfigPatch, match: str) -> None:
+def test_a_patch_the_file_cannot_take_is_refused(patch: ArmConfigPatch, match: str) -> None:
     with pytest.raises(ValueError, match=match):
         merge_patch(calibration(), patch, created=LATER)
 
 
 def test_the_merged_file_is_checked_like_any_other() -> None:
-    patch = ConfigPatch(arm_id="toy/arm", notes="x")
+    patch = ArmConfigPatch(arm_id="toy/arm", notes="x")
     with pytest.raises(ValidationError, match="time zone"):
         merge_patch(calibration(), patch, created=datetime(2026, 11, 18))
 

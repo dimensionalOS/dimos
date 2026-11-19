@@ -28,7 +28,7 @@ that one before it drives the arm.
 The arm is configured through the ``_connection`` module reference: the
 blueprint injects the robot's connection (a ``DamiaoConnection`` deployed
 with ``config_sessions=True``) and every call is an RPC to it over the bus,
-through the arm config contract (``hooks.ArmConfigHooks``). Targets go out
+through the config contract (``hooks.ArmConfigHooks``). Targets go out
 on ``calibration_joint_command`` at ``ProcedureSettings.stream_hz``, 50 per
 second by default, to the control coordinator's pass-through task
 (``coordinator.CalibrationCoordinator``), which sends each one to the
@@ -88,9 +88,10 @@ from dimos.control.calibration.procedure import (
 )
 from dimos.control.calibration.recording import SqliteRecording, probe_payload
 from dimos.control.calibration.robots import KNOWN_ROBOTS, arm_spec
+from dimos.control.calibration.schema import ArmConfigPatch
 from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.control.calibration.steps import calibration_steps
-from dimos.control.connection.arm_config import ConfigApplied, ConfigKeys, ConfigPatch
+from dimos.control.connection.module_config import ConfigApplied, ConfigKeys
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -230,7 +231,7 @@ class _ModuleProcedure(Procedure):
         self._timeouts = timeouts
 
     def persist(
-        self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+        self, patch: ArmConfigPatch, *, force: bool = False, apply_now: bool = True
     ) -> ConfigApplied:
         timeouts = self._timeouts
         if timeouts is None:

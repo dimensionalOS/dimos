@@ -131,6 +131,8 @@ from dimos.control.calibration.schema import (
     HISTORY_DIR_NAME,
     ArmCalibration,
     ArmCalibrationError,
+    ArmConfigPatch,
+    ArmConfigState,
     JointGains,
     load_for_spec,
     to_inertial_overrides,
@@ -146,7 +148,7 @@ from dimos.control.calibration.step_report import (
     extract_steps,
     write_tables,
 )
-from dimos.control.connection.arm_config import ArmConfigState, ConfigApplied, ConfigPatch
+from dimos.control.connection.module_config import ConfigApplied, ConfigKeys
 
 END_LABEL = "end"
 # A reading this far past a joint limit fails the check.
@@ -221,6 +223,11 @@ def _needs(
     return True
 
 
+def _compensates_gravity(keys: ConfigKeys) -> bool:
+    """Whether the connection holds the arm's weight up (``features["gravity_compensation"]``)."""
+    return keys.features.get("gravity_compensation") is True
+
+
 def _measured(ctx: StepContext) -> Vector:
     """The arm's latest reading, outside a config session too; a stale one fails the step."""
     position, _, _ = joint_reading(ctx.state, ctx.keys().source, ctx.spec.joint_names, ctx.clock)
@@ -241,7 +248,7 @@ def _ensure_home(ctx: StepContext, why: str) -> None:
 
 
 def _persist(
-    ctx: StepContext, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+    ctx: StepContext, patch: ArmConfigPatch, *, force: bool = False, apply_now: bool = True
 ) -> ConfigApplied:
     """Save ``patch`` through the connection; raises ``StepFailedError`` when it cannot.
 
@@ -261,7 +268,7 @@ def _persist(
     return saved
 
 
-def _save(ctx: StepContext, patch: ConfigPatch) -> dict[str, Any]:
+def _save(ctx: StepContext, patch: ArmConfigPatch) -> dict[str, Any]:
     """Save ``patch`` at home and apply it; a gravity step too large is forced on a second yes.
 
     The connection writes nothing when applying the saved file would step a
@@ -272,7 +279,7 @@ def _save(ctx: StepContext, patch: ConfigPatch) -> dict[str, Any]:
     _ensure_home(ctx, "apply the calibration")
     saved = _persist(ctx, patch)
     refused, forced = saved.refused, False
-    step = saved.gravity_step_nm
+    step = _gravity_step(saved)
     if refused is not None:
         try:
             ctx.confirm(
@@ -284,7 +291,7 @@ def _save(ctx: StepContext, patch: ConfigPatch) -> dict[str, Any]:
         else:
             saved = _persist(ctx, patch, force=True)
             forced = True
-            step = saved.gravity_step_nm
+            step = _gravity_step(saved)
     data: dict[str, Any] = {
         "saved": saved.path,
         "applied": saved.applied_now,
@@ -294,6 +301,12 @@ def _save(ctx: StepContext, patch: ConfigPatch) -> dict[str, Any]:
     if refused is not None and not forced:
         data["refused"] = refused
     return data
+
+
+def _gravity_step(saved: ConfigApplied) -> dict[str, float]:
+    """By joint, how much a save changed its gravity torque at this pose, or would have."""
+    step: Mapping[str, Any] = saved.details.get("gravity_step_nm") or {}
+    return {joint: float(value) for joint, value in step.items()}
 
 
 def _persist_path(ctx: StepContext) -> Path:
@@ -337,7 +350,7 @@ def _record_check(ctx: StepContext, name: str, value: dict[str, Any]) -> dict[st
     if stored is None:
         return {"saved": None}
     try:
-        saved = ctx.persist(ConfigPatch(arm_id=ctx.spec.arm_id, checks={name: value}))
+        saved = ctx.persist(ArmConfigPatch(arm_id=ctx.spec.arm_id, checks={name: value}))
     except Exception as error:
         raise StepFailedError(f"the connection did not save the calibration: {plain_error(error)}")
     if saved.unsupported:
@@ -356,7 +369,8 @@ def _not_recorded(data: Mapping[str, Any]) -> str:
 def _applied_now(ctx: StepContext) -> ArmConfigState | None:
     """How the arm is driven now, as its connection says: its file and link masses."""
     try:
-        return ctx.connection.config_get().get(ctx.spec.arm_id)
+        state = ctx.connection.config_get().get(ctx.spec.arm_id)
+        return None if state is None else ArmConfigState.from_state(state)
     except Exception as error:
         raise StepFailedError(f"the connection did not say what the arm runs: {plain_error(error)}")
 
@@ -580,10 +594,10 @@ class CheckStep(Step):
                 "the connection does not serve config sessions: start the robot's calibration "
                 "blueprint (<robot>-calibrate), which deploys it with config_sessions=True"
             )
-        joints = keys.arms.get(spec.arm_id)
+        joints = keys.targets.get(spec.arm_id)
         if joints is None:
             raise StepFailedError(
-                f"the connection drives the arms {list(keys.arms)}, not {spec.arm_id}"
+                f"the connection drives the arms {list(keys.targets)}, not {spec.arm_id}"
             )
         missing = [name for name in spec.joint_names if name not in joints]
         if missing:
@@ -669,7 +683,7 @@ class GravityPosesStep(Step):
         ctx.run.pose_set = pose_set
         poses = pose_set.identification
         applied = _applied_now(ctx)
-        compensation = Compensation(ctx.keys().gravity_compensation, _links_of(applied))
+        compensation = Compensation(_compensates_gravity(ctx.keys()), _links_of(applied))
         dithers = len(arm.measured_joints) * 2 * settings.dither_hold_s
         stops = [arm.home, *(np.asarray(p.joints_rad) for p in poses), arm.home]
         travel = sum(_ramp_s(a, b, settings.speed_deg_s) for a, b in itertools.pairwise(stops))
@@ -836,7 +850,7 @@ class GravityFitStep(Step):
         assert gravity is not None
         # The connection merges it into the stored file: the gains and notes stay,
         # the checks only when the masses did not change.
-        patch = ConfigPatch(
+        patch = ArmConfigPatch(
             arm_id=ctx.spec.arm_id,
             links=gravity.links,
             fit=gravity.fit,
@@ -873,7 +887,7 @@ class FloatCheckStep(Step):
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
-        if caps.keys is not None and not caps.keys.gravity_compensation:
+        if caps.keys is not None and not _compensates_gravity(caps.keys):
             return "the robot does not compensate gravity, so a floating joint would fall"
         return _needs(caps, session="float")
 
@@ -1111,7 +1125,7 @@ class PickGainsStep(Step):
         # (DamiaoArm.apply_calibration) drops every live gain override, so from here
         # on the arm holds the saved gains, in any session too: confirm_tracking
         # runs on the file's gains, as it should.
-        data.update(_save(ctx, ConfigPatch(arm_id=ctx.spec.arm_id, gains=gains)))
+        data.update(_save(ctx, ArmConfigPatch(arm_id=ctx.spec.arm_id, gains=gains)))
         return StepResult(f"saved gains for {sorted(chosen)} to {data['saved']}", data)
 
 

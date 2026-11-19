@@ -85,14 +85,13 @@ from dimos.control.calibration.motion import (
     speed_rad_s,
 )
 from dimos.control.calibration.recording import RecordingSource
+from dimos.control.calibration.schema import ArmConfigPatch, ArmConfigState
 from dimos.control.calibration.spec import ArmCalibrationSpec
-from dimos.control.connection.arm_config import (
+from dimos.control.connection.module_config import (
     DEFAULT_CONFIG_LEASE_S,
     MAX_CONFIG_LEASE_S,
-    ArmConfigState,
     ConfigApplied,
     ConfigKeys,
-    ConfigPatch,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -424,7 +423,7 @@ class StepContext:
         return self._procedure.keys()
 
     def persist(
-        self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+        self, patch: ArmConfigPatch, *, force: bool = False, apply_now: bool = True
     ) -> ConfigApplied:
         """Save ``patch`` to the arm's calibration file; see ``Procedure.persist``."""
         return self._procedure.persist(patch, force=force, apply_now=apply_now)
@@ -612,7 +611,7 @@ class Procedure:
         return None
 
     def persist(
-        self, patch: ConfigPatch, *, force: bool = False, apply_now: bool = True
+        self, patch: ArmConfigPatch, *, force: bool = False, apply_now: bool = True
     ) -> ConfigApplied:
         """Save ``patch`` to the arm's calibration file through the connection (scope "persist").
 
@@ -623,7 +622,7 @@ class Procedure:
         with self._lock:
             session = self._session
         return self.connection.config_set(
-            patch,
+            patch.to_patch(),
             scope="persist",
             force=force,
             apply_now=apply_now,

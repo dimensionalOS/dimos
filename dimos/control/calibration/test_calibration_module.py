@@ -40,8 +40,8 @@ from dimos.control.calibration.module import (
     CalibrationModuleConfig,
 )
 from dimos.control.calibration.recording import SqliteRecording
+from dimos.control.calibration.schema import ArmConfigPatch
 from dimos.control.calibration.spec import ArmCalibrationSpec
-from dimos.control.connection.arm_config import ConfigPatch
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.protocol.encode.cbor import decode, encode
@@ -229,7 +229,7 @@ def test_the_config_calls_time_out_in_seconds_and_a_save_in_ten(make_module, lef
     assert timeouts["start"] == 1200.0
     # A save waits longer, then the session's calls are short again.
     procedure = module._require()
-    procedure.persist(ConfigPatch(arm_id=left_spec.arm_id, notes="x"))
+    procedure.persist(ArmConfigPatch(arm_id=left_spec.arm_id, notes="x"))
     with procedure.open_session():
         pass
     assert seen == [("persist", PERSIST_CALL_TIMEOUT_S), ("session", CONFIG_CALL_TIMEOUT_S)]
