@@ -104,14 +104,27 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     """Resolve and validate the stream plan the standalone recorder will receive.
 
     With ``--record-events`` the trigger stream is always recorded, on its own topic
-    when no module publishes it, so ``dimos topic send`` can start a clip.
+    when no module publishes it, so ``dimos topic send`` can start a clip. That topic
+    joins the recorded streams' LCM URL when they use LCM.
     """
     events = RustEventConfig() if global_config.record_events else None
     transports = dict(transports)
     selected = matching(global_config.record_topics, (name for name, _ in transports))
     if events is not None:
         if not any(name == events.trigger for name, _ in transports):
-            transports[(events.trigger, String)] = make_transport(events.trigger, String)
+            lcm = next(
+                (
+                    transport
+                    for (name, _), transport in transports.items()
+                    if name in selected and type(transport) is LCMTransport
+                ),
+                None,
+            )
+            transports[(events.trigger, String)] = (
+                make_transport(events.trigger, String)
+                if lcm is None
+                else LCMTransport(f"/{events.trigger}", String, url=lcm.lcm.config.url)
+            )
         selected.add(events.trigger)
     unsupported_transports: list[str] = []
     streams: list[RustStreamSpec] = []

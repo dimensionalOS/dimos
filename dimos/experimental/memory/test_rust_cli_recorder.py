@@ -314,6 +314,18 @@ def test_conflicting_lcm_urls_are_rejected():
         second.stop()
 
 
+def test_event_trigger_joins_the_recorded_streams_lcm_url(monkeypatch):
+    monkeypatch.setattr(global_config, "record_events", True)
+    url = "udpm://239.255.76.69:7667?ttl=0"
+    transport = LCMTransport("/odom", PoseStamped, url=url)
+    try:
+        plan = rust_cli_recorder.make_plan({("odom", PoseStamped): transport})
+        assert plan.lcm_url == url
+        assert [stream.name for stream in plan.streams] == ["odom", "clip_that"]
+    finally:
+        transport.stop()
+
+
 def test_external_lcm_connection_is_rejected():
     transport = _lcm("/odom")
     transport.lcm.config.lcm = transport.lcm.l
