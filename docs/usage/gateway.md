@@ -19,7 +19,10 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
    `go2connection` with no namespace).
 7. **RPCs are for buttons.** `POST /active/modules/{id}/rpcs/{name}` calls the module directly, not through MCP, so a
    skill's capability holds don't apply; call one only from a user's action. Agents use the python API.
-8. **The catalog is a cache.** It changes only when a `POST /catalog/scan` job finishes (`?timeout=` per blueprint);
+8. **A running module's config can be read.** `GET /active/modules/{id}/config` answers
+   `{config: {field: value}, readonly: [field]}`: a readonly field is a secret (sent as `•••`) or one JSON can't carry
+   (its text). `POST /active/modules/{id}/restart` with `{"config": {field: value}}` restarts it with those changed.
+9. **The catalog is a cache.** It changes only when a `POST /catalog/scan` job finishes (`?timeout=` per blueprint);
    follow the job at `GET /jobs/{job}`. What is read from the code on demand (a blueprint's or module's detail, source
    and `config`, and `extras`) is reused for ten minutes, and read again once a scan is asked for or the checkout
    changes (an edit, a commit, an install).
@@ -29,7 +32,7 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 | | |
 | -- | -- |
 | `/catalog` | `blueprints`, `modules`, `rpcs`, `robots`, `config` (global schema), `scan`, each `{name}/config` schema and `{name}/source` (its .py file; a module's `?blueprint=` reads it from that blueprint's live run's checkout) |
-| `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
+| `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `config`, `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
 | `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
 | `/cloud` | `account`, `login` (a device login; `?after=<state>` waits for it to leave that state; DELETE cancels it, or logs out with none pending), `login/page` (a login page apps embed), `uploads` (queue a recording, retry, cancel) |
 | views | `msgs.js` (decoders for dimos messages), `msgs.d.ts` (its types) |
