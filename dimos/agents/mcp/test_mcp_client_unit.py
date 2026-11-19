@@ -527,7 +527,7 @@ class _AnswersGraph:
 
 
 def test_infer_returns_the_final_answer_of_its_turn(
-    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     graph = _AnswersGraph(
         AIMessage(content="", tool_calls=[_call("add", "c1", x=1, y=2)]),
@@ -538,11 +538,10 @@ def test_infer_returns_the_final_answer_of_its_turn(
 
     assert mcp_client.infer("what is 1 + 2?") == "It is 3."
     assert mcp_client._history[0].content == "what is 1 + 2?"
-    assert mcp_client._waiters == {}
 
 
 def test_infer_raises_when_its_turn_fails(
-    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(mcp_client, "_state_graph", _FailsOnceGraph([]))
 
@@ -551,9 +550,6 @@ def test_infer_raises_when_its_turn_fails(
     assert mcp_client.infer("second") == "done"
 
 
-def test_infer_gives_up_when_the_turn_does_not_end(mcp_client: Agent) -> None:
-    mcp_client.config.infer_timeout_s = 0.05
-
-    with pytest.raises(TimeoutError, match="did not end within"):
-        mcp_client.infer("nobody is listening")
-    assert mcp_client._waiters == {}
+def test_infer_needs_the_model_to_be_built(mcp_client: Agent) -> None:
+    with pytest.raises(RuntimeError, match="no model yet"):
+        mcp_client.infer("too early")
