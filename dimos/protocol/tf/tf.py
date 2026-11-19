@@ -96,6 +96,7 @@ class MultiTBuffer:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
         self._cv = threading.Condition()
+        self._has_received_transform = False
 
     def receive_transform(self, *args: Transform) -> None:
         with self._cv:
@@ -104,6 +105,7 @@ class MultiTBuffer:
                 if key not in self.buffers:
                     self.buffers[key] = TBuffer(self.buffer_size)
                 self.buffers[key].add(transform)
+                self._has_received_transform = True
             self._cv.notify_all()
 
     def receive_tfmessage(self, msg: TFMessage) -> None:
@@ -211,15 +213,21 @@ class MultiTBuffer:
         forward_tolerance: float = 0.0,
         warn: bool = True,
     ) -> Transform | None:
-        result = self._get(parent_frame, child_frame, time_point, time_tolerance)
-        if result is None and forward_tolerance > 0:
-            result = self._wait_get(
-                parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
-            )
-        if result is None and warn:
-            logger.warning(
-                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
-            )
+        with self._cv:
+            result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+            if result is None and forward_tolerance > 0:
+                result = self._wait_get(
+                    parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
+                )
+            if result is not None or not warn:
+                return result
+            # Choose the level with the lookup still locked: a first TF arriving
+            # after an empty-buffer miss must not promote it to a warning.
+            # Replay may evict its cache or populate static buffers directly.
+            log = logger.warning if self._has_received_transform or self.buffers else logger.debug
+        log(
+            f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
+        )
         return result
 
     def get_pose(

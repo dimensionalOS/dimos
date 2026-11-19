@@ -20,6 +20,8 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::f64::consts::PI;
 
+use crate::geom::progress_index;
+
 /// Fine distance-field pitch: half the map's voxel.
 const FINE: f64 = 0.04; // VOXEL / 2
 const PAD: f64 = 1.5;
@@ -31,6 +33,10 @@ const PERIOD: f64 = 0.24; // 2 * CELL == 3 * VOXEL == 6 * FINE
 /// Free space kept around the working area, in whole periods.
 const GRID_PAD: f64 = 0.72; // 3 * PERIOD
 const YAW_BINS: usize = 16;
+/// Cells around the goal a route may step onto an exact pose from.
+const GOAL_WINDOW: usize = 2;
+/// Tolerance for a route that already ends on the exact goal pose.
+const EXACT_EPS: f64 = 1e-6;
 const OFFSET_STEP: f64 = 0.05;
 /// Worst-case distance between the fine-grid snaps of two coincident points.
 const SNAP: f64 = FINE * std::f64::consts::SQRT_2;
@@ -1076,11 +1082,52 @@ fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Opt
     let end = *approach.last()?;
     let walk = fps.id(emb, Some(0.0));
     let margin = cl.margin;
-    let fits = |cl: &mut Clear, x: f64, y: f64| {
+    let found = last_along(approach, |x, y| {
         let (i, j) = cl.cell_of(x, y);
         (0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
-    };
-    if fits(cl, end[0], end[1]) {
+    });
+    Some(found.unwrap_or((end[0], end[1])))
+}
+
+/// The last point of `approach` the standing body clears facing `yaw`, or None.
+fn pull_back_facing(
+    cl: &mut Clear,
+    fps: &Fps,
+    approach: &[[f64; 2]],
+    yaw: f64,
+) -> Option<(f64, f64)> {
+    let margin = cl.margin;
+    last_along(approach, |x, y| {
+        pose_clear(cl.w, fps.stand(), x, y, yaw) > margin
+    })
+}
+
+/// Where a heading goal is planned to: the pull-back along `approach`, or the kept route's end
+/// when that is nearer the goal and the standing body still clears it facing `yaw`.
+fn heading_spot(
+    cl: &mut Clear,
+    fps: &Fps,
+    approach: &[[f64; 2]],
+    yaw: f64,
+    incumbent: Option<&[[f64; 3]]>,
+) -> Option<(f64, f64)> {
+    let fresh = pull_back_facing(cl, fps, approach, yaw)?;
+    let goal = *approach.last()?;
+    let off = |x: f64, y: f64| (x - goal[0]).hypot(y - goal[1]);
+    let margin = cl.margin;
+    let held = incumbent
+        .and_then(|inc| inc.last())
+        .filter(|e| {
+            rem_2pi(e[2] - yaw).abs() < EXACT_EPS && off(e[0], e[1]) < off(fresh.0, fresh.1)
+        })
+        .filter(|e| pose_clear(cl.w, fps.stand(), e[0], e[1], yaw) > margin);
+    Some(held.map_or(fresh, |e| (e[0], e[1])))
+}
+
+/// The last point of `approach` that `fits`, walking back from its end in half-cell steps.
+fn last_along(approach: &[[f64; 2]], mut fits: impl FnMut(f64, f64) -> bool) -> Option<(f64, f64)> {
+    let end = *approach.last()?;
+    if fits(end[0], end[1]) {
         return Some((end[0], end[1]));
     }
     for pair in approach.windows(2).rev() {
@@ -1090,12 +1137,12 @@ fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Opt
         for q in (0..n).rev() {
             let t = q as f64 / n as f64;
             let (x, y) = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]));
-            if fits(cl, x, y) {
+            if fits(x, y) {
                 return Some((x, y));
             }
         }
     }
-    Some((end[0], end[1]))
+    None
 }
 
 /// `se2_search` on a clearance table the caller owns (a pure memo, so shareable).
@@ -1104,6 +1151,7 @@ fn se2_search_in(
     fps: &Fps,
     start: (f64, f64, f64),
     goal: (f64, f64),
+    goal_yaw: Option<f64>,
     emb: &Emb,
     margin: f64,
 ) -> Option<Vec<[f64; 3]>> {
@@ -1338,15 +1386,19 @@ fn se2_search_in(
     };
 
     let n_states = YAW_BINS * nx * ny;
-    let mut dist = vec![f64::INFINITY; n_states];
+    // With a heading the route ends on the exact pose, a state past the lattice
+    // entered from any state within GOAL_WINDOW of the goal cell by a clear segment.
+    let exact = goal_yaw.map(|yaw| [goal.0, goal.1, yaw]);
+    let goal_k = n_states;
+    let mut dist = vec![f64::INFINITY; n_states + 1];
     // `from + 1`, 0 = no predecessor, so the vector is served zeroed.
-    let mut prev = vec![0u32; n_states];
+    let mut prev = vec![0u32; n_states + 1];
     let mut closed = vec![false; n_states];
     let mut heap: BinaryHeap<Node> = BinaryHeap::new();
     let s0 = (sb * nx + si) * ny + sj;
     dist[s0] = 0.0;
     // Infinite `h` proves unreachability: drop, do not push.
-    let mut goal_state: Option<(usize, usize, usize)> = None;
+    let mut goal_state: Option<usize> = None;
     if heur(si, sj) < f64::INFINITY {
         debug_assert!(heur(si, sj) >= 0.0 && heur(si, sj).is_sign_positive());
         heap.push(Node {
@@ -1356,6 +1408,10 @@ fn se2_search_in(
     }
     while let Some(Node { f: _, k: from }) = heap.pop() {
         let from = from as usize;
+        if from == goal_k {
+            goal_state = Some(prev[goal_k] as usize - 1);
+            break;
+        }
         let b = from / (nx * ny);
         let i = (from / ny) % nx;
         let j = from % ny;
@@ -1365,9 +1421,29 @@ fn se2_search_in(
             continue;
         }
         closed[from] = true;
-        if (i, j) == (gi, gj) {
-            goal_state = Some((b, i, j));
-            break;
+        match exact {
+            None => {
+                if (i, j) == (gi, gj) {
+                    goal_state = Some(from);
+                    break;
+                }
+            }
+            Some(g) => {
+                if i.abs_diff(gi) <= GOAL_WINDOW && j.abs_diff(gj) <= GOAL_WINDOW {
+                    let here = [cl.gx[i], cl.gy[j], thetas[b]];
+                    let uv = cl.clear_at(from, b, i, j);
+                    let c = motion_cost(emb, &here, &g) * cl.price(uv) * cl.w.mult(i, j);
+                    if d + c < dist[goal_k] && seg_free(cl.w, fps, emb, &here, &g, margin) {
+                        dist[goal_k] = d + c;
+                        prev[goal_k] = from as u32 + 1;
+                        debug_assert!(d + c >= 0.0 && (d + c).is_sign_positive());
+                        heap.push(Node {
+                            f: (d + c).to_bits(),
+                            k: goal_k as u32,
+                        });
+                    }
+                }
+            }
         }
         let hij = heur(i, j);
         let from = from as u32;
@@ -1467,7 +1543,8 @@ fn se2_search_in(
             }
         }
     }
-    let (mut b, mut i, mut j) = goal_state?;
+    let k = goal_state?;
+    let (mut b, mut i, mut j) = (k / (nx * ny), (k / ny) % nx, k % ny);
     let mut states = vec![(b, i, j)];
     while prev[(b * nx + i) * ny + j] != 0 && (b, i, j) != (sb, si, sj) {
         let p = prev[(b * nx + i) * ny + j] as usize - 1;
@@ -1477,10 +1554,11 @@ fn se2_search_in(
         states.push((b, i, j));
     }
     states.reverse();
-    let raw: Vec<[f64; 3]> = states
+    let mut raw: Vec<[f64; 3]> = states
         .iter()
         .map(|&(b, i, j)| [cl.gx[i], cl.gy[j], thetas[b]])
         .collect();
+    raw.extend(exact);
 
     let w = &mut *cl.w;
     let raw_clear: Vec<f64> = raw
@@ -1749,20 +1827,12 @@ fn trim_to_pose(states: &[[f64; 3]], pose: (f64, f64, f64)) -> Vec<[f64; 3]> {
     if states.is_empty() {
         return vec![[pose.0, pose.1, pose.2]];
     }
-    let mut best = 0usize;
-    let mut bd = f64::INFINITY;
-    for (i, s) in states.iter().enumerate() {
-        let d = (s[0] - pose.0).hypot(s[1] - pose.1);
-        if d < bd {
-            bd = d;
-            best = i;
-        }
-    }
-    states[best..].to_vec()
+    states[progress_index(states, pose.0, pose.1, pose.2)..].to_vec()
 }
 
 /// The published route, trimmed to here and carried to the goal, or None when
 /// this map no longer allows it.
+#[allow(clippy::too_many_arguments)]
 fn committed(
     cl: &mut Clear,
     fps: &Fps,
@@ -1770,6 +1840,7 @@ fn committed(
     incumbent: &[[f64; 3]],
     pose: (f64, f64, f64),
     goal: (f64, f64),
+    goal_yaw: Option<f64>,
     margin: f64,
 ) -> Option<(Vec<[f64; 3]>, bool)> {
     let mut route = trim_to_pose(incumbent, pose);
@@ -1786,11 +1857,19 @@ fn committed(
     let end = *route.last().expect("len >= 2");
     let cell = |v: f64| (v / CELL).round_even_i64();
     // The goal moves between replans: carry the route on by chord, else by
-    // search from the far end.
+    // search from the far end. A heading goal is reached only on the exact pose.
+    let at_goal = match goal_yaw {
+        Some(yaw) => {
+            (end[0] - goal.0).abs() < EXACT_EPS
+                && (end[1] - goal.1).abs() < EXACT_EPS
+                && rem_2pi(end[2] - yaw).abs() < EXACT_EPS
+        }
+        None => (cell(end[0]), cell(end[1])) == (cell(goal.0), cell(goal.1)),
+    };
     let mut carried = false;
-    if (cell(end[0]), cell(end[1])) != (cell(goal.0), cell(goal.1)) {
+    if !at_goal {
         carried = true;
-        let tgt = [goal.0, goal.1, end[2]];
+        let tgt = [goal.0, goal.1, goal_yaw.unwrap_or(end[2])];
         if seg_free(cl.w, fps, emb, &end, &tgt, margin) {
             route.push(tgt);
         } else {
@@ -1801,6 +1880,7 @@ fn committed(
                 fps,
                 (end[0], end[1], end[2]),
                 goal,
+                goal_yaw,
                 emb,
                 margin,
             )?);
@@ -1846,11 +1926,13 @@ pub fn plan(
         &Terrain::default(),
         pose,
         &[[goal.0, goal.1]],
+        None,
         emb,
         resolution,
         incumbent,
         commit_margin,
     )
+    .map(|(states, _)| states)
 }
 
 /// A soft point as the search takes it.
@@ -1880,18 +1962,21 @@ pub fn step_reach(emb: &Emb) -> f64 {
 
 /// `plan` with `terrain` priced. The heuristic never sees the price, so the search stays exact.
 /// The goal is pulled back along `approach`, the route from the robot to the carrot, to where
-/// the body fits.
+/// the body fits. With `goal_yaw` the route ends facing it at the last point of `approach`
+/// the standing body clears in that heading, when a route reaches it, else the goal is
+/// planned position-only. The flag says whether the route ends facing the heading.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_explored(
     points: &[[f64; 2]],
     terrain: &Terrain,
     pose: (f64, f64, f64),
     approach: &[[f64; 2]],
+    goal_yaw: Option<f64>,
     emb: &Emb,
     resolution: f64,
     incumbent: Option<&[[f64; 3]]>,
     commit_margin: f64,
-) -> Option<Vec<[f64; 3]>> {
+) -> Option<(Vec<[f64; 3]>, bool)> {
     let fps = Fps::new(emb);
     let offs = fps.union().to_vec();
     let reach = reach_of(&offs);
@@ -1903,13 +1988,24 @@ pub fn plan_explored(
     let (fresh, held) = {
         let (gx, gy) = lattice_axes(&w);
         let mut cl = Clear::new(&mut w, &fps, margin, gx, gy, emb.governor());
-        let goal = pull_back(&mut cl, &fps, emb, approach)?;
-        let fresh = se2_search_in(&mut cl, &fps, pose, goal, emb, margin);
-        let held = match incumbent {
-            None => None,
-            Some(inc) => committed(&mut cl, &fps, emb, inc, pose, goal, margin),
-        };
-        (fresh, held)
+        let exact = goal_yaw
+            .and_then(|yaw| Some((heading_spot(&mut cl, &fps, approach, yaw, incumbent)?, yaw)));
+        let with_heading = exact.and_then(|(goal, yaw)| {
+            let fresh = se2_search_in(&mut cl, &fps, pose, goal, Some(yaw), emb, margin);
+            let held = incumbent
+                .and_then(|inc| committed(&mut cl, &fps, emb, inc, pose, goal, Some(yaw), margin));
+            (fresh.is_some() || held.is_some()).then_some((fresh, held))
+        });
+        match with_heading {
+            Some(found) => found,
+            None => {
+                let goal = pull_back(&mut cl, &fps, emb, approach)?;
+                let fresh = se2_search_in(&mut cl, &fps, pose, goal, None, emb, margin);
+                let held = incumbent
+                    .and_then(|inc| committed(&mut cl, &fps, emb, inc, pose, goal, None, margin));
+                (fresh, held)
+            }
+        }
     };
     // A kept, uncarried route is already at resolution.
     let (states, dense) = match (fresh, held) {
@@ -1926,20 +2022,22 @@ pub fn plan_explored(
             }
         }
     };
+    let honored = goal_yaw.is_some_and(|yaw| {
+        states
+            .last()
+            .is_some_and(|end| rem_2pi(end[2] - yaw).abs() < EXACT_EPS)
+    });
     if dense {
-        return Some(states);
+        return Some((states, honored));
     }
-    Some(densify(
-        &mut w,
-        &offs,
-        &states,
-        resolution,
-        sweep_slack(reach),
-    ))
+    let dense = densify(&mut w, &offs, &states, resolution, sweep_slack(reach));
+    Some((dense, honored))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::FRAC_PI_2;
+
     use super::*;
 
     /// Unexplored terrain is priced, not forbidden.
@@ -1966,11 +2064,12 @@ mod tests {
                 unseen_cost: cost,
                 soft: &[],
             };
-            let p = plan_explored(
+            let (p, _) = plan_explored(
                 &[],
                 &terrain,
                 (0.0, 0.0, 0.0),
                 &[[4.0, 0.0]],
+                None,
                 &emb,
                 0.1,
                 None,
@@ -1992,6 +2091,7 @@ mod tests {
             &dark,
             (0.0, 0.0, 0.0),
             &[[4.0, 0.0]],
+            None,
             &emb,
             0.1,
             None,
@@ -2028,12 +2128,14 @@ mod tests {
                 &terrain,
                 (0.0, 0.0, 0.0),
                 &[[4.0, 0.0]],
+                None,
                 &emb,
                 0.1,
                 None,
                 COMMIT_MARGIN,
             )
             .expect("routes")
+            .0
         };
         let widest = |p: Vec<[f64; 3]>| p.iter().map(|s| s[1].abs()).fold(0.0f64, f64::max);
         assert!(
@@ -2318,11 +2420,142 @@ mod tests {
             &Terrain::default(),
             (0.0, 0.0, 0.0),
             approach,
+            None,
             &Emb::fixture(),
             0.1,
             None,
             COMMIT_MARGIN,
         )
+        .map(|(states, _)| states)
+    }
+
+    fn plan_heading(
+        pts: &[[f64; 2]],
+        pose: (f64, f64, f64),
+        goal: [f64; 2],
+        yaw: Option<f64>,
+    ) -> Option<(Vec<[f64; 3]>, bool)> {
+        plan_explored(
+            pts,
+            &Terrain::default(),
+            pose,
+            &[goal],
+            yaw,
+            &Emb::fixture(),
+            0.1,
+            None,
+            COMMIT_MARGIN,
+        )
+    }
+
+    fn assert_ends_at(states: &[[f64; 3]], want: [f64; 3]) {
+        let end = states.last().unwrap();
+        assert!(
+            (end[0] - want[0]).abs() < 1e-9
+                && (end[1] - want[1]).abs() < 1e-9
+                && rem_2pi(end[2] - want[2]).abs() < 1e-9,
+            "{end:?} != {want:?}"
+        );
+    }
+
+    /// Walls at `y = +-half` from `x = -1` to `x = 5`.
+    fn corridor(half: f64) -> Vec<[f64; 2]> {
+        let mut pts = Vec::new();
+        let mut x = -1.0;
+        while x <= 5.0 {
+            pts.push([x, -half]);
+            pts.push([x, half]);
+            x += 0.04;
+        }
+        pts
+    }
+
+    #[test]
+    fn an_open_room_ends_on_every_heading_exactly() {
+        for yaw in [0.0, FRAC_PI_2, PI, -FRAC_PI_2, 0.3] {
+            let (states, honored) =
+                plan_heading(&[], (0.0, 0.0, 0.0), [4.0, 0.0], Some(yaw)).expect("a route");
+            assert!(honored, "yaw={yaw}");
+            assert!(states.len() >= 2);
+            assert_ends_at(&states, [4.0, 0.0, yaw]);
+        }
+    }
+
+    #[test]
+    fn a_goal_off_the_lattice_and_between_bins_ends_exact() {
+        let (states, honored) =
+            plan_heading(&[], (0.0, 0.0, 0.0), [3.97, 0.05], Some(0.3)).expect("a route");
+        assert!(honored);
+        assert_ends_at(&states, [3.97, 0.05, 0.3]);
+    }
+
+    #[test]
+    fn a_replan_with_the_held_route_still_ends_on_the_heading() {
+        let replan = |pose: [f64; 3], yaw: f64, held: &[[f64; 3]]| {
+            plan_explored(
+                &[],
+                &Terrain::default(),
+                (pose[0], pose[1], pose[2]),
+                &[[4.0, 0.0]],
+                Some(yaw),
+                &Emb::fixture(),
+                0.1,
+                Some(held),
+                COMMIT_MARGIN,
+            )
+            .expect("a route")
+        };
+        let (first, _) =
+            plan_heading(&[], (0.0, 0.0, 0.0), [4.0, 0.0], Some(FRAC_PI_2)).expect("a route");
+        let moved = first[first.len() / 2];
+        let (again, honored) = replan(moved, FRAC_PI_2, &first);
+        assert!(honored);
+        assert_ends_at(&again, [4.0, 0.0, FRAC_PI_2]);
+        let (turned, honored) = replan(moved, PI, &again);
+        assert!(honored);
+        assert_ends_at(&turned, [4.0, 0.0, PI]);
+    }
+
+    #[test]
+    fn a_corridor_honors_a_reversed_heading_and_not_a_sideways_one() {
+        let pts = corridor(0.4);
+        let (states, honored) =
+            plan_heading(&pts, (0.0, 0.0, 0.0), [4.0, 0.0], Some(PI)).expect("a route");
+        assert!(honored);
+        assert_ends_at(&states, [4.0, 0.0, PI]);
+        let (states, honored) =
+            plan_heading(&pts, (0.0, 0.0, 0.0), [4.0, 0.0], Some(FRAC_PI_2)).expect("a route");
+        assert!(!honored, "the body cannot stand across 0.8 m");
+        let (plain, _) = plan_heading(&pts, (0.0, 0.0, 0.0), [4.0, 0.0], None).expect("a route");
+        assert_eq!(states, plain, "the fallback is the position-only plan");
+    }
+
+    #[test]
+    fn a_pose_the_body_fits_but_no_route_reaches_is_refused() {
+        let pts = ring(4.0, 0.0, 1.0, 0.02);
+        assert!(plan_heading(&pts, (0.0, 0.0, 0.0), [4.0, 0.0], Some(0.0)).is_none());
+    }
+
+    #[test]
+    fn a_pose_parallel_to_a_wall_is_honored_at_an_angle_between_bins() {
+        // A wall 0.30 m beside the goal, turned 0.2 rad off the lattice and off every bin.
+        let phi = 0.2f64;
+        let (s, c) = phi.sin_cos();
+        let mut pts = Vec::new();
+        let mut t = -1.0;
+        while t <= 5.0 {
+            pts.push([t * c - 0.30 * s, t * s + 0.30 * c]);
+            t += 0.02;
+        }
+        let goal = [4.0 * c, 4.0 * s];
+        let (states, honored) =
+            plan_heading(&pts, (0.0, 0.0, phi), goal, Some(phi)).expect("a route");
+        assert!(honored);
+        assert_ends_at(&states, [goal[0], goal[1], phi]);
+        // Facing the wall falls back to the position-only goal, which does not fit either.
+        let facing = plan_heading(&pts, (0.0, 0.0, phi), goal, Some(phi + FRAC_PI_2));
+        assert!(facing.is_none(), "facing the wall does not fit");
+        assert!(plan_heading(&pts, (0.0, 0.0, phi), goal, None).is_none());
     }
 
     fn slot_x(lo: f64, hi: f64, from_y: f64) -> Vec<[f64; 2]> {
@@ -2357,6 +2590,67 @@ mod tests {
         );
         let states = plan_along(&pts, &[[0.0, 0.0], goal]).expect("pulled back, not refused");
         assert_near(end_xy(&states), [1.68, 0.0]);
+    }
+
+    #[test]
+    fn a_heading_against_a_wall_is_kept_where_the_goal_is_pulled_back() {
+        let pts = wall_x(2.0, None);
+        let (states, honored) = plan_explored(
+            &pts,
+            &Terrain::default(),
+            (0.0, 0.0, 0.0),
+            &[[0.0, 0.0], [1.85, 0.0]],
+            Some(PI),
+            &Emb::fixture(),
+            0.1,
+            None,
+            COMMIT_MARGIN,
+        )
+        .expect("pulled back, not refused");
+        assert!(honored, "the reversed body fits short of the wall");
+        let end = states.last().unwrap();
+        assert!(end[0] < 1.85, "pulled back, ends at {end:?}");
+        assert!(
+            rem_2pi(end[2] - PI).abs() < 1e-9,
+            "faces the heading, ends at {end:?}"
+        );
+    }
+
+    #[test]
+    fn a_heading_spot_moves_no_further_from_the_goal_once_held() {
+        let pts = wall_x(2.0, None);
+        let plan_from =
+            |pose: (f64, f64, f64), approach: &[[f64; 2]], held: Option<&[[f64; 3]]>| {
+                let (states, honored) = plan_explored(
+                    &pts,
+                    &Terrain::default(),
+                    pose,
+                    approach,
+                    Some(PI),
+                    &Emb::fixture(),
+                    0.1,
+                    held,
+                    COMMIT_MARGIN,
+                )
+                .expect("pulled back, not refused");
+                assert!(honored, "the reversed body fits short of the wall");
+                states
+            };
+        let goal = [1.85, 0.0];
+        let off = |s: &[[f64; 3]]| {
+            let end = end_xy(s);
+            (end[0] - goal[0]).hypot(end[1] - goal[1])
+        };
+        let straight = plan_from((0.0, 0.0, 0.0), &[[0.0, 0.0], goal], None);
+        // Approached on the slant, the pull-back lands further from the goal.
+        let slant = [[1.0, -0.8], goal];
+        let fresh = plan_from((1.0, -0.8, 0.0), &slant, None);
+        assert!(
+            off(&fresh) > off(&straight) + 0.02,
+            "{fresh:?} vs {straight:?}"
+        );
+        let kept = plan_from((1.0, -0.8, 0.0), &slant, Some(&straight));
+        assert_near(end_xy(&kept), end_xy(&straight));
     }
 
     #[test]

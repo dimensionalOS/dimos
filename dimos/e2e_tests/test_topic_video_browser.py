@@ -118,7 +118,7 @@ class Stack:
     frames_published: list[int]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
     root = tmp_path_factory.mktemp("topic-video")
     (root / "index.html").write_text(PAGE % {"key": CAMERA_KEY})

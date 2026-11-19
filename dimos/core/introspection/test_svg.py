@@ -18,7 +18,7 @@ import subprocess
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.introspection.blueprint.dot import LayoutAlgo
 from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.introspection.svg import to_svg
@@ -30,10 +30,11 @@ from dimos.core.introspection.svg import to_svg
         pytest.param(ModuleInfo(name="Example"), None, "dot", id="module"),
         pytest.param(Blueprint(()), None, "dot", id="blueprint"),
         pytest.param(Blueprint(()), {LayoutAlgo.FDP}, "fdp", id="blueprint-fdp"),
+        pytest.param(autoconnect(), None, "dot", id="composition"),
     ],
 )
 def test_svg_missing_graphviz_reports_install_commands(
-    target: ModuleInfo | Blueprint,
+    target: ModuleInfo | Blueprint | MetaBlueprint,
     layout: set[LayoutAlgo] | None,
     engine: str,
     tmp_path: Path,

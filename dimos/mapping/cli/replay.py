@@ -174,7 +174,11 @@ def main(
         help="Drop accumulated-map points below this Z (m) when rendering; e.g. 0 strips the floor; --map/--map-final only",
     ),
 ) -> None:
-    """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
+    """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun.
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     import rerun as rr
 
     from dimos.mapping.voxels.module import VoxelMapTransformer

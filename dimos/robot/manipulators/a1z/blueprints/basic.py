@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -47,7 +47,7 @@ A1Z_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def a1z_coordinator() -> Blueprint:
+def a1z_coordinator() -> MetaBlueprint:
     """Run planned joint trajectories on an A1Z and open and close its gripper,
     through ``A1ZConnection``.
 

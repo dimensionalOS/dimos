@@ -31,7 +31,7 @@ from dimos.utils.data import get_project_root
 
 OPENYAM_TEACH_COLLECTION = next(
     atom.kwargs["recording_schema"]
-    for atom in openyam_teach_collection.active_blueprints
+    for atom in openyam_teach_collection.solidify().active_blueprints
     if atom.name == "recorder"
 )
 

@@ -16,15 +16,12 @@
 
 from __future__ import annotations
 
-import math
-
 from dimos_lcm.actionlib_msgs import GoalStatus
 from dimos_lcm.std_msgs import Time
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
@@ -58,6 +55,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     goal_z_tolerance: float = 0.5
+    # Heading error in radians under which a goal with a heading counts as reached.
+    goal_yaw_tolerance: float = 0.25
     # Seconds a goal may go without a safe path before the planner aborts it.
     blocked_timeout_s: float = 2.0
     # Seconds a followed goal may go without the robot moving before it is aborted.
@@ -90,7 +89,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     # the region pipeline between live updates. Live updates keep priority.
     seed_map: In[PointCloud2]
     seed_bounds: In[PoseStamped]
-    goal: In[PointStamped]
+    goal: In[PoseStamped]
     tf: In[TFMessage]
 
     path: Out[Path]
@@ -107,18 +106,20 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         super().stop()
 
     @rpc
-    def go_to(self, pose: PoseStamped) -> Time:
+    def go_to(self, pose: PoseStamped, face_heading: bool = False) -> Time:
         """Start driving to a pose and return the goal's stamp at once.
 
-        Replaces any goal under way. The heading is not used and an empty frame is the
-        world frame. `nav_status` reports carry the stamp in `goal_id.stamp`, and a report
-        with a status other than PENDING or ACTIVE says the goal is over.
+        Replaces any goal under way. The robot ends facing whichever way it arrives, unless
+        `face_heading` is set, when it turns to the pose's orientation there. An empty frame
+        is the world frame. `nav_status` reports carry the stamp in `goal_id.stamp`, and a
+        report with a status other than PENDING or ACTIVE says the goal is over.
         """
-        goal = PointStamped(pose.x, pose.y, pose.z, frame_id=pose.frame_id)
+        orientation = pose.orientation if face_heading else spec.NO_HEADING
+        goal = PoseStamped(frame_id=pose.frame_id, position=pose.position, orientation=orientation)
         self.goal.transport.publish(goal)
         return Time(*goal.ros_timestamp())
 
     @rpc
     def stop_navigation(self) -> None:
         """Cancel the current goal, whoever sent it, and return at once."""
-        self.goal.transport.publish(PointStamped(math.nan, math.nan, math.nan))
+        self.goal.transport.publish(spec.cancel_goal(frame_id=self.config.world_frame))

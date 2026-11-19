@@ -30,7 +30,6 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -38,6 +37,7 @@ from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.navigation.spec import cancel_goal
 from dimos.robot.deeprobotics.m20.basic_server import (
     CHARGE_CHARGING,
     CHARGE_COMMAND_START,
@@ -205,7 +205,7 @@ class M20Connection(Module):
     motion_state_cmd: Out[Int32]
     gait_cmd: Out[UInt32]
     odom: Out[PoseStamped]
-    goal: Out[PointStamped]
+    goal: Out[PoseStamped]
     battery: Out[BatteryState]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -688,7 +688,7 @@ class M20Connection(Module):
             return self._fresh_charge_status() is not None
 
     def _cancel_nav_goal(self) -> None:
-        self.goal.publish(PointStamped(math.nan, math.nan, math.nan, frame_id=WORLD_FRAME))
+        self.goal.publish(cancel_goal(frame_id=WORLD_FRAME))
 
     def _on_basic_server_report(self) -> None:
         with self._state_condition:
