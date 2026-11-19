@@ -395,7 +395,7 @@ class GO2Connection(TfModule, Camera, Pointcloud):
 
         # Copy so the class-level default is not mutated.
         self.camera_info_static = copy.copy(self.camera_info_static)
-        self.camera_info_static.frame_id = self.config.tf_frames_local["camera_optical"]
+        self.camera_info_static.frame_id = self.frame.camera_optical
 
     @rpc
     def start(self) -> None:
@@ -406,7 +406,7 @@ class GO2Connection(TfModule, Camera, Pointcloud):
         self.connection.start()
 
         def onimage(image: Image) -> None:
-            image.frame_id = self.config.tf_frames_local["camera_optical"]
+            image.frame_id = self.frame.camera_optical
             self.color_image.publish(image)
 
         if self.config.lidar:
@@ -487,7 +487,7 @@ class GO2Connection(TfModule, Camera, Pointcloud):
         return [Transform.from_pose(frames["body"], odom), camera_link, camera_optical]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        msg.frame_id = self.config.tf_frames_local["world"]
+        msg.frame_id = self.frame.world
         if self.config.publish_tf:
             self.tfbuffer.publish(*self._odom_to_tf(msg, self.config.tf_frames_local))
         if self.odom.transport:

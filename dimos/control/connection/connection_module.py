@@ -114,7 +114,7 @@ class ConnectionModule(TfModule, ABC):
                 )))
 
     Readings are the module's own: publish them from wherever the SDK
-    delivers them, stamped with ``frame(role)``. Once a command is accepted, if no
+    delivers them, stamped with ``self.frame.<role>``. Once a command is accepted, if no
     other is within ``deadman_timeout_s``, ``halt`` is called once. To close
     the hardware, override ``stop`` and close it after ``super().stop()``.
     """
@@ -250,16 +250,6 @@ class ConnectionModule(TfModule, ABC):
                 self._report(f"write failed: {type(error).__name__}: {error}")
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
-
-    def frame(self, role: str) -> str:
-        """The frame id the config declares for ``role``, e.g. "go2b/odom" once namespaced."""
-        frames = {**self.config.tf_frames_global, **self.config.tf_frames_local}
-        if role not in frames:
-            raise ValueError(
-                f"{type(self).__name__} has no tf frame for role {role!r}; "
-                f"declare it in tf_frames_local (declared: {sorted(frames)})"
-            )
-        return frames[role]
 
     def _on_loop(self, step: Any) -> None:
         """Run a deadman step on the module's event loop, from any thread, in order."""

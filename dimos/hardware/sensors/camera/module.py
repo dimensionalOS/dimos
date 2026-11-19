@@ -84,7 +84,7 @@ class WebcamModule(TfModule, perception.Camera):
         )
 
     def _publish_image(self, image: Image) -> None:
-        image.frame_id = self.config.tf_frames_local["camera_optical"]
+        image.frame_id = self.frame.camera_optical
         self.color_image.publish(image)
 
     def publish_metadata(self) -> None:
@@ -92,26 +92,25 @@ class WebcamModule(TfModule, perception.Camera):
         if camera is None:
             return
         camera_info = camera.camera_info.with_ts(time.time())
-        camera_info.frame_id = self.config.tf_frames_local["camera_optical"]
+        camera_info.frame_id = self.frame.camera_optical
         self.camera_info.publish(camera_info)
 
         if not self.config.transform:
             return
 
-        local = self.config.tf_frames_local
         camera_link = Transform(
             translation=self.config.transform.translation,
             rotation=self.config.transform.rotation,
-            frame_id=local["parent"],
-            child_frame_id=local["camera_link"],
+            frame_id=self.frame.parent,
+            child_frame_id=self.frame.camera_link,
             ts=camera_info.ts,
         )
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id=local["camera_link"],
-            child_frame_id=local["camera_optical"],
+            frame_id=self.frame.camera_link,
+            child_frame_id=self.frame.camera_optical,
             ts=camera_link.ts,
         )
 

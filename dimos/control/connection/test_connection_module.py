@@ -291,9 +291,9 @@ def test_stopping_halts_once_and_a_second_stop_is_harmless(rig: Callable[..., Ri
 
 
 def test_frame_reads_the_declared_role(rig: Callable[..., Rig]) -> None:
-    assert rig(tf_frames_local={"odom": "go2b/odom"}).module.frame("odom") == "go2b/odom"
-    with pytest.raises(ValueError, match="no tf frame for role 'odom'"):
-        rig().module.frame("odom")
+    assert rig(tf_frames_local={"odom": "go2b/odom"}).module.frame.odom == "go2b/odom"
+    with pytest.raises(AttributeError, match="no tf frame for role 'odom'"):
+        _ = rig().module.frame.odom
 
 
 def test_status_is_an_rpc_that_crosses_processes(rig: Callable[..., Rig]) -> None:
