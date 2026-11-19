@@ -192,6 +192,18 @@ provides:
             required: true
             schema:
               type: string
+    /active/modules/{id}/config:
+      get:
+        description: >-
+          The config the instance runs with (its get_config RPC): {config: {field: value}, readonly: [field]}, without
+          rpc_transport, g, instance_name and rpc_name; a readonly field is a secret (sent as •••) or isn't JSON-able
+          (config has its text). 404 when the instance's dimos has no get_config.
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              type: string
     /active/modules/{id}/restart:
       post:
         description: >-
