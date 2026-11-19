@@ -175,6 +175,7 @@ class ModuleCoordinator(Resource):
             "restart_module_by_class_name": self.restart_module_by_class_name,
             "restart_module_by_name": self.restart_module_by_name,
             "unload_module_by_class_name": self.unload_module_by_class_name,
+            "unload_module_by_name": self.unload_module_by_name,
             "shutdown": self.shutdown,
         }
 
@@ -617,6 +618,10 @@ class ModuleCoordinator(Resource):
         with self._modules_lock:
             self.unload_module(self._instance_key_of_class_name(class_name))
 
+    def unload_module_by_name(self, name: str) -> None:
+        """Unload one instance by its name (``robot0/go2connection``), not every copy of its class."""
+        self.unload_module(name)
+
     def _instance_key_of_class_name(self, class_name: str) -> str:
         names = [n for n, c in self._instance_classes.items() if c.__name__ == class_name]
         if len(names) > 1:
@@ -679,15 +684,17 @@ class ModuleCoordinator(Resource):
         name: str,
         *,
         reload_source: bool = True,
+        config: Mapping[str, Any] | None = None,
     ) -> None:
         with self._modules_lock:
-            self._restart_module(name, reload_source=reload_source)
+            self._restart_module(name, reload_source=reload_source, config=config)
 
     def restart_module(
         self,
         module: type[ModuleBase] | str,
         *,
         reload_source: bool = True,
+        config: Mapping[str, Any] | None = None,
     ) -> ModuleProxyProtocol:
         """Restart a single deployed module in place.
 
@@ -696,16 +703,19 @@ class ModuleCoordinator(Resource):
         via ``importlib.reload`` so edited code is picked up, then redeploys it
         onto a fresh worker process, reconnects its streams to the existing
         transports, and re-injects the new proxy into every other module that
-        held a reference to it.
+        held a reference to it. ``config`` (field -> value) is merged over the
+        module's config first, so a changed setting takes effect, and is kept for
+        later restarts.
         """
         with self._modules_lock:
-            return self._restart_module(module, reload_source=reload_source)
+            return self._restart_module(module, reload_source=reload_source, config=config)
 
     def _restart_module(
         self,
         module: type[ModuleBase] | str,
         *,
         reload_source: bool = True,
+        config: Mapping[str, Any] | None = None,
     ) -> ModuleProxyProtocol:
         name = self._resolve_instance_key(module)
         module_class = self._instance_classes[name]
@@ -715,7 +725,7 @@ class ModuleCoordinator(Resource):
             )
 
         old_atom = self._deployed_atoms[name]
-        kwargs = dict(old_atom.kwargs)
+        kwargs = {**old_atom.kwargs, **(config or {})}
         saved_transports = dict(self._module_transports.get(name, {}))
         inbound_refs = [
             (consumer, ref_name)

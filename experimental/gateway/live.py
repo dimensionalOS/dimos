@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import importlib
 import inspect
 import threading
 from typing import Any
@@ -81,12 +80,6 @@ def connect_dimos() -> Any:
     # TODO(core): Dimos.connect could take a transport= instead of reading the process-wide GlobalConfig
     global_config.update(transport=transport or GlobalConfig().transport)
     return Dimos.connect()
-
-
-def load_class(path: str) -> Any:
-    """A module class from its class path (what Dimos.restart and Dimos.unload take)."""
-    module, name = path.rsplit(".", 1)
-    return getattr(importlib.import_module(module), name)
 
 
 def live_run_id() -> str | None:
@@ -220,19 +213,33 @@ class Live:
             encoded = str(result)
         return {"ok": True, "result": encoded, "error": None}
 
-    # TODO(core): Dimos.restart and Dimos.unload take a module class, so with several namespaced copies of one class
-    # (robot0:go2connection, robot1:go2connection) they refuse ("Multiple instances"). Doing this cleanly needs them
-    # to take an instance name: the coordinator already has restart_module_by_name, but unloading by name has no RPC.
-    def restart(self, module_id: str) -> dict[str, Any]:
-        return self._try(lambda app, module_class: app.restart(module_class), module_id)
+    def module_ids(self) -> set[str]:
+        """The running blueprint's instance ids (empty when nothing runs)."""
+        try:
+            app = self.app()
+        except NothingRunningError:
+            return set()
+        return {instance_id(instance.instance_name) for instance in app.list_modules()}
+
+    def restart(
+        self, module_id: str, config: dict[str, Any] | None = None, reload_source: bool = True
+    ) -> dict[str, Any]:
+        """Restart that one instance (a namespaced robot's, not every copy of its class), with `config` (field ->
+        value) merged over its config first, so a changed setting takes effect."""
+        self.module(None, module_id)
+        try:
+            self.app().restart_instance(
+                module_id.replace(":", "/"), reload_source=reload_source, config=config
+            )
+        except Exception as error:
+            return {"ok": False, "error": f"{type(error).__name__}: {error}"}
+        return {"ok": True, "error": None}
 
     def unload(self, module_id: str) -> dict[str, Any]:
-        return self._try(lambda app, module_class: app.unload(module_class), module_id)
-
-    def _try(self, action: Callable[[Any, Any], None], module_id: str) -> dict[str, Any]:
-        module = self.module(None, module_id)
+        """Stop and remove that one instance (a namespaced robot's, not every copy of its class)."""
+        self.module(None, module_id)
         try:
-            action(self.app(), load_class(module["catalogId"]))
+            self.app().unload_instance(module_id.replace(":", "/"))
         except Exception as error:
             return {"ok": False, "error": f"{type(error).__name__}: {error}"}
         return {"ok": True, "error": None}

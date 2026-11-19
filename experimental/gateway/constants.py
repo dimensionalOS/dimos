@@ -35,6 +35,9 @@ INTROSPECT_CACHE_S = 600.0
 
 # watchers: a run that crashed leaves its registry file behind, so no file event says it ended; this finds it
 STALE_RUN_CHECK_S = 5.0
+# modules: how often the running blueprint's module list is compared with the last one (a `modules` event per change);
+# the coordinator tells no outside process when one is deployed or removed
+MODULES_CHECK_S = 1.0
 # watchers: file changes are grouped into one batch for at most this long (awatch's default)
 FILE_EVENT_DEBOUNCE_MS = 1_600
 
