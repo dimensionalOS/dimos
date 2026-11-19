@@ -61,8 +61,8 @@ class PlanningSpecs:
     trajectory_parametrizer: TrajectoryParametrizerSpec
 
 
-WorldBackend: TypeAlias = Literal["drake", "roboplan"]
-PlannerBackend: TypeAlias = Literal["rrt_connect", "roboplan"]
+WorldBackend: TypeAlias = Literal["drake", "roboplan", "curobo"]
+PlannerBackend: TypeAlias = Literal["rrt_connect", "roboplan", "curobo"]
 KinematicsName: TypeAlias = Literal["jacobian", "drake_optimization", "pink"]
 
 SUPPORTED_WORLD_BACKENDS = get_args(WorldBackend)
@@ -72,6 +72,8 @@ SUPPORTED_KINEMATICS = get_args(KinematicsName)
 _ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD = (
     'planner.backend="roboplan" requires world_backend="roboplan"'
 )
+_CUROBO_PLANNER_REQUIRES_CUROBO_WORLD = 'planner.backend="curobo" requires world_backend="curobo"'
+_CUROBO_WORLD_REQUIRES_CUROBO_PLANNER = 'world_backend="curobo" requires planner.backend="curobo"'
 
 DEFAULT_KINEMATICS_NAME: KinematicsName = "pink"
 
@@ -105,14 +107,24 @@ def validate_backend_combination(
             f"Unknown trajectory parametrization backend: {trajectory_parametrization_backend}"
         )
 
-    if planner_backend == "roboplan" and world_backend != "roboplan":
-        raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
+    _validate_world_planner_pair(world_backend, planner_backend)
+    if world_backend == "curobo" and kinematics_name != "pink":
+        raise ValueError('world_backend="curobo" requires kinematics_name="pink"')
     if kinematics_name == "drake_optimization" and world_backend != "drake":
         raise ValueError('kinematics_name="drake_optimization" requires world_backend="drake"')
     if trajectory_parametrization_backend == "roboplan_toppra" and world_backend != "roboplan":
         raise ValueError(
             'trajectory_parametrization.backend="roboplan_toppra" requires world_backend="roboplan"'
         )
+
+
+def _validate_world_planner_pair(world_backend: str | None, planner_backend: str) -> None:
+    if planner_backend == "curobo" and world_backend != "curobo":
+        raise ValueError(_CUROBO_PLANNER_REQUIRES_CUROBO_WORLD)
+    if world_backend == "curobo" and planner_backend != "curobo":
+        raise ValueError(_CUROBO_WORLD_REQUIRES_CUROBO_PLANNER)
+    if planner_backend == "roboplan" and world_backend != "roboplan":
+        raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
 
 
 def create_trajectory_parametrizer(
@@ -157,6 +169,10 @@ def create_world(
         from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 
         return RoboPlanWorld(enable_viz=enable_viz, **kwargs)
+    if backend == "curobo":
+        from dimos.manipulation.planning.world.curobo_world import CuRoboWorld
+
+        return CuRoboWorld(enable_viz=enable_viz, **kwargs)
 
     raise ValueError(f"Unknown backend: {backend}. Available: {list(SUPPORTED_WORLD_BACKENDS)}")
 
@@ -196,19 +212,25 @@ def create_planner(
 ) -> PlannerSpec:
     """Create a motion planner from its typed backend configuration.
 
-    RoboPlan-native planning is scene/backend-coupled, so its planner is bound to
-    the supplied RoboPlan world.
+    Native planners are bound to the supplied world of the matching backend.
     """
+    _validate_world_planner_pair(world_backend, config.backend)
     if config.backend == "rrt_connect":
         from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 
         return RRTConnectPlanner(**kwargs)
     if config.backend == "roboplan":
-        if world_backend != "roboplan" or world is None:
+        if world is None:
             raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
         from dimos.manipulation.planning.planners.roboplan_planner import RoboPlanPlanner
 
         return RoboPlanPlanner(world, config)
+    if config.backend == "curobo":
+        if world is None:
+            raise ValueError(_CUROBO_PLANNER_REQUIRES_CUROBO_WORLD)
+        from dimos.manipulation.planning.planners.curobo_planner import CuRoboPlanner
+
+        return CuRoboPlanner(world, config)
 
     raise TypeError(f"Unsupported planner config: {type(config).__name__}")
 
@@ -260,6 +282,11 @@ def create_planning_stack(
     kinematics: ManipulationKinematicsConfig | None = None,
 ) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec]:
     """Create and finalize a complete single-model planning stack."""
+    validate_backend_combination(
+        world_backend=world_backend,
+        planner_backend=planner.backend if planner is not None else "roboplan",
+        kinematics_name=kinematics.backend if kinematics is not None else DEFAULT_KINEMATICS_NAME,
+    )
     world = create_world(backend=world_backend, visualization=visualization)
     planning_specs = create_planning_specs(
         world=world,

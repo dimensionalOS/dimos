@@ -750,13 +750,28 @@ class ManipulationModule(Module):
     ) -> GeneratedPlan | None:
         """Plan over explicit planning groups and store the resulting plan."""
         assert self._world_monitor and self._planner
-        result = self._planner.plan_selected_joint_path(
-            world=self._world_monitor.world,
-            selection=self._world_monitor.planning_groups.select(group_ids),
-            start=start,
-            goal=goal,
-            timeout=self.config.planning_timeout,
-        )
+        from dimos.manipulation.planning.planners.curobo_planner import CuRoboPlanner
+
+        selection = self._world_monitor.planning_groups.select(group_ids)
+        world = self._world_monitor.world
+        if isinstance(self._planner, CuRoboPlanner):
+            # Timed planner output is not retimed by the materializer.
+            result = self._planner.plan_selected_joint_path(
+                world,
+                selection,
+                start,
+                goal,
+                timeout=self.config.planning_timeout,
+                speed_scale=speed_scale,
+            )
+        else:
+            result = self._planner.plan_selected_joint_path(
+                world=world,
+                selection=selection,
+                start=start,
+                goal=goal,
+                timeout=self.config.planning_timeout,
+            )
         if not result.is_success():
             detail = f": {result.message}" if result.message else ""
             self._finish(planning_epoch, f"Planning failed: {result.status.name}{detail}")

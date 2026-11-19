@@ -34,6 +34,10 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.manipulation.planning.world.collision_exclusions import (
+    collision_exclusion_pairs,
+    srdf_collision_exclusions,
+)
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.transform_utils import pose_to_matrix
 
@@ -286,30 +290,17 @@ def _srdf(
         lines.append(f'  <group name="{escape(group.name)}">')
         lines.extend(f'    <joint name="{escape(name)}"/>' for name in group.native_names)
         lines.append("  </group>")
-    pairs = {tuple(sorted(pair)) for pair in prepared.adjacent_links if _ROOT_LINK not in pair}
     links = {
         name
         for element in ET.fromstring(prepared.xml).iter()
         if _tag(element.tag) == "link"
         if (name := element.get("name"))
     }
-    configured = list(config.collision_exclusion_pairs)
-    if config.srdf_path is not None:
-        configured.extend(_source_exclusions(config.srdf_path))
-    for first, second in configured:
-        first_exists = first in links
-        second_exists = second in links
-        if not first_exists and not second_exists:
-            continue
-        if not first_exists or not second_exists:
-            raise ValueError(
-                f"Model collision exclusion references unknown links: {first} <-> {second}"
-            )
-        pairs.add(tuple(sorted((first, second))))
+    pairs = collision_exclusion_pairs(config, links, prepared.adjacent_links)
     lines.extend(
         f'  <disable_collisions link1="{escape(first)}" link2="{escape(second)}" '
         'reason="DimOS configured"/>'
-        for first, second in sorted(pairs)
+        for first, second in pairs
     )
     lines.append("</robot>")
     return "\n".join(lines) + "\n"
@@ -334,22 +325,8 @@ def _validate_group_order(
     return validated
 
 
-def _source_exclusions(path: Path) -> list[tuple[str, str]]:
-    return _exclusions(ET.parse(path).getroot())
-
-
-def _exclusions(root: ET.Element) -> list[tuple[str, str]]:
-    return [
-        (first, second)
-        for element in root.iter()
-        if _tag(element.tag) == "disable_collisions"
-        if (first := element.get("link1")) is not None
-        if (second := element.get("link2")) is not None
-    ]
-
-
 def _apply_collision_exclusions(scene: Any, srdf: str) -> None:
-    for first, second in _exclusions(ET.fromstring(srdf)):
+    for first, second in srdf_collision_exclusions(ET.fromstring(srdf)):
         scene.setCollisions(first, second, False)
 
 

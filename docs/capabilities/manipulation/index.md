@@ -135,11 +135,67 @@ Valid combinations:
 | `drake` | `rrt_connect` | `jacobian` | Legacy Jacobian IK |
 | `drake` | `rrt_connect` | `drake_optimization` | Drake-only IK |
 | `roboplan` | `rrt_connect` | `pink` or `jacobian` | Generic RRT over RoboPlan collision checks |
+| `curobo` | `curobo` | `pink` | Experimental CUDA backend for fixed-base xArm7 joint/pose goals |
 
 Invalid combinations fail during startup instead of waiting for the first plan
 request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
+
+### Experimental cuRobo V2 backend
+
+Use only for offline planning and simulation evaluation. **External obstacles are
+an optimization preference, not a physical safety barrier.** A successful plan
+can pass through occupied space. RoboPlan remains the default and does not
+inherit this policy.
+
+Install upstream [cuRobo V2 v0.9.0](https://github.com/NVlabs/curobo/tree/v0.9.0)
+(`nvidia-curobo==0.9.0`) into the same environment as DimOS with Pink and the
+matching CUDA-enabled PyTorch and cuRobo CUDA extra. Follow the upstream
+installation guide for your driver/toolkit pair. cuRobo is not installed by
+DimOS extras and is not imported by the default backend. For example, from an
+activated DimOS environment with working CUDA PyTorch, install the pinned source
+with `uv pip install 'nvidia-curobo[cu13] @ git+https://github.com/NVlabs/curobo.git@v0.9.0'`
+for CUDA 13. Use `uv run --no-sync` if launching from a uv project to avoid
+removing the separately installed dependency.
+
+Select both settings in the xArm7 grasp composition (Pink is already the
+default):
+
+```bash
+dimos --simulation mujoco run xarm-grasp \
+  --world-backend=curobo --planner.backend=curobo
+```
+
+Equivalently, set `world_backend="curobo"` and
+`planner={"backend": "curobo"}` in the `ManipulationModule` blueprint config.
+The experimental path supports one fixed-base arm at the planning-frame origin,
+with the grasp model's gripper represented at a fixed open configuration. It
+fits spheres once per loaded model from URDF collision geometry, using the
+same adjacency, configured and SRDF exclusions as RoboPlan. Per-link sphere
+presence is checked, not continuous mesh enclosure or coverage across gripper
+travel. Cartesian waypoint/linear commands and the full grasp sequence that
+uses them are not supported; use joint goals or Pink point-to-point pose goals
+when the fitted model admits a valid start state. **Known draft blocker:** the
+simulated xArm7 grasp model's initial sphere fit overlaps the `link7` and
+`xarm_gripper_base_link` geometry by about 2 cm at home. The native self-collision
+check rejects that start. Do not enable this draft for a grasp evaluation until
+that fit is qualified; no collision pair was disabled to force a passing plan.
+
+V2 `plan_cspace` keeps the scene collision term active in trajectory
+optimization but removes it from the separate TrajOpt feasibility rollout.
+Self-collision and joint-limit checks remain enabled, and an unsuccessful
+native result is rejected. Graph seeding is disabled because it applies hard
+external-scene feasibility. This limits detour search. The trimmed native
+sample times and velocities go through the existing executor path (lower speed
+scales stretch the sample times). The planning timeout rejects late results;
+it does not interrupt an active GPU solve.
+
+The world replaces native scenes from the latest obstacle snapshot before
+solving. Occupied voxel centers become cuboids, bounded to 8,192 cells total;
+oversized updates are rejected rather than sampled. Per-object exemptions,
+signed minimum-distance queries, live replanning and attached payload collision
+models are not supported.
 
 Trajectory parametrization is a separate startup choice. Joint-space planners
 normally return an untimed geometric path; dimOS accepts the plan only after
