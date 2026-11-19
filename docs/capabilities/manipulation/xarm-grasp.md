@@ -172,12 +172,8 @@ print(pick)
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 ```
 
-`find_surface` measures the table from the same memory: one line per flat surface,
-biggest first, with its height, centre, size, heading and tilt in any tf frame.
-Surfaces are reported parallel to the reporting frame's xy plane, as a table is to
-the arm's base; set `surface_parallel_to_frame=False` on `ManipulationLocalize` to
-fit a tilted top.
-`surfaces` returns the same as data, with the plane's coefficients and normal:
+`find_surface` measures the table from the same memory: each flat surface's height,
+size, heading and tilt in any tf frame. `surfaces` returns the same as data:
 
 ```python skip
 print(localize.find_surface(frame="link_base"))

@@ -22,11 +22,12 @@ import numpy as np
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
+from dimos.manipulation.surfaces import MAX_TILT_DEG, find_surfaces
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.localize.module import PerceptionLocalize, PerceptionLocalizeConfig
 from dimos.perception.localize.rig import TF_TOLERANCE
-from dimos.perception.localize.support_plane import MAX_TILT_DEG, find_surfaces, window_points
+from dimos.perception.localize.support_plane import window_points
 from dimos.perception.localize.types import Localization
 from dimos.utils.logging_config import setup_logger
 
@@ -40,10 +41,9 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     # scene_cloud: cell size of the merged cloud, and the farthest depth it keeps, metres
     scene_voxel_m: float = 0.01
     scene_depth_trunc_m: float = 2.0
-    # find_surface: keyframes merged per camera, so a sweep over a table counts
+    # find_surface: keyframes merged per camera
     surface_frames: int = 10
-    # find_surface: surfaces are parallel to the reporting frame's xy plane, as a
-    # table is to the arm's base; False fits their tilt too.
+    # find_surface: surfaces parallel to the reporting frame's xy plane; False fits tilt
     surface_parallel_to_frame: bool = True
 
 
@@ -53,7 +53,7 @@ class ManipulationLocalize(PerceptionLocalize):
     A ``localize`` or ``scan`` answer replaces the objects of the labels it was
     asked for and keeps the others. Pick and place reads them by id, or by a
     label only one object has. A forgotten object's older sightings are left out
-    of later answers. ``find_surface`` measures the table the objects stand on.
+    of later answers. ``find_surface`` measures the table.
     """
 
     config: ManipulationLocalizeConfig
@@ -162,13 +162,10 @@ class ManipulationLocalize(PerceptionLocalize):
         frame: str = "",
         max_tilt_deg: float = MAX_TILT_DEG,
     ) -> list[dict[str, Any]]:
-        """The flat surfaces seen in a window of memory, biggest first, as in ``find_surface``.
+        """``find_surface``'s surfaces as dicts, with each plane's ``coefficients`` and ``normal``.
 
-        Each is a dict: ``height``, ``center``, ``size``, ``yaw_deg``, ``normal``,
-        ``tilt_deg``, ``downhill_deg``, ``coefficients`` (a, b, c, d of ax+by+cz+d=0),
-        ``points``, ``rms_m`` and ``points_above`` (what stands on it, 1 to 30 cm over
-        it inside its outline), in ``frame``. Empty when localize is not ready, the
-        window has no geometry, or ``frame`` has no transform from the world frame.
+        Empty when localize is not ready, nothing in the window has geometry, or
+        ``frame`` has no transform.
         """
         if not self._ready.is_set():
             return []
@@ -210,19 +207,11 @@ class ManipulationLocalize(PerceptionLocalize):
     ) -> str:
         """Find flat surfaces, such as the table top or the floor, in a window of memory.
 
-        Gives each surface's height under the origin of ``frame``, its centre, its
-        size (long side x short side) and the long side's heading, and how far it
-        tilts from level and towards which heading it goes down. The biggest
-        surface comes first. Only what the camera saw inside the window counts,
-        so look over the table before calling; the size runs about 2% short.
-
-        ``start`` and ``duration`` name the window as in ``localize``. ``frame``
-        is the frame to report in, e.g. the arm's base link; empty means the
-        world frame. By default (``surface_parallel_to_frame``) every surface is
-        taken as parallel to that frame's xy plane and reported at the height of
-        its centre, tilt 0; this assumes the table is square to the frame within
-        about half a degree, and nothing over 5 deg counts. With it off, the tilt
-        is fitted, level to the world frame, up to ``max_tilt_deg``.
+        Gives each one's height under the origin of ``frame`` (empty: the world
+        frame), its centre, size, heading and tilt, and how many points stand on
+        it, the biggest first. ``start`` and ``duration`` name the window as in
+        ``localize``; only what the camera saw in it counts. Surfaces are taken as
+        parallel to the frame's xy plane unless ``surface_parallel_to_frame`` is off.
         """
         if not self._ready.is_set():
             return (

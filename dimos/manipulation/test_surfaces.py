@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.perception.localize.support_plane import find_surfaces
+from dimos.manipulation.surfaces import find_surfaces
 
 
 def _slab(length, width, yaw_deg, tilt_deg, downhill_deg, center, rng, step=0.01):
