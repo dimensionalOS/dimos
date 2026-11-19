@@ -33,7 +33,11 @@ from dimos.core.coordination.blueprint_config.fields import (
     validate_module_config,
 )
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
-from dimos.core.coordination.blueprints import MetaBlueprint, transport_config_name
+from dimos.core.coordination.blueprints import (
+    MetaBlueprint,
+    config_defaults,
+    transport_config_name,
+)
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
@@ -1081,7 +1085,11 @@ def _deploy_all_modules(
         module_specs.append((bp.module, gc, kwargs))
         deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
-    atoms = [*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()]
+    # Checks see every config field, defaults included, not just the ones someone set.
+    atoms = [
+        dataclasses.replace(atom, kwargs={**config_defaults(atom.module), **atom.kwargs})
+        for atom in [*module_coordinator._deployed_atoms.values(), *deployed_atoms.values()]
+    ]
     # Every base's own check (so mixins each keep theirs), and each distinct function once.
     checkers = list(
         dict.fromkeys(

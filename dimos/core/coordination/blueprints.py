@@ -419,7 +419,16 @@ class Blueprint(BlueprintProtocol):
 
         for atom in self.blueprints:
             new_name = f"{prefix}/{atom.name}"
-            kwargs = atom.module.handle_blueprint_namespace(dict(atom.kwargs), prefix=prefix)
+            defaults = config_defaults(atom.module)
+            handled = atom.module.handle_blueprint_namespace(
+                {**defaults, **atom.kwargs}, prefix=prefix
+            )
+            # Keep what was set or what the hook changed; untouched defaults stay unpinned.
+            kwargs = {
+                name: value
+                for name, value in handled.items()
+                if name in atom.kwargs or name not in defaults or value is not defaults[name]
+            }
             kwargs["instance_name"] = new_name
             new_atoms.append(replace(atom, kwargs=kwargs, instance_name=new_name))
 
@@ -471,6 +480,19 @@ class Blueprint(BlueprintProtocol):
             return self.blueprints
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
+
+
+def config_defaults(module: type[ModuleBase]) -> dict[str, Any]:
+    """Every config field that has a default, as the module's own config would fill it in.
+
+    Defaults computed from other fields (``default_factory=lambda m: m["g"]...``) are left out.
+    """
+    fields = get_type_hints(module)["config"].model_fields
+    return {
+        name: field.get_default(call_default_factory=True)
+        for name, field in fields.items()
+        if not field.is_required() and not field.default_factory_takes_validated_data
+    }
 
 
 def transport_config_name(cls: type) -> str:

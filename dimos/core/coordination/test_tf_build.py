@@ -12,11 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
+
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import BlueprintAtom, MetaBlueprint, autoconnect
+from dimos.core.coordination.blueprints import (
+    BlueprintAtom,
+    MetaBlueprint,
+    autoconnect,
+    config_defaults,
+)
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -87,7 +94,12 @@ class LegacyTfPublisher(Module):
 
 
 def _verify(blueprint: MetaBlueprint) -> None:
-    TfModule.blueprint_checks(list(blueprint.solidify().active_blueprints))
+    TfModule.blueprint_checks(
+        [
+            replace(atom, kwargs={**config_defaults(atom.module), **atom.kwargs})
+            for atom in blueprint.solidify().active_blueprints
+        ]
+    )
 
 
 def test_one_tree_passes() -> None:
