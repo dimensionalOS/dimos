@@ -15,7 +15,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 import warnings
 
 import pytest
@@ -142,9 +145,13 @@ class FakeServer:
 
 
 class FakeRuntimeServer(FakeServer):
-    def __init__(self) -> None:
+    def __init__(self, port: int = 8095) -> None:
         super().__init__()
+        self.port = port
         self.stopped = False
+
+    def get_port(self) -> int:
+        return self.port
 
     def stop(self) -> None:
         self.stopped = True
@@ -494,7 +501,8 @@ def test_runtime_starts_once_opens_browser_and_closes(
     def fake_server(*, host: str, port: int) -> FakeRuntimeServer:
         assert host == "127.0.0.1"
         assert port == 8123
-        server = FakeRuntimeServer()
+        # Like Viser when the configured port is taken: it binds the next one.
+        server = FakeRuntimeServer(port=8124)
         servers.append(server)
         return server
 
@@ -506,12 +514,45 @@ def test_runtime_starts_once_opens_browser_and_closes(
     second = runtime.start()
 
     assert first is second
-    assert runtime.url == "http://127.0.0.1:8123"
-    assert opened_urls == ["http://127.0.0.1:8123"]
+    assert runtime.url == "http://127.0.0.1:8124"
+    assert opened_urls == ["http://127.0.0.1:8124"]
     runtime.close()
     assert runtime.url is None
     assert servers[0].stopped is True
     runtime.close()
+
+
+def test_two_threads_starting_at_once_share_one_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    servers: list[FakeRuntimeServer] = []
+
+    class SlowRuntime:
+        url = "http://127.0.0.1:8095"
+
+        def __init__(self, config: ViserVisualizationConfig) -> None:
+            pass
+
+        def start(self) -> FakeRuntimeServer:
+            servers.append(FakeRuntimeServer())
+            time.sleep(0.1)  # room for the other thread to arrive
+            return servers[-1]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(visualizer_module, "ViserRuntime", SlowRuntime)
+    monkeypatch.setattr(visualizer_module, "ViserManipulationScene", MagicMock())
+    visualizer = ViserManipulationVisualizer(config=ViserVisualizationConfig(panel_enabled=False))
+    threads = [
+        threading.Thread(target=visualizer.add_vis_obstacle, args=(f"map{i}", object()))
+        for i in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    visualizer.close()
+
+    assert len(servers) == 1
 
 
 def test_visualizer_publish_preview_and_close_paths(
