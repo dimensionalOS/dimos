@@ -19,8 +19,6 @@ import difflib
 import math
 import time
 
-from unitree_webrtc_connect.constants import RTC_TOPIC
-
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -32,6 +30,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
+from dimos.robot.unitree.webrtc_connect import RTC_TOPIC
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

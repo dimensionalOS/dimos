@@ -36,6 +36,7 @@ from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.memory.store.sqlite import SqliteStore
@@ -252,6 +253,19 @@ def test_make_connection_replay_forwards_exit_on_complete() -> None:
     conn = go2_conn.make_connection("replay", ConnectionConfig(g=GlobalConfig(replay=True)))
     assert isinstance(conn, go2_conn.ReplayConnection)
     assert conn._exit_on_complete is False
+
+
+def test_replay_shutdown_identifies_its_deployed_module(mocker: MockerFixture) -> None:
+    rpc_name = "runs/primary/modules/GO2Connection"
+    replay = go2_conn.make_connection(
+        "replay", ConnectionConfig(g=GlobalConfig(replay=True), replay_exit=True, rpc_name=rpc_name)
+    )
+    assert isinstance(replay, go2_conn.ReplayConnection)
+    coordinator = mocker.patch.object(CoordinatorRPC, "connect").return_value
+
+    replay._request_shutdown()
+
+    coordinator.call.assert_called_once_with("shutdown", requesting_module=rpc_name)
 
 
 def test_replay_exit_fires_after_the_last_stream_completes(
