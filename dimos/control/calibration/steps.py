@@ -775,7 +775,7 @@ class GravityFitStep(Step):
         ctx.say("reading the recording")
         recording.wait_for(span[1])
         grec = recording.gravity(span[0], span[1])
-        measurements = extract_measurements(grec, ctx.spec)
+        measurements, incomplete = extract_measurements(grec, ctx.spec)
         if not measurements:
             raise StepFailedError("the recording holds no paired dithers to fit")
         compensation = recorded_compensation(grec)
@@ -786,7 +786,7 @@ class GravityFitStep(Step):
         except ValueError as error:
             raise StepFailedError(f"cannot model the masses the sweep ran: {error}")
         ctx.say(f"fitting {len(measurements)} measurements")
-        result = fit_gravity(ctx.arm, errors)
+        result = fit_gravity(ctx.arm, errors, incomplete_pairs=incomplete)
         ctx.check_abort()
         # The raw resting torque is the error of the masses the arm ran.
         running = result.rms_of(np.asarray([m.tau_pd_nm for m in measurements]), holdout=True)
@@ -809,6 +809,7 @@ class GravityFitStep(Step):
             "refusals": refusals,
             "holdout_poses": list(result.holdout_poses),
             "measurements": len(measurements),
+            "incomplete_pairs": len(incomplete),
             "report": None,
             "saved": None,
         }
