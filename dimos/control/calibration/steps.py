@@ -65,8 +65,7 @@ it without applying it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 import itertools
 import math
@@ -77,9 +76,8 @@ import uuid
 
 import numpy as np
 from numpy.typing import NDArray
-import pinocchio as pin
 
-from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
+from dimos.control.calibration._inertial import LinkInertial
 from dimos.control.calibration.arm_session import (
     HOME_TOLERANCE_DEG,
     ArmSession,
@@ -95,16 +93,19 @@ from dimos.control.calibration.float_analysis import (
     analyze_window,
 )
 from dimos.control.calibration.gravity_fit import (
+    COMPENSATION_KEY,
     REPORT_DIR_NAME as GRAVITY_REPORT_DIR,
+    Compensation,
     FitResult,
-    Measurement,
     calibration_from_fit,
     default_holdout,
     extract_measurements,
     fit_gravity,
     format_report,
     plot_resting_torque,
+    recorded_compensation,
     save_refusals,
+    to_urdf_error,
     write_measurements_csv,
 )
 from dimos.control.calibration.gravity_poses import ArmModel, Pose, generate_poses
@@ -404,47 +405,6 @@ def _disk_differs(ctx: StepContext, applied: ArmConfigState | None) -> str | Non
     )
 
 
-def _compensation_offset(
-    ctx: StepContext, applied: ArmConfigState | None
-) -> Callable[[Vector], NDArray[np.float64]]:
-    """Gravity torque the connection compensated during the sweep minus the URDF's, by joint.
-
-    The fit corrects the URDF, but the arm was held with whatever the
-    connection compensated: nothing on a robot without gravity compensation,
-    the masses it ran (as it reported them, not as a file now says) on one
-    that ran a file.
-    """
-    arm = ctx.arm
-    if not ctx.keys().gravity_compensation:
-        return lambda q: -arm.gravity(q)
-    links = _links_of(applied)
-    if not links:
-        return lambda q: np.zeros(arm.dof)
-    try:
-        model = arm.model.copy()
-        apply_inertial_overrides(model, links)
-    except ValueError as error:
-        raise StepFailedError(f"cannot model the masses the sweep ran: {error}")
-    data = model.createData()
-
-    def offset(q: Vector) -> NDArray[np.float64]:
-        compensated = np.asarray(pin.computeGeneralizedGravity(model, data, q), dtype=np.float64)
-        difference: NDArray[np.float64] = compensated - np.asarray(arm.gravity(q))
-        return difference
-
-    return offset
-
-
-def _corrected(
-    arm: ArmModel, measurements: list[Measurement], offset: Callable[[Vector], Vector]
-) -> list[Measurement]:
-    rows = {name: index for index, name in enumerate(arm.joint_names)}
-    return [
-        replace(m, tau_pd_nm=m.tau_pd_nm + float(offset(arm.q(m.q_rad))[rows[m.joint]]))
-        for m in measurements
-    ]
-
-
 def _rms_table(
     before: dict[str, float], running: dict[str, float], after: dict[str, float]
 ) -> dict[str, dict[str, float]]:
@@ -709,6 +669,7 @@ class GravityPosesStep(Step):
         ctx.run.pose_set = pose_set
         poses = pose_set.identification
         applied = _applied_now(ctx)
+        compensation = Compensation(ctx.keys().gravity_compensation, _links_of(applied))
         dithers = len(arm.measured_joints) * 2 * settings.dither_hold_s
         stops = [arm.home, *(np.asarray(p.joints_rad) for p in poses), arm.home]
         travel = sum(_ramp_s(a, b, settings.speed_deg_s) for a, b in itertools.pairwise(stops))
@@ -744,7 +705,11 @@ class GravityPosesStep(Step):
                         continue
                     t0 = session.mark_pose(
                         pose.name,
-                        {"index": index, "targets_deg": [math.degrees(v) for v in target]},
+                        {
+                            "index": index,
+                            "targets_deg": [math.degrees(v) for v in target],
+                            COMPENSATION_KEY: compensation.as_data(),
+                        },
                     )
                     first = t0 if first is None else first
                     log.pose = pose.name
@@ -813,9 +778,15 @@ class GravityFitStep(Step):
         measurements = extract_measurements(grec, ctx.spec)
         if not measurements:
             raise StepFailedError("the recording holds no paired dithers to fit")
-        offset = _compensation_offset(ctx, applied)
+        compensation = recorded_compensation(grec)
+        if compensation is None:
+            raise StepFailedError("the recording does not say what gravity the poses ran with")
+        try:
+            errors = to_urdf_error(ctx.arm, measurements, compensation)
+        except ValueError as error:
+            raise StepFailedError(f"cannot model the masses the sweep ran: {error}")
         ctx.say(f"fitting {len(measurements)} measurements")
-        result = fit_gravity(ctx.arm, _corrected(ctx.arm, measurements, offset))
+        result = fit_gravity(ctx.arm, errors)
         ctx.check_abort()
         # The raw resting torque is the error of the masses the arm ran.
         running = result.rms_of(np.asarray([m.tau_pd_nm for m in measurements]), holdout=True)

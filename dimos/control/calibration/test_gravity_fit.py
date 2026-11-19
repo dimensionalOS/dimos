@@ -32,7 +32,9 @@ from dimos.control.calibration._calibration_test_helpers import (
 from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.control.calibration.gravity_fit import (
     COM_BOX_M,
+    COMPENSATION_KEY,
     FIT_RANK_TOLERANCE,
+    Compensation,
     GravityRecording,
     Measurement,
     PoseMarker,
@@ -49,6 +51,7 @@ from dimos.control.calibration.gravity_fit import (
     pose_windows,
     report_json_name,
     save_refusals,
+    to_urdf_error,
 )
 from dimos.control.calibration.gravity_poses import (
     ArmModel,
@@ -414,22 +417,31 @@ def test_median_friction_uses_only_unflagged_pairs_and_is_never_negative(arm: Ar
 
 
 def _synthetic_recording(
-    arm: ArmModel, poses: list[Pose], prefix: str, truth: pin.Model | None = None
+    arm: ArmModel,
+    poses: list[Pose],
+    prefix: str,
+    truth: pin.Model | None = None,
+    compensated: bool | None = True,
 ) -> GravityRecording:
     """A +1/-1 deg dither of each measured joint at each pose, settling short of its target.
 
     Friction leaves each dither 0.1 deg short; a ``truth`` model heavier than the
-    arm's model sags each rest by the extra gravity torque over kp.
+    arm's model sags each rest by the extra gravity torque over kp. Uncompensated
+    (``compensated`` False) each rest sags by the whole gravity torque over kp;
+    ``None`` leaves the compensation out of the markers.
     """
     dt, hold, kp = 0.01, 1.0, 80.0
     truth_data = truth.createData() if truth is not None else None
+    held_up = truth if truth is not None else arm.model
+    held_up_data = held_up.createData()
+    data = {} if compensated is None else {COMPENSATION_KEY: Compensation(compensated).as_data()}
     t_all: list[float] = []
     q_all: list[np.ndarray] = []
     events: list[StepEvent] = []
     markers: list[PoseMarker] = []
     t = 0.0
     for pose in poses:
-        markers.append(PoseMarker(pose.name, t, {}, {}))
+        markers.append(PoseMarker(pose.name, t, {}, data))
         q_pose = np.degrees(np.asarray(pose.joints_rad))
         error = np.zeros(arm.dof)
         if truth is not None:
@@ -457,6 +469,9 @@ def _synthetic_recording(
                 # The joint stops 0.1 deg short of each target: friction 80 * 0.1 deg.
                 reached = target.copy()
                 reached[index] -= 0.1 * delta + sag_deg
+                for _ in range(0 if compensated is not False else 6):
+                    load = pin.computeGeneralizedGravity(held_up, held_up_data, np.radians(reached))
+                    reached[index] = target[index] - 0.1 * delta - math.degrees(load[index] / kp)
                 for k in range(int(hold / dt)):
                     t_all.append(t + k * dt)
                     q_all.append(reached)
@@ -488,6 +503,64 @@ def test_extract_measurements_pairs_dithers_by_joint_name(
         assert m.q_rad[m.joint] == pytest.approx(pose.as_targets()[m.joint], abs=1e-9)
         assert m.friction_nm == pytest.approx(80.0 * math.radians(0.1), rel=1e-6)
         assert m.tau_pd_nm == pytest.approx(0.0, abs=1e-9)
+
+
+def test_the_fit_takes_the_resting_torque_against_what_was_compensated(
+    tmp_path: Path,
+    arm: ArmModel,
+    pose_set: PoseSet,
+    left_spec: ArmCalibrationSpec,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poses = [home_pose(arm), *pose_set.identification]
+    run = tmp_path / "run"
+    run.mkdir()
+    held_by_pd = _synthetic_recording(arm, poses, "", compensated=False)
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: held_by_pd)
+    result, _, calibration = generate_gravity_report(run, left_spec, arm=arm)
+    raw = extract_measurements(held_by_pd, left_spec)
+    assert max(abs(m.tau_pd_nm) for m in raw) > 1.0
+    assert np.abs(result.residual_before).max() < 0.01
+    assert calibration is not None and not result.at_bounds
+    for link, fitted in result.links.items():
+        assert fitted.mass_kg == pytest.approx(result.urdf_links[link].mass_kg, abs=0.01), link
+    unknown = _synthetic_recording(arm, poses, "", compensated=None)
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: unknown)
+    with pytest.raises(ValueError, match="does not record the gravity the connection compensated"):
+        generate_gravity_report(run, left_spec, arm=arm)
+
+
+def test_urdf_error_adds_what_was_compensated_beyond_the_urdf(
+    arm: ArmModel, pose_set: PoseSet
+) -> None:
+    measurements = synthetic_measurements(
+        arm, arm.model, pose_set.identification[:3], noise_nm=0.0, friction_nm=0.3
+    )
+    forearm = arm.model.inertias[arm.fitted_joint_ids[1]]
+    heavy = {
+        arm.fitted_links[1]: LinkInertial(
+            mass_kg=float(forearm.mass) + 1.0, com_m=tuple(float(v) for v in forearm.lever)
+        )
+    }
+    model = arm.model.copy()
+    apply_inertial_overrides(model, heavy)
+    data = model.createData()
+    file = Compensation.from_data(json.loads(json.dumps(Compensation(True, heavy).as_data())))
+    assert file == Compensation(True, heavy)
+    urdf = to_urdf_error(arm, measurements, Compensation(True))
+    none = to_urdf_error(arm, measurements, Compensation(False))
+    ran_file = to_urdf_error(arm, measurements, file)
+    for m, u, n, f in zip(measurements, urdf, none, ran_file, strict=True):
+        q = arm.q(m.q_rad)
+        row = arm.joint_names.index(m.joint)
+        assert u.tau_pd_nm == m.tau_pd_nm
+        assert n.tau_pd_nm == pytest.approx(m.tau_pd_nm - arm.gravity(q)[row], abs=1e-12)
+        heavier = pin.computeGeneralizedGravity(model, data, q)[row] - arm.gravity(q)[row]
+        assert f.tau_pd_nm == pytest.approx(m.tau_pd_nm + heavier, abs=1e-12)
+    with pytest.raises(ValueError, match="unknown link"):
+        to_urdf_error(
+            arm, measurements, Compensation(True, {"no_such_link": heavy[arm.fitted_links[1]]})
+        )
 
 
 def test_report_pipeline_writes_the_calibration_and_keeps_stored_gains(
