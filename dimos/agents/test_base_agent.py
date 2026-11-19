@@ -25,7 +25,7 @@ import pytest
 from dimos.agents.agent import Agent
 from dimos.agents.base_agent import BaseAgent
 from dimos.agents.typesafe.types import SystemOneRequest
-from dimos.core.coordination.blueprints import BlueprintAtom
+from dimos.core.coordination.blueprints import BlueprintAtom, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
@@ -35,6 +35,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.encode import cbor
+from dimos.utils.testing.waiting import wait_until
 
 T = TypeVar("T")
 
@@ -314,3 +315,38 @@ def test_the_messages_an_agent_takes_and_returns_survive_the_wire() -> None:
     assert cbor.decode(cbor.encode(answer)).tool_calls == answer.tool_calls
     assert cbor.decode(cbor.encode(request)) == request
     assert Agent.accepts(cbor.decode(cbor.encode(human)))
+
+
+def test_a_value_on_agent_input_is_answered_on_agent_output() -> None:
+    """The stream route of an agent that only defines infer."""
+    blueprint = autoconnect(RobotAgent.blueprint()).global_config(n_workers=1, viewer="none")
+    coordinator = ModuleCoordinator.build(blueprint)
+    try:
+        transports = coordinator.get_instance(RobotAgent).agent_transports()
+        answers: list[dict[str, float]] = []
+        for transport in transports.values():
+            transport.start()
+        transports["agent_output"].subscribe(answers.append)
+        try:
+            wait_until(
+                lambda: transports["agent_input"].publish(_robot_query()) or bool(answers),
+                timeout=20,
+                interval=0.5,
+            )
+        finally:
+            for transport in transports.values():
+                transport.stop()
+        assert answers[0] == {"joints": 2.0, "x": 1.5, "words": 4.0}
+        assert coordinator.get_instance(RobotAgent).infer(_robot_query()) == answers[0]
+    finally:
+        coordinator.stop()
+
+
+def test_an_agent_used_as_a_plain_class_answers_infer() -> None:
+    """No coordinator, no worker process, no transport."""
+    agent = RobotAgent()
+    try:
+        assert agent.infer(_robot_query()) == {"joints": 2.0, "x": 1.5, "words": 4.0}
+        assert RobotAgent.accepts(_robot_query())
+    finally:
+        agent.stop()
