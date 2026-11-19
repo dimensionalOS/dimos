@@ -34,7 +34,6 @@ from dimos.experimental.memory.rust_recorder import (
     RustContinuousMode,
     RustEventConfig,
     RustRecorderConfig,
-    RustRecordingMode,
     RustStreamSpec,
 )
 from dimos.memory.store.sqlite import SqliteStore
@@ -62,7 +61,7 @@ class RustRecordingPlan:
     streams: list[RustStreamSpec]
     payload_types: dict[str, type[Any]]
     path: Path
-    mode: RustRecordingMode
+    mode: RustContinuousMode | RustEventConfig
     lcm_url: str | None = None
 
 
@@ -309,10 +308,10 @@ class RustRecordingSession:
     def _report_leftover_window(self) -> None:
         """Point at the recovery tool when an event recording left its window behind."""
         mode = self.plan.mode
-        if not isinstance(mode, RustEventConfig) or mode.window_dir is None:
+        if not isinstance(mode, RustEventConfig) or self._executable is None:
             return
         window = Path(mode.window_dir)
-        if self._executable is None or not window.exists():
+        if not window.exists():
             return
         recover = self._executable.with_name("dimos-memory-recover")
         logger.error(

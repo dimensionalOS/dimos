@@ -97,15 +97,6 @@ impl McapRecordingStore {
                         channel_streams.insert(channel.id, index);
                     }
                 }
-                Record::Attachment { header, data, .. } => {
-                    store.writer.attach(&Attachment {
-                        log_time: header.log_time,
-                        create_time: header.create_time,
-                        name: header.name,
-                        media_type: header.media_type,
-                        data,
-                    })?;
-                }
                 Record::Message { header, data } => {
                     let Some(&index) = channel_streams.get(&header.channel_id) else {
                         continue;

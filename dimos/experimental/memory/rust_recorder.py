@@ -138,10 +138,6 @@ class RustEventConfig(BaseModel):
     """
 
     kind: Literal["events"] = "events"
-    window_dir: str | None = Field(
-        default=None,
-        description="Directory for window segments. Defaults to window/ beside the artifact.",
-    )
     pre_s: float = Field(default=60.0, ge=0, description="Full-rate seconds before a trigger.")
     post_s: float = Field(default=60.0, ge=0, description="Full-rate seconds after a trigger.")
     segment_s: float = Field(default=10.0, gt=0, description="Seconds per window segment.")
@@ -162,45 +158,26 @@ class RustEventConfig(BaseModel):
         exclude=True,
         description="Seconds between kept images and point clouds outside clips.",
     )
-    period_overrides: dict[str, float] = Field(
-        default_factory=dict,
-        exclude=True,
-        description="Seconds between kept messages outside clips, by stream name. 0 keeps all.",
-    )
     periods: dict[str, float] = Field(
         default_factory=dict,
         description="Resolved period of every stream, populated internally before native launch.",
     )
-
-    @field_validator("window_dir", mode="before")
-    @classmethod
-    def _resolve_window_dir(cls, value: str | os.PathLike[str] | None) -> str | None:
-        return None if value is None else RustStoreConfig._resolve_path(value)
+    window_dir: str = Field(
+        default="",
+        description="Window directory beside the artifact, populated internally before native launch.",
+    )
 
     def resolve(self, streams: list[RustStreamSpec], artifact: Path) -> RustEventConfig:
-        """Fill ``periods`` for every stream and default ``window_dir`` beside ``artifact``."""
-        names = {stream.name for stream in streams}
-        if self.trigger not in names:
+        """Fill ``periods`` for every stream and put ``window_dir`` beside ``artifact``."""
+        if self.trigger not in {stream.name for stream in streams}:
             raise ValueError(f"Event recording needs the trigger stream {self.trigger!r}")
-        unknown = sorted(set(self.period_overrides) - names)
-        if unknown:
-            raise ValueError(f"Period overrides name unrecorded streams: {unknown}")
         periods = {
             stream.name: self.heavy_period_s if stream.payload_type in _HEAVY_PAYLOAD_TYPES else 0.0
             for stream in streams
         }
         return self.model_copy(
-            update={
-                "periods": periods | self.period_overrides,
-                "window_dir": self.window_dir or str(artifact.parent / "window"),
-            }
+            update={"periods": periods, "window_dir": str(artifact.parent / "window")}
         )
-
-
-RustRecordingMode: TypeAlias = Annotated[
-    RustContinuousMode | RustEventConfig,
-    Field(discriminator="kind"),
-]
 
 
 class RustRecorderConfig(NativeModuleConfig):

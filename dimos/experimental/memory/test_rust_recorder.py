@@ -121,7 +121,7 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
     assert set(config) == {"encoding_threads", "store", "streams", "mode"}
 
 
-def test_event_periods_cover_every_stream_by_payload_type_and_override(tmp_path: Path) -> None:
+def test_event_periods_cover_every_stream_by_payload_type(tmp_path: Path) -> None:
     streams = [
         RustStreamSpec(
             port=name,
@@ -137,15 +137,15 @@ def test_event_periods_cover_every_stream_by_payload_type_and_override(tmp_path:
             ("clip_that", String),
         ]
     ]
-    events = RustEventConfig(heavy_period_s=2.0, period_overrides={"global_map": 30.0, "odom": 0.5})
+    events = RustEventConfig(heavy_period_s=2.0)
 
     native = events.resolve(streams, tmp_path / "memory.mcap").model_dump()
 
     assert native["periods"] == {
         "color_image": 2.0,
         "lidar": 2.0,
-        "global_map": 30.0,
-        "odom": 0.5,
+        "global_map": 2.0,
+        "odom": 0.0,
         "clip_that": 0.0,
     }
     assert native["window_dir"] == str(tmp_path / "window")
