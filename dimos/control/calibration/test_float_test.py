@@ -22,6 +22,7 @@ from dimos.control.calibration.float_analysis import (
     FingertipModel,
     FloatEvent,
     analyze_window,
+    format_metrics,
     segment_windows,
 )
 from dimos.control.calibration.float_report import FloatRecording, extract_windows
@@ -99,3 +100,25 @@ def test_extract_windows_reads_each_arm_by_joint_name(
     assert by_side["left"].fingertip_drift_mm == 0.0
     assert by_side["right"].max_joint == "right_joint3"
     assert by_side["right"].fingertip_drift_mm > 0.0
+
+
+def test_a_window_its_samples_do_not_span_fails_as_cut_short(
+    left_spec: ArmCalibrationSpec, left_model: FingertipModel
+) -> None:
+    home = np.asarray(DUAL_OPENYAM_HOME_PER_ARM)
+    t = np.linspace(0.0, 0.2, 21)
+    q = np.tile(home, (t.size, 1))
+    event = FloatEvent(side="left", index=1, t0=0.0, duration_s=10.0)
+    short = analyze_window(left_model, event, t, q)
+    assert short.fingertip_drift_mm == 0.0 and short.requested_s == 10.0
+    assert not short.complete and not short.passed and short.verdict == "cut short"
+    assert short.as_row()["complete"] is False
+    assert "over 0.2 of 10 s" in format_metrics(short) and "[cut short," in format_metrics(short)
+    q_rad = {name: q[:, index] for index, name in enumerate(left_spec.joint_names)}
+    [record] = extract_windows(
+        FloatRecording(t=t, q_rad=q_rad, events=[event]), {"left": left_model}
+    )
+    assert not record.metrics.complete and not record.metrics.passed
+    full = np.linspace(0.0, 9.95, 200)
+    complete = analyze_window(left_model, event, full, np.tile(home, (full.size, 1)))
+    assert complete.complete and complete.passed and complete.verdict == "ok"
