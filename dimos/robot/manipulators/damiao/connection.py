@@ -117,7 +117,10 @@ class DamiaoConnection(ConnectionModule):
         assert self.config.model is not None
         if {joint.name for joint in movable_joints(self.config.model)} != set(self.joint_names):
             raise ValueError("connection model joints must match the vendor topology")
-        self._state_frame = self.frame(self.config.model.load().root_link)
+        # A declared "root" frame wins over the model's root link (declare it to namespace it).
+        self._state_frame = (
+            self.config.tf_frames_local.get("root") or self.config.model.load().root_link
+        )
         ports = self.can_ports()
         if len(ports) != len(self.robot.buses) or any(not port.strip() for port in ports):
             raise ValueError("CAN selectors must cover exactly the robot buses")

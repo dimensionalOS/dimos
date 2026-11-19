@@ -35,7 +35,7 @@ from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig, stack_frame_id_prefix
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -44,7 +44,7 @@ logger = setup_logger()
 Values = dict[str, float]
 
 
-class ConnectionConfig(ModuleConfig):
+class ConnectionConfig(TfModuleConfig):
     """Settings every connection module has: what the robot is told, and when it is halted.
 
     Attributes:
@@ -55,11 +55,11 @@ class ConnectionConfig(ModuleConfig):
             listed joints are commanded; planar axes are ordinary joints.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
+        tf_frames_local: Role to frame id for the frames readings are stamped
+            with (see ``ConnectionModule.frame``); ``.namespace()`` prefixes them.
     """
 
     source: str
-    # Set by .namespace(), or by hand in a fleet: frames become "<prefix>/<name>".
-    frame_id_prefix: str | None = None
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
     deadman_timeout_s: float = 0.1
@@ -89,7 +89,7 @@ class ConnectionStatus:
     last_error: str | None
 
 
-class ConnectionModule(Module, ABC):
+class ConnectionModule(TfModule, ABC):
     """One robot: commands go through ``command``, and it halts when they stop.
 
     Subclass it, give it a config, declare the ports, fill in ``connect``,
@@ -114,19 +114,12 @@ class ConnectionModule(Module, ABC):
                 )))
 
     Readings are the module's own: publish them from wherever the SDK
-    delivers them, stamped with ``frame``. Once a command is accepted, if no
+    delivers them, stamped with ``frame(role)``. Once a command is accepted, if no
     other is within ``deadman_timeout_s``, ``halt`` is called once. To close
     the hardware, override ``stop`` and close it after ``super().stop()``.
     """
 
     config: ConnectionConfig
-
-    @classmethod
-    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return {
-            **super().handle_blueprint_namespace(config, prefix=prefix),
-            **stack_frame_id_prefix(config, prefix),
-        }
 
     dedicated_worker: ClassVar[bool] = True
 
@@ -258,11 +251,15 @@ class ConnectionModule(Module, ABC):
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
 
-    def frame(self, name: str) -> str:
-        """The frame to stamp a reading with: ``name`` behind the config's
-        ``frame_id_prefix``, e.g. "go2b/odom", or just "odom" without one."""
-        prefix = self.config.frame_id_prefix
-        return f"{prefix}/{name}" if prefix else name
+    def frame(self, role: str) -> str:
+        """The frame id the config declares for ``role``, e.g. "go2b/odom" once namespaced."""
+        frames = {**self.config.tf_frames_global, **self.config.tf_frames_local}
+        if role not in frames:
+            raise ValueError(
+                f"{type(self).__name__} has no tf frame for role {role!r}; "
+                f"declare it in tf_frames_local (declared: {sorted(frames)})"
+            )
+        return frames[role]
 
     def _on_loop(self, step: Any) -> None:
         """Run a deadman step on the module's event loop, from any thread, in order."""

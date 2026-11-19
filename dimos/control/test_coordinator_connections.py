@@ -128,6 +128,7 @@ class FakeBaseConfig(ConnectionConfig):
     }
     state_rate_hz: float = 100.0
     initial_yaw: float = 0.0
+    tf_frames_local: dict[str, str] = {"base_link": "base_link", "odom": "odom"}
 
 
 class FakeBase(ConnectionModule):

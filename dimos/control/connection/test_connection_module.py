@@ -290,9 +290,10 @@ def test_stopping_halts_once_and_a_second_stop_is_harmless(rig: Callable[..., Ri
     assert writes(r) == []
 
 
-def test_frame_takes_the_config_prefix(rig: Callable[..., Rig]) -> None:
-    assert rig().module.frame("odom") == "odom"
-    assert rig(frame_id_prefix="go2b").module.frame("odom") == "go2b/odom"
+def test_frame_reads_the_declared_role(rig: Callable[..., Rig]) -> None:
+    assert rig(tf_frames_local={"odom": "go2b/odom"}).module.frame("odom") == "go2b/odom"
+    with pytest.raises(ValueError, match="no tf frame for role 'odom'"):
+        rig().module.frame("odom")
 
 
 def test_status_is_an_rpc_that_crosses_processes(rig: Callable[..., Rig]) -> None:
