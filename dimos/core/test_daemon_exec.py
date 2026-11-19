@@ -68,10 +68,9 @@ def test_reexecuted_daemon_consumes_status_pipe_once(
         ],
     ],
 )
-def test_macos_grandchild_reexec_preserves_interpreter_and_arguments(
+def test_grandchild_reexec_preserves_interpreter_and_arguments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, original_argv: list[str]
 ) -> None:
-    monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(sys, "orig_argv", original_argv)
     monkeypatch.delenv("_DIMOS_DAEMON_STATUS_FD", raising=False)
     monkeypatch.setenv("DIMOS_RUN_ID", "launcher-run")
@@ -94,28 +93,6 @@ def test_macos_grandchild_reexec_preserves_interpreter_and_arguments(
         assert env["_DIMOS_DAEMON_STATUS_FD"] == str(write_fd)
         assert os.get_inheritable(write_fd)
         assert "_DIMOS_DAEMON_STATUS_FD" not in os.environ
-    finally:
-        with suppress(OSError):
-            os.close(read_fd)
-        os.close(write_fd)
-
-
-def test_linux_grandchild_retains_fork_without_exec(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.delenv("_DIMOS_DAEMON_STATUS_FD", raising=False)
-    read_fd, write_fd = os.pipe()
-    try:
-        with (
-            mock.patch("os.pipe", return_value=(read_fd, write_fd)),
-            mock.patch("os.fork", side_effect=[0, 0]),
-            mock.patch("os.setsid"),
-            mock.patch("os.execve") as execve,
-        ):
-            assert fork_daemon(tmp_path) == (0, write_fd)
-        execve.assert_not_called()
-        assert not os.get_inheritable(write_fd)
     finally:
         with suppress(OSError):
             os.close(read_fd)

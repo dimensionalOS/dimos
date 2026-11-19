@@ -50,7 +50,7 @@ def test_dual_arm_trajectory_uses_unique_hardware_joints(blueprint) -> None:
 def test_standalone_xarm7_has_only_arm_tasks() -> None:
     atom = next(
         atom
-        for atom in coordinator_xarm7.active_blueprints
+        for atom in coordinator_xarm7.solidify().active_blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
     hardware_joints = {name for component in atom.kwargs["hardware"] for name in component.joints}
@@ -64,11 +64,11 @@ def test_standalone_xarm7_has_only_arm_tasks() -> None:
 def test_dual_xarm_mock_limits_survive_blueprint_config_parsing() -> None:
     coordinator_atom = next(
         atom
-        for atom in dual_xarm6_planner_coordinator.active_blueprints
+        for atom in dual_xarm6_planner_coordinator.solidify().active_blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
 
-    parsed = BlueprintConfigParser(dual_xarm6_planner_coordinator).parse(environ={})
+    parsed = BlueprintConfigParser(dual_xarm6_planner_coordinator.solidify()).parse(environ={})
     config = ControlCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator_atom.name))
 
     assert [type(component.limits) for component in config.hardware] == [
@@ -80,11 +80,11 @@ def test_dual_xarm_mock_limits_survive_blueprint_config_parsing() -> None:
 def test_dual_xarm_models_grippers_without_control_tasks() -> None:
     manipulation_atom = next(
         atom
-        for atom in dual_xarm6_planner_coordinator.active_blueprints
+        for atom in dual_xarm6_planner_coordinator.solidify().active_blueprints
         if issubclass(atom.module, ManipulationModule)
     )
 
-    parsed = BlueprintConfigParser(dual_xarm6_planner_coordinator).parse(environ={})
+    parsed = BlueprintConfigParser(dual_xarm6_planner_coordinator.solidify()).parse(environ={})
     config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(manipulation_atom.name))
 
     assert [group.tip_link for group in config.model.planning_groups[:2]] == [
@@ -94,7 +94,7 @@ def test_dual_xarm_models_grippers_without_control_tasks() -> None:
 
     coordinator_atom = next(
         atom
-        for atom in dual_xarm6_planner_coordinator.active_blueprints
+        for atom in dual_xarm6_planner_coordinator.solidify().active_blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
     coordinator_config = ControlCoordinatorConfig.model_validate(

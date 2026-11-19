@@ -682,7 +682,11 @@ def test_a_given_grasp_that_does_not_hold_says_where_it_came_from(
 
 def _generator_client(name: str) -> MagicMock:
     """A running grasp generator as on_system_modules hands it over."""
-    client = MagicMock(remote_name=name, rpcs=frozenset({"propose_grasps_for"}))
+    client = MagicMock(
+        instance_name=name,
+        remote_name=f"runs/test/modules/{name}",
+        rpcs=frozenset({"propose_grasps_for"}),
+    )
     client.propose_grasps_for.return_value = {"generator": name, "grasps": []}
     return client
 
