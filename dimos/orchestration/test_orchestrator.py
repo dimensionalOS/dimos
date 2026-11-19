@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator
+import json
 from pathlib import Path
 import threading
 import time
@@ -27,10 +28,11 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.core.module import Module
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
+from dimos.msgs.std_msgs.String import String
 from dimos.orchestration import engine
 from dimos.orchestration.binding import Deployed, bind, resolve
-from dimos.orchestration.engine import Call, SendCancel, SendStart, StreamItem
+from dimos.orchestration.engine import Call, ReturnItem, SendCancel, SendStart, StreamItem
 from dimos.orchestration.loader import load_and_check
 from dimos.orchestration.orchestrator import Orchestrator
 from dimos.utils.testing.waiting import wait_until
@@ -197,6 +199,25 @@ class FakeBase(Module):
         return list(self._calls)
 
 
+class Listener(Module):
+    """Keeps what the Orchestrator publishes."""
+
+    orchestrator_state: In[String]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._states: list[str] = []
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.orchestrator_state.subscribe(lambda message: self._states.append(message.data))
+
+    @rpc
+    def states(self) -> list[str]:
+        return list(self._states)
+
+
 def _deployed() -> Deployed:
     return Deployed(
         modules=frozenset({"FakeBase"}),
@@ -348,3 +369,123 @@ def test_an_engine_error_cancels_every_activity(
     orchestrator._run(orchestrator._checked)
     assert [call.args[0] for call in sent.call.call_args_list] == ["FakeBase/go_to"]
     assert [call.args[0] for call in sent.call_nowait.call_args_list] == ["FakeBase/halt"]
+
+
+ARRIVED = {
+    "node": "Going",
+    "cause": "if status == SUCCEEDED && reached == job.goal",
+    "goto": "Arrived",
+}
+
+
+def test_the_orchestrator_publishes_its_state_with_its_definition(
+    tmp_path: Path, build: Build
+) -> None:
+    job = _written(tmp_path, JOB)
+    blueprint = autoconnect(
+        FakeBase.blueprint(), Listener.blueprint(), Orchestrator.blueprint(file=job)
+    )
+    listener = build(blueprint).get_instance(Listener)
+
+    def arrived() -> list[dict[str, object]]:
+        states = [json.loads(state) for state in listener.states()]
+        return [state for state in states if state["active"] == ["Job", "Arrived"]]
+
+    wait_until(lambda: bool(arrived()), timeout=10.0, interval=0.05)
+    assert arrived()[0]["transitions"] == [ARRIVED]
+    definition = arrived()[0]["definition"]
+    assert definition["root"] == "Job"
+    assert definition["nodes"][1]["transitions"][0]["if"] == ARRIVED["cause"].removeprefix("if ")
+
+
+def _heard(orchestrator: Orchestrator) -> list[dict[str, object]]:
+    """Collects each state the Orchestrator publishes from here on."""
+    heard: list[dict[str, object]] = []
+    orchestrator.orchestrator_state.subscribe(
+        lambda message: heard.append(json.loads(message.data))
+    )
+    return heard
+
+
+def test_the_state_stream_has_each_step_that_changed_more_than_a_stream_value(
+    bound: tuple[Orchestrator, Mock], mocker: MockerFixture
+) -> None:
+    orchestrator, sent = bound
+    assert orchestrator._checked is not None
+    heard = _heard(orchestrator)
+    steps: list[Callable[[], object]] = [
+        lambda: StreamItem("FakeBase.status", {"status": 1, "reached": "lobby"}),
+        lambda: ReturnItem(sent.call.call_args_list[0].args[2].args[0], "lobby"),
+        lambda: StreamItem("FakeBase.status", {"status": 3, "reached": "lobby"}),
+        lambda: None,
+    ]
+    mocker.patch.object(orchestrator, "_next", side_effect=lambda: steps.pop(0)())
+    orchestrator._run(orchestrator._checked)
+
+    going = Call(1, "Going", "start", "sent", frozenset(), "FakeBase.go_to", {"name": "lobby"})
+    assert [state["handled"] for state in heard] == [
+        "startup",
+        "start of FakeBase.go_to returned",
+        "message on FakeBase.status",
+    ]
+    assert heard[0].pop("definition")["root"] == "Job"
+    assert heard[0] | {"timers": []} == {
+        "seq": 1,
+        "handled": "startup",
+        "transitions": [],
+        "fault": None,
+        "active": ["Job", "Going"],
+        "blackboard": {},
+        "calls": [
+            {
+                "node": "Going",
+                "kind": "start",
+                "phase": "sent",
+                "rpc": going.rpc,
+                "args": going.args,
+            }
+        ],
+        "timers": [],
+    }
+    arrived = heard[2]
+    assert arrived["transitions"] == [ARRIVED]
+    assert arrived["active"] == ["Job", "Arrived"]
+    assert arrived["blackboard"] == {"status": 3, "reached": "lobby", "job.goal": "lobby"}
+    assert [(call["kind"], call["rpc"]) for call in arrived["calls"]] == [
+        ("cancel", "FakeBase.halt"),
+        ("start", "FakeBase.mark"),
+    ]
+    assert [(timer["kind"], timer["node"]) for timer in arrived["timers"]] == [
+        ("cancel_deadline", "Going"),
+        ("after", "Arrived"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("engine_breaks", "handled", "fault"),
+    [
+        (
+            False,
+            "start of FakeBase.go_to raised",
+            {"rule": "a `failed` that no node handles", "node": "Going"},
+        ),
+        (True, "engine error", {"rule": "an engine error: RuntimeError: broken", "node": None}),
+    ],
+)
+def test_the_state_stream_has_each_fault(
+    bound: tuple[Orchestrator, Mock],
+    mocker: MockerFixture,
+    engine_breaks: bool,
+    handled: str,
+    fault: dict[str, str | None],
+) -> None:
+    orchestrator, sent = bound
+    assert orchestrator._checked is not None
+    heard = _heard(orchestrator)
+    sent.call.side_effect = lambda name, arguments, returned: returned(RuntimeError("no"))
+    if engine_breaks:
+        mocker.patch.object(engine, "step", side_effect=RuntimeError("broken"))
+    orchestrator._run(orchestrator._checked)
+    assert heard[-1]["handled"] == handled
+    assert heard[-1]["fault"] == fault
+    assert heard[-1]["active"] == []
