@@ -43,8 +43,7 @@ class PositionTracker:
 
     def reset_data(self) -> None:
         with self._lock:
-            # float64: time.time() is ~1.8e9, which float32 only holds to the
-            # nearest 128 s, far coarser than the stuck time window.
+            # float32 would only have granularity in minutes today, must be float64.
             self._timestamps = np.zeros(self._max_points, dtype=np.float64)
             self._positions = np.zeros((self._max_points, 2), dtype=np.float32)
             self._index = 0
