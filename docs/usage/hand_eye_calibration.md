@@ -8,7 +8,7 @@ The module is composed per arm. The xArm6 wrist camera has `xarm6-handeye-calibr
 
 The default board is 8 by 5 squares of 30 mm with AprilTag 36h11 markers of 22 mm, ids from 0. Generate it with OpenCV:
 
-```python
+```python skip
 import cv2
 
 d = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
@@ -41,13 +41,13 @@ Terminal 2, with the e-stop in hand:
 dimos shell
 ```
 
-```python
+```python skip
 cal = app.get_module("HandEyeCalibrationModule")
 ```
 
 An operator-approved run can wait on `approve()` longer than an RPC client waits for `calibrate()`, so start it in the background and poll:
 
-```python
+```python skip
 cal.start_calibration()
 cal.status()            # running, moves, waiting_for_approval; last_result when the run is over
 cal.approve()           # from a second shell, once per gated move
