@@ -48,6 +48,14 @@ def test_countdown_propagates_exceptions() -> None:
         countdown("step", 0.1, fail, stream=io.StringIO())
 
 
+def test_countdown_propagates_a_timeout_the_worker_raised() -> None:
+    def fail() -> None:
+        raise TimeoutError("the arm never answered")
+
+    with pytest.raises(TimeoutError, match="the arm never answered"):
+        countdown("step", 0.1, fail, stream=io.StringIO())
+
+
 def test_progress_bar_counts_to_total() -> None:
     out = io.StringIO()
     bar = ProgressBar(4, "report", stream=out)
