@@ -14,15 +14,17 @@
 # limitations under the License.
 
 import threading
+from time import monotonic
 
 import numpy as np
 from reactivex import Observable
-import sounddevice as sd  # type: ignore[import-untyped]
 
-from dimos.stream.audio.base import AbstractAudioConsumer
+from dimos.stream.audio.base import AbstractAudioConsumer, AudioEvent
+from dimos.stream.audio.sounddevice_loader import sounddevice as sd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+_DEVICE_RETRY_SECONDS = 1.0
 
 
 class SounddeviceAudioOutput(AbstractAudioConsumer):
@@ -52,7 +54,8 @@ class SounddeviceAudioOutput(AbstractAudioConsumer):
         self.block_size = block_size
         self.dtype = dtype
 
-        self._stream = None
+        self._stream: sd.OutputStream | None = None
+        self._retry_after = 0.0
         self._stream_lock = threading.Lock()
         self._running = threading.Event()
         self._subscription = None
@@ -67,27 +70,8 @@ class SounddeviceAudioOutput(AbstractAudioConsumer):
         Returns:
             Self for method chaining
         """
-        # Try to create and start the output stream. If no audio device is
-        # available (e.g. in CI / headless), log and continue — audio events
-        # will still be drained from the observable and silently dropped.
-        try:
-            self._stream = sd.OutputStream(
-                device=self.device_index,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                blocksize=self.block_size,
-                dtype=self.dtype,
-            )
-            self._stream.start()  # type: ignore[attr-defined]
-            self._running.set()
-
-        except Exception as e:
-            self._stream = None
-            logger.warning(
-                f"No audio output device available ({e}); audio events will be consumed and dropped"
-            )
-
-        # Subscribe to the observable
+        self._retry_after = 0.0
+        self._running.set()
         self._subscription = audio_observable.subscribe(  # type: ignore[assignment]
             on_next=self._play_audio_event,
             on_error=self._handle_error,
@@ -110,11 +94,35 @@ class SounddeviceAudioOutput(AbstractAudioConsumer):
                 self._stream.close()
                 self._stream = None
 
-    def _play_audio_event(self, audio_event) -> None:  # type: ignore[no-untyped-def]
-        """Play audio from an AudioEvent."""
-        if not self._running.is_set():
+    def _open_stream(self) -> None:
+        """Open on demand and limit device probes while the server is down."""
+        if monotonic() < self._retry_after:
             return
 
+        stream = None
+        try:
+            stream = sd.OutputStream(
+                device=self.device_index,
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                blocksize=self.block_size,
+                dtype=self.dtype,
+            )
+            stream.start()
+        except Exception as e:
+            if stream is not None:
+                stream.close()
+            if not self._retry_after:
+                logger.warning(
+                    "Audio output unavailable, dropping audio until it recovers", error=str(e)
+                )
+            self._retry_after = monotonic() + _DEVICE_RETRY_SECONDS
+        else:
+            self._stream = stream
+            self._retry_after = 0.0
+
+    def _play_audio_event(self, audio_event: AudioEvent) -> None:
+        """Play audio from an AudioEvent."""
         try:
             # Ensure data type matches our stream
             if audio_event.dtype != self.dtype:
@@ -124,7 +132,11 @@ class SounddeviceAudioOutput(AbstractAudioConsumer):
                     audio_event = audio_event.to_int16()
 
             with self._stream_lock:
-                if self._stream:
+                if not self._running.is_set():
+                    return
+                if self._stream is None:
+                    self._open_stream()
+                if self._stream is not None:
                     self._stream.write(audio_event.data)
         except Exception as e:
             logger.error(f"Error playing audio: {e}")

@@ -178,7 +178,10 @@ def make_connection(
 
     if ip in ("fake", "mock", "replay") or mode == "replay":
         return ReplayConnection(
-            dataset=cfg.g.replay_db, loop=cfg.replay_loop, exit_on_complete=cfg.replay_exit
+            dataset=cfg.g.replay_db,
+            loop=cfg.replay_loop,
+            exit_on_complete=cfg.replay_exit,
+            module_rpc_name=cfg.rpc_name,
         )
     elif ip == "mujoco" or mode in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
@@ -211,12 +214,14 @@ class ReplayConnection(CompositeResource):
         duration: float | None = None,
         loop: bool = False,
         exit_on_complete: bool = False,
+        module_rpc_name: str | None = None,
     ) -> None:
         self.dataset = dataset
         self._seek = seek
         self._duration = duration
         self._loop = loop
         self._exit_on_complete = exit_on_complete
+        self._module_rpc_name = module_rpc_name
         self._progress = ReplayProgress(dataset, on_complete=self._on_complete)
         self._replay_path: str | None = None
         self._pending_streams: list[ReplayStream[Any]] = []
@@ -302,7 +307,7 @@ class ReplayConnection(CompositeResource):
         try:
             client = CoordinatorRPC.connect(timeout=10.0)
             try:
-                client.call("shutdown")
+                client.call("shutdown", requesting_module=self._module_rpc_name)
             finally:
                 client.stop()
         except Exception:

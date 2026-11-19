@@ -136,7 +136,7 @@ def test_serve_and_connect_use_selected_rpc_name(mocker) -> None:
     client = CoordinatorRPC.connect(timeout=1.0, name=name)
     result = client.call("ping")
 
-    ensure.assert_called_once_with(name)
+    ensure.assert_called_once_with(server_rpc, name)
     server_rpc.serve_module_rpc.assert_called_once_with(coordinator, name=name)
     assert server.name == name
     assert client.name == name

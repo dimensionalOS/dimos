@@ -178,8 +178,8 @@ for the `ToolResult`, `setExpanded(expanded)` for `/expand`, and `dispose()`, wh
 needs a frame.
 
 `MenuTab` has a `title` and `rows(context)`, which returns the tab's `MenuRow` list each
-time the view renders. A `MenuRow` has `text`, a `Level`, its `MenuKey` list, and `open`, which Enter calls.
-`open` returns a `MenuDetail` pane with a `title`, `lines()` and `close()`, or `null` after an action that leaves
+time the view renders. A `MenuRow` has `text`, a `Level`, its actions, and an optional `open` callback.
+`open` returns a `MenuDetail` pane with a `title` and `lines()`, or `null` after an action that leaves
 `/menu`. `TabContext` carries the `Ui`, `now`, the `current` conversation
 and `attach(conversation)`.
 
@@ -330,8 +330,7 @@ export class StreamGetCard implements ToolCard {
 
 `busyTab` lists every conversation with a run in progress, the oldest run first, and Enter shows the selected one in the
 chat. It reads `ui.gateway.conversations` each time the view renders, as `conversationsTab` in
-[menu/conversations.ts](/dimos/agents/frontends/tui/menu/conversations.ts) does. To show it, move it into menu/ and add it to `TABS` in
-[menu/view.ts](/dimos/agents/frontends/tui/menu/view.ts). Add a matching key to `TAB_KEYS`.
+[menu/conversations.ts](/dimos/agents/frontends/tui/menu/conversations.ts) does.
 
 ```ts
 import type { MenuRow, MenuTab } from "#dimos/agents/frontends/tui/menu/base.ts";
@@ -352,7 +351,7 @@ export const busyTab: MenuTab = {
                 return {
                     text: `${mark} #${row.id}  ${what}  ${duration(elapsed)}  ${row.title}`,
                     level: elapsed > LONG_RUN_MS ? "warn" : "ok",
-                    keys: [],
+                    actions: [],
                     open: () => {
                         context.attach(row.id);
                         return null;
@@ -431,18 +430,16 @@ Any other `FrameSource` can replace it.
 sidebar.test.ts drives a `Sidebar` through a real `TuiAltScreen` with an in-memory terminal and frame source.
 
 [menu/](/dimos/agents/frontends/tui/menu/) is the main menu that `/menu` opens, the `MenuTab` family in [base.ts](/dimos/agents/frontends/tui/menu/base.ts). `MenuView` in
-view.ts is the full-screen view main.ts opens. Keys 2 to 4 pick a tab, Up and Down pick a row, Enter opens the row's
-detail, a row's own keys run its actions, and Esc closes the detail and then the view. A tab longer than the screen
-shows the rows around the selected one. A failed key action lands in `Feedback` as a refusal.
+view.ts is the full-screen view main.ts opens. Left and Right switch sections. Typing filters the current list, and Up and Down select a row.
+Enter resumes a conversation or opens the actions for a module or job. Esc returns to the previous screen and
+restores the list selection and filter. The footer shows connection status and the latest action result.
 
-| Key | Tab           | File                                         | Rows                                                                                                  |
-| --- | ------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 2   | Conversations | conversations.ts                             | Every conversation in switcher order. Enter shows it in the chat.                                     |
-| 3   | Agent modules | [modules.ts](/dimos/agents/frontends/tui/menu/modules.ts)             | Every agent module and its owner. `r` restarts, `u` unloads, `d` deletes.   |
-| 4   | Jobs          | [jobs.ts](/dimos/agents/frontends/tui/menu/jobs.ts)                   | Every job as a lane over the last and next 12 hours. `r` runs it now, `d` deletes, Enter lists runs.  |
+| Section | Actions |
+| --- | --- |
+| [Conversations](/dimos/agents/frontends/tui/menu/conversations.ts) | Resume the selected conversation. |
+| [Agent modules](/dimos/agents/frontends/tui/menu/modules.ts) | Restart, unload, or delete the selected module. |
+| [Jobs](/dimos/agents/frontends/tui/menu/jobs.ts) | View run history, run the selected job now, or delete it. |
 
-[menu/lib/](/dimos/agents/frontends/tui/menu/lib/) is private to menu/.
-`plain(text, level)` in [rows.ts](/dimos/agents/frontends/tui/menu/lib/rows.ts) is a row with no keys and no Enter.
 [lane.ts](/dimos/agents/frontends/tui/menu/lib/lane.ts) has `laneText`, which draws a job's runs, due times and now on a ruler of a given number
 of cells, and `axisText`, the clock labels above it. The Jobs tab uses 48 cells, one per 30 minutes. lane.test.ts checks
 both strings.

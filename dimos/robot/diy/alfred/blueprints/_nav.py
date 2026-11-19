@@ -20,7 +20,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.navigation.embodiment.alfred import ALFRED
@@ -107,7 +107,7 @@ def _alfred_rerun_config() -> dict[str, Any]:
     }
 
 
-def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
+def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> MetaBlueprint:
     """Mapping, planning and following. map_cloud_topic is what the voxel map raytraces."""
     return autoconnect(
         RayTracingVoxelMap.blueprint(
