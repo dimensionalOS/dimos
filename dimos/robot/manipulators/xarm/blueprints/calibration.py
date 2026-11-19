@@ -33,6 +33,7 @@ from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.calibration.hand_eye_module import BoxObstacle, HandEyeCalibrationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.xarm.blueprints.basic import XARM_REMAPS, xarm_coordinator
 from dimos.robot.manipulators.xarm.config import (
@@ -299,6 +300,21 @@ def _xarm7_calibration_model() -> RobotModelConfig:
     )
 
 
+def _with_held_card(config: RobotModelConfig) -> RobotModelConfig:
+    card = RobotModel.from_urdf_string(XARM7_HELD_CARD_URDF)
+    return config.model_copy(
+        update={
+            "model": config.model.with_attached_model(
+                card, parent_link="link7", joint_name="held_card_joint", xyz=XARM7_HELD_CARD_XYZ
+            ),
+            "collision_exclusion_pairs": [
+                *config.collision_exclusion_pairs,
+                *(("held_card", link) for link in XARM7_HELD_CARD_TOUCHES),
+            ],
+        }
+    )
+
+
 xarm7_handeye_calibrate = autoconnect(
     planner(
         model=_xarm7_calibration_model(),
@@ -326,14 +342,16 @@ def _xarm7_sim(
     width: int,
     height: int,
     address: LfsPath = XARM7_CALIBRATION_BENCH_PATH,
+    held_card: bool = False,
 ) -> Blueprint:
     """The simulated xArm7 on the kitting bench twin, streaming one of its cameras."""
     hardware = make_xarm7_sim_hardware(home_joints=XARM7_CALIBRATION_HOME)
+    model = make_xarm7_sim_robot_config(
+        base_pose=PoseStamped(frame_id="world"), tf_extra_links=["link7", "link_tcp"]
+    )
     return autoconnect(
         planner(
-            model=make_xarm7_sim_robot_config(
-                base_pose=PoseStamped(frame_id="world"), tf_extra_links=["link7", "link_tcp"]
-            ),
+            model=_with_held_card(model) if held_card else model,
             gripper_tasks={"manipulator": "arm_gripper"},
         ),
         coordinator(
@@ -397,6 +415,24 @@ XARM7_SCENE_CAMERA_GUESS_XYZW = (0.6311099, 0.6311099, -0.3189048, -0.3189048)
 # from the twin. A centimetre or two out does not matter; it only aims the plate.
 XARM7_PLATE_XYZ = (-0.075, 0.0, 0.277)
 XARM7_PLATE_XYZW = (-0.7071068, 0.0, 0.0, 0.7071068)
+# The card as a planner body on link7, so no move takes it into the table: the printed 15 x 12 cm
+# with a margin, from the fingertips out, its face across flange y like the plate above.
+XARM7_HELD_CARD_URDF = """<robot name="held_card"><link name="held_card">
+<visual><geometry><box size="0.20 0.02 0.15"/></geometry></visual>
+<collision><geometry><box size="0.20 0.02 0.15"/></geometry></collision>
+</link></robot>"""
+XARM7_HELD_CARD_XYZ = (0.0, 0.0, 0.26)
+# The fingers clamp it, and the gripper base sits right behind it.
+XARM7_HELD_CARD_TOUCHES = (
+    "xarm_gripper_base_link",
+    "left_finger",
+    "right_finger",
+    "left_inner_knuckle",
+    "right_inner_knuckle",
+    "left_outer_knuckle",
+    "right_outer_knuckle",
+    "link_tcp",
+)
 XARM7_SCENE_BENCH_PATH = LfsPath("xarm7_kitting_bench/calibration_bench_scene.xml")
 
 _XARM7_SCENE = {
@@ -423,7 +459,7 @@ _XARM7_SCENE = {
 
 xarm7_handeye_calibrate_scene = autoconnect(
     planner(
-        model=_xarm7_calibration_model(),
+        model=_with_held_card(_xarm7_calibration_model()),
         gripper_tasks={"manipulator": "arm_gripper"},
         visualization={"backend": "viser"},
     ),
@@ -439,6 +475,7 @@ xarm7_handeye_calibrate_scene_sim = autoconnect(
         width=1280,
         height=720,
         address=XARM7_SCENE_BENCH_PATH,
+        held_card=True,
     ),
     HandEyeCalibrationModule.blueprint(
         name="xarm7_scene_camera_sim",
