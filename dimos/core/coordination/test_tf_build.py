@@ -30,6 +30,7 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.utils.safe_thread_map import ExceptionGroup
 
 
 class OdomConfig(TfModuleConfig):
