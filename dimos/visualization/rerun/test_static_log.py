@@ -37,12 +37,6 @@ def cloud(points):
     return rr.Points3D(np.zeros((points, 3), dtype=np.float32))
 
 
-def logged(log):
-    return [
-        (call.args[0], [type(a).__name__ for a in call.args[1:]]) for call in log.call_args_list
-    ]
-
-
 @pytest.mark.parametrize(
     ("limit", "expected"),
     [("1GiB", 2**30), ("256MB", 256_000_000), ("25%", 2 * 2**30)],
@@ -53,46 +47,75 @@ def test_memory_limit_bytes_reads_sizes_and_shares_of_ram(mocker, limit, expecte
     assert memory_limit_bytes(limit) == expected
 
 
-def test_logs_everything_as_static(mocker):
+@pytest.mark.parametrize("limit", ["0", "0%", "unlimited", "none", "max", "∞"])
+def test_disabled_or_unlimited_history_sends_each_update_once(mocker, limit):
     log = mocker.patch.object(rr, "log")
-    points = cloud(1)
+    static_log = StaticLog(limit)
+    robot, region = cloud(1), cloud(5000)
+    static_log.log("world/robot", robot, once=True)
+    static_log.log("world/map", region)
 
-    StaticLog("1GiB").log("world/map", points)
-
-    log.assert_called_once_with("world/map", points, static=True)
-
-
-def test_replays_what_was_logged_once_after_half_a_buffer_of_static_data(mocker):
-    log = mocker.patch.object(rr, "log")
-    static_log = StaticLog("100KiB")
-    static_log.log("world/lidar", rr.Transform3D(parent_frame="tf#/lidar"), once=True)
-    static_log.log("world/robot", rr.Boxes3D(half_sizes=[1, 1, 1]), once=True)
-    log.reset_mock()
-
-    # A region counts as 14 kB. Three stay under the 50 KiB half, the fourth passes it.
-    for region in range(3):
-        static_log.log(f"world/map/{region}", cloud(1000))
-    assert len(log.call_args_list) == 3
-    static_log.log("world/map/3", cloud(1000))
-
-    assert logged(log)[4:] == [("world/lidar", ["Transform3D"]), ("world/robot", ["Boxes3D"])]
-    assert all(call.kwargs == {"static": True} for call in log.call_args_list)
+    assert log.call_args_list == [
+        mocker.call("world/robot", robot, static=True),
+        mocker.call("world/map", region, static=True),
+    ]
 
 
-def test_replays_only_the_latest_value_of_an_archetype(mocker):
+def test_refresh_replays_updated_positions_and_partial_colors(mocker):
     log = mocker.patch.object(rr, "log")
     static_log = StaticLog("100KiB")
-    old = rr.Transform3D(parent_frame="tf#/old")
-    new = rr.Transform3D(parent_frame="tf#/new")
-    pinhole = rr.Pinhole(focal_length=1.0, width=2, height=2)
-    static_log.log("world/camera", old, once=True)
-    static_log.log("world/camera", pinhole, once=True)
-    static_log.log("world/camera", new, once=True)
+    static_log.log("world/robot", cloud(1), once=True)
+    static_log.log("world/robot", rr.Points3D.from_fields(colors=[[0, 255, 0]]), once=True)
+    static_log.log("/world/robot", rr.Points3D([[7, 8, 9]]))
+    static_log.log("world/robot", rr.Boxes3D(half_sizes=[1, 1, 1]))
     log.reset_mock()
 
     static_log.log("world/map", cloud(5000))
 
-    assert log.call_args_list[1] == mocker.call("world/camera", new, pinhole, static=True)
+    assert [call.args[0] for call in log.call_args_list] == [
+        "world/map",
+        "world/robot",
+        "world/robot",
+    ]
+    assert all(call.kwargs == {"static": True} for call in log.call_args_list)
+    assert {
+        str(batch.component_descriptor()): batch.as_arrow_array().to_pylist()
+        for call in log.call_args_list[1:]
+        for batch in call.args[1]
+    } == {"Points3D:positions": [[7, 8, 9]], "Points3D:colors": [0x00FF00FF]}
+
+
+def test_each_cloud_records_its_frame_and_the_latest_frame_is_available_as_a_fallback(tmp_path):
+    path = tmp_path / "frames.rrd"
+    topic = Topic(topic="dimos/lidar", lcm_type=PointCloud2)
+    module = RerunBridgeModule(pubsubs=[])
+    try:
+        with rr.RecordingStream("frame-history") as recording:
+            recording.save(path)
+            for step, frame in enumerate(["base_link", "base_link", "odom"]):
+                recording.set_time("step", sequence=step)
+                msg = PointCloud2.from_numpy(
+                    np.array([[1, 2, 3]], dtype=np.float32), frame_id=frame
+                )
+                module._on_message(msg, topic)
+    finally:
+        module.stop()
+
+    samples = []
+    fallback = []
+    for chunk in RrdReader(path).stream():
+        data = chunk.to_record_batch().to_pydict()
+        if chunk.entity_path == "/world/lidar":
+            assert not chunk.is_static
+            assert "Points3D:positions" in data
+            samples.extend(zip(data["step"], data["Transform3D:parent_frame"], strict=True))
+        if chunk.entity_path == "/frame_attachments/world/lidar":
+            assert chunk.is_static
+            fallback.extend(
+                zip(data["Transform3D:child_frame"], data["Transform3D:parent_frame"], strict=True)
+            )
+    assert sorted(samples) == [(0, ["tf#/base_link"]), (1, ["tf#/base_link"]), (2, ["tf#/odom"])]
+    assert fallback[-1] == (["tf#/world/lidar"], ["tf#/odom"])
 
 
 @pytest.fixture
@@ -108,7 +131,12 @@ def bridge(request, mocker, unused_tcp_port):
         rerun_open="none",
         connect_url=uri,
         server_memory_limit="256KiB",
-        static={"world/robot": lambda rerun: rerun.Boxes3D(half_sizes=[0.3, 0.2, 0.1])},
+        static={
+            "world/robot": lambda rerun: rerun.Boxes3D(half_sizes=[0.3, 0.2, 0.1]),
+            "world/scene": lambda rerun: rerun.Asset3D(
+                contents=np.random.default_rng(1).bytes(170 * 1024)
+            ),
+        },
         visual_override={
             "world/map_regions": partial(
                 render_map_region, voxel_size=0.1, height_range=(0.0, 1.0), static=request.param
@@ -158,24 +186,30 @@ def late_client(tmp_path):
         client.wait(timeout=10)
 
 
-@pytest.mark.parametrize("bridge", [False, True], indirect=True, ids=["temporal", "static"])
-def test_late_viewer_gets_what_the_bridge_logged_once(bridge, late_client):
+@pytest.mark.parametrize(
+    ("bridge", "regions", "points"),
+    [(False, 20, 4000), (True, 20, 4000), (True, 5, 1500)],
+    indirect=["bridge"],
+    ids=["temporal", "static", "large-asset-with-five-small-updates"],
+)
+def test_late_viewer_gets_what_the_bridge_logged_once(bridge, late_client, regions, points):
     module, uri = bridge
     recording = rr.get_global_data_recording()
     rng = np.random.default_rng(42)
     lidar = PointCloud2.from_numpy(np.array([[1, 2, 3]], dtype=np.float32), frame_id="lidar")
     module._on_message(lidar, Topic(topic="dimos/lidar", lcm_type=PointCloud2))
 
-    # 1.2 MB of map regions through a 256 KiB buffer, as timeline or as static data.
-    for seq in range(20):
-        region = PointCloud2.from_numpy(rng.random((4000, 3), dtype=np.float32), frame_id="odom")
+    # Five small updates fit in half the buffer, but exceed the space left by the scene.
+    for seq in range(regions):
+        region = PointCloud2.from_numpy(rng.random((points, 3), dtype=np.float32), frame_id="odom")
         region.seq = seq
         module._on_message(region, Topic(topic="dimos/map_regions", lcm_type=PointCloud2))
         recording.flush()
 
     columns = late_client(uri)
     expected = {
-        "/world/lidar:Transform3D:parent_frame",
+        "/frame_attachments/world/lidar:Transform3D:parent_frame",
+        "/world/scene:Asset3D:blob",
         "/world/robot:Boxes3D:half_sizes",
         "/:AnnotationContext:context",
     }

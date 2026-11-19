@@ -147,7 +147,7 @@ def test_a_leaf_stack_does_not_claim_the_coordinator_name() -> None:
     assert coordinator._coordinator_rpc is None
 
 
-def test_multi_entries_log_their_static_flag_and_pin_the_frame_once(
+def test_multi_entries_log_their_static_flag_and_parent_frame(
     mocker: MockerFixture, make_bridge: Callable[..., RerunBridgeModule]
 ) -> None:
     cells = [
@@ -166,7 +166,11 @@ def test_multi_entries_log_their_static_flag_and_pin_the_frame_once(
     assert calls.count(("world/surface_map/0_0", True)) == 2
     assert calls.count(("world/surface_map/1_0", False)) == 2
     pins = [c for c in log.call_args_list if c.args[0] == entity]
-    assert len(pins) == 1 and isinstance(pins[0].args[1], rr.Transform3D)
+    assert [call.args[1].parent_frame.as_arrow_array().to_pylist() for call in pins] == [
+        ["tf#/odom"],
+        ["tf#/odom"],
+    ]
+    assert calls.count(("frame_attachments/world/surface_map", True)) == 1
 
 
 def test_region_cells_unpack_from_the_seq_the_planner_packs() -> None:

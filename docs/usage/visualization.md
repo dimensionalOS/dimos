@@ -154,15 +154,17 @@ Rerun keeps what the bridge logs in two places. Each has its own limit:
 | `--rerunbridgemodule.memory-limit` | A quarter of RAM, at most 4 GiB | The native viewer. Past the limit it drops its oldest data, so the timeline gets shorter. Browser viewers do not take this limit. |
 | `--rerunbridgemodule.server-memory-limit` | `1GiB` | The replay buffer in the bridge's worker. A viewer that connects late starts from what is in it. |
 
-Both take a size (`2GB`) or a share of RAM (`10%`).
+Both limits take a size (`2GB`) or a share of RAM (`10%`). For a remote
+viewer, run the printed `viewer_limit` assignment on the viewer machine. An
+explicit viewer limit appears directly in the connection command.
 
-A full replay buffer drops timeline data first, oldest first. What the bridge
-logs only once is static data, which the buffer drops last: the frame each
-entity is attached to, the `static` entities, the colormap and the blueprint
-graph. The bridge also logs these again before static topic data, such as map
-regions, can push them out. So a late viewer draws every entity in its place,
-with as much history as fits. A topic that publishes once on the timeline is
-not kept. A late viewer misses it once the buffer has moved on.
+Set the server limit to `0` to stream live with no replay, or `unlimited` to
+keep the full recording. With a finite budget, the proxy drops the oldest
+timeline data first and then the oldest static data. The bridge periodically
+resends configured static entities, the colormap, the blueprint graph, and
+the latest frame attachments. Size the buffer to fit those entities together
+with the topic history you want to replay. Recorded samples keep the frame
+they had when they arrived.
 
 ---
 

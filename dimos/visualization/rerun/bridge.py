@@ -21,6 +21,7 @@ from dataclasses import field
 import functools
 from operator import attrgetter
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -489,41 +490,37 @@ class RerunBridgeModule(Module):
         if not rerun_data:
             return
 
-        # TFMessage for example returns list of (entity_path, archetype) tuples
+        frame_id = getattr(msg, "frame_id", None)
+        attachment = []
+        if frame_id and not isinstance(rerun_data, rr.Transform3D):
+            parent = f"tf#/{frame_id}"
+            attachment.append(rr.Transform3D(parent_frame=parent))
+            if self._frame_attached.get(entity_path) != frame_id:
+                # Rerun supports a static fallback and a temporal transform for the
+                # same child frame on separate paths. The temporal one wins at its
+                # timestamps, even after a later change updates the fallback.
+                path = entity_path.lstrip("/")
+                self._static_log.log(
+                    f"frame_attachments/{path}",
+                    rr.Transform3D(child_frame=f"tf#/{path}", parent_frame=parent),
+                    once=True,
+                )
+                self._frame_attached[entity_path] = frame_id
+                if isinstance(msg, Image) and frame_id in self._camera_infos:
+                    rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+
         if is_rerun_multi(rerun_data):
+            if attachment:
+                rr.log(entity_path, attachment[0])
             for entry in rerun_data:
                 if isinstance(entry, RerunEntry) and entry.static:
                     self._static_log.log(entry.path, entry.archetype)
                 else:
                     rr.log(entry[0], entry[1])
-            # Pin the base entity to the message frame once, so child entities
-            # follow it the way a single archetype does below.
-            frame_id = getattr(msg, "frame_id", None)
-            if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                self._attach(entity_path, frame_id)
         else:
-            rr.log(entity_path, cast("Archetype", rerun_data))
+            rr.log(entity_path, cast("Archetype", rerun_data), *attachment)
             if isinstance(msg, Image):
                 self._image_entities.add(entity_path)
-            # if source msg carries a frame_id, attach the entity to that TF frame
-            # should skip if archetype is a Transform3D
-            if not isinstance(rerun_data, rr.Transform3D):
-                frame_id = getattr(msg, "frame_id", None)
-                if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                    self._attach(entity_path, frame_id)
-                    if isinstance(msg, Image) and frame_id in self._camera_infos:
-                        rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
-
-    def _attach(self, entity_path: str, frame_id: str) -> None:
-        """Pin an entity to its tf frame.
-
-        Static, because it is logged once: as timeline data the replay buffer
-        drops it, and a viewer that connects later draws the entity at the origin.
-        """
-        import rerun as rr
-
-        self._static_log.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"), once=True)
-        self._frame_attached[entity_path] = frame_id
 
     def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
         """A CameraInfo is the pinhole of every image in its optical frame.
@@ -667,7 +664,7 @@ class RerunBridgeModule(Module):
         local_grpc = f"rerun+http://{self.host}:{grpc_port}/proxy"
         local_ws = self._websocket_url
         # Without it a viewer started by hand takes Rerun's default, 75% of RAM.
-        limit = f"--memory-limit {self.config.memory_limit}"
+        local_limit = shlex.quote(self.config.memory_limit)
         hostname = socket.gethostname()
 
         columns = 60
@@ -677,8 +674,21 @@ class RerunBridgeModule(Module):
             "Rerun gRPC server running (no viewer opened)",
             "",
             "Connect a viewer:",
-            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws} {limit}",
+            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws} --memory-limit {local_limit}",
         ]
+        remote_limit = local_limit
+        if local_ips and "memory_limit" not in self.config.model_fields_set:
+            # Remote users may have only the standalone viewer installed.
+            ram = 'os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")'
+            calc = f"import os; print(min({VIEWER_MEMORY_CAP_MIB}, {ram} // 4 // 2**20))"
+            lines.extend(
+                [
+                    "",
+                    "On the viewer machine:",
+                    f"  viewer_limit=$(python3 -c {shlex.quote(calc)})MiB",
+                ]
+            )
+            remote_limit = '"$viewer_limit"'
         for ip, iface in local_ips:
             remote_grpc = f"rerun+http://{ip}:{grpc_port}/proxy"
             remote_ws = self._websocket_url
@@ -688,7 +698,7 @@ class RerunBridgeModule(Module):
                 netloc = f"{host}:{ws.port}" if ws.port is not None else host
                 remote_ws = ws._replace(netloc=netloc).geturl()
             lines.append(
-                f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws} {limit}  # {iface}"
+                f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws} --memory-limit {remote_limit}  # {iface}"
             )
         lines.append("")
         lines.append(f"  hostname: {hostname}")

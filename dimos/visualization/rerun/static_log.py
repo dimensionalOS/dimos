@@ -23,57 +23,76 @@ import psutil
 from pydantic import ByteSize, TypeAdapter
 
 if TYPE_CHECKING:
-    from rerun import AsComponents
+    from collections.abc import Collection
+
+    from rerun import AsComponents, ComponentDescriptor, DescribedComponentBatch
 
 # What the proxy charges for a message on top of its Arrow data. Measured on
 # Rerun 0.32 at 1.1 kB for one component and 1.7 kB for three.
 MESSAGE_OVERHEAD = 2048
 
 
-def memory_limit_bytes(limit: str) -> int:
-    """A Rerun memory limit in bytes, from a size ("1GiB") or a share of RAM ("25%")."""
+def memory_limit_bytes(limit: str) -> int | None:
+    """Parse a Rerun proxy budget. None means unlimited."""
+    if limit in {"unlimited", "none", "max", "∞"}:
+        return None
     if limit.endswith("%"):
         return int(psutil.virtual_memory().total * float(limit[:-1]) / 100)
     return int(TypeAdapter(ByteSize).validate_python(limit))
 
 
+def _message_size(batches: Collection[DescribedComponentBatch]) -> int:
+    return MESSAGE_OVERHEAD + sum(int(batch.as_arrow_array().nbytes) for batch in batches)
+
+
 class StaticLog:
-    """Log static data, repeating what is logged only once before the proxy drops it.
-
-    Rerun's gRPC proxy replays its buffer to a viewer that connects late. It
-    drops static messages last, but it never merges them. Once static data alone
-    exceeds the server memory limit, the oldest static messages go.
-
-    Static topic data is published again by its source. What the bridge logs
-    only once is not, so it is kept here and logged again each time half a
-    buffer of static data has gone by.
-    """
+    """Refresh one-time static components before other writes age them out of the proxy."""
 
     def __init__(self, server_memory_limit: str) -> None:
-        self._replay_after = memory_limit_bytes(server_memory_limit) // 2
-        self._once: dict[str, dict[type, AsComponents]] = {}
-        self._pending = 0
+        self._limit = memory_limit_bytes(server_memory_limit)
+        self._remaining = (self._limit or 0) // 2
+        self._once: dict[
+            tuple[str, type], list[dict[ComponentDescriptor, DescribedComponentBatch]]
+        ] = {}
         self._lock = threading.Lock()
 
     def log(self, path: str, *archetypes: AsComponents, once: bool = False) -> None:
-        """Log static data. Pass once=True when nothing will log it again."""
+        """Log static data. Pass once=True to retain its components for late viewers."""
         # Rerun is heavy, so only the bridge's worker imports it.
         import rerun as rr
 
-        # The lock also keeps a replay from logging an older value after a newer one.
-        with self._lock:
-            if once:
-                self._once.setdefault(path, {}).update(
-                    {type(archetype): archetype for archetype in archetypes}
-                )
+        if not self._limit:  # Zero disables history. Unlimited history needs no refresh.
             rr.log(path, *archetypes, static=True)
-            self._pending += MESSAGE_OVERHEAD + sum(
-                batch.as_arrow_array().nbytes
-                for archetype in archetypes
-                for batch in archetype.as_component_batches()
-            )
-            if self._pending < self._replay_after:
+            return
+
+        with self._lock:
+            rr.log(path, *archetypes, static=True)
+            for archetype in archetypes:
+                batches = archetype.as_component_batches()
+                self._remaining -= _message_size(batches)
+                key = (path.lstrip("/") or "/", type(archetype))
+                if once or key in self._once:
+                    rows = self._once.setdefault(key, [])
+                    update = {batch.component_descriptor(): batch for batch in batches}
+                    for row in rows:
+                        for descriptor in update:
+                            row.pop(descriptor, None)
+                    # Keep row order. Rerun resolves a Transform3D from a single row,
+                    # while Points3D can take positions and colors from different rows.
+                    self._once[key] = [row for row in rows if row] + [update]
+
+            if self._remaining > 0:
                 return
-            self._pending = 0
-            for once_path, kept in self._once.items():
-                rr.log(once_path, *kept.values(), static=True)
+
+            # Two copies of a large asset in one SDK chunk are evicted together.
+            recording = rr.get_data_recording()
+            if recording is not None:
+                recording.flush(timeout_sec=0)
+            headroom = self._limit
+            for (path, _), rows in self._once.items():
+                for row in rows:
+                    rr.log(path, row.values(), static=True)
+                    headroom -= _message_size(row.values())
+            # If the retained data alone exceeds the budget, replaying on every
+            # write would flood live viewers without making the snapshot fit.
+            self._remaining = (headroom if headroom > 0 else self._limit) // 2
