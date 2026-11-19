@@ -54,6 +54,30 @@ def test_octree_obstacles_draw_their_occupied_cells() -> None:
     assert call.kwargs["point_size"] == pytest.approx(0.025)
 
 
+def test_octree_cells_are_coloured_by_height() -> None:
+    scene = _scene()
+    points = np.array([[0.0, 0.0, z] for z in np.linspace(0.0, 0.2, 11)], dtype=np.float32)
+
+    scene.add_vis_obstacle("mapping/voxel-map", _octree(points))
+
+    colors = scene.server.scene.add_point_cloud.call_args.kwargs["colors"]
+    assert colors.dtype == np.uint8
+    assert tuple(colors[0]) == (40, 70, 220)  # lowest cell blue
+    assert tuple(colors[-1]) == (220, 50, 40)  # highest cell red
+
+
+def test_an_octree_with_its_own_colour_keeps_it() -> None:
+    scene = _scene()
+    points = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.2]], dtype=np.float32)
+    obstacle = _octree(points)
+    obstacle.color = (1.0, 0.0, 0.0, 1.0)
+
+    scene.add_vis_obstacle("mapping/voxel-map", obstacle)
+
+    colors = scene.server.scene.add_point_cloud.call_args.kwargs["colors"]
+    assert {tuple(c) for c in colors} == {(255, 0, 0)}
+
+
 def test_an_empty_octree_is_a_render_failure_not_a_blank_cloud() -> None:
     """A map with no occupied cells is a broken mapping chain, not a clear table."""
     scene = _scene()
