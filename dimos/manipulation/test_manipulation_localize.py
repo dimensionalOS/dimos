@@ -260,7 +260,7 @@ def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5), points=4000,
     }
 
 
-_SURFACE_SETTINGS = dict(reach=1.0, thickness=0.03, cut_above=0.01)
+_SURFACE_SETTINGS = dict(reach=1.0, thickness=0.03, cut_above=0.01, cut_below=0.02)
 
 
 def test_table_box_tops_out_on_the_surface_round_the_whole_reach():
@@ -273,9 +273,9 @@ def test_table_box_tops_out_on_the_surface_round_the_whole_reach():
     assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.0, 0.0])
     assert box_size == pytest.approx([2.0, 2.0, 0.03])
     assert box_pose.position.z + box_size[2] / 2 == pytest.approx(0.08)
-    assert cut_size == pytest.approx([2.0, 2.0, 1.01])
+    assert cut_size == pytest.approx([2.0, 2.0, 0.03])
     assert cut_pose.position.z + cut_size[2] / 2 == pytest.approx(0.09)
-    assert cut_pose.position.z - cut_size[2] / 2 == pytest.approx(-0.92)
+    assert cut_pose.position.z - cut_size[2] / 2 == pytest.approx(0.06)
     assert pose_to_matrix(box_pose)[:3, 2] == pytest.approx([0.0, 0.0, 1.0])
 
 
@@ -287,12 +287,13 @@ def test_two_arms_share_one_table_round_both():
     assert box_size[:2] == pytest.approx([2.0, 2.6])
 
 
-def test_the_cut_takes_table_cells_and_what_is_under_and_keeps_what_stands_on_it():
+def test_the_cut_takes_the_surface_cells_and_keeps_what_is_over_and_under_it():
     _, (cut_pose, cut_size) = surface_boxes(_surface(), [np.zeros(3)], **_SURFACE_SETTINGS)
     cells = np.array(
         [
             [0.5, 0.0, 0.085],  # a 1 cm cell of the table top, its centre half a cell up
-            [0.3, 0.2, -0.4],  # under the table
+            [0.5, 0.0, 0.065],  # the table top's cell, its centre half a cell down
+            [0.3, 0.2, -0.4],  # under the table: a lower step, mapped behind the box
             [0.5, 0.0, 0.105],  # a block's cell 2.5 cm over the table
             [1.2, 0.0, 0.085],  # past the arm's reach
         ]
@@ -300,7 +301,7 @@ def test_the_cut_takes_table_cells_and_what_is_under_and_keeps_what_stands_on_it
 
     inside = inside_boxes(cells, [(pose_to_matrix(cut_pose), np.asarray(cut_size))])
 
-    assert inside.tolist() == [True, True, False, False]
+    assert inside.tolist() == [True, True, False, False, False]
 
 
 def test_add_surface_puts_a_box_in_the_planner_and_cuts_its_cells(localizer, mocker):
@@ -324,7 +325,7 @@ def test_add_surface_puts_a_box_in_the_planner_and_cuts_its_cells(localizer, moc
     assert size == pytest.approx([2.0, 2.0, 0.03])
     cut_name, _, cut_size = localizer._box_filter.set_box.call_args.args
     assert cut_name == SURFACE
-    assert cut_size.to_tuple() == pytest.approx((2.0, 2.0, 1.01))
+    assert cut_size.to_tuple() == pytest.approx((2.0, 2.0, 0.03))
     # A second call replaces the table rather than stacking another.
     localizer._obstacles.remove_obstacle.assert_called_once_with(SURFACE)
 

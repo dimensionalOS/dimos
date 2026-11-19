@@ -32,7 +32,11 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
+from dimos.manipulation.planning.spec.models import (
+    DEFAULT_OBSTACLE_RGBA,
+    WORK_SURFACE_OBSTACLE,
+    Obstacle,
+)
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
@@ -105,6 +109,8 @@ OBSTACLE_PROXY_COLOR = (255, 45, 25)
 # across these percentiles of the heights, so a few stray cells do not flatten the rest.
 HEIGHT_RAMP = ((40, 70, 220), (30, 190, 220), (60, 200, 80), (240, 210, 40), (220, 50, 40))
 HEIGHT_RAMP_PERCENTILES = (2, 98)
+# Cells under the work surface: mapped, but not part of the ramp.
+BELOW_SURFACE_COLOR = (110, 110, 110)
 GRASP_PROPOSAL_NAMESPACE = "/manipulation/grasp-proposals"
 # Best rank green through worst orange, so the ordering reads at a glance.
 GRASP_PROPOSAL_BEST_COLOR = (60, 220, 60)
@@ -281,6 +287,8 @@ class ViserManipulationScene:
                 )
             self._obstacle_handles[obstacle_id] = handles
             self._obstacles[obstacle_id] = replace(deepcopy(obstacle), name=obstacle_id)
+            if obstacle_id == WORK_SURFACE_OBSTACLE:
+                self._redraw_octrees()
 
     def update_vis_obstacle(self, obstacle: Obstacle) -> None:
         """Replace an obstacle representation while holding the renderer lock."""
@@ -305,8 +313,23 @@ class ViserManipulationScene:
         with self._scene_lock:
             for handle in self._obstacle_handles.pop(obstacle_id, []):
                 self._remove_scene_handle(handle)
-            self._obstacles.pop(obstacle_id, None)
+            removed = self._obstacles.pop(obstacle_id, None)
             self._obstacle_render_failures.pop(obstacle_id, None)
+            if removed is not None and obstacle_id == WORK_SURFACE_OBSTACLE:
+                self._redraw_octrees()
+
+    def _redraw_octrees(self) -> None:
+        """Draw the mapped cells again, coloured from the work surface as it now is."""
+        for obstacle_id, stored in list(self._obstacles.items()):
+            if stored.obstacle_type == ObstacleType.OCTREE:
+                self.add_vis_obstacle(obstacle_id, stored)
+
+    def _work_surface_top(self) -> float | None:
+        """The world z of the work surface's box top, if the planner has one."""
+        surface = self._obstacles.get(WORK_SURFACE_OBSTACLE)
+        if surface is None or surface.obstacle_type != ObstacleType.BOX:
+            return None
+        return float(surface.pose.position.z) + float(surface.dimensions[2]) / 2
 
     def clear_vis_obstacles(self) -> None:
         """Remove every obstacle entity while retaining the robot scene."""
@@ -478,18 +501,30 @@ class ViserManipulationScene:
         ), float(color[3])
 
     @staticmethod
-    def _height_colors(heights: NDArray[np.float32]) -> NDArray[np.uint8]:
-        """One colour per cell by its height, ``HEIGHT_RAMP`` across ``HEIGHT_RAMP_PERCENTILES``."""
-        low, high = np.percentile(heights, HEIGHT_RAMP_PERCENTILES)
+    def _height_colors(
+        heights: NDArray[np.float32], floor: float | None = None
+    ) -> NDArray[np.uint8]:
+        """One colour per cell by its height, ``HEIGHT_RAMP`` across ``HEIGHT_RAMP_PERCENTILES``.
+
+        With a ``floor``, such as the work surface, the ramp starts there and cells
+        below it are ``BELOW_SURFACE_COLOR``.
+        """
+        above = heights if floor is None else heights[heights >= floor]
+        if not len(above):
+            above = heights
+        low, high = np.percentile(above, HEIGHT_RAMP_PERCENTILES)
+        if floor is not None:
+            low = floor
         t = np.clip((heights - low) / max(float(high - low), 1e-6), 0.0, 1.0)
         stops = np.linspace(0.0, 1.0, len(HEIGHT_RAMP))
         ramp = np.asarray(HEIGHT_RAMP, dtype=np.float64)
-        return np.stack([np.interp(t, stops, ramp[:, c]) for c in range(3)], axis=1).astype(
-            np.uint8
-        )
+        colors = np.stack([np.interp(t, stops, ramp[:, c]) for c in range(3)], axis=1)
+        if floor is not None:
+            colors[heights < floor] = BELOW_SURFACE_COLOR
+        return colors.astype(np.uint8)
 
-    @staticmethod
     def _add_octree(
+        self,
         scene: SceneApi,
         path: str,
         obstacle: Obstacle,
@@ -508,7 +543,7 @@ class ViserManipulationScene:
         if not len(points):
             raise ValueError("octree obstacle carries no occupied cells")
         if obstacle.color == OBSTACLE_DEFAULT_RGBA:
-            colors = ViserManipulationScene._height_colors(points[:, 2] + position[2])
+            colors = self._height_colors(points[:, 2] + position[2], self._work_surface_top())
         else:
             colors = np.tile(np.asarray(color, dtype=np.uint8), (len(points), 1))
         return scene.add_point_cloud(

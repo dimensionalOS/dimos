@@ -22,9 +22,14 @@ import pytest
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import Obstacle
-from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
+from dimos.manipulation.planning.spec.models import WORK_SURFACE_OBSTACLE, Obstacle
+from dimos.manipulation.visualization.viser.scene import (
+    BELOW_SURFACE_COLOR,
+    HEIGHT_RAMP,
+    ViserManipulationScene,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def _scene() -> ViserManipulationScene:
@@ -85,3 +90,24 @@ def test_an_empty_octree_is_a_render_failure_not_a_blank_cloud() -> None:
     scene.add_vis_obstacle("mapping/voxel-map", _octree(np.zeros((0, 3), dtype=np.float32)))
 
     assert "mapping/voxel-map" in scene._obstacle_render_failures
+
+
+def test_with_a_work_surface_the_ramp_starts_there_and_cells_below_are_grey() -> None:
+    scene = _scene()
+    points = np.array([[0.0, 0.0, -0.3], [0.0, 0.0, 0.09], [0.0, 0.0, 0.3]], dtype=np.float32)
+    scene.add_vis_obstacle("mapping/voxel-map", _octree(points))
+    # Its top at 0.08 m.
+    surface = Obstacle(
+        name=WORK_SURFACE_OBSTACLE,
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(frame_id="world", position=Vector3(0.0, 0.0, 0.065)),
+        dimensions=(2.0, 2.0, 0.03),
+    )
+
+    scene.add_vis_obstacle(WORK_SURFACE_OBSTACLE, surface)
+
+    # The map is drawn again with the surface's floor.
+    colors = scene.server.scene.add_point_cloud.call_args.kwargs["colors"]
+    assert tuple(colors[0]) == BELOW_SURFACE_COLOR
+    assert tuple(colors[2]) == HEIGHT_RAMP[-1]
+    assert tuple(colors[1]) != BELOW_SURFACE_COLOR
