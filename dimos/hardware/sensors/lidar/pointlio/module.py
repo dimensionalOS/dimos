@@ -153,10 +153,11 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
     config: PointLioConfig
 
     @classmethod
-    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return stack_frame_id_prefix(
-            super().handle_blueprint_namespace(kwargs, prefix=prefix), prefix
-        )
+    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        return {
+            **super().handle_blueprint_namespace(config, prefix=prefix),
+            **stack_frame_id_prefix(config, prefix),
+        }
 
     lidar_raw: In[PointCloud2]
     imu_raw: In[Imu]

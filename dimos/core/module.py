@@ -116,13 +116,10 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
-def stack_frame_id_prefix(kwargs: dict[str, Any], prefix: str) -> dict[str, Any]:
+def stack_frame_id_prefix(config: dict[str, Any], prefix: str) -> dict[str, Any]:
     """For a config that declares ``frame_id_prefix``: each namespace stacks onto it, ``prefix/old``."""
-    frame_id_prefix = kwargs.get("frame_id_prefix")
-    return {
-        **kwargs,
-        "frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix,
-    }
+    frame_id_prefix = config.get("frame_id_prefix")
+    return {"frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix}
 
 
 class ModuleConfig(BaseConfig):
@@ -209,9 +206,12 @@ class ModuleBase(Configurable, CompositeResource):
         return self.config.frame_id or self.__class__.__name__
 
     @classmethod
-    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        """This module's own kwargs once ``Blueprint.namespace(prefix)`` wraps it (once per level, innermost first)."""
-        return kwargs
+    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        """Only the config fields to change once ``Blueprint.namespace(prefix)`` wraps this module (once per level, innermost first).
+
+        *config* is the module's kwargs over its config defaults.
+        """
+        return {}
 
     @rpc
     def build(self) -> None:

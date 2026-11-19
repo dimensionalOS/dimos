@@ -122,10 +122,11 @@ class ConnectionModule(Module, ABC):
     config: ConnectionConfig
 
     @classmethod
-    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return stack_frame_id_prefix(
-            super().handle_blueprint_namespace(kwargs, prefix=prefix), prefix
-        )
+    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        return {
+            **super().handle_blueprint_namespace(config, prefix=prefix),
+            **stack_frame_id_prefix(config, prefix),
+        }
 
     dedicated_worker: ClassVar[bool] = True
 

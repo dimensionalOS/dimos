@@ -404,6 +404,9 @@ def test_namespace_keeps_only_the_tf_stream_global() -> None:
         == "fleet/robot0/detected_tf"
     )
 
+    private = TfPublisher.blueprint().namespace("robot0", expose=())
+    assert private.remapping_map[("robot0/tfpublisher", "tf")] == "robot0/tf"
+
 
 def test_namespace_expose_typo_raises() -> None:
     with pytest.raises(ValueError, match="data_typo"):
@@ -431,10 +434,11 @@ class FramePrefixed(Module):
     config: FramePrefixedConfig
 
     @classmethod
-    def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return stack_frame_id_prefix(
-            super().handle_blueprint_namespace(kwargs, prefix=prefix), prefix
-        )
+    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        return {
+            **super().handle_blueprint_namespace(config, prefix=prefix),
+            **stack_frame_id_prefix(config, prefix),
+        }
 
 
 def test_namespace_stacks_a_declared_frame_id_prefix() -> None:
@@ -539,3 +543,14 @@ def test_blueprint_roundtrip_keeps_checks_and_pinned_transports() -> None:
         assert [atom.module for atom in restored.blueprints] == [ModuleA, ModuleB]
     finally:
         pinned.stop()
+
+
+class ReturnsEverything(Module):
+    @classmethod
+    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+        return {**config, **super().handle_blueprint_namespace(config, prefix=prefix)}
+
+
+def test_namespace_hook_must_return_only_changes() -> None:
+    with pytest.raises(ValueError, match="return only the fields it changes"):
+        ReturnsEverything.blueprint().namespace("robot0")
