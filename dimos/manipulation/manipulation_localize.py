@@ -26,6 +26,7 @@ from scipy.spatial.transform import Rotation
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.manipulation.manipulation_spec import PlanningObstaclesSpec
+from dimos.manipulation.planning.spec.models import WORK_SURFACE_OBSTACLE
 from dimos.manipulation.surfaces import MAX_TILT_DEG, find_surfaces, in_outline, plane_axes
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -43,7 +44,7 @@ logger = setup_logger()
 # find_surface reports a surface tilted less than this as level.
 LEVEL_BELOW_DEG = 0.5
 # add_surface's planner obstacle and its voxel map cut.
-SURFACE = "scene/surface"
+SURFACE = WORK_SURFACE_OBSTACLE
 # Without a line of sight, add_surface takes the widest surface with this many points on it.
 SURFACE_MIN_STANDING = 10
 # add_surface(height=...) takes the surface within this, metres.
@@ -58,12 +59,14 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     surface_frames: int = 10
     # find_surface: surfaces parallel to the reporting frame's xy plane; False fits tilt
     surface_parallel_to_frame: bool = True
-    # add_surface, metres: the box spans surface_reach_m round the arm's base, surface_thickness_m
-    # under the surface; the voxel map is cut from surface_cut_above_m over it down
-    # (half a cell plus depth noise: 0.01 for 1 cm cells, about 0.018 for 2.5 cm).
+    # add_surface, metres: the box spans surface_reach_m round the arm's base,
+    # surface_thickness_m under the surface. The voxel map is cut from surface_cut_above_m
+    # over it (half a cell plus depth noise: 0.01 for 1 cm cells, about 0.018 for 2.5 cm)
+    # to surface_cut_below_m under it: the surface's own cells; what lies below stays.
     surface_reach_m: float = 1.0
     surface_thickness_m: float = 0.03
     surface_cut_above_m: float = 0.01
+    surface_cut_below_m: float = 0.02
 
 
 class ManipulationLocalize(PerceptionLocalize):
@@ -281,8 +284,8 @@ class ManipulationLocalize(PerceptionLocalize):
 
         The surface is the one the camera looks at in the newest frame, else the widest
         with objects on it; ``height`` picks one from ``find_surface`` instead. The box
-        spans the arm's reach and the voxel map cells under it are cut, so
-        ``clear_surface`` before reaching below it. Calling it again replaces it.
+        spans the arm's reach and the surface's own voxel map cells are cut; what lies
+        below stays mapped, behind the box. Calling it again replaces it.
         """
         if not self._ready.is_set():
             return (
@@ -311,6 +314,7 @@ class ManipulationLocalize(PerceptionLocalize):
             reach=self.config.surface_reach_m,
             thickness=self.config.surface_thickness_m,
             cut_above=self.config.surface_cut_above_m,
+            cut_below=self.config.surface_cut_below_m,
         )
         self.clear_surface()
         # The arm's base may stand inside the box, e.g. on a mount below the surface.
@@ -443,10 +447,11 @@ def surface_boxes(
     reach: float,
     thickness: float,
     cut_above: float,
+    cut_below: float,
 ) -> tuple[tuple[Pose, list[float]], tuple[Pose, list[float]]]:
     """The planner box and the voxel map cut, as (pose, edge lengths): a square ``reach``
     round every base, the box ``thickness`` under the surface, the cut from ``cut_above``
-    over it to ``reach`` under it."""
+    over it to ``cut_below`` under it."""
     normal = np.asarray(surface["normal"], dtype=np.float64)
     a, b, c, d = surface["coefficients"]
     # The bases dropped onto the plane, along the normal.
@@ -464,5 +469,5 @@ def surface_boxes(
         return Pose(position=Vector3(*(middle + normal * offset)), orientation=orientation)
 
     box = (placed(-thickness / 2), [*side, thickness])
-    cut = (placed((cut_above - reach) / 2), [*side, cut_above + reach])
+    cut = (placed((cut_above - cut_below) / 2), [*side, cut_above + cut_below])
     return box, cut
