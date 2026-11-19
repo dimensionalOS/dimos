@@ -34,6 +34,7 @@ from dimos.control.calibration.gravity_fit import (
     COM_BOX_M,
     COMPENSATION_KEY,
     FIT_RANK_TOLERANCE,
+    AssumedCompensation,
     Compensation,
     GravityRecording,
     Measurement,
@@ -528,6 +529,47 @@ def test_the_fit_takes_the_resting_torque_against_what_was_compensated(
     monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: unknown)
     with pytest.raises(ValueError, match="does not record the gravity the connection compensated"):
         generate_gravity_report(run, left_spec, arm=arm)
+
+
+def test_compensation_is_supplied_for_a_recording_that_does_not_record_it(
+    tmp_path: Path,
+    arm: ArmModel,
+    pose_set: PoseSet,
+    left_spec: ArmCalibrationSpec,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poses = [home_pose(arm), *pose_set.identification]
+    monkeypatch.setattr(gravity_fit, "calibration_path", lambda arm_id: tmp_path / "none.json")
+    run = tmp_path / "run"
+    run.mkdir()
+    held_by_urdf = _synthetic_recording(arm, poses, "", compensated=None)
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: held_by_urdf)
+    args = [str(run), "--robot", "dual-openyam", "--arm", "left"]
+
+    refused = CliRunner().invoke(gravity_fit.app, args)
+    assert refused.exit_code == 1 and isinstance(refused.exception, ValueError)
+    assert "--compensation urdf or none" in str(refused.exception)
+    assert not (run / "gravity_report").exists()
+    assert CliRunner().invoke(gravity_fit.app, [*args, "--compensation", "file"]).exit_code == 2
+    supplied = CliRunner().invoke(gravity_fit.app, [*args, "--compensation", "urdf"])
+    assert supplied.exit_code == 0, supplied.output
+    assert (run / "gravity_report" / "report.md").exists()
+
+    urdf = AssumedCompensation.urdf.as_compensation()
+    none = AssumedCompensation.none.as_compensation()
+    assert (urdf, none) == (Compensation(True), Compensation(False))
+    result, _, _ = generate_gravity_report(run, left_spec, arm=arm, assumed_compensation=urdf)
+    assert np.abs(result.residual_before).max() < 0.01
+    result, _, _ = generate_gravity_report(run, left_spec, arm=arm, assumed_compensation=none)
+    assert np.abs(result.residual_before).max() > 1.0
+    pd_only = _synthetic_recording(arm, poses, "", compensated=False)
+    unrecorded = replace(pd_only, markers=[replace(m, data={}) for m in pd_only.markers])
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: unrecorded)
+    result, _, _ = generate_gravity_report(run, left_spec, arm=arm, assumed_compensation=none)
+    assert np.abs(result.residual_before).max() < 0.01
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: pd_only)
+    result, _, _ = generate_gravity_report(run, left_spec, arm=arm, assumed_compensation=urdf)
+    assert np.abs(result.residual_before).max() < 0.01
 
 
 def test_urdf_error_adds_what_was_compensated_beyond_the_urdf(
