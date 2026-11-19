@@ -396,3 +396,15 @@ def test_a_near_fix_is_refined_by_icp_alone():
     fix = relocalizer.attempt(live, "world", "map", near).fix
     assert fix is not None
     assert (fix.translation - truth.translation).length() < 0.05
+
+
+def test_world_to_map_is_identity_until_the_first_fix(module):
+    m = module()
+    sent = []
+    m.tf = SimpleNamespace(publish=sent.append)
+    m.publish_tf()
+    (placeholder,) = sent[-1].transforms
+    assert (placeholder.frame_id, placeholder.child_frame_id) == ("world", "map")
+    np.testing.assert_allclose(placeholder.to_matrix(), np.eye(4))
+    # ... which places no named location
+    assert m.frame_to("map", "world") is None

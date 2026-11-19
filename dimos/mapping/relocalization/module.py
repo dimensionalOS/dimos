@@ -79,8 +79,9 @@ class Config(ModuleConfig):
     world_frame: str = "world"
     # Frame for the loaded premap; None: the frame its stream names
     map_frame: str | None = None
-    # Seconds between tf republishes of the accepted fix (tf is not latched)
-    tf_interval: float = 10.0
+    # Seconds between world -> map tf republishes (tf is not latched); stamped lookups match within
+    # ~0.1 s (the ray tracer's tf_match_tolerance_s), so a slower edge fails them
+    tf_interval: float = 0.05
     # Seconds between `loaded_map` republishes after the first fix; 0 publishes it once
     republish_loaded_map: float = 0.0
     # Stop attempting once a fix is accepted; otherwise every later attempt refines the current
@@ -146,11 +147,14 @@ class PremapModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(
-            fix_stream(self.fixes, self.config.tf_interval).subscribe(lambda _: self.publish_tf())
-        )
         if self.config.map_file:
             self._resolve_map(self.config.map_file)
+        # world -> map always exists: identity until the first fix (map_frame is resolved by now)
+        self.register_disposable(
+            fix_stream(
+                self.fixes.pipe(ops.start_with(self._identity())), self.config.tf_interval
+            ).subscribe(lambda _: self.publish_tf())
+        )
         self.open_locations()
         # Clients connected before start() would otherwise never hear the list
         self.named_locations.publish(self.locations_snapshot())
@@ -295,9 +299,7 @@ class PremapModule(Module):
         )
 
     def publish_tf(self) -> None:
-        if self.fix is None:
-            return
-        self.tf.publish(TFMessage(self.fix.now()))
+        self.tf.publish(TFMessage((self.fix or self._identity()).now()))
 
     @property
     def placed(self) -> bool:
@@ -367,10 +369,11 @@ class PremapModule(Module):
     def frame_to(self, frame: str, child: str) -> Transform | None:
         """``frame -> child``, preferring our own fix over tf for world/map."""
         world, map_frame = self.config.world_frame, self.map_frame
-        if self.fix is not None and (frame, child) == (world, map_frame):
-            return self.fix
-        if self.fix is not None and (frame, child) == (map_frame, world):
-            return self.fix.inverse()
+        if (frame, child) in ((world, map_frame), (map_frame, world)):
+            # Before the first fix tf carries only our placeholder identity, which places nothing
+            if self.fix is None:
+                return None
+            return self.fix if frame == world else self.fix.inverse()
         return self.tfbuffer.get(frame, child)
 
     def reexpress(self, pose: PoseStamped, frame: str) -> PoseStamped | None:

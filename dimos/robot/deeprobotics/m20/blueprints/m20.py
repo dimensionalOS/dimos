@@ -47,7 +47,6 @@ m20 = (
             live_cloud="local_map",
             relocalize_once=False,
             new_map=True,
-            tf_interval=1.0,
             # live voxels the first match waits for, under the 20k default
             min_local_points=8_000,
             # one kept point per ray tracer voxel, so a standing robot's map is not thinned below min_local_points
