@@ -82,7 +82,7 @@ class TfModule(Module):
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
-        """Refuse a frame with two parents, or declared edges that form a cycle or several trees; warn on an edge with two owners. Modules with skip_tf_checks are left out."""
+        """Refuse a frame with two parents or declared edges that form a cycle; warn on an edge with two owners or several trees. Modules with skip_tf_checks are left out."""
         publishers: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         for atom in atoms:
             if not _is_checked(atom):
@@ -133,20 +133,21 @@ class TfModule(Module):
             roots = sorted(
                 sorted(tree - publishers.keys()) or sorted(tree)[:1] for tree in trees.values()
             )
-            message = f"declared tf edges form {len(trees)} separate trees, rooted at {roots}"
-            # A module that isn't a TfModule may publish the edges that join them, so only warn then.
+            # Only a warning: separate robots' odometry stays disconnected until something localizes them.
             undeclared_publishers = sorted(
                 atom.name
                 for atom in atoms
                 if not _is_checked(atom)
                 and any(stream.name == "tf" and stream.direction != "in" for stream in atom.streams)
             )
-            if undeclared_publishers:
-                logger.warning(
-                    f"{message}; {', '.join(undeclared_publishers)} may join them (not checked TfModules)"
-                )
-            else:
-                errors.append(f"    - {message}")
+            joiners = (
+                f"; {', '.join(undeclared_publishers)} may join them (not checked TfModules)"
+                if undeclared_publishers
+                else ""
+            )
+            logger.warning(
+                f"declared tf edges form {len(trees)} separate trees, rooted at {roots}{joiners}"
+            )
 
         if errors:
             raise ValueError(

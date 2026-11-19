@@ -151,11 +151,16 @@ def test_skip_tf_checks_leaves_a_module_out_of_the_tree_check() -> None:
     _verify(autoconnect(Odom.blueprint(), second_parent))
 
 
-def test_separate_trees_are_refused_unless_a_legacy_module_may_join_them() -> None:
+def test_separate_trees_only_warn(mocker: MockerFixture) -> None:
+    logger = mocker.patch("dimos.core.tf_module.logger")
     lidar_alone = Lidar.blueprint(tf_frames_local={"body": "mount", "lidar": "lidar"})
-    with pytest.raises(ValueError, match="2 separate trees"):
-        _verify(autoconnect(Odom.blueprint(), lidar_alone))
+    _verify(autoconnect(Odom.blueprint(), lidar_alone))
+    (message,), _ = logger.warning.call_args
+    assert "2 separate trees" in message
+
     _verify(autoconnect(Odom.blueprint(), lidar_alone, LegacyTfPublisher.blueprint()))
+    (message,), _ = logger.warning.call_args
+    assert "legacytfpublisher may join them" in message
 
 
 def test_build_checks_the_namespaced_tree() -> None:
