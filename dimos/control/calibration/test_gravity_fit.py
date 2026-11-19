@@ -494,7 +494,10 @@ def test_extract_measurements_pairs_dithers_by_joint_name(
     arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec, prefix: str
 ) -> None:
     poses = pose_set.identification[:3]
-    measurements = extract_measurements(_synthetic_recording(arm, poses, prefix), left_spec)
+    measurements, incomplete = extract_measurements(
+        _synthetic_recording(arm, poses, prefix), left_spec
+    )
+    assert incomplete == []
     assert len(measurements) == len(poses) * len(LEFT_MEASURED)
     assert {m.joint for m in measurements} == set(LEFT_MEASURED)
     for m in measurements:
@@ -504,6 +507,52 @@ def test_extract_measurements_pairs_dithers_by_joint_name(
         assert m.q_rad[m.joint] == pytest.approx(pose.as_targets()[m.joint], abs=1e-9)
         assert m.friction_nm == pytest.approx(80.0 * math.radians(0.1), rel=1e-6)
         assert m.tau_pd_nm == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_dither_cut_short_leaves_its_pair_out_of_the_fit(
+    tmp_path: Path,
+    arm: ArmModel,
+    pose_set: PoseSet,
+    left_spec: ArmCalibrationSpec,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    truth = perturbed_model(arm, PERTURBATION)
+    poses = [home_pose(arm), *pose_set.identification]
+    full = _synthetic_recording(arm, poses, "", truth)
+    without_last = _synthetic_recording(arm, poses[:-1], "", truth)
+    cut = next(e for e in full.recording.events[::-1] if e.joint == LEFT_MEASURED[0])
+    assert cut.delta_deg < 0
+    end = cut.t0 + 0.3 * cut.hold_s
+    traces = {}
+    for name, trace in full.recording.traces.items():
+        kept = trace.t <= end
+        q_deg = trace.q_deg[kept].copy()
+        if name == cut.joint:
+            q_deg[trace.t[kept] >= cut.t0] = q_deg[trace.t[kept] < cut.t0][-1]
+        traces[name] = JointTrace(t=trace.t[kept], q_deg=q_deg, dq_deg_s=trace.dq_deg_s[kept])
+    stopped = GravityRecording(
+        recording=Recording(
+            traces=traces,
+            events=[e for e in full.recording.events if e.t0 <= end],
+            t_end=float(traces[cut.joint].t[-1]),
+        ),
+        markers=full.markers,
+    )
+    measurements, incomplete = extract_measurements(stopped, left_spec)
+    assert incomplete == [f"{poses[-1].name} {cut.joint}"]
+    assert measurements == extract_measurements(without_last, left_spec)[0]
+
+    monkeypatch.setattr(gravity_fit, "calibration_path", lambda arm_id: tmp_path / "none.json")
+    results = {}
+    for name, grec in (("stopped", stopped), ("without_last", without_last)):
+        run = tmp_path / name
+        run.mkdir()
+        monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _, g=grec: g)
+        results[name], _, _ = generate_gravity_report(run, left_spec, arm=arm)
+    assert results["stopped"].links == results["without_last"].links
+    assert results["stopped"].incomplete_pairs == incomplete
+    report = (tmp_path / "stopped" / "gravity_report" / "report.md").read_text()
+    assert "Left out 1 incomplete dither pair(s)" in report
 
 
 def test_the_fit_takes_the_resting_torque_against_what_was_compensated(
@@ -519,7 +568,7 @@ def test_the_fit_takes_the_resting_torque_against_what_was_compensated(
     held_by_pd = _synthetic_recording(arm, poses, "", compensated=False)
     monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: held_by_pd)
     result, _, calibration = generate_gravity_report(run, left_spec, arm=arm)
-    raw = extract_measurements(held_by_pd, left_spec)
+    raw, _ = extract_measurements(held_by_pd, left_spec)
     assert max(abs(m.tau_pd_nm) for m in raw) > 1.0
     assert np.abs(result.residual_before).max() < 0.01
     assert calibration is not None and not result.at_bounds
@@ -679,7 +728,7 @@ def test_save_needs_a_held_out_pose_and_no_worse_held_out_error(
     generate_gravity_report(run, left_spec, arm=arm, holdout=[], save_to=stored, force=True)
     assert load_calibration(stored).gravity == calibration.gravity
     # A held-out error that rises on one joint is refused too.
-    fitted = fit_gravity(arm, extract_measurements(recording, left_spec))
+    fitted = fit_gravity(arm, extract_measurements(recording, left_spec)[0])
     assert save_refusals(fitted) == []
     worse = fitted.residual_after.copy()
     rows = [
@@ -810,7 +859,7 @@ def test_fit_runs_on_the_single_pose_step_test_recording(
     # Rank deficient by construction (one pose): it must still run and say so.
     grec = load_gravity_recording(OLD_RECORDING)
     assert not grec.markers
-    measurements = extract_measurements(grec, left_spec)
+    measurements, _ = extract_measurements(grec, left_spec)
     assert {m.joint for m in measurements} == set(LEFT_MEASURED)
     result = fit_gravity(arm, measurements)
     assert result.train_poses == ["all"] and not result.holdout_poses
@@ -836,7 +885,7 @@ def test_the_bench_recordings_reproduce_the_october_fit(
     recording = _bench_recording(side)
     spec = next(s for s in dual_openyam_specs if s.arm_id == f"dual_openyam/{side}")
     grec = load_gravity_recording(recording)
-    measurements = extract_measurements(grec, spec)
+    measurements, _ = extract_measurements(grec, spec)
     assert len(measurements) == 60  # 15 poses, 4 measured joints
     result = fit_gravity(ArmModel(spec), measurements)
     assert result.holdout_poses == ["pose_05", "pose_10", "pose_15"]
