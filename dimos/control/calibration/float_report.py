@@ -14,7 +14,7 @@
 
 """Offline float-test report from a recording of any known robot.
 
-    python -m dimos.robot.manipulators.calibration.float_report recordings/<run-id> \
+    python -m dimos.control.calibration.float_report recordings/<run-id> \
         --robot dual-openyam [--plot]
 
 Reads ``memory.db``, cuts the joint stream at each ``float_events`` marker and
@@ -38,8 +38,7 @@ import matplotlib
 import numpy as np
 import typer
 
-from dimos.memory.store.sqlite import SqliteStore
-from dimos.robot.manipulators.calibration.float_analysis import (
+from dimos.control.calibration.float_analysis import (
     DRIFT_LIMIT_MM,
     DriftMetrics,
     FingertipModel,
@@ -50,9 +49,10 @@ from dimos.robot.manipulators.calibration.float_analysis import (
     format_table,
     segment_windows,
 )
-from dimos.robot.manipulators.calibration.progress import ProgressBar
-from dimos.robot.manipulators.calibration.robots import arm_spec
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.progress import ProgressBar
+from dimos.control.calibration.robots import arm_spec
+from dimos.control.calibration.spec import ArmCalibrationSpec
+from dimos.memory.store.sqlite import SqliteStore
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

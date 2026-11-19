@@ -14,7 +14,7 @@
 
 """Pose set for gravity-model identification of one arm, driven by its spec.
 
-    python -m dimos.robot.manipulators.calibration.gravity_poses --robot dual-openyam --arm left
+    python -m dimos.control.calibration.gravity_poses --robot dual-openyam --arm left
 
 Poses are chosen on a grid over the spec's measured joints inside their
 ``joint_ranges`` (every other joint stays at home), filtered by the spec's
@@ -52,8 +52,8 @@ import numpy as np
 import pinocchio as pin
 import typer
 
-from dimos.robot.manipulators.calibration.robots import arm_spec
-from dimos.robot.manipulators.calibration.spec import (
+from dimos.control.calibration.robots import arm_spec
+from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     NoWorkspaceGuardError,
     default_clearance_frames,

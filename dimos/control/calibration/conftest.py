@@ -12,19 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Calibration test fixtures: robot specs built only from models already on disk."""
+"""Calibration test fixtures: robot specs built only from models already on disk.
+
+No calibration test reads the calibrations saved on the machine running it.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
-from dimos.robot.manipulators.calibration._calibration_test_helpers import (
+from dimos.control.calibration._calibration_test_helpers import (
     offline_robot_assets,
     robot_specs_or_skip,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, WorkspaceGuard
+from dimos.control.calibration.spec import ArmCalibrationSpec, WorkspaceGuard
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM
 
@@ -32,6 +36,20 @@ from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM
 DUAL_OPENYAM_TEST_BENCH = WorkspaceGuard.for_bench(floor_z_m=-0.03, min_x_m=0.15)
 # A table at the base's level, the fingertip 100 mm in front of the base.
 B601_TEST_BENCH = WorkspaceGuard.for_bench(floor_z_m=0.0, min_x_m=0.10)
+
+
+@pytest.fixture(autouse=True)
+def calibration_root(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """An empty directory Damiao connections look in for saved calibrations."""
+    root = tmp_path_factory.mktemp("arms")
+    try:
+        from dimos.robot.manipulators.damiao import connection
+    except ImportError:
+        return root
+    monkeypatch.setattr(connection, "CALIBRATION_ROOT", root)
+    return root
 
 
 @pytest.fixture(scope="session", autouse=True)
