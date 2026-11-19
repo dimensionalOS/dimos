@@ -37,14 +37,14 @@ is and the reason is logged as an error; ``status()["park"]`` says what the
 last park did. Everything the calls return is plain JSON: strings, numbers,
 booleans, lists and dicts.
 
-Nothing here knows the transport: the arm is a :class:`~dimos.robot.
-manipulators.calibration.hooks.ArmConfigHooks` connection (an RPC proxy in a
-``dimos run``, a fake in tests), its targets go to an :class:`~dimos.robot.
-manipulators.calibration.arm_session.ArmDriver` (the control coordinator's
+Nothing here knows the transport: the arm is a :class:`~dimos.control.
+calibration.hooks.ArmConfigHooks` connection (an RPC proxy in a
+``dimos run``, a fake in tests), its targets go to an :class:`~dimos.control.
+calibration.arm_session.ArmDriver` (the control coordinator's
 pass-through task), its readings come from a :class:`~dimos.
-robot.manipulators.calibration.arm_session.StateSource` (the connection's
+control.calibration.arm_session.StateSource` (the connection's
 ``joint_state`` stream), markers and status go to an :class:`EventSink`, and
-analyses read a :class:`~dimos.robot.manipulators.calibration.recording.
+analyses read a :class:`~dimos.control.calibration.recording.
 RecordingSource`.
 """
 
@@ -59,15 +59,7 @@ import time
 from typing import Any, Literal, Protocol, TypedDict
 import uuid
 
-from dimos.control.connection.arm_config import (
-    DEFAULT_CONFIG_LEASE_S,
-    MAX_CONFIG_LEASE_S,
-    ArmConfigState,
-    ConfigApplied,
-    ConfigKeys,
-    ConfigPatch,
-)
-from dimos.robot.manipulators.calibration.arm_session import (
+from dimos.control.calibration.arm_session import (
     AbortRequestedError,
     ArmDriver,
     ArmSession,
@@ -81,19 +73,27 @@ from dimos.robot.manipulators.calibration.arm_session import (
     TrackingLog,
     plain_error,
 )
-from dimos.robot.manipulators.calibration.gravity_poses import (
+from dimos.control.calibration.gravity_poses import (
     DEFAULT_POSE_COUNT,
     ArmModel,
     PoseSet,
 )
-from dimos.robot.manipulators.calibration.hooks import ArmConfigHooks
-from dimos.robot.manipulators.calibration.motion import (
+from dimos.control.calibration.hooks import ArmConfigHooks
+from dimos.control.calibration.motion import (
     DEFAULT_SPEED_DEG_S,
     check_step,
     speed_rad_s,
 )
-from dimos.robot.manipulators.calibration.recording import RecordingSource
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.recording import RecordingSource
+from dimos.control.calibration.spec import ArmCalibrationSpec
+from dimos.control.connection.arm_config import (
+    DEFAULT_CONFIG_LEASE_S,
+    MAX_CONFIG_LEASE_S,
+    ArmConfigState,
+    ConfigApplied,
+    ConfigKeys,
+    ConfigPatch,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

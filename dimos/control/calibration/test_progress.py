@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from dimos.robot.manipulators.calibration.progress import (
+from dimos.control.calibration.progress import (
     CONFIRM_HINT,
     ParkRequestedError,
     ProgressBar,

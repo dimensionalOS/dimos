@@ -20,11 +20,11 @@ from dataclasses import replace
 
 import pytest
 
-from dimos.robot.manipulators.calibration._calibration_test_helpers import (
+from dimos.control.calibration._calibration_test_helpers import (
     ModelNotOnDiskError,
     offline_robot_assets,
 )
-from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS, robot_id, robot_specs
+from dimos.control.calibration.robots import KNOWN_ROBOTS, robot_id, robot_specs
 from dimos.robot.manipulators.damiao.robot import DamiaoMotor, DamiaoProfile, DamiaoRobot
 from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM

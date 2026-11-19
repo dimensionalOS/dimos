@@ -19,7 +19,7 @@ import numpy as np
 import pinocchio as pin
 import pytest
 
-from dimos.robot.manipulators.calibration.gravity_poses import (
+from dimos.control.calibration.gravity_poses import (
     GRAVITY_FREE_LIMIT_NM,
     GRAVITY_PARAMS_PER_BODY,
     ArmModel,
@@ -30,7 +30,7 @@ from dimos.robot.manipulators.calibration.gravity_poses import (
     grid_axes,
     home_pose,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, HalfSpace
+from dimos.control.calibration.spec import ArmCalibrationSpec, HalfSpace
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_LEFT_ARM_JOINTS,
     DUAL_OPENYAM_RIGHT_ARM_JOINTS,

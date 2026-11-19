@@ -32,17 +32,13 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.control.connection import connection_module
-from dimos.control.connection.arm_config import AppliedFile, ConfigPatch
-from dimos.control.connection.connection_module import ConnectionStatus
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.calibration._calibration_test_helpers import (
+from dimos.control.calibration._calibration_test_helpers import (
     offline_robot_assets,
     require_model,
 )
-from dimos.robot.manipulators.calibration._inertial import LinkInertial
-from dimos.robot.manipulators.calibration.robots import calibration_keys
-from dimos.robot.manipulators.calibration.schema import (
+from dimos.control.calibration._inertial import LinkInertial
+from dimos.control.calibration.robots import calibration_keys
+from dimos.control.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
     GravityCalibration,
@@ -53,7 +49,11 @@ from dimos.robot.manipulators.calibration.schema import (
     load_calibration,
     save_calibration,
 )
-from dimos.robot.manipulators.calibration.spec import model_sha256, specs_from_damiao_robot
+from dimos.control.calibration.spec import model_sha256, specs_from_damiao_robot
+from dimos.control.connection import connection_module
+from dimos.control.connection.arm_config import AppliedFile, ConfigPatch
+from dimos.control.connection.connection_module import ConnectionStatus
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao import connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
     LocalTransport,

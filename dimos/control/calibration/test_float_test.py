@@ -17,15 +17,15 @@ import math
 import numpy as np
 import pytest
 
-from dimos.robot.manipulators.calibration.float_analysis import (
+from dimos.control.calibration.float_analysis import (
     DRIFT_LIMIT_MM,
     FingertipModel,
     FloatEvent,
     analyze_window,
     segment_windows,
 )
-from dimos.robot.manipulators.calibration.float_report import FloatRecording, extract_windows
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.float_report import FloatRecording, extract_windows
+from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_HOME_PER_ARM
 
 

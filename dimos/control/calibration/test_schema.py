@@ -26,11 +26,9 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.constants import STATE_DIR
-from dimos.control.connection import arm_config
-from dimos.control.connection.arm_config import ConfigPatch
-from dimos.robot.manipulators.calibration import schema
-from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
-from dimos.robot.manipulators.calibration.schema import (
+from dimos.control.calibration import schema
+from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
+from dimos.control.calibration.schema import (
     LEGACY_NOTES,
     ArmCalibration,
     ArmCalibrationError,
@@ -47,7 +45,9 @@ from dimos.robot.manipulators.calibration.schema import (
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, urdf_sha256
+from dimos.control.calibration.spec import ArmCalibrationSpec, urdf_sha256
+from dimos.control.connection import arm_config
+from dimos.control.connection.arm_config import ConfigPatch
 
 REFERENCE = Path(__file__).resolve().parent / "reference" / "gravity_both_2026-10-16.json"
 SHA = "a" * 64

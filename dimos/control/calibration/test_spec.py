@@ -22,25 +22,24 @@ import pytest
 from pytest_mock import MockerFixture
 
 import dimos
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.calibration import spec as spec_module
-from dimos.robot.manipulators.calibration._calibration_test_helpers import (
+from dimos.control.calibration import spec as spec_module
+from dimos.control.calibration._calibration_test_helpers import (
     require_model,
     robot_specs_or_skip,
 )
-from dimos.robot.manipulators.calibration.gravity_poses import (
+from dimos.control.calibration.gravity_poses import (
     ArmModel,
     candidate_poses,
     generate_poses,
     grid_axes,
 )
-from dimos.robot.manipulators.calibration.robots import (
+from dimos.control.calibration.robots import (
     KNOWN_ROBOTS,
     arm_spec,
     robot_id,
     robot_specs,
 )
-from dimos.robot.manipulators.calibration.spec import (
+from dimos.control.calibration.spec import (
     DAMIAO_STOCK_TORQUE_LIMIT_NM,
     DEFAULT_TORQUE_SAFETY_FACTOR,
     ArmCalibrationSpec,
@@ -52,6 +51,7 @@ from dimos.robot.manipulators.calibration.spec import (
     specs_from_damiao_robot,
     urdf_limits,
 )
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM

@@ -27,20 +27,20 @@ from typing import Any
 import pytest
 
 from dimos.constants import RECORDINGS_DIR
+from dimos.control.calibration.recording import (
+    CALIBRATION_EVENTS_STREAM,
+    RecordingUnavailableError,
+    SqliteRecording,
+    probe_payload,
+)
+from dimos.control.calibration.step_analysis import StepEvent
+from dimos.control.calibration.step_report import extract_steps
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.stream import Transport
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.manipulators.calibration.recording import (
-    CALIBRATION_EVENTS_STREAM,
-    RecordingUnavailableError,
-    SqliteRecording,
-    probe_payload,
-)
-from dimos.robot.manipulators.calibration.step_analysis import StepEvent
-from dimos.robot.manipulators.calibration.step_report import extract_steps
 
 JOINTS = ["left_joint1", "left_joint2"]
 

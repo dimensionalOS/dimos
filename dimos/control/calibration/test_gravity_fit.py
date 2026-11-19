@@ -24,13 +24,13 @@ import pinocchio as pin
 import pytest
 from typer.testing import CliRunner
 
-from dimos.robot.manipulators.calibration import gravity_fit
-from dimos.robot.manipulators.calibration._calibration_test_helpers import (
+from dimos.control.calibration import gravity_fit
+from dimos.control.calibration._calibration_test_helpers import (
     PERTURBATION,
     perturbed_model,
 )
-from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
-from dimos.robot.manipulators.calibration.gravity_fit import (
+from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
+from dimos.control.calibration.gravity_fit import (
     COM_BOX_M,
     GravityRecording,
     Measurement,
@@ -49,26 +49,26 @@ from dimos.robot.manipulators.calibration.gravity_fit import (
     report_json_name,
     save_refusals,
 )
-from dimos.robot.manipulators.calibration.gravity_poses import (
+from dimos.control.calibration.gravity_poses import (
     ArmModel,
     Pose,
     PoseSet,
     generate_poses,
     home_pose,
 )
-from dimos.robot.manipulators.calibration.schema import (
+from dimos.control.calibration.schema import (
     ArmCalibration,
     JointGains,
     bake_into_urdf,
     load_calibration,
     save_calibration,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
-from dimos.robot.manipulators.calibration.step_analysis import StepEvent
-from dimos.robot.manipulators.calibration.step_report import JointTrace, Recording
+from dimos.control.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.step_analysis import StepEvent
+from dimos.control.calibration.step_report import JointTrace, Recording
 
 OLD_RECORDING = (
-    Path(__file__).resolve().parents[5]
+    Path(__file__).resolve().parents[4]
     / "recordings"
     / "20261015-235349-091c-dual-openyam-step-test"
 )
@@ -646,7 +646,7 @@ def test_saved_calibration_round_trips_with_the_fit(
     loaded = load_calibration(path, expected_model_sha256=left_spec.model_sha256())
     assert isinstance(loaded, ArmCalibration) and loaded == calibration
     assert loaded.gravity is not None
-    assert loaded.gravity.fit["source"] == "dimos.robot.manipulators.calibration.gravity_fit"
+    assert loaded.gravity.fit["source"] == "dimos.control.calibration.gravity_fit"
     assert loaded.gravity.fit["holdout_poses"] == result.holdout_poses
 
 

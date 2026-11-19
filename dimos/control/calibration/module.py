@@ -14,7 +14,7 @@
 
 """The arm calibration procedure as a module, driven over RPC.
 
-A :class:`CalibrationModule` runs :class:`~dimos.robot.manipulators.
+A :class:`CalibrationModule` runs :class:`~dimos.control.
 calibration.procedure.Procedure` on one arm of a known Damiao robot
 (``robots.KNOWN_ROBOTS``). A terminal wizard or a Desktop tab drives it:
 ``plan`` lists the steps and whether each can run, from what the connection
@@ -64,23 +64,16 @@ from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
 
-from dimos.control.connection.arm_config import ConfigApplied, ConfigKeys, ConfigPatch
-from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
-from dimos.robot.manipulators.calibration.arm_session import MarkerStream
-from dimos.robot.manipulators.calibration.coordinator import CALIBRATION_PASSTHROUGH_TASK
-from dimos.robot.manipulators.calibration.gravity_poses import DEFAULT_POSE_COUNT
-from dimos.robot.manipulators.calibration.hooks import ArmConfigHooks
-from dimos.robot.manipulators.calibration.motion import (
+from dimos.control.calibration.arm_session import MarkerStream
+from dimos.control.calibration.coordinator import CALIBRATION_PASSTHROUGH_TASK
+from dimos.control.calibration.gravity_poses import DEFAULT_POSE_COUNT
+from dimos.control.calibration.hooks import ArmConfigHooks
+from dimos.control.calibration.motion import (
     DEFAULT_SPEED_DEG_S,
     MAX_SPEED_DEG_S,
     MAX_STEP_DEG,
 )
-from dimos.robot.manipulators.calibration.procedure import (
+from dimos.control.calibration.procedure import (
     DEFAULT_DITHER_DEG,
     DEFAULT_HOLD_S,
     DEFAULT_KP_SCALES,
@@ -93,10 +86,17 @@ from dimos.robot.manipulators.calibration.procedure import (
     ProcedureSettings,
     ProcedureStatus,
 )
-from dimos.robot.manipulators.calibration.recording import SqliteRecording, probe_payload
-from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS, arm_spec
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
-from dimos.robot.manipulators.calibration.steps import calibration_steps
+from dimos.control.calibration.recording import SqliteRecording, probe_payload
+from dimos.control.calibration.robots import KNOWN_ROBOTS, arm_spec
+from dimos.control.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.steps import calibration_steps
+from dimos.control.connection.arm_config import ConfigApplied, ConfigKeys, ConfigPatch
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.String import String
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 

@@ -15,7 +15,7 @@
 """How a calibration procedure moves an arm: ramps, paths and the checks on every tick.
 
 Everything here is pure: joint vectors in the spec's ``joint_names`` order,
-radians, and an :class:`~dimos.robot.manipulators.calibration.gravity_poses.
+radians, and an :class:`~dimos.control.calibration.gravity_poses.
 ArmModel` for the workspace. A ramp is a minimum-jerk profile whose peak joint
 speed is the speed cap, so a 10 deg/s ramp never moves any joint faster than
 10 deg/s. A path goes straight when the straight ramp keeps the transition
@@ -36,8 +36,8 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec, urdf_limits
+from dimos.control.calibration.gravity_poses import ArmModel
+from dimos.control.calibration.spec import ArmCalibrationSpec, urdf_limits
 
 # The safety limits of the bench-proven step test.
 MAX_STEP_DEG = 5.0

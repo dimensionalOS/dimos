@@ -18,7 +18,7 @@ import math
 import numpy as np
 import pytest
 
-from dimos.robot.manipulators.calibration.step_analysis import (
+from dimos.control.calibration.step_analysis import (
     SETTLE_BAND_DEG,
     StepEvent,
     StepMetrics,
@@ -28,7 +28,7 @@ from dimos.robot.manipulators.calibration.step_analysis import (
     propose_gains,
     segment_steps,
 )
-from dimos.robot.manipulators.calibration.step_report import (
+from dimos.control.calibration.step_report import (
     CommandTrace,
     JointTrace,
     Recording,
