@@ -382,11 +382,12 @@ def test_no_costmap_encode_while_unsubscribed(costmap_bridge, monkeypatch) -> No
     assert calls["n"] == 0
     assert module.encoded["global_costmap"] == 0
 
-    push(module, clients[0], Subs(chs=["global_costmap"], n=1))
-    # The subscribe replays the cached grid (compressed on a worker thread)...
-    assert wait_until(lambda: calls["n"] == 1)
-    assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
-    # ... then the live frame encodes on the transport thread.
+    client = clients[0]
+    push(module, client, Subs(chs=["global_costmap"], n=1))
+    # Publishing while the replay is still encoding can make it retry on the newer grid.
+    assert wait_until(lambda: len(client.writers["global_costmap"].offers) == 1)
+    assert calls["n"] == 1
+
     costmap_transport(module).publish(COSTMAP_GRID)
     assert calls["n"] == 2
     assert module.encoded["global_costmap"] == 1
