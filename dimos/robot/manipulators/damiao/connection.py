@@ -23,8 +23,10 @@ At start it applies each arm's saved calibration file, if there is one
 (``DamiaoConnectionConfig.calibration``): the file's gains and fitted link
 masses. Without a file the arm runs exactly its URDF and bus defaults.
 
-Every connection serves the arm config contract of
-:mod:`dimos.control.connection.arm_config`. One deployed with
+Every connection serves the config contract of
+:mod:`dimos.control.connection.module_config` with one target per arm id and
+the arm's keys of :mod:`dimos.control.calibration.schema`
+(``ArmConfigPatch``, ``ArmConfigState``). One deployed with
 ``config_sessions=True`` (calibration blueprints only) lets one calibration
 tool hold a config session and change its gains, float its joints
 (kp 0) and add torque offsets live, and save calibrations to each arm's file
@@ -59,6 +61,9 @@ from dimos.control.calibration.schema import (
     ARMS_STATE_DIR,
     ArmCalibration,
     ArmCalibrationError,
+    ArmConfigPatch,
+    ArmConfigState,
+    JointGains,
     RobotModelRef,
     calibration_file,
     calibration_path,
@@ -70,19 +75,18 @@ from dimos.control.calibration.schema import (
     to_inertial_overrides,
 )
 from dimos.control.calibration.spec import calibration_keys, model_name, model_sha256
-from dimos.control.connection.arm_config import (
-    AppliedFile,
-    ArmConfigState,
-    ConfigApplied,
-    ConfigKeys,
-    ConfigPatch,
-    ConfigScope,
-    JointGains,
-)
 from dimos.control.connection.connection_module import (
     ConnectionConfig,
     ConnectionModule,
     Values,
+)
+from dimos.control.connection.module_config import (
+    AppliedFile,
+    ConfigApplied,
+    ConfigKeys,
+    ConfigPatch,
+    ConfigScope,
+    ConfigState,
 )
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
@@ -202,11 +206,11 @@ def _undone(reset: TuningReset) -> str:
 class DamiaoConnection(ConnectionModule):
     """Own one Damiao robot, its measured states and position targets.
 
-    It serves the arm config contract in full (see ``ConnectionModule``): a
-    config session changes gains (kp 0 floats a joint, gravity still held)
-    and torque offsets of the energized arm live, and a save merges into each
-    arm's calibration file and applies it. Calibration tools only, and only
-    with ``config.config_sessions``.
+    It serves the config contract in full (see ``ConnectionModule``) in the
+    arm's keys (``ArmConfigPatch``): a config session changes gains (kp 0
+    floats a joint, gravity still held) and torque offsets of the energized
+    arm live, and a save merges into each arm's calibration file and applies
+    it. Calibration tools only, and only with ``config.config_sessions``.
     """
 
     #: The robot this connection deploys: motors, gains, grippers and models.
@@ -345,18 +349,19 @@ class DamiaoConnection(ConnectionModule):
             update={
                 "sessions": self.config.config_sessions,
                 "persist_paths": {
-                    arm_id: str(calibration_path(arm_id, CALIBRATION_ROOT)) for arm_id in keys.arms
+                    arm_id: str(calibration_path(arm_id, CALIBRATION_ROOT))
+                    for arm_id in keys.targets
                 },
             }
         )
 
-    def _config_state(self) -> dict[str, ArmConfigState]:
-        """How each arm is driven now: its gains, floating joints, offsets and file."""
+    def _config_state(self) -> dict[str, ConfigState]:
+        """How each arm is driven now (``ArmConfigState``): gains, floating joints, offsets, file."""
         arm = self._live_arm()
         gains, floating, offsets = arm.get_gains(), arm.floating, arm.feedforward
         with self._lock:
             applied = dict(self._applied)
-        states: dict[str, ArmConfigState] = {}
+        states: dict[str, ConfigState] = {}
         for arm_id, joints in self._arm_joints_by_id().items():
             item = applied.get(arm_id)
             gravity = None if item is None else item.calibration.gravity
@@ -369,8 +374,12 @@ class DamiaoConnection(ConnectionModule):
                 torque_offset_nm={joint: offsets[joint] for joint in joints if offsets.get(joint)},
                 links={} if gravity is None else dict(gravity.links),
                 file=None if item is None else item.applied_file(),
-            )
+            ).to_state()
         return states
+
+    def _config_check(self, patch: ConfigPatch) -> None:
+        """Refuse a patch that is not an arm's change (``ArmConfigPatch.from_patch``)."""
+        ArmConfigPatch.from_patch(patch)
 
     def _config_apply(
         self, patch: ConfigPatch, scope: ConfigScope, force: bool, apply_now: bool
@@ -384,27 +393,29 @@ class DamiaoConnection(ConnectionModule):
         the motor's rated torque. Links, fit, friction, checks and notes are
         for a save only. See ``_save`` for a save.
         """
+        arm_patch = ArmConfigPatch.from_patch(patch)
         arm = self._live_arm()
         arms = self._arm_joints_by_id()
-        joints = arms.get(patch.arm_id)
+        joints = arms.get(arm_patch.arm_id)
         if joints is None:
             raise ValueError(
-                f"{patch.arm_id!r} is not an arm of this Damiao robot; its arms are {list(arms)}"
+                f"{arm_patch.arm_id!r} is not an arm of this Damiao robot; "
+                f"its arms are {list(arms)}"
             )
-        named = set(patch.gains or {}) | set(patch.torque_offset_nm or {})
+        named = set(arm_patch.gains or {}) | set(arm_patch.torque_offset_nm or {})
         strangers = sorted(named - set(joints))
         if strangers:
             raise ValueError(
-                f"not arm joints of {patch.arm_id}: {strangers}; its joints are {joints}"
+                f"not arm joints of {arm_patch.arm_id}: {strangers}; its joints are {joints}"
             )
         if scope == "persist":
-            return self._save(arm, patch, joints, force=force, apply_now=apply_now)
+            return self._save(arm, arm_patch, joints, force=force, apply_now=apply_now)
         unsupported: dict[str, str] = {}
-        file_only = patch.model_copy(update={"gains": None, "torque_offset_nm": None})
+        file_only = arm_patch.model_copy(update={"gains": None, "torque_offset_nm": None})
         unsupported.update(dict.fromkeys(file_only.keys(), _FILE_ONLY))
         gains: dict[str, JointGains] = {}
         clamped: list[str] = []
-        for joint, asked in (patch.gains or {}).items():
+        for joint, asked in (arm_patch.gains or {}).items():
             keys = [f"gains.{joint}.kp", f"gains.{joint}.kd"]
             if asked.kp == 0.0:
                 if not self.robot.gravity:
@@ -430,16 +441,18 @@ class DamiaoConnection(ConnectionModule):
                 if want != got
             ]
         offsets: dict[str, float] = {}
-        for joint, tau in (patch.torque_offset_nm or {}).items():
+        for joint, tau in (arm_patch.torque_offset_nm or {}).items():
             offsets[joint] = arm.set_feedforward(joint, tau)
             if offsets[joint] != tau:
                 clamped.append(f"torque_offset_nm.{joint}")
         return ConfigApplied(
-            arm_id=patch.arm_id,
+            target=arm_patch.arm_id,
             scope="session",
-            applied=ConfigPatch(
-                arm_id=patch.arm_id, gains=gains or None, torque_offset_nm=offsets or None
-            ),
+            applied=ArmConfigPatch(
+                arm_id=arm_patch.arm_id, gains=gains or None, torque_offset_nm=offsets or None
+            )
+            .to_patch()
+            .values,
             clamped=clamped,
             unsupported=list(unsupported),
             why=unsupported,
@@ -448,7 +461,7 @@ class DamiaoConnection(ConnectionModule):
     def _save(
         self,
         arm: DamiaoArm,
-        patch: ConfigPatch,
+        patch: ArmConfigPatch,
         joints: list[str],
         *,
         force: bool,
@@ -467,6 +480,8 @@ class DamiaoConnection(ConnectionModule):
         gains or links changes nothing the arm runs, so it is not applied; one
         with nothing a file holds writes nothing. Checks are refused unless
         the arm runs the file as it is on disk (``_checks_refused``).
+        ``details["gravity_step_nm"]`` is, by joint, how much its gravity
+        torque at the measured pose changed, or would have.
         """
         arm_id = patch.arm_id
         unsupported: dict[str, str] = dict.fromkeys(
@@ -508,9 +523,8 @@ class DamiaoConnection(ConnectionModule):
         if not saved.keys():
             # Nothing a file holds: the file and its history stay as they are.
             return ConfigApplied(
-                arm_id=arm_id,
+                target=arm_id,
                 scope="persist",
-                applied=ConfigPatch(arm_id=arm_id),
                 unsupported=list(unsupported),
                 why=unsupported,
                 applied_now=False,
@@ -535,9 +549,8 @@ class DamiaoConnection(ConnectionModule):
             }
             if large and not force:
                 return ConfigApplied(
-                    arm_id=arm_id,
+                    target=arm_id,
                     scope="persist",
-                    applied=ConfigPatch(arm_id=arm_id),
                     unsupported=list(unsupported),
                     why=unsupported,
                     applied_now=False,
@@ -546,7 +559,7 @@ class DamiaoConnection(ConnectionModule):
                         f"{MAX_GRAVITY_STEP_NM:g} N m: {large} (N m), so nothing was written; "
                         "save calibrations near home, or pass force=True"
                     ),
-                    gravity_step_nm=step,
+                    details={"gravity_step_nm": step},
                 )
         target = save_calibration(path, merged)
         if live:
@@ -562,15 +575,15 @@ class DamiaoConnection(ConnectionModule):
                 with self._lock:
                     self._applied[arm_id] = item
         return ConfigApplied(
-            arm_id=arm_id,
+            target=arm_id,
             scope="persist",
-            applied=saved,
+            applied=saved.to_patch().values,
             clamped=clamped,
             unsupported=list(unsupported),
             why=unsupported,
             path=str(target),
             applied_now=live,
-            gravity_step_nm=step,
+            details={"gravity_step_nm": step},
         )
 
     def _checks_refused(self, arm_id: str, path: Path) -> str | None:

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Calibration files applied at start, and the arm config contract a calibration tool drives."""
+"""Calibration files applied at start, and the config contract a calibration tool drives."""
 
 from __future__ import annotations
 
@@ -41,6 +41,8 @@ from dimos.control.calibration.robots import calibration_keys
 from dimos.control.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
+    ArmConfigPatch,
+    ArmConfigState,
     GravityCalibration,
     JointGains,
     LinkGravity,
@@ -51,8 +53,8 @@ from dimos.control.calibration.schema import (
 )
 from dimos.control.calibration.spec import model_sha256, specs_from_damiao_robot
 from dimos.control.connection import connection_module
-from dimos.control.connection.arm_config import AppliedFile, ConfigPatch
 from dimos.control.connection.connection_module import ConnectionStatus
+from dimos.control.connection.module_config import AppliedFile, ConfigApplied
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao import connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
@@ -144,6 +146,22 @@ def _files(module) -> dict[str, AppliedFile | None]:
     return {arm_id: state.file for arm_id, state in module.config_get().items()}
 
 
+def _states(module) -> dict[str, ArmConfigState]:
+    """How each arm is driven, by arm id, as config_get reports it."""
+    return {
+        arm_id: ArmConfigState.from_state(state) for arm_id, state in module.config_get().items()
+    }
+
+
+def _set(module, patch: ArmConfigPatch, **kwargs: Any) -> ConfigApplied:
+    """``config_set`` of one arm's change."""
+    return module.config_set(patch.to_patch(), **kwargs)
+
+
+def _applied(result: ConfigApplied) -> ArmConfigPatch:
+    return ArmConfigPatch.from_applied(result)
+
+
 def test_auto_applies_each_arms_saved_file_and_logs_one_line(
     start, boundary, calibration_root, mocker
 ):
@@ -171,7 +189,7 @@ def test_auto_applies_each_arms_saved_file_and_logs_one_line(
         ),
         "rig/right": None,
     }
-    assert set(module.config_get()["rig/left"].links) == {"link2"}
+    assert set(_states(module)["rig/left"].links) == {"link2"}
     lines = [line for line in _messages(info) if "rig/left" in line]
     assert len(lines) == 1
     assert str(path) in lines[0] and "2026-11-17 09:30 UTC" in lines[0]
@@ -349,7 +367,7 @@ def test_an_unnamed_robot_reads_no_calibration(make_rig, mocker):
     load = mocker.spy(common, "load_calibration")
     module, _, _ = make_rig(config_sessions=True)
     load.assert_not_called()
-    assert module.config_keys().arms == {} and module.config_get() == {}
+    assert module.config_keys().targets == {} and module.config_get() == {}
 
 
 def test_friction_in_a_file_is_not_applied_yet(start, boundary, calibration_root, mocker):
@@ -369,17 +387,17 @@ def _active(module) -> bool:
 
 def _begin(module, **kwargs: Any) -> str:
     """Start a config session; returns its id."""
-    session = module.config_set(ConfigPatch(arm_id="rig/left"), **kwargs).session_id
+    session = _set(module, ArmConfigPatch(arm_id="rig/left"), **kwargs).session_id
     assert session is not None
     return session
 
 
 def _left(module, session: str | None, **fields: Any):
-    return module.config_set(ConfigPatch(arm_id="rig/left", **fields), session_id=session)
+    return _set(module, ArmConfigPatch(arm_id="rig/left", **fields), session_id=session)
 
 
 def _right(module, session: str | None, **fields: Any):
-    return module.config_set(ConfigPatch(arm_id="rig/right", **fields), session_id=session)
+    return _set(module, ArmConfigPatch(arm_id="rig/right", **fields), session_id=session)
 
 
 def _float(module, session: str, kd: float = 0.5):
@@ -395,26 +413,27 @@ def test_the_config_contract_round_trip(start, boundary, calibration_root):
     module = start(config_sessions=True, readings=readings)
     native = boundary[0]
     keys = module.config_keys()
-    assert keys.arms == {"rig/left": ["joint1", "joint2"], "rig/right": ["joint3"]}
-    assert keys.session == ["gains", "float", "torque_offset_nm"] and keys.gravity_compensation
+    assert keys.targets == {"rig/left": ["joint1", "joint2"], "rig/right": ["joint3"]}
+    assert keys.session == ["gains", "float", "torque_offset_nm"]
+    assert keys.features == {"gravity_compensation": True}
     assert keys.persist_paths["rig/left"] == str(calibration_root / "rig/left/calibration.json")
     assert keys.source == "arm" and keys.sessions
-    started = module.config_set(ConfigPatch(arm_id="rig/left"))
+    started = _set(module, ArmConfigPatch(arm_id="rig/left"))
     session = started.session_id
     assert started.lease_s == 2.0 and session is not None and len(session) == 32
 
     # Each change returns what took effect, as clamped.
     applied = _left(module, session, gains={"joint2": JointGains(kp=900, kd=2)})
-    assert applied.applied.gains == {"joint2": JointGains(kp=500.0, kd=2.0)}
+    assert _applied(applied).gains == {"joint2": JointGains(kp=500.0, kd=2.0)}
     assert applied.clamped == ["gains.joint2.kp"] and applied.session_id == session
     np.testing.assert_equal(_rows(boundary, "left_arm")[1, :2], [500, 2])
     # kp 0 floats the joint with that damping, not a gain of 0.
-    assert _float(module, session, kd=0.4).applied.gains == {"joint3": JointGains(kp=0.0, kd=0.4)}
+    assert _applied(_float(module, session, kd=0.4)).gains == {"joint3": JointGains(kp=0.0, kd=0.4)}
     # A fifth of joint1's rated 28 N m.
     offset = _left(module, session, torque_offset_nm={"joint1": 9.0})
-    assert offset.applied.torque_offset_nm == {"joint1": pytest.approx(5.6)}
+    assert _applied(offset).torque_offset_nm == {"joint1": pytest.approx(5.6)}
     assert offset.clamped == ["torque_offset_nm.joint1"]
-    state = module.config_get()
+    state = _states(module)
     assert state["rig/right"].floating == {"joint3": 0.4}
     assert state["rig/right"].gains["joint3"] == JointGains(kp=20.0, kd=0.6)
     assert state["rig/left"].torque_offset_nm == {"joint1": pytest.approx(5.6)}
@@ -424,7 +443,7 @@ def test_the_config_contract_round_trip(start, boundary, calibration_root):
     assert module._arm.floating == {}
     _left(module, session, torque_offset_nm={"joint1": 0.0})
     module.config_reset(keep_session=True)
-    assert module.config_get()["rig/left"].gains["joint2"].kp == 10.0
+    assert _states(module)["rig/left"].gains["joint2"].kp == 10.0
     np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [20, 0.6])
 
     # Readings come from the joint_state stream, effort included.
@@ -460,8 +479,9 @@ def test_a_plan_made_before_the_run_expects_what_the_connection_reports(
     expected = calibration_keys(Robot.robot)
     keys = start(Robot, config_sessions=True).config_keys()
     assert keys.model_copy(update={"persist_paths": {}}) == expected
-    assert ("float" in keys.session) is gravity and keys.gravity_compensation is gravity
-    assert set(keys.persist_paths) == set(keys.arms) == {"rig/left", "rig/right"}
+    assert ("float" in keys.session) is gravity
+    assert keys.features["gravity_compensation"] is gravity
+    assert set(keys.persist_paths) == set(keys.targets) == {"rig/left", "rig/right"}
 
 
 def test_the_calls_that_change_the_arm_are_refused_unless_deployed_for_calibration(start, boundary):
@@ -470,8 +490,8 @@ def test_the_calls_that_change_the_arm_are_refused_unless_deployed_for_calibrati
     assert not any(name.startswith("tuning_") for name in module.rpcs)
     sent = len(boundary[0].groups["left_arm"].commands)
     for call in (
-        lambda: module.config_set(ConfigPatch(arm_id="rig/left")),
-        lambda: module.config_set(ConfigPatch(arm_id="rig/left", notes="x"), scope="persist"),
+        lambda: _set(module, ArmConfigPatch(arm_id="rig/left")),
+        lambda: _set(module, ArmConfigPatch(arm_id="rig/left", notes="x"), scope="persist"),
         lambda: module.config_reset(),
     ):
         with pytest.raises(RuntimeError, match="config sessions are off"):
@@ -487,7 +507,7 @@ def test_reading_resetting_and_saving_need_no_config_session(start, boundary):
     module.config_get()
     module.config_reset()
     module.config_reset(keep_session=True)
-    module.config_set(ConfigPatch(arm_id="rig/left", notes="x"), scope="persist")
+    _set(module, ArmConfigPatch(arm_id="rig/left", notes="x"), scope="persist")
     session = _begin(module)
     with pytest.raises(RuntimeError, match="a config session is live"):
         _begin(module)
@@ -529,27 +549,32 @@ def test_bad_arguments_are_refused_and_end_the_session(start, boundary):
         ),
         (
             lambda s: module.config_set(
-                {"arm_id": "rig/left", "gains": {"joint1": {"kp": "80", "kd": 1.0}}}, session_id=s
+                {"target": "rig/left", "values": {"gains": {"joint1": {"kp": "80", "kd": 1.0}}}},
+                session_id=s,
             ),
             ValidationError,
             "valid number",
         ),
         (
             lambda s: module.config_set(
-                {"arm_id": "rig/left", "torque_offset_nm": {"joint1": float("nan")}},
+                {"target": "rig/left", "values": {"torque_offset_nm": {"joint1": float("nan")}}},
                 session_id=s,
             ),
             ValidationError,
             "finite",
         ),
         (
-            lambda s: module.config_set(ConfigPatch(arm_id="rig/nope"), session_id=s),
+            lambda s: _set(module, ArmConfigPatch(arm_id="rig/nope"), session_id=s),
             ValueError,
             "arms",
         ),
         (
-            lambda s: module.config_set(
-                ConfigPatch(arm_id="rig/left"), scope="persist", force="yes", session_id=s
+            lambda s: _set(
+                module,
+                ArmConfigPatch(arm_id="rig/left"),
+                scope="persist",
+                force="yes",
+                session_id=s,
             ),
             TypeError,
             "True or False",
@@ -585,7 +610,7 @@ def test_a_released_joint_stays_where_the_hand_left_it_though_a_coordinator_stre
 ):
     commands = LocalTransport()
     module = start(config_sessions=True, commands=commands)
-    held = module.config_get()["rig/right"].gains["joint3"]
+    held = _states(module)["rig/right"].gains["joint3"]
     session = _begin(module)
     _float(module, session)
     boundary[0].groups["right_arm"].q[:] = [0.9]
@@ -772,26 +797,26 @@ def test_a_save_merges_into_the_arms_file_and_applies_it_live(start, boundary, c
     module = start(config_sessions=True)
     path = calibration_root / "rig/left/calibration.json"
     links = {"link2": LinkGravity(mass_kg=1.5, com_m=(0.1, 0.0, 0.0))}
-    patch = ConfigPatch(
+    patch = ArmConfigPatch(
         arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)}, links=links
     )
-    saved = module.config_set(patch, scope="persist")
+    saved = _set(module, patch, scope="persist")
     assert saved.path == str(path) and saved.applied_now and saved.refused is None
-    assert saved.applied == patch and saved.unsupported == []
+    assert _applied(saved) == patch and saved.unsupported == []
     # Sent at once, without a command.
     np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], [60, 3])
     stored = load_calibration(path, expected_model_sha256=model_sha256(RIG.gravity_model))
     assert stored.gains == patch.gains and stored.gravity is not None
     assert stored.gravity.links == links
-    state = module.config_get()["rig/left"]
+    state = _states(module)["rig/left"]
     assert state.links == links and state.file is not None
     assert state.file.path == str(path)
     assert state.file.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
     assert _files(module)["rig/right"] is None
 
     # A second save merges: joint2's gains join joint1's, the links stay.
-    more = ConfigPatch(arm_id="rig/left", gains={"joint2": JointGains(kp=30.0, kd=1.0)})
-    module.config_set(more, scope="persist")
+    more = ArmConfigPatch(arm_id="rig/left", gains={"joint2": JointGains(kp=30.0, kd=1.0)})
+    _set(module, more, scope="persist")
     stored = load_calibration(path)
     assert stored.gains is not None and set(stored.gains) == {"joint1", "joint2"}
     assert stored.gravity is not None and stored.gravity.links == links
@@ -799,8 +824,10 @@ def test_a_save_merges_into_the_arms_file_and_applies_it_live(start, boundary, c
     assert len(list((path.parent / "history").iterdir())) == 1
 
     # A check alone is written, not applied, and the record follows the file.
-    module.config_set(
-        ConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}}), scope="persist"
+    _set(
+        module,
+        ArmConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}}),
+        scope="persist",
     )
     assert load_calibration(path).checks == {"float": {"passed": True}}
     state = module.config_get()["rig/left"]
@@ -810,12 +837,12 @@ def test_a_save_merges_into_the_arms_file_and_applies_it_live(start, boundary, c
 
 def test_a_save_leaves_out_what_a_file_cannot_hold(start, boundary, calibration_root):
     module = start(config_sessions=True)
-    patch = ConfigPatch(
+    patch = ArmConfigPatch(
         arm_id="rig/left",
         gains={"joint1": JointGains(kp=0.0, kd=0.5), "joint2": JointGains(kp=30.0, kd=1.0)},
         torque_offset_nm={"joint1": 0.2},
     )
-    saved = module.config_set(patch, scope="persist")
+    saved = _set(module, patch, scope="persist")
     assert saved.unsupported == ["torque_offset_nm.joint1", "gains.joint1.kp", "gains.joint1.kd"]
     assert "session" in saved.why["torque_offset_nm.joint1"]
     stored = load_calibration(calibration_root / "rig/left/calibration.json")
@@ -826,14 +853,14 @@ def test_a_save_leaves_out_what_a_file_cannot_hold(start, boundary, calibration_
 def test_a_save_of_nothing_a_file_holds_writes_nothing(start, boundary, calibration_root):
     module = start(config_sessions=True)
     path = calibration_root / "rig/left/calibration.json"
-    module.config_set(ConfigPatch(arm_id="rig/left", notes="a"), scope="persist")
+    _set(module, ArmConfigPatch(arm_id="rig/left", notes="a"), scope="persist")
     before = path.read_bytes()
     for patch in (
-        ConfigPatch(arm_id="rig/left", torque_offset_nm={"joint1": 1.0}),
-        ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=0.0, kd=0.5)}),
-        ConfigPatch(arm_id="rig/left"),
+        ArmConfigPatch(arm_id="rig/left", torque_offset_nm={"joint1": 1.0}),
+        ArmConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=0.0, kd=0.5)}),
+        ArmConfigPatch(arm_id="rig/left"),
     ):
-        saved = module.config_set(patch, scope="persist")
+        saved = _set(module, patch, scope="persist")
         assert saved.path is None and not saved.applied_now
         assert saved.unsupported == patch.keys()
     assert path.read_bytes() == before
@@ -843,28 +870,27 @@ def test_a_save_of_nothing_a_file_holds_writes_nothing(start, boundary, calibrat
 def test_a_check_is_recorded_only_in_the_file_the_arm_runs(start, boundary, calibration_root):
     module = start(config_sessions=True)
     path = calibration_root / "rig/left/calibration.json"
-    check = ConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}})
+    check = ArmConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}})
     # The file the arm runs takes a check.
-    module.config_set(
-        ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)}),
+    _set(
+        module,
+        ArmConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)}),
         scope="persist",
     )
-    assert module.config_set(check, scope="persist").unsupported == []
+    assert _set(module, check, scope="persist").unsupported == []
     # New masses saved without applying them: the arm still runs the old file.
-    heavier = ConfigPatch(
+    heavier = ArmConfigPatch(
         arm_id="rig/left", links={"link2": LinkGravity(mass_kg=1.5, com_m=(0.1, 0.0, 0.0))}
     )
-    module.config_set(heavier, scope="persist", apply_now=False)
-    refused = module.config_set(
-        check.model_copy(update={"notes": "after the check"}), scope="persist"
-    )
+    _set(module, heavier, scope="persist", apply_now=False)
+    refused = _set(module, check.model_copy(update={"notes": "after the check"}), scope="persist")
     assert refused.unsupported == ["checks.float"]
     assert refused.why["checks.float"].startswith(f"the arm does not run {path} as it is on disk")
     stored = load_calibration(path)
     assert stored.checks is None and stored.notes == "after the check"
     # Nothing left to save but the check: nothing is written.
     written = path.read_bytes()
-    assert module.config_set(check, scope="persist").path is None
+    assert _set(module, check, scope="persist").path is None
     assert path.read_bytes() == written
 
 
@@ -874,8 +900,10 @@ def test_a_check_is_refused_while_the_arm_runs_no_file(start, boundary, calibrat
     )
     module = start(config_sessions=True)
     assert _files(module)["rig/left"] is None
-    refused = module.config_set(
-        ConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}}), scope="persist"
+    refused = _set(
+        module,
+        ArmConfigPatch(arm_id="rig/left", checks={"float": {"passed": True}}),
+        scope="persist",
     )
     assert refused.unsupported == ["checks.float"] and refused.path is None
     assert "it runs no calibration file" in refused.why["checks.float"]
@@ -897,9 +925,9 @@ def test_a_save_stores_and_reports_its_gains_as_clamped(
     start, boundary, calibration_root, apply_now
 ):
     module = start(config_sessions=True)
-    patch = ConfigPatch(arm_id="rig/left", gains={"joint2": JointGains(kp=900.0, kd=9.0)})
-    saved = module.config_set(patch, scope="persist", apply_now=apply_now)
-    assert saved.applied.gains == {"joint2": JointGains(kp=500.0, kd=5.0)}
+    patch = ArmConfigPatch(arm_id="rig/left", gains={"joint2": JointGains(kp=900.0, kd=9.0)})
+    saved = _set(module, patch, scope="persist", apply_now=apply_now)
+    assert _applied(saved).gains == {"joint2": JointGains(kp=500.0, kd=5.0)}
     assert saved.clamped == ["gains.joint2.kp", "gains.joint2.kd"]
     stored = load_calibration(calibration_root / "rig/left/calibration.json")
     assert stored.gains == {"joint2": JointGains(kp=500.0, kd=5.0)}
@@ -907,7 +935,7 @@ def test_a_save_stores_and_reports_its_gains_as_clamped(
         assert module._arm.get_gains()["joint2"] == (500.0, 5.0)
     # The file it wrote loads at start like any other.
     module.stop()
-    assert start().config_get()["rig/left"].gains["joint2"] == JointGains(kp=500.0, kd=5.0)
+    assert _states(start())["rig/left"].gains["joint2"] == JointGains(kp=500.0, kd=5.0)
 
 
 def test_a_saved_file_that_does_not_fit_is_replaced_not_merged(
@@ -918,8 +946,9 @@ def test_a_saved_file_that_does_not_fit_is_replaced_not_merged(
     )
     module = start(config_sessions=True)
     warning = mocker.spy(common.logger, "warning")
-    module.config_set(
-        ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)}),
+    _set(
+        module,
+        ArmConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)}),
         scope="persist",
     )
     stored = load_calibration(path)
@@ -931,10 +960,10 @@ def test_a_saved_file_that_does_not_fit_is_replaced_not_merged(
 
 def test_saving_one_arms_file_live_keeps_what_the_other_arm_runs(start, boundary, calibration_root):
     module = start(config_sessions=True)
-    right = ConfigPatch(arm_id="rig/right", gains={"joint3": JointGains(kp=30.0, kd=1.0)})
-    left = ConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)})
-    module.config_set(right, scope="persist")
-    module.config_set(left, scope="persist")
+    right = ArmConfigPatch(arm_id="rig/right", gains={"joint3": JointGains(kp=30.0, kd=1.0)})
+    left = ArmConfigPatch(arm_id="rig/left", gains={"joint1": JointGains(kp=60.0, kd=3.0)})
+    _set(module, right, scope="persist")
+    _set(module, left, scope="persist")
     files = _files(module)
     assert {arm_id: None if file is None else file.path for arm_id, file in files.items()} == {
         "rig/left": str(calibration_root / "rig/left/calibration.json"),
@@ -949,27 +978,27 @@ def test_a_save_that_steps_gravity_more_than_2_nm_is_refused_unless_forced(
 ):
     module = start(config_sessions=True)
     path = calibration_root / "rig/left/calibration.json"
-    heavier = ConfigPatch(
+    heavier = ArmConfigPatch(
         arm_id="rig/left", links={"link2": LinkGravity(mass_kg=3.0, com_m=(0.1, 0.0, 0.0))}
     )
     sent = len(boundary[0].groups["left_arm"].commands)
-    refused = module.config_set(heavier, scope="persist")
+    refused = _set(module, heavier, scope="persist")
     assert refused.refused is not None and not refused.applied_now and refused.path is None
     assert re.search(
         r"more than 2 N m: \{'joint1': .*near home, or pass force=True", refused.refused
     )
-    assert abs(refused.gravity_step_nm["joint1"]) > 2.0
+    assert abs(refused.details["gravity_step_nm"]["joint1"]) > 2.0
     assert not path.exists()
     assert len(boundary[0].groups["left_arm"].commands) == sent
     assert _files(module)["rig/left"] is None
 
     # Skipping writes the file without applying it.
-    skipped = module.config_set(heavier, scope="persist", apply_now=False)
+    skipped = _set(module, heavier, scope="persist", apply_now=False)
     assert skipped.path == str(path) and not skipped.applied_now and skipped.refused is None
     assert path.exists() and _files(module)["rig/left"] is None
     assert len(boundary[0].groups["left_arm"].commands) == sent
 
-    result = module.config_set(heavier, scope="persist", force=True)
+    result = _set(module, heavier, scope="persist", force=True)
     pose = np.full(3, 0.2)
     joints = RIG.arm_joint_names
     before = PhysicalModel(RIG.gravity_model, joints, gravity_comp=True).gravity(pose)
@@ -979,12 +1008,12 @@ def test_a_save_that_steps_gravity_more_than_2_nm_is_refused_unless_forced(
         gravity_comp=True,
         inertial_overrides={"link2": LinkInertial(mass_kg=3.0, com_m=(0.1, 0.0, 0.0))},
     ).gravity(pose)
-    assert result.applied_now and result.gravity_step_nm == pytest.approx(
+    assert result.applied_now and result.details["gravity_step_nm"] == pytest.approx(
         dict(zip(joints, after - before, strict=True))
     )
     # joint3 carries none of link2.
-    assert result.gravity_step_nm["joint3"] == 0.0
-    assert set(module.config_get()["rig/left"].links) == {"link2"}
+    assert result.details["gravity_step_nm"]["joint3"] == 0.0
+    assert set(_states(module)["rig/left"].links) == {"link2"}
     np.testing.assert_allclose(_rows(boundary, "left_arm")[:, 4], after[:2])
 
 
@@ -998,13 +1027,13 @@ def test_masses_over_a_motors_rating_at_home_are_refused(
     # Every link vertical: no gravity torque at the measured pose.
     boundary[0].groups["left_arm"].q[:] = [math.pi / 2, 0.0]
     boundary[0].groups["right_arm"].q[:] = [0.0]
-    heavy = ConfigPatch(
+    heavy = ArmConfigPatch(
         arm_id="rig/left", links={"link2": LinkGravity(mass_kg=10.0, com_m=(0.1, 0.0, 0.0))}
     )
     with pytest.raises(
         ArmCalibrationError, match="on joint1 at home, more than its motor's rated 28 N m"
     ):
-        module.config_set(heavy, scope="persist")
+        _set(module, heavy, scope="persist")
     assert _files(module) == {"rig/left": None, "rig/right": None}
     assert not (calibration_root / "rig/left/calibration.json").exists()
 
@@ -1037,7 +1066,7 @@ def test_files_from_the_calibration_tools_load_into_dual_openyam(
             source="arm",
             model=_local_test_model(DualOpenYamConnection, tmp_path / "control.urdf"),
         )
-    states = module.config_get()
+    states = _states(module)
     assert list(states) == ["dual_openyam/left", "dual_openyam/right"]
     for spec in specs:
         state = states[spec.arm_id]
@@ -1057,12 +1086,13 @@ def test_the_state_reports_the_masses_and_file_hash_each_arm_runs(
     module = start(config_sessions=True)
 
     state = module.config_get()
+    arms = {arm_id: ArmConfigState.from_state(each) for arm_id, each in state.items()}
 
-    assert state["rig/left"].file == AppliedFile(
+    assert arms["rig/left"].file == AppliedFile(
         path=str(path), created="2026-11-17T09:30:00+00:00", sha256=sha
     )
-    assert state["rig/left"].links == {"link2": LinkGravity(mass_kg=2.0, com_m=(0.1, 0.0, 0.0))}
-    assert state["rig/right"].file is None and state["rig/right"].links == {}
+    assert arms["rig/left"].links == {"link2": LinkGravity(mass_kg=2.0, com_m=(0.1, 0.0, 0.0))}
+    assert arms["rig/right"].file is None and arms["rig/right"].links == {}
     # A file rewritten on disk changes nothing the arm runs until it is applied.
     save_calibration(path, _calibration(masses={"link2": 2.5}))
     assert module.config_get() == state
@@ -1113,7 +1143,7 @@ def test_stopping_waits_for_the_calibration_tool_to_park_before_disabling(start,
 
     assert order == ["park began", "parked", "disabled", "stopped"]
     assert any(
-        "waiting up to 10 s for the calibration tool to park the arm" in line
+        "waiting up to 10 s for the calibration tool to park the robot" in line
         for line in _messages(warning)
     )
 

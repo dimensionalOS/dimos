@@ -21,8 +21,17 @@ fingerprint of the robot model it was made against (``ArmCalibrationSpec.
 model_sha256``), and ``load_calibration`` refuses a file made for a different
 model, since the fitted masses are corrections to that model;
 ``load_for_spec`` always checks both the model and the arm. ``merge_patch``
-changes a stored calibration by a ``ConfigPatch`` of the arm config contract
-(``dimos.control.connection.arm_config``).
+changes a stored calibration by an :class:`ArmConfigPatch`.
+
+The arm's keys of the connection config contract
+(``dimos.control.connection.module_config``) live here too: a calibration
+tool builds an :class:`ArmConfigPatch` and sends it as the contract's
+``ConfigPatch`` (``to_patch``), and reads a connection's ``ConfigState`` as an
+:class:`ArmConfigState`. A connection that drives arms reads a patch back
+with ``ArmConfigPatch.from_patch``, strictly, since the RPC codec rebuilds
+models without validating them. Joints are named as in the robot's model,
+without the connection's source prefix, e.g. "left_joint2"; gains are kp in
+N m/rad and kd in N m s/rad, torques in N m.
 
 A fitted link's mass and centre of mass are those of the link's pinocchio body:
 the link plus the links merged into it (``merged_links``: fixed children and
@@ -42,7 +51,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 import xml.etree.ElementTree as ET
 
 if sys.version_info >= (3, 11):
@@ -51,7 +60,7 @@ else:
     from typing_extensions import Self
 
 import numpy as np
-from pydantic import Field, ValidationError, field_validator
+from pydantic import BeforeValidator, Field, ValidationError, field_validator
 
 from dimos.constants import STATE_DIR
 from dimos.control.calibration._inertial import LinkInertial
@@ -60,13 +69,11 @@ from dimos.control.calibration.spec import (
     merged_links,
     urdf_sha256,
 )
-from dimos.control.connection.arm_config import (
+from dimos.control.connection.module_config import (
+    AppliedFile,
+    ConfigApplied,
     ConfigPatch,
-    FiniteFloat as FiniteFloat,
-    JointGains as JointGains,
-    LinkGravity as LinkGravity,
-    NonNegativeFloat as NonNegativeFloat,
-    PositiveFloat as PositiveFloat,
+    ConfigState,
 )
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.assets.model import RobotModel
@@ -78,6 +85,150 @@ SCHEMA_VERSION: Literal[1] = 1
 CALIBRATION_FILENAME = "calibration.json"
 HISTORY_DIR_NAME = "history"
 ARMS_STATE_DIR = STATE_DIR / "arms"
+
+PositiveFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
+NonNegativeFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
+FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+
+
+class JointGains(BaseConfig):
+    """How stiffly one joint is held: kp in N m/rad, kd in N m s/rad."""
+
+    kp: NonNegativeFloat
+    kd: NonNegativeFloat
+
+
+def _tuple_of(value: Any) -> Any:
+    """A JSON array as a tuple, so strict validation takes it; anything else as given."""
+    return tuple(value) if isinstance(value, list) else value
+
+
+class LinkGravity(BaseConfig):
+    """Fitted mass and centre of mass of one link's body, centre of mass in the link frame.
+
+    Attributes:
+        mass_kg: The body's mass, including ``merged_links``.
+        com_m: The body's centre of mass, link frame, metres.
+        merged_links: Links whose URDF inertia the body includes.
+    """
+
+    mass_kg: PositiveFloat
+    # A list too, as JSON gives it: a connection validates patches strictly.
+    com_m: Annotated[tuple[FiniteFloat, FiniteFloat, FiniteFloat], BeforeValidator(_tuple_of)]
+    merged_links: list[str] = Field(default_factory=list)
+
+
+class ArmConfigPatch(BaseConfig):
+    """A change to how one arm is driven; only what is given changes.
+
+    Attributes:
+        arm_id: The arm, e.g. "dual_openyam/left"; the patch's target.
+        gains: By joint, merged per joint. kp 0 floats the joint with kd
+            damping, gravity still held (session only).
+        torque_offset_nm: By joint, added to its gravity torque; 0 removes it
+            (session only).
+        links: Fitted link masses; replace the stored set as a whole (persist
+            only).
+        fit: The fit's statistics, stored with the links (persist only).
+        friction_nm: Coulomb friction by joint; stored, not applied (persist
+            only).
+        checks: Validation results by name, merged by name (persist only).
+        notes: Free text for the operator (persist only).
+    """
+
+    arm_id: str
+    gains: dict[str, JointGains] | None = None
+    torque_offset_nm: dict[str, FiniteFloat] | None = None
+    links: dict[str, LinkGravity] | None = None
+    fit: dict[str, Any] | None = None
+    friction_nm: dict[str, NonNegativeFloat] | None = None
+    checks: dict[str, Any] | None = None
+    notes: str | None = None
+
+    def keys(self) -> list[str]:
+        """Every value the patch gives, dotted, e.g. "gains.left_joint2.kp", "links.link3".
+
+        A field given as an empty mapping is named alone, e.g. "links".
+        """
+        out: list[str] = []
+        if self.gains is not None:
+            out += [f"gains.{joint}.{gain}" for joint in self.gains for gain in ("kp", "kd")]
+            out += [] if self.gains else ["gains"]
+        for name in ("torque_offset_nm", "links", "friction_nm", "checks"):
+            value = getattr(self, name)
+            if value is not None:
+                out += [f"{name}.{key}" for key in value] or [name]
+        if self.fit is not None:
+            out.append("fit")
+        if self.notes is not None:
+            out.append("notes")
+        return out
+
+    def to_patch(self) -> ConfigPatch:
+        """The change as a connection takes it: the arm its target, the rest its values."""
+        values = self.model_dump(mode="json", exclude={"arm_id"}, exclude_none=True)
+        return ConfigPatch(target=self.arm_id, values=values)
+
+    @classmethod
+    def from_patch(cls, patch: ConfigPatch) -> Self:
+        """``patch`` read strictly as one arm's change.
+
+        Raises:
+            ValidationError: A key no arm has, or a value no arm could take.
+            ValueError: The values name the arm; the target does.
+        """
+        if "arm_id" in patch.values:
+            raise ValueError("the arm is the patch's target, not one of its values")
+        return cls.model_validate({**patch.values, "arm_id": patch.target}, strict=True)
+
+    @classmethod
+    def from_applied(cls, applied: ConfigApplied) -> Self:
+        """What one ``config_set`` applied, as one arm's change."""
+        return cls.from_patch(ConfigPatch(target=applied.target, values=applied.applied))
+
+
+class ArmConfigState(BaseConfig):
+    """How one arm is driven now.
+
+    Attributes:
+        arm_id: The arm; the state's target.
+        gains: Every arm joint's holding gains: a session override, else the
+            file's, else the robot's defaults.
+        floating: Joints at kp 0, with the damping each floats with.
+        torque_offset_nm: Torques added to the gravity torque; non-zero only.
+        links: Links whose masses differ from the URDF, as the arm runs them.
+        file: The calibration file it runs, or ``None`` for its defaults.
+        session_id: The live config session, if any.
+    """
+
+    arm_id: str
+    gains: dict[str, JointGains]
+    floating: dict[str, float] = Field(default_factory=dict)
+    torque_offset_nm: dict[str, float] = Field(default_factory=dict)
+    links: dict[str, LinkGravity] = Field(default_factory=dict)
+    file: AppliedFile | None = None
+    session_id: str | None = None
+
+    def to_state(self) -> ConfigState:
+        """The state as a connection reports it: the arm its target, the arm's keys its values."""
+        values = self.model_dump(
+            mode="json", include={"gains", "floating", "torque_offset_nm", "links"}
+        )
+        return ConfigState(
+            target=self.arm_id, values=values, file=self.file, session_id=self.session_id
+        )
+
+    @classmethod
+    def from_state(cls, state: ConfigState) -> Self:
+        """``state`` read as one arm's; raises ``ValidationError`` when it is not one."""
+        return cls.model_validate(
+            {
+                **state.values,
+                "arm_id": state.target,
+                "file": state.file,
+                "session_id": state.session_id,
+            }
+        )
 
 
 class ArmCalibrationError(RuntimeError):
@@ -317,7 +468,9 @@ def check_arm_fits(
         )
 
 
-def merge_patch(stored: ArmCalibration, patch: ConfigPatch, *, created: datetime) -> ArmCalibration:
+def merge_patch(
+    stored: ArmCalibration, patch: ArmConfigPatch, *, created: datetime
+) -> ArmCalibration:
     """``stored`` with what ``patch`` gives changed, written at ``created``.
 
     Gains merge by joint. Links replace the stored set as a whole, with the

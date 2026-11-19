@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a calibration procedure needs from a running arm connection: the arm config contract.
+"""What a calibration procedure needs from a running arm connection: the config contract.
 
 Every ``ConnectionModule`` serves the contract of
-:mod:`dimos.control.connection.arm_config`; :class:`ArmConfigHooks` is the
-part a calibration tool calls. ``config_keys`` says what the connection can
+:mod:`dimos.control.connection.module_config`; :class:`ArmConfigHooks` is the
+part a calibration tool calls, with one target per arm id and the arm's keys
+of :mod:`dimos.control.calibration.schema`: patches are built as
+``ArmConfigPatch`` and sent with ``to_patch``, states read with
+``ArmConfigState.from_state``. ``config_keys`` says what the connection can
 read and change, ``config_get`` how each arm is driven now. With
 ``config_sessions`` on (calibration blueprints only), ``config_set`` with
 scope "session" starts the one config session; each ``config_set`` that
@@ -35,20 +38,20 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from dimos.control.connection.arm_config import (
+from dimos.control.connection.connection_module import ConnectionStatus
+from dimos.control.connection.module_config import (
     DEFAULT_CONFIG_LEASE_S,
-    ArmConfigState,
     ConfigApplied,
     ConfigKeys,
     ConfigPatch,
     ConfigScope,
+    ConfigState,
 )
-from dimos.control.connection.connection_module import ConnectionStatus
 
 
 @runtime_checkable
 class ArmConfigHooks(Protocol):
-    """The arm config contract as a calibration tool drives it; see ``ConnectionModule``.
+    """The config contract as a calibration tool drives it; see ``ConnectionModule``.
 
     Any ``config_*`` call that raises ends the config session.
     """
@@ -57,8 +60,8 @@ class ArmConfigHooks(Protocol):
         """What the connection lets a calibration tool read and change."""
         ...
 
-    def config_get(self) -> dict[str, ArmConfigState]:
-        """How each arm is driven now, by arm id."""
+    def config_get(self) -> dict[str, ConfigState]:
+        """How each arm is driven now, by arm id (``ArmConfigState.from_state``)."""
         ...
 
     def config_set(

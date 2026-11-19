@@ -35,8 +35,8 @@ from dimos.control.calibration.coordinator import (
     calibration_passthrough_task,
 )
 from dimos.control.connection import connection_module
-from dimos.control.connection.arm_config import ConfigPatch
 from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection.module_config import ConfigPatch
 from dimos.control.contract.keys import Interface
 from dimos.control.tick_loop import TickLoop
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -243,7 +243,7 @@ def test_a_sender_that_dies_lets_the_deadman_halt_the_arm_and_end_the_session(
     running: Callable[..., tuple[Rig, FakeArm]],
 ) -> None:
     rig, arm = running(deadman_timeout_s=0.5)
-    session = arm.config_set(ConfigPatch(arm_id="arm"), lease_s=5.0).session_id
+    session = arm.config_set(ConfigPatch(target="arm"), lease_s=5.0).session_id
     _stream(rig, 1.0)
     assert arm.status().config_session_id == session and arm.halts == 0
     assert arm.writes[-1]["arm/joint1/position"] == 0.2

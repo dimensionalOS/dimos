@@ -65,7 +65,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pinocchio as pin
 
-from dimos.control.connection.arm_config import ConfigKeys
+from dimos.control.connection.module_config import ConfigKeys
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoMotor, DamiaoRobot
 from dimos.utils.logging_config import setup_logger
@@ -577,7 +577,9 @@ def calibration_keys(robot: DamiaoRobot, source: str = "arm") -> ConfigKeys:
     The one source: the connection's ``config_keys`` is this plus where each
     arm's file is saved (``persist_paths``), and a plan made before anything
     runs (``dimos arm calibrate --dry-run``) reads it without a connection.
-    It floats a joint only when the robot compensates gravity.
+    Its targets are the arm ids, each with its joints, and the keys those of
+    ``schema.ArmConfigPatch``. It floats a joint only when the robot
+    compensates gravity, which ``features["gravity_compensation"]`` says.
     """
     ids = robot.arm_ids()
     arms = (
@@ -591,11 +593,11 @@ def calibration_keys(robot: DamiaoRobot, source: str = "arm") -> ConfigKeys:
     return ConfigKeys(
         source=source,
         sessions=True,
-        arms=arms,
+        targets=arms,
         readable=["gains", "links", "torque_offset_nm"],
         session=["gains", *(["float"] if robot.gravity else []), "torque_offset_nm"],
         persist=["gains", "links", "fit", "friction_nm", "checks", "notes"],
-        gravity_compensation=robot.gravity,
+        features={"gravity_compensation": robot.gravity},
     )
 
 
