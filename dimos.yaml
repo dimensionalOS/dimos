@@ -12,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 9.2.0
+    version: 9.3.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -194,7 +194,10 @@ provides:
               type: string
     /active/modules/{id}/restart:
       post:
-        summary: Restart that instance, reloading its source
+        description: >-
+          Restart that one instance (a namespaced robot's, not every copy of its class), reloading its source unless
+          {reloadSource: false}; {config: {field: value}} is merged over its config first, so a changed setting takes
+          effect (and stays for later restarts). The `modules` event says when it's back
         parameters:
           - name: id
             in: path
@@ -203,7 +206,7 @@ provides:
               type: string
     /active/modules/{id}/stop:
       post:
-        summary: Unload that instance; the rest keep running
+        summary: Unload that one instance (not every copy of its class); the rest keep running
         parameters:
           - name: id
             in: path
@@ -222,8 +225,12 @@ provides:
     /active/modules/{id}/rpcs/{name}:
       post:
         description: >-
-          Call the RPC with {args?, kwargs?}: {ok, result, error}. For buttons: called directly, not through MCP, so skills'
-          capability holds don't apply; agents use the python API.
+          Call the RPC with {args?, kwargs?}: {ok, result, error}. With content-type application/cbor the body is dimos's
+          own RPC payload, cbor((args, kwargs)) as dimos.protocol.encode.cbor writes it, and the answer is cbor({ok, result,
+          error}): messages, dataclasses and enums travel as themselves (the caller encodes and decodes). Either way an
+          RPC that raised answers ok false with the error; a call the gateway can't make answers its HTTP status with
+          JSON {error}. For buttons: called directly, not through MCP, so skills' capability holds don't apply; agents
+          use the python API.
         parameters:
           - name: id
             in: path
