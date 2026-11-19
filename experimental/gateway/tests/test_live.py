@@ -54,7 +54,12 @@ class FakeDimos:
     stopped: bool = False
 
     def list_modules(self) -> list[ModuleInfo]:
-        speaker = [RpcInfo("start"), RpcInfo("speak"), RpcInfo("volume", documentation="Loudness.")]
+        speaker = [
+            RpcInfo("start"),
+            RpcInfo("speak"),
+            RpcInfo("volume", documentation="Loudness."),
+            RpcInfo("get_config"),
+        ]
         return [
             ModuleInfo(
                 "robot0/speaker",
@@ -93,6 +98,8 @@ class FakeDimos:
             def __getattr__(self, rpc: str) -> Any:
                 def call(*args: Any, **kwargs: Any) -> Any:
                     fake.calls.append((f"{name}/{rpc}", kwargs))
+                    if rpc == "get_config":
+                        return {"volume": 3, "voice": {"pitch": 1.5}, "lock": object(), "g": {}}
                     if kwargs.get("text") == "explode":
                         raise RuntimeError("speaker on fire")
                     return {"said": kwargs.get("text")}
@@ -376,3 +383,53 @@ def test_a_cbor_call_carries_dimos_objects_both_ways(
         headers={"content-type": "application/cbor"},
     )
     assert bad.status_code == 400
+
+
+def test_config_leaves_out_infrastructure_and_marks_unencodable_readonly(
+    client: TestClient, dimos: dict[str, Any]
+) -> None:
+    answer = client.get("/active/modules/robot0:speaker/config")
+    assert answer.status_code == 200
+    config = answer.json()
+    assert config["readonly"] == ["lock"]
+    assert config["config"]["volume"] == 3 and config["config"]["voice"] == {"pitch": 1.5}
+    assert config["config"]["lock"].startswith("<object object")
+    assert "g" not in config["config"]
+    assert dimos["apps"][-1].calls == [("robot0/speaker/get_config", {})]
+
+
+def test_config_is_404_without_a_get_config_rpc(client: TestClient, dimos: dict[str, Any]) -> None:
+    answer = client.get("/active/modules/camera/config")
+    assert answer.status_code == 404 and "get_config" in answer.json()["error"]
+    assert client.get("/active/modules/nope/config").status_code == 404
+
+
+def test_config_marks_reprd_and_secret_fields_readonly(
+    client: TestClient, dimos: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from collections.abc import Callable
+
+    from pydantic import BaseModel
+
+    class SpeakerConfig(BaseModel):
+        volume: int = 3
+        voice: dict[str, float] = {}
+        lock: Callable[[], None] | None = None
+        api_key: str = ""
+
+    # get_config sends a field JSON can't carry as its repr, so only the field's type says it isn't a string
+    monkeypatch.setattr(live, "config_fields", lambda _path: dict(SpeakerConfig.model_fields))
+    config = client.get("/active/modules/robot0:speaker/config").json()
+    assert config["readonly"] == ["lock"]
+    monkeypatch.setattr(
+        FakeDimos,
+        "get_module",
+        lambda self, name: type(
+            "H", (), {"get_config": lambda _s: {"volume": 3, "api_key": "sk-1", "lock": "<f>"}}
+        )(),
+    )
+    config = client.get("/active/modules/robot0:speaker/config").json()
+    assert config["config"]["api_key"] == "•••" and sorted(config["readonly"]) == [
+        "api_key",
+        "lock",
+    ]

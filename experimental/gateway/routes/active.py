@@ -170,6 +170,11 @@ async def module(state: GatewayState, id: str) -> dict[str, Any]:
     return await asyncio.to_thread(state.live.module, state.scanner.cache(), id)
 
 
+@router.get("/modules/{id}/config", response_model=responses.ModuleConfig)
+async def module_config(state: GatewayState, id: str) -> dict[str, Any]:
+    return await asyncio.to_thread(state.live.config, id)
+
+
 class RestartRequest(BaseModel):
     # config fields (name -> value) merged over the module's config before it's deployed again
     config: dict[str, JsonValue] | None = None
