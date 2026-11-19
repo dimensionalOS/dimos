@@ -18,11 +18,20 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from dimos.manipulation.manipulation_localize import ManipulationLocalize
+from dimos.manipulation.manipulation_localize import (
+    TABLE,
+    ManipulationLocalize,
+    pick_table,
+    table_boxes,
+)
+from dimos.mapping.pointclouds.box_filter import inside_boxes
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.localize.rig import Rig
+from dimos.utils.transform_utils import pose_to_matrix
 
 
 @pytest.fixture
@@ -52,6 +61,7 @@ def _ready(module, mocker, views):
     module.rig = mocker.Mock(cameras={"camera_color_optical_frame": None}, world_frame="world")
     module.rig.backdrop.side_effect = lambda ts, frame, trunc: views[int(ts)]
     module.rig.lidar = None
+    module.rig.camera_pose.return_value = None
 
 
 def _hit(instance_id, points, position=(0.0, 0.0, 0.0)):
@@ -232,3 +242,169 @@ def test_surfaces_on_lidar_read_only_the_window_scans(localizer, mocker):
     lidar.time_range.assert_called_once_with(6.0, 9.0)
     rig = window_points.call_args.args[0]
     assert rig.lidar is lidar.time_range.return_value
+
+
+def _surface(yaw_deg=0.0, center=(0.5, 0.0, 0.08), size=(0.8, 0.5), points=4000, above=0):
+    return {
+        "height": center[2],
+        "center": list(center),
+        "size": list(size),
+        "yaw_deg": yaw_deg,
+        "normal": [0.0, 0.0, 1.0],
+        "tilt_deg": 0.0,
+        "downhill_deg": 0.0,
+        "coefficients": [0.0, 0.0, 1.0, -center[2]],
+        "points": points,
+        "rms_m": 0.002,
+        "points_above": above,
+    }
+
+
+_TABLE_SETTINGS = dict(reach=1.0, thickness=0.03, cut_above=0.01)
+
+
+def test_table_box_tops_out_on_the_surface_round_the_whole_reach():
+    base = np.zeros(3)
+    (box_pose, box_size), (cut_pose, cut_size) = table_boxes(_surface(), [base], **_TABLE_SETTINGS)
+
+    # Centred under the base, not on the measured table: its edges are never used.
+    assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.0, 0.0])
+    assert box_size == pytest.approx([2.0, 2.0, 0.03])
+    assert box_pose.position.z + box_size[2] / 2 == pytest.approx(0.08)
+    assert cut_size == pytest.approx([2.0, 2.0, 1.01])
+    assert cut_pose.position.z + cut_size[2] / 2 == pytest.approx(0.09)
+    assert cut_pose.position.z - cut_size[2] / 2 == pytest.approx(-0.92)
+    assert pose_to_matrix(box_pose)[:3, 2] == pytest.approx([0.0, 0.0, 1.0])
+
+
+def test_two_arms_share_one_table_round_both():
+    bases = [np.array([0.0, -0.3, 0.0]), np.array([0.0, 0.3, 0.0])]
+    (box_pose, box_size), _ = table_boxes(_surface(), bases, **_TABLE_SETTINGS)
+
+    assert [box_pose.position.x, box_pose.position.y] == pytest.approx([0.0, 0.0])
+    assert box_size[:2] == pytest.approx([2.0, 2.6])
+
+
+def test_the_cut_takes_table_cells_and_what_is_under_and_keeps_what_stands_on_it():
+    _, (cut_pose, cut_size) = table_boxes(_surface(), [np.zeros(3)], **_TABLE_SETTINGS)
+    cells = np.array(
+        [
+            [0.5, 0.0, 0.085],  # a 1 cm cell of the table top, its centre half a cell up
+            [0.3, 0.2, -0.4],  # under the table
+            [0.5, 0.0, 0.105],  # a block's cell 2.5 cm over the table
+            [1.2, 0.0, 0.085],  # past the arm's reach
+        ]
+    )
+
+    inside = inside_boxes(cells, [(pose_to_matrix(cut_pose), np.asarray(cut_size))])
+
+    assert inside.tolist() == [True, True, False, False]
+
+
+def test_add_table_puts_a_box_in_the_planner_and_cuts_its_cells(localizer, mocker):
+    _ready(localizer, mocker, [])
+    mocker.patch.object(localizer, "surfaces", return_value=[_surface()])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (
+        SimpleNamespace(base_frame="link_base"),
+    )
+    localizer._obstacles.add_obstacle.return_value = TABLE
+    localizer._box_filter = mocker.Mock()
+    localizer.rig.tf.get.return_value = Transform(
+        translation=Vector3(0.0, 0.0, 0.0), frame_id="world", child_frame_id="link_base"
+    )
+
+    answer = localizer.add_table()
+
+    assert answer.startswith("table added: top at z=0.080 m in world, 2.00 x 2.00 m")
+    name, pose, shape, size, mesh, touch = localizer._obstacles.add_obstacle.call_args.args
+    assert (name, shape, mesh, touch) == (TABLE, "box", None, ["link_base"])
+    assert size == pytest.approx([2.0, 2.0, 0.03])
+    cut_name, _, cut_size = localizer._box_filter.set_box.call_args.args
+    assert cut_name == TABLE
+    assert cut_size.to_tuple() == pytest.approx((2.0, 2.0, 1.01))
+    # A second call replaces the table rather than stacking another.
+    localizer._obstacles.remove_obstacle.assert_called_once_with(TABLE)
+
+
+def test_add_table_without_a_planner_says_so(localizer, mocker):
+    _ready(localizer, mocker, [])
+
+    assert "needs a motion planner" in localizer.add_table()
+
+
+def test_add_table_with_no_surface_in_view_adds_nothing(localizer, mocker):
+    _ready(localizer, mocker, [])
+    mocker.patch.object(localizer, "surfaces", return_value=[])
+    localizer._obstacles = mocker.Mock()
+    localizer._box_filter = mocker.Mock()
+
+    assert localizer.add_table().startswith("no table")
+    localizer._obstacles.add_obstacle.assert_not_called()
+    localizer._box_filter.set_box.assert_not_called()
+
+
+def test_the_table_is_the_widest_surface_with_objects_on_it():
+    # An arm at its table: the floor past the edge is wider in view but empty.
+    floor = _surface(center=(1.2, 0.0, -0.6), size=(1.2, 0.8), points=26000)
+    table = _surface(center=(0.5, 0.0, 0.12), size=(0.9, 0.6), points=15000, above=300)
+    tray = _surface(center=(0.45, 0.0, 0.16), size=(0.3, 0.2), points=6000, above=80)
+
+    assert pick_table([floor, table, tray]) is table
+    assert pick_table([floor, table, tray], height=-0.6) is floor
+    assert pick_table([floor, table, tray], height=0.5) is None
+    assert pick_table([]) is None
+
+
+def test_with_nothing_standing_anywhere_the_widest_surface_is_the_table():
+    floor = _surface(center=(1.2, 0.0, -0.6), size=(1.2, 0.8))
+    table = _surface(center=(0.5, 0.0, 0.12), size=(0.9, 0.6))
+
+    assert pick_table([table, floor]) is floor
+
+
+def test_the_table_is_what_the_camera_looks_at():
+    """On the real rig the floor past the table's edge can be wider in view, with legs on it."""
+    floor = _surface(center=(1.2, 0.0, -0.6), size=(1.4, 0.9), points=26000, above=400)
+    table = _surface(center=(0.5, 0.0, 0.12), size=(0.6, 0.4), points=9000, above=300)
+    down = np.array([0.0, 0.0, -1.0])
+
+    assert pick_table([floor, table], sight=(np.array([0.5, 0.05, 0.45]), down)) is table
+    # Looking past the table's edge, the floor is what the camera sees.
+    assert pick_table([floor, table], sight=(np.array([1.3, 0.0, 0.45]), down)) is floor
+    # Looking up at nothing: the area rule.
+    assert pick_table([floor, table], sight=(np.zeros(3), -down)) is floor
+
+
+def test_add_table_takes_the_newest_view(localizer, mocker):
+    _ready(localizer, mocker, [])
+    floor = _surface(center=(1.2, 0.0, -0.6), size=(1.4, 0.9), points=26000, above=400)
+    mocker.patch.object(localizer, "surfaces", return_value=[floor, _surface(above=50)])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (SimpleNamespace(base_frame="world"),)
+    localizer._obstacles.add_obstacle.return_value = TABLE
+    localizer._box_filter = mocker.Mock()
+    # The optical frame 40 cm over the table, looking straight down (optical z down).
+    localizer.rig.camera_pose.return_value = PoseStamped(
+        frame_id="world",
+        position=Vector3(0.5, 0.0, 0.5),
+        orientation=Quaternion(1.0, 0.0, 0.0, 0.0),
+    )
+
+    assert localizer.add_table().startswith("table added: top at z=0.080 m")
+    localizer.rig.camera_pose.assert_called_once_with(10.0, "camera_color_optical_frame")
+
+
+def test_add_table_lists_the_surfaces_it_chose_from(localizer, mocker):
+    _ready(localizer, mocker, [])
+    floor = _surface(center=(0.5, 0.0, 0.0), size=(1.0, 0.6), points=26000)
+    mocker.patch.object(localizer, "surfaces", return_value=[floor, _surface(above=50)])
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (SimpleNamespace(base_frame="world"),)
+    localizer._obstacles.add_obstacle.return_value = TABLE
+    localizer._box_filter = mocker.Mock()
+
+    answer = localizer.add_table()
+
+    assert answer.startswith("table added: top at z=0.080 m")
+    assert "Surfaces seen: 0.000 m (1.00 x 0.60), 0.080 m (0.80 x 0.50)" in answer

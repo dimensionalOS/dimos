@@ -417,7 +417,7 @@ class ManipulationModule(Module):
             logger.error(traceback.format_exc())
 
     def _tf_publish_loop(self) -> None:
-        """Publish TF transforms at 10Hz for EE and extra links."""
+        """Publish TF transforms at 10Hz for EE, base and extra links."""
         period = 0.1  # 10Hz
         while not self._tf_stop_event.is_set():
             try:
@@ -435,7 +435,16 @@ class ManipulationModule(Module):
                         ee_tf = Transform.from_pose(group.tip_link, ee_pose)
                         ee_tf.frame_id = "world"
                         transforms.append(ee_tf)
-                for link_name in config.tf_extra_links:
+                # Each group's base too, e.g. for ManipulationLocalize.add_table.
+                bases = {
+                    group.base_link
+                    for group in self._world_monitor.planning_groups.list()
+                    if group.base_link != "world"
+                }
+                for link_name in [
+                    *sorted(bases - set(config.tf_extra_links)),
+                    *config.tf_extra_links,
+                ]:
                     if not state.name:
                         break
                     link_pose = self._world_monitor.get_link_pose(link_name, state)
@@ -1315,8 +1324,12 @@ class ManipulationModule(Module):
         shape: str,
         dimensions: list[float] | None = None,
         mesh_path: str | None = None,
+        touch_links: list[str] | None = None,
     ) -> str:
-        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id."""
+        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id.
+
+        ``touch_links`` are robot links that may touch it, e.g. a base inside a table box.
+        """
         if not self._world_monitor:
             return ""
 
@@ -1336,6 +1349,7 @@ class ManipulationModule(Module):
             pose=PoseStamped(position=pose.position, orientation=pose.orientation),
             dimensions=tuple(dimensions) if dimensions else (),
             mesh_path=mesh_path,
+            touch_links=tuple(touch_links or ()),
         )
         return self._world_monitor.add_obstacle(obstacle)
 
