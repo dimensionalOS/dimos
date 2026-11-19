@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 import warnings
@@ -524,8 +523,10 @@ def test_runtime_starts_once_opens_browser_and_closes(
 
 def test_two_threads_starting_at_once_share_one_server(monkeypatch: pytest.MonkeyPatch) -> None:
     servers: list[FakeRuntimeServer] = []
+    starting = threading.Event()
+    second_waits = threading.Event()
 
-    class SlowRuntime:
+    class HeldRuntime:
         url = "http://127.0.0.1:8095"
 
         def __init__(self, config: ViserVisualizationConfig) -> None:
@@ -533,23 +534,41 @@ def test_two_threads_starting_at_once_share_one_server(monkeypatch: pytest.Monke
 
         def start(self) -> FakeRuntimeServer:
             servers.append(FakeRuntimeServer())
-            time.sleep(0.1)  # room for the other thread to arrive
+            starting.set()
+            # Held until the other caller is waiting at the start lock.
+            assert second_waits.wait(timeout=5.0)
             return servers[-1]
 
         def close(self) -> None:
             pass
 
-    monkeypatch.setattr(visualizer_module, "ViserRuntime", SlowRuntime)
+    class SpyLock:
+        """The start lock, saying when a second caller reaches it."""
+
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.callers = 0
+
+        def __enter__(self) -> None:
+            self.callers += 1
+            if self.callers == 2:
+                second_waits.set()
+            self.lock.acquire()
+
+        def __exit__(self, *_: object) -> None:
+            self.lock.release()
+
+    monkeypatch.setattr(visualizer_module, "ViserRuntime", HeldRuntime)
     monkeypatch.setattr(visualizer_module, "ViserManipulationScene", MagicMock())
     visualizer = ViserManipulationVisualizer(config=ViserVisualizationConfig(panel_enabled=False))
-    threads = [
-        threading.Thread(target=visualizer.add_vis_obstacle, args=(f"map{i}", object()))
-        for i in range(2)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    visualizer._start_lock = SpyLock()
+    first = threading.Thread(target=visualizer.add_vis_obstacle, args=("a", object()))
+    second = threading.Thread(target=visualizer.add_vis_obstacle, args=("b", object()))
+    first.start()
+    assert starting.wait(timeout=5.0)
+    second.start()
+    first.join()
+    second.join()
     visualizer.close()
 
     assert len(servers) == 1
