@@ -18,7 +18,7 @@
 slices (dimos/web/relay_bridge/audio_codec.py pins the wire contract). The
 reassembled container bytes go through the owned local STT chain - PyAV
 decode to PCM, AudioNormalizer, WhisperNode (the exact pipeline behind the
-legacy WebInput upload) - and the transcript is published on `human_input`,
+legacy WebInput upload) - and the transcript is published on `agent_input`,
 entering the agent conversation exactly like a typed chat message. A
 cancelled hold simply stops sending; its half-built utterance is reaped
 after `stale_utterance_s`.
@@ -30,6 +30,7 @@ from threading import Event, Lock, Thread
 import time
 from typing import Any
 
+from langchain_core.messages import HumanMessage
 import reactivex as rx
 from reactivex.disposable import Disposable
 
@@ -68,7 +69,7 @@ class VoiceInput(Module):
     config: VoiceInputConfig
 
     audio_in: In[AudioChunk]
-    human_input: Out[str]
+    agent_input: Out[HumanMessage]
 
     _assemblies: dict[str, _Assembly]
     _lock: Lock
@@ -193,4 +194,4 @@ class VoiceInput(Module):
     def _publish_text(self, text: str) -> None:
         text = text.strip()
         if text:
-            self.human_input.publish(text)
+            self.agent_input.publish(HumanMessage(text))

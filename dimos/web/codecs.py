@@ -148,6 +148,7 @@ class DecoderDef:
 _registry_lock = threading.Lock()
 _encoders: dict[str, EncoderDef] = {}
 _decoders: dict[str, DecoderDef] = {}
+_typed_decoders: dict[tuple[str, type[Any]], DecoderDef] = {}
 
 
 def _check_encoding_id(encoding: Any) -> None:
@@ -273,6 +274,10 @@ def _register_encoder(definition: EncoderDef) -> None:
 def _register_decoder(definition: DecoderDef) -> None:
     with _registry_lock:
         existing = _decoders.get(definition.encoding)
+        if existing is not None and existing.message_type is not definition.message_type:
+            # A second decoder for the same wire encoding that produces another message type.
+            _typed_decoders[(definition.encoding, definition.message_type)] = definition
+            return
         if existing is not None and _describe(existing.decode) != _describe(definition.decode):
             raise ValueError(
                 f"web decoder for encoding {definition.encoding!r} is already "
@@ -391,7 +396,7 @@ def resolve_decoder(encoding: str, message_type: type[Any]) -> DecoderDef:
     ValueError when the pair is unsupported. Runs in the parent at blueprint
     authoring time, so this also finishes the by-reference check
     deferred from decoration (mirrors resolve_encoder)."""
-    definition = _decoders.get(encoding)
+    definition = _typed_decoders.get((encoding, message_type)) or _decoders.get(encoding)
     if definition is not None:
         if message_type is not definition.message_type:
             raise ValueError(

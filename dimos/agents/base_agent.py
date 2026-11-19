@@ -66,23 +66,35 @@ def _matches(tp: Any, value: Any) -> bool:
     return True
 
 
-class BaseAgent(Module, Generic[I, O]):
-    """Base for agents: one inference call and the chat streams.
+def _declared(cls: type, stream: str) -> bool:
+    """Whether cls or an agent it extends wrote this stream's annotation by hand."""
+    for klass in cls.__mro__:
+        if klass.__name__ == "BaseAgent" and klass.__module__ == __name__:
+            return False
+        if stream in klass.__dict__.get("__annotations__", {}):
+            return stream not in klass.__dict__.get("_typed_streams", ())
+    return False
 
-    A subclass names its types, ``class Agent(BaseAgent[HumanMessage, AIMessage])``, and they are
-    kept on the class as ``input_type`` and ``output_type``. An input with several
-    parts is one dataclass.
+
+class BaseAgent(Module, Generic[I, O]):
+    """Base for agents: one inference call and the streams that feed it.
+
+    A subclass names its types, ``class Agent(BaseAgent[HumanMessage, AIMessage])``. They are
+    kept on the class as ``input_type`` and ``output_type``, and the class gets the streams
+    ``agent_input: In[Input]`` and ``agent_output: Out[Output]`` unless it declares a stream
+    of that name itself. An input with several parts is one dataclass.
     """
 
     input_type: ClassVar[Any]
     output_type: ClassVar[Any]
+    _typed_streams: ClassVar[frozenset[str]] = frozenset()
 
-    human_input: In[str]
+    agent_input: In[Any]
+    agent_output: Out[Any]
     agent: Out[BaseMessage]
     agent_idle: Out[bool]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
         types = _resolve(cls, BaseAgent)
         if types is None:
             raise TypeError(
@@ -90,14 +102,35 @@ class BaseAgent(Module, Generic[I, O]):
                 f"e.g. class {cls.__name__}(BaseAgent[str, str])"
             )
         unbound = [tp for tp in types if isinstance(tp, TypeVar)]
-        if unbound and not getattr(cls, "__parameters__", ()):
+        # Generic.__init_subclass__ has not run yet, so __parameters__ is still the parent's.
+        generic = any(
+            isinstance(arg, TypeVar)
+            for base in cls.__dict__.get("__orig_bases__", ())
+            for arg in get_args(base)
+        )
+        if unbound and not generic:
             raise TypeError(f"{cls.__name__} leaves {unbound} of BaseAgent unbound")
         cls.input_type, cls.output_type = types
+        if not unbound:
+            in_stream: Any = In
+            out_stream: Any = Out
+            streams = {"agent_input": in_stream[types[0]], "agent_output": out_stream[types[1]]}
+            typed = {name: hint for name, hint in streams.items() if not _declared(cls, name)}
+            cls.__annotations__ = {**cls.__dict__.get("__annotations__", {}), **typed}
+            cls._typed_streams = frozenset(typed)
+        super().__init_subclass__(**kwargs)
 
     @classmethod
     def accepts(cls, x: object) -> bool:
         """Whether x is a valid input for this agent."""
         return _matches(cls.input_type, x)
+
+    @rpc
+    def agent_transports(self) -> dict[str, Any]:
+        """The transport each agent stream is on, for a client outside the blueprint."""
+        streams = ("agent_input", "agent_output", "agent", "agent_idle")
+        transports = {name: getattr(self, name).transport for name in streams}
+        return {name: transport for name, transport in transports.items() if transport is not None}
 
     @rpc
     def infer(self, x: I) -> O:

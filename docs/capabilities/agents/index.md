@@ -17,7 +17,7 @@ fill = none
 boxrad = 5px
 
 Input: box "humancli / WebInput" "dimos agent-send" fit wid 170% ht 170%
-arrow right 0.85in "human_input" above "In[str]" below
+arrow right 0.85in "agent_input" above "In[HumanMessage]" below
 Agent: box "Agent" "LangGraph + LLM" fit wid 170% ht 170%
 Skills: box "@skill methods" "on any Module" fit wid 170% ht 170% \
     with .w at (Agent.e.x + 0.9in, Agent.e.y)
@@ -44,9 +44,10 @@ arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
 ![output](assets/agent_architecture.svg)
 
 **Agent** (`dimos/agents/agent.py`) is a `BaseAgent`, the `Module` in `dimos/agents/base_agent.py` that declares its streams:
-- `human_input: In[str]`: receives text from `humancli`, `WebInput`, or `agent-send`
+- `agent_input: In[HumanMessage]`: receives messages from `humancli`, `WebInput`, `VoiceInput`, the cockpit chat, or `agent-send`
+- `agent_output: Out[AIMessage]`: publishes the final answer of each turn
 - `agent: Out[BaseMessage]`: publishes the transcript: human input, agent responses (text, tool calls), tool results, and the turns fed to the model on a tool's behalf (`[tool:<name>]` stream updates, image artefacts tagged with the tool name in `additional_kwargs`), which chat UIs render as tool output
-- `agent_idle: Out[bool]`: signals when the agent is waiting for input
+- `agent_idle: Out[bool]`: signals when the agent is waiting for input, with no turn queued and no background skill running
 
 The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools. A blueprint with no `McpServer` and no `mcp_server_url` gives the agent no tools.
 
@@ -63,6 +64,8 @@ app.get_module("Agent").infer(HumanMessage("what do you see?")).text
 ```
 
 `infer` blocks until the agent is done, background skills included, and shares its history with messages that arrive on the input stream.
+
+The two types also give the agent its streams: `BaseAgent[Input, Output]` declares `agent_input: In[Input]` and `agent_output: Out[Output]`, which `autoconnect` matches by name and type. A module sends to the agent by declaring `agent_input: Out[HumanMessage]`. Outside the blueprint, `dimos.agents.client.agent_transports()` returns the transports of the running agent's streams. Two agents with different input types in one blueprint need `.remappings()` on one of them.
 
 An input with several parts is one dataclass:
 

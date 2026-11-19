@@ -94,7 +94,7 @@ blueprint = blueprint.transports(
 
 When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L97)):
 
-* The agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
+* The agent channels (`agent_input`, `agent_output`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
 * `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
 * Everything else: zenoh defaults (reliable, drop under congestion).
 

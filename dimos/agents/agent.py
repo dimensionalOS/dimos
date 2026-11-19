@@ -190,6 +190,8 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             with self._settled:
                 self._background.discard(str(params.get("tool_name")))
                 self._settled.notify_all()
+                if not self._background and self._message_queue.unfinished_tasks == 0:
+                    self.agent_idle.publish(True)
             return
         if method == tool_stream.NOTIFICATIONS_PROGRESS_METHOD:
             text = params.get("message") or ""
@@ -283,10 +285,7 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     def start(self) -> None:
         super().start()
 
-        def _on_human_input(string: str) -> None:
-            self._message_queue.put(HumanMessage(content=string))
-
-        self.register_disposable(Disposable(self.human_input.subscribe(_on_human_input)))
+        self.register_disposable(Disposable(self.agent_input.subscribe(self._message_queue.put)))
 
         # Subscribe directly over LCM rather than through the server's GET
         # /mcp SSE channel.  HTTP would add a startup race: the first few
@@ -495,7 +494,10 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
                 )
             )
 
-        if self._message_queue.empty():
+        answer = self._history[-1]
+        if isinstance(answer, AIMessage):
+            self.agent_output.publish(answer)
+        if self._message_queue.empty() and not self._background:
             self.agent_idle.publish(True)
 
     def _record(self, message: BaseMessage) -> None:

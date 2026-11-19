@@ -616,3 +616,35 @@ def test_a_background_tool_counts_as_running_until_its_stop_frame(mcp_client: Ag
         {"method": "dimos/tool_stopped", "params": {"tool_name": "add"}}
     )
     assert mcp_client._background == set()
+
+
+def test_each_turn_publishes_its_final_answer_on_agent_output(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(running_agent, "_state_graph", _AnswersGraph())
+    answers: list[AIMessage] = []
+    monkeypatch.setattr(running_agent.agent_output, "publish", answers.append)
+
+    running_agent.infer(HumanMessage("one"))
+    running_agent.infer(HumanMessage("two"))
+
+    assert [a.content for a in answers] == ["turn 1", "turn 2"]
+
+
+def test_agent_idle_waits_for_background_skills(
+    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(running_agent, "_state_graph", _AnswersGraph())
+    idle: list[bool] = []
+    monkeypatch.setattr(running_agent.agent_idle, "publish", idle.append)
+    running_agent._background.add("explore")
+
+    running_agent.add_message(HumanMessage("explore the room"))
+    wait_until(lambda: len(running_agent._history) == 2, timeout=5, interval=0.01)
+    wait_until(lambda: running_agent._message_queue.unfinished_tasks == 0, timeout=5, interval=0.01)
+    assert idle == [False]
+
+    running_agent._on_tool_stream_message(
+        {"method": "dimos/tool_stopped", "params": {"tool_name": "explore"}}
+    )
+    assert idle == [False, True]

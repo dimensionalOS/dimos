@@ -21,9 +21,11 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.agents.base_agent import BaseAgent
+from dimos.core.coordination.blueprints import BlueprintAtom
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
+from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -194,18 +196,44 @@ def coordinator() -> Iterator[ModuleCoordinator]:
         mc.stop()
 
 
-def test_infer_runs_over_rpc_with_each_kind_of_input(coordinator: ModuleCoordinator) -> None:
-    for agent in (TextAgent, CaptionAgent, RobotAgent, DictAgent):
-        coordinator.load_module(agent)
+@pytest.mark.parametrize(
+    "agent, value, answer",
+    [
+        (TextAgent, "hello", "HELLO"),
+        (CaptionAgent, ImageQuery("two views", (_image(), _image())), "two views: 6x4, 6x4"),
+        (RobotAgent, _robot_query(), {"joints": 2.0, "x": 1.5, "words": 4.0}),
+        (DictAgent, {"b": 2.0, "a": 1.0}, ["a", "b"]),
+    ],
+)
+def test_infer_runs_over_rpc(
+    coordinator: ModuleCoordinator, agent: type[BaseAgent[Any, Any]], value: Any, answer: Any
+) -> None:
+    coordinator.load_module(agent)
+    assert coordinator.get_instance(agent).infer(value) == answer
 
-    assert coordinator.get_instance(TextAgent).infer("hello") == "HELLO"
-    assert (
-        coordinator.get_instance(CaptionAgent).infer(ImageQuery("two views", (_image(), _image())))
-        == "two views: 6x4, 6x4"
-    )
-    assert coordinator.get_instance(RobotAgent).infer(_robot_query()) == {
-        "joints": 2.0,
-        "x": 1.5,
-        "words": 4.0,
-    }
-    assert coordinator.get_instance(DictAgent).infer({"b": 2.0, "a": 1.0}) == ["a", "b"]
+
+def test_an_agent_gets_its_streams_from_its_types() -> None:
+    streams = {s.name: (s.type, s.direction) for s in BlueprintAtom.create(RobotAgent, {}).streams}
+    assert streams["agent_input"] == (RobotQuery, "in")
+    assert streams["agent_output"] == (dict[str, float], "out")
+
+
+def test_a_stream_an_agent_declares_itself_is_kept() -> None:
+    class GoalAgent(BaseAgent[RobotQuery, str]):
+        agent_input: In[str]
+
+    class Inherits(GoalAgent):
+        pass
+
+    for agent in (GoalAgent, Inherits):
+        streams = {s.name: s.type for s in BlueprintAtom.create(agent, {}).streams}
+        assert streams["agent_input"] is str
+        assert streams["agent_output"] is str
+
+
+def test_agents_with_different_input_types_cannot_share_the_stream_name(
+    coordinator: ModuleCoordinator,
+) -> None:
+    coordinator.load_module(TextAgent)
+    with pytest.raises(ValueError, match="agent_input"):
+        coordinator.load_module(CaptionAgent)
