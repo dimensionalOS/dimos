@@ -53,6 +53,7 @@ from dimos.mapping.relocalization.utils import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
@@ -117,6 +118,8 @@ class PremapModule(Module):
     config: Config
     tf: IO[TFMessage]
     loaded_map: Out[PointCloud2]
+    # Every match attempt's fitness (0-1, the share of live points the premap explains), accepted or not
+    relocalization_strength: Out[Float32]
     named_locations: IO[InteractiveMarkerUpdate]
     named_locations_request: In[String]
     local_map: In[PointCloud2]
@@ -240,12 +243,14 @@ class PremapModule(Module):
         t0 = time.monotonic()
         try:
             initial_fix = None if self.config.relocalize_once else self.fix
-            tf = self._relocalizer.attempt(
+            attempt = self._relocalizer.attempt(
                 msg.pointcloud, self.config.world_frame, self.map_frame, initial_fix
-            ).fix
+            )
         except Exception:
             logger.exception("relocalize() failed")
             return
+        self.relocalization_strength.publish(Float32(float(attempt.result.fitness)))
+        tf = attempt.fix
         dt = time.monotonic() - t0
         if tf is None:
             logger.info(

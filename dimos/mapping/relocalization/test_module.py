@@ -72,7 +72,7 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
     """With it on, nothing is attempted after a fix; with it off, the fix is refined from."""
     from reactivex import Subject
 
-    attempts = []
+    attempts, strengths = [], []
 
     class FakeRelocalizer:
         def __init__(self, *_):
@@ -80,7 +80,7 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
 
         def attempt(self, cloud, world_frame, map_frame, initial_fix=None):
             attempts.append(initial_fix)
-            return SimpleNamespace(fix=None)
+            return SimpleNamespace(fix=None, result=SimpleNamespace(fitness=0.5))
 
     monkeypatch.setattr(relocalization, "LidarRelocalizer", FakeRelocalizer)
     # Synchronous, so the attempts land before the assert and no worker thread is left behind
@@ -89,6 +89,7 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
     cloud = PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32))
     for once in (True, False):
         m = module(live_cloud="lidar", relocalize_once=once, min_local_points=0)
+        m.relocalization_strength = SimpleNamespace(publish=strengths.append)
         clouds = Subject()
         m._clouds = lambda clouds=clouds: clouds
         m.premap = cloud
@@ -96,6 +97,8 @@ def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
         m.submit(tf)
         clouds.on_next(cloud)
     assert attempts == [tf]
+    # Refused or not, every attempt's fitness goes out
+    assert [s.data for s in strengths] == [0.5]
 
 
 @pytest.mark.parametrize("interval", [3600.0, 0.0])
