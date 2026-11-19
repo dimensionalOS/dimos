@@ -55,6 +55,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import transport_topic
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
@@ -74,6 +75,7 @@ from dimos.visualization.rerun.constants import (
 )
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
 from dimos.visualization.rerun.spec import RerunWebSocketServerSpec
+from dimos.visualization.rerun.static_log import StaticLog
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -360,6 +362,7 @@ class RerunBridgeModule(Module):
         self._camera_infos: dict[str, CameraInfo] = {}
         self._image_entities: set[str] = set()
         self._min_intervals: dict[str, float] = {}
+        self._static_log = StaticLog(self.config.server_memory_limit)
         self._tf_lock = threading.Lock()
         self._tf_tree = self._new_tf_tree()
 
@@ -369,6 +372,7 @@ class RerunBridgeModule(Module):
         return TfFrameTree(
             axis_length=self.config.tf_axes,
             root=f"{self.config.entity_prefix}/tf",
+            log_static=functools.partial(self._static_log.log, once=True),
         )
 
     @property
@@ -488,13 +492,15 @@ class RerunBridgeModule(Module):
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
             for entry in rerun_data:
-                rr.log(entry[0], entry[1], static=isinstance(entry, RerunEntry) and entry.static)
+                if isinstance(entry, RerunEntry) and entry.static:
+                    self._static_log.log(entry.path, entry.archetype)
+                else:
+                    rr.log(entry[0], entry[1])
             # Pin the base entity to the message frame once, so child entities
             # follow it the way a single archetype does below.
             frame_id = getattr(msg, "frame_id", None)
             if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
-                self._frame_attached[entity_path] = frame_id
+                self._attach(entity_path, frame_id)
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
             if isinstance(msg, Image):
@@ -504,10 +510,20 @@ class RerunBridgeModule(Module):
             if not isinstance(rerun_data, rr.Transform3D):
                 frame_id = getattr(msg, "frame_id", None)
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
-                    self._frame_attached[entity_path] = frame_id
+                    self._attach(entity_path, frame_id)
                     if isinstance(msg, Image) and frame_id in self._camera_infos:
                         rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+
+    def _attach(self, entity_path: str, frame_id: str) -> None:
+        """Pin an entity to its tf frame.
+
+        Static, because it is logged once: as timeline data the replay buffer
+        drops it, and a viewer that connects later draws the entity at the origin.
+        """
+        import rerun as rr
+
+        self._static_log.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"), once=True)
+        self._frame_attached[entity_path] = frame_id
 
     def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
         """A CameraInfo is the pinhole of every image in its optical frame.
@@ -555,6 +571,8 @@ class RerunBridgeModule(Module):
             },
         )
         assert server_uri is not None  # start_grpc=True guarantees a URI
+        # rerun_init logged it already. Going through the static log keeps it replayed.
+        self._static_log.log("/", colormap_annotation("turbo"), once=True)
 
         parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
@@ -691,7 +709,7 @@ class RerunBridgeModule(Module):
                     archetypes=[type(entry[1]).__name__ for entry in data],
                 )
                 for entry in data:
-                    rr.log(entry[0], entry[1], static=True)
+                    self._static_log.log(entry[0], entry[1], once=True)
                 continue
 
             if isinstance(data, list):
@@ -701,14 +719,14 @@ class RerunBridgeModule(Module):
                     archetypes=[type(archetype).__name__ for archetype in data],
                 )
                 for archetype in data:
-                    rr.log(entity_path, archetype, static=True)
+                    self._static_log.log(entity_path, archetype, once=True)
             else:
                 logger.info(
                     "Rerun static entity",
                     entity_path=entity_path,
                     archetypes=[type(data).__name__],
                 )
-                rr.log(entity_path, data, static=True)
+                self._static_log.log(entity_path, data, once=True)
 
     @rpc
     def log_blueprint_graph(self, dot_code: str, module_names: list[str]) -> None:
@@ -762,7 +780,7 @@ class RerunBridgeModule(Module):
         if not node_ids:
             return
 
-        rr.log(
+        self._static_log.log(
             "blueprint",
             rr.GraphNodes(
                 node_ids=node_ids,
@@ -773,7 +791,7 @@ class RerunBridgeModule(Module):
                 show_labels=True,
             ),
             rr.GraphEdges(edges=edges, graph_type="directed"),
-            static=True,
+            once=True,
         )
 
     @rpc

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, BinaryIO
 
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
@@ -23,7 +24,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from rerun._baseclasses import Archetype
 
@@ -51,10 +52,15 @@ class TfFrameTree:
     """Store each frame under its parents. This lets us view the tree in the left panel."""
 
     def __init__(
-        self, axis_length: float = DEFAULT_AXIS_LENGTH, root: str = DEFAULT_TF_ROOT
+        self,
+        axis_length: float = DEFAULT_AXIS_LENGTH,
+        root: str = DEFAULT_TF_ROOT,
+        log_static: Callable[..., None] | None = None,
     ) -> None:
         self.axis_length = axis_length
         self.root = root
+        # Takes a path and archetypes. None logs them with rr.log.
+        self._log_static = log_static
         self._parents: dict[str, str] = {}
         self._placed: dict[str, tuple[str, int]] = {}  # frame -> (path, depth)
 
@@ -83,21 +89,22 @@ class TfFrameTree:
     def _redraw(self) -> None:
         import rerun as rr
 
+        log_static = self._log_static or partial(rr.log, static=True)
+
         frames = {*self._parents, *self._parents.values()}
         placed = {frame: self._place(frame, frozenset()) for frame in frames}
 
         for frame, (old_path, _depth) in self._placed.items():
             new = placed.get(frame)
             if new is None or new[0] != old_path:
-                rr.log(old_path, rr.Arrows3D(origins=[], vectors=[]), static=True)
+                log_static(old_path, rr.Arrows3D(origins=[], vectors=[]))
 
         for frame, (path, depth) in placed.items():
             if self._placed.get(frame) != (path, depth):
-                rr.log(
+                log_static(
                     path,
                     rr.CoordinateFrame(f"tf#/{frame}"),
                     _triad(self.axis_length * DEPTH_SCALE**depth),
-                    static=True,
                 )
 
         self._placed = placed

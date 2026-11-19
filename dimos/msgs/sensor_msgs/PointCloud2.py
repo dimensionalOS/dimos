@@ -60,18 +60,21 @@ def register_colormap_annotation(name: str = "turbo") -> None:
     """Register a colormap as AnnotationContext so Rerun resolves colors viewer-side."""
     import rerun as rr
 
+    rr.log("/", colormap_annotation(name), static=True)
+
+
+def colormap_annotation(name: str = "turbo") -> Archetype:
+    """The colormap as an AnnotationContext, for a caller that logs it itself."""
+    import rerun as rr
+
     lut = _get_colormap_lut(name)
-    rr.log(
-        "/",
-        rr.AnnotationContext(
-            [
-                rr.datatypes.ClassDescription(
-                    info=rr.datatypes.AnnotationInfo(id=i, color=lut[i].tolist())
-                )
-                for i in range(256)
-            ]
-        ),
-        static=True,
+    return rr.AnnotationContext(
+        [
+            rr.datatypes.ClassDescription(
+                info=rr.datatypes.AnnotationInfo(id=i, color=lut[i].tolist())
+            )
+            for i in range(256)
+        ]
     )
 
 
