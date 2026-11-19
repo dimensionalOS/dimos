@@ -19,7 +19,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+import cv2
 import numpy as np
+from numpy.typing import NDArray
+from scipy import ndimage
 
 from dimos.utils.logging_config import setup_logger
 
@@ -39,6 +42,8 @@ PIECE_CELL = 0.02  # m - inliers this close in the plane are one patch
 DEDUPE_CELL = 0.01  # m - find_surfaces counts points closer than this once
 STANDING_LOW, STANDING_HIGH = 0.01, 0.30  # m - over a surface, what stands on it
 LEVEL_MAX_TILT_DEG = 5.0  # find_surfaces(level=True) takes nothing steeper as parallel
+MAX_TILT_DEG = 25.0  # find_surfaces' default: nothing steeper is a surface
+SPAN_PERCENTILES = (1, 99)  # a surface's extent, past its strays; runs about 2% short
 
 
 @dataclass
@@ -55,7 +60,7 @@ class SupportPlane:
 
 def window_points(
     rig: Rig, keyframes: list[Observation[Image]], frame: str, frames: int = 5
-) -> np.ndarray | None:
+) -> NDArray[np.float64] | None:
     """Up to ``frames`` of one camera's keyframes, spread over the list, merged at 1 cm;
     None when they hold fewer than 500 points."""
     if not keyframes:
@@ -74,7 +79,9 @@ def window_points(
     return points if len(points) >= 500 else None
 
 
-def peel_planes(points: np.ndarray, min_up_dot: float) -> list[tuple[np.ndarray, np.ndarray]]:
+def peel_planes(
+    points: NDArray[np.float64], min_up_dot: float
+) -> list[tuple[NDArray[np.float64], NDArray[np.float64]]]:
     """Up to four planes peeled off by RANSAC, biggest first as found; only those whose
     normal has ``|n . z| >= min_up_dot``, each as (a, b, c, d) normal up and its inliers."""
     import open3d as o3d
@@ -82,7 +89,7 @@ def peel_planes(points: np.ndarray, min_up_dot: float) -> list[tuple[np.ndarray,
     o3d.utility.random.seed(PLANE_SEED)
     remaining = o3d.geometry.PointCloud()
     remaining.points = o3d.utility.Vector3dVector(points)
-    found: list[tuple[np.ndarray, np.ndarray]] = []
+    found: list[tuple[NDArray[np.float64], NDArray[np.float64]]] = []
     for _ in range(4):
         if len(remaining.points) < 500:
             break
@@ -98,7 +105,7 @@ def peel_planes(points: np.ndarray, min_up_dot: float) -> list[tuple[np.ndarray,
     return found
 
 
-def anchored(model: np.ndarray, inliers: np.ndarray) -> SupportPlane:
+def anchored(model: NDArray[np.float64], inliers: NDArray[np.float64]) -> SupportPlane:
     """The plane through the base of its inlier slab.
 
     Thin objects (< 1 cm) sitting on the support surface fall inside the RANSAC
@@ -129,10 +136,21 @@ def fit_support_plane(
 class Surface:
     """One flat surface, such as a table top, in the frame it was asked in.
 
-    ``height`` is the surface's z straight under the frame's origin; ``center`` and
-    ``size`` (long side, short side) come from its points, ``yaw`` is the long side's
-    heading. ``tilt_deg`` is the normal's angle from +z, and the surface goes down
-    towards ``downhill_deg``, a heading in the frame's xy plane.
+    Attributes:
+        plane: Its plane, normal up.
+        height: The plane's z straight under the frame's origin, metres.
+        center: The centre of its points' outline, on the plane.
+        size: The outline's long side and short side, metres.
+        yaw_deg: The long side's heading in the frame's xy plane.
+        tilt_deg: The normal's angle from +z.
+        downhill_deg: The heading the surface goes down towards.
+        points: How many points it has.
+        rms_m: Their spread about the plane.
+        points_above: Points standing on it: inside its outline, ``STANDING_LOW`` to
+            ``STANDING_HIGH`` over it.
+        fitted: The plane fitted to it when ``plane`` is reported level instead;
+            what stands on it is measured from this one, so a slope's own points do
+            not count.
     """
 
     plane: SupportPlane
@@ -144,10 +162,7 @@ class Surface:
     downhill_deg: float
     points: int
     rms_m: float
-    # Points standing on it: inside its outline, STANDING_LOW to STANDING_HIGH over it.
     points_above: int = 0
-    # The plane fitted to it, when ``plane`` is reported level instead; what stands on
-    # it is measured from this one, so a slope's own points do not count.
     fitted: SupportPlane | None = None
 
     @property
@@ -171,7 +186,7 @@ class Surface:
         }
 
 
-def _plane_axes(normal: np.ndarray) -> np.ndarray:
+def plane_axes(normal: NDArray[np.float64]) -> NDArray[np.float64]:
     """Two unit vectors in a plane with this normal: the x axis and the y axis laid onto it."""
     first = np.array([1.0, 0.0, 0.0]) - normal * normal[0]
     if np.linalg.norm(first) < 1e-6:
@@ -180,12 +195,12 @@ def _plane_axes(normal: np.ndarray) -> np.ndarray:
     return np.stack([first, np.cross(normal, first)])
 
 
-def connected_pieces(model: np.ndarray, inliers: np.ndarray) -> list[np.ndarray]:
+def connected_pieces(
+    model: NDArray[np.float64], inliers: NDArray[np.float64]
+) -> list[NDArray[np.float64]]:
     """A plane's inliers split into the patches that touch, on a ``PIECE_CELL`` grid in
     the plane: four block tops at one height are four pieces, not one surface."""
-    from scipy import ndimage
-
-    uv = inliers @ _plane_axes(np.asarray(model[:3], dtype=np.float64)).T
+    uv = inliers @ plane_axes(np.asarray(model[:3], dtype=np.float64)).T
     cells = np.floor((uv - uv.min(axis=0)) / PIECE_CELL).astype(np.int64)
     grid = np.zeros(cells.max(axis=0) + 1, dtype=bool)
     grid[cells[:, 0], cells[:, 1]] = True
@@ -194,21 +209,21 @@ def connected_pieces(model: np.ndarray, inliers: np.ndarray) -> list[np.ndarray]
     return [inliers[of_point == label] for label in range(1, count + 1)]
 
 
-def describe_surface(model: np.ndarray, inliers: np.ndarray, level: bool = False) -> Surface:
+def describe_surface(
+    model: NDArray[np.float64], inliers: NDArray[np.float64], level: bool = False
+) -> Surface:
     """A plane's height, extent, heading and tilt, from its inliers.
 
     The size and heading are those of the smallest rectangle round the inliers in
-    the plane, so a square table reads square; the 1st to 99th percentile spans
-    along its sides ignore strays and run about 2% short. ``level`` reports the
-    surface as parallel to the xy plane, at the height of its centre.
+    the plane, so a square table reads square, spanning ``SPAN_PERCENTILES`` of the
+    inliers along its sides. ``level`` reports the surface as parallel to the xy
+    plane, at the height of its centre.
     """
-    import cv2
-
     plane = anchored(model, inliers)
     normal = np.asarray(plane.coefficients[:3])
     distances = plane.height_above(inliers)
     flat = inliers - np.outer(distances, normal)
-    axes = _plane_axes(normal)
+    axes = plane_axes(normal)
     uv = flat @ axes.T
     middle = np.median(uv, axis=0)
     (_, _), (_, _), angle = cv2.minAreaRect((uv - middle).astype(np.float32))
@@ -217,7 +232,7 @@ def describe_surface(model: np.ndarray, inliers: np.ndarray, level: bool = False
     spans = []
     center_uv = middle.copy()
     for side in sides:
-        low, high = np.percentile((uv - middle) @ side, [1, 99])
+        low, high = np.percentile((uv - middle) @ side, SPAN_PERCENTILES)
         spans.append(float(high - low))
         center_uv += side * (low + high) / 2
     long_side = sides[0] if spans[0] >= spans[1] else sides[1]
@@ -225,7 +240,7 @@ def describe_surface(model: np.ndarray, inliers: np.ndarray, level: bool = False
     yaw = float(np.degrees(np.arctan2(long_axis[1], long_axis[0])))
     # A side's heading is the same as its opposite's: keep it in (-90, 90].
     yaw = yaw - 180.0 if yaw > 90.0 else yaw + 180.0 if yaw <= -90.0 else yaw
-    # The centre, on the plane: the point along the normal that the plane passes.
+    # Out of the plane's own coordinates: the plane sits -d along its normal.
     center = center_uv @ axes - normal * plane.coefficients[3]
     fitted = None
     if level:
@@ -249,9 +264,9 @@ def describe_surface(model: np.ndarray, inliers: np.ndarray, level: bool = False
 
 
 def find_surfaces(
-    points: np.ndarray,
-    max_tilt_deg: float = 25.0,
-    to_frame: np.ndarray | None = None,
+    points: NDArray[np.float64],
+    max_tilt_deg: float = MAX_TILT_DEG,
+    to_frame: NDArray[np.float64] | None = None,
     level: bool = False,
 ) -> list[Surface]:
     """Every flat surface at least ``MIN_SURFACE_SIDE`` wide among up to four RANSAC
@@ -274,16 +289,14 @@ def find_surfaces(
     points = points[np.sort(first)]
     if level and to_frame is not None:
         points = points @ to_frame[:3, :3].T + to_frame[:3, 3]
-    surfaces = []
     if level:
         max_tilt_deg = min(max_tilt_deg, LEVEL_MAX_TILT_DEG)
+    surfaces = []
     for model, inliers in peel_planes(points, float(np.cos(np.radians(max_tilt_deg)))):
         if to_frame is not None and not level:
             model = np.append(to_frame[:3, :3] @ model[:3], 0.0)
             inliers = inliers @ to_frame[:3, :3].T + to_frame[:3, 3]
         for piece in connected_pieces(model, inliers):
-            if len(piece) < 3:
-                continue
             surface = describe_surface(model, piece, level)
             if surface.size[1] >= MIN_SURFACE_SIDE:
                 surfaces.append(surface)
@@ -293,20 +306,36 @@ def find_surfaces(
     return sorted(surfaces, key=lambda surface: -surface.points)
 
 
-def standing_on(surface: Surface, points: np.ndarray) -> int:
+def in_outline(
+    center: NDArray[np.float64],
+    normal: NDArray[np.float64],
+    yaw_deg: float,
+    size: tuple[float, float],
+    points: NDArray[np.float64],
+) -> NDArray[np.bool_]:
+    """Which points lie over or under a surface's outline: within half its length along
+    its long side, at ``yaw_deg``, and half its width across it."""
+    along = np.array([np.cos(np.radians(yaw_deg)), np.sin(np.radians(yaw_deg)), 0.0])
+    along -= normal * (along @ normal)
+    along /= max(float(np.linalg.norm(along)), 1e-9)
+    offsets = np.atleast_2d(points) - center
+    length, width = size
+    inside: NDArray[np.bool_] = (np.abs(offsets @ along) <= length / 2) & (
+        np.abs(offsets @ np.cross(normal, along)) <= width / 2
+    )
+    return inside
+
+
+def standing_on(surface: Surface, points: NDArray[np.float64]) -> int:
     """How many of ``points`` stand on a surface: inside its outline, between
     ``STANDING_LOW`` and ``STANDING_HIGH`` over it."""
-    normal = np.asarray(surface.normal, dtype=np.float64)
-    axes = _plane_axes(normal)
     above = (surface.fitted or surface.plane).height_above(points)
     near = (above > STANDING_LOW) & (above < STANDING_HIGH)
-    if not near.any():
-        return 0
-    uv = (points[near] - np.asarray(surface.center)) @ axes.T
-    yaw = np.radians(surface.yaw_deg)
-    long_uv = axes @ np.array([np.cos(yaw), np.sin(yaw), 0.0])
-    long_uv /= max(float(np.linalg.norm(long_uv)), 1e-9)
-    along = uv @ long_uv
-    across = uv @ np.array([-long_uv[1], long_uv[0]])
-    length, width = surface.size
-    return int(np.count_nonzero((np.abs(along) <= length / 2) & (np.abs(across) <= width / 2)))
+    inside = in_outline(
+        np.asarray(surface.center),
+        np.asarray(surface.normal),
+        surface.yaw_deg,
+        surface.size,
+        points[near],
+    )
+    return int(np.count_nonzero(inside))

@@ -26,11 +26,14 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.localize.module import PerceptionLocalize, PerceptionLocalizeConfig
 from dimos.perception.localize.rig import TF_TOLERANCE
-from dimos.perception.localize.support_plane import find_surfaces, window_points
+from dimos.perception.localize.support_plane import MAX_TILT_DEG, find_surfaces, window_points
 from dimos.perception.localize.types import Localization
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# find_surface reports a surface tilted less than this as level.
+LEVEL_BELOW_DEG = 0.5
 
 
 class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
@@ -136,8 +139,7 @@ class ManipulationLocalize(PerceptionLocalize):
         """
         if not self._ready.is_set() or self.config.geometry != "depth":
             return None
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
+        lo, _ = self._window_start(start)
         views = []
         for obs in self.index.time_range(lo, lo + duration):
             for frame in self.rig.cameras:
@@ -158,7 +160,7 @@ class ManipulationLocalize(PerceptionLocalize):
         start: float = -10.0,
         duration: float = 10.0,
         frame: str = "",
-        max_tilt_deg: float = 25.0,
+        max_tilt_deg: float = MAX_TILT_DEG,
     ) -> list[dict[str, Any]]:
         """The flat surfaces seen in a window of memory, biggest first, as in ``find_surface``.
 
@@ -170,8 +172,7 @@ class ManipulationLocalize(PerceptionLocalize):
         """
         if not self._ready.is_set():
             return []
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
+        lo, head = self._window_start(start)
         keyframes = list(self.index.time_range(lo, lo + duration))
         views = (
             window_points(self.rig, keyframes, camera, self.config.surface_frames)
@@ -184,7 +185,9 @@ class ManipulationLocalize(PerceptionLocalize):
         if frame and frame != self.rig.world_frame:
             transform = self.rig.tf.get(frame, self.rig.world_frame, head, TF_TOLERANCE)
             if transform is None:
-                logger.warning(f"find_surface: no transform from {self.rig.world_frame} to {frame}")
+                logger.warning(
+                    "find_surface: no transform", parent=frame, child=self.rig.world_frame
+                )
                 return []
             to_frame = transform.to_matrix()
         return [
@@ -203,7 +206,7 @@ class ManipulationLocalize(PerceptionLocalize):
         start: float = -10.0,
         duration: float = 10.0,
         frame: str = "",
-        max_tilt_deg: float = 25.0,
+        max_tilt_deg: float = MAX_TILT_DEG,
     ) -> str:
         """Find flat surfaces, such as the table top or the floor, in a window of memory.
 
@@ -218,8 +221,8 @@ class ManipulationLocalize(PerceptionLocalize):
         world frame. By default (``surface_parallel_to_frame``) every surface is
         taken as parallel to that frame's xy plane and reported at the height of
         its centre, tilt 0; this assumes the table is square to the frame within
-        about half a degree. With it off, the tilt is fitted, level to the world
-        frame. Either way ``max_tilt_deg`` drops surfaces tilted more than that.
+        about half a degree, and nothing over 5 deg counts. With it off, the tilt
+        is fitted, level to the world frame, up to ``max_tilt_deg``.
         """
         if not self._ready.is_set():
             return (
@@ -236,7 +239,7 @@ class ManipulationLocalize(PerceptionLocalize):
             tilt = surface["tilt_deg"]
             slope = (
                 f"tilted {tilt:.1f} deg, down towards {round(surface['downhill_deg'])} deg"
-                if tilt >= 0.5
+                if tilt >= LEVEL_BELOW_DEG
                 else "level"
             )
             lines.append(
@@ -247,6 +250,11 @@ class ManipulationLocalize(PerceptionLocalize):
                 f"{surface['points_above']} points standing on it"
             )
         return "\n".join(lines)
+
+    def _window_start(self, start: float) -> tuple[float, float]:
+        """Where a window named by ``start``, as in ``localize``, begins, and the newest frame."""
+        first, head = self.index.get_time_range()
+        return max(first, head + start if start < 0 else first + start), head
 
     def _localize(
         self,
