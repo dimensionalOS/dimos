@@ -42,6 +42,8 @@ TRACE_NAME = "trace.jsonl"
 # Gripper opening as a fraction of travel, the unit of gripper.set and gripper.range.
 GRIPPER_CLOSED = 0.0
 GRIPPER_OPEN = 1.0
+# How long a gripper call waits for the jaw to stop moving, seconds.
+GRIPPER_TIMEOUT_S = 15.0
 
 API_REFERENCE = f"""\
 Program API, version {API_VERSION}. A program is a Python file defining run(robot, task);
@@ -59,6 +61,9 @@ catch it to try another way.
   robot.gripper.open() / .close()         fully open or closed
   robot.gripper.set(x), .range()          the opening as a fraction of travel; range() gives
                                           (closed, open) = ({GRIPPER_CLOSED}, {GRIPPER_OPEN})
+                                          open, close and set return once the jaw has stopped:
+                                          at the target, or short of it on an object; TIMEOUT
+                                          if it still moves after {GRIPPER_TIMEOUT_S:g} s
   robot.scene.objects(words)              detected objects matching words, e.g. ["cube", "bowl"]:
                                           SceneObject(id, name, position, size), the box centre
                                           and extents
@@ -136,7 +141,7 @@ class Observer(Protocol):
 class RobotBackend(Protocol):
     """What a backend does for ``Robot``: reads, blocking moves that raise
     ``RobotCallError``, gripper commands as a fraction of travel (0 closed,
-    1 open), object detection and camera frames."""
+    1 open) that return once the jaw has stopped, object detection and camera frames."""
 
     def joints(self) -> list[float]: ...
 
@@ -324,15 +329,17 @@ class GripperApi:
         self._robot = robot
 
     def open(self) -> None:
-        """Open the gripper fully."""
+        """Open the gripper fully; returns once the jaw has stopped."""
         self._robot._traced("gripper.open", {}, self._robot._backend.open_gripper, motion=True)
 
     def close(self) -> None:
-        """Close the gripper fully, or onto whatever is between the fingers."""
+        """Close the gripper fully, or onto whatever is between the fingers; returns once
+        the jaw has stopped."""
         self._robot._traced("gripper.close", {}, self._robot._backend.close_gripper, motion=True)
 
     def set(self, value: float) -> None:
-        """Open the gripper to ``value``, a fraction of travel from 0.0 (closed) to 1.0 (open)."""
+        """Open the gripper to ``value``, a fraction of travel from 0.0 (closed) to 1.0 (open);
+        returns once the jaw has stopped."""
         self._robot._traced(
             "gripper.set",
             {"value": value},

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from dimos.manipulation.grasp_verification import GraspVerificationConfig, await_gripper_settle
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
     ExecutionResult,
@@ -40,6 +41,13 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
     from dimos.porcelain.dimos import Dimos
+
+# How long a gripper call waits for the jaw to stop, seconds.
+GRIPPER_TIMEOUT_S = 15.0
+# Time between jaw readings, seconds; the jaw is still when a reading moves under 0.005 of travel.
+GRIPPER_POLL_S = 0.1
+# A jaw that has not moved this long after a command is already where it stops, seconds.
+GRIPPER_BLOCKED_AFTER_S = 0.5
 
 
 class MotionError(RuntimeError):
@@ -228,8 +236,15 @@ class Arm:
             raise MotionError("cancel", result)
         return result
 
-    def set_gripper_position(self, position: float) -> CommandResult:
-        """Set normalized gripper travel: 0 closed, 1 open."""
+    def set_gripper_position(
+        self, position: float, *, timeout: float = GRIPPER_TIMEOUT_S
+    ) -> CommandResult:
+        """Move the gripper to ``position`` (0 closed, 1 open) and return once the jaw stopped.
+
+        The jaw has stopped when its measured opening reaches ``position`` or holds
+        still short of it, as when it closes on an object. Raises ``MotionError``
+        with a ``TIMED_OUT`` result if it is still moving after ``timeout`` seconds.
+        """
         if not math.isfinite(position) or not 0.0 <= position <= 1.0:
             raise ValueError("Gripper position must be finite and between 0 and 1")
         if not self.info.has_gripper:
@@ -237,15 +252,29 @@ class Arm:
         result = self.rpc.set_gripper_position(position, planning_group=self.info.id)
         if not result.succeeded:
             raise MotionError("set_gripper_position", result)
+        settle = await_gripper_settle(
+            lambda: self.state().gripper_position,
+            position,
+            GraspVerificationConfig(timeout=timeout, poll_interval=GRIPPER_POLL_S),
+            blocked_after=GRIPPER_BLOCKED_AFTER_S,
+        )
+        if not settle.settled:
+            raise MotionError(
+                "set_gripper_position",
+                ExecutionResult(
+                    ExecutionStatus.TIMED_OUT,
+                    f"jaw still moving after {timeout} s, last opening {settle.position}",
+                ),
+            )
         return result
 
-    def open_gripper(self) -> CommandResult:
-        """Open the gripper."""
-        return self.set_gripper_position(1.0)
+    def open_gripper(self, *, timeout: float = GRIPPER_TIMEOUT_S) -> CommandResult:
+        """Open the gripper fully; see ``set_gripper_position``."""
+        return self.set_gripper_position(1.0, timeout=timeout)
 
-    def close_gripper(self) -> CommandResult:
-        """Close the gripper."""
-        return self.set_gripper_position(0.0)
+    def close_gripper(self, *, timeout: float = GRIPPER_TIMEOUT_S) -> CommandResult:
+        """Close the gripper, onto an object if one is in the jaw; see ``set_gripper_position``."""
+        return self.set_gripper_position(0.0, timeout=timeout)
 
     def home(
         self, *, speed_scale: float | None = None, timeout: float | None = None
