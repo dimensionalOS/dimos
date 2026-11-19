@@ -12,23 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol
+from typing import Any, Protocol
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.spec.utils import Spec
+
+# How far back a scan looks in the camera's memory, seconds: only frames after the last reset.
+SCAN_WINDOW_S = 3.0
 
 
 class ObjectSceneSpec(Spec, Protocol):
-    """The scene a program reads: named objects with world-frame boxes."""
+    """The scene a program reads: the objects found by name.
 
-    def set_prompts(self, text: list[str] | None = None) -> None: ...
-    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray: ...
-    def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None: ...
-    def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None: ...
-    def get_full_scene_pointcloud(
-        self,
-        exclude_object_id: str | None = None,
-        depth_trunc: float = 2.0,
-        voxel_size: float = 0.01,
-    ) -> PointCloud2 | None: ...
+    ``scan`` returns one entry per object seen in the last ``window_s`` seconds,
+    each with ``id``, ``label``, and ``position`` (box centre) and ``size`` in
+    world metres.
+    """
+
+    def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]: ...

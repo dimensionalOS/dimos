@@ -14,9 +14,8 @@
 
 from pathlib import Path
 import time
+from typing import Any
 
-from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import BoundingBox3D
 import pytest
 from scipy.spatial.transform import Rotation
 
@@ -30,9 +29,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 
 LIFT = """
 import math
@@ -155,19 +151,13 @@ class Bench:
     ) -> None:
         self.tip = PoseStamped(position=list(position), orientation=Quaternion(*orientation))
 
-    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
-        detections = []
-        for name, x in (("cube", 0.2), ("bowl", 0.36)):
-            detection = Detection3D()
-            detection.id = name
-            detection.bbox = BoundingBox3D(
-                center=Pose(position=Vector3(x, 0.0, 0.02), orientation=Quaternion()),
-                size=Vector3(0.04, 0.04, 0.04),
-            )
-            detections.append(detection)
-        return Detection3DArray(
-            detections_length=len(detections), header=Header(1.0, "world"), detections=detections
-        )
+    def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
+        found = [("cube", 0.2), ("bowl", 0.36)]
+        return [
+            {"id": name, "label": name, "position": [x, 0.0, 0.02], "size": [0.04] * 3}
+            for name, x in found
+            if name in names
+        ]
 
     def set_box(self, name: str, pose: object, size: object, frame_id: str | None = None) -> bool:
         self.boxes.add(name)
@@ -184,6 +174,7 @@ class Bench:
 def test_cleared_objects_stay_out_of_the_map_together_until_restore() -> None:
     bench = Bench()
     live = DimosBackend(bench, bench, bench, bench, bench.maps)
+    live.objects(["cube", "bowl"])
     live.clear_object("cube", 0.03)
     live.clear_object("bowl", 0.03)
     assert bench.boxes == {program_box("cube"), program_box("bowl")}
@@ -198,6 +189,7 @@ def test_clearing_an_object_times_out_when_no_newer_map_arrives(
     bench = Bench()
     bench.mapping = False
     live = DimosBackend(bench, bench, bench, bench, bench.maps)
+    live.objects(["cube"])
     with pytest.raises(RobotCallError) as raised:
         live.clear_object("cube", 0.03)
     assert raised.value.status == "TIMEOUT"

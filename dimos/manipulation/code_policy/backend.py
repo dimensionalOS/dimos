@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Run a program's robot calls on a running DimOS stack: the ``Arm`` SDK for
-motion and the gripper, the object-registration module for the scene, the
+motion and the gripper, the camera's object localizer for the scene, the
 map's box filter for clearing objects, and the camera stream for keyframes.
 ``backend`` is the factory a runner names as ``LIVE_BACKEND``."""
 
@@ -38,7 +38,7 @@ from dimos.manipulation.code_policy.api import (
     RobotCallError,
     SceneObject,
 )
-from dimos.manipulation.code_policy.scene_spec import ObjectSceneSpec
+from dimos.manipulation.code_policy.scene_spec import SCAN_WINDOW_S, ObjectSceneSpec
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
     ExecutionResult,
@@ -129,7 +129,7 @@ class StreamObserver:
 
 class DimosBackend:
     """``RobotBackend`` over a running DimOS stack: the ``Arm`` SDK for motion
-    and the gripper, the object-registration module for the scene, the map's
+    and the gripper, the camera's object localizer for the scene, the map's
     box filter for clearing objects, and an ``Observer`` for camera frames.
     ``maps`` must be fed from the box filter's output: ``clear_object`` and
     ``restore`` return once a map captured after the change has arrived.
@@ -156,6 +156,8 @@ class DimosBackend:
         self._box_filter = box_filter
         self._observer = observer
         self._maps = maps
+        # The objects scene.objects returned, by id, so clear_object can box them.
+        self._seen: dict[str, SceneObject] = {}
         # The boxes this program set, so restore() clears them all.
         self._boxes: set[str] = set()
 
@@ -200,61 +202,35 @@ class DimosBackend:
         self._motion(lambda: self._arm.set_gripper_position(travel, timeout=GRIPPER_TIMEOUT_S))
 
     def objects(self, words: Sequence[str]) -> list[SceneObject]:
-        detections = self._scene.scan_scene(text=list(words))
-        if detections.header.frame_id != "world":
-            raise RuntimeError(
-                f"Objects are in frame {detections.header.frame_id!r}; the arm plans in "
-                "'world', so the scene module must run with target_frame=\"world\""
-            )
-        return [
+        found = [
             SceneObject(
-                id=str(detection.id),
-                name=str(detection.results[0].hypothesis.class_id),
+                id=str(entry["id"]),
+                name=str(entry["label"]),
                 position=(
-                    float(detection.bbox.center.position.x),
-                    float(detection.bbox.center.position.y),
-                    float(detection.bbox.center.position.z),
+                    float(entry["position"][0]),
+                    float(entry["position"][1]),
+                    float(entry["position"][2]),
                 ),
-                size=(
-                    float(detection.bbox.size.x),
-                    float(detection.bbox.size.y),
-                    float(detection.bbox.size.z),
-                ),
+                size=(float(entry["size"][0]), float(entry["size"][1]), float(entry["size"][2])),
             )
-            for detection in detections.detections
-            if detection.id and detection.results
+            for entry in self._scene.scan(list(words), SCAN_WINDOW_S)
         ]
+        self._seen.update({obj.id: obj for obj in found})
+        return found
 
     def clear_object(self, object_id: str, margin: float) -> None:
-        detections = self._scene.scan_scene()
-        for detection in detections.detections:
-            if str(detection.id) == object_id:
-                box = detection.bbox
-                name = program_box(object_id)
-                self._box_filter.set_box(
-                    name,
-                    PoseMsg(
-                        position=Vector3(
-                            box.center.position.x, box.center.position.y, box.center.position.z
-                        ),
-                        orientation=Quaternion(
-                            box.center.orientation.x,
-                            box.center.orientation.y,
-                            box.center.orientation.z,
-                            box.center.orientation.w,
-                        ),
-                    ),
-                    Vector3(
-                        box.size.x + 2.0 * margin,
-                        box.size.y + 2.0 * margin,
-                        box.size.z + 2.0 * margin,
-                    ),
-                    detections.header.frame_id,
-                )
-                self._boxes.add(name)
-                self._wait_for_map(f"a map without {object_id!r}")
-                return
-        raise ValueError(f"no object with id {object_id!r} in the scene")
+        obj = self._seen.get(object_id)
+        if obj is None:
+            raise ValueError(f"no object with id {object_id!r} in any scene.objects answer")
+        name = program_box(object_id)
+        self._box_filter.set_box(
+            name,
+            PoseMsg(position=Vector3(*obj.position), orientation=Quaternion()),
+            Vector3(*(extent + 2.0 * margin for extent in obj.size)),
+            "world",
+        )
+        self._boxes.add(name)
+        self._wait_for_map(f"a map without {object_id!r}")
 
     def restore(self) -> None:
         if not self._boxes:
@@ -298,8 +274,8 @@ def _status_of(result: PlanResult | ExecutionResult | MoveResult | CommandResult
 def backend(run_dir: Path) -> RobotBackend:
     """Attach to the stack on this machine's bus and return its ``DimosBackend``:
     the one arm, the scene module, the map's box filter and the camera's
-    ``color_image`` stream for keyframes. The scene module must run with
-    ``target_frame="world"``. The connection closes when the process exits."""
+    ``color_image`` stream for keyframes. The scene module must report
+    world-frame positions. The connection closes when the process exits."""
     app = Dimos.connect()
     atexit.register(app.stop)
     cameras = [

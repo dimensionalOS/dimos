@@ -22,10 +22,9 @@ import json
 from pathlib import Path
 import threading
 import time
+from typing import Any
 from unittest.mock import call
 
-from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 import numpy as np
 import pytest
 import pytest_mock
@@ -62,11 +61,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.robot.manipulators.damiao._damiao_test_helpers import LocalTransport
 from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 from dimos.utils.testing.waiting import wait_until
@@ -192,19 +188,8 @@ class FakeBoxFilter:
 
 
 class FakeScene:
-    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
-        detection = Detection3D()
-        detection.header = Header(1.0, "world")
-        detection.id = "cube"
-        detection.results = [ObjectHypothesisWithPose(hypothesis=ObjectHypothesis("cube", 1.0))]
-        detection.results_length = 1
-        detection.bbox = BoundingBox3D(
-            center=Pose(position=Vector3(0.2, 0.1, 0.02), orientation=Quaternion()),
-            size=Vector3(0.04, 0.04, 0.04),
-        )
-        return Detection3DArray(
-            detections_length=1, header=Header(1.0, "world"), detections=[detection]
-        )
+    def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
+        return [{"id": "0", "label": "cube", "position": [0.2, 0.1, 0.02], "size": [0.04] * 3}]
 
 
 @dataclass

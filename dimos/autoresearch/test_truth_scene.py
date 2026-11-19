@@ -26,7 +26,7 @@ def _transform(name: str, x: float, y: float, z: float) -> Transform:
     return Transform(Vector3(x, y, z), Quaternion(), "world", name, ts=5.0)
 
 
-def test_scan_scene_answers_world_boxes_for_the_named_bodies() -> None:
+def test_scan_answers_world_boxes_for_the_named_bodies() -> None:
     module = TruthSceneModule(
         objects={
             "cube": TruthObject(size=(0.04, 0.04, 0.04)),
@@ -37,7 +37,7 @@ def test_scan_scene_answers_world_boxes_for_the_named_bodies() -> None:
     module.body_poses.transport = poses
     module.start()
     try:
-        assert module.scan_scene(["cube"]).detections_length == 0
+        assert module.scan(["cube"]) == []
 
         poses.publish(
             TFMessage(
@@ -46,18 +46,11 @@ def test_scan_scene_answers_world_boxes_for_the_named_bodies() -> None:
                 _transform("cylinder", 0.26, -0.11, 0.04),
             )
         )
-        found = module.scan_scene(["red cube", "the bowl", "spoon"])
+        cube, bowl = module.scan(["red cube", "the bowl", "spoon"])
 
-        assert found.header.frame_id == "world" and found.ts == 5.0
-        assert [d.id for d in found.detections] == ["cube", "bowl"]
-        assert [d.results[0].hypothesis.class_id for d in found.detections] == ["cube", "bowl"]
-        cube, bowl = found.detections
-        assert (cube.bbox.center.position.x, cube.bbox.center.position.z) == (0.26, 0.02)
-        assert (cube.bbox.size.x, cube.bbox.size.y, cube.bbox.size.z) == (0.04, 0.04, 0.04)
-        assert bowl.bbox.center.position.z == pytest.approx(0.02)
-        assert bowl.bbox.size.z == 0.04
-        # Without words every body with a box answers; the cylinder has none.
-        assert [d.id for d in module.scan_scene(None).detections] == ["cube", "bowl"]
-        assert module.get_object_pointcloud_by_name("cube") is None
+        assert (cube["id"], cube["label"], bowl["label"]) == ("cube", "cube", "bowl")
+        assert cube["position"] == pytest.approx([0.26, 0.11, 0.02])
+        assert cube["size"] == pytest.approx([0.04, 0.04, 0.04])
+        assert bowl["position"] == pytest.approx([0.36, 0.0, 0.02])
     finally:
         module.stop()
