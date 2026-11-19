@@ -382,6 +382,10 @@ class ModuleBase(Configurable, CompositeResource):
         return descriptors
 
     @rpc
+    def get_config(self) -> dict[str, Any]:
+        return self.config.model_dump(mode="json", fallback=repr)
+
+    @rpc
     def get_rpc_signatures(self) -> list[RpcInfo]:
         """Describe every RPC's parameters and return annotation."""
         return [extract_rpc_info(fn) for fn in self.rpcs.values()]
