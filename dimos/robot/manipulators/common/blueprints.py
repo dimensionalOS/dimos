@@ -28,6 +28,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
+from dimos.mapping.pointclouds.riding_box_filter import RidingBox, RidingBoxFilter
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.topics import (
@@ -197,11 +198,13 @@ def manipulation_mapping(
     world_frame: str = "world",
     workspace_radius_m: float | None = None,
     workspace_frame: str | None = None,
+    riding_boxes: list[RidingBox] | None = None,
 ) -> Blueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
-    Three modules in a row: a self filter drops the robot's own returns, a
-    voxel mapper collects the rest, and a box filter lets pick-and-place leave
+    Four modules in a row: a self filter drops the robot's own returns, a riding
+    box filter drops what rides on it (the gripper, a held object), a voxel
+    mapper collects the rest, and a box filter lets pick-and-place leave
     the object it is picking, and add_table the table, out of the map, and drops
     what lies outside the workspace. The box filter's output is named
     ``voxel_map``, so ManipulationModule's input of that name connects by
@@ -219,6 +222,9 @@ def manipulation_mapping(
             None keeps them all.
         workspace_frame: The workspace's centre, e.g. the arm's base link; None
             for the origin of ``world_frame``.
+        riding_boxes: Boxes on moving frames left out of the camera's cloud
+            before it is mapped, such as the gripper on its tool frame, which
+            the self filter does not cover. hold_object adds the held object.
     """
     return autoconnect(
         UrdfManagerPointClearing.blueprint(
@@ -240,11 +246,17 @@ def manipulation_mapping(
             max_range=2.0,
         ),
         PointCloudBoxFilter.blueprint(
-            keep_within_m=workspace_radius_m, keep_within_frame=workspace_frame
+            keep_within_m=workspace_radius_m,
+            keep_within_frame=workspace_frame,
         ),
+        # Between the self filter and the mapper: what rides on the arm, at its
+        # pose when each cloud was captured.
+        RidingBoxFilter.blueprint(boxes=list(riding_boxes or ())),
     ).remappings(
         [
-            (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),
+            (RidingBoxFilter, "cloud", "filtered_pointcloud"),
+            (RidingBoxFilter, "filtered_cloud", "unridden_pointcloud"),
+            (RayTracingVoxelMap, "lidar", "unridden_pointcloud"),
             (PointCloudBoxFilter, "cloud", "global_map"),
             (PointCloudBoxFilter, "filtered_cloud", "voxel_map"),
         ]

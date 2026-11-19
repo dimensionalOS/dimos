@@ -27,6 +27,7 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
+from dimos.mapping.pointclouds.riding_box_filter import RidingBoxFilter
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
@@ -49,10 +50,11 @@ def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> 
     topics = _topics(blueprint)
     planner_map = topics[ManipulationModule, "voxel_map"]
 
+    # The self filter, then what rides on the arm, then the mapper.
     assert (
-        topics[UrdfManagerPointClearing, "filtered_pointcloud"]
-        == topics[RayTracingVoxelMap, "lidar"]
+        topics[UrdfManagerPointClearing, "filtered_pointcloud"] == topics[RidingBoxFilter, "cloud"]
     )
+    assert topics[RidingBoxFilter, "filtered_cloud"] == topics[RayTracingVoxelMap, "lidar"]
     assert topics[RayTracingVoxelMap, "global_map"] == topics[PointCloudBoxFilter, "cloud"]
     assert topics[PointCloudBoxFilter, "filtered_cloud"] == planner_map
     # Nothing else feeds the planner's map.
