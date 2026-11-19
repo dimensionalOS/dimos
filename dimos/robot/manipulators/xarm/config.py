@@ -120,6 +120,7 @@ _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
 XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
 XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_device.urdf.xacro"
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
+_XARM7_GRIPPER_SRDF = Path(__file__).with_name("xarm7_gripper.srdf")
 
 XArmType = Literal["xarm5", "xarm6", "xarm7", "lite6", "uf850"]
 XArmGripperType = Literal["xarm"]
@@ -432,6 +433,7 @@ def make_xarm_model_config(
             arm, "xarm" if add_gripper else None, robot=robot, prefix=prefix
         ).with_default_joint_acceleration_limit(2.0),
         base_pose=base_pose if base_pose is not None else PoseStamped(),
+        srdf_path=_XARM7_GRIPPER_SRDF if arm == "xarm7" and xarm_gripper and not prefix else None,
         joint_names=model_joint_names,
         base_link=f"{prefix}link_base",
         planning_groups=[

@@ -14,6 +14,7 @@
 
 import platform
 import sys
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -23,12 +24,18 @@ if sys.platform == "linux" and platform.machine() == "aarch64":
         "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
     )
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
+from dimos.manipulation.planning.world.collision_exclusions import srdf_collision_exclusions
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
+from dimos.robot.manipulators.xarm.blueprints.grasp import (
+    _grasp_modules,
+    xarm_grasp,
+    xarm_grasp_graspgenx,
+)
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.spec.utils import spec_structural_compliance
 
@@ -71,3 +78,24 @@ def test_pick_and_place_finds_the_box_filter(blueprint: Blueprint) -> None:
     ]
 
     assert providers == [PointCloudBoxFilter]
+
+
+@pytest.mark.parametrize("simulated", [False, True])
+def test_xarm7_grasp_model_excludes_only_the_fixed_mount_in_srdf(simulated: bool) -> None:
+    manipulation, *_ = _grasp_modules("xarm7", simulated)
+    (atom,) = autoconnect(manipulation).solidify().active_blueprints
+    model = prepare_robot_model(atom.kwargs["model"])
+    assert model.config.srdf_path is not None
+    assert srdf_collision_exclusions(ET.parse(model.config.srdf_path).getroot()) == [
+        ("link7", "xarm_gripper_base_link")
+    ]
+    urdf = ET.fromstring(model.description.xml)
+    for name, parent, child in (
+        ("joint_eef", "link7", "link_eef"),
+        ("gripper_fix", "link_eef", "xarm_gripper_base_link"),
+    ):
+        joint = urdf.find(f"joint[@name='{name}'][@type='fixed']")
+        assert joint is not None
+        assert joint.find(f"parent[@link='{parent}']") is not None
+        assert joint.find(f"child[@link='{child}']") is not None
+        assert joint.find("origin[@xyz='0 0 0'][@rpy='0 0 0']") is not None

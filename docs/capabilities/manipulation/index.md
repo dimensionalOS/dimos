@@ -174,13 +174,12 @@ with the grasp model's gripper represented at a fixed open configuration. It
 fits spheres once per loaded model from URDF collision geometry, using the
 same adjacency, configured and SRDF exclusions as RoboPlan. Per-link sphere
 presence is checked, not continuous mesh enclosure or coverage across gripper
-travel. Cartesian waypoint/linear commands and the full grasp sequence that
-uses them are not supported; use joint goals or Pink point-to-point pose goals
-when the fitted model admits a valid start state. **Known draft blocker:** the
-simulated xArm7 grasp model's initial sphere fit overlaps the `link7` and
-`xarm_gripper_base_link` geometry by about 2 cm at home. The native self-collision
-check rejects that start. Do not enable this draft for a grasp evaluation until
-that fit is qualified; no collision pair was disabled to force a passing plan.
+travel. The xArm7 model with the stock gripper and unprefixed link names supplies
+one SRDF exclusion for `link7` and `xarm_gripper_base_link`. The pinned URDF joins
+these mounting surfaces through two fixed, zero-transform joints via `link_eef`.
+Both links retain their collision geometry and other collision checks.
+Cartesian waypoint/linear commands and the full grasp sequence that uses them
+are not supported; use joint goals or Pink point-to-point pose goals offline.
 
 V2 `plan_cspace` keeps the scene collision term active in trajectory
 optimization but removes it from the separate TrajOpt feasibility rollout.
