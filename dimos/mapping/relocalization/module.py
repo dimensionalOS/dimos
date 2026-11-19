@@ -35,7 +35,11 @@ from reactivex import Observable, Subject, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.mapping.relocalization.relocalize import MID360, LidarRelocalizer, RelocalizeConfig
+from dimos.mapping.relocalization.lidar_relocalizer import (
+    MID360,
+    LidarRelocalizer,
+    RelocalizeConfig,
+)
 from dimos.mapping.relocalization.utils import (
     DEFAULT_MAP_FRAME,
     LiveMap,
@@ -89,7 +93,7 @@ class Config(ModuleConfig):
     reloc_interval: float = 2.0
     # Skip clouds sparser than this (smaller local maps are too small a patch; a mid360 sweep is ~3k points)
     min_local_points: int = 20_000
-    # Rig preset to align with, see relocalize.PRESETS
+    # Rig preset to align with, see lidar_relocalizer.PRESETS
     relocalize: RelocalizeConfig = MID360
     # local_map with relocalize_once off: fold local_map into the kept live map at most this often (s)
     accumulate_interval: float = 1.0

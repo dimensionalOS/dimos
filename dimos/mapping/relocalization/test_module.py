@@ -22,8 +22,8 @@ from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
 from dimos.mapping.relocalization import module as relocalization
+from dimos.mapping.relocalization.lidar_relocalizer import MID360, LidarRelocalizer
 from dimos.mapping.relocalization.module import PremapModule
-from dimos.mapping.relocalization.relocalize import MID360, LidarRelocalizer
 from dimos.mapping.relocalization.utils import LiveMap
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -161,7 +161,7 @@ def test_saved_premap_flags_survive_loading(module, tmp_path):
 
 def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
     """One config surface: the relocalizer holds the knobs and the accept decision."""
-    from dimos.mapping.relocalization import relocalize as lidar
+    from dimos.mapping.relocalization import lidar_relocalizer as lidar
 
     placement = np.eye(4)
     placement[:3, 3] = [3.0, -1.0, 0.0]  # the map is 3 m +x of where the robot thought
@@ -189,7 +189,7 @@ def test_no_config_without_naming_a_rig():
     """The scales are per-rig, so there is no bare RelocalizeConfig() to fall into."""
     import pydantic
 
-    from dimos.mapping.relocalization import relocalize as lidar
+    from dimos.mapping.relocalization import lidar_relocalizer as lidar
 
     assert lidar.DEFAULT_PRESET in lidar.PRESETS
     assert lidar.PRESETS["mid360"] is lidar.MID360
@@ -202,7 +202,7 @@ def test_the_match_runs_on_a_window_of_the_last_scans():
 
     from reactivex import Subject
 
-    from dimos.mapping.relocalization.relocalize import MID360
+    from dimos.mapping.relocalization.lidar_relocalizer import MID360
     from dimos.mapping.relocalization.utils import window
 
     cfg = MID360.model_copy(update={"min_frames": 2, "max_frames": 3})

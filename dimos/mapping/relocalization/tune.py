@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import numpy as np
 import typer
 
-from dimos.mapping.relocalization.relocalize import (
+from dimos.mapping.relocalization.lidar_relocalizer import (
     DEFAULT_PRESET,
     PRESETS,
     LidarRelocalizer,

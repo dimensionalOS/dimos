@@ -28,7 +28,7 @@ import numpy as np
 import reactivex as rx
 from reactivex import Observable, operators as ops
 
-from dimos.mapping.relocalization.relocalize import RelocalizeConfig
+from dimos.mapping.relocalization.lidar_relocalizer import RelocalizeConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import FLAG_NAMES, PointCloud2

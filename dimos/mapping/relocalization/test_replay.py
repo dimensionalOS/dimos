@@ -26,7 +26,7 @@ pytest.importorskip("dimos_voxel_ray_tracing")
 
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.relocalization import replay as replay_module
-from dimos.mapping.relocalization.relocalize import PRESETS, RelocAttempt
+from dimos.mapping.relocalization.lidar_relocalizer import PRESETS, RelocAttempt
 from dimos.mapping.relocalization.replay import recorded_fix, replay, write_loaded_map
 from dimos.mapping.relocalization.utils import fix_error
 from dimos.memory.store.sqlite import SqliteStore

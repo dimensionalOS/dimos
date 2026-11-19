@@ -23,8 +23,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
+from dimos.mapping.relocalization.lidar_relocalizer import MID360_NAV
 from dimos.mapping.relocalization.module import PremapModule
-from dimos.mapping.relocalization.relocalize import MID360_NAV
 from dimos.robot.diy.alfred.blueprints._nav import _alfred_nav, _alfred_rerun_config
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_lidar_hardware
 from dimos.robot.diy.alfred.config import ALFRED_HARDWARE, LIO_BLIND_M

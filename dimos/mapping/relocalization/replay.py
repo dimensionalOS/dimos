@@ -29,8 +29,8 @@ import typer
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, voxel_map_points
+from dimos.mapping.relocalization.lidar_relocalizer import DEFAULT_PRESET, PRESETS, LidarRelocalizer
 from dimos.mapping.relocalization.module import Config
-from dimos.mapping.relocalization.relocalize import DEFAULT_PRESET, PRESETS, LidarRelocalizer
 from dimos.mapping.relocalization.utils import fix_error, load_premap, yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
