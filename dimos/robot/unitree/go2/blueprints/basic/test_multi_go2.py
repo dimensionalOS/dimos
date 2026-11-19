@@ -86,7 +86,7 @@ def test_configured_ips_create_namespaced_robots(
 ) -> None:
     monkeypatch.setattr(global_config, "robot_ips", " 192.0.2.10, ,192.0.2.11, ")
 
-    blueprint = runpy.run_path(str(Path(__file__).with_name(f"{name}.py")))[name]
+    blueprint = runpy.run_path(str(Path(__file__).with_name(f"{name}.py")))[name].solidify()
 
     assert [atom.name for atom in blueprint.active_blueprints] == module_names
     assert {

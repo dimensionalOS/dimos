@@ -7,17 +7,18 @@ import type { Ui } from "#dimos/agents/frontends/tui/session.ts";
 export type MenuDetail = {
   readonly title: string;
   lines(): readonly string[];
-  close(): Promise<void>;
 };
 
-/** One key a row answers to, besides Enter. */
-export type MenuKey = { readonly key: string; readonly label: string; run(): Promise<void> };
+/** An action offered when a row is selected. */
+export type MenuAction = { readonly label: string; run(): Promise<void> };
 
-/** One row of a /menu tab: its text, its level, its keys, and what Enter does. */
+/** One row of a /menu tab: its text, its level, its actions, and what Enter does. */
 export type MenuRow = {
   readonly text: string;
+  /** Searchable metadata omitted from the display label. */
+  readonly searchText?: string;
   readonly level: Level;
-  readonly keys: readonly MenuKey[];
+  readonly actions: readonly MenuAction[];
   /** Enter: a detail pane, or an action that leaves /menu (null after it ran); none when the row has nothing more. */
   readonly open: (() => MenuDetail | null) | null;
 };

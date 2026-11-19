@@ -48,10 +48,13 @@ class RpcCall:
         remote_name: str,
         unsub_fns: list,  # type: ignore[type-arg]
         stop_client: Callable[[], None] | None = None,
+        *,
+        instance_name: str | None = None,
     ) -> None:
         self._rpc = rpc
         self._name = name
         self._remote_name = remote_name
+        self.instance_name = instance_name or remote_name
         self._unsub_fns = unsub_fns
         self._stop_rpc_client = stop_client
 
@@ -72,7 +75,7 @@ class RpcCall:
 
     @property
     def remote_name(self) -> str:
-        """The exact deployed module-instance name."""
+        """The deployed module's RPC address."""
         return self._remote_name
 
     def set_rpc(self, rpc: RPCSpec) -> None:
@@ -103,6 +106,7 @@ class ModuleProxyProtocol(Protocol):
     """Protocol for host-side handles to remote modules (worker or Docker)."""
 
     remote_name: str
+    instance_name: str
 
     def build(self) -> None: ...
     def start(self) -> None: ...
@@ -124,6 +128,7 @@ class RPCClient:
         *,
         rpc: RPCSpec | None = None,
         stream_lookup: Callable[[str], RemoteOut[Any]] | None = None,
+        instance_name: str | None = None,
     ) -> None:
         if rpc is None:
             self.rpc = rpc_backend()()
@@ -140,6 +145,7 @@ class RPCClient:
             rpcs = actor_class.rpcs if rpcs is None else rpcs
         self.actor_class = actor_class
         self.remote_name = remote_name
+        self.instance_name = instance_name or remote_name
         self.actor_instance = actor_instance
         self.rpcs = frozenset(rpcs)
         self._unsub_fns: list = []  # type: ignore[type-arg]
@@ -178,11 +184,17 @@ class RPCClient:
         # signature. remote_name must be included or proxies sent into workers
         # would fall back to class-name RPC topics. The parent-side Actor stays
         # behind too: receivers only call @rpc methods.
-        return {"remote_name": self.remote_name, "rpcs": sorted(self.rpcs)}
+        return {
+            "remote_name": self.remote_name,
+            "instance_name": self.instance_name,
+            "rpcs": sorted(self.rpcs),
+        }
 
     @classmethod
     def cbor_decode(cls, data: dict[str, Any]) -> RPCClient:
-        return cls(None, None, data["remote_name"], data["rpcs"])
+        return cls(
+            None, None, data["remote_name"], data["rpcs"], instance_name=data.get("instance_name")
+        )
 
     def __dir__(self) -> list[str]:
         """Expose the module's RPCs for interactive discovery."""
@@ -204,6 +216,7 @@ class RPCClient:
             "__getattr__",
             "rpcs",
             "remote_name",
+            "instance_name",
             "remote_instance",
             "actor_instance",
         }:
@@ -218,18 +231,19 @@ class RPCClient:
                 self.remote_name,
                 self._unsub_fns,
                 self.stop_rpc_client,
+                instance_name=self.instance_name,
             )
 
         if self.actor_instance is None:
             raise AttributeError(
-                f"{self.remote_name!r} has no @rpc method named {name!r}; "
+                f"{self.instance_name!r} has no @rpc method named {name!r}; "
                 f"this client was constructed without a parent-side Actor "
                 f"(remote-mode), so non-@rpc attribute access is unavailable."
             )
 
         if inspect.isfunction(getattr(self.actor_class, name, None)):
             raise AttributeError(
-                f"{self.remote_name}.{name} is a method without @rpc, so the worker cannot "
+                f"{self.instance_name}.{name} is a method without @rpc, so the worker cannot "
                 "send it back; decorate it with @rpc to call it from the host"
             )
 
