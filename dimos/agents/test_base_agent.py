@@ -14,13 +14,17 @@
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from types import new_class
 from typing import Any, Generic, TypedDict, TypeVar
 
+from langchain_core.messages import AIMessage, HumanMessage
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+from dimos.agents.agent import Agent
 from dimos.agents.base_agent import BaseAgent
+from dimos.agents.typesafe.types import SystemOneRequest
 from dimos.core.coordination.blueprints import BlueprintAtom
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -30,6 +34,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.protocol.encode import cbor
 
 T = TypeVar("T")
 
@@ -142,6 +147,60 @@ def test_an_agent_without_types_is_refused_when_defined() -> None:
         type("Untyped", (BaseAgent,), {})
 
 
+_ANY_AGENT: Any = BaseAgent
+
+
+class Handle:
+    """A plain class: nothing says how to send it."""
+
+
+@dataclass(frozen=True)
+class HoldsHandle:
+    name: str
+    handle: Handle
+
+
+@pytest.mark.parametrize(
+    "bad, reason",
+    [
+        (Handle, "Handle is a plain class"),
+        (HoldsHandle, "HoldsHandle.handle: .*plain class"),
+        (list[Handle], "plain class"),
+        (dict[str, HoldsHandle | None], "HoldsHandle.handle"),
+    ],
+)
+def test_an_agent_whose_types_cannot_be_sent_is_refused_when_defined(bad: Any, reason: str) -> None:
+    for pair in ((bad, str), (str, bad)):
+        with pytest.raises(TypeError, match=f"cannot be sent over RPC or a transport: .*{reason}"):
+            new_class("Unsendable", (_ANY_AGENT[pair],))
+
+
+def test_a_type_defined_inside_a_function_is_refused() -> None:
+    @dataclass
+    class Local:
+        x: int
+
+    with pytest.raises(TypeError, match="defined inside a function"):
+        new_class("LocalAgent", (_ANY_AGENT[Local, str],))
+
+
+@pytest.mark.parametrize(
+    "agent, value",
+    [
+        (TextAgent, "hello"),
+        (CaptionAgent, ImageQuery("two views", (_image(), _image()))),
+        (RobotAgent, _robot_query()),
+        (DictAgent, {"a": 1.0}),
+        (ReadingAgent, Reading(sensor="lidar", value=0.5)),
+        (Embedder, ("a door", _image())),
+    ],
+)
+def test_an_input_survives_the_wire(agent: type[BaseAgent[Any, Any]], value: Any) -> None:
+    back = cbor.decode(cbor.encode(value))
+    assert type(back) is type(value)
+    assert agent.accepts(back)
+
+
 def test_an_agent_that_leaves_a_type_open_is_refused_when_defined() -> None:
     with pytest.raises(TypeError, match="unbound"):
         type("Open", (OneInput,), {})
@@ -237,3 +296,21 @@ def test_agents_with_different_input_types_cannot_share_the_stream_name(
     coordinator.load_module(TextAgent)
     with pytest.raises(ValueError, match="agent_input"):
         coordinator.load_module(CaptionAgent)
+
+
+def test_the_messages_an_agent_takes_and_returns_survive_the_wire() -> None:
+    human = HumanMessage(
+        content=[{"type": "text", "text": "what is this?"}, *_image().agent_encode()]
+    )
+    answer = AIMessage(content="a door", tool_calls=[{"name": "observe", "args": {}, "id": "c1"}])
+    request = SystemOneRequest(
+        state={"goal": "chair"},
+        questions={"seen": {"type": "noul", "instructions": "Is it visible?"}},
+    )
+
+    for value in (human, answer):
+        back = cbor.decode(cbor.encode(value))
+        assert type(back) is type(value) and back.content == value.content
+    assert cbor.decode(cbor.encode(answer)).tool_calls == answer.tool_calls
+    assert cbor.decode(cbor.encode(request)) == request
+    assert Agent.accepts(cbor.decode(cbor.encode(human)))
