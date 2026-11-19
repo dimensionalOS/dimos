@@ -21,8 +21,8 @@ import math
 import numpy as np
 import pytest
 
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, generate_poses
-from dimos.robot.manipulators.calibration.motion import (
+from dimos.control.calibration.gravity_poses import ArmModel, generate_poses
+from dimos.control.calibration.motion import (
     MAX_SPEED_DEG_S,
     SegmentGuard,
     check_step,
@@ -37,7 +37,7 @@ from dimos.robot.manipulators.calibration.motion import (
     speed_rad_s,
     tracking_error,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.spec import ArmCalibrationSpec
 
 PERIOD_S = 0.02
 

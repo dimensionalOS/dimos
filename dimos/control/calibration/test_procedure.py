@@ -30,18 +30,16 @@ import pinocchio as pin
 from pydantic import ValidationError
 import pytest
 
-from dimos.control.connection.arm_config import ConfigPatch, JointGains, LinkGravity
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.calibration import (
+from dimos.control.calibration import (
     arm_session as arm_session_module,
     procedure as procedure_module,
 )
-from dimos.robot.manipulators.calibration._calibration_test_helpers import (
+from dimos.control.calibration._calibration_test_helpers import (
     PERTURBATION,
     perturbed_model,
     robot_specs_or_skip,
 )
-from dimos.robot.manipulators.calibration._fake_tuning_arm import (
+from dimos.control.calibration._fake_tuning_arm import (
     DEADMAN_S,
     STALE_S,
     FakeTuningArm,
@@ -49,20 +47,20 @@ from dimos.robot.manipulators.calibration._fake_tuning_arm import (
     SimClock,
     drive,
 )
-from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
-from dimos.robot.manipulators.calibration.arm_session import StepFailedError
-from dimos.robot.manipulators.calibration.gravity_poses import (
+from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
+from dimos.control.calibration.arm_session import StepFailedError
+from dimos.control.calibration.gravity_poses import (
     ArmModel,
     body_joint_id,
     generate_poses,
 )
-from dimos.robot.manipulators.calibration.motion import joint_limits, limit_error, limit_margin_rad
-from dimos.robot.manipulators.calibration.procedure import (
+from dimos.control.calibration.motion import joint_limits, limit_error, limit_margin_rad
+from dimos.control.calibration.procedure import (
     Capabilities,
     Procedure,
     ProcedureSettings,
 )
-from dimos.robot.manipulators.calibration.schema import (
+from dimos.control.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
     GravityCalibration,
@@ -72,12 +70,14 @@ from dimos.robot.manipulators.calibration.schema import (
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import (
+from dimos.control.calibration.spec import (
     DEFAULT_TORQUE_SAFETY_FACTOR,
     ArmCalibrationSpec,
     WorkspaceGuard,
 )
-from dimos.robot.manipulators.calibration.steps import calibration_steps
+from dimos.control.calibration.steps import calibration_steps
+from dimos.control.connection.arm_config import ConfigPatch, JointGains, LinkGravity
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.makermods_metal.config import METAL
 
 STEP_IDS = [step.id for step in calibration_steps()]

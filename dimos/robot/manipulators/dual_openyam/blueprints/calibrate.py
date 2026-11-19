@@ -20,10 +20,10 @@ The left arm is calibrated unless ``--calibrationmodule.arm right``; the other a
 is held where it is by the coordinator meanwhile. Poses need the table height and
 the front line (``--calibrationmodule.floor-z-m``, ``--calibrationmodule.min-x-m``);
 the midline between the two bases in the URDF keeps each arm on its own half.
-See ``dimos.robot.manipulators.calibration.blueprints``.
+See ``dimos.control.calibration.blueprints``.
 """
 
-from dimos.robot.manipulators.calibration.blueprints import calibration_blueprint
+from dimos.control.calibration.blueprints import calibration_blueprint
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
 dual_openyam_calibrate = calibration_blueprint(

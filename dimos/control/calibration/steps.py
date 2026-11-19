@@ -79,9 +79,8 @@ import numpy as np
 from numpy.typing import NDArray
 import pinocchio as pin
 
-from dimos.control.connection.arm_config import ArmConfigState, ConfigApplied, ConfigPatch
-from dimos.robot.manipulators.calibration._inertial import LinkInertial, apply_inertial_overrides
-from dimos.robot.manipulators.calibration.arm_session import (
+from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
+from dimos.control.calibration.arm_session import (
     HOME_TOLERANCE_DEG,
     ArmSession,
     JointDriftedError,
@@ -90,12 +89,12 @@ from dimos.robot.manipulators.calibration.arm_session import (
     joint_reading,
     plain_error,
 )
-from dimos.robot.manipulators.calibration.float_analysis import (
+from dimos.control.calibration.float_analysis import (
     DRIFT_LIMIT_MM,
     FingertipModel,
     analyze_window,
 )
-from dimos.robot.manipulators.calibration.gravity_fit import (
+from dimos.control.calibration.gravity_fit import (
     REPORT_DIR_NAME as GRAVITY_REPORT_DIR,
     FitResult,
     Measurement,
@@ -108,8 +107,8 @@ from dimos.robot.manipulators.calibration.gravity_fit import (
     save_refusals,
     write_measurements_csv,
 )
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, Pose, generate_poses
-from dimos.robot.manipulators.calibration.motion import (
+from dimos.control.calibration.gravity_poses import ArmModel, Pose, generate_poses
+from dimos.control.calibration.motion import (
     MIN_JERK_PEAK_RATIO,
     joint_limits,
     limit_error,
@@ -117,7 +116,7 @@ from dimos.robot.manipulators.calibration.motion import (
     plan_path,
     speed_rad_s,
 )
-from dimos.robot.manipulators.calibration.procedure import (
+from dimos.control.calibration.procedure import (
     Capabilities,
     RunState,
     SkipRequestedError,
@@ -126,8 +125,8 @@ from dimos.robot.manipulators.calibration.procedure import (
     StepResult,
     StepUnavailableError,
 )
-from dimos.robot.manipulators.calibration.recording import RecordingUnavailableError
-from dimos.robot.manipulators.calibration.schema import (
+from dimos.control.calibration.recording import RecordingUnavailableError
+from dimos.control.calibration.schema import (
     HISTORY_DIR_NAME,
     ArmCalibration,
     ArmCalibrationError,
@@ -135,17 +134,18 @@ from dimos.robot.manipulators.calibration.schema import (
     load_for_spec,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import (
+from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     NoWorkspaceGuardError,
     urdf_limits,
 )
-from dimos.robot.manipulators.calibration.step_analysis import propose_gains
-from dimos.robot.manipulators.calibration.step_report import (
+from dimos.control.calibration.step_analysis import propose_gains
+from dimos.control.calibration.step_report import (
     REPORT_DIR_NAME as STEP_REPORT_DIR,
     extract_steps,
     write_tables,
 )
+from dimos.control.connection.arm_config import ArmConfigState, ConfigApplied, ConfigPatch
 
 END_LABEL = "end"
 # A reading this far past a joint limit fails the check.

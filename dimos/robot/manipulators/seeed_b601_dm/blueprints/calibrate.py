@@ -19,10 +19,10 @@
 Without a workspace guard of its own the arm needs the table height and the
 line its fingertip stays in front of: ``--calibrationmodule.floor-z-m`` and
 ``--calibrationmodule.min-x-m``, metres from its base.
-See ``dimos.robot.manipulators.calibration.blueprints``.
+See ``dimos.control.calibration.blueprints``.
 """
 
-from dimos.robot.manipulators.calibration.blueprints import calibration_blueprint
+from dimos.control.calibration.blueprints import calibration_blueprint
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
 
 b601_dm_calibrate = calibration_blueprint(B601DMConnection, "b601-dm").remappings([])

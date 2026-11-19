@@ -14,8 +14,8 @@
 
 """One calibration tool's hold on an arm: a config session streamed at a fixed rate.
 
-:class:`ArmSession` opens a config session on an :class:`~dimos.robot.
-manipulators.calibration.hooks.ArmConfigHooks` connection and, while it
+:class:`ArmSession` opens a config session on an :class:`~dimos.control.
+calibration.hooks.ArmConfigHooks` connection and, while it
 lasts, publishes the arm's targets every tick (at least 50 Hz) to an
 :class:`ArmDriver`: the control coordinator's pass-through task, which sends
 each one to the connection on its next tick, unchanged. Before the session
@@ -32,7 +32,7 @@ workspace, or when a joint lags its target by more than
 (``motion.ramp_lag_limits_deg``). A floating joint (a gain of kp 0) is held
 again when it moves faster than ``FLOAT_SPEED_LIMIT_DEG_S`` or drifts more
 than ``FLOAT_DRIFT_LIMIT_DEG``. Ramps are the minimum-jerk ramps of
-:mod:`~dimos.robot.manipulators.calibration.motion`. A session method that
+:mod:`~dimos.control.calibration.motion`. A session method that
 raises first has the driver hold the arm where it is (``ArmDriver.hold``), so
 the coordinator stops sending the last target. Leaving the session, for any
 reason, holds the arm and then ends the config session (``config_reset``):
@@ -64,17 +64,10 @@ from typing import Any, Literal, Protocol, TypeVar, cast
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.control.connection.arm_config import (
-    ArmConfigState,
-    ConfigApplied,
-    ConfigPatch,
-    JointGains,
-)
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.calibration.float_analysis import FloatEvent
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
-from dimos.robot.manipulators.calibration.hooks import ArmConfigHooks
-from dimos.robot.manipulators.calibration.motion import (
+from dimos.control.calibration.float_analysis import FloatEvent
+from dimos.control.calibration.gravity_poses import ArmModel
+from dimos.control.calibration.hooks import ArmConfigHooks
+from dimos.control.calibration.motion import (
     MAX_POSE_ERROR_DEG,
     SegmentGuard,
     check_step,
@@ -86,8 +79,15 @@ from dimos.robot.manipulators.calibration.motion import (
     ramp_lag_limits_deg,
     tracking_error,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
-from dimos.robot.manipulators.calibration.step_analysis import REST_WINDOW_S, StepEvent
+from dimos.control.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.step_analysis import REST_WINDOW_S, StepEvent
+from dimos.control.connection.arm_config import (
+    ArmConfigState,
+    ConfigApplied,
+    ConfigPatch,
+    JointGains,
+)
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

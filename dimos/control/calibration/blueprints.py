@@ -17,7 +17,7 @@
 Each robot package defines its ``<robot>-calibrate`` blueprint with
 :func:`calibration_blueprint`. The connection is open for config sessions,
 which change how the arm is driven; the arm is moved by a
-:class:`~dimos.robot.manipulators.calibration.coordinator.CalibrationCoordinator`
+:class:`~dimos.control.calibration.coordinator.CalibrationCoordinator`
 whose pass-through task sends it the calibration module's targets unchanged,
 and nothing once they stop. Recording is pinned to sqlite with the Python
 engine and to the streams the procedure reads back, the commands the arm was
@@ -30,12 +30,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.robot.manipulators.calibration.coordinator import (
+from dimos.control.calibration.coordinator import (
     CalibrationCoordinator,
     calibration_passthrough_task,
 )
-from dimos.robot.manipulators.calibration.module import CalibrationModule
+from dimos.control.calibration.module import CalibrationModule
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_connection,
