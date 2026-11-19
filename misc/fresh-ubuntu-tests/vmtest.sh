@@ -27,7 +27,7 @@ export VBOX_RELEASE_LOG_DEST=nofile
 # --- constants ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; readonly SCRIPT_DIR
 readonly RELEASE="26.04"
-readonly VM="dimos-vmtest-base"
+readonly VM="dimos-vmtest-base-$RELEASE"  # per release, so a VM built for an older one is never reused
 readonly MEM=16384        # MiB (8 xdist workers peak near 13 GB)
 readonly CPUS=8
 readonly DISK=40960       # MiB (dynamic; only grows as used)

@@ -12,7 +12,7 @@ color = white
 fill = none
 
 # Base images
-U1: box "ubuntu:26.04" rad 5px fit wid 170% ht 170%
+U1: box "ubuntu:22.04" rad 5px fit wid 170% ht 170%
 U2: box "ubuntu:26.04" rad 5px fit wid 170% ht 170% at (U1.x + 2.5in, U1.y)
 
 # Labels
@@ -50,7 +50,7 @@ All images are published to [Docker Hub](https://hub.docker.com/u/dimensional) u
 
 | Image        | Base         | Purpose                                            |
 | ------------ | ------------ | -------------------------------------------------- |
-| `python`     | ubuntu:26.04 | Core dimos with Python dependencies, no ROS        |
+| `python`     | ubuntu:22.04 | Core dimos with Python dependencies, no ROS        |
 | `dev`        | python       | Development environment (editors, git, pre-commit) |
 | `ros`        | ubuntu:26.04 | ROS 2 Lyrical with navigation packages             |
 | `ros-python` | ros          | ROS + dimos Python dependencies                    |
@@ -125,7 +125,7 @@ Tests and type checking run in [`.github/workflows/ci.yml`](/.github/workflows/c
 All Dockerfiles accept a `FROM_IMAGE` build arg for flexibility:
 
 ```dockerfile skip
-ARG FROM_IMAGE=ubuntu:26.04
+ARG FROM_IMAGE=ubuntu:22.04
 FROM ${FROM_IMAGE}
 ```
 
