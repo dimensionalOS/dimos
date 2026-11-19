@@ -832,10 +832,11 @@ def test_bake_writes_the_urdf_with_the_fitted_masses_and_refuses_a_foreign_urdf(
 
 def test_every_forwarded_flag_parses_on_the_real_blueprint_to_the_value_given() -> None:
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.core.coordination.blueprints import autoconnect
     from dimos.robot.get_all_blueprints import load_blueprint
 
     flags = arm_command.calibrate_flags("left", -0.03, 0.12, 6, 10.0, confirm_each=False)
-    parser = BlueprintConfigParser(load_blueprint("dual-openyam-calibrate"))
+    parser = BlueprintConfigParser(autoconnect(load_blueprint("dual-openyam-calibrate")).solidify())
     parsed = parser.parse(
         [
             *flags,
