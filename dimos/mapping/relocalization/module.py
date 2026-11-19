@@ -283,8 +283,8 @@ class PremapModule(Module):
             return
         self._refusals = 0
         logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={len(msg)}")
-        if lost:
-            # The fix jumped, so live voxels already kept sit where the old frame put them.
+        if lost and self._split:
+            # The fix jumped world -> map, so live voxels already kept sit where the old frame put them.
             self.live.mark_stale()
         self.submit(tf, "lidar")
 

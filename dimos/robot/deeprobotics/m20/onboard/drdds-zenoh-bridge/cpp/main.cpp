@@ -67,9 +67,6 @@ constexpr char kZenohListen[] = "tcp/0.0.0.0:7447";
 
 constexpr char kBodyTopic[] = "/SLAM_CLOUD_REGISTERED_BODY";
 constexpr char kOdometryTopic[] = "/SLAM_ODOM";
-// The vendor LIO names its odometry frame "map"; DimOS calls the live odometry frame
-// "world" and keeps "map" for the relocalized frame the premap is placed in.
-constexpr char kWorldFrame[] = "world";
 constexpr char kNavCmdTopic[] = "/NAV_CMD";
 constexpr char kMotionStateTopic[] = "/MOTION_STATE";
 constexpr char kMotionInfoTopic[] = "/MOTION_INFO";
@@ -312,7 +309,6 @@ static void on_odometry(const nav_msgs::msg::Odometry* m, Port* odometry_port,
     }
     nav_msgs::Odometry out;
     out.header = to_lcm_header(m->header());
-    out.header.frame_id = kWorldFrame;
     out.child_frame_id = m->child_frame_id();
 
     const auto& pose = m->pose().pose();
