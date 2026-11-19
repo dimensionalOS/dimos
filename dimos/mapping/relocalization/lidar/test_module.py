@@ -15,14 +15,14 @@
 import numpy as np
 import pytest
 
-from dimos.mapping.relocalization.lidar import module as lidar_module
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
+from dimos.mapping.relocalization import module as lidar_module
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 @pytest.fixture
 def module():
-    module = LocalMapRelocalization(min_local_points=3)
+    module = PremapModule(live_cloud="local_map", min_local_points=3)
     yield module
     module.dispose()
 

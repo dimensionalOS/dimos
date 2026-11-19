@@ -23,8 +23,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.robot.diy.alfred.blueprints._nav import _alfred_nav, _alfred_rerun_config
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_lidar_hardware
 from dimos.robot.diy.alfred.config import ALFRED_HARDWARE, LIO_BLIND_M
@@ -40,6 +40,6 @@ alfred_nav = autoconnect(
     mid360_for_pointlio(lidar_ip=ALFRED_HARDWARE.mid360_ip),
     PointLio.blueprint(blind=LIO_BLIND_M),
     _alfred_nav(map_cloud_topic="lidar", map_max_range=MID360_MAX_RANGE_METERS),
-    LocalMapRelocalization.blueprint(world_frame="odom", relocalize=MID360_NAV),
+    PremapModule.blueprint(world_frame="odom", live_cloud="local_map", relocalize=MID360_NAV),
     vis_module(global_config.viewer, rerun_config=_alfred_rerun_config()),
 ).global_config(n_workers=12, robot_model="alfred")

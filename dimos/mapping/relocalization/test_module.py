@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from types import SimpleNamespace
 from typing import get_type_hints
 
@@ -20,7 +21,6 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
-from dimos.mapping.relocalization.lidar.module import LidarWindowRelocalization
 from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -63,18 +63,38 @@ def test_submit_publishes_and_checks_frames(module):
         m.submit(Transform.from_matrix(np.eye(4), frame_id="map", child_frame_id="world"))
 
 
-def test_relocalize_once_stops_after_the_first_fix(module):
-    """What the flag does, either way."""
+def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
+    """With it on, nothing is attempted after a fix; with it off, the fix is refined from."""
+    from reactivex import Subject
+
+    from dimos.mapping.relocalization import module as relocalization
+
+    attempts = []
+
+    class FakeRelocalizer:
+        def __init__(self, *_):
+            pass
+
+        def attempt(self, cloud, world_frame, map_frame, initial_fix=None):
+            attempts.append(initial_fix)
+            return SimpleNamespace(fix=None)
+
+    monkeypatch.setattr(relocalization, "LidarRelocalizer", FakeRelocalizer)
     tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
-
-    once = module(relocalize_once=True)
-    assert once.keep_relocalizing() and not once.placed
-    once.submit(tf)
-    assert once.placed and not once.keep_relocalizing()
-
-    forever = module(relocalize_once=False)
-    forever.submit(tf)
-    assert forever.placed and forever.keep_relocalizing()
+    cloud = PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32))
+    for once in (True, False):
+        m = module(live_cloud="lidar", relocalize_once=once, min_local_points=0)
+        clouds = Subject()
+        m._clouds = lambda clouds=clouds: clouds
+        m.premap = cloud
+        m._start_matching()
+        m.submit(tf)
+        clouds.on_next(cloud)
+    deadline = time.monotonic() + 5.0
+    while not attempts and time.monotonic() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.1)
+    assert attempts == [tf]
 
 
 @pytest.mark.parametrize("interval", [3600.0, 0.0])
@@ -178,11 +198,10 @@ def test_no_config_without_naming_a_rig():
 
 def test_the_match_runs_on_a_window_of_the_last_scans():
     """Every scan enters the window; a match sees the last `max_frames` of them."""
-    import time
 
     from reactivex import Subject
 
-    from dimos.mapping.relocalization.lidar.module import window
+    from dimos.mapping.relocalization.lidar.clouds import window
     from dimos.mapping.relocalization.lidar.relocalize import MID360
 
     cfg = MID360.model_copy(update={"min_frames": 2, "max_frames": 3})
@@ -213,7 +232,7 @@ def test_dual_strategy_merges_ports():
     class FakeImpl(PremapModule):
         detections: In[Detection3DArray]
 
-    class Dual(LidarWindowRelocalization, FakeImpl):
+    class Dual(FakeImpl):
         pass
 
     hints = get_type_hints(Dual)

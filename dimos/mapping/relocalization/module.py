@@ -14,7 +14,9 @@
 
 """Relocalization: place the live ``world`` frame inside a prior map's ``map`` frame.
 
-Implementations read ``self.premap`` after ``super().start()`` and call :meth:`PremapModule.submit`.
+With a ``live_cloud`` it also matches that cloud against the premap (FPFH+RANSAC then ICP) and
+publishes the fix; other strategies read ``self.premap`` after ``super().start()`` and call
+:meth:`PremapModule.submit`.
 Named locations live in the ``map`` frame; ``named_locations`` carries the whole list both ways
 (last writer wins). They persist only in the map file, so edits made without a recording are lost.
 """
@@ -25,7 +27,8 @@ import math
 from pathlib import Path
 import re
 import threading
-from typing import Any
+import time
+from typing import Any, Literal
 import uuid
 
 import reactivex as rx
@@ -34,6 +37,8 @@ from reactivex import Observable, Subject, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
+from dimos.mapping.relocalization.lidar.clouds import LiveMap, window
+from dimos.mapping.relocalization.lidar.relocalize import MID360, LidarRelocalizer, RelocalizeConfig
 from dimos.mapping.relocalization.named_locations import (
     load_locations,
 )
@@ -49,8 +54,12 @@ from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
 )
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
+
+_SPARSE_CLOUD_GRACE_S = 10.0
+_SKIP_LOG_INTERVAL_S = 5.0
 
 RECORDING_SUFFIXES = (".db", ".mcap")
 
@@ -170,18 +179,43 @@ class Config(ModuleConfig):
     tf_interval: float = 10.0
     # Seconds between `loaded_map` republishes after the first fix; 0 publishes it once
     republish_loaded_map: float = 0.0
-    # Stop attempting once a fix is accepted.
+    # Stop attempting once a fix is accepted; otherwise every later attempt refines the current
+    # fix by ICP alone, and with local_map matches only its non-premap voxels (needs the premap bit)
     relocalize_once: bool = True
     # No map_file: this run's world frame is the map
     new_map: bool = False
+    # Live cloud to match against the premap: the ray tracer's local_map, a window of lidar scans, or none
+    live_cloud: Literal["none", "local_map", "lidar"] = "none"
+    reloc_interval: float = 2.0
+    # Skip clouds sparser than this (smaller local maps are too small a patch; a mid360 sweep is ~3k points)
+    min_local_points: int = 20_000
+    # Rig preset to align with, see relocalize.PRESETS
+    relocalize: RelocalizeConfig = MID360
+    # local_map with relocalize_once off: fold local_map into the kept live map at most this often (s)
+    accumulate_interval: float = 1.0
+    # ... the kept live map's voxel edge (m)
+    live_voxel_m: float = 0.1
+    # ... match kept live points within this xy distance (m) of the latest local map; 0 matches them all
+    match_radius_m: float = 30.0
 
 
 class PremapModule(Module):
+    """Loads the premap, keeps its named locations, and places it in the live world frame.
+
+    With ``relocalize_once`` off and ``live_cloud="local_map"`` it matches its own map of
+    local_map's live (non-premap) voxels, so the premap never confirms itself. The first fix
+    searches the whole premap and places it in the ray tracer; every later one refines the
+    current fix by ICP and only moves ``world -> map``. world_frame must be the frame the
+    ray tracer maps in.
+    """
+
     config: Config
     tf: IO[TFMessage]
     loaded_map: Out[PointCloud2]
     named_locations: IO[InteractiveMarkerUpdate]
     named_locations_request: In[String]
+    local_map: In[PointCloud2]
+    lidar: In[PointCloud2]
 
     _placed: bool = False
 
@@ -198,6 +232,11 @@ class PremapModule(Module):
         self._cloud_stream: str | None = None
         self._map_frame: str | None = None
         self._locations_stream: str | None = None
+        self._relocalizer: LidarRelocalizer | None = None
+        self._first_sparse_cloud: float | None = None
+        self._last_skip_log: float | None = None
+        self.live = LiveMap(self.config.live_voxel_m)
+        self._center: tuple[float, float] | None = None
 
     @rpc
     def start(self) -> None:
@@ -219,6 +258,99 @@ class PremapModule(Module):
             return
         self._load_premap(self.config.map_file)
         logger.info(f"Relocalization module started: map_file={self.config.map_file!r}")
+        if self.config.live_cloud != "none":
+            self._start_matching()
+
+    def _start_matching(self) -> None:
+        assert self.premap is not None
+        # Premap preprocessing is the dominant cost, paid once here.
+        self._relocalizer = LidarRelocalizer(self.premap.pointcloud, self.config.relocalize)
+        self.register_disposable(
+            backpressure(
+                self._clouds().pipe(
+                    ops.filter(lambda _: not (self._placed and self.config.relocalize_once)),
+                    ops.do_action(self._maybe_log_skip),
+                    ops.filter(self._has_enough_points),
+                )
+            ).subscribe(self._relocalize)
+        )
+
+    def _clouds(self) -> Observable[PointCloud2]:
+        """The live cloud to match, at most one every ``reloc_interval``."""
+        if self.config.live_cloud == "lidar":
+            return window(
+                self.lidar.observable(),  # type: ignore[no-untyped-call]
+                self.config.relocalize,
+                self.config.reloc_interval,
+            )
+        local_maps = self.local_map.observable()  # type: ignore[no-untyped-call]
+        if self.config.relocalize_once:
+            return local_maps.pipe(ops.throttle_first(self.config.reloc_interval))
+        self.register_disposable(
+            local_maps.pipe(ops.throttle_first(self.config.accumulate_interval)).subscribe(
+                self._on_local_map
+            )
+        )
+        return rx.interval(self.config.reloc_interval).pipe(
+            ops.map(
+                lambda _: self.live.cloud(
+                    self.config.world_frame, self._center, self.config.match_radius_m
+                )
+            )
+        )
+
+    def _on_local_map(self, cloud: PointCloud2) -> None:
+        self.live.fold(cloud)
+        points = cloud.points_f32().reshape(-1, 3)
+        if len(points):
+            # The local map is a window around the robot, so its xy middle is close enough.
+            low, high = points[:, :2].min(axis=0), points[:, :2].max(axis=0)
+            self._center = (float(low[0] + high[0]) / 2, float(low[1] + high[1]) / 2)
+
+    def _maybe_log_skip(self, msg: PointCloud2) -> None:
+        if self._has_enough_points(msg):
+            self._first_sparse_cloud = None
+            self._last_skip_log = None
+            return
+        now = time.monotonic()
+        if self._first_sparse_cloud is None:
+            self._first_sparse_cloud = now
+        if self._last_skip_log is None or now - self._last_skip_log >= _SKIP_LOG_INTERVAL_S:
+            log = (
+                logger.info
+                if now - self._first_sparse_cloud < _SPARSE_CLOUD_GRACE_S
+                else logger.warning
+            )
+            log(
+                "relocalize skipped: not enough local points",
+                n_pts=len(msg),
+                min_local_points=self.config.min_local_points,
+            )
+            self._last_skip_log = now
+
+    def _has_enough_points(self, msg: PointCloud2) -> bool:
+        return len(msg) >= self.config.min_local_points
+
+    def _relocalize(self, msg: PointCloud2) -> None:
+        assert self._relocalizer is not None
+        t0 = time.monotonic()
+        try:
+            initial_fix = None if self.config.relocalize_once else self.fix
+            tf = self._relocalizer.attempt(
+                msg.pointcloud, self.config.world_frame, self.map_frame, initial_fix
+            ).fix
+        except Exception:
+            logger.exception("relocalize() failed")
+            return
+        dt = time.monotonic() - t0
+        if tf is None:
+            logger.info(
+                f"relocalize lidar: refused after {dt:.1f}s n_pts={len(msg)} "
+                f"(below fitness_threshold={self.config.relocalize.fitness_threshold})"
+            )
+            return
+        logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={len(msg)}")
+        self.submit(tf, "lidar")
 
     @property
     def map_frame(self) -> str:
@@ -266,10 +398,6 @@ class PremapModule(Module):
     def placed(self) -> bool:
         """Whether any fix has been accepted yet."""
         return self._placed
-
-    def keep_relocalizing(self) -> bool:
-        """Whether to keep attempting. Implementations gate their input on this."""
-        return not (self._placed and self.config.relocalize_once)
 
     def submit(self, tf: Transform, source: str = "") -> None:
         """Publish a ``world_frame -> map`` fix the implementation already decided to believe."""

@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.mapping.relocalization.lidar.module import LiveMap
+from dimos.mapping.relocalization.lidar.clouds import LiveMap
 from dimos.mapping.relocalization.lidar.relocalize import MID360, LidarRelocalizer
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform

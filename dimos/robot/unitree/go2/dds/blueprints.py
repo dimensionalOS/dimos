@@ -24,8 +24,8 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.viz import MAP_REGIONS_ENTITY, render_map_region
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.navigation.global_planner.mls_planner.viz import (
     SURFACE_MAP_ENTITY,
     render_surface_region,
@@ -84,7 +84,7 @@ _go2_nav_stack = autoconnect(
     GO2DDS.blueprint(**_MID360_KWARGS, obstacle_avoidance=False).remappings(_MID360_REMAPPINGS),
     mid360_for_pointlio(),
     _go2_nav,
-    LocalMapRelocalization.blueprint(world_frame="odom", relocalize=MID360_NAV),
+    PremapModule.blueprint(world_frame="odom", live_cloud="local_map", relocalize=MID360_NAV),
     PointLio.blueprint(),
 )
 
