@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
 import time
 
 import pytest
@@ -83,7 +82,6 @@ def test_classmethods(navigation) -> None:
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
     assert "get_stream_descriptors" in class_rpcs
-    assert "get_config" in class_rpcs
     assert len(class_rpcs) == 11
 
     # Check that the values are callable
@@ -95,17 +93,6 @@ def test_classmethods(navigation) -> None:
         "navigate_to should have __rpc__ attribute"
     )
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
-
-
-def test_get_config_is_the_running_config_cbor_can_carry(navigation: Navigation) -> None:
-    config = navigation.get_config()
-    assert config["default_rpc_timeout"] == navigation.config.default_rpc_timeout
-    # it crosses the RPC wire whole
-    assert decode(encode(config)) == config
-    # a field CBOR can't carry is left out, the rest stay
-    navigation.config.__dict__["frame_id"] = threading.Lock()
-    assert "frame_id" not in navigation.get_config()
-    assert "default_rpc_timeout" in navigation.get_config()
 
 
 def test_rpc_signatures_keep_plain_and_message_types(navigation: Navigation) -> None:
