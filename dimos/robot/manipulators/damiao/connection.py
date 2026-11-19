@@ -104,14 +104,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-__all__ = [
-    "CALIBRATION_ROOT",
-    "MAX_GRAVITY_STEP_NM",
-    "DamiaoConnection",
-    "DamiaoConnectionConfig",
-    "zero_stiffness_joints",
-]
-
 #: Where "auto" looks for each arm's calibration, ``<root>/<arm_id>/calibration.json``.
 #: Read at every load, so tests can point it at a scratch directory.
 CALIBRATION_ROOT: Path = ARMS_STATE_DIR

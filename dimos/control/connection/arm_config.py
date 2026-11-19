@@ -35,22 +35,6 @@ from pydantic import BeforeValidator, Field
 
 from dimos.protocol.service.spec import BaseConfig
 
-__all__ = [
-    "DEFAULT_CONFIG_LEASE_S",
-    "MAX_CONFIG_LEASE_S",
-    "AppliedFile",
-    "ArmConfigState",
-    "ConfigApplied",
-    "ConfigKeys",
-    "ConfigPatch",
-    "ConfigScope",
-    "FiniteFloat",
-    "JointGains",
-    "LinkGravity",
-    "NonNegativeFloat",
-    "PositiveFloat",
-]
-
 PositiveFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
 NonNegativeFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
