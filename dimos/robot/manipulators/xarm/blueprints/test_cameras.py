@@ -50,8 +50,7 @@ def test_the_planner_publishes_both_camera_mounts() -> None:
 
 
 def test_each_camera_takes_its_serial_from_the_command_line() -> None:
-    # the namespaced instance is chest/realsensecamera; on the command line the slash is an
-    # underscore
+    # the namespaced instance is chest/realsensecamera, chest_realsensecamera on the command line
     parsed = BlueprintConfigParser(xarm6_cameras).parse(
         [
             "--xarmconnection.ip",

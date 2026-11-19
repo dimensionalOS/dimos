@@ -33,8 +33,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 XARM_CALIBRATION_DIR = Path(__file__).resolve().parent / "calibration"
 XARM6_WRIST_CAMERA = "xarm6_wrist_camera"
 XARM6_CHEST_CAMERA = "xarm6_chest_camera"
-# The chest RealSense runs under this blueprint namespace, so its frames and topics do not
-# collide with the wrist camera's: chest/camera_link, chest/color_image, chest/pointcloud.
+# Namespace for the chest RealSense so its frames and topics stay apart from the wrist camera's.
 CHEST_NAMESPACE = "chest"
 
 

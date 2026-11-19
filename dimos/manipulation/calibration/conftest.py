@@ -162,15 +162,13 @@ def rig7() -> SyntheticRig:
     return SyntheticRig(arm=arm, camera=SyntheticCamera(arm), home=home, limits=limits)
 
 
-# The fixed camera: 0.6 m to the arm's right at the plate's height, looking along +y at the
-# arm, image right along +x, image down along -z.
+# Fixed camera 0.6 m to the arm's right, looking along +y; image right +x, image down -z.
 _PLATE = BoardSpec(squares_x=5, squares_y=4, square_m=0.030, marker_m=0.0225, ids_from=100)
 _X_FIXED = rt_to_T(
     np.column_stack([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]),
     np.array([0.45, -0.6, 0.2]),
 )
-# The plate in the fingers: its face normal along the flange's -y (toward the camera at the
-# home pose), its long side along the flange x, centred 0.2 m along the tool axis.
+# Plate face normal along flange -y, long side along flange x, 0.2 m out along the tool.
 _T_FLANGE_PLATE = rt_to_T(
     np.column_stack([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]]),
     np.array([-0.075, 0.0, 0.14]),

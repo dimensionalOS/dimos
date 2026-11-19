@@ -82,8 +82,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# The arm has settled when no joint moved more than SETTLE_TOL_RAD over SETTLE_WINDOW_S. What the
-# solve needs is a still arm at the moment of the frame, not an arm exactly on its target.
+# Settled: no joint moved more than SETTLE_TOL_RAD over SETTLE_WINDOW_S.
 SETTLE_TOL_RAD = 0.002
 SETTLE_WINDOW_S = 0.3
 SETTLE_POLL_S = 0.05
@@ -134,34 +133,28 @@ class BoxObstacle(BaseModel):
 class HandEyeCalibrationConfig(ModuleConfig):
     # The result file's name under STATE_DIR/calibration, e.g. "xarm6_wrist_camera".
     name: str
-    # "flange": the camera rides the arm and the board is fixed. "base": the camera is fixed and
-    # the board is held by the arm.
+    # "flange": camera on the arm, board fixed. "base": camera fixed, board held by the arm.
     camera_frame: Literal["flange", "base"] = "flange"
-    # Where the camera's colour optical frame is believed to be in that frame, and how far the
-    # solve may land from it before the verdict refuses it as a gross blunder.
+    # Expected optical-frame pose in that frame, and how far the solve may land from it.
     nominal_translation: tuple[float, float, float]
     nominal_rotation_xyzw: tuple[float, float, float, float]
     nominal_tolerance_m: float = Field(default=0.01, gt=0.0)
     nominal_tolerance_deg: float = Field(default=5.0, gt=0.0)
     board: HandEyeBoardConfig = Field(default_factory=HandEyeBoardConfig)
-    # A pose with the board in the middle of the frame about PROBE_M away; the run draws poses
-    # about it.
+    # Pose with the board centred about PROBE_M away; the run draws poses around it.
     home_joints: list[float]
     joint_limits_rad: list[tuple[float, float]]
     planning_group: str = "manipulator"
     base_frame: str = "world"
     flange_frame: str = "link6"
-    # The frame the camera module stamps its colour frames with, and the frame a blueprint mounts
-    # the camera by; both come from the camera's own tf.
+    # Colour frame id and mount frame, both from the camera's own tf.
     optical_frame: str = "camera_color_optical_frame"
     camera_link_frame: str = "camera_link"
     max_poses: int = Field(default=20, ge=3)
     max_seconds: float = Field(default=300.0, gt=0.0)
     speed_scale: float = Field(default=0.25, gt=0.0, le=1.0)
-    # How long to wait for the arm to come to rest after the planner reports the move complete.
     settle_timeout_s: float = Field(default=5.0, gt=0.0)
-    # Policy limits in front of the planner. The cap is per draw; the one approach to the home
-    # from wherever the arm is parked is exempt.
+    # Per-move joint cap; the first approach to home is exempt.
     max_joint_step_rad: float = Field(default=1.2, gt=0.0)
     max_moves: int = Field(default=120, gt=0)
     # The operator releases each of the first N moves with approve(); 0 runs unattended.
@@ -170,17 +163,13 @@ class HandEyeCalibrationConfig(ModuleConfig):
     dry_run: bool = False
     # For a fixed camera: no part of the arm plans within this of the nominal camera position.
     camera_keepout_m: float = Field(default=0.15, ge=0.0)
-    # The bench the board lies on, as a box the planner keeps the arm above for the run: its
-    # top in the base frame (None adds nothing) and its extent along x and y.
+    # Table box the planner keeps the arm above for the run; None adds none.
     table_top_z: float | None = None
     table_x_m: tuple[float, float] = (0.25, 1.0)
     table_y_m: tuple[float, float] = (-0.6, 0.6)
     # Fixed boxes beside the table, a wall or another robot, kept clear of for the run.
     obstacle_boxes: list[BoxObstacle] = Field(default_factory=list)
-    # The board lies somewhere on the table and nobody measured where. When the home pose does not
-    # show it, the camera looks straight down from search_height_m over a grid search_spacing_m
-    # apart on the table (search_x_m by search_y_m, the table box's extent when None) until a view
-    # does; then the draw is centred straight above the board. A camera on the flange only.
+    # Flange camera only: if home does not see the board, grid-search the table looking down.
     find_board: bool = False
     search_height_m: float = Field(default=0.55, gt=0.0)
     search_spacing_m: float = Field(default=0.3, gt=0.0)
@@ -188,21 +177,14 @@ class HandEyeCalibrationConfig(ModuleConfig):
     search_y_m: tuple[float, float] | None = None
     # The planner's tip link, which its pose targets are given for.
     tcp_frame: str = "link_tcp"
-    # A fixed camera stands somewhere in front of the arm and nobody measured where. When the
-    # home pose does not show it the plate, the arm holds the plate at each of hold_points (where
-    # the home pose holds it when empty) facing each of aim_points (the nominal camera position
-    # when empty) until the camera sees it. The camera pose from that one view is the nominal the
-    # solve is checked against, and the draw is centred on the plate facing it. A fixed camera
-    # only.
+    # Fixed camera only: if home does not see the plate, try each hold point facing each aim point.
     find_camera: bool = False
     hold_points: list[tuple[float, float, float]] = Field(default_factory=list)
     aim_points: list[tuple[float, float, float]] = Field(default_factory=list)
-    # Where the plate sits in the fingers, flange -> the board's frame, for aiming it: a
-    # centimetre or two out does not matter.
+    # flange -> board frame of the held plate, only for aiming; centimetres are fine.
     plate_translation: tuple[float, float, float] = (0.0, 0.0, 0.2)
     plate_rotation_xyzw: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
-    # Keep every captured frame with the joints and flange pose it was taken at, plus the
-    # report, under STATE_DIR/calibration/records/<name>_<time>, for inspection afterwards.
+    # Save every frame with its joints and flange pose under STATE_DIR/calibration/records.
     record: bool = False
     # The pose draw's seed; None draws a fresh sequence each run, so repeat runs are independent.
     seed: int | None = None
@@ -219,8 +201,7 @@ class _Run:
     last_move_end: float = 0.0
     waiting_for_approval: bool = False
     last_frame_ts: float | None = None
-    # One record per target the solver asked for: its joints, what became of it, and the planned
-    # path, so a dry run can be inspected before anything moves.
+    # Per target: joints, outcome and planned path, so a dry run can be inspected.
     targets: list[dict[str, Any]] = field(default_factory=list)
     frames: int = 0
     record_dir: Path | None = None
@@ -268,8 +249,6 @@ class HandEyeCalibrationModule(Module):
     def _on_info(self, msg: CameraInfo) -> None:
         with self._frames:
             self._latest_info = msg
-
-    # ---- operator RPCs -------------------------------------------------------------------------
 
     @rpc
     def start_calibration(self) -> dict[str, Any]:
@@ -392,8 +371,6 @@ class HandEyeCalibrationModule(Module):
             "last_result": None if self._result is None else self._report(self._result),
         }
 
-    # ---- the run -------------------------------------------------------------------------------
-
     def _nominal(self) -> CameraNominal:
         T = np.eye(4)
         T[:3, :3] = Quaternion(*self.config.nominal_rotation_xyzw).to_rotation_matrix()
@@ -515,8 +492,7 @@ class HandEyeCalibrationModule(Module):
             Quaternion(*cfg.plate_rotation_xyzw).to_rotation_matrix(),
             np.asarray(cfg.plate_translation, dtype=float),
         )
-        # only the printed face reads, so a plate put in the fingers the other way round is the
-        # same plate turned half a turn about the tool axis
+        # a plate held the other way round reads as the same plate turned half a turn
         faces = [Z, rt_to_T(np.diag([-1.0, -1.0, 1.0]), np.zeros(3)) @ Z]
         w, h = board.squares_x * board.square_m, board.squares_y * board.square_m
         held = (self.read_flange_pose() @ Z @ np.array([w / 2, h / 2, 0.0, 1.0]))[:3]

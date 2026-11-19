@@ -49,22 +49,15 @@ FloatArray = NDArray[np.float64]
 
 CameraFrameKind = Literal["flange", "base"]
 
-# Where the answer is read off: a grasp is felt about this far in front of the camera, so it is
-# also the distance the board is walked to.
+# Standoff the board is walked to and the self-check probe is read at.
 PROBE_M = 0.4
 
-# Pose draw: how far each joint may move from the centre in one pose, radians, scaled by the
-# amplitude; the widest amplitude an arrangement affords; and how the amplitude reacts to a frame
-# without a board (shrink) and with one (recover). Keyed by the arm's joint count: the xArm7's
-# extra joint 3 turns the upper arm about its own axis and moves the elbow like joint 2 does.
+# Per-joint draw swing in rad, scaled by the amplitude, keyed by joint count.
 STEP_RANGES = {
     6: np.array([0.25, 0.15, 0.15, 0.5, 0.35, 0.05]),
     7: np.array([0.25, 0.15, 0.15, 0.15, 0.5, 0.35, 0.05]),
 }
-# The last joint rolls the tool through this cycle on top of the draw. A sideways offset of the camera in the
-# flange shows in the images only through rolls about the tool axis, by its sine: 30 degree
-# rolls left 7 mm of offset inside a real arm's pose scatter (xArm6, 2026-11-03, two runs 4 mm
-# apart and 7 mm from a ruler), 60 degree rolls do not. Consecutive steps stay under the 1.2 rad cap.
+# Wrist rolls on top of the draw: 60 deg rolls expose a sideways camera offset, 30 deg hide it.
 WRIST_ROLLS_RAD = (1.05, 0.0, -1.05, 0.0)
 LIMIT_MARGIN_RAD = 0.1
 AMP_CEIL = {
@@ -79,10 +72,7 @@ AMP_MIN = 0.2
 DEPTH_TOL_M = 0.03
 STANDOFF_MIN_M = 0.33  # the nearest an approach reaches; a setpoint below it only loses views
 STANDOFF_MAX_M = 0.60  # and the farthest a board of this size still fills enough of the frame
-# Once the mean sits on PROBE_M the next views are asked for alternately nearer and farther, so
-# the run holds views from different heights: that is what separates a shift of the camera along
-# its viewing axis from a tilt (a real arm, 2026-11-03: views all at 0.28 m put two runs 6 mm
-# apart along that axis; a run from 0.31 to 0.62 m did not).
+# Alternate views nearer and farther than PROBE_M to tell a shift along the view axis from a tilt.
 DEPTH_SWEEP_M = 0.08
 DEPTH_FIT_MIN = 7  # views needed before the fitted joint-to-view map can steer
 DEPTH_FIT_R2 = 0.8
@@ -90,9 +80,7 @@ DEPTH_STEP_M = 0.20  # trust region in metres of standoff per step
 DEPTH_STEP_MIN_M = 0.02
 DEPTH_RIDGE = 1e-3
 CENTRE_SPAN_RAD = 0.8  # the centre never wanders further than this from home, per joint
-# A fixed camera stands well past PROBE_M, so its run holds the first view's distance instead and
-# keeps the draw near it: the real xArm7's board-in-hand scatter grew from 2.7 mm over a 12 cm
-# draw to 7 mm over 30 cm (2026-11-18), the arm's error, not the camera's.
+# A fixed camera holds the first view's standoff and a narrow draw: arm error grows with the draw.
 SCENE_CENTRE_SPAN_RAD = 0.3
 SCENE_STANDOFF_SPAN_M = 0.10
 STEP_MAX_RAD = 0.25
@@ -105,9 +93,7 @@ N_RESAMPLE = 12
 RESAMPLE_FRAC = 0.7
 PASS_MM = 2.0  # estimated probe-point error must be under this
 CATASTROPHE_MM = 4.0  # and no resample may look like a disaster
-# The board must land in one place from every pose. A real arm's absolute accuracy, a few
-# millimetres over its reach, lands here as well as the camera does, so the gate is wider than
-# the solver alone would need (a perfect-kinematics twin holds 0.1 mm).
+# Wider than the solver needs: the arm's own absolute accuracy lands here too.
 MISCLOSE_MM = 4.0
 MIN_POSES = 4
 NOMINAL_TOL_MULT = 2.0  # a solve further than this many tolerances from the nominal is refused
@@ -610,8 +596,7 @@ def solve_hand_eye(
     amp = ceil
     # the draw is kept a full swing clear of the joint limits so it stays symmetric about its centre
     lim = np.asarray(robot.joint_limits(), dtype=float)
-    # ... and a margin clear of the limit itself: the xArm planner refuses a start within
-    # about 0.04 rad of a one-turn joint limit (joint 6 at -3.11 rad on hardware)
+    # ... and a margin past that: the xArm planner refuses a start within about 0.04 rad of a limit
     bounds = (
         lim[:, 0] + ceil * step_range + LIMIT_MARGIN_RAD,
         lim[:, 1] - ceil * step_range - LIMIT_MARGIN_RAD,

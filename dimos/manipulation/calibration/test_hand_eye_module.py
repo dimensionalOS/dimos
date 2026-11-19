@@ -274,8 +274,7 @@ def test_a_target_beyond_the_joint_step_cap_never_reaches_the_planner(
 def test_a_parked_arm_is_brought_to_the_home_before_the_capped_draws(
     module: HandEyeCalibrationModule, planner: FakePlanner, frames: threading.Event, rig: Any
 ) -> None:
-    # parked a full turn of the wrist from the home: further than the cap, as an arm left in
-    # another posture is
+    # parked a full wrist turn from home, past the per-move cap
     home = np.asarray(rig.home, dtype=float)
     rig.arm.move_to_joints(list(home + np.array([0.0, 0.0, 0.0, 0.0, 0.0, 2.9])))
     module.config.max_joint_step_rad = 1.2

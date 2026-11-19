@@ -47,33 +47,23 @@ from dimos.robot.manipulators.xarm.config import (
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
 
-# Tool pointing down about 0.4 m over a board 0.45 m in front of the base; the wrist at zero
-# keeps the camera cable untwisted (the board fits the view either way round).
+# Tool down about 0.4 m over a board 0.45 m out; wrist at zero keeps the camera cable untwisted.
 XARM6_CALIBRATION_HOME = [0.0, -0.247, -0.909, 0.0, 1.156, 0.0]
-# The bench the arm shares with the board, as the planner box the module adds for the run: a
-# table top level with the base plate reaching from just past the base to 1 m out. Set
-# table_top_z to the highest surface within reach, the board included, plus 15 mm, and
-# table_x_m to the measured edge, on the command line.
+# Planner table box; pass the real top (highest surface + 15 mm) and edge on the command line.
 XARM6_BENCH_TOP_Z = 0.0
 XARM6_BENCH_X_M = (0.1, 1.0)
 
-# The wrist RealSense on the xArm6 kit mount: the camera's screw line 87 mm off the flange
-# axis, tilted 15 degrees inward, looking along the tool. The colour lens sits at one end of
-# the D435 body, 41 mm along it from the screw line, and 26 mm forward of the flange face
-# (first hardware run, 2026-11-03; the kit drawing's screw line was 42 mm off as a prior).
+# Kit wrist mount: D435 screw line 87 mm off the flange axis, tilted 15 deg in, lens 26 mm forward.
 XARM6_WRIST_CAMERA_NOMINAL_XYZ = (0.079, -0.041, 0.026)
 XARM6_WRIST_CAMERA_NOMINAL_XYZW = (-0.0922963, -0.0922963, 0.7010586, 0.7010561)
 
 XARM6_CALIBRATION_BENCH_PATH = LfsPath("xarm6/calibration_bench.xml")
-# The planner's model keeps the continuous joints within one turn, so the draw stays there too
-# or its targets would be refused at the limit.
+# The planner keeps continuous joints within one turn, so the draw does too.
 XARM6_PLANNER_JOINT_LIMITS: list[tuple[float, float]] = [
     (-math.pi, math.pi) if lo <= -2 * math.pi else (lo, hi) for lo, hi in XARM6_JOINT_LIMITS
 ]
 
-# A fixed camera beside the bench, the mirror run: the printed gripper plate rides in the closed
-# fingers and the camera watches it. The plate: 5 by 4 ChArUco, 30 mm squares, 22.5 mm markers,
-# ids from 100 (real/boards/gripper_plate_A4.pdf).
+# Gripper plate for a fixed camera: 5 x 4 ChArUco, 30 mm squares, 22.5 mm markers, ids from 100.
 XARM6_CHEST_PLATE = {
     "squares_x": 5,
     "squares_y": 4,
@@ -81,14 +71,9 @@ XARM6_CHEST_PLATE = {
     "marker_m": 0.0225,
     "ids_from": 100,
 }
-# Home for the plate run: the plate held out in front of the arm, its face square to a camera
-# on the arm's right (negative y), 0.6 m up, 0.45 m from it, with the arm a tool's length above
-# the bench and 0.39 m clear of the camera; solved on the bench twin for the nominal below.
+# Plate held out facing a camera on the arm's right (-y), 0.6 m up; solved on the bench twin.
 XARM6_CHEST_CALIBRATION_HOME = [-0.212, -0.099, -1.161, -0.773, 1.028, 3.076]
-# Where the lens is and where it looks, base frame, from a tape measure: base centre to the lens
-# (0.55 m out, 0.60 m to the right, 0.60 m up) looking at the middle of the workspace. The
-# verdict allows the solve 0.30 m from this, so a tape measure is enough. OpenCV optical axes:
-# z along the view, x image right (horizontal), y image down.
+# Tape-measured lens pose, base frame, OpenCV optical axes (z view, x right, y down).
 XARM6_CHEST_CAMERA_NOMINAL_XYZ = (0.55, -0.60, 0.60)
 XARM6_CHEST_CAMERA_NOMINAL_XYZW = (0.9108557, 0.0753847, -0.0334691, -0.4043994)
 XARM6_CHEST_CAMERA_TOLERANCE_M = 0.15
@@ -123,8 +108,7 @@ xarm6_handeye_calibrate = autoconnect(
 ).remappings(XARM_REMAPS)
 
 
-# The simulated arm, through the coordinator's MuJoCo adapter, with its joints named the way
-# XArmConnection names the real ones, which is what the planner model expects.
+# Simulated arm via the coordinator's MuJoCo adapter, joints named as XArmConnection names them.
 _sim_hardware = make_xarm_hardware(
     "arm",
     6,
@@ -247,20 +231,16 @@ xarm6_handeye_calibrate_chest_sim = autoconnect(
 )
 
 
-# ---- xArm7 on the kitting bench ----------------------------------------------------------------
-# Measurements in FDEIssues/xarm7-bench/BENCH_SPEC.md, all in the arm's base frame: x toward the
-# front table edge, y toward the dual OpenYAM end, z up from the bottom of the arm's base.
+# xArm7 kitting bench, base frame: x toward the front table edge, y toward the OpenYAM end, z up.
 
-# The home Krishna set on the arm in UFactory Studio, 2026-11-16.
+# Home pose in joint degrees, as UFactory Studio shows it.
 XARM7_CALIBRATION_HOME = [
     round(math.radians(v), 4) for v in (-5.1, -35.0, -0.8, 53.5, -1.8, 87.5, 1.5)
 ]
 XARM7_PLANNER_JOINT_LIMITS: list[tuple[float, float]] = [
     (-math.pi, math.pi) if lo <= -2 * math.pi else (lo, hi) for lo, hi in XARM7_JOINT_LIMITS
 ]
-# The table top sits 8 mm under the base, on the mount plate; the box top is 15 mm above it for
-# the taped board and margin. It reaches from just past the base to the front edge and along the
-# whole table; the base itself stands inside x < 0.1.
+# Table top 8 mm under the base, box top 15 mm above it for the taped board.
 XARM7_BENCH_TOP_Z = 0.007
 XARM7_BENCH_X_M = (0.10, 0.695)
 XARM7_BENCH_Y_M = (-0.61, 0.914)
@@ -273,8 +253,7 @@ XARM7_BENCH_BOXES = [
 # Where the board may lie: the done and empty-bin zones in front of the arm.
 XARM7_SEARCH_X_M = (0.15, 0.55)
 XARM7_SEARCH_Y_M = (-0.55, 0.35)
-# The wrist RealSense on the same kit mount as the xArm6's, whose link6 and the xArm7's link7 are
-# both the tool flange: the xArm6's measured mount (run 8, 2026-11-05) as the prior.
+# Prior: the xArm6's measured kit-mount pose; link6 and link7 are both the tool flange.
 XARM7_WRIST_CAMERA_NOMINAL_XYZ = (0.0770182, -0.0408053, 0.0285793)
 XARM7_WRIST_CAMERA_NOMINAL_XYZW = (-0.0927751, -0.0807643, 0.7044101, 0.6990539)
 XARM7_CALIBRATION_BENCH_PATH = LfsPath("xarm7_kitting_bench/calibration_bench.xml")
@@ -377,8 +356,7 @@ def _xarm7_sim(
     )
 
 
-# The twin's wrist camera sits on the measured mount; the run starts from the xArm6 kit drawing's
-# mount, a few millimetres and a degree off it, as a real first run would.
+# The twin's camera sits on the measured mount; the run starts from the kit drawing's, mm off.
 xarm7_handeye_calibrate_sim = autoconnect(
     _xarm7_sim(camera_name="wrist_camera", base_frame_id="link7", width=848, height=480),
     HandEyeCalibrationModule.blueprint(
@@ -397,28 +375,17 @@ xarm7_handeye_calibrate_sim = autoconnect(
 )
 
 
-# ---- the xArm7's scene camera: a D435 on a floor tripod in front of the table --------------------
-# Nobody measures where the tripod stands. The run holds the printed 5 x 4 plate in the closed
-# fingers facing one point after another of the band the tripod may stand in, 0.4 to 0.9 m out
-# from the front edge and 0.5 to 0.95 m above the table, until the camera sees it; that view gives
-# the nominal the solve is checked against.
-# The card stops decoding about 1 m from the lens, so for a tripod off to one side the plate is
-# also held out toward that side (sim: corners 0.7 m out, 0.45 m across, 0.75 m up failed from the
-# middle hold alone and passed at 0.5 to 0.6 mm with these).
+# Tripod camera, position unmeasured: hold the plate at each hold point facing each aim until seen.
+# Side holds because the card stops decoding about 1 m from the lens.
 XARM7_SCENE_HOLDS = [(0.45, 0.0, 0.30), (0.50, 0.25, 0.38), (0.50, -0.25, 0.38)]
 XARM7_SCENE_AIMS = [(x, y, 0.70) for x in (1.20, 1.50) for y in (0.0, -0.45, 0.45)]
-# The middle of the band, looking back at the arm: only the keep-out sphere and the default aim
-# use it.
+# Middle of the tripod band; only the keep-out sphere and the default aim use it.
 XARM7_SCENE_CAMERA_GUESS_XYZ = (1.35, 0.0, 0.70)
 XARM7_SCENE_CAMERA_GUESS_XYZW = (0.6311099, 0.6311099, -0.3189048, -0.3189048)
-# The plate in the fingers, its printed face toward the flange's -y: link7 -> the board's frame,
-# from the twin. A centimetre or two out does not matter; it only aims the plate.
+# link7 -> board frame of the held plate, from the twin; only for aiming.
 XARM7_PLATE_XYZ = (-0.075, 0.0, 0.277)
 XARM7_PLATE_XYZW = (-0.7071068, 0.0, 0.0, 0.7071068)
-# The card as a planner body on link7, so no move takes it into the table: 17 x 19 cm, 7 mm thick,
-# its 17 cm edge 4 cm into the pads (12.4 to 16.1 cm out), so from the fingertips to 31.7 cm out.
-# On the bench the pattern sat 3 cm further out than that (the card held shallower), so the body
-# reaches 36 cm out, its face across flange y like the plate above.
+# The held card as a planner body on link7, 36 cm out, so no move takes it into the table.
 XARM7_HELD_CARD_URDF = """<robot name="held_card"><link name="held_card">
 <visual><geometry><box size="0.19 0.03 0.193"/></geometry></visual>
 <collision><geometry><box size="0.19 0.03 0.193"/></geometry></collision>
