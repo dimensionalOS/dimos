@@ -50,7 +50,6 @@ from dimos.core.resource import CompositeResource
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import rpc_backend
-from dimos.protocol.encode import cbor
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import TF
