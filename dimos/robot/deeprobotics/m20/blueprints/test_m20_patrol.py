@@ -90,10 +90,11 @@ def _battery(status: int) -> StreamItem:
     return StreamItem("M20Connection.battery", values)
 
 
-def _walk() -> tuple[list[str], list[TransitionRecord], list[FaultReport]]:
+def _walk() -> tuple[list[str], list[str], list[TransitionRecord], list[FaultReport]]:
     """Run the file from the charger with every goal, dock and undock succeeding."""
     checked = _checked()
     calls: list[str] = []
+    facing: list[str] = []
     records: list[TransitionRecord] = []
     faults: list[FaultReport] = []
     queue: deque[QueueItem] = deque([_battery(LCMBatteryState.POWER_SUPPLY_STATUS_CHARGING)])
@@ -109,6 +110,8 @@ def _walk() -> tuple[list[str], list[TransitionRecord], list[FaultReport]]:
                     pose = PoseStamped(frame_id="premap", position=[len(calls), 0.0, 0.0])
                     queue.append(ReturnItem(call, to_plain(pose)))
                 case SendStart(call) if call.rpc == "MLSPlannerNative.go_to":
+                    if call.args.get("face_heading") is True:
+                        facing.append(calls[-1])
                     stamp = Time(len(calls), 0)
                     queue.append(ReturnItem(call, to_plain(stamp)))
                     status = GoalStatus(goal_id=GoalID(stamp=stamp), status=GoalStatus.SUCCEEDED)
@@ -137,11 +140,11 @@ def _walk() -> tuple[list[str], list[TransitionRecord], list[FaultReport]]:
     while queue:
         runtime, effects = engine.step(checked, runtime, queue.popleft(), 0.0)
         perform(effects)
-    return calls, records, faults
+    return calls, facing, records, faults
 
 
 def test_the_robot_docks_once_from_every_goal_then_stays_on_the_charger() -> None:
-    calls, records, faults = _walk()
+    calls, facing, records, faults = _walk()
 
     assert faults == []
     # Each cycle walks the loop plus one goal, so cycle n docks from goal n.
@@ -153,6 +156,8 @@ def test_the_robot_docks_once_from_every_goal_then_stays_on_the_charger() -> Non
         expected += ["undock", *loop, "dock_approach", "predock", "dock"]
     assert calls == expected
     assert [loop[-4] for loop in _cycles(calls)] == GOALS
+    # Only the two docking points ask the planner to turn to their heading.
+    assert facing == ["dock_approach", "predock"] * len(GOALS)
     assert records[-1] == TransitionRecord("TopUp", "if cycle.count >= size(goals)", "Finished")
 
 

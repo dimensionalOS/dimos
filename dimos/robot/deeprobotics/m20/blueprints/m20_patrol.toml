@@ -196,11 +196,11 @@ goto = "Approach"
 on = "failed"
 goto = "ApproachRetry"
 
-# Driving in from the approach point leaves the robot facing the charger at predock.
+# Both docking points carry the charger's heading, so the robot faces the reflectors at predock.
 [[node]]
 name = "Approach"
 activity = "navigate"
-args = { pose = "approach.pose" }
+args = { pose = "approach.pose", face_heading = true }
 result = "nav.goal"
 
 [[node.transition]]
@@ -239,7 +239,7 @@ goto = "ApproachRetry"
 [[node]]
 name = "Predock"
 activity = "navigate"
-args = { pose = "predock.pose" }
+args = { pose = "predock.pose", face_heading = true }
 result = "nav.goal"
 
 [[node.transition]]
