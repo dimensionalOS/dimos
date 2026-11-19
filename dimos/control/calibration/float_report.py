@@ -126,8 +126,9 @@ def extract_windows(
 ) -> list[WindowRecord]:
     """One record per marker that has at least two samples inside its window.
 
-    ``models`` holds a fingertip model per marker ``side``; one missing is built
-    from ``resolve(side)``.
+    A window its samples do not span is kept and fails as incomplete
+    (``DriftMetrics.complete``). ``models`` holds a fingertip model per marker
+    ``side``; one missing is built from ``resolve(side)``.
     """
     models = {} if models is None else models
     records: list[WindowRecord] = []

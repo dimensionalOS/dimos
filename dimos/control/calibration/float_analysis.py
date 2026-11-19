@@ -18,7 +18,8 @@ Shared by a live driver and the offline report (``float_report``). A window is
 the ``float_events`` marker plus the joint samples recorded during it; the drift
 is the fingertip motion between the start and the end of the window, computed
 through the arm's model (its spec's tip frame and fingertip offset) so a joint
-error far from the base counts for what it does at the fingers.
+error far from the base counts for what it does at the fingers. A window whose
+samples do not span the duration its marker asked for is incomplete and fails.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ DRIFT_LIMIT_MM = 2.0
 # The pose at either end of a window is the median over this much of it, so one
 # noisy encoder sample does not decide the drift.
 EDGE_WINDOW_S = 0.25
+WINDOW_COMPLETE_TOLERANCE_S = 0.1
 
 
 @dataclass(frozen=True)
@@ -78,11 +80,16 @@ class FloatEvent:
 
 @dataclass(frozen=True)
 class DriftMetrics:
-    """What one float window says about the arm."""
+    """What one float window says about the arm.
+
+    ``requested_s`` is the window its marker asked for; one whose samples span
+    less, within ``WINDOW_COMPLETE_TOLERANCE_S``, is incomplete and fails.
+    """
 
     side: str
     index: int
     duration_s: float  # the window actually covered by samples
+    requested_s: float
     samples: int
     fingertip_drift_mm: float  # start pose to end pose, through the model
     fingertip_peak_mm: float  # farthest the fingertip got from the start pose
@@ -91,14 +98,26 @@ class DriftMetrics:
     joint_drift_deg: dict[str, float]
 
     @property
+    def complete(self) -> bool:
+        return self.duration_s >= self.requested_s - WINDOW_COMPLETE_TOLERANCE_S
+
+    @property
     def passed(self) -> bool:
-        return self.fingertip_drift_mm < DRIFT_LIMIT_MM
+        return self.complete and self.fingertip_drift_mm < DRIFT_LIMIT_MM
+
+    @property
+    def verdict(self) -> str:
+        if not self.complete:
+            return "cut short"
+        return "ok" if self.passed else "FAIL"
 
     def as_row(self) -> dict[str, Any]:
         return {
             "side": self.side,
             "index": self.index,
             "duration_s": round(self.duration_s, 3),
+            "requested_s": round(self.requested_s, 3),
+            "complete": self.complete,
             "samples": self.samples,
             "fingertip_drift_mm": round(self.fingertip_drift_mm, 3),
             "fingertip_peak_mm": round(self.fingertip_peak_mm, 3),
@@ -166,6 +185,7 @@ def analyze_window(
         side=event.side,
         index=event.index,
         duration_s=float(t[-1] - t[0]),
+        requested_s=event.duration_s,
         samples=int(t.size),
         fingertip_drift_mm=drift_m * 1000.0,
         fingertip_peak_mm=peak_m * 1000.0,
@@ -200,13 +220,12 @@ def segment_windows(
 
 
 def format_metrics(metrics: DriftMetrics) -> str:
-    verdict = "ok" if metrics.passed else "FAIL"
     return (
         f"{metrics.side} pose {metrics.index}: fingertip drift {metrics.fingertip_drift_mm:.2f} mm "
-        f"over {metrics.duration_s:.1f} s / {metrics.samples} samples "
+        f"over {metrics.duration_s:.1f} of {metrics.requested_s:g} s / {metrics.samples} samples "
         f"(peak {metrics.fingertip_peak_mm:.2f} mm), "
         f"max joint drift {metrics.max_joint_drift_deg:.3f} deg on {metrics.max_joint} "
-        f"[{verdict}, limit {DRIFT_LIMIT_MM:g} mm]"
+        f"[{metrics.verdict}, limit {DRIFT_LIMIT_MM:g} mm]"
     )
 
 
@@ -218,9 +237,9 @@ def format_table(rows: list[DriftMetrics]) -> str:
     lines = [header, "|" + "---|" * 9]
     for m in sorted(rows, key=lambda m: (m.side, m.index)):
         lines.append(
-            f"| {m.side} | {m.index} | {m.duration_s:.1f} | {m.samples} "
+            f"| {m.side} | {m.index} | {m.duration_s:.1f} of {m.requested_s:g} | {m.samples} "
             f"| {m.fingertip_drift_mm:.2f} | {m.fingertip_peak_mm:.2f} "
-            f"| {m.max_joint_drift_deg:.3f} | {m.max_joint} | {'ok' if m.passed else 'FAIL'} |"
+            f"| {m.max_joint_drift_deg:.3f} | {m.max_joint} | {m.verdict} |"
         )
     lines.append("")
     return "\n".join(lines)

@@ -225,18 +225,18 @@ def step_start(recording: Recording, event: StepEvent, stop: float) -> float:
 def extract_steps(
     recording: Recording, on_step: Callable[[StepEvent], None] | None = None
 ) -> list[StepRecord]:
-    """One record per step marker, from when its target went out (``step_start``)."""
+    """One record per step marker, from when its target went out (``step_start``).
+
+    A marker with no recorded samples keeps its record, with none, and fails.
+    """
     records: list[StepRecord] = []
+    unrecorded = JointTrace(t=np.empty(0), q_deg=np.empty(0), dq_deg_s=np.empty(0))
     for event, _, stop in segment_steps(recording.events, recording.t_end):
         if on_step is not None:
             on_step(event)
         start = step_start(recording, event, stop)
-        trace = recorded_trace(recording, event.joint)
-        if trace is None:
-            continue
+        trace = recorded_trace(recording, event.joint) or unrecorded
         mask = (trace.t >= start) & (trace.t <= stop)
-        if not mask.any():
-            continue
         before = np.flatnonzero(trace.t < start)
         y0 = float(trace.q_deg[before[-1]]) if before.size else event.target_before_deg
         t = trace.t[mask] - start
