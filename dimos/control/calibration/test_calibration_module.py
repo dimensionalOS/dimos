@@ -27,13 +27,9 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.control.connection.arm_config import ConfigPatch
-from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
-from dimos.memory.store.sqlite import SqliteStore
-from dimos.protocol.encode.cbor import decode, encode
-from dimos.robot.manipulators.calibration._fake_tuning_arm import FakeTuningArm
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel, generate_poses
-from dimos.robot.manipulators.calibration.module import (
+from dimos.control.calibration._fake_tuning_arm import FakeTuningArm
+from dimos.control.calibration.gravity_poses import ArmModel, generate_poses
+from dimos.control.calibration.module import (
     CALL_TIMEOUTS_S,
     CONFIG_CALL_TIMEOUT_S,
     HOLD_CALL_TIMEOUT_S,
@@ -42,8 +38,12 @@ from dimos.robot.manipulators.calibration.module import (
     CalibrationModule,
     CalibrationModuleConfig,
 )
-from dimos.robot.manipulators.calibration.recording import SqliteRecording
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.recording import SqliteRecording
+from dimos.control.calibration.spec import ArmCalibrationSpec
+from dimos.control.connection.arm_config import ConfigPatch
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
 

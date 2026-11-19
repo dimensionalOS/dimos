@@ -73,6 +73,34 @@ import numpy as np
 from numpy.typing import NDArray
 import pinocchio as pin
 
+from dimos.control.calibration._inertial import apply_inertial_overrides
+from dimos.control.calibration.arm_session import MarkerStream
+from dimos.control.calibration.coordinator import CALIBRATION_PASSTHROUGH_TASK
+from dimos.control.calibration.gravity_fit import GravityRecording, PoseMarker
+from dimos.control.calibration.gravity_poses import ArmModel
+from dimos.control.calibration.procedure import Procedure, ProcedureStatus
+from dimos.control.calibration.recording import RecordingUnavailableError
+from dimos.control.calibration.schema import (
+    ArmCalibration,
+    ArmCalibrationError,
+    calibration_path,
+    check_arm_fits,
+    load_for_spec,
+    merge_patch,
+    save_calibration,
+    to_inertial_overrides,
+)
+from dimos.control.calibration.spec import (
+    DEFAULT_TORQUE_SAFETY_FACTOR,
+    ArmCalibrationSpec,
+    urdf_limits,
+)
+from dimos.control.calibration.step_analysis import StepEvent
+from dimos.control.calibration.step_report import (
+    CommandTrace,
+    JointTrace,
+    Recording,
+)
 from dimos.control.connection.arm_config import (
     DEFAULT_CONFIG_LEASE_S,
     MAX_CONFIG_LEASE_S,
@@ -92,34 +120,6 @@ from dimos.control.connection.connection_module import (
     _real,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.calibration._inertial import apply_inertial_overrides
-from dimos.robot.manipulators.calibration.arm_session import MarkerStream
-from dimos.robot.manipulators.calibration.coordinator import CALIBRATION_PASSTHROUGH_TASK
-from dimos.robot.manipulators.calibration.gravity_fit import GravityRecording, PoseMarker
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
-from dimos.robot.manipulators.calibration.procedure import Procedure, ProcedureStatus
-from dimos.robot.manipulators.calibration.recording import RecordingUnavailableError
-from dimos.robot.manipulators.calibration.schema import (
-    ArmCalibration,
-    ArmCalibrationError,
-    calibration_path,
-    check_arm_fits,
-    load_for_spec,
-    merge_patch,
-    save_calibration,
-    to_inertial_overrides,
-)
-from dimos.robot.manipulators.calibration.spec import (
-    DEFAULT_TORQUE_SAFETY_FACTOR,
-    ArmCalibrationSpec,
-    urdf_limits,
-)
-from dimos.robot.manipulators.calibration.step_analysis import StepEvent
-from dimos.robot.manipulators.calibration.step_report import (
-    CommandTrace,
-    JointTrace,
-    Recording,
-)
 
 # The robot name the fake's joint states carry, "arm/left_joint2".
 SOURCE = "arm"

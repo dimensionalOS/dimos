@@ -28,18 +28,18 @@ from typing import Any
 import pytest
 
 from dimos.control._control_test_helpers import FAKE_ARM_JOINTS, FakeArm, fake_arm_model
+from dimos.control.calibration.coordinator import (
+    CALIBRATION_COMMAND_PORT,
+    CALIBRATION_PASSTHROUGH_TASK,
+    CalibrationCoordinator,
+    calibration_passthrough_task,
+)
 from dimos.control.connection import connection_module
 from dimos.control.connection.arm_config import ConfigPatch
 from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.contract.keys import Interface
 from dimos.control.tick_loop import TickLoop
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.calibration.coordinator import (
-    CALIBRATION_COMMAND_PORT,
-    CALIBRATION_PASSTHROUGH_TASK,
-    CalibrationCoordinator,
-    calibration_passthrough_task,
-)
 from dimos.utils.testing.waiting import wait_until
 
 ARM_JOINTS = [f"arm/{joint}" for joint in FAKE_ARM_JOINTS]

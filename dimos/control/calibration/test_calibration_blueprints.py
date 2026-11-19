@@ -19,19 +19,19 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.control.calibration.coordinator import (
+    CALIBRATION_COMMAND_PORT,
+    CALIBRATION_PASSTHROUGH_TASK,
+    CalibrationCoordinator,
+)
+from dimos.control.calibration.module import CalibrationModule
+from dimos.control.calibration.robots import KNOWN_ROBOTS
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.core.coordination.module_coordinator import resolve_module_refs, stream_name_types
 from dimos.core.global_config import global_config
 from dimos.memory.tap import matching
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.get_all_blueprints import load_blueprint
-from dimos.robot.manipulators.calibration.coordinator import (
-    CALIBRATION_COMMAND_PORT,
-    CALIBRATION_PASSTHROUGH_TASK,
-    CalibrationCoordinator,
-)
-from dimos.robot.manipulators.calibration.module import CalibrationModule
-from dimos.robot.manipulators.calibration.robots import KNOWN_ROBOTS
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection
 from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
@@ -55,7 +55,7 @@ CALIBRATE: dict[str, tuple[type[DamiaoConnection], str, str | None]] = {
 def test_every_known_robot_has_one():
     assert sorted(robot for _, robot, _ in CALIBRATE.values()) == sorted(KNOWN_ROBOTS)
     assert all_modules["calibration-module"] == (
-        "dimos.robot.manipulators.calibration.module.CalibrationModule"
+        "dimos.control.calibration.module.CalibrationModule"
     )
 
 
