@@ -30,9 +30,7 @@ _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
 
 
 def _camera_fields() -> set[str]:
-    own = set(RealSenseCameraConfig.model_fields) - set(NativeModuleConfig.model_fields)
-    # The frame stem is a base field that crosses the wire too.
-    return own | {"frame_id"}
+    return set(RealSenseCameraConfig.model_fields) - set(NativeModuleConfig.model_fields)
 
 
 def test_config_dict_is_the_camera_config() -> None:
@@ -57,7 +55,9 @@ def test_ports_match_registry() -> None:
         return {
             name
             for name, hint in cls.__annotations__.items()
-            if getattr(hint, "__origin__", None) is not None or "Out[" in str(hint)
+            if getattr(hint, "__origin__", None) is not None
+            or "Out[" in str(hint)
+            or "IO[" in str(hint)
         } - {"config"}
 
     manifest = tomllib.loads(_RUST_MANIFEST.read_text())
