@@ -162,7 +162,9 @@ def make_metal_model_config(
             collision_exclusion_pairs=[("link7", "link8")],
             auto_convert_meshes=True,
             gripper=GripperConfig(
-                pad_links=("link7", "link8"), finger_joints={driven: METAL_GRIPPER_RANGE}
+                pad_links=("link7", "link8"),
+                finger_joints={driven: METAL_GRIPPER_RANGE},
+                grasp_frame=METAL_GRASP_FRAME,
             ),
             home_joints=home_joints,
             tf_extra_links=list(tf_extra_links or []),

@@ -34,7 +34,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 T = TypeVar("T")
 
-API_VERSION = "1"
+API_VERSION = "2"
 
 CallStatus = Literal["OK", "PLANNING_FAILED", "EXECUTION_FAILED", "TIMEOUT", "RAISED"]
 
@@ -48,11 +48,14 @@ GRIPPER_TIMEOUT_S = 15.0
 API_REFERENCE = f"""\
 Program API, version {API_VERSION}. A program is a Python file defining run(robot, task);
 `import math` is the only import allowed. task.text is the task in words. Positions are metres
-and angles radians, in the world frame. Motion calls block until done and raise RobotCallError
+and angles radians, in the world frame. An arm pose is the grasp point, midway between the
+finger pads: move it to an object's centre to grasp it. The fingers point along the pose's own +z
+axis and the jaw opens along its y axis. Motion calls block until done and raise RobotCallError
 (with a .status: PLANNING_FAILED, EXECUTION_FAILED or TIMEOUT) when planning or execution fails;
 catch it to try another way.
   robot.arm.joints()                      joint positions, radians, in the arm's joint order
-  robot.arm.pose()                        Pose(position xyz, orientation xyzw quaternion)
+  robot.arm.pose()                        Pose(position xyz, orientation xyzw quaternion) of
+                                          the grasp point
   robot.arm.move_joints(positions)        planned move to joint positions
   robot.arm.move_pose(xyz, orientation)   planned move; orientation is roll, pitch, yaw or an
                                           xyzw quaternion, omitted keeps the current one
@@ -85,7 +88,7 @@ Example:
       robot.scene.clear(cube.id)
       robot.gripper.open()
       robot.arm.move_pose([x, y, z + 0.10], [math.pi, 0.0, 0.0])
-      robot.arm.move_linear(dz=-0.08)
+      robot.arm.move_linear(dz=-0.10)
       robot.gripper.close()
       robot.arm.move_linear(dz=0.10)
 """
@@ -93,8 +96,8 @@ Example:
 
 @dataclass(frozen=True)
 class Pose:
-    """Where the end effector is: ``position`` in metres and ``orientation`` as
-    an xyzw quaternion, both in the world frame."""
+    """Where the grasp point, midway between the finger pads, is: ``position``
+    in metres and ``orientation`` as an xyzw quaternion, both in the world frame."""
 
     position: tuple[float, float, float]
     orientation: tuple[float, float, float, float]

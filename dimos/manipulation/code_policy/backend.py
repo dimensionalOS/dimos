@@ -132,7 +132,9 @@ class DimosBackend:
     and the gripper, the object-registration module for the scene, the map's
     box filter for clearing objects, and an ``Observer`` for camera frames.
     ``maps`` must be fed from the box filter's output: ``clear_object`` and
-    ``restore`` return once a map captured after the change has arrived."""
+    ``restore`` return once a map captured after the change has arrived.
+    Poses are the grasp point's, which the arm must report; raises
+    ``RuntimeError`` if it does not."""
 
     def __init__(
         self,
@@ -142,6 +144,13 @@ class DimosBackend:
         observer: Observer,
         maps: MapStamps,
     ) -> None:
+        if arm.info.grasp_point is None:
+            raise RuntimeError(
+                f"Arm {arm.info.id!r} does not report its grasp point; set grasp_frame "
+                "in the robot's GripperConfig"
+            )
+        # Where the grasp point sits in the arm's tip frame, metres.
+        self._grasp_point = Vector3(*arm.info.grasp_point)
         self._arm = arm
         self._scene = scene
         self._box_filter = box_filter
@@ -154,8 +163,10 @@ class DimosBackend:
         return [float(value) for value in self._arm.joints()]
 
     def pose(self) -> Pose:
-        pose = self._arm.pose()
-        return Pose(pose.position.to_tuple(), pose.orientation.to_tuple())
+        tip = self._arm.pose()
+        # grasp = tip position + tip rotation applied to the grasp point's offset in the tip frame.
+        grasp = tip.position + tip.orientation.normalize().rotate_vector(self._grasp_point)
+        return Pose(grasp.to_tuple(), tip.orientation.to_tuple())
 
     def move_joints(self, positions: Sequence[float]) -> None:
         self._motion(lambda: self._arm.move_joints(positions))
@@ -165,9 +176,13 @@ class DimosBackend:
         position: tuple[float, float, float],
         orientation: tuple[float, float, float, float] | None,
     ) -> None:
-        self._motion(lambda: self._arm.move_pose(position, orientation=orientation))
+        rotation = self._arm.pose().orientation if orientation is None else Quaternion(*orientation)
+        # The tip goes where the grasp point lands on the target: target - rotation applied to the offset.
+        tip = Vector3(*position) - rotation.normalize().rotate_vector(self._grasp_point)
+        self._motion(lambda: self._arm.move_pose(tip.to_tuple(), orientation=rotation.to_tuple()))
 
     def move_linear(self, dx: float, dy: float, dz: float) -> None:
+        # A translation moves the tip and the grasp point by the same amount.
         self._motion(lambda: self._arm.move_linear(dx, dy, dz))
 
     def home(self) -> None:
