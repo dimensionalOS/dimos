@@ -23,7 +23,7 @@ from typing import Literal, cast
 from dimos.constants import RECORDINGS_DIR
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.fields import module_config_cls
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import (
     RealSenseCamera,
@@ -73,7 +73,7 @@ def _camera_if_real(*, pointcloud: bool) -> tuple[Blueprint, ...]:
 
 
 def _collection_components(
-    robot: str, teleop: Blueprint, *, task: str, headset_view: bool = False
+    robot: str, teleop: Blueprint | MetaBlueprint, *, task: str, headset_view: bool = False
 ) -> tuple[Blueprint, ...]:
     """The recorder, the episode monitor and the teleop stack with its camera.
 
@@ -98,7 +98,9 @@ def _collection_components(
     button_map: dict[EpisodeCommand, str] = (
         {"toggle": "B", "discard": "A"} if headset_view else {"toggle": "B", "discard": "Y"}
     )
-    producers = autoconnect(teleop, *real_camera, *bench)
+    # The profile below is built from the coordinator and camera atoms, so the stack is
+    # resolved here. That fixes any choice inside `teleop` to its default.
+    producers = autoconnect(teleop, *real_camera, *bench).solidify()
     coordinator = next(
         atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
     )

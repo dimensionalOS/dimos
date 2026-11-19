@@ -61,6 +61,14 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      - name: Start a PulseAudio server (Ubuntu 26.04)
+        if: matrix.version == '26.04'
+        run: |
+          apt-get install -y --no-install-recommends pulseaudio
+          echo "PULSE_RUNTIME_PATH=/tmp/pulse" >> "$GITHUB_ENV"
+          export PULSE_RUNTIME_PATH=/tmp/pulse PULSE_STATE_PATH=/tmp/pulse-state
+          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/pulseaudio.log ||
+            { cat /tmp/pulseaudio.log; exit 1; }
       - name: Install and verify
         run: |
           # checkout's safe.directory setting uses a temporary HOME. The

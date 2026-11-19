@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.damiao.connection import zero_stiffness_joints
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
@@ -50,7 +50,7 @@ def _gripper_task() -> TaskConfig:
     )
 
 
-def openyam_control(*, teach: bool = False) -> Blueprint:
+def openyam_control(*, teach: bool = False) -> MetaBlueprint:
     """Trajectories and the gripper, through the OpenYAM connection.
 
     Args:

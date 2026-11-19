@@ -84,7 +84,7 @@ def use_zenoh(mocker):
 
 @pytest.fixture()
 def blueprint():
-    return autoconnect(ProducerModule.blueprint(), ConsumerModule.blueprint())
+    return autoconnect(ProducerModule.blueprint(), ConsumerModule.blueprint()).solidify()
 
 
 @pytest.fixture()

@@ -42,7 +42,7 @@ import time
 
 import numpy as np
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -168,7 +168,7 @@ def _percentiles_ms(samples: list[float]) -> dict[str, float]:
     }
 
 
-def blueprint(args: argparse.Namespace) -> Blueprint:
+def blueprint(args: argparse.Namespace) -> MetaBlueprint:
     bp = autoconnect(
         FramePublisher.blueprint(rate_hz=args.rate, size_bytes=args.size, count=args.count),
         SlowHandlerModule.blueprint(handler_delay_ms=args.handler_delay_ms),

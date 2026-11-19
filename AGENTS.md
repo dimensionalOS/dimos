@@ -178,7 +178,10 @@ class MyModule(Module):
 
 ### Blueprints
 
-Compose modules with `autoconnect()`. Streams auto-connect by `(name, type)` matching.
+Compose modules with `autoconnect()`, which returns a `MetaBlueprint`. Call
+`.solidify()` to resolve any `ChoiceAtom`s into a concrete `Blueprint`, or
+`.build(choices=...)` to resolve and build directly. Streams auto-connect by
+`(name, type)` matching. The CLI resolves choices using repeatable `--choice NAME=OPTION` flags.
 
 ```python
 from dimos.core.coordination.blueprints import autoconnect

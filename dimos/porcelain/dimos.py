@@ -21,7 +21,7 @@ import inspect
 import threading
 from typing import Any, TypeAlias, TypeVar, cast
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 from dimos.core.global_config import global_config
 from dimos.core.introspection.module.info import (
@@ -71,14 +71,14 @@ class Dimos:
         self._stopped = False
         atexit.register(self.stop)
 
-    def run(self, target: str | Blueprint | type[ModuleBase]) -> None:
+    def run(self, target: str | Blueprint | MetaBlueprint | type[ModuleBase]) -> None:
         """Start a blueprint, module, or named configuration.
 
         Args:
             target: One of:
                 - A string name from the blueprint/module registry
                   (e.g. `"unitree-go2-basic"` or `"webcam-module"`).
-                - A `Blueprint` object.
+                - A `Blueprint` or `MetaBlueprint` object (using default choices).
                 - A `Module` class (calls `.blueprint()` automatically).
 
         The first call creates the coordinator and starts the system.
@@ -431,7 +431,11 @@ class Dimos:
         return base
 
 
-def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModuleSource) -> None:
+def _run_remote(
+    target: str | Blueprint | MetaBlueprint | type[ModuleBase], source: RemoteModuleSource
+) -> None:
+    if isinstance(target, MetaBlueprint):
+        target = target.solidify()
     if isinstance(target, str):
         source.load_blueprint_by_name(target)
         return
@@ -486,11 +490,13 @@ def _describe_module(descriptor: ModuleDescriptor) -> ModuleInfo:
     )
 
 
-def _resolve_target(target: str | Blueprint | type[ModuleBase]) -> Blueprint:
+def _resolve_target(target: str | Blueprint | MetaBlueprint | type[ModuleBase]) -> Blueprint:
     """Convert a run() argument into a Blueprint."""
 
     if isinstance(target, str):
-        return get_by_name(target)
+        target = get_by_name(target)
+    if isinstance(target, MetaBlueprint):
+        return target.solidify()
     if isinstance(target, Blueprint):
         return target
     if inspect.isclass(target) and issubclass(target, ModuleBase):

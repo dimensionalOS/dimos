@@ -33,7 +33,7 @@ from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.gripper_task.gripper_task import GripperControlTask
 from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
@@ -60,12 +60,12 @@ from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 # Each blueprint's gripper joint: the adapter's "arm/gripper", or the URDF's
 # drive_joint behind XArmConnection.
 _GRIPPER_BLUEPRINTS = [
-    (keyboard_teleop_xarm6, "arm/gripper"),
-    (keyboard_teleop_xarm7, "arm/gripper"),
-    (coordinator_teleop_xarm6, "arm/gripper"),
-    (coordinator_teleop_xarm7, "arm/gripper"),
-    (xarm7_planner_coordinator, "arm/drive_joint"),
-    (xarm_perception_sim, "arm/gripper"),
+    (keyboard_teleop_xarm6.solidify(), "arm/gripper"),
+    (keyboard_teleop_xarm7.solidify(), "arm/gripper"),
+    (coordinator_teleop_xarm6.solidify(), "arm/gripper"),
+    (coordinator_teleop_xarm7.solidify(), "arm/gripper"),
+    (xarm7_planner_coordinator.solidify(), "arm/drive_joint"),
+    (xarm_perception_sim.solidify(), "arm/gripper"),
 ]
 
 
@@ -81,10 +81,10 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
 @pytest.mark.parametrize(
     "blueprint",
     [
-        keyboard_teleop_xarm6,
-        keyboard_teleop_xarm7,
-        xarm_grasp,
-        xarm_perception_sim,
+        keyboard_teleop_xarm6.solidify(),
+        keyboard_teleop_xarm7.solidify(),
+        xarm_grasp.solidify(),
+        xarm_perception_sim.solidify(),
     ],
 )
 def test_xarm_roboplan_blueprints_use_compatible_visualization(blueprint: Blueprint) -> None:
@@ -106,7 +106,9 @@ def test_gripper_has_dedicated_task(blueprint: Blueprint, joint: str) -> None:
     assert (gripper.name, gripper.joint_names) == ("arm_gripper", [joint])
 
 
-@pytest.mark.parametrize("blueprint", [coordinator_teleop_xarm6, coordinator_teleop_xarm7])
+@pytest.mark.parametrize(
+    "blueprint", [coordinator_teleop_xarm6.solidify(), coordinator_teleop_xarm7.solidify()]
+)
 def test_trajectory_accepts_gripper(blueprint: Blueprint) -> None:
     trajectory = next(task for task in _coordinator_tasks(blueprint) if task.type == "trajectory")
 
@@ -141,7 +143,7 @@ def _under_simulation(module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> di
 def test_simulation_leaves_the_gripper_joint_to_the_sim(
     name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    blueprint = _under_simulation(_SIM_BLUEPRINTS[name], monkeypatch)[name]
+    blueprint = autoconnect(_under_simulation(_SIM_BLUEPRINTS[name], monkeypatch)[name]).solidify()
     coordinator = next(
         atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
     )
@@ -153,7 +155,7 @@ def test_simulation_leaves_the_gripper_joint_to_the_sim(
     assert sim.kwargs["dof"] == len(arm.joints) - 1
 
 
-@pytest.mark.parametrize("blueprint", [xarm6_teleop, xarm7_teleop])
+@pytest.mark.parametrize("blueprint", [xarm6_teleop.solidify(), xarm7_teleop.solidify()])
 def test_connection_blueprint_shares_the_contract_declaration(blueprint: Blueprint) -> None:
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={}, overrides={"xarmconnection": {"ip": "192.0.2.1"}}

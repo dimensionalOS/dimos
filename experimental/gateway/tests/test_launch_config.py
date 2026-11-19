@@ -526,3 +526,15 @@ def test_topic_metadata_follows_the_desktop_runtime_setting(
         shared_config.shared_config.cache_clear()
     defaults = launches.launch_env_defaults()
     assert defaults.get("TOPIC_METADATA") == ("true" if enabled is True else None)
+
+
+@pytest.mark.parametrize("connect", ["tcp/10.21.31.106:7447", None])
+def test_zenoh_connect_follows_the_desktop_runtime_setting(home: Path, connect: str | None) -> None:
+    if connect is not None:
+        (home / "dimos_home").mkdir()
+        (home / "dimos_home" / "config.yaml").write_text(f"zenoh:\n  connect: {connect}\n")
+        shared_config.shared_config.cache_clear()
+    defaults = launches.launch_env_defaults()
+    assert defaults.get("ZENOH_CONNECT") == connect
+    parsed = BlueprintConfigParser(RerunBridgeModule.blueprint()).parse(environ=defaults)
+    assert parsed.global_config.get("zenoh_connect", "") == (connect or "")

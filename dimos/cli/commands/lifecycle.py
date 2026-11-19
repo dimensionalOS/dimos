@@ -182,6 +182,9 @@ def run(
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    choice: list[str] = typer.Option(
+        [], "--choice", help="Select a blueprint alternative as NAME=OPTION; may be repeated"
+    ),
     config_path: Path = typer.Option(
         DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config file"
     ),
@@ -210,7 +213,7 @@ def run(
         BlueprintConfigParser,
         split_run_arguments,
     )
-    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import ChoiceResolutionError, autoconnect
     from dimos.core.coordination.module_coordinator import (
         check_module_dependencies,
         stream_name_types,
@@ -225,6 +228,14 @@ def run(
 
     try:
         blueprint_names, config_tokens = split_run_arguments(robot_types)
+        choices: dict[str, str] = {}
+        for selection in choice:
+            name, separator, option = selection.partition("=")
+            if not separator or not name or not option:
+                raise BlueprintConfigError(f"Invalid --choice {selection!r}: expected NAME=OPTION")
+            if name in choices:
+                raise BlueprintConfigError(f"Choice {name!r} was specified more than once")
+            choices[name] = option
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
@@ -261,7 +272,13 @@ def run(
         typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
         raise typer.Exit(2) from error
 
-    blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
+    try:
+        blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names)).solidify(
+            choices=choices
+        )
+    except ChoiceResolutionError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
 
     if disable:
         disabled_classes = tuple(
@@ -415,9 +432,7 @@ def run(
             # forked image.
             os._exit(1)
     else:
-        # Foreground: SIGINT stays at default so Ctrl+C raises KeyboardInterrupt with a
-        # visible traceback.
-        _run_registered(blueprint, parsed_config, entry, sigint=False)
+        _run_registered(blueprint, parsed_config, entry)
 
 
 def status() -> None:
