@@ -62,6 +62,9 @@ MIN_CELLS = 40
 RIM_FRACTION = 0.75
 MIN_RIM_POINTS = 50
 MAX_LIP_M = 0.02
+# Depth noise at a metre sprays a few rim points centimetres past the side walls, and each fused
+# frame adds more: the rectangle is fitted to the rim less this share on each side, across it.
+WIDTH_TRIM_PCT = 2.0
 # A done slot is taken when a seen bin comes within this of the slot's footprint. The done slots
 # leave 26 mm between bins, so a neighbour standing on its own slot does not take this one.
 SLOT_CLEAR_M = 0.015
@@ -304,7 +307,14 @@ class XArm7BinFinder(Module):
         rim = p[p[:, 2] > cfg.table_top_z + RIM_FRACTION * BIN_HEIGHT_M]
         if len(rim) < MIN_RIM_POINTS:
             return None
-        (cx, cy), (w, h), angle = cv2.minAreaRect((rim[:, :2] * 1000).astype(np.float32))
+        mm = (rim[:, :2] * 1000).astype(np.float32)
+        (cx, cy), (w, h), angle = cv2.minAreaRect(mm)
+        across = np.radians(angle if w < h else angle + 90.0)
+        b = (mm - (cx, cy)) @ np.array([np.cos(across), np.sin(across)])
+        lo, hi = np.percentile(b, [WIDTH_TRIM_PCT, 100.0 - WIDTH_TRIM_PCT])
+        inside = (b >= lo) & (b <= hi)
+        rim = rim[inside]
+        (cx, cy), (w, h), angle = cv2.minAreaRect(mm[inside])
         along_deg = angle if w >= h else angle + 90.0
         along = np.array([np.cos(np.radians(along_deg)), np.sin(np.radians(along_deg))])
         centre: FloatArray = np.array([cx, cy], dtype=float) / 1000

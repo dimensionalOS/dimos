@@ -84,6 +84,21 @@ def test_two_bins_as_close_as_the_done_slots_stay_two_and_zone_by_slot() -> None
     assert all(b["size_ok"] for b in bins)
 
 
+def test_depth_noise_past_a_side_wall_does_not_widen_or_move_the_bin() -> None:
+    # as on the loading slot: a thin run of rim points up to 6 cm past the far wall, about 1% of
+    # the rim, made the bin 21 cm wide and moved it 3 cm
+    p = _bin_points(0.314, 0.505, 90.0)
+    far_wall_x = 0.314 - BIN_WIDTH_M / 2
+    spray = np.array(
+        [(far_wall_x - d, 0.5, TABLE_Z + 0.11) for d in np.arange(0.005, 0.061, 0.005)]
+    )
+    bins = XArm7BinFinder._fit_bins(_finder(), np.concatenate([p, spray]))  # type: ignore[arg-type]
+    assert len(bins) == 1
+    b = bins[0]
+    assert np.hypot(b["x"] - 0.314, b["y"] - 0.505) < 0.005
+    assert abs(b["yaw_deg"] - 90.0) < 1.0 and b["size_ok"]
+
+
 def _seen(x: float, y: float, yaw_deg: float) -> dict[str, float]:
     return {"x": x, "y": y, "yaw_deg": yaw_deg, "length_m": BIN_LENGTH_M, "width_m": BIN_WIDTH_M}
 
