@@ -23,12 +23,20 @@ one pair of files, whole, not reconstructed from normalized messages.
 ``write_normalized(dir, messages, result)`` is the fallback for providers
 that offer no HTTP hook: the same file pair built from LangChain's view of
 the call, marked ``"normalized": true`` so a reader knows it is not wire-exact.
+
+Both also save each image a request carries, the first time any request
+carries it, as ``seen/r<seq>-<n>.<ext>`` beside *dir*: what the model looked
+at, in one folder, as it looks.
 """
 
 from __future__ import annotations
 
+import base64
+from collections.abc import Iterator
+import hashlib
 import json
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Any
@@ -42,6 +50,11 @@ logger = setup_logger()
 REQUEST_SUFFIX = "-request.json"
 RESPONSE_SUFFIX = "-response.json"
 _DROPPED_HEADERS = {"authorization", "x-api-key", "x-goog-api-key", "openai-organization", "cookie"}
+SEEN_DIR = "seen"
+_DATA_URL = re.compile(r"data:image/([a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)")
+# Images already saved, per trace dir, by digest: a later request resends the whole history.
+_saved: dict[Path, set[str]] = {}
+_saved_lock = threading.Lock()
 
 
 def _next_seq(trace_dir: Path) -> int:
@@ -61,6 +74,49 @@ def _body(content: bytes) -> Any:
         return json.loads(content)
     except ValueError:
         return content.decode("utf-8", errors="replace")
+
+
+def _images(value: Any) -> Iterator[tuple[str, str]]:
+    """(subtype, base64) of each image in a request body: data URLs (OpenAI) and
+    ``media_type`` / ``mime_type`` + ``data`` blocks (Anthropic, Gemini)."""
+    if isinstance(value, str):
+        yield from _DATA_URL.findall(value)
+    elif isinstance(value, dict):
+        media = value.get("media_type") or value.get("mime_type") or value.get("mimeType")
+        if (
+            isinstance(media, str)
+            and media.startswith("image/")
+            and isinstance(value.get("data"), str)
+        ):
+            yield media.removeprefix("image/"), value["data"]
+            return
+        for item in value.values():
+            yield from _images(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _images(item)
+
+
+def seen_dir(trace_dir: Path) -> Path:
+    return trace_dir.parent / SEEN_DIR
+
+
+def _save_images(trace_dir: Path, seq: int, body: Any) -> None:
+    with _saved_lock:
+        saved = _saved.setdefault(trace_dir.resolve(), set())
+        index = 0
+        for subtype, data in _images(body):
+            digest = hashlib.sha256(data.encode()).hexdigest()
+            if digest in saved:
+                continue
+            saved.add(digest)
+            folder = seen_dir(trace_dir)
+            folder.mkdir(exist_ok=True)
+            ext = (
+                "jpg" if subtype in ("jpeg", "jpg") else re.sub(r"[^a-z0-9]", "", subtype) or "img"
+            )
+            (folder / f"r{seq:03d}-{index}.{ext}").write_bytes(base64.b64decode(data))
+            index += 1
 
 
 def request_path(trace_dir: Path, seq: int) -> Path:
@@ -83,6 +139,7 @@ def tracing_http_client(trace_dir: Path, **kwargs: Any) -> httpx.Client:
             with lock:
                 seq = _next_seq(trace_dir)
                 request.extensions["llm_trace"] = (seq, time.monotonic())
+                body = _body(request.content)
                 _write(
                     request_path(trace_dir, seq),
                     {
@@ -90,9 +147,10 @@ def tracing_http_client(trace_dir: Path, **kwargs: Any) -> httpx.Client:
                         "method": request.method,
                         "url": str(request.url),
                         "headers": _headers(request.headers),
-                        "body": _body(request.content),
+                        "body": body,
                     },
                 )
+                _save_images(trace_dir, seq, body)
         except Exception:
             logger.exception("llm trace: request not recorded", dir=str(trace_dir))
 
@@ -126,7 +184,9 @@ def write_normalized(trace_dir: Path, messages: list[Any], result: Any) -> tuple
     trace_dir.mkdir(parents=True, exist_ok=True)
     seq = _next_seq(trace_dir)
     req, resp = request_path(trace_dir, seq), response_path(trace_dir, seq)
-    _write(req, {"normalized": True, "messages": [m.model_dump() for m in messages]})
+    dumped = [m.model_dump() for m in messages]
+    _write(req, {"normalized": True, "messages": dumped})
+    _save_images(trace_dir, seq, dumped)
     _write(resp, {"normalized": True, "result": result.model_dump()})
     return seq, req, resp
 

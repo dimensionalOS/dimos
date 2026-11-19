@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from collections.abc import Callable
 import json
 from pathlib import Path
@@ -26,7 +27,9 @@ from dimos.agents.llm_trace import (
     list_llm_trace_pairs,
     request_path,
     response_path,
+    seen_dir,
     tracing_http_client,
+    write_normalized,
 )
 
 
@@ -108,3 +111,73 @@ def test_trace_discovery_orders_complete_calls_and_respects_sequence_boundary(
     assert last_request_unanswered(tmp_path)
     response_path(tmp_path, 1001).write_text("{}")
     assert not last_request_unanswered(tmp_path)
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+def _data_url(data: str) -> dict[str, str]:
+    return {"type": "input_image", "image_url": f"data:image/jpeg;base64,{data}"}
+
+
+def test_images_are_saved_once_as_their_request_goes_out(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    seen = seen_dir(raw)
+    prompt, frame, crop = _b64(b"prompt"), _b64(b"frame"), _b64(b"crop")
+    bodies = [
+        {"input": [_data_url(prompt)]},
+        # The whole history again, plus the frame a tool fetched (Anthropic's form).
+        {
+            "input": [_data_url(prompt)],
+            "messages": [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": frame},
+                }
+            ],
+        },
+        # Gemini's inline data.
+        {"contents": [{"parts": [{"inline_data": {"mime_type": "image/webp", "data": crop}}]}]},
+    ]
+    saved_after = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        saved_after.append(sorted(path.name for path in seen.glob("*")) if seen.exists() else [])
+        return httpx.Response(200, json={})
+
+    with _client(raw, handler) as client:
+        for body in bodies:
+            client.post("https://api.test/v1/responses", json=body)
+
+    # Each image is on disk before the model answers the request that carries it.
+    assert saved_after == [
+        ["r000-0.jpg"],
+        ["r000-0.jpg", "r001-0.png"],
+        ["r000-0.jpg", "r001-0.png", "r002-0.webp"],
+    ]
+    assert (seen / "r000-0.jpg").read_bytes() == b"prompt"
+    assert (seen / "r001-0.png").read_bytes() == b"frame"
+    assert (seen / "r002-0.webp").read_bytes() == b"crop"
+
+
+def test_normalized_calls_save_their_images_too(tmp_path: Path, mocker: MockerFixture) -> None:
+    raw = tmp_path / "raw"
+    message = mocker.Mock()
+    message.model_dump.return_value = {
+        "content": [
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64(b'shot')}"}}
+        ]
+    }
+    result = mocker.Mock()
+    result.model_dump.return_value = {}
+    write_normalized(raw, [message], result)
+    write_normalized(raw, [message], result)
+    assert [path.name for path in seen_dir(raw).iterdir()] == ["r000-0.png"]
+
+
+def test_requests_without_images_leave_no_seen_folder(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    with _client(raw, lambda request: httpx.Response(200, json={})) as client:
+        client.post("https://api.test/v1/responses", json={"input": "hi"})
+    assert not seen_dir(raw).exists()
