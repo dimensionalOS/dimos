@@ -82,6 +82,7 @@ def _cameras() -> MetaBlueprint:
                 hardware=WebcamConfig(camera_index=index, fps=30),
                 frame_id=f"{name}_camera_link",
                 tf_frames_local={
+                    "parent": "base_link",
                     "camera_link": f"{name}_camera_link",
                     "camera_optical": f"{name}_image/camera_optical",
                 },

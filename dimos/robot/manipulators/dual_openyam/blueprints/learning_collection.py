@@ -79,6 +79,7 @@ dual_openyam_quest_collection = autoconnect(
         hardware=WebcamConfig(camera_index=0, fps=30),
         frame_id="left_wrist_camera_link",
         tf_frames_local={
+            "parent": "base_link",
             "camera_link": "left_wrist_camera_link",
             "camera_optical": "left_wrist_image/camera_optical",
         },
@@ -88,6 +89,7 @@ dual_openyam_quest_collection = autoconnect(
         hardware=WebcamConfig(camera_index=1, fps=30),
         frame_id="right_wrist_camera_link",
         tf_frames_local={
+            "parent": "base_link",
             "camera_link": "right_wrist_camera_link",
             "camera_optical": "right_wrist_image/camera_optical",
         },

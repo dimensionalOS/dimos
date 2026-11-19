@@ -95,6 +95,7 @@ def build_openyam_rollout(
         ),
         frame_id="wrist_camera_link",
         tf_frames_local={
+            "parent": "base_link",
             "camera_link": "wrist_camera_link",
             "camera_optical": "wrist/camera_optical",
         },

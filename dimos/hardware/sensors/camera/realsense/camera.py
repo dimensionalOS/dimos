@@ -46,7 +46,7 @@ class RealSenseCameraConfig(NativeModuleConfig, TfModuleConfig, DepthCameraConfi
     fps: int = 15
     # "link" is the camera's tf link, what a mount edge points at. Imager frames hang off
     # it with `_link` dropped: d435_link -> d435_color_optical_frame.
-    tf_frames_local: dict[str, str] = Field(default_factory=lambda: {"link": "camera_link"})
+    tf_frames_local: dict[str, str] = {"link": "camera_link"}
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True

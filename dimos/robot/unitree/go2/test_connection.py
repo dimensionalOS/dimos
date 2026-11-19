@@ -349,7 +349,12 @@ def connection(stub_webrtc: MagicMock) -> Iterator[Callable[[bool], GO2Connectio
         conn = GO2Connection(
             g=GlobalConfig(robot_ip="127.0.0.1"),
             publish_tf=publish_tf,
-            tf_frames_global={"world": "go2_odom"},
+            tf_frames_local={
+                "world": "go2_odom",
+                "body": "base_link",
+                "camera_link": "camera_link",
+                "camera_optical": "camera_optical",
+            },
         )
         conn._tf = MagicMock()
         conn.odom = MagicMock()
@@ -438,13 +443,13 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
         thread.join(timeout=2)
 
 
-def test_namespace_prefixes_local_frames_only() -> None:
-    """Robot-local frames get the namespace; the odom parent stays global so all robots hang
-    off one tree root."""
-    config = GO2Connection.blueprint().namespace("robot0").blueprints[0].kwargs
-    odom = PoseStamped(ts=1.0, frame_id="world")
-    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, config["tf_frames_local"])
-    assert (base.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
+def test_namespace_prefixes_every_go2_frame() -> None:
+    """The odom origin is this go2's own world, so it gets the namespace like base_link."""
+    frames = GO2Connection.blueprint().namespace("robot0").blueprints[0].kwargs["tf_frames_local"]
+    assert frames["world"] == "robot0/world"
+    odom = PoseStamped(ts=1.0, frame_id=frames["world"])
+    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, frames)
+    assert (base.frame_id, base.child_frame_id) == ("robot0/world", "robot0/base_link")
     assert (camera_link.frame_id, camera_link.child_frame_id) == (
         "robot0/base_link",
         "robot0/camera_link",

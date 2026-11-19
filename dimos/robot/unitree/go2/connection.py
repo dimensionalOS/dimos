@@ -70,23 +70,19 @@ class Go2Mode(str, Enum):
 
 
 class ConnectionConfig(TfModuleConfig):
-    tf_frames_local: dict[str, str] = Field(
-        default_factory=lambda: {
-            "body": "base_link",
-            "camera_link": "camera_link",
-            "camera_optical": "camera_optical",
-        }
-    )
-    # Parent of the internal odometry (world -> base_link). Rename (e.g. "go2_odom") when
-    # another odom source owns the tree root.
-    tf_frames_global: dict[str, str] = Field(default_factory=lambda: {"world": "world"})
-    tf_edges: list[tuple[str, str]] = Field(
-        default_factory=lambda: [
-            ("world", "body"),
-            ("body", "camera_link"),
-            ("camera_link", "camera_optical"),
-        ]
-    )
+    # "world" is this go2's odometry origin (world -> base_link), so it's local too. Rename it
+    # (e.g. "go2_odom") when another odom source owns the tree root.
+    tf_frames_local: dict[str, str] = {
+        "world": "world",
+        "body": "base_link",
+        "camera_link": "camera_link",
+        "camera_optical": "camera_optical",
+    }
+    tf_edges: list[tuple[str, str]] = [
+        ("world", "body"),
+        ("body", "camera_link"),
+        ("camera_link", "camera_optical"),
+    ]
     ip: str | None = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
@@ -491,7 +487,7 @@ class GO2Connection(TfModule, Camera, Pointcloud):
         return [Transform.from_pose(frames["body"], odom), camera_link, camera_optical]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        msg.frame_id = self.config.tf_frames_global["world"]
+        msg.frame_id = self.config.tf_frames_local["world"]
         if self.config.publish_tf:
             self.tfbuffer.publish(*self._odom_to_tf(msg, self.config.tf_frames_local))
         if self.odom.transport:

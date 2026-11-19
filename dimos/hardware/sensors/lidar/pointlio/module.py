@@ -61,10 +61,8 @@ class PointLioConfig(NativeModuleConfig, TfModuleConfig):
 
     # Odometry is published as odom (fixed) -> sensor (moving sensor), and also broadcast on
     # TF. The point cloud is stamped with the sensor frame. The rust side reads these roles.
-    tf_frames_local: dict[str, str] = Field(
-        default_factory=lambda: {"odom": "odom", "sensor": "mid360_link"}
-    )
-    tf_edges: list[tuple[str, str]] = Field(default_factory=lambda: [("odom", "sensor")])
+    tf_frames_local: dict[str, str] = {"odom": "odom", "sensor": "mid360_link"}
+    tf_edges: list[tuple[str, str]] = [("odom", "sensor")]
 
     # Point-LIO internal processing rates (Hz)
     msr_freq: float = 50.0

@@ -70,6 +70,7 @@ openyam_quest_collection = autoconnect(
         hardware=WebcamConfig(camera_index=0, fps=30),
         frame_id="wrist_camera_link",
         tf_frames_local={
+            "parent": "base_link",
             "camera_link": "wrist_camera_link",
             "camera_optical": "wrist_image/camera_optical",
         },
