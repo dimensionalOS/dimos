@@ -12,30 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Scene scans answered from the simulator's true body poses instead of a
-detector, in the shape of the object-registration module's RPCs."""
+"""Scene scans answered from the simulator's true body poses instead of the
+camera, in the shape of ``ManipulationLocalize.scan``."""
 
 from __future__ import annotations
 
 import threading
 from typing import Any
 
-from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 from pydantic import BaseModel
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 
 
 class TruthObject(BaseModel):
@@ -53,9 +45,9 @@ class TruthSceneModuleConfig(ModuleConfig):
 
 
 class TruthSceneModule(Module):
-    """Answers ``scan_scene`` with a world-frame box for every tracked body named
-    in the query, from the latest ``body_poses`` message. Takes the place of
-    the object-registration module on a simulated stack without a detector."""
+    """Answers ``scan`` with a world-frame box for every tracked body named in
+    the query, from the latest ``body_poses`` message. Takes the place of
+    ``ManipulationLocalize`` on a simulated stack."""
 
     config: TruthSceneModuleConfig
 
@@ -65,7 +57,6 @@ class TruthSceneModule(Module):
         super().__init__(**kwargs)
         self._lock = threading.Lock()
         self._latest: dict[str, Transform] = {}
-        self._prompts: list[str] | None = None
 
     @rpc
     def start(self) -> None:
@@ -78,68 +69,27 @@ class TruthSceneModule(Module):
                 self._latest[transform.child_frame_id] = transform
 
     @rpc
-    def set_prompts(self, text: list[str] | None = None) -> None:
-        """Remember the words later scans without a query use."""
-        self._prompts = text
-
-    @rpc
-    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
-        """Boxes in the world frame for the tracked bodies ``text`` names (a body
-        matches a query that contains its name as a word); every body when no words."""
-        words = self._prompts if text is None else text
+    def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
+        """One world-frame box per tracked body that ``names`` names (a body matches
+        a name that contains it as a word), from the latest body poses. ``window_s``
+        (seconds) is ignored: the poses are always current."""
         with self._lock:
             latest = dict(self._latest)
-        detections = [
-            _detection(name, transform, self.config.objects[name])
-            for name, transform in latest.items()
-            if name in self.config.objects and _named(name, words)
+        return [
+            {
+                "id": name,
+                "label": name,
+                "position": [
+                    t.translation.x + self.config.objects[name].centre[0],
+                    t.translation.y + self.config.objects[name].centre[1],
+                    t.translation.z + self.config.objects[name].centre[2],
+                ],
+                "size": list(self.config.objects[name].size),
+            }
+            for name, t in latest.items()
+            if name in self.config.objects and _named(name, names)
         ]
-        ts = max((transform.ts for transform in latest.values()), default=0.0)
-        return Detection3DArray(
-            detections_length=len(detections),
-            header=Header(ts, "world"),
-            detections=detections,
-        )
-
-    @rpc
-    def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None:
-        """None: the truth scene has no camera, so no point clouds."""
-        return None
-
-    @rpc
-    def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None:
-        """None: the truth scene has no camera, so no point clouds."""
-        return None
-
-    @rpc
-    def get_full_scene_pointcloud(
-        self,
-        exclude_object_id: str | None = None,
-        depth_trunc: float = 2.0,
-        voxel_size: float = 0.01,
-    ) -> PointCloud2 | None:
-        """None: the truth scene has no camera, so no point clouds."""
-        return None
 
 
-def _named(body: str, words: list[str] | None) -> bool:
-    return words is None or any(body in word.lower().split() for word in words)
-
-
-def _detection(name: str, transform: Transform, box: TruthObject) -> Detection3D:
-    t, q = transform.translation, transform.rotation
-    detection = Detection3D()
-    detection.header = Header(transform.ts, "world")
-    detection.id = name
-    detection.results = [
-        ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id=name, score=1.0))
-    ]
-    detection.results_length = 1
-    detection.bbox = BoundingBox3D(
-        center=Pose(
-            position=Vector3(t.x + box.centre[0], t.y + box.centre[1], t.z + box.centre[2]),
-            orientation=Quaternion(q.x, q.y, q.z, q.w),
-        ),
-        size=Vector3(*box.size),
-    )
-    return detection
+def _named(body: str, words: list[str]) -> bool:
+    return any(body in word.lower().split() for word in words)

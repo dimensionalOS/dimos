@@ -72,7 +72,7 @@ the program may catch it and try another way.
 | `arm.home()` | the home preset | `Arm.home` |
 | `gripper.open()` / `close()` | fully open or closed | `Arm.open_gripper` / `close_gripper` |
 | `gripper.set(x)` | opening as a fraction of travel, 0 closed to 1 open, on any robot; `gripper.range()` gives (0.0, 1.0) | `Arm.set_gripper_position` |
-| `scene.objects(words)` | detected objects: id, name, position, size | the object-registration module's `scan_scene` |
+| `scene.objects(words)` | detected objects: id, name, position, size | the scene module's `scan` (`ObjectSceneSpec`) |
 | `scene.clear(object_id, margin=0.03)` | leave that object, plus `margin` metres on every side, out of the obstacle map: the map treats every object as an obstacle, so clear each object you will touch or put something into; clears add up | the map's box filter `set_box` |
 | `scene.restore()` | put every cleared object back in the map | the box filter `clear_box` |
 | `observe()` | saves a keyframe, returns its path | an `Observer` |
@@ -150,7 +150,7 @@ background thread and return at once; `results` is polled. The world is
 (no plan, so it works from any pose), waits for it to hold still and for an
 obstacle map of the new scene, then puts back whatever the last program
 cleared from that map and waits for fresh poses; a snapshot stops the arm and
-waits for it to hold still. Programs run on `LIVE_BACKEND`. `TruthSceneModule` (`truth_scene.py`) answers scene scans from the
+waits for it to hold still. Programs run on `LIVE_BACKEND`. `TruthSceneModule` (`truth_scene.py`) answers `scan` from the
 simulator's true poses so no detector is needed. The autoresearch module publishes an
 `AutoresearchStatus` document (`status.py`) on `autoresearch_status`, and
 `session.json` goes idle, running, frozen, scored with the held-out rate.

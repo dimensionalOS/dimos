@@ -48,7 +48,7 @@ from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode_monitor import EpisodeControlSpec
 from dimos.manipulation.code_policy.api import API_REFERENCE, RunStoppedError
 from dimos.manipulation.code_policy.runner import DEFAULT_TIMEOUT_S, LIVE_BACKEND
-from dimos.manipulation.code_policy.scene_spec import ObjectSceneRegistrationSpec
+from dimos.manipulation.code_policy.scene_spec import SCAN_WINDOW_S, ObjectSceneSpec
 from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.manipulation.sdk import Arm
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
@@ -130,7 +130,8 @@ class AutoresearchModuleConfig(ModuleConfig):
     ``model`` at ``actor_provider`` is what ``start_actor`` runs unless told
     otherwise, for at most ``actor_max_steps`` model calls in ``actor_timeout_s``.
     ``blueprint`` (the stack's blueprint name) and ``scene_source`` (what finds
-    objects for ``scene.objects``) go into session.json for skill exports."""
+    objects for ``scene.objects``) go into session.json for skill exports.
+    ``scene_objects`` are the names the ``scene`` tool looks for."""
 
     session_dir: Path
     task: str
@@ -147,6 +148,7 @@ class AutoresearchModuleConfig(ModuleConfig):
     backend_factory: str = LIVE_BACKEND
     blueprint: str = ""
     scene_source: str = "simulator-truth"
+    scene_objects: list[str] = Field(default_factory=list)
 
     @field_validator("actor_provider")
     @classmethod
@@ -176,7 +178,7 @@ class AutoresearchModule(Module):
     _control: TrajectoryControlSpec
     _box_filter: PointCloudBoxFilterSpec
     _episodes: EpisodeControlSpec
-    _scene: ObjectSceneRegistrationSpec
+    _scene: ObjectSceneSpec
     _mcp_server: McpServerSpec
 
     _session: Session
@@ -320,22 +322,14 @@ class AutoresearchModule(Module):
     def scene(self) -> str:
         """The objects in the scene now, with their box centres and sizes in
         world metres, and the path of a camera frame saved just now."""
-        detections = self._scene.scan_scene(None)
+        found = self._scene.scan(list(self.config.scene_objects), SCAN_WINDOW_S)
         objects = [
-            {
-                "name": detection.results[0].hypothesis.class_id,
-                "position": [
-                    detection.bbox.center.position.x,
-                    detection.bbox.center.position.y,
-                    detection.bbox.center.position.z,
-                ],
-                "size": [detection.bbox.size.x, detection.bbox.size.y, detection.bbox.size.z],
-            }
-            for detection in detections.detections
+            {"name": entry["label"], "position": entry["position"], "size": entry["size"]}
+            for entry in found
         ]
         return json.dumps(
             {
-                "frame": detections.header.frame_id,
+                "frame": "world",
                 "objects": objects,
                 "keyframe": str(self._keyframe()),
             },

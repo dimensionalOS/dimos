@@ -68,6 +68,7 @@ autoresearch_metal_sim = autoconnect(
         place_body="bowl",
         placement_bounds=METAL_BENCH_PLACEMENT,
         blueprint="autoresearch-metal-sim",
+        scene_objects=list(METAL_BENCH_TRUTH),
     ),
     McpServer.blueprint(),
 ).remappings([("recorder", "wrist_image", "color_image")])
