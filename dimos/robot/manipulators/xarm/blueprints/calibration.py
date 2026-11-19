@@ -416,13 +416,14 @@ XARM7_SCENE_CAMERA_GUESS_XYZW = (0.6311099, 0.6311099, -0.3189048, -0.3189048)
 XARM7_PLATE_XYZ = (-0.075, 0.0, 0.277)
 XARM7_PLATE_XYZW = (-0.7071068, 0.0, 0.0, 0.7071068)
 # The card as a planner body on link7, so no move takes it into the table: 17 x 19 cm, 7 mm thick,
-# its 17 cm edge 4 cm into the pads (12.4 to 16.1 cm out), so from the fingertips to 31.7 cm out,
-# with 1 cm to spare all round and its face across flange y like the plate above.
+# its 17 cm edge 4 cm into the pads (12.4 to 16.1 cm out), so from the fingertips to 31.7 cm out.
+# On the bench the pattern sat 3 cm further out than that (the card held shallower), so the body
+# reaches 36 cm out, its face across flange y like the plate above.
 XARM7_HELD_CARD_URDF = """<robot name="held_card"><link name="held_card">
-<visual><geometry><box size="0.19 0.02 0.16"/></geometry></visual>
-<collision><geometry><box size="0.19 0.02 0.16"/></geometry></collision>
+<visual><geometry><box size="0.19 0.03 0.193"/></geometry></visual>
+<collision><geometry><box size="0.19 0.03 0.193"/></geometry></collision>
 </link></robot>"""
-XARM7_HELD_CARD_XYZ = (0.0, 0.0, 0.247)
+XARM7_HELD_CARD_XYZ = (0.0, -0.007, 0.2635)
 # The fingers clamp it, and the gripper base sits right behind it.
 XARM7_HELD_CARD_TOUCHES = (
     "xarm_gripper_base_link",
