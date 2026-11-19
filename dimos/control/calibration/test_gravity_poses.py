@@ -278,6 +278,16 @@ def test_midline_keep_out_faces_the_other_arm(arm: ArmModel, right_arm: ArmModel
     assert not arm.transition_ok(home_pose(arm).joints_rad, reaching)
 
 
+def test_a_fingertip_only_guard_checks_no_other_frame(left_spec: ArmCalibrationSpec) -> None:
+    spec = replace(left_spec, workspace=replace(left_spec.workspace, clearance_frames=()))
+    arm = ArmModel(spec)
+    home = home_pose(arm).joints_rad
+    tip, others = arm.points(arm.q(home))
+    assert others.shape == (0, 3) and tip.shape == (3,)
+    assert arm.pose_ok(home, require_front=False)
+    assert arm.transition_ok(home, home)
+
+
 def test_keep_out_half_space_checks_every_point() -> None:
     space = HalfSpace(normal=(0.0, 0.0, -1.0), offset_m=-0.2, name="below 0.2 m")
     assert not space.violated_by(np.array([[0.0, 0.0, 0.3], [1.0, 1.0, 0.25]]))

@@ -185,7 +185,8 @@ class ArmModel:
         """Fingertip and the stacked clearance frame origins, workspace frame."""
         pin.framesForwardKinematics(self.model, self.data, q)
         tip = self.data.oMf[self._tip].act(self._tip_offset) - self.origin
-        others = np.stack([self.data.oMf[f].translation for f in self._clearance]) - self.origin
+        frames = [self.data.oMf[f].translation for f in self._clearance]
+        others = (np.stack(frames) if frames else np.zeros((0, 3))) - self.origin
         return np.asarray(tip, dtype=np.float64), others
 
     def fingertip(self, joints: Joints) -> np.ndarray:
