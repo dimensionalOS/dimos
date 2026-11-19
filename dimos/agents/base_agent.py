@@ -12,15 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, ClassVar, Generic, Protocol, TypeVar, get_args, get_origin
+import dataclasses
+from enum import Enum
+from pathlib import Path
+from typing import (
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Protocol,
+    TypeVar,
+    get_args,
+    get_origin,
+    get_type_hints,
+    is_typeddict,
+)
 
 from langchain_core.messages.base import BaseMessage
-from pydantic import ConfigDict, TypeAdapter, ValidationError
+import numpy as np
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 from pydantic.errors import PydanticUserError
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.protocol.encode import cbor
 
 I = TypeVar("I")
 O = TypeVar("O")
@@ -66,6 +82,51 @@ def _matches(tp: Any, value: Any) -> bool:
     return True
 
 
+_PLAIN = (type(None), bool, int, float, str, bytes, Path)
+
+
+def _unsendable(tp: Any, seen: frozenset[int] = frozenset()) -> str | None:
+    """Why values of tp cannot cross RPC or a transport (see protocol/encode/cbor.py), or None.
+
+    ``Any`` and ``object`` pass: what they hold is only known when a value is sent.
+    """
+    if tp is Any or tp is object or tp in _PLAIN or id(tp) in seen:
+        return None
+    origin = get_origin(tp)
+    if origin is Literal:
+        return None
+    if origin is not None:
+        if isinstance(origin, type) and issubclass(origin, np.ndarray):
+            return None
+        for arg in get_args(tp):
+            if arg is not Ellipsis and (reason := _unsendable(arg, seen)) is not None:
+                return reason
+        return None
+    if not isinstance(tp, type):
+        return f"{tp!r} is not a class or a typing form of classes"
+    if "<locals>" in tp.__qualname__:
+        return f"{tp.__qualname__} is defined inside a function, so the receiver cannot import it"
+    if issubclass(tp, (Enum, BaseModel, np.ndarray, np.generic, tuple, list, dict, set, frozenset)):
+        fields: dict[str, Any] = get_type_hints(tp) if is_typeddict(tp) else {}
+    elif dataclasses.is_dataclass(tp):
+        fields = get_type_hints(tp)
+    elif (
+        callable(getattr(tp, "lcm_encode", None))
+        or callable(getattr(tp, "cbor_encode", None))
+        or issubclass(tp, tuple(cbor._REGISTRY))
+    ):
+        return None
+    else:
+        return (
+            f"{tp.__module__}.{tp.__qualname__} is a plain class; make it a dataclass, a "
+            "pydantic model or a DimOS message, or give it cbor_encode/cbor_decode"
+        )
+    for name, hint in fields.items():
+        if (reason := _unsendable(hint, seen | {id(tp)})) is not None:
+            return f"{tp.__qualname__}.{name}: {reason}"
+    return None
+
+
 class BaseAgent(Module, Generic[I, O]):
     """Base for agents: one inference call and the chat streams.
 
@@ -92,6 +153,12 @@ class BaseAgent(Module, Generic[I, O]):
         unbound = [tp for tp in types if isinstance(tp, TypeVar)]
         if unbound and not getattr(cls, "__parameters__", ()):
             raise TypeError(f"{cls.__name__} leaves {unbound} of BaseAgent unbound")
+        for tp in types if not unbound else ():
+            if (reason := _unsendable(tp)) is not None:
+                raise TypeError(
+                    f"{cls.__name__} names a type that cannot be sent over RPC or a transport: "
+                    f"{reason}"
+                )
         cls.input_type, cls.output_type = types
 
     @classmethod
