@@ -50,6 +50,7 @@ from dimos.core.resource import CompositeResource
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import rpc_backend
+from dimos.protocol.encode import cbor
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import TF
@@ -382,9 +383,18 @@ class ModuleBase(Configurable, CompositeResource):
         return descriptors
 
     @rpc
-    def get_config(self) -> ModuleConfig:
-        """The config this instance is running with."""
-        return self.config
+    def get_config(self) -> dict[str, Any]:
+        """The config this instance is running with, field by field: only the fields the RPC's CBOR can carry (a
+        field holding, say, a callable or a lock is left out)."""
+        fields: dict[str, Any] = {}
+        for name in type(self.config).model_fields:
+            value = getattr(self.config, name)
+            try:
+                cbor.encode(value)
+            except TypeError:
+                continue
+            fields[name] = value
+        return fields
 
     @rpc
     def get_rpc_signatures(self) -> list[RpcInfo]:
