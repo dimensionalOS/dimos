@@ -331,8 +331,6 @@ def test_the_session_id_is_new_each_start_and_steady_in_between(
     assert rig().module.status().session_id != session
 
 
-# --- The arm config contract -------------------------------------------------
-
 ARM = "fake/arm"
 CONFIG_RPCS = {"config_keys", "config_get", "config_set", "config_reset"}
 DEFAULT_GAINS = JointGains(kp=50.0, kd=1.0)
