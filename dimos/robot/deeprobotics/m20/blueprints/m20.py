@@ -21,7 +21,7 @@ the Map Editor, then run with ``--map-file <recording>.db``.
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import ZenohTransport
-from dimos.mapping.relocalization.lidar.module import ContinuousRelocalization
+from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -40,10 +40,11 @@ m20 = (
         UrdfManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
         m20_nav_stack().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
-        ContinuousRelocalization.blueprint(
+        LocalMapRelocalization.blueprint(
             world_frame=WORLD_FRAME,
             map_frame="premap",
             relocalize=MID360_NAV,
+            continuous=True,
             new_map=True,
             tf_interval=1.0,
             # live voxels the first match waits for, under the 20k default

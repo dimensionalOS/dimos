@@ -252,7 +252,6 @@ all_modules = {
     "camera-mux-module": "dimos.teleop.hosted.camera_mux.CameraMuxModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
     "cloud-relocalization": "dimos.mapping.relocalization.lidar.module.CloudRelocalization",
-    "continuous-relocalization": "dimos.mapping.relocalization.lidar.module.ContinuousRelocalization",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
     "damiao-coordinator": "dimos.robot.manipulators.damiao.damiao_blueprint.DamiaoCoordinator",

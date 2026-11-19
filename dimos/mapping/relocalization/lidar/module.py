@@ -62,8 +62,8 @@ class LidarConfig(Config):
     min_local_points: int = 2_000
     # Rig preset to align with, see relocalize.PRESETS
     relocalize: RelocalizeConfig = MID360
-    # After the first fix, refine it by ICP alone instead of searching the whole premap again
-    refine_fix: bool = False
+    # Keep relocalizing after the first fix, each time by ICP from the current fix instead of a whole-premap search
+    continuous: bool = False
 
 
 class CloudRelocalization(PremapModule):
@@ -83,6 +83,9 @@ class CloudRelocalization(PremapModule):
     def clouds(self) -> Observable[PointCloud2]:
         """The windowed live cloud to match, at most one every ``reloc_interval``."""
         raise NotImplementedError
+
+    def keep_relocalizing(self) -> bool:
+        return self.config.continuous or super().keep_relocalizing()
 
     @rpc
     def start(self) -> None:
@@ -129,7 +132,7 @@ class CloudRelocalization(PremapModule):
         assert self._relocalizer is not None
         t0 = time.monotonic()
         try:
-            initial_fix = self.fix if self.config.refine_fix else None
+            initial_fix = self.fix if self.config.continuous else None
             tf = self._relocalizer.attempt(
                 msg.pointcloud, self.config.world_frame, self.map_frame, initial_fix
             ).fix
@@ -157,24 +160,6 @@ class LidarWindowRelocalization(CloudRelocalization):
             self.lidar.observable(),
             self.config.relocalize,
             self.config.reloc_interval,
-        )
-
-
-class LocalMapConfig(LidarConfig):
-    # Smaller carved local maps are too small a patch to match
-    min_local_points: int = 20_000
-
-
-class LocalMapRelocalization(CloudRelocalization):
-    """Matches the ray-tracing mapper's local map, a window in space, already carved."""
-
-    config: LocalMapConfig
-
-    local_map: In[PointCloud2]
-
-    def clouds(self) -> Observable[PointCloud2]:
-        return self.local_map.observable().pipe(  # type: ignore[no-untyped-call]
-            ops.throttle_first(self.config.reloc_interval)
         )
 
 
@@ -231,27 +216,28 @@ class LiveMap:
         return PointCloud2.from_numpy(points, frame_id=frame_id)
 
 
-class ContinuousConfig(LidarConfig):
-    relocalize_once: bool = False
-    refine_fix: bool = True
-    # Fold the ray tracer's local_map into the kept live map at most this often (s)
+class LocalMapConfig(LidarConfig):
+    # Smaller carved local maps are too small a patch to match
+    min_local_points: int = 20_000
+    # Continuous only: fold local_map into the kept live map at most this often (s)
     accumulate_interval: float = 1.0
-    # The kept live map's voxel edge (m)
+    # Continuous only: the kept live map's voxel edge (m)
     live_voxel_m: float = 0.1
-    # Match only kept live points within this xy distance (m) of the robot's latest local map; 0 matches them all
+    # Continuous only: match kept live points within this xy distance (m) of the latest local map; 0 matches them all
     match_radius_m: float = 30.0
 
 
-class ContinuousRelocalization(CloudRelocalization):
-    """Keeps refining ``world -> map`` against its own map of the ray tracer's live voxels.
+class LocalMapRelocalization(CloudRelocalization):
+    """Matches the ray-tracing mapper's local map, a window in space, already carved.
 
-    It keeps the live (non-premap) voxels of the ray tracer's local maps, so the premap never
-    confirms itself. The first fix searches the whole premap and places it in the ray tracer;
-    every later one refines the current fix by ICP and only moves ``world -> map``.
-    world_frame must be the frame the ray tracer maps in, and its local_map must carry the premap bit.
+    With ``continuous`` it matches its own map of local_map's live (non-premap) voxels
+    instead, so the premap never confirms itself, and local_map must carry the premap bit.
+    The first fix searches the whole premap and places it in the ray tracer; every later
+    one refines the current fix by ICP and only moves ``world -> map``.
+    world_frame must be the frame the ray tracer maps in.
     """
 
-    config: ContinuousConfig
+    config: LocalMapConfig
 
     local_map: In[PointCloud2]
 
@@ -263,7 +249,7 @@ class ContinuousRelocalization(CloudRelocalization):
     @rpc
     def start(self) -> None:
         super().start()
-        if self.premap is None:
+        if self.premap is None or not self.config.continuous:
             return
         self.register_disposable(
             self.local_map.observable()  # type: ignore[no-untyped-call]
@@ -280,6 +266,10 @@ class ContinuousRelocalization(CloudRelocalization):
             self._center = (float(low[0] + high[0]) / 2, float(low[1] + high[1]) / 2)
 
     def clouds(self) -> Observable[PointCloud2]:
+        if not self.config.continuous:
+            return self.local_map.observable().pipe(  # type: ignore[no-untyped-call]
+                ops.throttle_first(self.config.reloc_interval)
+            )
         return rx.interval(self.config.reloc_interval).pipe(
             ops.map(
                 lambda _: self.live.cloud(
