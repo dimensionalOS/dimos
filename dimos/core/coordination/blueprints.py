@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 from dimos.core.module import ModuleBase, is_module_type
 from dimos.core.stream import IO, In, Out, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
 
@@ -378,8 +377,8 @@ class Blueprint(BlueprintProtocol):
         its own config (TF frame ids), which disconnects the namespaced
         modules from everything outside.
 
-        TFMessage streams always stay global: their frame ids are namespaced instead,
-        so every robot's transforms share one tf tree.
+        The stream named ``tf`` always stays global: its frame ids are namespaced instead,
+        so every robot's transforms share one tf tree. Other TFMessage streams are namespaced.
 
         Stream names listed in *expose* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
@@ -428,7 +427,7 @@ class Blueprint(BlueprintProtocol):
                 effective = self.remapping_map.get((atom.name, stream.name), stream.name)
                 if not isinstance(effective, str):
                     continue
-                if effective in expose_set or stream.type is TFMessage:
+                if effective in expose_set or effective == "tf":
                     if (atom.name, stream.name) in self.remapping_map:
                         new_remap[new_name, stream.name] = effective
                 else:
@@ -441,7 +440,7 @@ class Blueprint(BlueprintProtocol):
 
         new_transports = {}
         for (name, type_), transport in self.transport_map.items():
-            if name in expose_set or type_ is TFMessage:
+            if name in expose_set or name == "tf":
                 new_transports[name, type_] = transport
             else:
                 new_transports[f"{prefix}/{name}", type_] = _reprefix_transport(transport, prefix)

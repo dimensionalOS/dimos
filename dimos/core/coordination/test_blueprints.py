@@ -393,12 +393,17 @@ def test_namespace_expose_keeps_names_global() -> None:
 
 class TfPublisher(Module):
     tf: Out[TFMessage]
+    detected_tf: Out[TFMessage]
 
 
-def test_namespace_keeps_tf_global() -> None:
+def test_namespace_keeps_only_the_tf_stream_global() -> None:
     blueprint = TfPublisher.blueprint().namespace("robot0").namespace("fleet")
 
     assert ("fleet/robot0/tfpublisher", "tf") not in blueprint.remapping_map
+    assert (
+        blueprint.remapping_map[("fleet/robot0/tfpublisher", "detected_tf")]
+        == "fleet/robot0/detected_tf"
+    )
 
 
 def test_namespace_expose_typo_raises() -> None:
