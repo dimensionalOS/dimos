@@ -19,15 +19,16 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-import cv2
 import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
+from scipy.spatial import cKDTree
 
 from dimos.perception.localize.support_plane import SupportPlane, anchored, peel_planes
 
 MIN_SURFACE_SIDE = 0.10  # m - a narrower plane, such as a block's top, is not a surface
-PIECE_CELL = 0.02  # m - inliers this close in the plane are one patch
+PIECE_CELL = 0.02  # m - inliers this close in the plane are one patch, at least
+PIECE_SPACINGS = 1.5  # ...or this many of the cloud's own point spacings, for sparse clouds
 DEDUPE_CELL = 0.01  # m - points closer than this count once
 STANDING_LOW, STANDING_HIGH = 0.01, 0.30  # m - over a surface, what stands on it
 LEVEL_MAX_TILT_DEG = 5.0  # level mode takes nothing steeper as parallel
@@ -95,12 +96,21 @@ def plane_axes(normal: NDArray[np.float64]) -> NDArray[np.float64]:
     return np.stack([first, np.cross(normal, first)])
 
 
+def point_spacing(points: NDArray[np.float64]) -> float:
+    """The median distance from a point to its nearest neighbour, such as a lidar map's grid."""
+    if len(points) < 2:
+        return 0.0
+    distances, _ = cKDTree(points).query(points, k=2)
+    return float(np.median(distances[:, 1]))
+
+
 def connected_pieces(
     model: NDArray[np.float64], inliers: NDArray[np.float64]
 ) -> list[NDArray[np.float64]]:
     """A plane's inliers split into touching patches, so scattered block tops are not one surface."""
     uv = inliers @ plane_axes(np.asarray(model[:3], dtype=np.float64)).T
-    cells = np.floor((uv - uv.min(axis=0)) / PIECE_CELL).astype(np.int64)
+    cell = max(PIECE_CELL, PIECE_SPACINGS * point_spacing(uv))
+    cells = np.floor((uv - uv.min(axis=0)) / cell).astype(np.int64)
     grid = np.zeros(cells.max(axis=0) + 1, dtype=bool)
     grid[cells[:, 0], cells[:, 1]] = True
     labels, count = ndimage.label(grid, structure=np.ones((3, 3), dtype=bool))
@@ -115,6 +125,8 @@ def describe_surface(
 
     The outline is the smallest rectangle round the inliers, so a square table reads square.
     """
+    import cv2  # heavy: only where it is used
+
     plane = anchored(model, inliers)
     normal = np.asarray(plane.coefficients[:3])
     distances = plane.height_above(inliers)
@@ -198,9 +210,11 @@ def in_outline(
     points: NDArray[np.float64],
 ) -> NDArray[np.bool_]:
     """Which points lie over or under a surface's outline."""
-    along = np.array([np.cos(np.radians(yaw_deg)), np.sin(np.radians(yaw_deg)), 0.0])
-    along -= normal * (along @ normal)
-    along /= max(float(np.linalg.norm(along)), 1e-9)
+    # The in-plane direction whose heading is yaw_deg: its z from the plane equation.
+    x, y = np.cos(np.radians(yaw_deg)), np.sin(np.radians(yaw_deg))
+    z = -(normal[0] * x + normal[1] * y) / normal[2] if abs(normal[2]) > 1e-6 else 0.0
+    along = np.array([x, y, z])
+    along /= np.linalg.norm(along)
     offsets = np.atleast_2d(points) - center
     length, width = size
     inside: NDArray[np.bool_] = (np.abs(offsets @ along) <= length / 2) & (

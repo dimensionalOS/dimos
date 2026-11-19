@@ -22,6 +22,7 @@ from dimos.manipulation.manipulation_localize import ManipulationLocalize
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.perception.localize.rig import Rig
 
 
 @pytest.fixture
@@ -50,6 +51,7 @@ def _ready(module, mocker, views):
     module.index.time_range.return_value = [SimpleNamespace(ts=float(i)) for i in range(len(views))]
     module.rig = mocker.Mock(cameras={"camera_color_optical_frame": None}, world_frame="world")
     module.rig.backdrop.side_effect = lambda ts, frame, trunc: views[int(ts)]
+    module.rig.lidar = None
 
 
 def _hit(instance_id, points, position=(0.0, 0.0, 0.0)):
@@ -215,3 +217,18 @@ def test_find_surface_reports_the_table_in_the_base_frame(localizer, mocker):
     (surface,) = localizer.surfaces()
     assert surface["height"] == pytest.approx(0.0, abs=0.004)
     assert surface["size"] == pytest.approx([0.8, 0.5], abs=0.03)
+
+
+def test_surfaces_on_lidar_read_only_the_window_scans(localizer, mocker):
+    _ready(localizer, mocker, [None] * 3)
+    lidar = mocker.Mock()
+    localizer.rig = Rig(cameras={"camera": mocker.Mock()}, tf=mocker.Mock(), lidar=lidar)
+    window_points = mocker.patch(
+        "dimos.manipulation.manipulation_localize.window_points", return_value=None
+    )
+
+    localizer.surfaces(start=-4.0, duration=3.0)
+
+    lidar.time_range.assert_called_once_with(6.0, 9.0)
+    rig = window_points.call_args.args[0]
+    assert rig.lidar is lidar.time_range.return_value

@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.manipulation.surfaces import find_surfaces
+from dimos.manipulation.surfaces import find_surfaces, in_outline
 
 
 def _slab(length, width, yaw_deg, tilt_deg, downhill_deg, center, rng, step=0.01):
@@ -209,3 +209,35 @@ def test_what_stands_on_a_slightly_tilted_table_is_only_what_is_on_it(rng):
     (bare,) = find_surfaces(table, level=True)
     assert bare.tilt_deg == 0.0
     assert bare.points_above == 0
+
+
+def test_a_sparse_cloud_stays_one_surface():
+    """A lidar map keeps one point per 5 cm: wider apart than the 2 cm patch cells."""
+    x, y = np.meshgrid(np.arange(0.0, 1.5, 0.05), np.arange(-0.5, 0.5, 0.05))
+    floor = np.stack([x.ravel(), y.ravel(), np.zeros(x.size)], axis=1)
+
+    (surface,) = find_surfaces(floor)
+
+    assert surface.size == pytest.approx((1.45, 0.95), abs=0.06)
+
+
+def test_the_outline_on_a_slope_keeps_its_diagonal_side():
+    """A long side running diagonally down a 20 degree slope, at a 45 degree heading."""
+    tilt = np.radians(20.0)
+    normal = np.array([0.0, -np.sin(tilt), np.cos(tilt)])
+    across_slope = np.array([1.0, 0.0, 0.0])
+    down_slope = np.cross(normal, across_slope)
+    along = (across_slope + down_slope) / np.linalg.norm(across_slope + down_slope)
+    width_axis = np.cross(normal, along)
+    yaw = float(np.degrees(np.arctan2(along[1], along[0])))
+    center = np.array([0.5, 0.0, 0.1])
+    corners = [
+        center + 0.95 * (sx * 0.4 * along + sy * 0.25 * width_axis)
+        for sx in (-1, 1)
+        for sy in (-1, 1)
+    ]
+    past_ends = [center + 1.05 * sx * 0.4 * along for sx in (-1, 1)]
+
+    inside = in_outline(center, normal, yaw, (0.8, 0.5), np.array(corners + past_ends))
+
+    assert inside.tolist() == [True, True, True, True, False, False]

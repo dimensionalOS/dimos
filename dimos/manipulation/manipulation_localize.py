@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -171,9 +172,13 @@ class ManipulationLocalize(PerceptionLocalize):
             return []
         lo, head = self._window_start(start)
         keyframes = list(self.index.time_range(lo, lo + duration))
+        rig = self.rig
+        if rig.lidar is not None:
+            # The window's scans only, as in _localize, not the whole feed.
+            rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
         views = (
-            window_points(self.rig, keyframes, camera, self.config.surface_frames)
-            for camera in self.rig.cameras
+            window_points(rig, keyframes, camera, self.config.surface_frames)
+            for camera in rig.cameras
         )
         clouds = [cloud for cloud in views if cloud is not None]
         if not clouds:
