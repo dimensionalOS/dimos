@@ -385,3 +385,18 @@ def test_an_rpcs_enums_come_back_by_name(
     monkeypatch.setattr(FakeDimos, "get_module", get_module)
     called = client.post("/active/modules/robot0:speaker/rpcs/speak").json()
     assert called["result"] == {"status": "FAILED", "message": "no path"}
+
+
+def test_a_slotted_message_in_a_result_comes_back_by_its_fields() -> None:
+    import numpy as np
+
+    class Point:
+        __slots__ = ("positions", "time_from_start")
+
+        def __init__(self) -> None:
+            self.positions = np.array([0.5, 1.0])
+            self.time_from_start = 0.25
+
+    assert live.to_json({"points": [Point()]}) == {
+        "points": [{"positions": [0.5, 1.0], "time_from_start": 0.25}]
+    }

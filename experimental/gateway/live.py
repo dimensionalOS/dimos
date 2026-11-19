@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+import dataclasses
 import enum
 import importlib
 import inspect
@@ -124,6 +125,40 @@ def from_json(value: Any, hint: Any) -> Any:
         except (TypeError, ValueError):
             return hint(value)
     return value
+
+
+def to_json(value: Any, depth: int = 0) -> Any:
+    """An RPC's result as JSON: dataclasses, dicts, lists and objects (slotted ones too, like dimos's trajectory
+    messages) by their public fields, an enum by its name (a plain value, often auto()'s 1, 2, ..., says nothing to a
+    caller), numpy by its numbers; anything else as jsonable_encoder gives it, or its text."""
+    if depth > 64:
+        return str(value)
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    if isinstance(value, enum.Enum):
+        return value.name
+    if hasattr(value, "tolist") and callable(value.tolist):  # numpy arrays and scalars
+        return value.tolist()
+    if isinstance(value, Mapping):
+        return {str(key): to_json(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, list | tuple | set | frozenset):
+        return [to_json(item, depth + 1) for item in value]
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        names = [field.name for field in dataclasses.fields(value)]
+    else:
+        names = [
+            name
+            for kind in type(value).__mro__
+            for name in getattr(kind, "__slots__", ())
+            if isinstance(name, str) and hasattr(value, name)
+        ] + list(getattr(value, "__dict__", {}))
+    if names:
+        fields = dict.fromkeys(name for name in names if not name.startswith("_"))
+        return {name: to_json(getattr(value, name), depth + 1) for name in fields}
+    try:
+        return jsonable_encoder(value)
+    except ValueError:  # jsonable_encoder's error for a value with no fields it can read
+        return str(value)
 
 
 def json_call_args(
@@ -268,14 +303,7 @@ class Live:
             raise ApiError(500, f"{module_id}/{name} didn't answer in time")
         except Exception as error:
             return {"ok": False, "result": None, "error": f"{type(error).__name__}: {error}"}
-        try:
-            # an enum by its name: a plain value (often auto()'s 1, 2, ...) says nothing to a caller
-            encoded = jsonable_encoder(
-                result, custom_encoder={enum.Enum: lambda member: member.name}
-            )
-        except ValueError:  # jsonable_encoder's error for a value with no fields it can read (no __dict__, not iterable)
-            encoded = str(result)
-        return {"ok": True, "result": encoded, "error": None}
+        return {"ok": True, "result": to_json(result), "error": None}
 
     # TODO(core): Dimos.restart and Dimos.unload take a module class, so with several namespaced copies of one class
     # (robot0:go2connection, robot1:go2connection) they refuse ("Multiple instances"). Doing this cleanly needs them
