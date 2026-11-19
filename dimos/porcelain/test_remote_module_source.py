@@ -286,6 +286,33 @@ def test_unload_single_named_instance_by_class_name():
         assert source.list_module_names() == []
 
 
+def test_unload_by_name_removes_only_that_instance():
+    with _remote_source_with_instances(
+        "robot0/namedremotemodule", "robot1/namedremotemodule"
+    ) as source:
+        source.unload_module_by_name("robot0/namedremotemodule")
+
+        assert source.list_module_names() == ["robot1/namedremotemodule"]
+
+
+def test_restart_by_name_restarts_only_that_instance():
+    with _remote_source_with_instances("robot0/namedremotemodule") as source:
+        # a restart redeploys from the blueprint it was loaded with
+        source._coord.call(
+            "load_blueprint",
+            NamedRemoteModule.blueprint(instance_name="robot1/namedremotemodule"),
+        )
+        source.restart_module_by_name("robot1/namedremotemodule", reload_source=False)
+
+        assert sorted(source.list_module_names()) == [
+            "robot0/namedremotemodule",
+            "robot1/namedremotemodule",
+        ]
+        assert source.get_module("robot1/namedremotemodule").ping_name() == (
+            "robot1/namedremotemodule"
+        )
+
+
 def test_cached_class_lookup_becomes_ambiguous_after_live_module_addition():
     with _remote_source_with_instances("robot0/namedremotemodule") as source:
         assert source.get_module("NamedRemoteModule").ping_name() == "robot0/namedremotemodule"
