@@ -335,8 +335,7 @@ class TF(MultiTBuffer):
     ``publish()`` stores locally and sends out on the stream. Without a stream
     it is a purely local buffer.
 
-    Given *frames*, lookups and publishes refuse any other frame; given *edges*,
-    publishes refuse any other (parent, child) pair. *owner* names who declared them.
+    Given *edges*, publishes refuse any other (parent, child) pair.
     """
 
     def __init__(
@@ -344,67 +343,20 @@ class TF(MultiTBuffer):
         stream: Any | None = None,
         buffer_size: float = 10.0,
         *,
-        frames: "Collection[str] | None" = None,
         edges: "Collection[tuple[str, str]] | None" = None,
-        owner: str = "TF",
     ) -> None:
         super().__init__(buffer_size)
         self._stream = stream
-        self._frames = None if frames is None else frozenset(frames)
         self._edges = None if edges is None else frozenset(edges)
-        self._owner = owner
         self._unsubscribe: Callable[[], None] | None = None
         if stream is not None:
             self._unsubscribe = stream.subscribe(self.receive_tfmessage)
 
-    def _require_declared(self, *frames: str) -> None:
-        if self._frames is None:
-            return
-        undeclared = sorted(set(frames) - self._frames)
-        if undeclared:
-            raise ValueError(
-                f"{self._owner} uses undeclared tf frames {undeclared}; "
-                f"add them to tf_frames_local or tf_frames_global (declared: {sorted(self._frames)})"
-            )
-
-    def get_transform_search(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: float | None = None,
-        time_tolerance: float | None = None,
-    ) -> list[Transform] | None:
-        self._require_declared(parent_frame, child_frame)
-        return super().get_transform_search(parent_frame, child_frame, time_point, time_tolerance)
-
-    def get(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: float | None = None,
-        time_tolerance: float | None = None,
-        *,
-        forward_tolerance: float = 0.0,
-        warn: bool = True,
-    ) -> Transform | None:
-        self._require_declared(parent_frame, child_frame)
-        return super().get(
-            parent_frame,
-            child_frame,
-            time_point,
-            time_tolerance,
-            forward_tolerance=forward_tolerance,
-            warn=warn,
-        )
-
     def publish(self, *transforms: Transform) -> None:
-        self._require_declared(*(f for t in transforms for f in (t.frame_id, t.child_frame_id)))
         if self._edges is not None:
             undeclared = sorted({(t.frame_id, t.child_frame_id) for t in transforms} - self._edges)
             if undeclared:
-                raise ValueError(
-                    f"{self._owner} publishes undeclared tf edges {undeclared}; add them to tf_edges"
-                )
+                raise ValueError(f"undeclared tf edges {undeclared}; add them to tf_edges")
         self.receive_transform(*transforms)
         if self._stream is not None:
             self._stream.publish(TFMessage(*transforms))
