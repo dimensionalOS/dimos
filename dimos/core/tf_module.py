@@ -15,7 +15,7 @@
 """A module whose tf frames are declared in its config, so a blueprint can namespace and check them."""
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, TypeAlias, get_type_hints
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field, model_validator
 
@@ -74,10 +74,11 @@ class TfModule(Module):
     def handle_blueprint_namespace(cls, kwargs: dict[str, Any], *, prefix: str) -> dict[str, Any]:
         """Also prefix the local frames, so namespaced copies don't share frames."""
         kwargs = super().handle_blueprint_namespace(kwargs, prefix=prefix)
-        frames = kwargs.get("tf_frames_local", _config_default(cls, "tf_frames_local"))
         return {
             **kwargs,
-            "tf_frames_local": {role: f"{prefix}/{frame}" for role, frame in frames.items()},
+            "tf_frames_local": {
+                role: f"{prefix}/{frame}" for role, frame in kwargs["tf_frames_local"].items()
+            },
         }
 
     @staticmethod
@@ -88,10 +89,10 @@ class TfModule(Module):
             if not _is_checked(atom):
                 continue
             frames = {
-                **_atom_field(atom, "tf_frames_global"),
-                **_atom_field(atom, "tf_frames_local"),
+                **atom.kwargs["tf_frames_global"],
+                **atom.kwargs["tf_frames_local"],
             }
-            for parent_role, child_role in _atom_field(atom, "tf_edges"):
+            for parent_role, child_role in atom.kwargs["tf_edges"]:
                 publishers[frames[child_role]][frames[parent_role]].append(atom.name)
         if not publishers:
             return
@@ -161,17 +162,5 @@ class TfModule(Module):
         )
 
 
-def _config_default(module: type[TfModule], name: str) -> Any:
-    return (
-        get_type_hints(module)["config"].model_fields[name].get_default(call_default_factory=True)
-    )
-
-
 def _is_checked(atom: "BlueprintAtom") -> bool:
-    return issubclass(atom.module, TfModule) and not _atom_field(atom, "skip_tf_checks")
-
-
-def _atom_field(atom: "BlueprintAtom", name: str) -> Any:
-    if name in atom.kwargs:
-        return atom.kwargs[name]
-    return _config_default(atom.module, name)  # type: ignore[arg-type]
+    return issubclass(atom.module, TfModule) and not atom.kwargs["skip_tf_checks"]
