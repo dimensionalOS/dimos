@@ -1,7 +1,0 @@
-<?xml version="1.0"?>
-<robot name="xarm7">
-  <!-- In the pinned xarm_ros2 description, joint_eef and gripper_fix join
-       link7 -> link_eef -> xarm_gripper_base_link with fixed zero transforms.
-       The mounting surfaces meet across a collisionless intermediary link. -->
-  <disable_collisions link1="link7" link2="xarm_gripper_base_link" reason="Fixed mount" />
-</robot>

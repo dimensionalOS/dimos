@@ -56,3 +56,16 @@ uv run --no-sync dimos --help
 Library mode selects CPU PyTorch wheels. On Linux x86_64 with a CUDA-capable GPU, use `--torch-backend cu128` for library mode or replace `--extra cpu` with `--extra cuda` to add GPU inference dependencies in developer mode.
 
 Developer installs use the locked PyTorch build. On Linux x86_64 it includes CUDA libraries and also supports CPU execution without an NVIDIA GPU. Selecting `cpu` skips optional CUDA extras; it does not select a CPU-only PyTorch wheel. Use `uv run --no-sync` to use the installed environment, and repeat your selected extras when running `uv sync`.
+
+### Optional cuRobo V2 planner
+
+After installing the system packages above, run this in a dimOS source checkout
+on Linux x86-64 with a supported NVIDIA GPU and driver:
+
+```sh skip
+uv sync --locked --python 3.12 --no-default-groups --extra manipulation --extra curobo
+```
+
+This uses the pinned cuRobo Git source and CUDA 12.8 PyTorch wheels. For driver
+requirements, simulation usage, and limitations, see the
+[experimental cuRobo V2 backend](/docs/capabilities/manipulation/index.md#experimental-curobo-v2-backend).

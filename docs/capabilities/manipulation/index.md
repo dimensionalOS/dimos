@@ -149,21 +149,25 @@ an optimization preference, not a physical safety barrier.** A successful plan
 can pass through occupied space. RoboPlan remains the default and does not
 inherit this policy.
 
-Install upstream [cuRobo V2 v0.9.0](https://github.com/NVlabs/curobo/tree/v0.9.0)
-(`nvidia-curobo==0.9.0`) into the same environment as DimOS with Pink and the
-matching CUDA-enabled PyTorch and cuRobo CUDA extra. Follow the upstream
-installation guide for your driver/toolkit pair. cuRobo is not installed by
-DimOS extras and is not imported by the default backend. For example, from an
-activated DimOS environment with working CUDA PyTorch, install the pinned source
-with `uv pip install 'nvidia-curobo[cu13] @ git+https://github.com/NVlabs/curobo.git@v0.9.0'`
-for CUDA 13. Use `uv run --no-sync` if launching from a uv project to avoid
-removing the separately installed dependency.
+On Linux x86-64 with a GPU newer than NVIDIA Turing, run this from a dimOS source checkout:
+
+```sh skip
+uv sync --locked --python 3.12 --no-default-groups --extra manipulation --extra curobo
+```
+
+The `curobo` extra uses [cuRobo V2 v0.9.0](https://github.com/NVlabs/curobo/tree/v0.9.0)
+(`nvidia-curobo[cu12-torch]`) from the pinned Git source and the project's
+CUDA 12.8 PyTorch wheels. The extra supports Python 3.11–3.12. Use an NVIDIA
+driver that meets the [upstream requirements](https://nvlabs.github.io/curobo/latest/getting-started/installation.html)
+(at least 580.65.06). Use the checkout's uv lock, not a PyPI install of cuRobo.
+Neither the base install nor the `planning` or `manipulation` extra selects
+cuRobo on its own. Repeat `--extra curobo` on subsequent syncs to keep it installed.
 
 Select both settings in the xArm7 grasp composition (Pink is already the
 default):
 
 ```bash
-dimos --simulation mujoco run xarm-grasp \
+uv run --no-sync dimos --simulation mujoco run xarm-grasp \
   --world-backend=curobo --planner.backend=curobo
 ```
 
@@ -175,8 +179,8 @@ fits spheres once per loaded model from URDF collision geometry, using the
 same adjacency, configured and SRDF exclusions as RoboPlan. Per-link sphere
 presence is checked, not continuous mesh enclosure or coverage across gripper
 travel. The xArm7 model with the stock gripper and unprefixed link names supplies
-one SRDF exclusion for `link7` and `xarm_gripper_base_link`. The pinned URDF joins
-these mounting surfaces through two fixed, zero-transform joints via `link_eef`.
+one configured exclusion for `link7` and `xarm_gripper_base_link`. The pinned URDF
+joins these mounting surfaces through two fixed, zero-transform joints via `link_eef`.
 Both links retain their collision geometry and other collision checks.
 Cartesian waypoint/linear commands and the full grasp sequence that uses them
 are not supported; use joint goals or Pink point-to-point pose goals offline.

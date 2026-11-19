@@ -206,7 +206,7 @@ def test_native_planner_only_removes_trajopt_external_constraint(
     assert stock == original
 
 
-def test_pinned_curobo_cpu_scene_and_stock_rollouts() -> None:
+def test_pinned_curobo_cpu_scene_and_stock_rollouts(monkeypatch: pytest.MonkeyPatch) -> None:
     try:
         installed = adapter.version("nvidia-curobo")
     except PackageNotFoundError:
@@ -215,6 +215,8 @@ def test_pinned_curobo_cpu_scene_and_stock_rollouts() -> None:
     if installed != adapter.CUROBO_VERSION:
         pytest.skip(f"requires pinned CuRobo V2, found {installed}")
 
+    # Parsing on CPU does not need TorchInductor's process-wide compile pool.
+    monkeypatch.setenv("TORCHINDUCTOR_COMPILE_THREADS", "1")
     from curobo.config_io import load_yaml
     from curobo.content import get_task_configs_path
     from curobo.scene import Scene

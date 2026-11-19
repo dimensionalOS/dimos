@@ -112,19 +112,15 @@ def test_build_curobo_grasp_model(
     assert all(
         Path(m.attrib["filename"]).is_file() for m in urdf.findall("link/collision/geometry/mesh")
     )
-    expected_ignores = (
-        {
-            frozenset(pair)
-            for pair in xarm.config.collision_exclusion_pairs
-            if set(pair) <= expected_links
-        }
-        | {
-            frozenset((joint.parent_link, joint.child_link))
-            for joint in xarm.description.joints
-            if {joint.parent_link, joint.child_link} <= expected_links
-        }
-        | {frozenset(("link7", "xarm_gripper_base_link"))}
-    )
+    expected_ignores = {
+        frozenset(pair)
+        for pair in xarm.config.collision_exclusion_pairs
+        if set(pair) <= expected_links
+    } | {
+        frozenset((joint.parent_link, joint.child_link))
+        for joint in xarm.description.joints
+        if {joint.parent_link, joint.child_link} <= expected_links
+    }
     assert {
         frozenset((first, second))
         for first, seconds in kinematics["self_collision_ignore"].items()
