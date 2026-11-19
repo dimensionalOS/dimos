@@ -105,6 +105,7 @@ def await_gripper_settle(
     config: GraspVerificationConfig,
     *,
     arrival_tolerance: float | None = None,
+    blocked_after: float | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> GripperSettle:
@@ -123,6 +124,9 @@ def await_gripper_settle(
     driven to its mechanical stop always halts short of the commanded extreme --
     the xArm rests at 0.988 of a nominal 850 count -- so the open path must pass
     the band that decides whether where the jaws stopped counts as open.
+
+    ``blocked_after`` (seconds) also counts still jaws as settled once that long
+    has passed without travel: jaws already at a stop or on an object never move.
     """
     reached = config.settle_tolerance if arrival_tolerance is None else arrival_tolerance
     start = clock()
@@ -145,7 +149,8 @@ def await_gripper_settle(
                 moved = True
             last = position
             arrived = abs(position - target) <= reached
-            if stable >= config.settle_samples and (moved or arrived):
+            blocked = blocked_after is not None and clock() - start >= blocked_after
+            if stable >= config.settle_samples and (moved or arrived or blocked):
                 return GripperSettle(True, position, moved, clock() - start)
 
         now = clock()

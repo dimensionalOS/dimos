@@ -409,6 +409,33 @@ def test_gripperless_arm_rejects_gripper_command(rpc):
     rpc.set_gripper_position.assert_not_called()
 
 
+def _jaw_readings(rpc, openings):
+    snapshot = rpc.get_state.return_value
+    group = snapshot.groups["arm"]
+    rpc.get_state.side_effect = [
+        replace(snapshot, groups={"arm": replace(group, gripper_position=value)})
+        for value in openings
+    ]
+
+
+def test_gripper_returns_when_the_jaw_stops_on_an_object(arm, rpc):
+    # Closing from open, the jaw stops at 0.42 on the object instead of reaching 0.
+    _jaw_readings(rpc, [1.0, 0.8, 0.6, 0.42, 0.42, 0.42, 0.42])
+
+    arm.close_gripper()
+
+    assert rpc.get_state.call_count == 6
+
+
+def test_gripper_raises_timeout_while_the_jaw_still_moves(arm, rpc):
+    _jaw_readings(rpc, [1.0 - 0.01 * step for step in range(100)])
+
+    with pytest.raises(MotionError, match="still moving") as error:
+        arm.close_gripper(timeout=0.3)
+
+    assert error.value.result.status is ExecutionStatus.TIMED_OUT
+
+
 def test_gripper_failure_retains_result(arm, rpc):
     failure = CommandResult(CommandStatus.FAILED, "gripper unavailable")
     rpc.set_gripper_position.return_value = failure

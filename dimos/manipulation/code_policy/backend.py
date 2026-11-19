@@ -30,6 +30,7 @@ import cv2
 
 from dimos.core.stream import RemoteOut
 from dimos.manipulation.code_policy.api import (
+    GRIPPER_TIMEOUT_S,
     CallStatus,
     Observer,
     Pose,
@@ -173,15 +174,15 @@ class DimosBackend:
         self._motion(self._arm.home)
 
     def open_gripper(self) -> None:
-        self._motion(self._arm.open_gripper)
+        self._motion(lambda: self._arm.open_gripper(timeout=GRIPPER_TIMEOUT_S))
 
     def close_gripper(self) -> None:
-        self._motion(self._arm.close_gripper)
+        self._motion(lambda: self._arm.close_gripper(timeout=GRIPPER_TIMEOUT_S))
 
     def set_gripper(self, travel: float) -> None:
         # The manipulation module takes the same 0 closed, 1 open travel and
         # maps it onto the gripper joint's own limits.
-        self._motion(lambda: self._arm.set_gripper_position(travel))
+        self._motion(lambda: self._arm.set_gripper_position(travel, timeout=GRIPPER_TIMEOUT_S))
 
     def objects(self, words: Sequence[str]) -> list[SceneObject]:
         detections = self._scene.scan_scene(text=list(words))
