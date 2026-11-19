@@ -297,97 +297,51 @@ def test_connect_uses_the_active_runs_transport_not_the_last_launchs(
     assert live.connect_dimos() == "lcm"
 
 
-def test_json_args_become_the_messages_an_rpc_names() -> None:
-    from collections.abc import Mapping
-
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.sensor_msgs.JointState import JointState
-
-    class Planner:
-        def plan_to_joints(
-            self, targets: Mapping[str, JointState], speed_scale: float | None = None
-        ) -> None: ...
-        def plan_to_poses(self, targets: dict[str, PoseStamped]) -> None: ...
-        def pick(
-            self, pose: PoseStamped | None = None, labels: list[str] | None = None
-        ) -> None: ...
-
-    args, kwargs = live.json_call_args(
-        Planner.plan_to_joints,
-        [{"arm": {"name": ["j1", "j2"], "position": [0.1, 0.2]}}],
-        {"speed_scale": 0.5},
-    )
-    joints = args[0]["arm"]
-    assert (
-        isinstance(joints, JointState)
-        and joints.name == ["j1", "j2"]
-        and joints.position == [0.1, 0.2]
-    )
-    assert kwargs == {"speed_scale": 0.5}
-
-    _, kwargs = live.json_call_args(
-        Planner.plan_to_poses,
-        [],
-        {
-            "targets": {
-                "arm": {"frame_id": "world", "position": [1, 2, 3], "orientation": [0, 0, 0, 1]}
-            }
-        },
-    )
-    pose = kwargs["targets"]["arm"]
-    assert isinstance(pose, PoseStamped) and pose.frame_id == "world"
-    assert [pose.position.x, pose.position.y, pose.position.z, pose.orientation.w] == [1, 2, 3, 1]
-
-    # an optional message, None, and plain values pass through as they are
-    _, kwargs = live.json_call_args(Planner.pick, [], {"pose": None, "labels": ["cup"]})
-    assert kwargs == {"pose": None, "labels": ["cup"]}
-
-
-def test_an_rpc_gets_messages_built_from_json(
+def test_a_cbor_call_carries_dimos_objects_both_ways(
     client: TestClient, dimos: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dimos.msgs.sensor_msgs.JointState import JointState
-
-    class Speaker:
-        def speak(self, text: str, joints: JointState | None = None) -> None: ...
-
-    monkeypatch.setattr(live, "load_class", lambda path: Speaker)
-    client.post(
-        "/active/modules/robot0:speaker/rpcs/speak",
-        json={"kwargs": {"text": "hi", "joints": {"name": ["a"], "position": [1.0]}}},
-    )
-    ((_, kwargs),) = dimos["apps"][-1].calls
-    assert kwargs["text"] == "hi" and isinstance(kwargs["joints"], JointState)
-
-
-def test_an_rpcs_enums_come_back_by_name(
-    client: TestClient, dimos: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dataclasses import dataclass
-    from enum import Enum, auto
-
-    class Status(Enum):
-        SUCCEEDED = auto()
-        FAILED = auto()
-
-    @dataclass
-    class Result:
-        status: Status
-        message: str
+    from dimos.protocol.encode import cbor
 
     def get_module(self: FakeDimos, name: str) -> Any:
+        fake = self
+
         class Handle:
             def __getattr__(self, rpc: str) -> Any:
-                return lambda *args, **kwargs: Result(Status.FAILED, "no path")
+                def call(*args: Any, **kwargs: Any) -> Any:
+                    fake.calls.append((f"{name}/{rpc}", args, kwargs))
+                    return kwargs["targets"]["arm"]
+
+                return call
 
         return Handle()
 
     monkeypatch.setattr(FakeDimos, "get_module", get_module)
-    called = client.post("/active/modules/robot0:speaker/rpcs/speak").json()
-    assert called["result"] == {"status": "FAILED", "message": "no path"}
+    joints = JointState(name=["j1", "j2"], position=[0.1, 0.2])
+    body = cbor.encode(((), {"targets": {"arm": joints}, "speed_scale": 0.5}))
+    # the body is dimos's own RPC payload: the module gets the JointState itself
+    answer = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        content=body,
+        headers={"content-type": "application/cbor"},
+    )
+    assert answer.headers["content-type"] == "application/cbor"
+    ((_, args, kwargs),) = dimos["apps"][-1].calls
+    assert args == () and kwargs["speed_scale"] == 0.5
+    assert isinstance(kwargs["targets"]["arm"], JointState)
+    # and the reply is CBOR too: the result as dimos encodes it, the JointState again
+    reply = cbor.decode(answer.content)
+    assert reply["ok"] and isinstance(reply["result"], JointState)
+    assert reply["result"].name == ["j1", "j2"] and list(reply["result"].position) == [0.1, 0.2]
+    bad = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak",
+        content=b"not cbor",
+        headers={"content-type": "application/cbor"},
+    )
+    assert bad.status_code == 400
 
 
-def test_a_slotted_message_in_a_result_comes_back_by_its_fields() -> None:
+def test_a_slotted_message_in_a_json_result_comes_back_by_its_fields() -> None:
     import numpy as np
 
     class Point:

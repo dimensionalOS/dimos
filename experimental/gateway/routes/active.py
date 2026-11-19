@@ -19,8 +19,8 @@ import difflib
 from functools import partial
 from typing import Any
 
-from fastapi import APIRouter
-from pydantic import BaseModel, JsonValue
+from fastapi import APIRouter, Request, Response
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from experimental.gateway import catalog, launches, responses
 from experimental.gateway.launches import LaunchConfig
@@ -186,14 +186,50 @@ async def module_rpcs(state: GatewayState, id: str) -> dict[str, Any]:
     return {"rpcs": found["rpcs"]}
 
 
-@router.post("/modules/{id}/rpcs/{name}", response_model=responses.CallResult)
-async def call(
-    state: GatewayState, id: str, name: str, request: CallRequest | None = None
-) -> dict[str, Any]:
-    request = request or CallRequest()
-    return await asyncio.to_thread(
-        state.live.call, state.scanner.cache(), id, name, request.args, request.kwargs
+CBOR = "application/cbor"
+
+
+@router.post(
+    "/modules/{id}/rpcs/{name}",
+    response_model=responses.CallResult,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"schema": CallRequest.model_json_schema()},
+                CBOR: {"schema": {"type": "string", "format": "binary"}},
+            }
+        }
+    },
+)
+async def call(state: GatewayState, id: str, name: str, http: Request) -> Any:
+    """JSON: {args, kwargs} in, {ok, result, error} out. CBOR (content-type application/cbor): dimos's own RPC payload in,
+    cbor((args, kwargs)) as dimos.protocol.encode.cbor writes it, and cbor({ok, result, error}) out, so messages,
+    dataclasses and enums travel as themselves both ways; the caller encodes and decodes."""
+    body = await http.body()
+    if (http.headers.get("content-type") or "").split(";")[0].strip().lower() != CBOR:
+        try:
+            request = CallRequest.model_validate_json(body) if body.strip() else CallRequest()
+        except ValidationError as error:
+            raise ApiError(422, f"a JSON call's body is {{args, kwargs}}: {error}") from None
+        return await asyncio.to_thread(
+            state.live.call, state.scanner.cache(), id, name, request.args, request.kwargs
+        )
+    from dimos.protocol.encode import cbor
+
+    try:
+        args, kwargs = cbor.decode(body)
+        args, kwargs = list(args), dict(kwargs)
+    except (ValueError, TypeError) as error:
+        raise ApiError(
+            400, f"a CBOR call's body is cbor((args, kwargs)), as dimos's RPC sends it: {error}"
+        ) from None
+    answer = await asyncio.to_thread(
+        partial(state.live.call, raw=True), state.scanner.cache(), id, name, args, kwargs
     )
+    try:
+        return Response(cbor.encode(answer), media_type=CBOR)
+    except TypeError as error:
+        raise ApiError(500, f"{id}/{name}'s result has no CBOR form: {error}") from None
 
 
 @router.get("/modules/{id}/streams", response_model=responses.LiveStreams)
