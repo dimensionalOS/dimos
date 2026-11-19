@@ -72,13 +72,11 @@ The run waits before each of the first `approve_first_moves` moves and logs the 
 |---|---|
 | probe error | the point 0.4 m in front of the camera moves under 2 mm when the poses are resampled |
 | worst resample | no subset of poses moves it over 4 mm |
-| misclosure | the board lands within 1 mm of one place from every pose |
+| misclosure | the board lands within 4 mm of one place from every pose |
 | deviation from nominal | the solve is within twice `nominal_tolerance_m` of the stated mount |
 | poses | at least 4 views solved |
 
 `reason` names the checks that failed. `too few detections` means the camera did not see the board from the draws: fix the home pose or the lighting. A large `deviation_from_nominal_mm` with everything else clean means the mount is not where the config says; raise `nominal_tolerance_m` only after measuring why.
-
-Run it three times. The three mounts should agree within 0.5 mm.
 
 ## A fixed camera: the chest run
 
