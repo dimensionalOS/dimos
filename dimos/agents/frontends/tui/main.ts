@@ -36,7 +36,7 @@ import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { LoginPanel } from "#dimos/agents/frontends/tui/dialogs.ts";
 import { MessageSelection } from "#dimos/agents/frontends/tui/conversation/selection.ts";
 import { PromptEditor } from "#dimos/agents/frontends/tui/conversation/input.ts";
-import { MenuView } from "#dimos/agents/frontends/tui/menu/view.ts";
+import { MenuView, newMenuMemory } from "#dimos/agents/frontends/tui/menu/view.ts";
 import { SIDEBAR_COLUMNS, Sidebar } from "#dimos/agents/frontends/tui/sidebar/sidebar.ts";
 import { StatusLine, accent, amber, levelColor, muted } from "#dimos/agents/frontends/tui/style.ts";
 import { RemoteFrames } from "#dimos/agents/sdk/streams/remote.ts";
@@ -491,7 +491,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
     };
     tui.setLayoutRoot(
       new VStack([
-        new StatusLine(() => [accent(`⠿ dimos agent / ${title}`), muted("Esc returns to chat")]),
+        new StatusLine(() => [accent(`⠿ dimos agent / ${title}`), muted("Esc back")]),
         { component: new ScrollView(focused, { primary: true, follow }), basis: 0, grow: 1 },
       ]),
     );
@@ -716,6 +716,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   };
 
   let menuView = null as MenuView | null;
+  const menuMemory = newMenuMemory();
   const app: TerminalApp = {
     ui,
     tui,
@@ -735,6 +736,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       closeSwitcher();
       const view = new MenuView({
         ui,
+        memory: menuMemory,
         current: showing?.id ?? null,
         attach: (conversation) => {
           closeFullScreen?.();
@@ -848,6 +850,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       } else resolveExit(0);
       return { consume: true };
     }
+    if (closeFullScreen !== null) return undefined;
     if (overlay !== null) return undefined;
     if (matchesKey(data, "ctrl+t")) {
       if (isKeyRelease(data) || isKeyRepeat(data)) return { consume: true };
