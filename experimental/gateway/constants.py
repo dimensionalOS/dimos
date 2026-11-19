@@ -33,15 +33,12 @@ INTROSPECT_TIMEOUT_S = 180.0
 # introspection: an answer is reused ten minutes, or until a rescan, a changed checkout or a changed blueprint list
 INTROSPECT_CACHE_S = 600.0
 
-# watchers: a run that crashed leaves its registry file behind, so no file event says it ended; this finds it
-# TODO(core): drop this poll once a run announces its end on the bus (e.g. a coordinator liveliness token the gateway
-# subscribes to): a crash then ends the token, no timer needed
+# watchers: a run that crashed leaves its registry file behind, so no file event says it ended; this finds it. It's also
+# when a module loaded, restarted or removed inside a running blueprint is noticed (the `modules` event), since that
+# changes no file
+# TODO(core): drop this poll once the coordinator announces both on the bus: its module set when it changes (from
+# _send_on_system_modules, which runs after every load, unload and restart) and its end (e.g. a liveliness token)
 STALE_RUN_CHECK_S = 5.0
-# modules: how often the running blueprint's module list is compared with the last one (a `modules` event per change);
-# the coordinator tells no outside process when one is deployed or removed
-# TODO(core): drop this poll once the coordinator publishes its module set on the bus when it changes (in
-# _send_on_system_modules, which runs after every load, unload and restart); events.watch_modules then just forwards it
-MODULES_CHECK_S = 1.0
 # watchers: file changes are grouped into one batch for at most this long (awatch's default)
 FILE_EVENT_DEBOUNCE_MS = 1_600
 

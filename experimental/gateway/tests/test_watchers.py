@@ -142,6 +142,32 @@ def test_a_terminal_run_starting_or_ending_is_a_launch_event() -> None:
     assert sent == ["ns/dimos/events/launch"] * 3
 
 
+def test_a_module_loaded_or_removed_is_a_modules_event(
+    state: State, sent: list[tuple[str, Any]], watchers: list[Any]
+) -> None:
+    listings = iter([{"a", "b"}, {"a", "b"}, {"a", "c"}, set()])
+    seen: list[set[str]] = []
+
+    def module_ids() -> set[str]:
+        seen.append(next(listings, set()))
+        return seen[-1]
+
+    async def scenario() -> None:
+        # each wake (here the re-check, every few ms) lists the modules again
+        watcher = asyncio.create_task(
+            events.watch_launch(state.bus, None, module_ids, stale_check_s=0.005)
+        )
+        await until(lambda: len(seen) >= 4)
+        watcher.cancel()
+
+    asyncio.run(scenario())
+    modules = [payload for _, payload in sent if payload["type"] == "modules"]
+    assert modules[:2] == [
+        {"type": "modules", "added": ["c"], "removed": ["b"]},
+        {"type": "modules", "added": [], "removed": ["a", "c"]},
+    ]
+
+
 def test_a_growing_run_log_or_launch_output_is_a_log_event(
     home: Path, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
 ) -> None:

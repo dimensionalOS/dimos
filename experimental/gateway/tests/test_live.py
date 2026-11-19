@@ -224,29 +224,6 @@ def test_restart_and_stop_go_by_instance_not_class(
     ]
 
 
-def test_modules_deployed_or_removed_are_an_event(dimos: dict[str, Any]) -> None:
-    import asyncio
-    import json
-
-    from experimental.gateway import events
-
-    sent: list[dict[str, Any]] = []
-    bus = events.Bus("ns", lambda key, data: sent.append({"key": key, **json.loads(data)}))
-    listings = iter([{"a", "b"}, {"a", "b"}, {"a", "c"}, set()])
-
-    async def run() -> None:
-        task = asyncio.create_task(events.watch_modules(bus, lambda: next(listings), check_s=0.001))
-        while len(sent) < 2:
-            await asyncio.sleep(0.001)
-        task.cancel()
-
-    asyncio.run(run())
-    assert sent == [
-        {"key": "ns/dimos/events/modules", "type": "modules", "added": ["c"], "removed": ["b"]},
-        {"key": "ns/dimos/events/modules", "type": "modules", "added": [], "removed": ["a", "c"]},
-    ]
-
-
 def test_module_ids_are_the_running_instances(client: TestClient, dimos: dict[str, Any]) -> None:
     state = client.app.state.gateway  # type: ignore[attr-defined]
     assert state.live.module_ids() == {"robot0:speaker", "robot1:speaker", "camera"}
