@@ -81,7 +81,7 @@ class StepMetrics:
     recording) leaves the rest metrics unreliable, and the step fails.
     ``samples`` counts the finite samples the metrics come from;
     ``nonfinite_samples`` those left out for a NaN or infinite value, which
-    fail the step too.
+    fail the step too, as does a step with no samples at all.
     """
 
     joint: str
@@ -113,6 +113,11 @@ class StepMetrics:
         step = f"{self.delta_deg:+g} deg step"
         if self.nonfinite_samples:
             reasons.append(f"{step} has {self.nonfinite_samples} non-finite sample(s)")
+        if self.samples == 0:
+            reasons.append(
+                f"{step} has no {'finite' if self.nonfinite_samples else 'recorded'} samples"
+            )
+            return reasons
         if not self.hold_complete:
             reasons.append(
                 f"{step} hold was cut short: {self.recorded_s:.2f} of {self.hold_s:g} s recorded"
@@ -211,7 +216,8 @@ def analyze_step(
 ) -> StepMetrics:
     """Metrics of one step from samples ``t`` (seconds since the command), ``y`` and ``dy``.
 
-    A sample with a non-finite value is left out of the metrics and fails the step.
+    A sample with a non-finite value is left out of the metrics and fails the
+    step; with no samples left the step fails and its metrics are NaN.
     """
     t = np.asarray(t, dtype=np.float64)
     y_deg = np.asarray(y_deg, dtype=np.float64)
@@ -220,7 +226,21 @@ def analyze_step(
     nonfinite = int(finite.size - finite.sum())
     t, y_deg, dy_deg_s = t[finite], y_deg[finite], dy_deg_s[finite]
     if t.size == 0:
-        raise ValueError(f"no samples for the {event.joint} step at t0={event.t0}")
+        return StepMetrics(
+            joint=event.joint,
+            delta_deg=event.delta_deg,
+            kp=event.kp,
+            kd=event.kd,
+            samples=0,
+            first_motion_s=None,
+            settle_time_s=None,
+            overshoot_pct=math.nan,
+            steady_state_error_deg=math.nan,
+            buzz_rms_deg_s=math.nan,
+            hold_s=event.hold_s,
+            recorded_s=0.0,
+            nonfinite_samples=nonfinite,
+        )
     y0 = event.target_before_deg if y0_deg is None else y0_deg
     target = event.target_after_deg
     return StepMetrics(

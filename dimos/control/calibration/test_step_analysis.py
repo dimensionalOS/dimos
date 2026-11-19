@@ -314,6 +314,40 @@ def _recorded_step(commands: dict[str, CommandTrace]) -> Recording:
     )
 
 
+def test_a_softer_gain_pair_lost_to_a_recording_gap_still_blocks_a_stiffer_one() -> None:
+    hold, tau = HOLD_S - 2 * DT, 0.05
+    events = [
+        _event(1.0, kp=kp, t0=t0, hold_s=hold)
+        if delta > 0
+        else _event(-1.0, kp=kp, t0=t0, hold_s=hold, target_before_deg=11.0, target_after_deg=10.0)
+        for kp, delta, t0 in (
+            (80.0, 1.0, 100.0),
+            (80.0, -1.0, 102.0),
+            (200.0, 1.0, 104.0),
+            (200.0, -1.0, 106.0),
+        )
+    ]
+    t = 104.0 + np.arange(0.0, 2 * HOLD_S, DT)
+    rising = t < 106.0
+    since = np.where(rising, t - 104.0, t - 106.0)
+    decay = np.exp(-since / tau)
+    q = np.where(rising, 11.0 - decay, 10.0 + decay)
+    dq = np.where(rising, decay / tau, -decay / tau)
+    trace = JointTrace(t=t, q_deg=q, dq_deg_s=dq)
+    recording = Recording(traces={"left_joint1": trace}, events=events, t_end=float(t[-1]))
+
+    records = extract_steps(recording)
+
+    assert [r.metrics.samples == 0 for r in records] == [True, True, False, False]
+    assert records[0].metrics.failures() == ["+1 deg step has no recorded samples"]
+    assert records[0].t.size == 0 and not records[0].metrics.passed
+    assert records[2].metrics.passed and records[3].metrics.passed
+    proposal = propose_gains(r.metrics for r in records)["left_joint1"]
+    assert proposal.gains is None
+    assert "has no recorded samples" in proposal.rejected["kp=80 kd=5"]
+    assert proposal.rejected["kp=200 kd=5"] == "its steps pass, but kp=80 kd=5 below it failed"
+
+
 def test_a_step_window_starts_at_the_first_recorded_command_of_its_target() -> None:
     sent_t = 100.0 + np.arange(-0.05, 0.2, 0.01) + 0.002
     sent_q = np.where(sent_t >= 100.0115, 11.0, 10.0)
