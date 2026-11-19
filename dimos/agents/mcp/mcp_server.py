@@ -418,9 +418,10 @@ class McpServer(Module):
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
             skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
+                None, self.rpc, skill_info.func_name, module.remote_name, []
             )
-            for skill_info in app.state.skills
+            for module, skills in zip(modules, per_module, strict=True)
+            for skill_info in skills
         }
 
     @skill

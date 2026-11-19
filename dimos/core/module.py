@@ -122,12 +122,11 @@ class ModuleConfig(BaseConfig):
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
     frame_id_prefix: str | None = None
     frame_id: str | None = None
-    # Set by the coordinator when the same module class is deployed more than
-    # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
-    # from the class name to this name.
+    # Blueprint identity for a named instance (see BlueprintAtom.instance_name).
+    # Also supplies the default RPC alias when set.
     instance_name: str | None = None
-    # Optional RPC-only address. Unlike instance_name, this does not change the
-    # module's Blueprint identity, configuration key, or stream namespace.
+    # Optional RPC alias in a blueprint. The coordinator passes the resolved
+    # wire address to the module, independently of its instance and stream names.
     rpc_name: str | None = None
     g: GlobalConfig = global_config
 
