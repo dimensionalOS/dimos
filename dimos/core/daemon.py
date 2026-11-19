@@ -62,9 +62,12 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     the terminal; it must call ``redirect_stdio_to_devnull`` and
     ``write_daemon_status`` once startup succeeds or fails.
 
-    On macOS the grandchild re-execs the CLI before building. Native imports
-    can initialize CoreFoundation, which is unsafe in a forked interpreter
-    even if no transport sessions have been opened.
+    The grandchild re-execs the CLI before building. The launcher's imports
+    initialize native libraries that are unsafe in a forked interpreter even
+    if no transport sessions have been opened: CoreFoundation on macOS, and
+    on Linux PortAudio (loaded by ``import sounddevice``), whose PulseAudio
+    backend runs a thread that fork does not copy, so ``Pa_Terminate`` waits
+    for it forever when the daemon exits.
     """
     inherited_fd = os.environ.pop(DAEMON_STATUS_FD_ENV, None)
     if inherited_fd is not None:
@@ -78,14 +81,10 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     sys.stdout.flush()
     sys.stderr.flush()
     read_fd, write_fd = os.pipe()
-
-    exec_env = None
-    exec_argv = None
-    if sys.platform == "darwin":
-        os.set_inheritable(write_fd, True)
-        exec_env = os.environ | {DAEMON_STATUS_FD_ENV: str(write_fd)}
-        # Preserve interpreter flags and both console-script/python -m entry.
-        exec_argv = [sys.executable, *sys.orig_argv[1:]]
+    os.set_inheritable(write_fd, True)
+    exec_env = os.environ | {DAEMON_STATUS_FD_ENV: str(write_fd)}
+    # Preserve interpreter flags and both console-script/python -m entry.
+    exec_argv = [sys.executable, *sys.orig_argv[1:]]
 
     pid = os.fork()
     if pid > 0:
@@ -99,9 +98,7 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     # Second fork — can never reacquire a controlling terminal
     if os.fork() > 0:
         os._exit(0)
-    if exec_env is not None and exec_argv is not None:
-        os.execve(sys.executable, exec_argv, exec_env)
-    return 0, write_fd
+    os.execve(sys.executable, exec_argv, exec_env)
 
 
 def redirect_stdio_to_devnull() -> None:

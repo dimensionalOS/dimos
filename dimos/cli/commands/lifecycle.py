@@ -335,7 +335,7 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(blueprint_names)
-    # A macOS daemon re-execs this command. Preserve the launcher's run/log
+    # A daemon re-execs this command. Preserve the launcher's run/log
     # identity rather than generating a second one in the fresh interpreter.
     inherited_run_id = (
         os.environ.get(DIMOS_RUN_ID_ENV) if daemon and DAEMON_STATUS_FD_ENV in os.environ else None
