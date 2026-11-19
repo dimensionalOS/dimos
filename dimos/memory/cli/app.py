@@ -40,7 +40,11 @@ def rerun(
         None, "--root", help="Nest every stream under this entity path (<root>/<name>)"
     ),
 ) -> None:
-    """Render a memory store into rerun (writes a .rrd, then opens the viewer)."""
+    """Render a memory store into rerun (writes a .rrd, then opens the viewer).
+
+    The detached viewer stays open after this command exits.
+    Close the viewer window separately; Ctrl+C and dimos stop will not close it.
+    """
     from dimos.memory.cli.dataset import AmbiguousDatasetError, open_dataset
     from dimos.memory.cli.render import render_store
 

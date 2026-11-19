@@ -114,7 +114,7 @@ def test_openarm_connection_rejects_incomplete_or_ambiguous_bus_selection(
 
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
-    parsed = BlueprintConfigParser(openarm_planner_coordinator).parse(
+    parsed = BlueprintConfigParser(openarm_planner_coordinator.solidify()).parse(
         ["--left-can-port", "can1", "--right-can-port", "can0"],
         environ={},
     )

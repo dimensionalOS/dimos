@@ -79,7 +79,7 @@ def start_module(each_transport):
         ModuleA.blueprint(),
         ModuleB.blueprint(),
         ModuleAB.blueprint(),
-    )
+    ).solidify()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
     coordinator.stop()

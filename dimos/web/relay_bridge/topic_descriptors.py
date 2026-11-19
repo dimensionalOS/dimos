@@ -213,4 +213,4 @@ def with_topic_metadata(blueprint: Blueprint) -> Blueprint:
         for atom in blueprint.blueprints
     ):
         return blueprint
-    return autoconnect(blueprint, TopicMetadataModule.blueprint())
+    return autoconnect(blueprint, TopicMetadataModule.blueprint()).solidify()

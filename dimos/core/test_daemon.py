@@ -723,11 +723,13 @@ def test_run_coordinator_serves_and_leaves_the_registry_alone(
     assert entry.registry_path.exists()
 
 
-def test_run_coordinator_stops_the_build_when_the_health_check_fails() -> None:
+def test_run_coordinator_stops_the_build_when_the_health_check_fails(mocker, monkeypatch) -> None:
     from dimos.core.daemon import run_coordinator
 
     coordinator = mock.MagicMock()
     coordinator.health_check.return_value = False
+    mocker.patch("dimos.core.coordination.process_lifecycle.spawn_watchdog")
+    monkeypatch.setenv("DIMOS_RUN_ID", "run-y")
     build = "dimos.core.coordination.module_coordinator.ModuleCoordinator.build"
     with (
         mock.patch(build, return_value=coordinator),

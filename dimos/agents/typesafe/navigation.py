@@ -52,13 +52,13 @@ from dimos.agents.typesafe.world_state import WorldState, build_world_state
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.navigation.spec import NO_HEADING
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import LatestReader, getter_streaming
@@ -95,7 +95,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
     lidar: In[PointCloud2]
 
     cmd_vel: Out[Twist]
-    goal: Out[PointStamped]  # world-frame XY the goal text resolved to
+    goal: Out[PoseStamped]  # world-frame XY the goal text resolved to, no heading
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -159,6 +159,8 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             lidar_band=self.config.lidar_band,
         )
         self._state_gen = gen
+        # The detections are read against this pose, so the goal they resolve to is in its frame.
+        self._state_frame = pose.frame_id
         return state
 
     def questions(self, state: object) -> dict[str, Question]:
@@ -188,6 +190,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             "lidar": getter_streaming(self.lidar.observable(), timeout=0, nonblocking=True),
         }
         self._state_gen = 0
+        self._state_frame = ""
         super().start()
         self.register_disposable(Disposable(self.human_input.subscribe(self.set_goal)))
         self._stop_event.clear()
@@ -296,7 +299,11 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             prev = self._goal_xy
             self._goal_xy = (x, y)
         if prev is None or abs(prev[0] - x) > 0.1 or abs(prev[1] - y) > 0.1:
-            self.goal.publish(PointStamped(x, y, 0.0, frame_id="world"))
+            self.goal.publish(
+                PoseStamped(
+                    frame_id=self._state_frame, position=[x, y, 0.0], orientation=NO_HEADING
+                )
+            )
 
     def _set_target(self, target: Vec3, *, immediate: bool = False, gen: int | None = None) -> None:
         now = time.monotonic()
