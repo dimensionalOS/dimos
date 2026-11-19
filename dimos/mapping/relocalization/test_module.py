@@ -21,6 +21,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
+from dimos.mapping.relocalization import module as relocalization
 from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -66,8 +67,6 @@ def test_submit_publishes_and_checks_frames(module):
 def test_relocalize_once_stops_after_the_first_fix(module, monkeypatch):
     """With it on, nothing is attempted after a fix; with it off, the fix is refined from."""
     from reactivex import Subject
-
-    from dimos.mapping.relocalization import module as relocalization
 
     attempts = []
 
@@ -266,3 +265,50 @@ def test_a_premap_mcap_decodes_its_cloud_past_unrelated_name_clashes(tmp_path):
     loaded = load_premap(str(path))
     assert isinstance(loaded, PointCloud2)
     assert np.allclose(loaded.as_numpy()[0], np.eye(3))
+
+
+@pytest.fixture
+def sparse_module(module):
+    return module(live_cloud="local_map", min_local_points=3)
+
+
+def test_sparse_clouds_warn_only_after_grace_and_remain_throttled(sparse_module, mocker):
+    logger = mocker.patch.object(relocalization, "logger")
+    clock = mocker.patch.object(relocalization.time, "monotonic")
+    cloud = PointCloud2.from_numpy(np.zeros((2, 3), dtype=np.float32))
+
+    for now in (100.0, 101.0, 105.0, 109.999, 110.0, 111.0, 115.0):
+        clock.return_value = now
+        sparse_module._maybe_log_skip(cloud)
+
+    message = "relocalize skipped: not enough local points"
+    fields = {"n_pts": 2, "min_local_points": 3}
+    assert logger.method_calls == [
+        mocker.call.info(message, **fields),
+        mocker.call.info(message, **fields),
+        mocker.call.warning(message, **fields),
+        mocker.call.warning(message, **fields),
+    ]
+    assert not sparse_module._has_enough_points(cloud)
+
+
+def test_enough_points_clear_sparse_cloud_warning_state(sparse_module, mocker):
+    logger = mocker.patch.object(relocalization, "logger")
+    clock = mocker.patch.object(relocalization.time, "monotonic", return_value=100.0)
+    sparse = PointCloud2.from_numpy(np.zeros((2, 3), dtype=np.float32))
+    ready = PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32))
+    sparse_module._maybe_log_skip(sparse)
+    clock.return_value = 105.0
+    sparse_module._maybe_log_skip(ready)
+    clock.return_value = 120.0
+    sparse_module._maybe_log_skip(sparse)
+
+    assert logger.method_calls == [
+        mocker.call.info(
+            "relocalize skipped: not enough local points", n_pts=2, min_local_points=3
+        ),
+        mocker.call.info(
+            "relocalize skipped: not enough local points", n_pts=2, min_local_points=3
+        ),
+    ]
+    assert sparse_module._has_enough_points(ready)
