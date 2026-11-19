@@ -27,6 +27,7 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
+from dimos.control.calibration._calibration_test_helpers import require_model
 from dimos.control.calibration._fake_tuning_arm import FakeTuningArm
 from dimos.control.calibration.gravity_poses import ArmModel, generate_poses
 from dimos.control.calibration.module import (
@@ -45,6 +46,7 @@ from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
+from dimos.robot.manipulators.openyam.config import OPENYAM
 from dimos.utils.testing.waiting import wait_until
 
 OUTPUTS = (
@@ -279,6 +281,7 @@ def test_the_config_refuses_what_cannot_run(config, error):
 
 
 def test_a_bench_guard_from_the_config_replaces_the_implicit_one():
+    require_model(OPENYAM.gravity_model, "OpenYAM")
     spec = CalibrationModuleConfig(robot="openyam", floor_z_m=-0.03, min_x_m=0.12).arm_spec()
     assert spec.require_workspace_guard().floor_z_m == -0.03
     assert spec.workspace.min_x_m == 0.12
