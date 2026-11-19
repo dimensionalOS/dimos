@@ -83,7 +83,9 @@ class StreamingModule(Module):
 def mcp_server(mcp_port: int, mcp_url: str):
     """Start a blueprint with StreamingModule + McpServer, wait for readiness."""
     global_config.update(viewer="none")
-    blueprint = autoconnect(StreamingModule.blueprint(), McpServer.blueprint(port=mcp_port))
+    blueprint = autoconnect(
+        StreamingModule.blueprint(), McpServer.blueprint(port=mcp_port)
+    ).solidify()
     coordinator = ModuleCoordinator.build(blueprint)
 
     adapter = McpAdapter(url=mcp_url)

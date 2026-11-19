@@ -27,8 +27,13 @@ HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
 RUN_LIVELINESS_KEY = "dimos/runs/{run_id}/live"
 # Every output line of a fragment, published while its run's blueprint root listens.
 RUN_LOG_KEY = "dimos/runs/{run_id}/logs/{host}"
-RUN_MODULE_RPC_NAME = "runs/{run_id}/hosts/{host_id}/modules/{module}"
+RUN_MODULE_RPC_NAMESPACE = "runs/{run_id}/hosts/{host_id}/modules"
+RUN_MODULE_RPC_NAME = RUN_MODULE_RPC_NAMESPACE + "/{module}"
 RUN_COORDINATOR_RPC_NAME = "runs/{run_id}/hosts/{host_id}/coordinator"
+
+
+def run_module_rpc_namespace(run_id: str, host_id: str) -> str:
+    return RUN_MODULE_RPC_NAMESPACE.format(run_id=run_id, host_id=host_id)
 
 
 def run_module_rpc_name(run_id: str, host_id: str, module_name: str) -> str:

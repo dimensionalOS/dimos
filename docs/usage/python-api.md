@@ -187,9 +187,9 @@ app.stop()  # closes the connection (does NOT stop the remote process)
 
 `Dimos.connect()` probes the coordinator on the configured transport bus. It does
 not require a CLI run-registry entry, so it also attaches to
-`ModuleCoordinator.build(...).loop()` launched directly from Python. dimOS
-supports one coordinator per bus; configure the transport bus consistently to
-connect across processes or hosts.
+`ModuleCoordinator.build(...).loop()` launched directly from Python. One stack
+per bus serves the default `Coordinator` endpoint. Companion stacks can share
+the bus by setting `serve_coordinator_rpc=False` and using their local module handles.
 
 `run()`, `restart()` and `unload()` also work against a daemon:
 
@@ -206,6 +206,7 @@ Strings and registered Module classes take a name-based fast path. Other
 Module classes and `Blueprint` objects are encoded and rebuilt on the
 daemon, so their module classes must be importable there and all kwargs must
 be encodable by the RPC codec ([cbor.py](/dimos/protocol/encode/cbor.py)).
+A `MetaBlueprint` is solidified with its default choices before it is sent.
 
 The daemon and its workers also import from `dimos.constants.RUNTIME_MODULES_DIR`
 (`~/.local/state/dimos/modules`, or under `$XDG_STATE_HOME`), so a module saved

@@ -35,7 +35,9 @@ from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
 from dimos.robot.manipulators.openyam.joints import OPENYAM_ARM_JOINTS
 
 
-@pytest.mark.parametrize("blueprint", [openyam_teach_collection, openyam_quest_collection])
+@pytest.mark.parametrize(
+    "blueprint", [openyam_teach_collection.solidify(), openyam_quest_collection.solidify()]
+)
 def test_collection_uses_normal_module_configuration(blueprint, tmp_path):
     parsed = BlueprintConfigParser(blueprint).parse(
         [
@@ -57,7 +59,7 @@ def test_collection_uses_normal_module_configuration(blueprint, tmp_path):
 
 
 def test_teach_collection_is_a_minimal_native_stack():
-    modules = [atom.module for atom in openyam_teach_collection.active_blueprints]
+    modules = [atom.module for atom in openyam_teach_collection.solidify().active_blueprints]
     assert issubclass(modules[0], CollectionModule)
     assert modules[1:] == [
         EpisodeMonitorModule,
@@ -82,7 +84,7 @@ def test_teach_robot_data_is_zero_stiffness_gravity_compensated_and_passive():
 def test_teach_connection_declares_zero_stiffness_to_the_coordinator():
     coordinator = next(
         atom
-        for atom in openyam_teach_collection.active_blueprints
+        for atom in openyam_teach_collection.solidify().active_blueprints
         if atom.module is OpenYamCoordinator
     )
     assert coordinator.kwargs.get("hardware", []) == []
@@ -105,7 +107,7 @@ def test_teach_connection_declares_zero_stiffness_to_the_coordinator():
 def test_teach_connection_is_selected_with_the_deployed_joint_names():
     atom = next(
         atom
-        for atom in openyam_teach_collection.active_blueprints
+        for atom in openyam_teach_collection.solidify().active_blueprints
         if atom.module is OpenYamConnection
     )
     assert atom.kwargs["source"] == "arm"
@@ -115,7 +117,9 @@ def test_teach_connection_is_selected_with_the_deployed_joint_names():
 
 def test_teach_recording_profile_keeps_seven_joint_state_and_action():
     recorder = next(
-        atom for atom in openyam_teach_collection.active_blueprints if atom.name == "recorder"
+        atom
+        for atom in openyam_teach_collection.solidify().active_blueprints
+        if atom.name == "recorder"
     )
     schema = recorder.kwargs["recording_schema"]
 
@@ -133,7 +137,7 @@ def test_teach_recording_profile_keeps_seven_joint_state_and_action():
 
 
 def test_teach_collection_can_selector_reaches_the_connection(tmp_path):
-    parsed = BlueprintConfigParser(openyam_teach_collection).parse(
+    parsed = BlueprintConfigParser(openyam_teach_collection.solidify()).parse(
         [
             "--recorder.recording",
             str(tmp_path / "session"),
@@ -147,7 +151,7 @@ def test_teach_collection_can_selector_reaches_the_connection(tmp_path):
     assert parsed.module_kwargs("openyamconnection")["can_port"] == "/dev/ttyACM0"
     coordinator = next(
         atom
-        for atom in openyam_teach_collection.active_blueprints
+        for atom in openyam_teach_collection.solidify().active_blueprints
         if issubclass(atom.module, ControlCoordinator)
     )
     assert coordinator.module is OpenYamCoordinator

@@ -16,7 +16,7 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
     arm_connection,
@@ -30,7 +30,7 @@ from dimos.robot.urdf_manager import UrdfManager
 _MODEL = make_metal_model_config(robot="arm")
 
 
-def makermods_metal_connection_control_blueprint() -> Blueprint:
+def makermods_metal_connection_control_blueprint() -> MetaBlueprint:
     """Trajectories and the gripper, with the robot model served to clients."""
     return autoconnect(
         DamiaoCoordinator.blueprint(

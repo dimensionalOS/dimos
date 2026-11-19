@@ -28,7 +28,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr
 
 DUAL_OPENYAM_COLLECTION = next(
     atom.kwargs["recording_schema"]
-    for atom in dual_openyam_quest_collection.active_blueprints
+    for atom in dual_openyam_quest_collection.solidify().active_blueprints
     if atom.name == "recorder"
 )
 
@@ -53,7 +53,9 @@ def test_dual_profile_projects_canonical_joint_order_and_records_both_cameras():
         "observation.images.right_wrist": "right_wrist_image",
     }
     [recorder] = [
-        atom for atom in dual_openyam_quest_collection.active_blueprints if atom.name == "recorder"
+        atom
+        for atom in dual_openyam_quest_collection.solidify().active_blueprints
+        if atom.name == "recorder"
     ]
     # Every Module inherits tf; the profile recorder does not record that input.
     assert {
@@ -68,7 +70,7 @@ def test_dual_profile_projects_canonical_joint_order_and_records_both_cameras():
 
 
 def test_dual_collection_configures_both_cameras_and_buses_through_run(tmp_path):
-    blueprint = dual_openyam_quest_collection
+    blueprint = dual_openyam_quest_collection.solidify()
     parsed = BlueprintConfigParser(blueprint).parse(
         [
             "--recorder.recording",
@@ -109,10 +111,10 @@ def test_collection_exposes_inherited_viser_without_changing_teleop(tmp_path, mo
         "fold towel",
         *can_ports,
     ]
-    parser = BlueprintConfigParser(dual_openyam_quest_collection)
+    parser = BlueprintConfigParser(dual_openyam_quest_collection.solidify())
     collection = parser.parse(args, environ={}).module_kwargs("manipulationmodule")
     teleop = (
-        BlueprintConfigParser(teleop_webxr_dual_openyam)
+        BlueprintConfigParser(teleop_webxr_dual_openyam.solidify())
         .parse(can_ports, environ={})
         .module_kwargs("manipulationmodule")
     )
@@ -123,12 +125,12 @@ def test_collection_exposes_inherited_viser_without_changing_teleop(tmp_path, mo
     assert collection["kinematics"] == teleop["kinematics"]
     [collection_module] = [
         atom
-        for atom in dual_openyam_quest_collection.active_blueprints
+        for atom in dual_openyam_quest_collection.solidify().active_blueprints
         if atom.module is ManipulationModule
     ]
     [teleop_module] = [
         atom
-        for atom in teleop_webxr_dual_openyam.active_blueprints
+        for atom in teleop_webxr_dual_openyam.solidify().active_blueprints
         if atom.module is ManipulationModule
     ]
     # Check inheritance without resolving the copied lazy model paths.

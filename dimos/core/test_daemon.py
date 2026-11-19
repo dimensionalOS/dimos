@@ -714,7 +714,9 @@ def test_run_coordinator_serves_and_leaves_the_registry_alone(
             on_ready=lambda _: readiness.append(True),
         )
 
-    build.assert_called_once_with("bp", "cfg", remote_module_refs=None)
+    build.assert_called_once_with(
+        "bp", "cfg", reserve_rpc_name="runs/x", module_rpc_namespace=None, remote_module_refs=None
+    )
     coordinator.start_rpc_service.assert_called_once_with(name="runs/x")
     watchdog.assert_called_once_with("run-x", log_dir=str(tmp_path))
     handlers.assert_called_once_with("run-x", coordinator, sigint=False)

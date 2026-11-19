@@ -52,7 +52,7 @@ def calibration_root(
     return root
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
 def offline_assets() -> Iterator[None]:
     """No calibration test downloads or refreshes a robot model."""
     with offline_robot_assets():
@@ -60,7 +60,7 @@ def offline_assets() -> Iterator[None]:
 
 
 @pytest.fixture(scope="session")
-def dual_openyam_specs(offline_assets: None) -> list[ArmCalibrationSpec]:
+def dual_openyam_specs() -> list[ArmCalibrationSpec]:
     """Both Dual OpenYAM arms on a bench, everything else from the model: left, then right."""
     return robot_specs_or_skip(DUAL_OPENYAM, "Dual OpenYAM", workspace=DUAL_OPENYAM_TEST_BENCH)
 
@@ -76,7 +76,7 @@ def right_spec(dual_openyam_specs: list[ArmCalibrationSpec]) -> ArmCalibrationSp
 
 
 @pytest.fixture(scope="session")
-def b601_spec(offline_assets: None) -> ArmCalibrationSpec:
+def b601_spec() -> ArmCalibrationSpec:
     """The Seeed B601-DM, a single non-OpenYAM Damiao arm, on a bench at its base's level.
 
     Everything but the workspace guard is derived from the model.

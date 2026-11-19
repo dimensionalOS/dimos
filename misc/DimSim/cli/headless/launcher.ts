@@ -48,7 +48,9 @@ const GPU_ARGS = [
   "--ignore-gpu-blocklist",
   "--enable-gpu",
   "--use-gl=angle",
-  "--use-angle=metal",
+  // Metal exists only on macOS. Chromium 149 exits when asked for it on Linux,
+  // where ANGLE's default backend (OpenGL) is the right one.
+  ...(Deno.build.os === "darwin" ? ["--use-angle=metal"] : []),
   "--in-process-gpu",
   "--disable-gpu-sandbox",
   // Prevent Chrome from throttling timers in headless/background mode

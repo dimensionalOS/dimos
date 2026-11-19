@@ -106,4 +106,4 @@ class GraspGeneratorModule(Module, GraspGenSpec):
 
     def _generator_name(self) -> str:
         """The name other modules call this one by."""
-        return self.config.rpc_name or self.config.instance_name or type(self).__name__
+        return self.config.instance_name or type(self).__name__

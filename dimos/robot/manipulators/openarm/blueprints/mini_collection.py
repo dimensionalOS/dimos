@@ -14,7 +14,7 @@
 
 """OpenArm Mini leader-follower collection for the bimanual OpenArm."""
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -74,7 +74,7 @@ _profile = CollectionProfile(
 )
 
 
-def _cameras() -> Blueprint:
+def _cameras() -> MetaBlueprint:
     return autoconnect(
         *(
             WebcamModule.blueprint(

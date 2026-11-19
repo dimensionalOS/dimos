@@ -29,7 +29,6 @@ from typing import Any
 
 from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
-from unitree_webrtc_connect.constants import SPORT_CMD
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -38,6 +37,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.webrtc_connect import SPORT_CMD
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
