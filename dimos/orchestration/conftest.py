@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterator, Mapping
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.orchestration.definition import (
     Activity,
@@ -85,8 +85,10 @@ def build() -> Iterator[Callable[..., ModuleCoordinator]]:
     built: list[ModuleCoordinator] = []
 
     def _build(
-        blueprint: Blueprint, overrides: Mapping[str, object] | None = None
+        blueprint: Blueprint | MetaBlueprint, overrides: Mapping[str, object] | None = None
     ) -> ModuleCoordinator:
+        if isinstance(blueprint, MetaBlueprint):
+            blueprint = blueprint.solidify()
         settings = {"g": {"viewer": "none"}, **(overrides or {})}
         parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=settings)
         built.append(ModuleCoordinator.build(blueprint, parsed))

@@ -26,7 +26,7 @@ from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, MetaBlueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.hardware.controllers.joycon.joycon_module import JoyconConnectionModule
@@ -176,12 +176,12 @@ def _leader(connection: type[OpenArmMiniConnection] = OpenArmMiniConnection) -> 
     ).remappings([(connection, "joint_state", "leader_joint_command")])
 
 
-def _joycon_leader() -> Blueprint:
+def _joycon_leader() -> MetaBlueprint:
     """Leaders without triggers, and a Joy-Con on each for its jaw, episodes and pause."""
     return autoconnect(_leader(OpenArmMiniArmConnection), JoyconConnectionModule.blueprint())
 
 
-def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:
+def _follower(visualization: ViserVisualizationConfig | None = None) -> MetaBlueprint:
     """The leader's targets over the OpenArm connection; --simulation swaps in a mock."""
     return autoconnect(
         OpenArmLeaderCoordinator.blueprint(

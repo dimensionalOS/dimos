@@ -22,18 +22,19 @@ from typer.testing import CliRunner
 
 import dimos.cli.commands.graph as graph_command
 from dimos.cli.dimos import main
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 
 
 def test_render_graph_resolves_blueprint_and_calls_existing_renderer(
     tmp_path: Path,
     mocker: MockerFixture,
 ) -> None:
-    blueprint = mocker.sentinel.blueprint
+    blueprint = Blueprint(blueprints=())
     output = tmp_path / "graph.svg"
     resolve = mocker.patch.object(
         graph_command.get_all_blueprints,
         "get_by_name",
-        return_value=blueprint,
+        return_value=autoconnect(blueprint),
     )
     render = mocker.patch.object(graph_command, "render_svg")
 

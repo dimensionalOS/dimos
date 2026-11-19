@@ -105,8 +105,6 @@ def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
 
 def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | None = None) -> None:
     robot_name = robot_model or "unitree_go1"
-    if robot_name == "unitree_go2":
-        robot_name = "unitree_go1"
 
     controller = MockController(shm)
     model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
@@ -115,7 +113,7 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
         raise ValueError("Failed to load MuJoCo model: model or data is None")
 
     match robot_name:
-        case "unitree_go1":
+        case "unitree_go1" | "unitree_go2":
             z = 0.3
         case "unitree_g1":
             z = 0.8

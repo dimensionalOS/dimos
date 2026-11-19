@@ -30,7 +30,10 @@ from dimos.core._test_future_annotations_helper import (
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
     Blueprint,
+    ChoiceAtom,
+    ChoiceResolutionError,
     DisabledModuleProxy,
+    MetaBlueprint,
     autoconnect,
 )
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -228,8 +231,10 @@ class Calculator1WithPort(Calculator1):
     extra_in: In[Image]
 
 
-def _build_without_rerun(blueprint: Blueprint) -> ModuleCoordinator:
+def _build_without_rerun(blueprint: Blueprint | MetaBlueprint) -> ModuleCoordinator:
     """Build with a parsed viewer override so tests never spawn Rerun."""
+    if isinstance(blueprint, MetaBlueprint):
+        blueprint = blueprint.solidify()
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={},
         overrides={"g": {"viewer": "none"}},
@@ -374,7 +379,7 @@ def test_name_conflicts_are_reported() -> None:
     class ModuleB(Module):
         shared_data: In[Data2]
 
-    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).solidify()
 
     try:
         verify_no_name_conflicts(blueprint_set)
@@ -396,7 +401,7 @@ def test_multiple_name_conflicts_are_reported() -> None:
         sensor_data: In[Data2]
         control_signal: In[Data3]
 
-    blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint())
+    blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint()).solidify()
 
     try:
         verify_no_name_conflicts(blueprint_set)
@@ -420,7 +425,9 @@ def test_that_remapping_can_resolve_conflicts() -> None:
         data2: In[Data2]
 
     # Without remapping, should raise conflict error
-    blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint(), Module3.blueprint())
+    blueprint_set = autoconnect(
+        Module1.blueprint(), Module2.blueprint(), Module3.blueprint()
+    ).solidify()
 
     try:
         verify_no_name_conflicts(blueprint_set)
@@ -429,13 +436,15 @@ def test_that_remapping_can_resolve_conflicts() -> None:
         assert "'data' has conflicting types" in str(e)
 
     # With remapping to resolve the conflict
-    blueprint_set_remapped = autoconnect(
-        Module1.blueprint(), Module2.blueprint(), Module3.blueprint()
-    ).remappings(
-        [
-            (Module1, "data", "data1"),
-            (Module2, "data", "data2"),
-        ]
+    blueprint_set_remapped = (
+        autoconnect(Module1.blueprint(), Module2.blueprint(), Module3.blueprint())
+        .solidify()
+        .remappings(
+            [
+                (Module1, "data", "data1"),
+                (Module2, "data", "data2"),
+            ]
+        )
     )
 
     # Should not raise any exception after remapping
@@ -446,13 +455,17 @@ def test_remapping() -> None:
     """Test that remapping streams works correctly."""
 
     # Create blueprint with remapping
-    blueprint_set = autoconnect(
-        SourceModule.blueprint(),
-        TargetModule.blueprint(),
-    ).remappings(
-        [
-            (SourceModule, "color_image", "remapped_data"),
-        ]
+    blueprint_set = (
+        autoconnect(
+            SourceModule.blueprint(),
+            TargetModule.blueprint(),
+        )
+        .solidify()
+        .remappings(
+            [
+                (SourceModule, "color_image", "remapped_data"),
+            ]
+        )
     )
 
     # Verify remappings are stored correctly, keyed by instance name.
@@ -631,7 +644,17 @@ def test_module_ref_remap_ambiguous() -> None:
 
 def test_load_blueprint_basic(dynamic_coordinator) -> None:
     """load_blueprint deploys, wires and starts modules the same way build() does."""
-    bp = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
+    bp = autoconnect(
+        ModuleA.blueprint(),
+        ChoiceAtom(
+            name="Consumers",
+            default="enabled",
+            choices={
+                "enabled": autoconnect(ModuleB.blueprint(), ModuleC.blueprint()),
+                "disabled": autoconnect(),
+            },
+        ),
+    )
     dynamic_coordinator.load_blueprint(bp)
 
     assert dynamic_coordinator.get_instance(ModuleA) is not None
@@ -758,6 +781,36 @@ def dynamic_coordinator():
     mc.stop()
 
 
+@pytest.fixture
+def default_choice_coordinator():
+    blueprint = autoconnect(
+        ModuleA.blueprint().global_config(n_workers=1, viewer="none"),
+        ChoiceAtom(
+            name="Consumer",
+            default="with_rpc",
+            choices={"with_rpc": ModuleB.blueprint(), "without_rpc": ModuleC.blueprint()},
+        ),
+    )
+    coordinator = ModuleCoordinator.build(blueprint)
+    yield coordinator
+    coordinator.stop()
+
+
+def test_build_resolves_metablueprint_defaults(default_choice_coordinator) -> None:
+    assert set(default_choice_coordinator.list_module_names()) == {"ModuleA", "ModuleB"}
+    assert default_choice_coordinator.get_instance(ModuleB).what_is_as_name() == "A, Module A"
+
+
+def test_build_rejects_missing_choices_before_starting(mocker) -> None:
+    start = mocker.patch.object(ModuleCoordinator, "start")
+    blueprint = autoconnect(ChoiceAtom(name="Required", choices={"a": ModuleA.blueprint()}))
+
+    with pytest.raises(ChoiceResolutionError, match="Required.*required"):
+        ModuleCoordinator.build(blueprint)
+
+    start.assert_not_called()
+
+
 def test_optional_module_ref_with_provider(build_coordinator) -> None:
     """An optional ref resolves normally when a provider is present."""
     coordinator = build_coordinator(
@@ -859,9 +912,11 @@ def test_missing_dependency_prevents_worker_and_transport_startup(mocker) -> Non
 def test_dependency_checks_receive_resolved_config_and_skip_disabled_modules(mocker) -> None:
     check_a = mocker.patch.object(ModuleA, "check_dependencies")
     check_b = mocker.patch.object(ModuleB, "check_dependencies")
-    blueprint = autoconnect(
-        ModuleA.blueprint(frame_id="pinned"), ModuleB.blueprint()
-    ).disabled_modules(ModuleB)
+    blueprint = (
+        autoconnect(ModuleA.blueprint(frame_id="pinned"), ModuleB.blueprint())
+        .solidify()
+        .disabled_modules(ModuleB)
+    )
     parsed = BlueprintConfigParser(blueprint).parse(
         overrides={ModuleA.name: {"frame_id": "overridden"}}, environ={}
     )
@@ -1441,7 +1496,7 @@ class PlainPingConsumer(Module):
 
 
 def test_spec_provider_without_rpc_fails_to_resolve() -> None:
-    blueprint = autoconnect(PlainPingProvider.blueprint(), PlainPingConsumer.blueprint())
+    blueprint = autoconnect(PlainPingProvider.blueprint(), PlainPingConsumer.blueprint()).solidify()
 
     with pytest.raises(Exception, match="PlainPingProvider has ping without @rpc"):
         resolve_module_refs(blueprint)

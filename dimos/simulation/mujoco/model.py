@@ -26,6 +26,7 @@ from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
+from dimos.simulation.mujoco.logging_config import configure_mujoco_logging
 from dimos.simulation.mujoco.menagerie import menagerie_path
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
 from dimos.utils.data import get_data
@@ -62,10 +63,17 @@ def get_assets() -> dict[str, bytes]:
     return assets
 
 
+def _robot_asset_name(robot: str) -> str:
+    # Go2 currently uses the Go1 model and locomotion policy as simulation stand-ins.
+    return "unitree_go1" if robot == "unitree_go2" else robot
+
+
 def load_model(
     input_device: InputController, robot: str, scene_xml: str
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
+    configure_mujoco_logging()
     mujoco.set_mjcb_control(None)
+    asset_robot = _robot_asset_name(robot)
 
     xml_string = get_model_xml(robot, scene_xml)
     model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
@@ -88,7 +96,8 @@ def load_model(
     model.opt.timestep = sim_dt
 
     params: dict[str, Any] = {
-        "policy_path": (_get_data_dir() / f"{robot}_policy.onnx").as_posix(),
+        "policy_path": (_get_data_dir() / f"{asset_robot}_policy.onnx").as_posix(),
+        "robot_label": robot if asset_robot == robot else f"{robot} ({asset_robot} stand-in)",
         "default_angles": np.array(model.keyframe("home").qpos[7:]),
         "n_substeps": n_substeps,
         "action_scale": 0.5,
@@ -96,7 +105,7 @@ def load_model(
         "ctrl_dt": ctrl_dt,
     }
 
-    match robot:
+    match asset_robot:
         case "unitree_go1":
             policy: OnnxController = Go1OnnxController(**params)
         case "unitree_g1":
@@ -111,8 +120,12 @@ def load_model(
 
 def get_model_xml(robot: str, scene_xml: str) -> str:
     root = ET.fromstring(scene_xml)
-    root.set("model", f"{robot}_scene")
-    root.insert(0, ET.Element("include", file=f"{robot}.xml"))
+    asset_robot = _robot_asset_name(robot)
+    scene_name = f"{robot}_scene"
+    if asset_robot != robot:
+        scene_name += f" ({asset_robot} stand-in)"
+    root.set("model", scene_name)
+    root.insert(0, ET.Element("include", file=f"{asset_robot}.xml"))
 
     _add_person_object(root)
 

@@ -82,7 +82,7 @@ def _is_failure_note(msg: BaseMessage) -> bool:
     return isinstance(msg, AIMessage) and TURN_FAILED_KEY in msg.additional_kwargs
 
 
-class McpClientAdapter(EvalSubject):
+class AgentAdapter(EvalSubject):
     """An eval adapter for the production ``Agent``.
 
     Send the instruction on ``/human_input`` and capture ``/agent`` until
@@ -96,7 +96,7 @@ class McpClientAdapter(EvalSubject):
 
     def validate_tools(self) -> None:
         if self.config.no_dimos:
-            raise ValueError("McpClientAdapter is dimOS's own agent")
+            raise ValueError("AgentAdapter is dimOS's own agent")
         super().validate_tools()
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
@@ -106,7 +106,7 @@ class McpClientAdapter(EvalSubject):
     def preflight(self, environment: Environment) -> None:
         if not environment.has_robot and not self.config.modules:
             raise RuntimeError(
-                f"McpClientAdapter needs a running Agent; {type(environment).__name__} "
+                f"AgentAdapter needs a running Agent; {type(environment).__name__} "
                 "has no robot and this agent adds no modules"
             )
 
