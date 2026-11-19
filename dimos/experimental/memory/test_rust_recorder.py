@@ -134,7 +134,7 @@ def test_event_periods_cover_every_stream_by_payload_type_and_override(tmp_path:
             ("lidar", PointCloud2),
             ("global_map", PointCloud2),
             ("odom", PoseStamped),
-            ("clip", String),
+            ("clip_that", String),
         ]
     ]
     events = RustEventConfig(heavy_period_s=2.0, period_overrides={"global_map": 30.0, "odom": 0.5})
@@ -146,7 +146,7 @@ def test_event_periods_cover_every_stream_by_payload_type_and_override(tmp_path:
         "lidar": 2.0,
         "global_map": 30.0,
         "odom": 0.5,
-        "clip": 0.0,
+        "clip_that": 0.0,
     }
     assert native["window_dir"] == str(tmp_path / "window")
     assert set(native) == {

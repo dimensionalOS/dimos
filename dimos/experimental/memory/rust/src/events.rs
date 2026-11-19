@@ -437,7 +437,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let window = dir.path().join("window");
         let database = dir.path().join("memory.db");
-        let streams = vec![stream("cloud"), stream("odom"), stream("clip")];
+        let streams = vec![stream("cloud"), stream("odom"), stream("clip_that")];
         let config = RecorderConfig {
             store: RecordingStoreConfig::Sqlite {
                 path: database.to_string_lossy().into_owned(),
@@ -451,11 +451,11 @@ mod tests {
                 segment_s: 10.0,
                 sync_s: 1.0,
                 max_clip_s: 600.0,
-                trigger: "clip".to_string(),
+                trigger: "clip_that".to_string(),
                 periods: HashMap::from([
                     ("cloud".to_string(), 1.0),
                     ("odom".to_string(), 0.0),
-                    ("clip".to_string(), 0.0),
+                    ("clip_that".to_string(), 0.0),
                 ]),
             }),
         };
@@ -526,6 +526,6 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(count("odom"), 3200);
-        assert_eq!(count("clip"), 1);
+        assert_eq!(count("clip_that"), 1);
     }
 }

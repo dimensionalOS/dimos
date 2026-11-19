@@ -130,7 +130,7 @@ class RustContinuousMode(BaseModel):
 class RustEventConfig(BaseModel):
     """Record long runs thinned, with full-rate clips around each trigger.
 
-    Every message on the ``trigger`` stream keeps all streams at full rate from
+    Every message on the ``clip_that`` stream keeps all streams at full rate from
     ``pre_s`` before it to ``post_s`` after it. Outside clips, each stream keeps at
     most one message per its period. Messages wait in on-disk window segments until
     no trigger can still claim them, so the artifact runs about ``pre_s + segment_s``
@@ -155,7 +155,7 @@ class RustEventConfig(BaseModel):
         gt=0,
         description="Longest a clip may grow when overlapping triggers extend it.",
     )
-    trigger: str = Field(default="clip", description="Stream whose messages start clips.")
+    trigger: Literal["clip_that"] = "clip_that"
     heavy_period_s: float = Field(
         default=5.0,
         ge=0,
