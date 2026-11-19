@@ -24,7 +24,7 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPl
 from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
-from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
+from dimos.robot.deeprobotics.m20.constants import MAP_FRAME
 
 VOXEL_SIZE_M = 0.08
 WALL_CLEARANCE_M = 0.07
@@ -42,11 +42,11 @@ def m20_nav_stack(embodiment: Embodiment = M20) -> MetaBlueprint:
             ray_subsample=5,
             emit_every=1,
             global_emit_every=50,
-            world_frame=WORLD_FRAME,
+            world_frame=MAP_FRAME,
             worker_threads=3,
         ).remappings([(RayTracingVoxelMap, "lidar", "slam_body_points")]),
         MLSPlannerNative.blueprint(
-            world_frame=WORLD_FRAME,
+            world_frame=MAP_FRAME,
             voxel_size=VOXEL_SIZE_M,
             robot_height=embodiment.height,
             start_z_offset_m=embodiment.base_height,
@@ -63,7 +63,7 @@ def m20_nav_stack(embodiment: Embodiment = M20) -> MetaBlueprint:
                 (MLSPlannerNative, "path", "planner_path"),
             ]
         ),
-        LocalPlannerNative.blueprint(embodiment=embodiment, world_frame=WORLD_FRAME),
+        LocalPlannerNative.blueprint(embodiment=embodiment, world_frame=MAP_FRAME),
         TrajectoryFollowerNative.blueprint(embodiment=embodiment),
         MovementManager.blueprint(),
     )

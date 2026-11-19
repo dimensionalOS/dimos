@@ -32,8 +32,8 @@ from dimos.robot.deeprobotics.m20.constants import (
     BODY_WIDTH_M,
     CMD_VEL_TIMEOUT_S,
     FRONT_LIDAR_XYZ_M,
+    MAP_FRAME,
     REAR_LIDAR_XYZ_M,
-    WORLD_FRAME,
 )
 from dimos.simulation.m20_sim.body import (
     COLLISION_GROUP as VENDOR_COLLISION_GROUP,
@@ -148,7 +148,8 @@ M20_RIG = Rig(
     sensors=(FRONT, REAR),
     shape=SHAPE,
     command_timeout=CMD_VEL_TIMEOUT_S,
-    world_frame=WORLD_FRAME,
+    # the sim's odometry is ground truth, so it publishes straight in the nav frame (no relocalizer)
+    world_frame=MAP_FRAME,
     odom_child_frame="base_link",
     cloud_frame="base",
     lidar_group=COLLISION_GROUP,

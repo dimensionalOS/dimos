@@ -424,3 +424,66 @@ def test_world_to_map_is_always_on_tf_beside_the_premap(module):
         disposable.dispose()
     edges = [(t.frame_id, t.child_frame_id) for msg in sent for t in msg.transforms]
     assert edges == [("world", "map")]
+
+
+def test_the_premap_is_placed_once_and_later_fixes_move_world_to_map(module):
+    m = module(map_frame="premap")
+    sent = []
+    m.tf = SimpleNamespace(publish=sent.append)
+
+    def fix(x, yaw_deg):
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion.from_euler(Vector3(0.0, 0.0, np.radians(yaw_deg))),
+            frame_id="world",
+            child_frame_id="premap",
+        )
+
+    def edges():
+        m.publish_tf()
+        return {(t.frame_id, t.child_frame_id): t for t in sent[-1].transforms}
+
+    assert list(edges()) == [("world", "map")]
+    m.submit(fix(2.0, 90.0))
+    placed = edges()
+    np.testing.assert_allclose(placed[("world", "map")].to_matrix(), np.eye(4), atol=1e-9)
+    np.testing.assert_allclose(placed[("map", "premap")].to_matrix(), fix(2.0, 90.0).to_matrix())
+    # A refinement moves world -> map only; the chain still lands on the new fix
+    m.submit(fix(2.1, 91.0))
+    refined = edges()
+    np.testing.assert_allclose(refined[("map", "premap")].to_matrix(), fix(2.0, 90.0).to_matrix())
+    chain = refined[("world", "map")] + refined[("map", "premap")]
+    np.testing.assert_allclose(chain.to_matrix(), fix(2.1, 91.0).to_matrix(), atol=1e-9)
+
+
+def test_a_cloud_in_the_map_frame_is_refined_into_a_world_fix(module, monkeypatch):
+    """The ray tracer maps in map, so its cloud's fix is map -> premap, turned into world -> premap."""
+
+    m = module(map_frame="premap", relocalize_once=False)
+    m.relocalization_strength = SimpleNamespace(publish=lambda _: None)
+    m.tf = SimpleNamespace(publish=lambda _: None)
+    first = Transform(translation=Vector3(2.0, 0.0, 0.0), frame_id="world", child_frame_id="premap")
+    m.submit(first)
+    m.submit(
+        Transform(translation=Vector3(2.5, 0.0, 0.0), frame_id="world", child_frame_id="premap")
+    )
+    seen = []
+
+    class FakeRelocalizer:
+        def attempt(self, cloud, cloud_frame, map_frame, initial_fix=None):
+            seen.append((cloud_frame, initial_fix))
+            # the map frame is 0.5 m off by now, so the cloud's map -> premap reads 2.4
+            found = Transform(
+                translation=Vector3(2.4, 0.0, 0.0), frame_id=cloud_frame, child_frame_id=map_frame
+            )
+            return SimpleNamespace(fix=found, result=SimpleNamespace(fitness=0.9))
+
+    m._relocalizer = FakeRelocalizer()
+    m._relocalize(PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), frame_id="map"))
+    ((cloud_frame, initial_fix),) = seen
+    # ICP starts from the placement (map -> premap), the fix expressed in the cloud's frame
+    assert cloud_frame == "map"
+    np.testing.assert_allclose(initial_fix.translation.x, 2.0)
+    # world -> premap = world -> map (0.5) + map -> premap (2.4)
+    np.testing.assert_allclose(m.fix.translation.x, 2.9)
+    assert (m.fix.frame_id, m.fix.child_frame_id) == ("world", "premap")

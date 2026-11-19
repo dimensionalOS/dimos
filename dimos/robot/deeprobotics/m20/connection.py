@@ -52,7 +52,7 @@ from dimos.robot.deeprobotics.m20.basic_server import (
     BasicServerLink,
     BatteryReport,
 )
-from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
+from dimos.robot.deeprobotics.m20.constants import MAP_FRAME
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -688,7 +688,7 @@ class M20Connection(Module):
             return self._fresh_charge_status() is not None
 
     def _cancel_nav_goal(self) -> None:
-        self.goal.publish(cancel_goal(frame_id=WORLD_FRAME))
+        self.goal.publish(cancel_goal(frame_id=MAP_FRAME))
 
     def _on_basic_server_report(self) -> None:
         with self._state_condition:
