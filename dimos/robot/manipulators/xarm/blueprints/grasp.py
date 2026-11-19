@@ -74,7 +74,7 @@ XARM_GRASP_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
 # The mapper and planner octree use the same resolution.
 XARM_GRASP_VOXEL_SIZE = 0.01
 # The arm's reach round link_base, gripper included: the map drops what lies farther,
-# and add_table spans this far.
+# and add_surface spans this far.
 XARM_GRASP_WORKSPACE_RADIUS = 0.9
 
 XARM_GRASP_PROMPTS = [
@@ -204,7 +204,7 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlue
         *_sensing(simulated),
         # Finds the objects pick_object takes by id, and the dense scene its contact check needs.
         ManipulationLocalize.blueprint(
-            world_frame="world", table_reach_m=XARM_GRASP_WORKSPACE_RADIUS
+            world_frame="world", surface_reach_m=XARM_GRASP_WORKSPACE_RADIUS
         ),
         manipulation_mapping(
             # Filter only the arm; gripper returns may remain in the map.
