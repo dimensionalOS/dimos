@@ -32,6 +32,7 @@ at, in one folder, as it looks.
 from __future__ import annotations
 
 import base64
+import binascii
 from collections.abc import Iterator
 import hashlib
 import json
@@ -102,21 +103,40 @@ def seen_dir(trace_dir: Path) -> Path:
 
 
 def _save_images(trace_dir: Path, seq: int, body: Any) -> None:
-    with _saved_lock:
-        saved = _saved.setdefault(trace_dir.resolve(), set())
-        index = 0
-        for subtype, data in _images(body):
-            digest = hashlib.sha256(data.encode()).hexdigest()
-            if digest in saved:
-                continue
-            saved.add(digest)
-            folder = seen_dir(trace_dir)
-            folder.mkdir(exist_ok=True)
-            ext = (
-                "jpg" if subtype in ("jpeg", "jpg") else re.sub(r"[^a-z0-9]", "", subtype) or "img"
-            )
-            (folder / f"r{seq:03d}-{index}.{ext}").write_bytes(base64.b64decode(data))
-            index += 1
+    """Never raises into the model call: text that only looks like an image (a data URL
+    quoted in a prompt) is skipped, and any other failure is logged."""
+    try:
+        with _saved_lock:
+            saved = _saved.setdefault(trace_dir.resolve(), set())
+            index = 0
+            for subtype, data in _images(body):
+                digest = hashlib.sha256(data.encode()).hexdigest()
+                if digest in saved:
+                    continue
+                try:
+                    image = base64.b64decode(data, validate=True)
+                except (binascii.Error, ValueError):
+                    continue
+                saved.add(digest)
+                folder = seen_dir(trace_dir)
+                folder.mkdir(exist_ok=True)
+                ext = (
+                    "jpg"
+                    if subtype in ("jpeg", "jpg")
+                    else re.sub(r"[^a-z0-9]", "", subtype) or "img"
+                )
+                (folder / f"r{seq:03d}-{index}.{ext}").write_bytes(image)
+                index += 1
+    except Exception:
+        logger.exception("llm trace: images not saved", dir=str(trace_dir))
+
+
+def save_request_images(trace_dir: Path, messages: list[Any]) -> None:
+    """Save the images of a call about to go out that no HTTP hook may see (``write_normalized``
+    records it afterwards), so ``seen/`` has them while the model works, or if it fails. The
+    hook saving the same images too keeps one copy."""
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    _save_images(trace_dir, _next_seq(trace_dir), [m.model_dump() for m in messages])
 
 
 def request_path(trace_dir: Path, seq: int) -> Path:

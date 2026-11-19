@@ -25,7 +25,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration
 
-from dimos.agents.llm_trace import latest_pair, write_normalized
+from dimos.agents.llm_trace import latest_pair, save_request_images, write_normalized
 from dimos.evals.agents.base import EvalSubject, ModelSubjectConfig
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -74,6 +74,7 @@ class SingleCallAgent(EvalSubject):
             SystemMessage(self.config.system_prompt),
             HumanMessage(content=[*blocks, {"type": "text", "text": inputs}]),
         ]
+        save_request_images(run_dir / "raw", messages)
         started_at = time.time()
         started = time.monotonic()
         result = chat.generate([messages])

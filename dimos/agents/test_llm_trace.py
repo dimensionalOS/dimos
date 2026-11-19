@@ -27,6 +27,7 @@ from dimos.agents.llm_trace import (
     list_llm_trace_pairs,
     request_path,
     response_path,
+    save_request_images,
     seen_dir,
     tracing_http_client,
     write_normalized,
@@ -181,3 +182,38 @@ def test_requests_without_images_leave_no_seen_folder(tmp_path: Path) -> None:
     with _client(raw, lambda request: httpx.Response(200, json={})) as client:
         client.post("https://api.test/v1/responses", json={"input": "hi"})
     assert not seen_dir(raw).exists()
+
+
+def _message(mocker: MockerFixture, *urls: str) -> Any:
+    message = mocker.Mock()
+    message.model_dump.return_value = {
+        "content": [{"type": "image_url", "image_url": {"url": url}} for url in urls]
+    }
+    return message
+
+
+def test_text_that_only_looks_like_an_image_is_skipped(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    raw = tmp_path / "raw"
+    result = mocker.Mock()
+    result.model_dump.return_value = {"ok": 1}
+    quoted = "data:image/png;base64,hello"  # a prompt quoting an example, not base64
+    seq, _, response = write_normalized(
+        raw, [_message(mocker, quoted, f"data:image/png;base64,{_b64(b'real')}")], result
+    )
+    assert _read(response)["result"] == {"ok": 1}
+    assert [path.name for path in seen_dir(raw).iterdir()] == ["r000-0.png"]
+
+
+def test_images_are_saved_before_a_normalized_call_goes_out(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    raw = tmp_path / "raw"
+    messages = [_message(mocker, f"data:image/jpeg;base64,{_b64(b'frame')}")]
+    save_request_images(raw, messages)
+    assert [path.name for path in seen_dir(raw).iterdir()] == ["r000-0.jpg"]
+    result = mocker.Mock()
+    result.model_dump.return_value = {}
+    write_normalized(raw, messages, result)  # recorded after the model answers: no second copy
+    assert [path.name for path in seen_dir(raw).iterdir()] == ["r000-0.jpg"]
