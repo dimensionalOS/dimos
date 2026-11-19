@@ -34,21 +34,21 @@ from numpy.typing import NDArray
 import pinocchio as pin
 import pytest
 
-from dimos.robot.assets.git_cache import GitAssetCache
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
-from dimos.robot.manipulators.calibration.schema import (
+from dimos.control.calibration.gravity_poses import ArmModel
+from dimos.control.calibration.schema import (
     ArmCalibration,
     GravityCalibration,
     JointGains,
     LinkGravity,
     RobotModelRef,
 )
-from dimos.robot.manipulators.calibration.spec import (
+from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     specs_from_damiao_robot,
     urdf_sha256,
 )
+from dimos.robot.assets.git_cache import GitAssetCache
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 import dimos.utils.data as lfs_data
 

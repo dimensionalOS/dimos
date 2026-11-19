@@ -14,7 +14,7 @@
 
 """Gravity-model identification of one arm from a step-test recording.
 
-    python -m dimos.robot.manipulators.calibration.gravity_fit recordings/<run-id> \
+    python -m dimos.control.calibration.gravity_fit recordings/<run-id> \
         --robot dual-openyam --arm left [--save]
 
 At every pose the driver dithers each of the spec's measured joints by +d and
@@ -58,15 +58,13 @@ import numpy as np
 from scipy.optimize import least_squares
 import typer
 
-from dimos.control.connection.arm_config import ConfigPatch
-from dimos.memory.store.sqlite import SqliteStore
-from dimos.robot.manipulators.calibration._inertial import LinkInertial, load_inertial_overrides
-from dimos.robot.manipulators.calibration.gravity_poses import (
+from dimos.control.calibration._inertial import LinkInertial, load_inertial_overrides
+from dimos.control.calibration.gravity_poses import (
     GRAVITY_PARAMS_PER_BODY,
     ArmModel,
 )
-from dimos.robot.manipulators.calibration.robots import arm_spec
-from dimos.robot.manipulators.calibration.schema import (
+from dimos.control.calibration.robots import arm_spec
+from dimos.control.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
     GravityCalibration,
@@ -78,16 +76,18 @@ from dimos.robot.manipulators.calibration.schema import (
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
-from dimos.robot.manipulators.calibration.step_analysis import (
+from dimos.control.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.step_analysis import (
     REST_WINDOW_S,
     rest_window,
     segment_steps,
 )
-from dimos.robot.manipulators.calibration.step_report import (
+from dimos.control.calibration.step_report import (
     Recording,
     load_recording,
 )
+from dimos.control.connection.arm_config import ConfigPatch
+from dimos.memory.store.sqlite import SqliteStore
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -574,7 +574,7 @@ def fit_stats(result: FitResult, recording_dir: Path | None = None) -> dict[str,
     train_before = result.rms_by_joint(holdout=False, after=False)
     train_after = result.rms_by_joint(holdout=False, after=True)
     return {
-        "source": "dimos.robot.manipulators.calibration.gravity_fit",
+        "source": "dimos.control.calibration.gravity_fit",
         "recording": recording_dir.name if recording_dir is not None else None,
         "ridge_nm": result.ridge_nm,
         "rank": result.rank,

@@ -22,7 +22,7 @@ robot's ``arm_ids()``.
 
 from __future__ import annotations
 
-from dimos.robot.manipulators.calibration.spec import (
+from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     arm_name,
     calibration_keys as calibration_keys,

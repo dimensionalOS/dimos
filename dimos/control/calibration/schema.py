@@ -54,6 +54,12 @@ import numpy as np
 from pydantic import Field, ValidationError, field_validator
 
 from dimos.constants import STATE_DIR
+from dimos.control.calibration._inertial import LinkInertial
+from dimos.control.calibration.spec import (
+    ArmCalibrationSpec,
+    merged_links,
+    urdf_sha256,
+)
 from dimos.control.connection.arm_config import (
     ConfigPatch,
     FiniteFloat as FiniteFloat,
@@ -64,12 +70,6 @@ from dimos.control.connection.arm_config import (
 )
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.calibration._inertial import LinkInertial
-from dimos.robot.manipulators.calibration.spec import (
-    ArmCalibrationSpec,
-    merged_links,
-    urdf_sha256,
-)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
