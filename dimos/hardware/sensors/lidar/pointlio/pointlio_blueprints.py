@@ -16,9 +16,9 @@
 import os
 from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect, config_defaults
 from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.visualization.vis_module import vis_module
@@ -31,7 +31,7 @@ def mid360_for_pointlio(**kwargs: Any) -> Blueprint:
 
     The full point format carries the tag byte Point-LIO's Livox noise gate reads.
     """
-    kwargs.setdefault("frame_id", PointLioConfig.model_fields["sensor_frame_id"].default)
+    kwargs.setdefault("frame_id", config_defaults(PointLio)["tf_frames_local"]["sensor"])
     kwargs.setdefault("point_format", "full")
     return Mid360.blueprint(**kwargs).remappings(
         [(Mid360, "lidar", "lidar_raw"), (Mid360, "imu", "imu_raw")]

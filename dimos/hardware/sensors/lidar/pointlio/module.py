@@ -34,14 +34,14 @@ Every config field is sent to the binary as stdin JSON.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
 from dimos.core.core import rpc
-from dimos.core.module import stack_frame_id_prefix
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -53,20 +53,18 @@ from dimos.spec import perception
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
 
-class PointLioConfig(NativeModuleConfig):
+class PointLioConfig(NativeModuleConfig, TfModuleConfig):
     stdin_config: bool = True
-    frame_id: str = "odom"
-    base_fields: frozenset[str] = frozenset({"frame_id"})
-    # Set by .namespace(); the module composes the namespaced frame itself,
-    # since it publishes odometry and tf without going back through Python.
-    frame_id_prefix: str | None = None
     source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build -L path:."
 
-    # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
-    # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
-    sensor_frame_id: str = "mid360_link"
+    # Odometry is published as odom (fixed) -> sensor (moving sensor), and also broadcast on
+    # TF. The point cloud is stamped with the sensor frame. The rust side reads these roles.
+    tf_frames_local: dict[str, str] = Field(
+        default_factory=lambda: {"odom": "odom", "sensor": "mid360_link"}
+    )
+    tf_edges: list[tuple[str, str]] = Field(default_factory=lambda: [("odom", "sensor")])
 
     # Point-LIO internal processing rates (Hz)
     msr_freq: float = 50.0
@@ -140,31 +138,18 @@ class PointLioConfig(NativeModuleConfig):
     publish_odometry_without_downsample: bool = False
     odom_only: bool = False
 
-    def to_config_dict(self) -> dict[str, Any]:
-        config = super().to_config_dict()
-        # The rust struct has the key; None crosses as an explicit null.
-        config["frame_id_prefix"] = self.frame_id_prefix
-        return config
 
-
-class PointLio(NativeModule, perception.Lidar, perception.Odometry):
+class PointLio(NativeModule, TfModule, perception.Lidar, perception.Odometry):
     """Point-LIO fed by the Mid360 driver's messages. Publishes tf itself."""
 
     config: PointLioConfig
-
-    @classmethod
-    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return {
-            **super().handle_blueprint_namespace(config, prefix=prefix),
-            **stack_frame_id_prefix(config, prefix),
-        }
 
     lidar_raw: In[PointCloud2]
     imu_raw: In[Imu]
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
-    tf: Out[TFMessage]
+    tf: IO[TFMessage]
 
     @rpc
     def start(self) -> None:

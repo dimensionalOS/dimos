@@ -23,10 +23,15 @@ import warnings
 from pydantic import BaseModel
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, autoconnect
+from dimos.core.coordination.blueprints import (
+    Blueprint,
+    BlueprintAtom,
+    autoconnect,
+    config_defaults,
+)
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
 from dimos.robot.test_all_blueprints import UBUNTU_BLUEPRINTS
 
@@ -68,7 +73,7 @@ def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) 
                 assert producers[0].module is Mid360, f"{name}: {atom.name}.{port} fed by {names}"
             driver = _producers(blueprint, atom.name, "lidar_raw")[0]
             driver_frame = _frame(driver, "frame_id", Mid360Config)
-            sensor_frame = _frame(atom, "sensor_frame_id", PointLioConfig)
+            sensor_frame = {**config_defaults(PointLio), **atom.kwargs}["tf_frames_local"]["sensor"]
             assert driver_frame == sensor_frame, f"{name}: {driver_frame} != {sensor_frame}"
             assert _frame(driver, "point_format", Mid360Config) == "full", name
             checked.append(name)

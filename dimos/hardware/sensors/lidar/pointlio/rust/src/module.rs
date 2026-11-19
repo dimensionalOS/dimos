@@ -25,15 +25,9 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use pointlio_core::{LivoxPoint, PointLio, PointXYZI};
-use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 use validator::ValidationError;
-
-/// Python's `None`, sent as a JSON null under a key that is always present.
-/// native_config forbids `Option`, so an absent key cannot pass as None.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(transparent)]
-struct Nullable<T>(Option<T>);
 
 /// The Python `PointLioConfig` tuning fields, 1:1. The tuning block is handed to
 /// `pointlio_core::Config` by a JSON round trip, so it stays name-compatible
@@ -42,9 +36,15 @@ struct Nullable<T>(Option<T>);
 #[derive(Clone)]
 #[validate(schema(function = core_config_parses))]
 pub struct Config {
-    frame_id: String,
-    frame_id_prefix: Nullable<String>,
-    sensor_frame_id: String,
+    /// TfModule role -> frame id; reads "odom" (fixed) and "sensor" (moving). Namespacing
+    /// already prefixed the local ones on the Python side.
+    tf_frames_local: HashMap<String, String>,
+    tf_frames_global: HashMap<String, String>,
+    /// Declared for the blueprint's tf checks, which run in Python.
+    #[allow(dead_code)]
+    tf_edges: Vec<(String, String)>,
+    #[allow(dead_code)]
+    skip_tf_checks: bool,
     #[validate(range(exclusive_min = 0.0))]
     pointcloud_freq: f64,
     #[validate(range(exclusive_min = 0.0))]
@@ -107,6 +107,13 @@ impl Config {
 }
 
 fn core_config_parses(cfg: &Config) -> Result<(), ValidationError> {
+    for role in ["odom", "sensor"] {
+        if cfg.tf_frame(role).is_none() {
+            let mut err = ValidationError::new("tf_frames");
+            err.message = Some(format!("no tf frame declared for role {role:?}").into());
+            return Err(err);
+        }
+    }
     cfg.core().map(|_| ()).map_err(|e| {
         let mut err = ValidationError::new("pointlio_core");
         err.message = Some(e.to_string().into());
@@ -147,8 +154,8 @@ impl PointLioModule {
         let cfg = self.config.core().expect("validated at launch");
         self.lio = Some(PointLio::new(&cfg));
         tracing::info!(
-            frame_id = %self.config.frame_id,
-            sensor_frame_id = %self.config.sensor_frame_id,
+            odom_frame = %self.config.world_frame(),
+            sensor_frame = %self.config.sensor_frame(),
             odom_freq = self.config.odom_freq,
             pointcloud_freq = self.config.pointcloud_freq,
             "pointlio started"
@@ -339,18 +346,21 @@ fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>, String> {
 }
 
 impl Config {
-    /// `<frame_id_prefix>/<name>`, as Module.frame_id composes it.
-    fn namespaced(&self, name: &str) -> String {
-        match self.frame_id_prefix.0.as_deref() {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{name}"),
-            _ => name.to_string(),
-        }
+    fn tf_frame(&self, role: &str) -> Option<&str> {
+        self.tf_frames_local
+            .get(role)
+            .or_else(|| self.tf_frames_global.get(role))
+            .map(String::as_str)
     }
     fn world_frame(&self) -> String {
-        self.namespaced(&self.frame_id)
+        self.tf_frame("odom")
+            .expect("validated at launch")
+            .to_string()
     }
     fn sensor_frame(&self) -> String {
-        self.namespaced(&self.sensor_frame_id)
+        self.tf_frame("sensor")
+            .expect("validated at launch")
+            .to_string()
     }
 }
 
@@ -540,18 +550,23 @@ mod tests {
     }
 
     #[test]
-    fn frames_carry_the_namespace_prefix() {
+    fn frames_come_from_the_declared_roles() {
         let plain: Config = serde_json::from_str(SAMPLE).unwrap();
         assert_eq!(plain.world_frame(), "odom");
         assert_eq!(plain.sensor_frame(), "mid360_link");
 
-        let prefixed: Config = serde_json::from_str(&SAMPLE.replace(
-            r#""frame_id":"odom""#,
-            r#""frame_id":"odom","frame_id_prefix":"r1""#,
+        let namespaced: Config = serde_json::from_str(&SAMPLE.replace(
+            r#""odom":"odom","sensor":"mid360_link""#,
+            r#""odom":"r1/odom","sensor":"r1/mid360_link""#,
         ))
         .unwrap();
-        assert_eq!(prefixed.world_frame(), "r1/odom");
-        assert_eq!(prefixed.sensor_frame(), "r1/mid360_link");
+        assert_eq!(namespaced.world_frame(), "r1/odom");
+        assert_eq!(namespaced.sensor_frame(), "r1/mid360_link");
+
+        use validator::Validate;
+        let missing: Config =
+            serde_json::from_str(&SAMPLE.replace(r#","sensor":"mid360_link""#, "")).unwrap();
+        assert!(missing.validate().is_err());
     }
 
     #[test]
@@ -568,7 +583,8 @@ mod tests {
     }
 
     const SAMPLE: &str = r#"{
-        "frame_id":"odom","sensor_frame_id":"mid360_link","pointcloud_freq":10.0,"odom_freq":30.0,
+        "tf_frames_local":{"odom":"odom","sensor":"mid360_link"},"tf_frames_global":{},
+        "tf_edges":[["odom","sensor"]],"skip_tf_checks":false,"pointcloud_freq":10.0,"odom_freq":30.0,
         "msr_freq":50.0,"main_freq":5000.0,"con_frame":false,"con_frame_num":1,"cut_frame":false,
         "cut_frame_time_interval":0.1,"time_lag_imu_to_lidar":0.0,"scan_line":4,"scan_rate":10,
         "blind":0.7,"point_filter_num":3,"use_imu_as_input":false,"prop_at_freq_of_imu":true,

@@ -105,13 +105,13 @@ unitree_g1_record = autoconnect(
     MovementManager.blueprint(),
     G1HighLevelDdsSdk.blueprint(),
     mid360_for_pointlio(host_ip="192.168.123.164", lidar_ip="192.168.123.120"),
-    PointLio.blueprint(frame_id="world").remappings(
+    PointLio.blueprint(tf_frames_local={"odom": "world", "sensor": "mid360_link"}).remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
-    RealSenseCamera.blueprint(frame_id="d435_link").remappings(
+    RealSenseCamera.blueprint(tf_frames_local={"link": "d435_link"}).remappings(
         [
             (RealSenseCamera, "depth_image", "realsense_depth_image"),
             (RealSenseCamera, "camera_info", "realsense_camera_info"),

@@ -297,7 +297,7 @@ def r1pro_lidar_odometry() -> MetaBlueprint:
             lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
-        PointLio.blueprint(sensor_frame_id=lidar_frame).remappings(
+        PointLio.blueprint(tf_frames_local={"odom": "odom", "sensor": lidar_frame}).remappings(
             [(PointLio, "odometry", "pointlio_odometry")]
         ),
         R1ProLio.blueprint(),
