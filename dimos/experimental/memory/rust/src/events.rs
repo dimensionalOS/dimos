@@ -305,14 +305,6 @@ impl Clips {
         }
     }
 
-    /// Keeps everything from `start` on, for the shutdown clip.
-    fn keep_all_from(&mut self, start: f64) {
-        match self.ranges.back_mut() {
-            Some(last) if start <= last.1 => last.1 = f64::INFINITY,
-            _ => self.ranges.push_back((start, f64::INFINITY)),
-        }
-    }
-
     /// Whether `time` falls in a clip. Times must not decrease between calls.
     fn contains(&mut self, time: f64) -> bool {
         while self.ranges.front().is_some_and(|range| range.1 < time) {
@@ -356,7 +348,6 @@ impl StoreWriter {
                 self.store_segment(&segment)?;
             }
         }
-        self.clips.keep_all_from(clock - self.pre_s);
         for segment in segments {
             self.store_segment(&segment)?;
         }
@@ -513,9 +504,7 @@ mod tests {
         let expected: Vec<f64> = times
             .iter()
             .copied()
-            .filter(|&time| {
-                (140.0..=260.0).contains(&time) || time >= 339.875 || time.fract() == 0.0
-            })
+            .filter(|&time| (140.0..=260.0).contains(&time) || time.fract() == 0.0)
             .collect();
         assert_eq!(cloud, expected);
         let count = |table: &str| -> i64 {
