@@ -18,6 +18,9 @@ from collections.abc import Callable
 import time
 from typing import TYPE_CHECKING, Any
 
+from filelock import FileLock
+
+from dimos.constants import RUNTIME_DIR
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import rpc_backend
 from dimos.utils.logging_config import setup_logger
@@ -30,6 +33,10 @@ logger = setup_logger()
 _CONNECT_ATTEMPT_TIMEOUT = 0.25
 
 
+class CoordinatorAlreadyRunningError(RuntimeError):
+    """Another run owns the requested Coordinator address."""
+
+
 class CoordinatorRPC:
     """Owns the RPC connection to the singleton Coordinator service."""
 
@@ -38,6 +45,30 @@ class CoordinatorRPC:
     def __init__(self, rpc: RPCSpec, name: str = NAME) -> None:
         self._rpc = rpc
         self._name = name
+        self._published = False
+
+    @classmethod
+    def reserve(cls, name: str) -> CoordinatorRPC:
+        """Claim the name before deployment. The public RPCs appear after publish()."""
+        rpc = rpc_backend()()
+        rpc.start()
+        try:
+            # Serialize the short probe-and-register window for simultaneous local
+            # launches. The bus, including remote services, determines occupancy.
+            RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+            with FileLock(RUNTIME_DIR / "coordinator-admission.lock"):
+                cls._ensure_no_existing_service(rpc, name)
+                rpc.serve_rpc(lambda: True, f"{name}/reserved")
+        except BaseException:
+            rpc.stop()
+            raise
+        return cls(rpc, name)
+
+    def publish(self, coordinator: RPCInspectable) -> None:
+        """Make the ready Coordinator available at the reserved address."""
+        if not self._published:
+            self._rpc.serve_module_rpc(coordinator, name=self._name)
+            self._published = True
 
     @classmethod
     def serve(
@@ -47,14 +78,13 @@ class CoordinatorRPC:
         name: str | None = None,
     ) -> CoordinatorRPC:
         """Publish ``coordinator`` under the selected RPC prefix."""
-        selected_name = name or cls.NAME
-        cls._ensure_no_existing_service(selected_name)
-        rpc = rpc_backend()()
-        # start() before serve_module_rpc(): Zenoh's subscribe needs an open
-        # session (acquired in start()), whereas LCM tolerates either order.
-        rpc.start()
-        rpc.serve_module_rpc(coordinator, name=selected_name)
-        return cls(rpc, selected_name)
+        service = cls.reserve(name or cls.NAME)
+        try:
+            service.publish(coordinator)
+        except BaseException:
+            service.stop()
+            raise
+        return service
 
     @classmethod
     def connect(
@@ -120,18 +150,16 @@ class CoordinatorRPC:
         except Exception:
             logger.error("Error closing Coordinator RPC service", exc_info=True)
 
-    @classmethod
-    def _ensure_no_existing_service(cls, name: str) -> None:
-        probe = rpc_backend()()
-        probe.start()
-        try:
+    @staticmethod
+    def _ensure_no_existing_service(rpc: RPCSpec, name: str) -> None:
+        # Older Coordinators answer only ping. A Coordinator still starting
+        # answers reserved and leaves ping unavailable to readiness probes.
+        for method in ("ping", "reserved"):
             try:
-                probe.call_sync(f"{name}/ping", ([], {}), rpc_timeout=0.5)
+                rpc.call_sync(f"{name}/{method}", ([], {}), rpc_timeout=0.5)
             except TimeoutError:
-                return
-            raise RuntimeError(
+                continue
+            raise CoordinatorAlreadyRunningError(
                 f"another {name} service is already running on the "
                 f"{global_config.transport} bus. Run `dimos stop` first."
             )
-        finally:
-            probe.stop()

@@ -165,12 +165,14 @@ def run_coordinator(
     run_id: str,
     log_dir: str | os.PathLike[str],
     rpc_name: str | None = None,
+    module_rpc_namespace: str | None = None,
     remote_module_refs: Mapping[tuple[str, str], tuple[type[ModuleBase] | frozenset[str], str]]
     | None = None,
     sigint: bool = True,
     on_ready: Callable[[ModuleCoordinator], None] | None = None,
 ) -> None:
     """Build, serve RPC, call ``on_ready`` and loop until a signal; the caller owns any registry entry."""
+    from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.coordination.process_lifecycle import spawn_watchdog
     from dimos.memory.tap import recording
@@ -179,7 +181,13 @@ def run_coordinator(
     # Build can launch detached viewers before a module fails to start. Arm the
     # sweep first so startup failures receive the same cleanup as normal exits.
     spawn_watchdog(run_id, log_dir=log_dir)
-    coordinator = ModuleCoordinator.build(blueprint, config, remote_module_refs=remote_module_refs)
+    coordinator = ModuleCoordinator.build(
+        blueprint,
+        config,
+        reserve_rpc_name=rpc_name or CoordinatorRPC.NAME,
+        module_rpc_namespace=module_rpc_namespace,
+        remote_module_refs=remote_module_refs,
+    )
     try:
         if not coordinator.health_check():
             raise RuntimeError("health check failed, a worker process died")

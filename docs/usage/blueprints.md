@@ -365,7 +365,7 @@ Inside a namespace everything is prefixed:
 * instance names (`robot0/go2connection`),
 * stream names and topics (`/robot0/lidar`),
 * TF frames (`frame_id_prefix`, unless you set one yourself),
-* and RPC topics (`robot0/go2connection/move`).
+* and the module's name within its run-scoped RPC address (`robot0/go2connection`).
 
 Prefixed streams only connect within their namespace.
 
@@ -404,6 +404,25 @@ This works in simulation too: adding `--simulation` starts one MuJoCo instance p
 ```bash
 ROBOT_IPS=10.0.0.1,10.0.0.2 dimos --simulation run unitree-go2-multi
 ```
+
+## Sharing a transport bus
+
+Each coordinator gives its modules distinct RPC addresses. Two stacks can deploy the same
+module class or instance name and call it independently. By default, `dimos run` claims the
+shared `Coordinator` service before deploying modules. To run a companion stack on the same
+bus, set `serve_coordinator_rpc=False` on that stack. `dimos shell` attaches to the stack
+that serves `Coordinator`.
+
+Launches sharing a local runtime directory take turns claiming the service. Across hosts,
+the check uses bus discovery, so simultaneous launches can both miss the other's claim.
+
+An explicit `rpc_name` in a blueprint is an alias within its run. For a manual remote
+reference, use the provider's resolved wire address from its `Coordinator/list_modules`
+descriptor (`rpc_name`) or its local proxy (`remote_name`). Hosted fragments use the
+run and host namespace agreed on by the fragment compiler.
+
+Stream topics are shared by default so companion stacks can exchange camera images, commands,
+and other data. Use blueprint namespaces or remappings to separate selected topics.
 
 ## Running across machines
 

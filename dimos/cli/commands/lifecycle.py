@@ -29,6 +29,7 @@ from pydantic import ValidationError
 import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.core.coordination.coordinator_rpc import CoordinatorAlreadyRunningError
 from dimos.core.daemon import (
     DAEMON_STATUS_FD_ENV,
     fork_daemon,
@@ -425,14 +426,22 @@ def run(
         except Exception as exc:
             if started:
                 raise
-            traceback.print_exc()
-            write_daemon_status(status_fd, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            if isinstance(exc, CoordinatorAlreadyRunningError):
+                startup_error = str(exc)
+            else:
+                traceback.print_exc()
+                startup_error = f"{type(exc).__name__}: {exc}"
+            write_daemon_status(status_fd, {"ok": False, "error": startup_error})
             sys.stderr.flush()
             # os._exit: never unwind the launcher's typer/atexit state in a
             # forked image.
             os._exit(1)
     else:
-        _run_registered(blueprint, parsed_config, entry)
+        try:
+            _run_registered(blueprint, parsed_config, entry)
+        except CoordinatorAlreadyRunningError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
 
 
 def status() -> None:

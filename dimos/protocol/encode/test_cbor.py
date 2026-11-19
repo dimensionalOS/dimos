@@ -40,6 +40,7 @@ from dimos.protocol.encode.cbor import (
     TAG_DIMOSMSG,
     TAG_ENUM,
     TAG_GENERIC_ALIAS,
+    TAG_NAMEDTUPLE,
     TAG_REGISTERED,
     TAG_UNION,
     CborDecodeError,
@@ -55,7 +56,7 @@ T = TypeVar("T")
 
 class Point(NamedTuple):
     x: int
-    y: str
+    y: str = ""
 
 
 class Color(enum.Enum):
@@ -274,6 +275,11 @@ def test_nested_container_types_survive() -> None:
     assert type(out["t"][1][1]) is tuple
     assert type(next(iter(out["s"]))) is frozenset
     assert type(out["l"][0]) is Point
+
+
+def test_namedtuple_from_older_sender_gets_trailing_default() -> None:
+    old_point = CBORTag(TAG_NAMEDTUPLE, [f"{__name__}:Point", [3]])
+    assert decode(dumps(old_point)) == Point(3, "")
 
 
 def test_dict_with_non_primitive_keys() -> None:
