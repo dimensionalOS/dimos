@@ -38,7 +38,7 @@ try:
 except Exception as error:
     if type(error).__name__ != "PortAudioError":
         raise
-    logger.debug("PortAudio did not start, audio is unavailable", error=str(error))
+    logger.info("PortAudio did not start, audio is unavailable", error=str(error))
     # The call that starts PortAudio is the last statement of sounddevice, so
     # the module is complete when it raises. A failed import drops the module,
     # so it is run again here and kept.
