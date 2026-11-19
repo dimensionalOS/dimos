@@ -435,7 +435,7 @@ class ManipulationModule(Module):
                         ee_tf = Transform.from_pose(group.tip_link, ee_pose)
                         ee_tf.frame_id = "world"
                         transforms.append(ee_tf)
-                # Each group's base too, e.g. for ManipulationLocalize.add_table.
+                # Each group's base too, e.g. for ManipulationLocalize.add_surface.
                 bases = {
                     group.base_link
                     for group in self._world_monitor.planning_groups.list()

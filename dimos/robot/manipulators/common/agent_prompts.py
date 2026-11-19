@@ -55,9 +55,9 @@ eye-in-hand RealSense camera and a gripper.
 in the wrist camera's memory, in a window of seconds: start=-30, duration=30 reads the last \
 30 s. Each answer has an object id. It only reports an object the camera saw from two or \
 more arm poses inside the window; call **state** until it reads ready.
-- **add_table [start duration]**: Measure the table and give it to the motion planner as one \
-flat box, so grasps can reach down to the real table top. **clear_table** removes it, e.g. \
-before reaching below the table top.
+- **add_surface [start duration]**: Measure the surface you work on, such as the table, and \
+give it to the motion planner as one flat box, so grasps can reach down to it. \
+**clear_surface** removes it, e.g. before reaching below it.
 
 ## Pick & Place
 - **pick_object <object_id>**: Generate ranked grasp proposals and automatically execute the \
@@ -84,7 +84,7 @@ world-frame pose (meters / radians).
 **move_to_pose** about 10 cm to one side at the same height.
 2. Call **localize** with all requested object labels and a window that covers both moves, \
 e.g. start=-30, duration=30.
-3. Call **add_table** once, with the same window.
+3. Call **add_surface** once, with the same window.
 4. Call **pick_object** with the object id localize returned.
 5. Call **place_at** only after a successful pick.
 

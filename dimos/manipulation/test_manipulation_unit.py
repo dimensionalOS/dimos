@@ -1041,7 +1041,7 @@ class TestPlanningGroupApis:
     def test_tf_loop_publishes_each_group_base_once(
         self, module_factory, mocker: MockerFixture
     ) -> None:
-        """Consumers that work round the arm, such as add_table, find its base in tf."""
+        """Consumers that work round the arm, such as add_surface, find its base in tf."""
         model = _bimanual_config()
         module = module_factory()
         module.config.model = model

@@ -42,12 +42,12 @@ logger = setup_logger()
 
 # find_surface reports a surface tilted less than this as level.
 LEVEL_BELOW_DEG = 0.5
-# The table's planner obstacle and its voxel map cut.
-TABLE = "scene/table"
-# Without a line of sight, add_table takes the widest surface with this many points on it.
-TABLE_MIN_STANDING = 10
-# add_table(height=...) takes the surface within this, metres.
-TABLE_HEIGHT_TOLERANCE = 0.02
+# add_surface's planner obstacle and its voxel map cut.
+SURFACE = "scene/surface"
+# Without a line of sight, add_surface takes the widest surface with this many points on it.
+SURFACE_MIN_STANDING = 10
+# add_surface(height=...) takes the surface within this, metres.
+SURFACE_HEIGHT_TOLERANCE = 0.02
 
 
 class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
@@ -58,12 +58,12 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     surface_frames: int = 10
     # find_surface: surfaces parallel to the reporting frame's xy plane; False fits tilt
     surface_parallel_to_frame: bool = True
-    # add_table, metres: the box spans table_reach_m round the arm's base, table_thickness_m
-    # under the table top; the voxel map is cut from table_cut_above_m over it down
+    # add_surface, metres: the box spans surface_reach_m round the arm's base, surface_thickness_m
+    # under the surface; the voxel map is cut from surface_cut_above_m over it down
     # (half a cell plus depth noise: 0.01 for 1 cm cells, about 0.018 for 2.5 cm).
-    table_reach_m: float = 1.0
-    table_thickness_m: float = 0.03
-    table_cut_above_m: float = 0.01
+    surface_reach_m: float = 1.0
+    surface_thickness_m: float = 0.03
+    surface_cut_above_m: float = 0.01
 
 
 class ManipulationLocalize(PerceptionLocalize):
@@ -72,13 +72,13 @@ class ManipulationLocalize(PerceptionLocalize):
     A ``localize`` or ``scan`` answer replaces the objects of the labels it was
     asked for and keeps the others. Pick and place reads them by id, or by a
     label only one object has. A forgotten object's older sightings are left out
-    of later answers. ``find_surface`` measures the table and ``add_table`` puts it
-    into the planner as one flat box.
+    of later answers. ``find_surface`` measures the surfaces in view and ``add_surface``
+    puts one, such as the table, into the planner as one flat box.
     """
 
     config: ManipulationLocalizeConfig
 
-    # Where add_table puts the table; optional, for blueprints without a planner.
+    # Where add_surface puts the surface; optional, for blueprints without a planner.
     _obstacles: PlanningObstaclesSpec | None = None
     _box_filter: PointCloudBoxFilterSpec | None = None
 
@@ -274,62 +274,64 @@ class ManipulationLocalize(PerceptionLocalize):
         return max(first, head + start if start < 0 else first + start), head
 
     @skill
-    def add_table(
+    def add_surface(
         self, start: float = -10.0, duration: float = 10.0, height: float | None = None
     ) -> str:
-        """Put the table into the motion planner as one flat box, across the arm's reach.
+        """Put the surface the arm works on into the motion planner as one flat box.
 
-        The table is the surface the camera looks at in the newest frame, else the
-        widest with objects on it; ``height`` picks one from ``find_surface`` instead.
-        Voxel map cells under it are cut. It spans past the table's edges, so
-        ``clear_table`` before reaching below the table top. Calling it again replaces it.
+        The surface is the one the camera looks at in the newest frame, else the widest
+        with objects on it; ``height`` picks one from ``find_surface`` instead. The box
+        spans the arm's reach and the voxel map cells under it are cut, so
+        ``clear_surface`` before reaching below it. Calling it again replaces it.
         """
         if not self._ready.is_set():
-            return f"add_table cannot answer yet: {self._stage}. Poll state() until it reads ready."
+            return (
+                f"add_surface cannot answer yet: {self._stage}. Poll state() until it reads ready."
+            )
         if self._obstacles is None or self._box_filter is None:
-            return "add_table needs a motion planner and a voxel map box filter in the blueprint"
+            return "add_surface needs a motion planner and a voxel map box filter in the blueprint"
         surfaces = self.surfaces(start, duration)
         if not surfaces:
-            return "no table: no flat surface in the window. Look at the table and try again."
-        table = pick_table(surfaces, height, self._line_of_sight())
+            return "no surface: none flat in the window. Look at it and try again."
+        platform = pick_surface(surfaces, height, self._line_of_sight())
         heights = ", ".join(
             f"{surface['height']:.3f} m ({surface['size'][0]:.2f} x {surface['size'][1]:.2f})"
             for surface in surfaces
         )
-        if table is None:
-            return f"no table at {height} m: the surfaces are at {heights}"
+        if platform is None:
+            return f"no surface at {height} m: the surfaces are at {heights}"
         groups = self._obstacles.list_planning_groups()
         bases = sorted({group.base_frame for group in groups})
         origins = [self._origin(base) for base in bases]
         if any(origin is None for origin in origins):
-            return f"no table: no transform from {self.rig.world_frame} to the arm's base {bases}"
-        (box_pose, box_size), (cut_pose, cut_size) = table_boxes(
-            table,
+            return f"no surface: no transform from {self.rig.world_frame} to the arm's base {bases}"
+        (box_pose, box_size), (cut_pose, cut_size) = surface_boxes(
+            platform,
             [origin for origin in origins if origin is not None],
-            reach=self.config.table_reach_m,
-            thickness=self.config.table_thickness_m,
-            cut_above=self.config.table_cut_above_m,
+            reach=self.config.surface_reach_m,
+            thickness=self.config.surface_thickness_m,
+            cut_above=self.config.surface_cut_above_m,
         )
-        self.clear_table()
-        # The arm's base may stand inside the box, e.g. on a mount below the table top.
-        if not self._obstacles.add_obstacle(TABLE, box_pose, "box", box_size, None, bases):
-            return "the planner refused the table box"
-        self._box_filter.set_box(TABLE, cut_pose, Vector3(*cut_size))
+        self.clear_surface()
+        # The arm's base may stand inside the box, e.g. on a mount below the surface.
+        if not self._obstacles.add_obstacle(SURFACE, box_pose, "box", box_size, None, bases):
+            return "the planner refused the surface box"
+        self._box_filter.set_box(SURFACE, cut_pose, Vector3(*cut_size))
         return (
-            f"table added: top at z={table['height']:.3f} m in {self.rig.world_frame}, "
+            f"surface added: top at z={platform['height']:.3f} m in {self.rig.world_frame}, "
             f"{box_size[0]:.2f} x {box_size[1]:.2f} m round the arm's base; the voxel map "
-            f"cells under it are cut. Surfaces seen: {heights}; if the table is another, "
-            f"call add_table(height=...)"
+            f"cells under it are cut. Surfaces seen: {heights}; for another, "
+            f"call add_surface(height=...)"
         )
 
     @skill
-    def clear_table(self) -> str:
-        """Remove ``add_table``'s box and let the table's voxel map cells back."""
+    def clear_surface(self) -> str:
+        """Remove ``add_surface``'s box and let the surface's voxel map cells back."""
         if self._obstacles is None or self._box_filter is None:
-            return "no table: the blueprint has no motion planner or voxel map box filter"
-        removed = self._obstacles.remove_obstacle(TABLE)
-        self._box_filter.clear_box(TABLE)
-        return "table removed" if removed else "no table to remove"
+            return "no surface: the blueprint has no motion planner or voxel map box filter"
+        removed = self._obstacles.remove_obstacle(SURFACE)
+        self._box_filter.clear_box(SURFACE)
+        return "surface removed" if removed else "no surface to remove"
 
     def _line_of_sight(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
         """The newest frame's camera position and viewing direction, in the world frame."""
@@ -398,23 +400,23 @@ class ManipulationLocalize(PerceptionLocalize):
         raise LookupError(f"No {target!r} among the localized objects. They are: {known}.")
 
 
-def pick_table(
+def pick_surface(
     surfaces: list[dict[str, Any]],
     height: float | None = None,
     sight: tuple[NDArray[np.float64], NDArray[np.float64]] | None = None,
 ) -> dict[str, Any] | None:
-    """The table among ``surfaces``: the one at ``height``, else the first the line of
+    """The surface to work on: the one at ``height``, else the first the line of
     ``sight`` (origin, direction) meets, else the widest with objects standing on it."""
     if not surfaces:
         return None
     if height is not None:
         nearest = min(surfaces, key=lambda surface: abs(surface["height"] - height))
-        return nearest if abs(nearest["height"] - height) <= TABLE_HEIGHT_TOLERANCE else None
+        return nearest if abs(nearest["height"] - height) <= SURFACE_HEIGHT_TOLERANCE else None
     if sight is not None:
         hits = [(t, surface) for surface in surfaces if (t := _sight_hit(surface, *sight))]
         if hits:
             return min(hits, key=lambda hit: hit[0])[1]
-    holding = [s for s in surfaces if s.get("points_above", 0) >= TABLE_MIN_STANDING]
+    holding = [s for s in surfaces if s.get("points_above", 0) >= SURFACE_MIN_STANDING]
     return max(holding or surfaces, key=lambda surface: surface["size"][0] * surface["size"][1])
 
 
@@ -434,7 +436,7 @@ def _sight_hit(
     return t if t > 0.0 and bool(inside[0]) else None
 
 
-def table_boxes(
+def surface_boxes(
     surface: dict[str, Any],
     bases: list[NDArray[np.float64]],
     *,

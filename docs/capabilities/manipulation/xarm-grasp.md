@@ -181,12 +181,12 @@ table = localize.surfaces(frame="link_base")[0]
 print(table["height"], table["tilt_deg"], table["size"])
 ```
 
-`add_table` gives the planner the table as one flat box across the arm's reach and
-cuts the table's voxel map cells, so grasps reach the real table top. Call it once after
-looking over the table; `clear_table` removes it:
+`add_surface` gives the planner the surface the arm works on, such as the table, as one
+flat box across the arm's reach and cuts its voxel map cells, so grasps reach the real
+surface. Call it once after looking at the surface; `clear_surface` removes it:
 
 ```python skip
-print(localize.add_table(start=-30.0, duration=30.0))
+print(localize.add_surface(start=-30.0, duration=30.0))
 ```
 
 `pick_object` generates the grasps itself, so there is no separate grasp call.
