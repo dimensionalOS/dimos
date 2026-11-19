@@ -103,6 +103,8 @@ class Config(ModuleConfig):
     live_voxel_m: float = 0.1
     # ... match kept live points within this xy distance (m) of the latest local map; 0 matches them all
     match_radius_m: float = 30.0
+    # Refused ICP refinements in a row before searching the whole premap again; 0 never does
+    global_after_refusals: int = 3
 
 
 class PremapModule(Module):
@@ -149,6 +151,7 @@ class PremapModule(Module):
         self.live = LiveMap(self.config.live_voxel_m)
         self._live_frame = self.config.world_frame
         self._center: tuple[float, float] | None = None
+        self._refusals = 0
 
     @rpc
     def start(self) -> None:
@@ -252,8 +255,10 @@ class PremapModule(Module):
                 f"relocalize skipped: no transform to the cloud's frame {msg.frame_id!r}"
             )
             return
+        n_global = self.config.global_after_refusals
+        lost = n_global > 0 and self._refusals >= n_global
         initial_fix = None
-        if not self.config.relocalize_once and self.fix is not None:
+        if not self.config.relocalize_once and self.fix is not None and not lost:
             initial_fix = world_to_cloud.inverse() + self.fix
         try:
             attempt = self._relocalizer.attempt(
@@ -266,12 +271,21 @@ class PremapModule(Module):
         tf = None if attempt.fix is None else world_to_cloud + attempt.fix
         dt = time.monotonic() - t0
         if tf is None:
+            self._refusals += 1
             logger.info(
                 f"relocalize lidar: refused after {dt:.1f}s n_pts={len(msg)} "
                 f"(below fitness_threshold={self.config.relocalize.fitness_threshold})"
             )
+            if n_global > 0 and self._refusals == n_global and self.fix is not None:
+                logger.warning(
+                    f"relocalize: {n_global} refusals in a row, searching the whole premap again"
+                )
             return
+        self._refusals = 0
         logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={len(msg)}")
+        if lost:
+            # The fix jumped, so live voxels already kept sit where the old frame put them.
+            self.live.mark_stale()
         self.submit(tf, "lidar")
 
     def _start_tf(self) -> None:

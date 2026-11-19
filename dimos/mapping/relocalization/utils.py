@@ -74,6 +74,8 @@ class LiveMap:
         self.voxel = voxel
         self._keys = np.empty(0, dtype=np.int64)
         self._points = np.empty((0, 3), dtype=np.float32)
+        # Voxels built under a frame a later fix moved; the ray tracer keeps republishing them
+        self._stale = np.empty(0, dtype=np.int64)
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
@@ -88,11 +90,20 @@ class LiveMap:
         points = local_map.points_f32().reshape(-1, 3)[(flags & _PREMAP_BIT) == 0]
         keys = _pack(points, self.voxel)
         with self._lock:
+            fresh = ~np.isin(keys, self._stale)
+            keys, points = keys[fresh], points[fresh]
             all_keys = np.concatenate([keys, self._keys])
             all_points = np.concatenate([points, self._points])
             # First occurrence wins, so a voxel's newest point is kept.
             self._keys, first = np.unique(all_keys, return_index=True)
             self._points = all_points[first]
+
+    def mark_stale(self) -> None:
+        """Drop every kept voxel and ignore it from now on: it was built under a frame that moved."""
+        with self._lock:
+            self._stale = np.union1d(self._stale, self._keys)
+            self._keys = np.empty(0, dtype=np.int64)
+            self._points = np.empty((0, 3), dtype=np.float32)
 
     def cloud(
         self, frame_id: str, center: tuple[float, float] | None, radius: float

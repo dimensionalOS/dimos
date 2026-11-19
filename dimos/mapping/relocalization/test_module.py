@@ -487,3 +487,34 @@ def test_a_cloud_in_the_map_frame_is_refined_into_a_world_fix(module, monkeypatc
     # world -> premap = world -> map (0.5) + map -> premap (2.4)
     np.testing.assert_allclose(m.fix.translation.x, 2.9)
     assert (m.fix.frame_id, m.fix.child_frame_id) == ("world", "premap")
+
+
+def test_refused_refinements_fall_back_to_a_global_search(module):
+    """An error ICP cannot reach (a bad first fix, a jump) is found again by searching the whole premap."""
+    m = module(map_frame="premap", relocalize_once=False, global_after_refusals=2)
+    m.relocalization_strength = SimpleNamespace(publish=lambda _: None)
+    m.tf = SimpleNamespace(publish=lambda _: None)
+    m.submit(
+        Transform(translation=Vector3(2.0, 0.0, 0.0), frame_id="world", child_frame_id="premap")
+    )
+    m.live.fold(local_map([[1, 0, 0]]))
+    seen = []
+    right = Transform(translation=Vector3(5.0, 0.0, 0.0), frame_id="world", child_frame_id="premap")
+
+    class FakeRelocalizer:
+        def attempt(self, cloud, cloud_frame, map_frame, initial_fix=None):
+            seen.append(initial_fix is None)
+            found = right if initial_fix is None else None
+            return SimpleNamespace(fix=found, result=SimpleNamespace(fitness=0.1))
+
+    m._relocalizer = FakeRelocalizer()
+    cloud = PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), frame_id="world")
+    for _ in range(4):
+        m._relocalize(cloud)
+    # two refused refinements, then a global search that is accepted, then refining again
+    assert seen == [False, False, True, False]
+    np.testing.assert_allclose(m.fix.translation.x, 5.0)
+    # voxels kept under the old frame are dropped, and stay dropped when the ray tracer resends them
+    assert len(m.live) == 0
+    m.live.fold(local_map([[1, 0, 0], [3, 0, 0]]))
+    assert held(m.live) == [(3, 0, 0)]
