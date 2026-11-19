@@ -2,7 +2,7 @@ root = "Mission"
 resources = ["base"]
 
 [constants]
-goals = ["couches", "workshop", "lobby", "common_area", "side_entrance", "bathroom", "garage", "flag", "robot_area"]
+goals = ["hardware", "kitchenette", "lobby", "common_area", "side_entrance", "bathroom", "garage", "flag", "robot_area", "hugo"]
 approach_location = "dock_approach"
 predock_location = "predock"
 low_battery = 0.20

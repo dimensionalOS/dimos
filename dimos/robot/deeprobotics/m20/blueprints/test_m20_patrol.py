@@ -49,8 +49,8 @@ from dimos.robot.deeprobotics.m20.connection import M20Connection
 PATROL = Path(__file__).parent / "m20_patrol.toml"
 MODULES = (MLSPlannerNative, M20Connection, LocalMapRelocalization)
 GOALS = [
-    "couches",
-    "workshop",
+    "hardware",
+    "kitchenette",
     "lobby",
     "common_area",
     "side_entrance",
@@ -58,6 +58,7 @@ GOALS = [
     "garage",
     "flag",
     "robot_area",
+    "hugo",
 ]
 
 
