@@ -21,8 +21,8 @@ the Map Editor, then run with ``--map-file <recording>.db``.
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import ZenohTransport
-from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.mapping.relocalization.module import PremapModule
+from dimos.mapping.relocalization.relocalize import MID360_NAV
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic

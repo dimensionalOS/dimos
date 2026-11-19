@@ -23,7 +23,10 @@ Named locations live in the ``map`` frame; ``named_locations`` carries the whole
 
 from __future__ import annotations
 
+from collections import deque
+from functools import reduce
 import math
+import operator
 from pathlib import Path
 import re
 import threading
@@ -31,20 +34,20 @@ import time
 from typing import Any, Literal
 import uuid
 
+import numpy as np
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.mapping.relocalization.lidar.clouds import LiveMap, window
-from dimos.mapping.relocalization.lidar.relocalize import MID360, LidarRelocalizer, RelocalizeConfig
 from dimos.mapping.relocalization.named_locations import (
     load_locations,
 )
+from dimos.mapping.relocalization.relocalize import MID360, LidarRelocalizer, RelocalizeConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import FLAG_NAMES, PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
@@ -62,6 +65,72 @@ _SPARSE_CLOUD_GRACE_S = 10.0
 _SKIP_LOG_INTERVAL_S = 5.0
 
 RECORDING_SUFFIXES = (".db", ".mcap")
+
+
+def window(
+    scans: Observable[PointCloud2], cfg: RelocalizeConfig, interval: float
+) -> Observable[PointCloud2]:
+    """The last ``max_frames`` scans merged, at most one merge every ``interval`` s."""
+    held: deque[PointCloud2] = deque(maxlen=cfg.max_frames)
+    return scans.pipe(
+        ops.do_action(held.append),
+        ops.throttle_first(interval),
+        ops.filter(lambda _: len(held) >= cfg.min_frames),
+        ops.map(lambda _: reduce(operator.add, held)),
+    )
+
+
+_PREMAP_BIT = 1 << FLAG_NAMES.index("premap")
+
+# A voxel key's three axes, packed into one int64 at this many bits each.
+_KEY_BITS = 21
+_KEY_OFFSET = 1 << (_KEY_BITS - 1)
+
+
+def _pack(points: np.ndarray, voxel: float) -> np.ndarray:
+    keys = np.floor(points / voxel).astype(np.int64) + _KEY_OFFSET
+    packed: np.ndarray = (keys[:, 0] << (2 * _KEY_BITS)) | (keys[:, 1] << _KEY_BITS) | keys[:, 2]
+    return packed
+
+
+class LiveMap:
+    """The live (non-premap) part of the ray tracer's local maps, kept one point per voxel."""
+
+    def __init__(self, voxel: float) -> None:
+        self.voxel = voxel
+        self._keys = np.empty(0, dtype=np.int64)
+        self._points = np.empty((0, 3), dtype=np.float32)
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+    def fold(self, local_map: PointCloud2) -> None:
+        flags = local_map.flags_u32()
+        if flags is None:
+            raise ValueError(
+                "local_map has no flags, so premap voxels cannot be told apart: run the ray tracer with a premap"
+            )
+        points = local_map.points_f32().reshape(-1, 3)[(flags & _PREMAP_BIT) == 0]
+        keys = _pack(points, self.voxel)
+        with self._lock:
+            all_keys = np.concatenate([keys, self._keys])
+            all_points = np.concatenate([points, self._points])
+            # First occurrence wins, so a voxel's newest point is kept.
+            self._keys, first = np.unique(all_keys, return_index=True)
+            self._points = all_points[first]
+
+    def cloud(
+        self, frame_id: str, center: tuple[float, float] | None, radius: float
+    ) -> PointCloud2:
+        """The kept points, only those within ``radius`` (xy) of ``center`` when both are given."""
+        with self._lock:
+            points = self._points
+        if center is not None and radius > 0:
+            dx = points[:, 0] - center[0]
+            dy = points[:, 1] - center[1]
+            points = points[dx * dx + dy * dy <= radius * radius]
+        return PointCloud2.from_numpy(points, frame_id=frame_id)
 
 
 def stream_key(name: str) -> str:

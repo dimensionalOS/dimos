@@ -4,10 +4,10 @@
 whether it finds the right place, how tightly, and how fast. `tune` searches a
 rig's `RelocalizeConfig` for a better tradeoff between those.
 
-    uv run python -m dimos.mapping.relocalization.lidar.tune run --samples 12
-    uv run python -m dimos.mapping.relocalization.lidar.tune run --samples 12 --view
-    uv run --group dev python -m dimos.mapping.relocalization.lidar.tune tune --trials 200
-    uv run --group dev python -m dimos.mapping.relocalization.lidar.tune verify --study <name>
+    uv run python -m dimos.mapping.relocalization.tune run --samples 12
+    uv run python -m dimos.mapping.relocalization.tune run --samples 12 --view
+    uv run --group dev python -m dimos.mapping.relocalization.tune tune --trials 200
+    uv run --group dev python -m dimos.mapping.relocalization.tune verify --study <name>
 
 ### Setup, once
 
@@ -61,7 +61,7 @@ System will auto-pick un-matchable frames and matchable frames when doing the tu
 # Probing
 
 ```sh ansi=False
-uv run python -m dimos.mapping.relocalization.lidar.tune run --samples 5 --view
+uv run python -m dimos.mapping.relocalization.tune run --samples 5 --view
 ```
 
 ```results
@@ -122,13 +122,13 @@ The procedure:
    inside the map and near 0.0 outside, with nothing in between. If coverage
    is smeared, the window is wrong.
 4. **Search**:
-    `python -m dimos.mapping.relocalization.lidar.tune tune --trials 200 --samples 30`
+    `python -m dimos.mapping.relocalization.tune tune --trials 200 --samples 30`
     Samples are how many relocalization attempts we have per trial. we want wide samples like this
     otherwise we can overfit. 200 trials against 8 probes mostly finds lucky draws.
 
 5. **Verify, always**:
     run top studies against previously unseen data to check for overfiting
-    `python -m dimos.mapping.relocalization.lidar.tune verify --study <name> --top 8 --repeats 10`.
+    `python -m dimos.mapping.relocalization.tune verify --study <name> --top 8 --repeats 10`.
 
 6. **Add the preset** in `relocalize.py`, named for the rig, with a comment
    saying which study and trial it came from.

@@ -15,7 +15,7 @@
 
 """Replay a recording through the lidar relocalizer's decision path, with no planner.
 
-python -m dimos.mapping.relocalization.lidar.tune replay <recording.db> --premap <map>
+python -m dimos.mapping.relocalization.tune replay <recording.db> --premap <map>
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ import typer
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, voxel_map_points
-from dimos.mapping.relocalization.lidar.relocalize import DEFAULT_PRESET, PRESETS, LidarRelocalizer
 from dimos.mapping.relocalization.module import Config, fix_error, load_premap, yaw_deg
+from dimos.mapping.relocalization.relocalize import DEFAULT_PRESET, PRESETS, LidarRelocalizer
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation

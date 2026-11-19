@@ -34,14 +34,14 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import numpy as np
 import typer
 
-from dimos.mapping.relocalization.lidar.relocalize import (
+from dimos.mapping.relocalization.module import load_premap
+from dimos.mapping.relocalization.relocalize import (
     DEFAULT_PRESET,
     PRESETS,
     LidarRelocalizer,
     RelocalizeConfig,
 )
-from dimos.mapping.relocalization.lidar.replay import main as replay_main
-from dimos.mapping.relocalization.module import load_premap
+from dimos.mapping.relocalization.replay import main as replay_main
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 from dimos.utils.executable import find_executable
