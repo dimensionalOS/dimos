@@ -59,6 +59,13 @@ METAL_GRIPPER_RANGE = (-0.05, 0.0)
 #: closed pose whatever the jaw does; a viewer places them from the joint
 #: state instead.
 METAL_TF_LINKS = ["base_link", *(f"link{index}" for index in range(1, 7))]
+# dimOS TCP: midpoint of the standard finger pads, rounded to 80 mm along
+# gripper_base +Z. In the pinned vendor link7/link8 meshes, their planar contact
+# regions span Z=68.15..91.40 and 68.45..91.70 mm. X spans the pad width, Y is
+# the jaw opening axis, and +Z points out of the gripper. This is model geometry,
+# not a vendor-specified or physically calibrated TCP.
+METAL_GRASP_FRAME = "grasp_frame"
+METAL_GRASP_XYZ = (0.0, 0.0, 0.08)
 #: MIT-mode position and velocity gains of the six arm motors, N m/rad and N m s/rad.
 METAL_KP = [100.0, 100.0, 100.0, 50.0, 20.0, 20.0]
 METAL_KD = [5.0, 5.0, 5.0, 5.0, 0.6, 0.6]
@@ -125,6 +132,7 @@ def make_metal_model_config(
     return named_for_robot(
         RobotModelConfig(
             model=METAL_MODEL.with_subtree_rooted_at("base_link")
+            .with_fixed_frame(METAL_GRASP_FRAME, "gripper_base", xyz=METAL_GRASP_XYZ)
             .with_renamed_joints({"gripper_base": "gripper_mount_joint"})
             .with_default_joint_acceleration_limit(1.0),
             joint_names=list(METAL_ARM_JOINTS),
@@ -141,7 +149,9 @@ def make_metal_model_config(
             collision_exclusion_pairs=[("link7", "link8")],
             auto_convert_meshes=True,
             gripper=GripperConfig(
-                pad_links=("link7", "link8"), finger_joints={driven: METAL_GRIPPER_RANGE}
+                pad_links=("link7", "link8"),
+                finger_joints={driven: METAL_GRIPPER_RANGE},
+                grasp_frame=METAL_GRASP_FRAME,
             ),
             home_joints=home_joints,
             tf_extra_links=list(tf_extra_links or []),

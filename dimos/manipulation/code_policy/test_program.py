@@ -18,12 +18,15 @@ import time
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D
 import pytest
+from scipy.spatial.transform import Rotation
 
 from dimos.manipulation.code_policy import backend
 from dimos.manipulation.code_policy._test_helpers import FAKE_BACKEND
 from dimos.manipulation.code_policy.api import RobotCallError, TraceLine
 from dimos.manipulation.code_policy.backend import DimosBackend, MapStamps, program_box
 from dimos.manipulation.code_policy.runner import run_program
+from dimos.manipulation.manipulation_spec import PlanningGroupInfo
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -126,10 +129,16 @@ def test_a_program_is_killed_at_the_timeout(tmp_path: Path) -> None:
 
 
 class Bench:
-    """A scene holding a cube and a bowl, and a box filter that keeps its boxes by
-    name and, while ``mapping``, sends a map captured after each change."""
+    """A scene holding a cube and a bowl, a box filter that keeps its boxes by
+    name and, while ``mapping``, sends a map captured after each change, and an
+    arm whose tip, tilted, goes wherever ``move_pose`` sends it."""
+
+    info = PlanningGroupInfo("arm", (), "world", "tip", True, grasp_point=(0.0, 0.0, 0.08))
 
     def __init__(self) -> None:
+        self.tip = PoseStamped(
+            position=[0.3, 0.1, 0.2], orientation=Quaternion.from_euler(Vector3(2.5, 0.3, -0.7))
+        )
         self.boxes: set[str] = set()
         self.maps = MapStamps()
         self.mapping = True
@@ -137,6 +146,14 @@ class Bench:
     def _send_map(self) -> None:
         if self.mapping:
             self.maps.on_map(PointCloud2(ts=time.time() + 1.0))
+
+    def pose(self) -> PoseStamped:
+        return self.tip
+
+    def move_pose(
+        self, position: tuple[float, float, float], *, orientation: tuple[float, ...]
+    ) -> None:
+        self.tip = PoseStamped(position=list(position), orientation=Quaternion(*orientation))
 
     def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
         detections = []
@@ -184,3 +201,16 @@ def test_clearing_an_object_times_out_when_no_newer_map_arrives(
     with pytest.raises(RobotCallError) as raised:
         live.clear_object("cube", 0.03)
     assert raised.value.status == "TIMEOUT"
+
+
+def test_poses_are_the_grasp_point_and_round_trip_to_the_same_tip_pose() -> None:
+    bench = Bench()
+    live = DimosBackend(bench, bench, bench, bench, bench.maps)
+    tip = bench.tip
+    grasp = live.pose()
+    expected = Rotation.from_quat(tip.orientation.to_tuple()).apply([0.0, 0.0, 0.08])
+    assert grasp.position == pytest.approx(tuple(tip.position.to_tuple() + expected))
+    live.move_pose((0.0, 0.0, 0.0), None)
+    live.move_pose(grasp.position, grasp.orientation)
+    assert bench.tip.position.to_tuple() == pytest.approx(tip.position.to_tuple())
+    assert bench.tip.orientation.to_tuple() == pytest.approx(tip.orientation.to_tuple())
