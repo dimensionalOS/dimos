@@ -80,6 +80,7 @@ from dimos.control.calibration.robots import arm_spec
 from dimos.control.calibration.schema import (
     ArmCalibration,
     ArmCalibrationError,
+    ArmConfigPatch,
     GravityCalibration,
     calibration_path,
     gravity_links_from_inertial,
@@ -99,7 +100,6 @@ from dimos.control.calibration.step_report import (
     Recording,
     load_recording,
 )
-from dimos.control.connection.arm_config import ConfigPatch
 from dimos.memory.store.sqlite import SqliteStore
 
 matplotlib.use("Agg")
@@ -1204,7 +1204,7 @@ def merge_with_stored(path: Path, new: ArmCalibration, spec: ArmCalibrationSpec)
     except ArmCalibrationError:
         return new
     gravity = new.gravity
-    patch = ConfigPatch(
+    patch = ArmConfigPatch(
         arm_id=new.arm_id,
         links=None if gravity is None else gravity.links,
         fit=None if gravity is None else gravity.fit,

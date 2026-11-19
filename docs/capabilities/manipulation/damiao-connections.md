@@ -12,8 +12,10 @@ Direct-connection coordinators communicate through
 
 ## Calibration sessions
 
-Every Damiao connection serves the arm config contract
-(`dimos/control/connection/arm_config.py`). Reading it (`config_keys`,
+Every Damiao connection serves the config contract
+(`dimos/control/connection/module_config.py`) with one target per arm id and
+the arm's keys, `ArmConfigPatch` and `ArmConfigState` in
+`dimos/control/calibration/schema.py`. Reading it (`config_keys`,
 `config_get`) always works. Changing how the energized arm is driven
 (`config_set`, `config_reset`) needs `config_sessions=True`, which only the
 `<robot>-calibrate` blueprints set; see
