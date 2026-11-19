@@ -22,8 +22,9 @@ from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
 from dimos.mapping.relocalization import module as relocalization
-from dimos.mapping.relocalization.module import LiveMap, PremapModule
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.mapping.relocalization.relocalize import MID360, LidarRelocalizer
+from dimos.mapping.relocalization.utils import LiveMap
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -102,7 +103,7 @@ def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
     """Not on the next interval tick, and with or without republishing (<= 0 = once per fix)."""
     from reactivex import Subject
 
-    from dimos.mapping.relocalization.module import fix_stream
+    from dimos.mapping.relocalization.utils import fix_stream
 
     fixes, sent = Subject(), []
     disposable = fix_stream(fixes, interval=interval).subscribe(sent.append)
@@ -201,8 +202,8 @@ def test_the_match_runs_on_a_window_of_the_last_scans():
 
     from reactivex import Subject
 
-    from dimos.mapping.relocalization.module import window
     from dimos.mapping.relocalization.relocalize import MID360
+    from dimos.mapping.relocalization.utils import window
 
     cfg = MID360.model_copy(update={"min_frames": 2, "max_frames": 3})
     scans = Subject()
@@ -241,7 +242,7 @@ def test_dual_strategy_merges_ports():
 
 
 def test_a_map_file_that_is_not_a_recording_is_refused():
-    from dimos.mapping.relocalization.module import load_premap
+    from dimos.mapping.relocalization.utils import load_premap
 
     with pytest.raises(ValueError, match="recording"):
         load_premap("office.pc2.lcm")
@@ -249,7 +250,7 @@ def test_a_map_file_that_is_not_a_recording_is_refused():
 
 def test_a_premap_mcap_decodes_its_cloud_past_unrelated_name_clashes(tmp_path):
     mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
-    from dimos.mapping.relocalization.module import load_premap
+    from dimos.mapping.relocalization.utils import load_premap
 
     path = tmp_path / "premap.mcap"
     cloud = PointCloud2.from_numpy(np.eye(3, dtype=np.float32), frame_id="map/v1", timestamp=1.0)
