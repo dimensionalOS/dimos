@@ -195,6 +195,25 @@ it, e.g. before reaching below the table top:
 print(localize.add_table(start=-30.0, duration=30.0))
 ```
 
+Picking with the arm directly, without `PickAndPlaceModule`, three skills keep the
+object out of the planner's voxel map: its cells would stop the fingers closing round
+it, and once it is in the hand they would trail behind it. The gripper itself is
+always left out of the camera's cloud before mapping (`XARM_GRIPPER_MAP_CUT`, a box
+on `link_tcp`, in a `RidingBoxFilter`), so the camera never maps its own fingers:
+
+```python skip
+localize.ignore_object("<object_id>")   # before the approach
+# ... plan to the grasp, close the gripper ...
+localize.hold_object("<object_id>")     # it now rides on link_tcp, out of the map
+# ... move, place, open the gripper, move up off it ...
+localize.release_object()               # the camera maps it where it now is
+```
+
+Release after moving up: released with the open fingers still round it, the object
+is mapped round them and the next move starts in collision. The grasp generators
+see only what the camera saw; from straight above that is an object's top face, so
+check a grasp's height against the table (`find_surface`) before descending.
+
 `pick_object` generates the grasps itself, so there is no separate grasp call.
 It opens the gripper, plans to the pregrasp, servos in, closes, verifies, and
 retreats; with a learned provider it walks the ranked candidates until one is

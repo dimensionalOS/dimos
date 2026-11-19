@@ -24,7 +24,7 @@ from scipy.spatial.transform import Rotation
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.manipulation.manipulation_spec import PlanningObstaclesSpec
-from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
+from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec, RidingBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -39,6 +39,9 @@ logger = setup_logger()
 
 # The table's planner obstacle and its cut out of the voxel map share this name.
 TABLE = "scene/table"
+# The voxel map cuts round the object about to be grasped, and round the held one.
+TARGET = "scene/target"
+HELD = "scene/held"
 # add_table takes the surface the camera looks at; failing that, the widest with at
 # least this many points standing on it (find_surface's points_above): the table the
 # objects are on, not the floor round it.
@@ -66,6 +69,9 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     table_reach_m: float = 1.0
     table_thickness_m: float = 0.03
     table_cut_above_m: float = 0.01
+    # ignore_object and hold_object: the cut round an object, past its points on
+    # every side, metres. A cell's centre sits up to half a cell from its points.
+    object_cut_margin_m: float = 0.02
 
 
 class ManipulationLocalize(PerceptionLocalize):
@@ -76,6 +82,8 @@ class ManipulationLocalize(PerceptionLocalize):
     label only one object has. A forgotten object's older sightings are left out
     of later answers. ``find_surface`` measures the table the objects stand on,
     and ``add_table`` puts it into the motion planner as one flat box.
+    ``ignore_object``, ``hold_object`` and ``release_object`` keep the object
+    being picked out of the planner's voxel map, on the table and in the hand.
     """
 
     config: ManipulationLocalizeConfig
@@ -83,6 +91,8 @@ class ManipulationLocalize(PerceptionLocalize):
     # Where add_table puts the table; both optional, as in a blueprint with no planner.
     _obstacles: PlanningObstaclesSpec | None = None
     _box_filter: PointCloudBoxFilterSpec | None = None
+    # Where hold_object leaves the held object out of the camera's cloud before mapping.
+    _riding: RidingBoxFilterSpec | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -348,6 +358,91 @@ class ManipulationLocalize(PerceptionLocalize):
         removed = self._obstacles.remove_obstacle(TABLE)
         self._box_filter.clear_box(TABLE)
         return "table removed" if removed else "no table to remove"
+
+    @skill
+    def ignore_object(self, target: str) -> str:
+        """Leave the object about to be grasped out of the planner's voxel map.
+
+        Its cells would stop the fingers closing round it. ``target`` is an id
+        from a localize answer, or a label only one object has. One object at a
+        time: ignoring another lets this one back. ``hold_object`` once it is
+        grasped; ``release_object`` lets it back without grasping.
+        """
+        if self._box_filter is None:
+            return "ignore_object needs a voxel map box filter in the blueprint"
+        hit = self._resolve(target)
+        center, size = self._object_box(hit)
+        self._box_filter.set_box(TARGET, Pose(position=Vector3(*center)), Vector3(*size))
+        return (
+            f"object {hit.instance_id} left out of the planner's map: a "
+            f"{size[0]:.2f} x {size[1]:.2f} x {size[2]:.2f} m box at "
+            f"({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})"
+        )
+
+    @skill
+    def hold_object(self, target: str) -> str:
+        """Tell the planner the gripper now holds this object.
+
+        Call it after the gripper closes on the object. From here the camera's
+        view of it is left out before mapping, on the tool tip, so it leaves no
+        trail as it moves; the cells it left on the table stay cut until
+        ``release_object``, which comes after opening the gripper and moving
+        up off the object. Localize forgets it.
+        """
+        if self._obstacles is None or self._box_filter is None or self._riding is None:
+            return (
+                "hold_object needs a motion planner, a voxel map box filter and a riding box "
+                "filter in the blueprint"
+            )
+        hit = self._resolve(target)
+        tips = [
+            group.tip_frame
+            for group in self._obstacles.list_planning_groups()
+            if group.has_gripper and group.tip_frame is not None
+        ]
+        if len(tips) != 1:
+            return f"hold_object needs exactly one arm with a gripper, not {len(tips)}"
+        tip = tips[0]
+        _, head = self.index.get_time_range()
+        transform = self.rig.tf.get(self.rig.world_frame, tip, head, TF_TOLERANCE)
+        if transform is None:
+            return f"hold_object: no transform from {self.rig.world_frame} to {tip}"
+        center, size = self._object_box(hit)
+        # The box in the tip's frame as it is now, axes as they are in the world.
+        world_to_tip = np.linalg.inv(transform.to_matrix())
+        x, y, z, w = Rotation.from_matrix(world_to_tip[:3, :3]).as_quat()
+        pose = Pose(
+            position=Vector3(*(world_to_tip[:3, :3] @ center + world_to_tip[:3, 3])),
+            orientation=Quaternion(float(x), float(y), float(z), float(w)),
+        )
+        self._box_filter.set_box(TARGET, Pose(position=Vector3(*center)), Vector3(*size))
+        self._riding.ride_box(HELD, pose, Vector3(*size), tip)
+        self.forget(hit.instance_id)
+        return f"holding object {hit.instance_id}: it rides on {tip}, out of the map"
+
+    @skill
+    def release_object(self) -> str:
+        """Let the held object, or the ignored one, back into the planner's voxel map.
+
+        Call it after letting go and moving the gripper up off the object: the
+        camera then maps the object where it now is. Released while the open
+        fingers are still round it, it is mapped round them and the next move
+        starts in collision.
+        """
+        if self._box_filter is None:
+            return "release_object needs a voxel map box filter in the blueprint"
+        held = self._riding.drop_box(HELD) if self._riding is not None else False
+        ignored = self._box_filter.clear_box(TARGET)
+        return "released" if held or ignored else "nothing held or ignored"
+
+    def _object_box(self, hit: Localization) -> tuple[np.ndarray, list[float]]:
+        """An object's points' bounds, grown by object_cut_margin_m: centre and edge lengths."""
+        points = hit.point_cloud.points_f32()
+        if not len(points):
+            points = np.asarray([hit.position_world_xyz], dtype=np.float32)
+        low = points.min(axis=0) - self.config.object_cut_margin_m
+        high = points.max(axis=0) + self.config.object_cut_margin_m
+        return (low + high) / 2.0, [float(v) for v in high - low]
 
     def _line_of_sight(self) -> tuple[np.ndarray, np.ndarray] | None:
         """The newest frame's camera position and viewing direction in the world frame."""
