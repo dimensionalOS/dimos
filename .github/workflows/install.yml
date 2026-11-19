@@ -61,17 +61,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      # Published releases may still require an audio server. Keep dev installs
-      # headless so they exercise the source checkout's PortAudio fallback.
-      - name: Start a PulseAudio server (Ubuntu 26.04 library install)
-        if: matrix.version == '26.04' && matrix.mode == 'library'
-        run: |
-          apt-get install -y --no-install-recommends pulseaudio
-          echo "PULSE_RUNTIME_PATH=/tmp/pulse" >> "$GITHUB_ENV"
-          export PULSE_RUNTIME_PATH=/tmp/pulse PULSE_STATE_PATH=/tmp/pulse-state
-          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/pulseaudio.log ||
-            { cat /tmp/pulseaudio.log; exit 1; }
-      - name: Install and verify
+      - name: Install and verify without an audio server
         run: |
           # checkout's safe.directory setting uses a temporary HOME. The
           # container's later steps need to trust this mounted checkout too.

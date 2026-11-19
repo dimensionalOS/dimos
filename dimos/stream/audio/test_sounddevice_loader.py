@@ -12,23 +12,57 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from pathlib import Path
 import subprocess
 import sys
 
 import pytest
 
-# Stands in for sounddevice on a machine where PortAudio cannot start.
-_FAILING_SOUNDDEVICE = """
+_SOUNDDEVICE = """
+from unittest.mock import Mock
+
 class PortAudioError(Exception):
     pass
 
-class OutputStream:
-    pass
+server_running = False
+_initialized = 0
 
-raise PortAudioError("PulseAudio_Initialize: Can't connect to server")
+def _initialize():
+    global _initialized
+    if not server_running:
+        raise PortAudioError("PulseAudio_Initialize: Can't connect to server")
+    _initialized += 1
+
+def query_devices():
+    return ["speaker"] if _initialized else []
+
+class OutputStream:
+    start = Mock()
+    write = Mock()
+    stop = Mock()
+    close = Mock()
+
+    def __init__(self, **kwargs):
+        if not _initialized:
+            raise PortAudioError("Error querying device -1")
+
+_initialize()
 """
+
+
+@pytest.fixture(autouse=True)
+def headless_audio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "sounddevice.py").write_text(_SOUNDDEVICE)
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", "INFO")
+
+
+def _run_python(code: str) -> str:
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
 
 
 @pytest.mark.parametrize(
@@ -39,13 +73,46 @@ raise PortAudioError("PulseAudio_Initialize: Can't connect to server")
         "dimos.robot.unitree.unitree_skill_container",
     ],
 )
-def test_import_survives_portaudio_not_starting(module: str, tmp_path: Path) -> None:
-    (tmp_path / "sounddevice.py").write_text(_FAILING_SOUNDDEVICE)
-    env = os.environ | {"PYTHONPATH": str(tmp_path)}
-    code = f"import {module}, sounddevice; sounddevice.OutputStream"
+def test_headless_import_is_quiet(module: str) -> None:
+    assert _run_python(f"import {module}, sounddevice; sounddevice.OutputStream") == ""
 
-    result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120, env=env
-    )
 
-    assert result.returncode == 0, result.stderr
+def test_playback_recovers_when_audio_server_starts() -> None:
+    _run_python("""
+from unittest.mock import patch
+
+import numpy as np
+from reactivex.subject import Subject
+
+from dimos.stream.audio.base import AudioEvent
+from dimos.stream.audio.node_output import SounddeviceAudioOutput
+import sounddevice
+
+events = Subject()
+frame = AudioEvent(np.ones((16, 1), dtype=np.float32), sample_rate=16000, timestamp=0)
+output = SounddeviceAudioOutput()
+try:
+    output.consume_audio(events)
+    with patch("dimos.stream.audio.node_output.monotonic", return_value=10) as clock:
+        events.on_next(frame)
+        sounddevice.OutputStream.write.assert_not_called()
+
+        sounddevice.server_running = True
+        clock.return_value = 20
+        events.on_next(frame)
+    sounddevice.OutputStream.write.assert_called_once_with(frame.data)
+finally:
+    output.stop()
+""")
+
+
+def test_cached_sounddevice_discovers_late_output_device() -> None:
+    _run_python("""
+import dimos.robot.unitree.connection
+import sounddevice
+from sounddevice import OutputStream, query_devices
+
+sounddevice.server_running = True
+assert query_devices() == ["speaker"]
+OutputStream().close()
+""")

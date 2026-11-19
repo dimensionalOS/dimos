@@ -21,24 +21,42 @@ robot's onboard computer have no audio server, so `import sounddevice` raises
 there. unitree_webrtc_connect imports sounddevice without using it, which made
 the Go2 and G1 connections impossible to import on such a machine.
 
-Importing this module loads sounddevice either way. Without an audio server
-PortAudio stays uninitialized. Every audio call then raises PortAudioError,
-which is what a machine with no audio device gives on older releases.
+Keep the module available for Unitree's import. Retry PortAudio when a caller
+opens an output stream or enumerates devices after the audio server starts.
 """
 
+from collections.abc import Callable
+from functools import wraps
 import importlib.util
 import sys
+from threading import Lock
+from typing import Any
 
-from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger()
+def _defer_initialization(backend: Any) -> None:
+    """Retry PortAudio initialization before a device query or stream open."""
+    lock = Lock()
+
+    def on_demand(function: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(function)
+        def call(*args: Any, **kwargs: Any) -> Any:
+            with lock:
+                # sounddevice counts successful initializations and balances them at exit.
+                if not backend._initialized:
+                    backend._initialize()
+            return function(*args, **kwargs)
+
+        return call
+
+    backend.OutputStream.__init__ = on_demand(backend.OutputStream.__init__)
+    backend.query_devices = on_demand(backend.query_devices)
+
 
 try:
     import sounddevice as sounddevice  # type: ignore[import-untyped]
 except Exception as error:
     if type(error).__name__ != "PortAudioError":
         raise
-    logger.info("PortAudio did not start, audio is unavailable", error=str(error))
     # The call that starts PortAudio is the last statement of sounddevice, so
     # the module is complete when it raises. A failed import drops the module,
     # so it is run again here and kept.
@@ -48,5 +66,5 @@ except Exception as error:
     try:
         spec.loader.exec_module(sounddevice)
     except sounddevice.PortAudioError:
-        pass
+        _defer_initialization(sounddevice)
     sys.modules["sounddevice"] = sounddevice
