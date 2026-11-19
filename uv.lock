@@ -32,21 +32,21 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-07T01:13:40.343231374Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-can-motor-control = false
-dim-odom = false
-dimos-cdrgen = false
-dimos-lcm = false
-dimos-viewer = false
-eclipse-zenoh = false
-edgetam-dimos = false
-lcm = false
-md-babel-py = false
-mjcf-to-urdf = false
 roboplan = false
+dimos-cdrgen = false
+dimos-viewer = false
+dimos-lcm = false
+lcm = false
+edgetam-dimos = false
+eclipse-zenoh = false
+can-motor-control = false
+md-babel-py = false
+dim-odom = false
+mjcf-to-urdf = false
 
 [manifest]
 constraints = [
@@ -1856,7 +1856,7 @@ wheels = [
 
 [[package]]
 name = "dimos"
-version = "0.0.15"
+version = "0.0.16"
 source = { editable = "." }
 dependencies = [
     { name = "annotation-protocol" },
