@@ -74,7 +74,7 @@ mod tests {
     use std::io::Write;
 
     use super::*;
-    use crate::store::{Observation, RecordingStoreConfig};
+    use crate::store::{McapAttachmentConfig, Observation, RecordingStoreConfig};
     use crate::window::SegmentWriter;
     use crate::{Codec, StreamConfig};
 
@@ -94,9 +94,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let window = dir.path().join("window");
         let path = dir.path().join("memory.mcap");
+        let schema = dir.path().join("schema.json");
+        fs::write(&schema, b"{}").unwrap();
         let config = RecordingStoreConfig::Mcap {
             path: path.to_string_lossy().into_owned(),
-            attachments: vec![],
+            attachments: vec![McapAttachmentConfig {
+                name: "schema.json".to_string(),
+                media_type: "application/json".to_string(),
+                path: schema.to_string_lossy().into_owned(),
+            }],
         };
         let streams = vec![stream("a"), stream("b")];
         let shared: Vec<_> = streams.iter().cloned().map(Arc::new).collect();
@@ -155,6 +161,7 @@ mod tests {
             .set_len(length - 1)
             .unwrap();
 
+        fs::remove_file(&schema).unwrap();
         assert_eq!(recover(&window).unwrap(), 19);
 
         assert!(!window.exists());
@@ -180,5 +187,15 @@ mod tests {
                 ("b".to_string(), expected(1))
             ])
         );
+        let attachments: Vec<_> = mcap::read::ChunkFlattener::new(&bytes)
+            .unwrap()
+            .filter_map(|record| match record.unwrap() {
+                mcap::records::Record::Attachment { header, data, .. } => {
+                    Some((header.name, data.into_owned()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(attachments, [("schema.json".to_string(), b"{}".to_vec())]);
     }
 }

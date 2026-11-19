@@ -62,7 +62,8 @@ impl McapRecordingStore {
         Self::create(path, streams, compression_threads, &attachments)
     }
 
-    /// Rewrites a crashed recording, keeping only the first `stored` messages of each stream.
+    /// Rewrites a crashed recording, keeping its attachments and only the first `stored` messages
+    /// of each stream.
     /// The crashed file stays at `<path>.crashed` until `finish`, so a failed recovery can rerun.
     pub fn recover(
         path: &str,
@@ -110,6 +111,15 @@ impl McapRecordingStore {
                         )?;
                         copied[index] += 1;
                     }
+                }
+                Record::Attachment { header, data, .. } => {
+                    store.writer.attach(&Attachment {
+                        log_time: header.log_time,
+                        create_time: header.create_time,
+                        name: header.name,
+                        media_type: header.media_type,
+                        data,
+                    })?;
                 }
                 _ => {}
             }
