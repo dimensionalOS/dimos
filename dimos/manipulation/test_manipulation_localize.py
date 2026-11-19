@@ -19,7 +19,9 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.manipulation_localize import (
+    HELD,
     SURFACE,
+    TARGET,
     ManipulationLocalize,
     pick_surface,
     surface_boxes,
@@ -411,3 +413,96 @@ def test_add_surface_lists_the_surfaces_it_chose_from(localizer, mocker):
 
     assert answer.startswith("surface added: top at z=0.080 m")
     assert "Surfaces seen: 0.000 m (1.00 x 0.60), 0.080 m (0.80 x 0.50)" in answer
+
+
+def _block_on_table(localizer, mocker):
+    """One localized 4 cm block, its points from z 0.12 to 0.16 round (0.5, 0.1)."""
+    _ready(localizer, mocker, [])
+    corners = [[0.48, 0.08, 0.12], [0.52, 0.12, 0.16]]
+    localizer._objects = {"b1": ("block", _hit("b1", corners, position=(0.5, 0.1, 0.14)))}
+    localizer._box_filter = mocker.Mock()
+
+
+def test_ignore_object_cuts_one_box_round_the_target(localizer, mocker):
+    _block_on_table(localizer, mocker)
+
+    answer = localizer.ignore_object("block")
+
+    assert answer.startswith("object b1 left out of the planner's map")
+    name, pose, size = localizer._box_filter.set_box.call_args.args
+    assert name == TARGET
+    assert [pose.position.x, pose.position.y, pose.position.z] == pytest.approx([0.5, 0.1, 0.14])
+    # The points' 4 cm bounds, 2 cm more on every side.
+    assert size.to_tuple() == pytest.approx((0.08, 0.08, 0.08))
+
+
+def test_hold_object_rides_the_object_on_the_tool_tip(localizer, mocker):
+    _block_on_table(localizer, mocker)
+    localizer._riding = mocker.Mock()
+    localizer._obstacles = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = (
+        SimpleNamespace(tip_frame="link_tcp", has_gripper=True),
+    )
+    # The tip 2 cm over the block's centre, pointing down: turned half round x.
+    localizer.rig.tf.get.return_value = Transform(
+        translation=Vector3(0.5, 0.1, 0.16),
+        rotation=Quaternion(1.0, 0.0, 0.0, 0.0),
+        frame_id="world",
+        child_frame_id="link_tcp",
+    )
+    forget = mocker.spy(localizer, "forget")
+
+    answer = localizer.hold_object("b1")
+
+    assert answer == "holding object b1: it rides on link_tcp, out of the map"
+    name, pose, size, frame = localizer._riding.ride_box.call_args.args
+    assert (name, frame) == (HELD, "link_tcp")
+    # 2 cm below the tip in the world is 2 cm along the tip's own z, which points down.
+    assert [pose.position.x, pose.position.y, pose.position.z] == pytest.approx(
+        [0.0, 0.0, 0.02], abs=1e-6
+    )
+    # The held cut is 3 cm past the points: the grasp can shift the object.
+    assert size.to_tuple() == pytest.approx((0.10, 0.10, 0.10))
+    # The cells it left on the table stay cut until release.
+    cut_name, cut_pose, _ = localizer._box_filter.set_box.call_args.args
+    assert cut_name == TARGET
+    assert [cut_pose.position.x, cut_pose.position.y] == pytest.approx([0.5, 0.1])
+    forget.assert_called_once_with("b1")
+
+
+def test_release_object_lets_the_held_and_ignored_boxes_go(localizer, mocker):
+    _block_on_table(localizer, mocker)
+    localizer._riding = mocker.Mock()
+    localizer._riding.drop_box.return_value = True
+    localizer._box_filter.clear_box.return_value = True
+
+    assert localizer.release_object() == "released"
+    localizer._riding.drop_box.assert_called_once_with(HELD)
+    localizer._box_filter.clear_box.assert_called_once_with(TARGET)
+
+
+def test_holding_needs_the_planner_and_one_gripper(localizer, mocker):
+    _block_on_table(localizer, mocker)
+    assert "needs a motion planner" in localizer.hold_object("b1")
+    localizer._obstacles = mocker.Mock()
+    localizer._riding = mocker.Mock()
+    localizer._obstacles.list_planning_groups.return_value = ()
+    assert "exactly one arm with a gripper" in localizer.hold_object("b1")
+
+
+def test_the_cut_reaches_down_to_the_table_under_a_top_face(localizer, mocker):
+    """From above the camera sees a 12 cm cylinder's top: the cut goes down to the table."""
+    _ready(localizer, mocker, [])
+    top = [[0.48, 0.08, 0.25], [0.52, 0.12, 0.25]]
+    localizer._objects = {"c1": ("cylinder", _hit("c1", top, position=(0.5, 0.1, 0.25)))}
+    localizer._box_filter = mocker.Mock()
+
+    localizer.ignore_object("c1")
+    _, pose, size = localizer._box_filter.set_box.call_args.args
+    assert pose.position.z - size.z / 2 == pytest.approx(0.23)  # no table: 2 cm under its top
+
+    localizer._surface_top = 0.13
+    localizer.ignore_object("c1")
+    _, pose, size = localizer._box_filter.set_box.call_args.args
+    assert pose.position.z - size.z / 2 == pytest.approx(0.13)
+    assert pose.position.z + size.z / 2 == pytest.approx(0.27)

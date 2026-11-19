@@ -28,7 +28,7 @@ from dimos.core.core import rpc
 from dimos.manipulation.manipulation_spec import PlanningObstaclesSpec
 from dimos.manipulation.planning.spec.models import WORK_SURFACE_OBSTACLE
 from dimos.manipulation.surfaces import MAX_TILT_DEG, find_surfaces, in_outline, plane_axes
-from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
+from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec, RidingBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -45,6 +45,9 @@ logger = setup_logger()
 LEVEL_BELOW_DEG = 0.5
 # add_surface's planner obstacle and its voxel map cut.
 SURFACE = WORK_SURFACE_OBSTACLE
+# The voxel map cuts round the object about to be grasped, and round the held one.
+TARGET = "scene/target"
+HELD = "scene/held"
 # Without a line of sight, add_surface takes the widest surface with this many points on it.
 SURFACE_MIN_STANDING = 10
 # add_surface(height=...) takes the surface within this, metres.
@@ -67,6 +70,10 @@ class ManipulationLocalizeConfig(PerceptionLocalizeConfig):
     surface_thickness_m: float = 0.03
     surface_cut_above_m: float = 0.01
     surface_cut_below_m: float = 0.02
+    # ignore_object / hold_object: an object's cut past its points, metres; wider when
+    # held, since the grasp can shift it
+    object_cut_margin_m: float = 0.02
+    object_hold_margin_m: float = 0.03
 
 
 class ManipulationLocalize(PerceptionLocalize):
@@ -76,7 +83,8 @@ class ManipulationLocalize(PerceptionLocalize):
     asked for and keeps the others. Pick and place reads them by id, or by a
     label only one object has. A forgotten object's older sightings are left out
     of later answers. ``find_surface`` measures the surfaces in view and ``add_surface``
-    puts one, such as the table, into the planner as one flat box.
+    puts one, such as the table, into the planner as one flat box. ``ignore_object``,
+    ``hold_object`` and ``release_object`` keep the object being picked out of the voxel map.
     """
 
     config: ManipulationLocalizeConfig
@@ -84,12 +92,16 @@ class ManipulationLocalize(PerceptionLocalize):
     # Where add_surface puts the surface; optional, for blueprints without a planner.
     _obstacles: PlanningObstaclesSpec | None = None
     _box_filter: PointCloudBoxFilterSpec | None = None
+    # Where hold_object rides the held object, before mapping.
+    _riding: RidingBoxFilterSpec | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._objects: dict[str, tuple[str, Localization]] = {}
         # Forgotten objects: label, id, box low and high corners, newest frame time then.
         self._gone: list[tuple[str, str, np.ndarray, np.ndarray, float]] = []
+        # add_surface's top (world z), where an object's cut reaches down to.
+        self._surface_top: float | None = None
 
     @rpc
     def scan(self, names: list[str], window_s: float = 10.0) -> list[dict[str, Any]]:
@@ -321,6 +333,7 @@ class ManipulationLocalize(PerceptionLocalize):
         if not self._obstacles.add_obstacle(SURFACE, box_pose, "box", box_size, None, bases):
             return "the planner refused the surface box"
         self._box_filter.set_box(SURFACE, cut_pose, Vector3(*cut_size))
+        self._surface_top = float(box_pose.position.z + box_size[2] / 2)
         return (
             f"surface added: top at z={platform['height']:.3f} m in {self.rig.world_frame}, "
             f"{box_size[0]:.2f} x {box_size[1]:.2f} m round the arm's base; its own voxel "
@@ -335,7 +348,90 @@ class ManipulationLocalize(PerceptionLocalize):
             return "no surface: the blueprint has no motion planner or voxel map box filter"
         removed = self._obstacles.remove_obstacle(SURFACE)
         self._box_filter.clear_box(SURFACE)
+        self._surface_top = None
         return "surface removed" if removed else "no surface to remove"
+
+    @skill
+    def ignore_object(self, target: str) -> str:
+        """Cut the object about to be grasped from the planner's voxel map, one at a time.
+
+        ``target`` is an id from a localize answer, or a label only one object has.
+        """
+        if self._box_filter is None:
+            return "ignore_object needs a voxel map box filter in the blueprint"
+        hit = self._resolve(target)
+        center, size = self._object_box(hit, self.config.object_cut_margin_m)
+        self._box_filter.set_box(TARGET, Pose(position=Vector3(*center)), Vector3(*size))
+        return (
+            f"object {hit.instance_id} left out of the planner's map: a "
+            f"{size[0]:.2f} x {size[1]:.2f} x {size[2]:.2f} m box at "
+            f"({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})"
+        )
+
+    @skill
+    def hold_object(self, target: str) -> str:
+        """Tell the planner the gripper now holds this object, after closing on it.
+
+        The object rides on the tool tip, out of the map, and its old place stays cut
+        until ``release_object``. Localize forgets it.
+        """
+        if self._obstacles is None or self._box_filter is None or self._riding is None:
+            return (
+                "hold_object needs a motion planner, a voxel map box filter and a riding box "
+                "filter in the blueprint"
+            )
+        hit = self._resolve(target)
+        tips = [
+            group.tip_frame
+            for group in self._obstacles.list_planning_groups()
+            if group.has_gripper and group.tip_frame is not None
+        ]
+        if len(tips) != 1:
+            return f"hold_object needs exactly one arm with a gripper, not {len(tips)}"
+        tip = tips[0]
+        _, head = self.index.get_time_range()
+        transform = self.rig.tf.get(self.rig.world_frame, tip, head, TF_TOLERANCE)
+        if transform is None:
+            return f"hold_object: no transform from {self.rig.world_frame} to {tip}"
+        center, size = self._object_box(hit, self.config.object_hold_margin_m)
+        # The box in the tip's frame as it is now, axes as they are in the world.
+        world_to_tip = np.linalg.inv(transform.to_matrix())
+        x, y, z, w = Rotation.from_matrix(world_to_tip[:3, :3]).as_quat()
+        pose = Pose(
+            position=Vector3(*(world_to_tip[:3, :3] @ center + world_to_tip[:3, 3])),
+            orientation=Quaternion(float(x), float(y), float(z), float(w)),
+        )
+        self._box_filter.set_box(TARGET, Pose(position=Vector3(*center)), Vector3(*size))
+        self._riding.ride_box(HELD, pose, Vector3(*size), tip)
+        self.forget(hit.instance_id)
+        return f"holding object {hit.instance_id}: it rides on {tip}, out of the map"
+
+    @skill
+    def release_object(self) -> str:
+        """Let the held or ignored object back into the voxel map.
+
+        Call it after opening the gripper and moving up off the object; released with
+        the fingers round it, the next move starts in collision.
+        """
+        if self._box_filter is None:
+            return "release_object needs a voxel map box filter in the blueprint"
+        held = self._riding.drop_box(HELD) if self._riding is not None else False
+        ignored = self._box_filter.clear_box(TARGET)
+        return "released" if held or ignored else "nothing held or ignored"
+
+    def _object_box(
+        self, hit: Localization, margin: float
+    ) -> tuple[NDArray[np.float64], list[float]]:
+        """An object's cut, centre and edge lengths: its points' bounds plus ``margin``,
+        down to the surface, since from above the points are mostly its top face."""
+        points = hit.point_cloud.points_f32()
+        if not len(points):
+            points = np.asarray([hit.position_world_xyz], dtype=np.float32)
+        low = points.min(axis=0).astype(np.float64) - margin
+        high = points.max(axis=0).astype(np.float64) + margin
+        if self._surface_top is not None:
+            low[2] = min(low[2], self._surface_top)
+        return (low + high) / 2.0, [float(v) for v in high - low]
 
     def _line_of_sight(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
         """The newest frame's camera position and viewing direction, in the world frame."""
