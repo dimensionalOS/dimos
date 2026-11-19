@@ -354,9 +354,11 @@ class TF(MultiTBuffer):
 
     def publish(self, *transforms: Transform) -> None:
         if self._edges is not None:
-            undeclared = sorted({(t.frame_id, t.child_frame_id) for t in transforms} - self._edges)
-            if undeclared:
-                raise ValueError(f"undeclared tf edges {undeclared}; add them to tf_edges")
+            for t in transforms:
+                if (t.frame_id, t.child_frame_id) not in self._edges:
+                    raise ValueError(
+                        f"undeclared tf edge ({t.frame_id!r}, {t.child_frame_id!r}); add it to tf_edges"
+                    )
         self.receive_transform(*transforms)
         if self._stream is not None:
             self._stream.publish(TFMessage(*transforms))
