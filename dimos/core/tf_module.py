@@ -154,7 +154,11 @@ class TfModule(Module):
             )
 
     def _create_tfbuffer(self, port: Any) -> TF:
-        return TF(port, edges=None if self.config.skip_tf_checks else self.config.tf_edge_frames)
+        return TF(
+            port,
+            edges=None if self.config.skip_tf_checks else self.config.tf_edge_frames,
+            module_name=self.config.instance_name or type(self).__name__,
+        )
 
 
 def _config_default(module: type[TfModule], name: str) -> Any:
