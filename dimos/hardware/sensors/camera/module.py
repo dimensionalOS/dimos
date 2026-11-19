@@ -20,15 +20,14 @@ import reactivex as rx
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 from dimos.visualization.vis_module import vis_module
 
@@ -42,18 +41,26 @@ def default_transform() -> Transform:
     )
 
 
-class WebcamModuleConfig(ModuleConfig):
+class WebcamModuleConfig(TfModuleConfig):
     frame_id: str = "camera_link"
+    tf_frames_local: dict[str, str] = Field(
+        default_factory=lambda: {"camera_link": "camera_link", "camera_optical": "camera_optical"}
+    )
+    # What the camera is mounted on.
+    tf_frames_global: dict[str, str] = Field(default_factory=lambda: {"parent": "base_link"})
+    tf_edges: list[tuple[str, str]] = Field(
+        default_factory=lambda: [("parent", "camera_link"), ("camera_link", "camera_optical")]
+    )
+    # The mount pose, parent -> camera_link; its frame ids are replaced by the tf frames above.
     transform: Transform | None = Field(default_factory=default_transform)
     hardware: WebcamConfig = Field(default_factory=WebcamConfig)
     frequency: float = 0.0  # Hz, 0 means no limit
 
 
-class WebcamModule(Module, perception.Camera):
+class WebcamModule(TfModule, perception.Camera):
     config: WebcamModuleConfig
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
-    tf: Out[TFMessage]
 
     _camera: Webcam | None = None
 
@@ -61,7 +68,12 @@ class WebcamModule(Module, perception.Camera):
     def start(self) -> None:
         super().start()
 
-        camera = Webcam(**self.config.hardware.model_dump())
+        camera = Webcam(
+            **{
+                **self.config.hardware.model_dump(),
+                "optical_frame_id": self.config.tf_frames_local["camera_optical"],
+            }
+        )
         self._camera = camera
 
         stream = camera.image_stream()
@@ -87,18 +99,21 @@ class WebcamModule(Module, perception.Camera):
         if not self.config.transform:
             return
 
+        local = self.config.tf_frames_local
         camera_link = self.config.transform
+        camera_link.frame_id = self.config.tf_frames_global["parent"]
+        camera_link.child_frame_id = local["camera_link"]
         camera_link.ts = camera_info.ts
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
+            frame_id=local["camera_link"],
+            child_frame_id=local["camera_optical"],
             ts=camera_link.ts,
         )
 
-        self.tf.publish(TFMessage(camera_link, camera_optical))
+        self.tfbuffer.publish(camera_link, camera_optical)
 
     @rpc
     def stop(self) -> None:

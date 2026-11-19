@@ -49,7 +49,8 @@ class WebcamConfig(CameraConfig):
     height: int = 480
     fps: float = 15.0
     camera_info: CameraInfo = Field(default_factory=CameraInfo)
-    frame_id_prefix: str | None = None
+    # Images and camera_info are stamped with this; WebcamModule sets it from its tf frames.
+    optical_frame_id: str = "camera_optical"
     stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
 
@@ -140,12 +141,6 @@ class Webcam(CameraHardware):
             self._capture.release()
             self._capture = None
 
-    def _frame(self, frame: str):  # type: ignore[no-untyped-def]
-        if not self.config.frame_id_prefix:
-            return frame
-        else:
-            return f"{self.config.frame_id_prefix}/{frame}"
-
     def capture_frame(self) -> Image:
         # Read frame
         import cv2
@@ -164,7 +159,7 @@ class Webcam(CameraHardware):
         image = Image.from_numpy(
             frame_rgb,
             format=ImageFormat.RGB,  # We converted to RGB above
-            frame_id=self._frame("camera_optical"),  # Standard frame ID for camera images
+            frame_id=self.config.optical_frame_id,
             ts=acquired_at,
         )
 
@@ -216,7 +211,7 @@ class Webcam(CameraHardware):
             width = self.config.width // 2 if self.config.stereo_slice else self.config.width
             height = self.config.height
         return CameraInfo.from_fov(
-            60.0, width, height, axis="horizontal", frame_id=self._frame("camera_optical")
+            60.0, width, height, axis="horizontal", frame_id=self.config.optical_frame_id
         )
 
     def emit(self, image: Image) -> None: ...

@@ -100,6 +100,7 @@ _with_vis = vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_c
 _camera = (
     autoconnect(
         WebcamModule.blueprint(
+            tf_frames_global={"parent": "sensor"},
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.6),  # height of camera on G1 robot
                 rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
