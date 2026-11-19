@@ -98,6 +98,7 @@ class Validation(BaseModel):
     heldout: SplitTally
     heldout_trials: list[TrialSummary]
     keyframes_from: str
+    # The coding agent's model, or "none" when no coding agent ran in the session.
     model: str
     session: str
     dimos_commit: str
@@ -161,7 +162,7 @@ def export_skill(
             for r in heldout
         ],
         keyframes_from=f"{shown.split}-{shown.index:02d}" if shown else "",
-        model=info.model,
+        model=info.model or "none",
         session=str(session.dir.resolve()),
         dimos_commit=info.dimos_commit or "unknown",
         blueprint=info.blueprint or "unknown",
@@ -298,7 +299,9 @@ def _skill_md(name: str, v: Validation, records: list[TrialRecord], has_findings
         f"Simulation only. Blueprint: {robot}. Objects found by: {v.scene_source}. "
         f"Held-out: {v.heldout.passed}/{v.heldout.trials} passed. "
         f"Dev: {v.dev.passed}/{v.dev.trials} passed. "
-        f"Candidate {v.candidate}, written by {v.model}, dimos commit {v.dimos_commit}.",
+        f"Candidate {v.candidate}, "
+        + (f"written by {v.model}" if v.model != "none" else "submitted without a coding agent")
+        + f", dimos commit {v.dimos_commit}.",
         "",
         "## Known failures",
         "",

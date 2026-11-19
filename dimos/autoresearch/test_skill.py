@@ -25,7 +25,7 @@ PROGRAM = "import math\n\ndef run(robot, task):\n    robot.arm.home()\n"
 
 def _session(directory: Path, task: str) -> Session:
     budget = Budget(dev_trials=2, heldout_trials=3)
-    return Session.create(directory, task, budget, "test-model", blueprint="autoresearch-metal-sim")
+    return Session.create(directory, task, budget, blueprint="autoresearch-metal-sim")
 
 
 def _record(session: Session, candidate: int, split: Split, index: int, success: bool) -> None:
@@ -53,6 +53,7 @@ def _record(session: Session, candidate: int, split: Split, index: int, success:
 
 def test_export_writes_a_valid_skill_from_the_frozen_candidate(tmp_path: Path) -> None:
     session = _session(tmp_path / "lift", "Lift the cube!")
+    session.set_model("test-model")
     session.submit(PROGRAM, "first try")
     frozen = session.submit(PROGRAM.replace("home()", "home()\n    robot.gripper.open()"), "open")
     _record(session, 1, "dev", 0, False)
@@ -70,6 +71,7 @@ def test_export_writes_a_valid_skill_from_the_frozen_candidate(tmp_path: Path) -
     assert front["name"] == "lift-the-cube"
     assert front["metadata"]["heldout-pass-rate"] == "0.67"
     assert front["metadata"]["dimos-commit"] == "unknown"
+    assert front["metadata"]["model"] == "test-model"
     assert front["metadata"]["code-policy-api"] == API_VERSION
     assert (skill / "references" / "api.md").read_text().count(API_REFERENCE) == 1
     assert (skill / "scripts" / "program.py").read_bytes() == session.program_path(
@@ -107,6 +109,7 @@ def test_export_refuses_a_program_without_a_passing_heldout_score_unless_forced(
     skill = export_skill(session, tmp_path / "skills", force=True)
 
     assert validate_skill(skill)["metadata"]["heldout-pass-rate"] == "0.00"
+    assert validate_skill(skill)["metadata"]["model"] == "none"
     assert "Held-out: 0/3 passed." in (skill / "SKILL.md").read_text()
 
 

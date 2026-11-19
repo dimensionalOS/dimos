@@ -205,7 +205,6 @@ class AutoresearchModule(Module):
             self.config.session_dir,
             self.config.task,
             self.config.budget,
-            self.config.model,
             blueprint=self.config.blueprint,
             success_rule=self._success_rule(),
             dimos_commit=_dimos_commit(),
@@ -269,6 +268,7 @@ class AutoresearchModule(Module):
                     "the session is scored; there is nothing left for a coding agent"
                 )
             self._actor_stop.clear()
+            self._session.set_model(model)
             self._actor_thread = threading.Thread(
                 target=self._actor, args=(model, provider), name="autoresearch-actor"
             )

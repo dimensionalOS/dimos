@@ -53,11 +53,12 @@ class SessionInfo(BaseModel):
     """The contents of ``session.json``. ``heldout_rate`` is the frozen
     candidate's held-out pass rate, set when the session is scored. The
     blueprint, success rule, dimos commit and scene source are empty for a
-    session that did not record them."""
+    session that did not record them. ``model`` is the coding agent's model,
+    empty until a coding agent is started in this session."""
 
     task: str
     budget: Budget
-    model: str
+    model: str = ""
     status: SessionStatus = "idle"
     heldout_rate: float | None = None
     blueprint: str = ""
@@ -115,7 +116,7 @@ class Session:
         directory: Path,
         task: str,
         budget: Budget,
-        model: str,
+        model: str = "",
         *,
         blueprint: str = "",
         success_rule: str = "",
@@ -222,6 +223,11 @@ class Session:
         self.candidate_dir(candidate)
         (self.dir / "frozen").write_text(f"{candidate}\n")
         self.set_status("frozen")
+
+    def set_model(self, model: str) -> None:
+        """Record ``model`` as the model of the coding agent started in this session."""
+        info = self.info().model_copy(update={"model": model})
+        (self.dir / "session.json").write_text(info.model_dump_json(indent=2))
 
     def set_status(self, status: SessionStatus, *, heldout_rate: float | None = None) -> None:
         """Write ``status`` to session.json; ``heldout_rate`` goes with ``scored``."""
