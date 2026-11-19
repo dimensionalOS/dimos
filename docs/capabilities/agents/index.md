@@ -57,10 +57,12 @@ Every agent subclasses `BaseAgent[Input, Output]` and answers `infer(x: Input) -
 ```python skip
 from dimos.agents.agent import Agent
 
-Agent.input_type, Agent.output_type   # (str, str)
-Agent.accepts("walk to the door")     # True
-app.get_module("Agent").infer("what do you see?")
+Agent.input_type, Agent.output_type            # (HumanMessage, AIMessage)
+Agent.accepts(HumanMessage("walk to the door"))  # True
+app.get_module("Agent").infer(HumanMessage("what do you see?")).text
 ```
+
+`infer` blocks until the agent is done, background skills included, and shares its history with messages that arrive on the input stream.
 
 An input with several parts is one dataclass:
 

@@ -69,7 +69,7 @@ def _matches(tp: Any, value: Any) -> bool:
 class BaseAgent(Module, Generic[I, O]):
     """Base for agents: one inference call and the chat streams.
 
-    A subclass names its types, ``class Agent(BaseAgent[str, str])``, and they are
+    A subclass names its types, ``class Agent(BaseAgent[HumanMessage, AIMessage])``, and they are
     kept on the class as ``input_type`` and ``output_type``. An input with several
     parts is one dataclass.
     """

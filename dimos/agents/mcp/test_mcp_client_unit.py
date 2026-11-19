@@ -547,7 +547,7 @@ def test_infer_returns_the_final_answer_of_its_turn(
     )
     monkeypatch.setattr(running_agent, "_state_graph", graph)
 
-    assert running_agent.infer("what is 1 + 2?") == "It is 3."
+    assert running_agent.infer(HumanMessage("what is 1 + 2?")).text == "It is 3."
     assert running_agent._history[0].content == "what is 1 + 2?"
 
 
@@ -557,13 +557,13 @@ def test_infer_raises_when_its_turn_fails(
     monkeypatch.setattr(running_agent, "_state_graph", _FailsOnceGraph([]))
 
     with pytest.raises(RuntimeError, match="TimeoutError: LLM API timed out"):
-        running_agent.infer("first")
-    assert running_agent.infer("second") == "done"
+        running_agent.infer(HumanMessage("first"))
+    assert running_agent.infer(HumanMessage("second")).text == "done"
 
 
 def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
     with pytest.raises(RuntimeError, match="not running"):
-        mcp_client.infer("too early")
+        mcp_client.infer(HumanMessage("too early"))
 
 
 def test_infer_waits_for_a_background_skill_to_stop(
@@ -573,7 +573,11 @@ def test_infer_waits_for_a_background_skill_to_stop(
     monkeypatch.setattr(running_agent, "_state_graph", _AnswersGraph())
     running_agent._background.add("explore")
     answers: list[str] = []
-    caller = Thread(target=lambda: answers.append(running_agent.infer("explore the room")))
+    caller = Thread(
+        target=lambda: answers.append(
+            str(running_agent.infer(HumanMessage("explore the room")).text)
+        )
+    )
     caller.start()
 
     wait_until(lambda: len(running_agent._history) == 2, timeout=5, interval=0.01)

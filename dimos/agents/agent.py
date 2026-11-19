@@ -98,7 +98,7 @@ class AgentConfig(ModuleConfig):
     trace_dir: Path | None = None
 
 
-class Agent(BaseAgent[str, str]):
+class Agent(BaseAgent[HumanMessage, AIMessage]):
     config: AgentConfig
 
     # Injected when the blueprint has an McpServer.
@@ -363,7 +363,7 @@ class Agent(BaseAgent[str, str]):
         self._message_queue.put(message)
 
     @rpc
-    def infer(self, x: str) -> str:
+    def infer(self, x: HumanMessage) -> AIMessage:
         """Send x as a turn and return the agent's final answer.
 
         Blocks until the agent is done: every queued message has been processed and
@@ -371,15 +371,15 @@ class Agent(BaseAgent[str, str]):
         """
         if not self._thread.is_alive():
             raise RuntimeError("Agent is not running; it starts with the blueprint")
-        self._message_queue.put(HumanMessage(content=x))
+        self._message_queue.put(x)
         with self._settled:
             self._settled.wait_for(
                 lambda: not self._background and self._message_queue.unfinished_tasks == 0
             )
-        last = self._history[-1]
+        last = next(m for m in reversed(self._history) if isinstance(m, AIMessage))
         if TURN_FAILED_KEY in last.additional_kwargs:
             raise RuntimeError(str(last.text))
-        return str(last.text)
+        return last
 
     @rpc
     def dispatch_continuation(
