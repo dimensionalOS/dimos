@@ -22,6 +22,7 @@ runner never branches on the agent type.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 import json
@@ -180,6 +181,7 @@ class EvalRunner(Configurable):
                 finally:
                     agent_duration_s = time.monotonic() - started
                 _write_trajectory(case_dir, trajectory, tools)
+                _write_seen_images(case_dir, trajectory)
                 case.environment.settle(max(0.0, case.timeout_s - agent_duration_s))
             finally:
                 case.environment.stop()
@@ -318,6 +320,38 @@ def _write_trajectory(case_dir: Path, trajectory: Trajectory, tools: list[str]) 
     agent = replace(trajectory.agent, tool_definitions=tuple(definitions.values()))
     record = _without_none(asdict(replace(trajectory, agent=agent)))
     (case_dir / "trajectory.json").write_text(json.dumps(record, indent=2, default=str))
+
+
+_DATA_IMAGE = re.compile(r"data:image/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=]+)")
+
+
+def _write_seen_images(case_dir: Path, trajectory: Trajectory) -> None:
+    """Every image the model saw, as ``seen/s<step>-<n>.<ext>`` beside the trajectory.
+
+    An image first sent with a model call's request came from the step before it
+    (the tool call that read it, or the prompt), so it is filed under that step.
+    """
+    sent: set[str] = set()
+    previous = 0
+    for step in trajectory.steps:
+        if step.extra is None:
+            previous = step.step_id
+            continue
+        try:
+            text = step.extra.request.read_text()
+        except OSError:
+            continue
+        index = 0
+        for kind, data in _DATA_IMAGE.findall(text):
+            if data in sent:
+                continue
+            sent.add(data)
+            seen = case_dir / "seen"
+            seen.mkdir(exist_ok=True)
+            ext = "jpg" if kind in ("jpeg", "jpg") else kind
+            (seen / f"s{previous}-{index}.{ext}").write_bytes(base64.b64decode(data))
+            index += 1
+        previous = step.step_id
 
 
 def _without_none(value: Any) -> Any:

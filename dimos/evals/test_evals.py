@@ -20,6 +20,7 @@ stub, and runner environments implement the same lifecycle as real environments.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable, Sequence
 from datetime import datetime
 import json
@@ -56,7 +57,7 @@ from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.live import LiveEnvironment
 from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.evals.module import list_agents
-from dimos.evals.runner import EvalRunner, forbidden_call, summarize
+from dimos.evals.runner import EvalRunner, _write_seen_images, forbidden_call, summarize
 from dimos.evals.scorers import (
     choice,
     exact,
@@ -782,6 +783,33 @@ def test_runner_gives_the_agent_only_agent_artifacts(tmp_path: Path) -> None:
     case = EvalCase(id="c", inputs="x", environment=WithAnswers(tmp_path, []), grade=grade)
     EvalRunner(out_dir=tmp_path).run([case], Looking(answer="ok"))
     assert seen == {"agent": {"recording"}, "grader": {"recording", "answers"}}
+
+
+def test_seen_images_are_saved_under_the_step_that_read_them(tmp_path: Path) -> None:
+    prompt_image, frame = base64.b64encode(b"prompt").decode(), base64.b64encode(b"f1").decode()
+    raw = tmp_path / "raw"
+    raw.mkdir()
+
+    def request(name: str, *images: str) -> Path:
+        parts = [
+            {"type": "input_image", "image_url": f"data:image/jpeg;base64,{i}"} for i in images
+        ]
+        (raw / name).write_text(json.dumps({"body": {"input": parts}}))
+        return raw / name
+
+    builder = TrajectoryBuilder("look", name="fake", model="m")
+    builder.step(message="", request=request("001-request.json", prompt_image), response=raw / "r")
+    builder.step(
+        message="", request=request("002-request.json", prompt_image, frame), response=raw / "r"
+    )
+    builder.step(
+        message="two", request=request("003-request.json", prompt_image, frame), response=raw / "r"
+    )
+    _write_seen_images(tmp_path, builder.build("answer"))
+    assert {p.name: p.read_bytes() for p in (tmp_path / "seen").iterdir()} == {
+        "s1-0.jpg": b"prompt",  # sent with the prompt
+        "s2-0.jpg": b"f1",  # read by step 2's tool call, first sent with step 3's request
+    }
 
 
 def test_recording_helper_opens_the_artifact(dataset: str) -> None:
