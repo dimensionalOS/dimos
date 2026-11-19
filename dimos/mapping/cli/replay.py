@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 from dimos.memory.utils.progress import progress
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
@@ -225,8 +226,10 @@ def main(
 
         print(store.summary())
 
+        window = RecordingWindow.from_store(store, seek, duration)
+
         def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
-            return store.stream(name, ptype).from_time(seek or None).to_time(duration)
+            return window.apply(store.stream(name, ptype))
 
         lidar = clipped("lidar", PointCloud2)
         color_image = clipped("color_image", Image)
