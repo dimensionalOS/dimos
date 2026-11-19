@@ -511,3 +511,49 @@ def test_a_tool_call_the_mcp_server_never_answers_does_not_stop_the_agent(
     assert isinstance(result, ToolMessage)
     assert (result.tool_call_id, result.status) == ("c1", "error")
     assert note.content == "This turn failed with ConnectionError: MCP server unreachable"
+
+
+class _AnswersGraph:
+    """Fake agent graph that streams `turn` for every message."""
+
+    def __init__(self, *turn: BaseMessage) -> None:
+        self.turn = turn
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        for message in self.turn:
+            yield {"model": {"messages": [message]}}
+
+
+def test_infer_returns_the_final_answer_of_its_turn(
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _AnswersGraph(
+        AIMessage(content="", tool_calls=[_call("add", "c1", x=1, y=2)]),
+        ToolMessage(content="3", tool_call_id="c1"),
+        AIMessage(content=[{"type": "text", "text": "It is "}, {"type": "text", "text": "3."}]),
+    )
+    monkeypatch.setattr(mcp_client, "_state_graph", graph)
+
+    assert mcp_client.infer("what is 1 + 2?") == "It is 3."
+    assert mcp_client._history[0].content == "what is 1 + 2?"
+    assert mcp_client._waiters == {}
+
+
+def test_infer_raises_when_its_turn_fails(
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_client, "_state_graph", _FailsOnceGraph([]))
+
+    with pytest.raises(RuntimeError, match="TimeoutError: LLM API timed out"):
+        mcp_client.infer("first")
+    assert mcp_client.infer("second") == "done"
+
+
+def test_infer_gives_up_when_the_turn_does_not_end(mcp_client: Agent) -> None:
+    mcp_client.config.infer_timeout_s = 0.05
+
+    with pytest.raises(TimeoutError, match="did not end within"):
+        mcp_client.infer("nobody is listening")
+    assert mcp_client._waiters == {}

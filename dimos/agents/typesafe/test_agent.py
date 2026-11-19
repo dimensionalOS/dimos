@@ -22,7 +22,7 @@ from reactivex import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.agents.typesafe.agent import TypeSafeAgent
-from dimos.agents.typesafe.types import Answers, Question, noul
+from dimos.agents.typesafe.types import Answers, Question, SystemOneRequest, noul
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.stream import In
 from dimos.core.transport import pLCMTransport
@@ -92,3 +92,13 @@ def test_trigger_drives_inference_and_answers_publish_by_type(
         time.sleep(0.02)
     assert published[0]["urgent"]["noul"] == 0.9  # type: ignore[typeddict-item]
     assert a.seen[0][0] == {"text": "fix this ASAP"}  # type: ignore[attr-defined]
+
+
+def test_infer_answers_one_request(
+    agent: tuple[EchoAgent, list[Answers], threading.Event],
+) -> None:
+    a, _, _ = agent
+    request = SystemOneRequest({"text": "reply ASAP"}, {"urgent": noul("Is `text` urgent?")})
+
+    assert a.infer(request) == {"urgent": {"type": "noul", "noul": 0.9}}
+    assert EchoAgent.input_type is SystemOneRequest

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -96,9 +97,11 @@ class AgentConfig(ModuleConfig):
     # None: the McpServer in this blueprint; without one the agent has no tools.
     mcp_server_url: str | None = None
     trace_dir: Path | None = None
+    # How long infer() waits for its turn to end.
+    infer_timeout_s: float = 600.0
 
 
-class Agent(BaseAgent):
+class Agent(BaseAgent[str, str]):
     config: AgentConfig
 
     # Injected when the blueprint has an McpServer.
@@ -110,6 +113,7 @@ class Agent(BaseAgent):
     _agent_tools: list[StructuredTool] | None
     _tool_registry: dict[str, dict[str, Any]]
     _history: list[BaseMessage]
+    _waiters: dict[int, Future[str]]
     _thread: Thread
     _stop_event: Event
     _http_client: requests.Session
@@ -124,6 +128,7 @@ class Agent(BaseAgent):
         self._agent_tools = None
         self._tool_registry = {}
         self._history = []
+        self._waiters = {}
         self._thread = Thread(
             target=self._thread_loop,
             name=f"{self.__class__.__name__}-thread",
@@ -337,6 +342,26 @@ class Agent(BaseAgent):
         self._message_queue.put(message)
 
     @rpc
+    def infer(self, x: str) -> str:
+        """Run one turn on x and return the agent's final answer.
+
+        The turn goes through the same queue as human_input, so it is published on
+        the agent stream like any other. A failed turn raises RuntimeError.
+        """
+        message = HumanMessage(content=x)
+        answer: Future[str] = Future()
+        self._waiters[id(message)] = answer
+        self._message_queue.put(message)
+        try:
+            return answer.result(timeout=self.config.infer_timeout_s)
+        except FutureTimeoutError:
+            raise TimeoutError(
+                f"Agent turn did not end within {self.config.infer_timeout_s} s"
+            ) from None
+        finally:
+            self._waiters.pop(id(message), None)
+
+    @rpc
     def dispatch_continuation(
         self, continuation: dict[str, Any], continuation_context: dict[str, Any]
     ) -> None:
@@ -413,6 +438,7 @@ class Agent(BaseAgent):
         self.agent_idle.publish(False)
         turn_start = len(self._history)
         self._record(message)
+        failure: str | None = None
 
         try:
             for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
@@ -445,6 +471,13 @@ class Agent(BaseAgent):
                 )
             )
 
+        waiter = self._waiters.pop(id(message), None)
+        if waiter is not None:
+            if failure is None:
+                waiter.set_result(_final_answer(self._history[turn_start + 1 :]))
+            else:
+                waiter.set_exception(RuntimeError(f"Agent turn failed with {failure}"))
+
         if self._message_queue.empty():
             self.agent_idle.publish(True)
 
@@ -452,6 +485,21 @@ class Agent(BaseAgent):
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
+
+
+def _final_answer(turn: list[BaseMessage]) -> str:
+    """The text of the turn's last assistant message, "" if it has none."""
+    for message in reversed(turn):
+        if isinstance(message, AIMessage):
+            content = message.content
+            if isinstance(content, str):
+                return content
+            return "".join(
+                block if isinstance(block, str) else str(block.get("text", ""))
+                for block in content
+                if isinstance(block, str) or block.get("type") == "text"
+            )
+    return ""
 
 
 def _unanswered_tool_calls(messages: list[BaseMessage]) -> Iterator[str]:

@@ -21,6 +21,7 @@ trigger update, or on the latest snapshot at `max_hz` when set.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -39,7 +40,14 @@ from dimos.agents.typesafe.constants import (
     DEFAULT_MODEL,
     REQUEST_TIMEOUT_S,
 )
-from dimos.agents.typesafe.types import Answers, ChoiceAnswer, NoulAnswer, Question, ScoreAnswer
+from dimos.agents.typesafe.types import (
+    Answers,
+    ChoiceAnswer,
+    NoulAnswer,
+    Question,
+    ScoreAnswer,
+    SystemOneRequest,
+)
 from dimos.constants import LOG_DIR
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
@@ -61,7 +69,7 @@ class TypeSafeAgentConfig(ModuleConfig):
     trace: bool = False  # raw request/response pairs under the run's log dir
 
 
-class TypeSafeAgent(BaseAgent):
+class TypeSafeAgent(BaseAgent[SystemOneRequest, Answers]):
     config: TypeSafeAgentConfig
 
     choices: Out[dict[str, ChoiceAnswer]]
@@ -122,16 +130,21 @@ class TypeSafeAgent(BaseAgent):
         state = self.state(trigger)
         if state is None:
             return
-        qs = self.questions(state)
-        answers = self._post(state, qs)
-        if self.config.trace:
-            self._trace(state, qs, answers)
+        answers = self.infer(SystemOneRequest(state, self.questions(state)))
         self.choices.publish({k: a for k, a in answers.items() if a["type"] == "choice"})
         self.scores.publish({k: a for k, a in answers.items() if a["type"] == "score"})
         self.nouls.publish({k: a for k, a in answers.items() if a["type"] == "noul"})
         self.on_answers(state, answers)
 
-    def _post(self, state: object, qs: dict[str, Question]) -> Answers:
+    @rpc
+    def infer(self, x: SystemOneRequest) -> Answers:
+        """Ask x.questions about x.state: one System One request."""
+        answers = self._post(x.state, x.questions)
+        if self.config.trace:
+            self._trace(x.state, x.questions, answers)
+        return answers
+
+    def _post(self, state: object, qs: Mapping[str, Question]) -> Answers:
         """`POST /v1/systemone`. A failure skips this tick; the next trigger asks again."""
         r = self._session.post(
             os.environ.get(BASE_URL_ENV, DEFAULT_BASE_URL) + "/v1/systemone",
@@ -142,7 +155,7 @@ class TypeSafeAgent(BaseAgent):
         answers: Answers = r.json()["answers"]
         return answers
 
-    def _trace(self, state: object, qs: dict[str, Question], answers: Answers) -> None:
+    def _trace(self, state: object, qs: Mapping[str, Question], answers: Answers) -> None:
         d = Path(os.environ.get("DIMOS_RUN_LOG_DIR", LOG_DIR)) / "typesafe"
         d.mkdir(parents=True, exist_ok=True)
         self._seq += 1

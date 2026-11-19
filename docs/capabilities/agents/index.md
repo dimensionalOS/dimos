@@ -50,6 +50,34 @@ arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
 
 The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools. A blueprint with no `McpServer` and no `mcp_server_url` gives the agent no tools.
 
+### Input and output types
+
+Every agent subclasses `BaseAgent[Input, Output]` and answers `infer(x: Input) -> Output`, which is also an RPC. The types are kept on the class:
+
+```python skip
+from dimos.agents.agent import Agent
+
+Agent.input_type, Agent.output_type   # (str, str)
+Agent.accepts("walk to the door")     # True
+app.get_module("Agent").infer("what do you see?")
+```
+
+An input with several parts is one dataclass:
+
+```python skip
+@dataclass(frozen=True)
+class RobotQuery:
+    state: JointState
+    odom: Odometry
+    command: str
+
+class RobotAgent(BaseAgent[RobotQuery, str]):
+    @rpc
+    def infer(self, x: RobotQuery) -> str: ...
+```
+
+A subclass that names no types raises `TypeError` when it is defined.
+
 ## Skills
 
 Skills are methods decorated with `@skill` on any `Module`. The agent discovers them automatically at startup.
