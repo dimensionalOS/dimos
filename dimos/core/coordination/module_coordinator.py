@@ -62,7 +62,7 @@ from dimos.spec.utils import (
 )
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.safe_thread_map import safe_thread_map
+from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
@@ -1093,7 +1093,7 @@ def _deploy_all_modules(
     # Every base's own check (so mixins each keep theirs), and each distinct function once.
     checkers = list(
         dict.fromkeys(
-            base.blueprint_checks
+            vars(base)["blueprint_checks"]
             for atom in atoms
             for base in atom.module.__mro__
             if "blueprint_checks" in vars(base)
