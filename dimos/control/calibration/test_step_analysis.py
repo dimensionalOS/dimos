@@ -220,23 +220,37 @@ def test_propose_gains_prefers_the_faster_kd_at_equal_kp_and_reports_none_passin
     assert "no candidate passed" in none.reason and "kp=300 kd=1" in none.rejected
 
 
-def test_a_non_finite_metric_fails_the_step_and_its_gains() -> None:
+def test_a_non_finite_sample_or_metric_fails_the_step_and_its_gains() -> None:
     t, y, dy = _first_order(1.0, 0.05)
     dy = dy.copy()
     dy[-3] = np.nan  # one velocity sample lost in the rest window
     metrics = analyze_step(_event(1.0, joint="j"), t, y, dy)
-    assert math.isnan(metrics.buzz_rms_deg_s)
+    assert math.isfinite(metrics.buzz_rms_deg_s)
+    assert metrics.samples == t.size - 1 and metrics.nonfinite_samples == 1
     assert not metrics.passed
-    assert metrics.failures() == ["+1 deg step metric buzz_rms_deg_s is not finite"]
+    assert metrics.failures() == ["+1 deg step has 1 non-finite sample(s)"]
     assert metrics.as_row()["passed"] is False
     t_neg, y_neg, dy_neg = _first_order(-1.0, 0.05)
     other_direction = analyze_step(_event(-1.0, joint="j"), t_neg, y_neg, dy_neg)
     assert other_direction.passed
     proposal = propose_gains([metrics, other_direction])["j"]
     assert proposal.gains is None
-    assert "not finite" in proposal.rejected["kp=80 kd=5"]
+    assert "non-finite sample" in proposal.rejected["kp=80 kd=5"]
     overshoot = replace(other_direction, overshoot_pct=math.inf)
     assert overshoot.failures() == ["-1 deg step metric overshoot_pct is not finite"]
+
+
+def test_a_non_finite_sample_cannot_hide_an_overshoot() -> None:
+    t, y, dy = _second_order(3.0, wn=30.0, zeta=0.3)
+    clean = analyze_step(_event(3.0), t, y, dy)
+    y = y.copy()
+    y[5] = np.nan
+    metrics = analyze_step(_event(3.0), t, y, dy)
+    assert metrics.overshoot_pct == pytest.approx(clean.overshoot_pct) and clean.overshoot_pct > 30
+    assert metrics.settle_time_s == clean.settle_time_s
+    failures = metrics.failures()
+    assert failures[0] == "+3 deg step has 1 non-finite sample(s)"
+    assert any("overshot" in reason for reason in failures)
 
 
 def test_a_hold_cut_short_fails_the_step() -> None:
