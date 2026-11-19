@@ -32,7 +32,6 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
-from reactivex.disposable import Disposable
 import requests
 
 from dimos.agents.base_agent import BaseAgent
@@ -285,8 +284,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     def start(self) -> None:
         super().start()
 
-        self.register_disposable(Disposable(self.agent_input.subscribe(self._message_queue.put)))
-
         # Subscribe directly over LCM rather than through the server's GET
         # /mcp SSE channel.  HTTP would add a startup race: the first few
         # updates of a short-lived stream can fire before the SSE connection
@@ -356,6 +353,9 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             self.config.trace_dir = Path(path) if path is not None else None
             if self._state_graph is not None:
                 self._rebuild_agent()
+
+    def _on_agent_input(self, x: HumanMessage) -> None:
+        self._message_queue.put(x)
 
     @rpc
     def add_message(self, message: BaseMessage) -> None:
