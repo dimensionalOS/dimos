@@ -57,12 +57,12 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
     make_xarm_model_config,
+    xarm_link_frames,
     xarm_model,
     xarm_wrist_camera_transform,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
-from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 SIMULATED = bool(global_config.simulation)
 
@@ -131,8 +131,9 @@ def _sensing(simulated: bool) -> tuple[Blueprint, ...]:
         )
     return (
         # enable_pointcloud is off by default here too, and the voxel chain has
-        # nothing to map without it.
-        RealSenseCamera.blueprint(enable_pointcloud=True),
+        # nothing to map without it. Points deeper than 1.2 m are mostly noisy
+        # floor; everything within the arm's reach is closer.
+        RealSenseCamera.blueprint(enable_pointcloud=True, depth_trunc_m=1.2),
     )
 
 
@@ -182,9 +183,9 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlue
             robot_type=robot_type,
             robot="arm",
             base_pose=PoseStamped(frame_id="world"),
-            tf_extra_links=[f"link{dof}"],
+            tf_extra_links=xarm_link_frames(dof),
         )
-        self_filter_model = xarm_model(arm, robot="arm")
+        self_filter_model = xarm_model(arm, gripper="xarm", robot="arm")
         control = xarm_coordinator(arm)
     return (
         ManipulationModule.blueprint(
@@ -202,11 +203,12 @@ def _grasp_modules(arm: XArmType, simulated: bool) -> tuple[Blueprint | MetaBlue
         # Finds the objects pick_object takes by id, and the dense scene its contact check needs.
         ManipulationLocalize.blueprint(world_frame="world"),
         manipulation_mapping(
-            # Filter only the arm; gripper returns may remain in the map.
+            # In sim only the arm is filtered; gripper returns may remain in the map.
             self_filter_model=self_filter_model,
             voxel_size=XARM_GRASP_VOXEL_SIZE,
+            # Tabletop scale: cells more than 5 cm in front of a surface can be cleared.
+            grace_depth=0.05,
         ),
-        RerunBridgeModule.blueprint(),
         control,
     )
 

@@ -16,7 +16,7 @@ dimos run xarm-grasp-graspgenx --simulation mujoco               # the room scen
 ```
 
 On hardware the arm is driven through `XArmConnection` and needs its address, from the flag above or `XARMCONNECTION__IP`. With `--simulation` everything runs in MuJoCo.
-`xarm6-grasp` and `xarm6-grasp-graspgenx` are the same stack on an xArm6, on hardware only; its wrist-camera mount reuses the xArm7's calibration.
+`xarm6-grasp` and `xarm6-grasp-graspgenx` are the same stack on an xArm6, on hardware only; its wrist-camera mount uses a hand-eye calibration of the xArm6 kit mount.
 `xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
 top; drive those with `dimos agent-send "..."`.
 
@@ -25,7 +25,7 @@ The first launch prepares its isolated Python 3.12 environment and downloads the
 checkpoints. Runtime sources come from the development checkout or the shared
 repository clone used by installed dimOS.
 
-To show the MuJoCo window with Rerun disabled:
+To show the MuJoCo window:
 
 ```bash
 MUJOCO_GL=glfw dimos --viewer none run xarm-grasp-graspgenx \

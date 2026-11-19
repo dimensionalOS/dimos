@@ -19,10 +19,9 @@ use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_flags,
-    emit_points_ungated, emit_points_ungated_flags, global_normal_fits, global_normals,
-    seed_points, seed_tile, update_map, ChunkKey, Config, Cylinder, FrameHits, LocalBounds,
-    VoxelKey, VoxelMap,
+    batch_local_bounds, chunk_points, emit_global_points, emit_points, emit_points_fine,
+    emit_points_flags, global_normal_fits, global_normals, seed_points, seed_tile, update_map,
+    ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelKey, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -198,15 +197,27 @@ impl Mapper {
     }
 
     /// All healthy voxel centers plus this frame's live voxels, flat triples.
+    /// `support_global` and `global_min_health` thin it.
     pub fn global_points(&self) -> Vec<f32> {
-        self.pool
-            .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
+        self.global(false)
     }
 
     /// `global_points` as flat (x, y, z, flags) quads.
     pub fn global_points_flags(&self) -> Vec<f32> {
+        self.global(true)
+    }
+
+    fn global(&self, with_flags: bool) -> Vec<f32> {
+        let c = &self.config;
         self.pool.install(|| {
-            emit_points_ungated_flags(&self.map, self.config.voxel_size, &self.live.coarse)
+            emit_global_points(
+                &self.map,
+                c.voxel_size,
+                &self.live.coarse,
+                c.support_global,
+                c.global_min_health,
+                with_flags,
+            )
         })
     }
 
@@ -314,6 +325,8 @@ mod tests {
             graze_cos: 0.5,
             graze_recent_frames: u32::MAX,
             support_min: 0,
+            support_global: false,
+            global_min_health: 0,
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
@@ -453,13 +466,32 @@ mod tests {
         assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5)]), 0);
     }
 
-    /// local_points applies the support gate. global_points stays unfiltered.
+    /// local_points applies the support gate. global_points does only with support_global.
+    /// With global_min_health 1 a voxel stays out of the global map until a second hit.
+    #[test]
+    fn global_min_health_waits_for_second_hit() {
+        let mut mapper = Mapper::new(Config {
+            min_health: -1,
+            max_health: 5,
+            global_min_health: 1,
+            ..config()
+        });
+        mapper.add_frame_world(vec![(5.5, 0.5, 0.5)], (0.0, 0.0, 0.0));
+        assert!(
+            mapper.global_points().is_empty(),
+            "one hit is not an obstacle"
+        );
+        mapper.add_frame_world(vec![(5.5, 0.5, 0.5)], (0.0, 0.0, 0.0));
+        assert_eq!(mapper.global_points(), vec![5.5, 0.5, 0.5]);
+    }
+
     #[test]
     fn local_points_apply_support_gate() {
         let cfg = Config {
             support_min: 3,
             ..config()
         };
+        let cfg_copy = cfg.clone();
         let mut mapper = Mapper::new(cfg);
         let mut cloud: Vec<Point> = Vec::new();
         for x in 0..3 {
@@ -484,6 +516,17 @@ mod tests {
             "isolated seed gated out"
         );
         assert_eq!(mapper.global_points().len(), 30);
+
+        let mut gated = Mapper::new(Config {
+            support_global: true,
+            ..cfg_copy
+        });
+        assert_eq!(gated.seed_points(&cloud), 10);
+        assert_eq!(
+            gated.global_points().len(),
+            27,
+            "support_global gates the global map"
+        );
     }
 
     #[test]
