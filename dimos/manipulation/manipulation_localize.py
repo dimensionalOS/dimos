@@ -323,8 +323,8 @@ class ManipulationLocalize(PerceptionLocalize):
         self._box_filter.set_box(SURFACE, cut_pose, Vector3(*cut_size))
         return (
             f"surface added: top at z={platform['height']:.3f} m in {self.rig.world_frame}, "
-            f"{box_size[0]:.2f} x {box_size[1]:.2f} m round the arm's base; the voxel map "
-            f"cells under it are cut. Surfaces seen: {heights}; for another, "
+            f"{box_size[0]:.2f} x {box_size[1]:.2f} m round the arm's base; its own voxel "
+            f"map cells are cut. Surfaces seen: {heights}; for another, "
             f"call add_surface(height=...)"
         )
 
