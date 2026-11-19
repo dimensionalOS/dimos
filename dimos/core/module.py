@@ -116,12 +116,6 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
-def stack_frame_id_prefix(config: dict[str, Any], prefix: str) -> dict[str, Any]:
-    """For a config that declares ``frame_id_prefix``: each namespace stacks onto it, ``prefix/old``."""
-    frame_id_prefix = config.get("frame_id_prefix")
-    return {"frame_id_prefix": f"{prefix}/{frame_id_prefix}" if frame_id_prefix else prefix}
-
-
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT

@@ -164,7 +164,7 @@ def test_fleet_blueprint(fleet_coordinator: ModuleCoordinator):
     assert sensor0.get_sensitivity() == 2.0
     assert sensor1.get_sensitivity() == 1.0
 
-    # Only frames a module declares as local (TfModule, its own frame_id_prefix) are namespaced.
+    # Only frames a TfModule declares as local are namespaced.
     assert sensor0.get_frame_id() == "Sensor"
 
     # Directed wiring: the shared commander drives only robot0.

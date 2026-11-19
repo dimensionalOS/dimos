@@ -35,8 +35,9 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig, stack_frame_id_prefix
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.encode.cbor import decode, encode
@@ -433,29 +434,20 @@ def test_namespace_nesting_composes() -> None:
     assert blueprint.remapping_map[("fleet/robot0/modulea", "data1")] == "fleet/robot0/data1"
 
 
-class FramePrefixedConfig(ModuleConfig):
-    frame_id_prefix: str | None = None
+class FramePrefixedConfig(TfModuleConfig):
+    tf_frames_local: dict[str, str] = {"body": "base_link"}
 
 
-class FramePrefixed(Module):
+class FramePrefixed(TfModule):
     config: FramePrefixedConfig
 
-    @classmethod
-    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return {
-            **super().handle_blueprint_namespace(config, prefix=prefix),
-            **stack_frame_id_prefix(config, prefix),
-        }
 
-
-def test_namespace_stacks_a_declared_frame_id_prefix() -> None:
+def test_namespace_stacks_local_tf_frames() -> None:
     nested = FramePrefixed.blueprint().namespace("robot0").namespace("fleet")
-    assert nested.blueprints[0].kwargs["frame_id_prefix"] == "fleet/robot0"
+    assert nested.blueprints[0].kwargs["tf_frames_local"] == {"body": "fleet/robot0/base_link"}
 
-    user_set = FramePrefixed.blueprint(frame_id_prefix="custom").namespace("robot0")
-    assert user_set.blueprints[0].kwargs["frame_id_prefix"] == "robot0/custom"
-
-    assert "frame_id_prefix" not in ModuleA.blueprint().namespace("robot0").blueprints[0].kwargs
+    user_set = FramePrefixed.blueprint(tf_frames_local={"body": "custom"}).namespace("robot0")
+    assert user_set.blueprints[0].kwargs["tf_frames_local"] == {"body": "robot0/custom"}
 
 
 def test_namespace_allows_duplicate_module_classes() -> None:
