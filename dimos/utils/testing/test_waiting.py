@@ -15,6 +15,7 @@
 import pytest
 
 from dimos.utils.testing import waiting
+from dimos.utils.testing.waiting import DEFAULT_TIMEOUT
 
 
 def test_wait_until_observes_condition_after_late_wakeup(mocker):
@@ -29,7 +30,7 @@ def test_wait_until_observes_condition_after_late_wakeup(mocker):
     clock.sleep.side_effect = wake_late
 
     # The condition becomes true at t=1, but the next poll only runs at t=3.
-    waiting.wait_until(lambda: now >= 1.0, timeout=2.0)
+    waiting.wait_until(lambda: now >= 1.0, timeout=DEFAULT_TIMEOUT)
     clock.sleep.assert_called_once()
 
 

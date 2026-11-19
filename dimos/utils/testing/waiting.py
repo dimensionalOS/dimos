@@ -18,6 +18,8 @@ from collections.abc import Callable
 import threading
 import time
 
+DEFAULT_TIMEOUT = 2.0
+
 
 def wait_until(
     predicate: Callable[[], bool],
