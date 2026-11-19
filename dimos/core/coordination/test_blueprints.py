@@ -404,8 +404,15 @@ def test_namespace_keeps_only_the_tf_stream_global() -> None:
         == "fleet/robot0/detected_tf"
     )
 
-    private = TfPublisher.blueprint().namespace("robot0", expose=())
+    exposed = TfPublisher.blueprint().namespace("robot0", expose={"detected_tf"})
+    assert ("robot0/tfpublisher", "tf") not in exposed.remapping_map
+    assert ("robot0/tfpublisher", "detected_tf") not in exposed.remapping_map
+
+    private = TfPublisher.blueprint().namespace("robot0", only_expose=())
     assert private.remapping_map[("robot0/tfpublisher", "tf")] == "robot0/tf"
+
+    with pytest.raises(ValueError, match="not both"):
+        TfPublisher.blueprint().namespace("robot0", expose={"tf"}, only_expose=())
 
 
 def test_namespace_expose_typo_raises() -> None:

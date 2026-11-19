@@ -49,7 +49,7 @@ else:
 
 logger = setup_logger()
 
-# Streams ``Blueprint.namespace`` leaves global unless *expose* says otherwise.
+# Streams ``Blueprint.namespace`` always leaves global, unless *only_expose* replaces them.
 DEFAULT_UNPREFIXED_STREAMS: tuple[str, ...] = ("tf",)
 
 
@@ -226,7 +226,11 @@ class BlueprintProtocol(Protocol):
     ) -> Self: ...
 
     def namespace(
-        self, prefix: str, *, expose: Iterable[str] = DEFAULT_UNPREFIXED_STREAMS
+        self,
+        prefix: str,
+        *,
+        expose: Iterable[str] = (),
+        only_expose: Iterable[str] | None = None,
     ) -> Self: ...
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self: ...
@@ -374,7 +378,13 @@ class Blueprint(BlueprintProtocol):
             )
         return names[0] if names else module.name
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = DEFAULT_UNPREFIXED_STREAMS) -> Self:
+    def namespace(
+        self,
+        prefix: str,
+        *,
+        expose: Iterable[str] = (),
+        only_expose: Iterable[str] | None = None,
+    ) -> Self:
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
         Instance names, stream names (and so their topics), and RPC topics all get
@@ -384,16 +394,15 @@ class Blueprint(BlueprintProtocol):
 
         Stream names listed in *expose* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
-        namespace boundary. *expose* defaults to ``DEFAULT_UNPREFIXED_STREAMS`` (``tf``),
-        so every robot's transforms share one tf tree (their frame ids are namespaced
-        instead); pass an *expose* without ``"tf"`` to namespace tf too:
+        namespace boundary. *expose* adds to ``DEFAULT_UNPREFIXED_STREAMS`` (``tf``), so
+        every robot's transforms share one tf tree (their frame ids are namespaced
+        instead). *only_expose* replaces the defaults, e.g. ``only_expose=()`` namespaces
+        tf too:
 
             fleet = autoconnect(
                 AggregateMapper.blueprint(),  # shared: sees every robot's pointcloud
                 *[
-                    GO2Connection.blueprint(ip=ip).namespace(
-                        f"robot{i}", expose={*DEFAULT_UNPREFIXED_STREAMS, "pointcloud"}
-                    )
+                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
                     for i, ip in enumerate(ips)
                 ],
             )
@@ -404,7 +413,12 @@ class Blueprint(BlueprintProtocol):
                 f"(nest namespaces by composition, not with '/')."
             )
 
-        expose_set = frozenset(expose)
+        listed = frozenset(expose)
+        expose_set = listed | frozenset(DEFAULT_UNPREFIXED_STREAMS)
+        if only_expose is not None:
+            if listed:
+                raise ValueError("pass expose or only_expose, not both")
+            listed = expose_set = frozenset(only_expose)
 
         effective_names = set()
         for atom in self.blueprints:
@@ -413,8 +427,8 @@ class Blueprint(BlueprintProtocol):
                 if isinstance(effective, str):
                     effective_names.add(effective)
 
-        # Default-exposed streams may be absent without it being a typo.
-        unknown = expose_set - effective_names - set(DEFAULT_UNPREFIXED_STREAMS)
+        # A default stream may be absent; a name the caller listed must exist.
+        unknown = listed - effective_names
         if unknown:
             raise ValueError(
                 f"expose names {sorted(unknown)} do not match any stream in the "
@@ -593,8 +607,19 @@ class MetaBlueprint(BlueprintProtocol):
     ) -> Self:
         return self._defer(Blueprint.remappings, tuple(remappings))
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = DEFAULT_UNPREFIXED_STREAMS) -> Self:
-        return self._defer(Blueprint.namespace, prefix, expose=tuple(expose))
+    def namespace(
+        self,
+        prefix: str,
+        *,
+        expose: Iterable[str] = (),
+        only_expose: Iterable[str] | None = None,
+    ) -> Self:
+        return self._defer(
+            Blueprint.namespace,
+            prefix,
+            expose=tuple(expose),
+            only_expose=None if only_expose is None else tuple(only_expose),
+        )
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self:
         return self._defer(Blueprint.requirements, *checks)
