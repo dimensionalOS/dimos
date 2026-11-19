@@ -414,7 +414,10 @@ def test_world_to_map_is_always_on_tf_beside_the_premap(module):
     m = module(map_frame="premap", tf_interval=3600.0)
     sent = []
     m.tf = SimpleNamespace(publish=sent.append)
-    m.register_disposable = lambda _: None
+    disposables = []
+    m.register_disposable = disposables.append
     m._start_tf()
+    for disposable in disposables:
+        disposable.dispose()
     edges = [(t.frame_id, t.child_frame_id) for msg in sent for t in msg.transforms]
     assert edges == [("world", "map")]
