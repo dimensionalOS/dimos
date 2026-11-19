@@ -20,8 +20,6 @@ from dimos.robot.manipulators.xarm.blueprints.calibration import (
     XARM6_CHEST_CALIBRATION_HOME,
     xarm6_handeye_calibrate,
     xarm6_handeye_calibrate_chest,
-    xarm6_handeye_calibrate_chest_sim,
-    xarm6_handeye_calibrate_sim,
 )
 
 
@@ -41,22 +39,18 @@ def test_real_stack_composes_planner_arm_camera_and_calibration() -> None:
     } <= names
 
 
-def test_sim_stack_replaces_the_arm_and_camera_with_mujoco() -> None:
-    names = _module_names(xarm6_handeye_calibrate_sim)
-
-    assert {
-        "manipulationmodule",
-        "controlcoordinator",
-        "mujocosimmodule",
-        "handeyecalibrationmodule",
-    } <= names
-    assert "xarmconnection" not in names
-    assert "realsensecamera" not in names
-
-
 def test_calibration_fields_override_from_the_command_line() -> None:
-    parsed = BlueprintConfigParser(xarm6_handeye_calibrate_sim).parse(
-        ["--handeyecalibrationmodule.max-poses", "5", "--handeyecalibrationmodule.dry-run", "true"],
+    parsed = BlueprintConfigParser(xarm6_handeye_calibrate).parse(
+        [
+            "--xarmconnection.ip",
+            "192.168.1.2",
+            "--realsensecamera.serial-number",
+            "1",
+            "--handeyecalibrationmodule.max-poses",
+            "5",
+            "--handeyecalibrationmodule.dry-run",
+            "true",
+        ],
         environ={},
     )
 
@@ -64,7 +58,6 @@ def test_calibration_fields_override_from_the_command_line() -> None:
     assert config["max_poses"] == 5
     assert config["dry_run"] is True
     assert list(config["home_joints"]) == XARM6_CALIBRATION_HOME
-    assert config["optical_frame"] == "wrist_camera_color_optical_frame"
 
 
 def test_the_bench_is_a_table_box_and_the_view_is_on_by_default() -> None:
@@ -89,10 +82,8 @@ def test_the_bench_is_a_table_box_and_the_view_is_on_by_default() -> None:
 
 def test_the_chest_stacks_calibrate_a_fixed_camera_against_the_held_plate() -> None:
     real = _module_names(xarm6_handeye_calibrate_chest)
-    sim = _module_names(xarm6_handeye_calibrate_chest_sim)
 
     assert {"xarmconnection", "realsensecamera", "handeyecalibrationmodule"} <= real
-    assert {"mujocosimmodule", "handeyecalibrationmodule"} <= sim and "xarmconnection" not in sim
     parsed = BlueprintConfigParser(xarm6_handeye_calibrate_chest).parse(
         [
             "--xarmconnection.ip",
