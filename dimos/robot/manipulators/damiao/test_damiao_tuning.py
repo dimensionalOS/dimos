@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from dimos.robot.manipulators.calibration._inertial import LinkInertial
+from dimos.control.calibration._inertial import LinkInertial
 from dimos.robot.manipulators.damiao import arm as arm_module
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
     TEST_ROBOT,

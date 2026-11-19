@@ -44,16 +44,16 @@ import numpy as np
 from numpy.typing import NDArray
 import pinocchio
 
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.calibration._inertial import (
+from dimos.control.calibration._inertial import (
     LinkInertial,
     apply_inertial_overrides,
 )
-from dimos.robot.manipulators.calibration.spec import (
+from dimos.control.calibration.spec import (
     DAMIAO_STOCK_TORQUE_LIMIT_NM,
     motor_rated_torque_nm,
     motor_torque_limit_nm,
 )
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.damiao.robot import (
     DamiaoBus,
     DamiaoMotor,

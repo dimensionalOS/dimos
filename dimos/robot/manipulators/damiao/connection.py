@@ -54,6 +54,22 @@ from reactivex.disposable import Disposable
 from typing_extensions import Self
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.calibration._inertial import LinkInertial
+from dimos.control.calibration.schema import (
+    ARMS_STATE_DIR,
+    ArmCalibration,
+    ArmCalibrationError,
+    RobotModelRef,
+    calibration_file,
+    calibration_path,
+    calibration_text,
+    check_arm_fits,
+    load_calibration,
+    merge_patch,
+    save_calibration,
+    to_inertial_overrides,
+)
+from dimos.control.calibration.spec import calibration_keys, model_name, model_sha256
 from dimos.control.connection.arm_config import (
     AppliedFile,
     ArmConfigState,
@@ -75,22 +91,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.calibration._inertial import LinkInertial
-from dimos.robot.manipulators.calibration.schema import (
-    ARMS_STATE_DIR,
-    ArmCalibration,
-    ArmCalibrationError,
-    RobotModelRef,
-    calibration_file,
-    calibration_path,
-    calibration_text,
-    check_arm_fits,
-    load_calibration,
-    merge_patch,
-    save_calibration,
-    to_inertial_overrides,
-)
-from dimos.robot.manipulators.calibration.spec import calibration_keys, model_name, model_sha256
 from dimos.robot.manipulators.damiao.arm import (
     MIT_KD_MAX,
     MIT_KP_MAX,
