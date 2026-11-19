@@ -49,6 +49,9 @@ else:
 
 logger = setup_logger()
 
+# Streams ``Blueprint.namespace`` leaves global unless *expose* says otherwise.
+DEFAULT_UNPREFIXED_STREAMS: tuple[str, ...] = ("tf",)
+
 
 class DisabledModuleProxy:
     def __init__(self, spec_name: str) -> None:
@@ -222,7 +225,9 @@ class BlueprintProtocol(Protocol):
         ],
     ) -> Self: ...
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ("tf",)) -> Self: ...
+    def namespace(
+        self, prefix: str, *, expose: Iterable[str] = DEFAULT_UNPREFIXED_STREAMS
+    ) -> Self: ...
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self: ...
 
@@ -369,7 +374,7 @@ class Blueprint(BlueprintProtocol):
             )
         return names[0] if names else module.name
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ("tf",)) -> Self:
+    def namespace(self, prefix: str, *, expose: Iterable[str] = DEFAULT_UNPREFIXED_STREAMS) -> Self:
         """Isolate this blueprint under a name prefix so several copies can coexist.
 
         Instance names, stream names (and so their topics), and RPC topics all get
@@ -379,14 +384,16 @@ class Blueprint(BlueprintProtocol):
 
         Stream names listed in *expose* are left unprefixed, so they connect
         globally by the usual (name, type) matching.  That is how data crosses the
-        namespace boundary. *expose* defaults to ``("tf",)``, so every robot's transforms
-        share one tf tree (their frame ids are namespaced instead); pass an *expose*
-        without ``"tf"`` to namespace tf too:
+        namespace boundary. *expose* defaults to ``DEFAULT_UNPREFIXED_STREAMS`` (``tf``),
+        so every robot's transforms share one tf tree (their frame ids are namespaced
+        instead); pass an *expose* without ``"tf"`` to namespace tf too:
 
             fleet = autoconnect(
                 AggregateMapper.blueprint(),  # shared: sees every robot's pointcloud
                 *[
-                    GO2Connection.blueprint(ip=ip).namespace(f"robot{i}", expose={"tf", "pointcloud"})
+                    GO2Connection.blueprint(ip=ip).namespace(
+                        f"robot{i}", expose={*DEFAULT_UNPREFIXED_STREAMS, "pointcloud"}
+                    )
                     for i, ip in enumerate(ips)
                 ],
             )
@@ -406,8 +413,8 @@ class Blueprint(BlueprintProtocol):
                 if isinstance(effective, str):
                     effective_names.add(effective)
 
-        # "tf" is exposed by default, so a blueprint without a tf stream isn't an error.
-        unknown = expose_set - effective_names - {"tf"}
+        # Default-exposed streams may be absent without it being a typo.
+        unknown = expose_set - effective_names - set(DEFAULT_UNPREFIXED_STREAMS)
         if unknown:
             raise ValueError(
                 f"expose names {sorted(unknown)} do not match any stream in the "
@@ -586,7 +593,7 @@ class MetaBlueprint(BlueprintProtocol):
     ) -> Self:
         return self._defer(Blueprint.remappings, tuple(remappings))
 
-    def namespace(self, prefix: str, *, expose: Iterable[str] = ("tf",)) -> Self:
+    def namespace(self, prefix: str, *, expose: Iterable[str] = DEFAULT_UNPREFIXED_STREAMS) -> Self:
         return self._defer(Blueprint.namespace, prefix, expose=tuple(expose))
 
     def requirements(self, *checks: Callable[[], str | None]) -> Self:
