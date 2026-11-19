@@ -133,7 +133,8 @@ class RustEventConfig(BaseModel):
     Every message on the ``trigger`` stream keeps all streams at full rate from
     ``pre_s`` before it to ``post_s`` after it. Outside clips, each stream keeps at
     most one message per its period. Messages wait in on-disk window segments until
-    no trigger can still claim them, so the artifact runs about a minute behind live.
+    no trigger can still claim them, so the artifact runs about ``pre_s + segment_s``
+    behind live.
     """
 
     kind: Literal["events"] = "events"
@@ -206,8 +207,8 @@ class RustRecorderConfig(NativeModuleConfig):
     """Configuration for :class:`RustRecorder`.
 
     Python owns artifact lifecycle and stream registration. The native process
-    receives only ``store``, ``encoding_threads``, ``mode``, and the internally
-    resolved ``streams`` list over stdin.
+    receives only ``store``, ``encoding_threads``, the internally resolved
+    ``streams`` list and the continuous ``mode`` over stdin.
     """
 
     executable: str = "result/bin/dimos-memory-recorder"
@@ -253,10 +254,6 @@ class RustRecorderConfig(NativeModuleConfig):
         ge=1,
         description="CPU workers for transport decoding and storage encoding.",
     )
-    mode: RustContinuousMode = Field(
-        default_factory=RustContinuousMode,
-        description="How observations reach the artifact.",
-    )
     streams: list[RustStreamSpec] = Field(
         default_factory=list,
         init=False,
@@ -273,6 +270,7 @@ class RustRecorderConfig(NativeModuleConfig):
         config = super().to_config_dict()
         # Older recorder binaries reject unknown stream fields, even null ones.
         config["streams"] = [stream.model_dump(exclude_none=True) for stream in self.streams]
+        config["mode"] = RustContinuousMode().model_dump()
         return config
 
 

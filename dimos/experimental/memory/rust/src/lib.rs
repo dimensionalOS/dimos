@@ -44,6 +44,8 @@ const IMAGE_PAYLOAD_TYPE: &str = "dimos.msgs.sensor_msgs.Image.Image";
 const QUEUE_CAPACITY: usize = 256;
 const WRITE_BATCH_SIZE: usize = 128;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+// Window segments store the stream index as a u16.
+const MAX_STREAMS: u64 = u16::MAX as u64;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -108,7 +110,7 @@ pub struct RecorderConfig {
     pub store: store::RecordingStoreConfig,
     #[validate(range(min = 1))]
     pub encoding_threads: usize,
-    #[validate(length(max = 65535))]
+    #[validate(length(max = MAX_STREAMS))]
     pub streams: Vec<StreamConfig>,
     #[validate(nested)]
     pub mode: RecordingMode,

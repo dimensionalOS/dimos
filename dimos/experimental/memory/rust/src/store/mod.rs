@@ -99,6 +99,12 @@ pub fn recover(
     compression_threads: usize,
     stored: &[u64],
 ) -> Result<Box<dyn RecordingStore>> {
+    anyhow::ensure!(
+        stored.len() == streams.len(),
+        "{} stored counts for {} streams",
+        stored.len(),
+        streams.len()
+    );
     match config {
         RecordingStoreConfig::Sqlite { path } => Ok(Box::new(
             sqlite::SqliteRecordingStore::recover(path, streams, stored)?,

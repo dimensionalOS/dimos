@@ -85,6 +85,15 @@ pub(crate) fn segment_indexes(dir: &Path) -> Result<Vec<u64>> {
     Ok(indexes)
 }
 
+/// Removes the manifest first, so a removal cut short leaves nothing recovery would act on.
+pub(crate) fn remove_window(dir: &Path) -> Result<()> {
+    let manifest = dir.join(MANIFEST_FILE);
+    fs::remove_file(&manifest)
+        .with_context(|| format!("failed to remove {}", manifest.display()))?;
+    sync_dir(dir)?;
+    fs::remove_dir_all(dir).with_context(|| format!("failed to remove {}", dir.display()))
+}
+
 pub(crate) fn sync_dir(dir: &Path) -> Result<()> {
     File::open(dir)
         .and_then(|directory| directory.sync_all())
@@ -191,13 +200,13 @@ impl SegmentReader {
     fn read_record(&mut self) -> Result<Option<Record>> {
         let mut header = [0; HEADER_SIZE];
         if self.remaining < HEADER_SIZE as u64 {
-            return Ok(self.stop());
+            return self.end();
         }
         self.file.read_exact(&mut header)?;
         let length = u32::from_le_bytes(header[..4].try_into()?) as usize;
         let record_size = (HEADER_SIZE + length + CRC_SIZE) as u64;
         if self.remaining < record_size {
-            return Ok(self.stop());
+            return self.end();
         }
         let mut data = vec![0; length];
         self.file.read_exact(&mut data)?;
@@ -207,7 +216,7 @@ impl SegmentReader {
         crc.update(&header);
         crc.update(&data);
         if crc.finalize() != u32::from_le_bytes(stored_crc) {
-            return Ok(self.stop());
+            return self.end();
         }
         self.remaining -= record_size;
         Ok(Some(Record {
@@ -220,9 +229,9 @@ impl SegmentReader {
     }
 
     /// Ends iteration at a torn or corrupt record.
-    fn stop(&mut self) -> Option<Record> {
+    fn end(&mut self) -> Result<Option<Record>> {
         self.remaining = 0;
-        None
+        Ok(None)
     }
 }
 

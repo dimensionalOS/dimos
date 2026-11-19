@@ -29,7 +29,7 @@ use crate::StreamConfig;
 
 pub struct McapRecordingStore {
     writer: Writer<BufWriter<File>>,
-    file: File,
+    sync_handle: File,
     channels: HashMap<String, u16>,
     sequences: HashMap<String, u32>,
     crashed: Option<PathBuf>,
@@ -175,7 +175,7 @@ impl McapRecordingStore {
         }
         Ok(Self {
             writer,
-            file: sync_handle,
+            sync_handle,
             channels,
             sequences: HashMap::new(),
             crashed: None,
@@ -232,13 +232,17 @@ impl RecordingStore for McapRecordingStore {
 
     fn sync(&mut self) -> Result<()> {
         self.writer.flush().context("failed to flush MCAP chunk")?;
-        self.file.sync_data().context("failed to sync MCAP")?;
+        self.sync_handle
+            .sync_data()
+            .context("failed to sync MCAP")?;
         Ok(())
     }
 
     fn finish(&mut self) -> Result<()> {
         self.writer.finish().context("failed to finalize MCAP")?;
-        self.file.sync_data().context("failed to sync MCAP")?;
+        self.sync_handle
+            .sync_data()
+            .context("failed to sync MCAP")?;
         if let Some(crashed) = self.crashed.take() {
             fs::remove_file(&crashed)
                 .with_context(|| format!("failed to delete {}", crashed.display()))?;

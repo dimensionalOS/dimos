@@ -30,7 +30,8 @@ use validator::{Validate, ValidationError};
 
 use crate::store::{Observation, RecordingStore, RecordingStoreConfig};
 use crate::window::{
-    sync_dir, ClosedSegment, Done, SegmentReader, SegmentWriter, Syncer, WindowManifest,
+    remove_window, sync_dir, ClosedSegment, Done, SegmentReader, SegmentWriter, Syncer,
+    WindowManifest,
 };
 use crate::{StreamConfig, WRITE_BATCH_SIZE};
 
@@ -97,6 +98,8 @@ enum WindowEvent {
     Segment(ClosedSegment),
     /// The aging clock moved to this monotonic time.
     Clock(f64),
+    /// The recording stopped cleanly, so drain the window into the store.
+    Finish,
 }
 
 /// Writer-side half of event mode: fills window segments and drives the store thread.
@@ -266,6 +269,7 @@ impl RecordingStore for EventWriter {
     fn finish(&mut self) -> Result<()> {
         self.send_open_segment()?;
         self.syncer.stop()?;
+        self.send_to_store(WindowEvent::Finish)?;
         self.join_store_thread()?;
         info!(window_dir = %self.dir.display(), "event window drained");
         Ok(())
@@ -331,15 +335,18 @@ struct StoreWriter {
 }
 
 impl StoreWriter {
-    /// Stores each segment once no trigger can still reach it, then drains the rest on shutdown.
+    /// Stores each segment once no trigger can still reach it, then drains the rest on `Finish`.
+    /// A writer that stops without `Finish` leaves the window for `dimos-memory-recover`.
     fn run(mut self, events: Receiver<WindowEvent>) -> Result<()> {
         let mut segments = VecDeque::new();
         let mut clock = f64::NEG_INFINITY;
-        for event in events {
-            match event {
-                WindowEvent::Trigger(time) => self.clips.add_trigger(time),
-                WindowEvent::Segment(segment) => segments.push_back(segment),
-                WindowEvent::Clock(time) => clock = time,
+        loop {
+            match events.recv() {
+                Ok(WindowEvent::Trigger(time)) => self.clips.add_trigger(time),
+                Ok(WindowEvent::Segment(segment)) => segments.push_back(segment),
+                Ok(WindowEvent::Clock(time)) => clock = time,
+                Ok(WindowEvent::Finish) => break,
+                Err(_) => return Ok(()),
             }
             while segments
                 .front()
@@ -354,8 +361,7 @@ impl StoreWriter {
             self.store_segment(&segment)?;
         }
         self.store.finish()?;
-        fs::remove_dir_all(&self.dir)
-            .with_context(|| format!("failed to remove {}", self.dir.display()))
+        remove_window(&self.dir)
     }
 
     /// Writes the segment's kept observations, makes them durable, then deletes the segment.

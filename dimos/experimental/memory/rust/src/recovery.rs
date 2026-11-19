@@ -14,7 +14,6 @@
 
 //! Recovery of the window a crashed event-mode run left on disk.
 
-use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
@@ -23,7 +22,9 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use crate::store;
-use crate::window::{segment_indexes, segment_path, Done, SegmentReader, WindowManifest};
+use crate::window::{
+    remove_window, segment_indexes, segment_path, Done, SegmentReader, WindowManifest,
+};
 use crate::WRITE_BATCH_SIZE;
 
 /// Stores every segment the crashed run had not stored, in full, then removes the window.
@@ -61,8 +62,7 @@ pub fn recover(window_dir: &Path) -> Result<u64> {
     store.write_batch(&batch)?;
     written += batch.len() as u64;
     store.finish()?;
-    fs::remove_dir_all(window_dir)
-        .with_context(|| format!("failed to remove {}", window_dir.display()))?;
+    remove_window(window_dir)?;
     info!(window_dir = %window_dir.display(), written, "event window recovered");
     Ok(written)
 }
@@ -70,7 +70,7 @@ pub fn recover(window_dir: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::fs::OpenOptions;
+    use std::fs::{self, OpenOptions};
     use std::io::Write;
 
     use super::*;
@@ -100,7 +100,6 @@ mod tests {
         };
         let streams = vec![stream("a"), stream("b")];
         let shared: Vec<_> = streams.iter().cloned().map(Arc::new).collect();
-        // Thirty observations at 1..=30 s, alternating streams, ten per segment.
         let observations: Vec<Observation> = (1..=30)
             .map(|second| Observation {
                 stream: Arc::clone(&shared[second % 2]),
