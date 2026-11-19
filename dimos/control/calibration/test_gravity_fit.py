@@ -32,6 +32,7 @@ from dimos.control.calibration._calibration_test_helpers import (
 from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.control.calibration.gravity_fit import (
     COM_BOX_M,
+    FIT_RANK_TOLERANCE,
     GravityRecording,
     Measurement,
     PoseMarker,
@@ -298,13 +299,44 @@ def test_fit_stays_physical_and_flags_the_bound_when_the_data_want_more(
     )
     result = fit_gravity(arm, measurements, ridge_nm=0.05)
     assert result.bounds_ok
-    assert any("left_gripper" in v and "bound" in v for v in result.at_bounds)
+    assert any("mass sits at its bound (upper)" in v for v in result.at_bounds)
+    unseen = [p for p in result.parameters if p.observable < 1e-12]
+    assert ("left_link2", "m") in {(p.link, p.name) for p in unseen}
+    for p in unseen:
+        assert p.delta == pytest.approx(0.0, abs=1e-12), (p.link, p.name)
     for link, fitted in result.links.items():
         urdf = result.urdf_links[link]
         assert np.abs(np.asarray(fitted.com_m) - np.asarray(urdf.com_m)).max() <= COM_BOX_M + 1e-9
         assert 0.5 * urdf.mass_kg - 1e-9 <= fitted.mass_kg <= 2.0 * urdf.mass_kg + 1e-9
     after = result.rms_by_joint(holdout=True, after=True)
     assert max(after.values()) > 0.5
+
+
+def test_directions_below_the_rank_tolerance_keep_the_urdf_values(
+    arm: ArmModel, pose_set: PoseSet
+) -> None:
+    base = pose_set.identification[3]
+    poses = [base]
+    for number, row in enumerate(arm.measured_rows):
+        joints = list(base.joints_rad)
+        joints[row] += math.radians(0.3)
+        poses.append(Pose(f"near_{number}", tuple(joints), arm.joint_names))
+    measurements = synthetic_measurements(arm, arm.model, poses, noise_nm=0.02, friction_nm=0.3)
+    result = fit_gravity(arm, measurements, holdout=[], ridge_nm=0.05)
+    rows = np.vstack(
+        [
+            arm.scaled_regressor(arm.q(m.q_rad))[arm.measured_joints.index(m.joint)]
+            for m in measurements
+        ]
+    )
+    _, s, vt = np.linalg.svd(rows, full_matrices=False)
+    weak = (s <= FIT_RANK_TOLERANCE * s[0]) & (s > 1e-9 * s[0])
+    assert weak.any() and result.rank == int((s > FIT_RANK_TOLERANCE * s[0]).sum())
+    correction = np.asarray([p.delta for p in result.parameters]) / arm.column_scale
+    assert np.abs(vt[result.rank :] @ correction).max() < 1e-9
+    for p in result.parameters:
+        if p.observable < 1e-12:
+            assert p.value == pytest.approx(p.urdf, abs=1e-12), (p.link, p.name)
 
 
 def test_a_failed_fit_produces_no_calibration(
@@ -576,7 +608,7 @@ def test_save_cli_refuses_without_force_and_shows_the_bounds(
     assert saved.exit_code == 0, saved.output
     assert "Saved the calibration of dual_openyam/left" in saved.output
     (bounds,) = [line for line in saved.output.splitlines() if line.startswith("  at bounds: ")]
-    assert "left_gripper mass sits at its bound (upper)" in bounds
+    assert "mass sits at its bound (upper)" in bounds
     target.unlink()
     labels = ",".join(p.name for p in pose_set.identification[:1])
     monkeypatch.setattr(gravity_fit, "save_refusals", lambda result: ["made up"])

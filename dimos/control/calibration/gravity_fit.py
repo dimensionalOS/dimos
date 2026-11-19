@@ -55,7 +55,7 @@ from typing import Any
 
 import matplotlib
 import numpy as np
-from scipy.optimize import least_squares
+from scipy.optimize import minimize
 import typer
 
 from dimos.control.calibration._inertial import LinkInertial, load_inertial_overrides
@@ -371,6 +371,10 @@ def fit_gravity(
     (singular values above ``FIT_RANK_TOLERANCE`` of the largest); directions
     outside it get exactly zero correction, i.e. stay at the URDF, and within
     it a ridge of ``ridge_nm`` shrinks weak directions toward the URDF too.
+    The mass ratio and COM box bounds are linear in the correction once each
+    COM bound is multiplied through by the fitted mass, which they keep
+    positive, so the solve is a convex quadratic program, physical by
+    construction.
     Standard errors come from the ridge covariance with the residual variance
     of the training rows; a parameter is "determined" when at least half of
     its direction lies in the identifiable subspace.
@@ -398,21 +402,16 @@ def fit_gravity(
     a_train = a_scaled[~is_holdout]
     b_train = b[~is_holdout]
 
-    u, s, vt = np.linalg.svd(a_train, full_matrices=False)
-    rank = int((s > FIT_RANK_TOLERANCE * s[0]).sum()) if s.size and s[0] > 0 else 0
+    sigma, basis = _identifiable_directions(a_train)
+    rank = sigma.size
     if rank == 0:
         raise ValueError("the training poses carry no gravity information (zero regressor)")
-    basis = vt[:rank].T  # identifiable directions, scaled parameter space
-    condition = float(s[0] / s[rank - 1])
-    sigma = s[:rank]
+    condition = float(sigma[0] / sigma[-1])
 
-    # Physical parameters: per link (d_mass, com_shift) with hard bounds, so the
-    # solution is physical by construction instead of being checked afterwards.
     masses0 = np.array([float(arm.model.inertias[j].mass) for j in arm.fitted_joint_ids])
     coms0 = np.array(
         [np.asarray(arm.model.inertias[j].lever, dtype=np.float64) for j in arm.fitted_joint_ids]
     )
-    a_phys = a_scaled / arm.column_scale  # torque per unit (m, m*c) correction
 
     def to_delta_phi(x: np.ndarray) -> np.ndarray:
         d_mass = x[0::4]
@@ -420,24 +419,52 @@ def fit_gravity(
         moment = d_mass[:, None] * coms0 + (masses0 + d_mass)[:, None] * shift
         return np.concatenate([np.column_stack([d_mass, moment])[k] for k in range(len(masses0))])
 
+    def to_x(delta_phi: np.ndarray) -> np.ndarray:
+        d_mass = delta_phi[0::4]
+        moment = delta_phi.reshape(-1, 4)[:, 1:]
+        shift = (moment - d_mass[:, None] * coms0) / (masses0 + d_mass)[:, None]
+        return np.column_stack([d_mass, shift]).ravel()
+
     lower = np.concatenate(
         [[(MASS_RATIO_BOUNDS[0] - 1.0) * m, -COM_BOX_M, -COM_BOX_M, -COM_BOX_M] for m in masses0]
     )
     upper = np.concatenate(
         [[(MASS_RATIO_BOUNDS[1] - 1.0) * m, COM_BOX_M, COM_BOX_M, COM_BOX_M] for m in masses0]
     )
+    constraints: list[np.ndarray] = []
+    limits: list[float] = []
+    unit = np.eye(lower.size)
+    for k, (mass0, com0) in enumerate(zip(masses0, coms0, strict=True)):
+        mass_row = unit[4 * k]
+        constraints += [mass_row, -mass_row]
+        limits += [upper[4 * k], -lower[4 * k]]
+        for axis in range(3):
+            j = 4 * k + 1 + axis
+            constraints += [unit[j] - (com0[axis] + upper[j]) * mass_row]
+            constraints += [(com0[axis] + lower[j]) * mass_row - unit[j]]
+            limits += [upper[j] * mass0, -lower[j] * mass0]
+    bound_rows = np.vstack(constraints) * arm.column_scale
+    bound_limits = np.asarray(limits)
     train_poses_arr = np.asarray([m.pose for m in measurements])[~is_holdout]
-    a_phys_train = a_phys[~is_holdout]
 
-    def solve(a: np.ndarray, b_: np.ndarray, ridge: float) -> np.ndarray:
-        def residual(x: np.ndarray) -> np.ndarray:
-            dphi = to_delta_phi(x)
-            return np.concatenate([a @ dphi - b_, ridge * dphi / arm.column_scale])
-
-        solution: np.ndarray = least_squares(
-            residual, np.zeros(lower.size), bounds=(lower, upper), xtol=1e-12, ftol=1e-12
+    def solve(a: np.ndarray, b_: np.ndarray, ridge: float, directions: np.ndarray) -> np.ndarray:
+        """Scaled correction within ``directions`` fitting ``a`` to ``b_``, ridge and bounds kept."""
+        size = directions.shape[1]
+        m = np.vstack([a @ directions, ridge * np.eye(size)])
+        c = np.concatenate([b_, np.zeros(size)])
+        g = bound_rows @ directions
+        z = minimize(
+            lambda z: 0.5 * float(np.sum(np.square(m @ z - c))),
+            np.zeros(size),
+            jac=lambda z: m.T @ (m @ z - c),
+            method="SLSQP",
+            constraints=[
+                {"type": "ineq", "fun": lambda z: bound_limits - g @ z, "jac": lambda z: -g}
+            ],
+            options={"ftol": 1e-15, "maxiter": 1000},
         ).x
-        return solution
+        correction: np.ndarray = directions @ z
+        return correction
 
     ridge_cv: dict[float, float] = {}
     if ridge_nm is None:
@@ -446,12 +473,14 @@ def fit_gravity(
             errors = []
             for pose in sorted(set(train_poses_arr)):
                 keep = train_poses_arr != pose
-                x = solve(a_phys_train[keep], b_train[keep], candidate)
-                errors.append(a_phys_train[~keep] @ to_delta_phi(x) - b_train[~keep])
+                _, directions = _identifiable_directions(a_train[keep])
+                y = solve(a_train[keep], b_train[keep], candidate, directions)
+                errors.append(a_train[~keep] @ y - b_train[~keep])
             ridge_cv[candidate] = float(np.sqrt(np.mean(np.square(np.concatenate(errors)))))
         ridge_nm = min(ridge_cv, key=lambda r: ridge_cv[r])
 
-    x_phys = solve(a_phys_train, b_train, ridge_nm)
+    correction = solve(a_train, b_train, ridge_nm, basis)
+    x_phys = np.clip(to_x(correction * arm.column_scale), lower, upper)
     delta = to_delta_phi(x_phys)
     x_scaled = delta / arm.column_scale
     residual_after = b - a_scaled @ x_scaled
@@ -497,13 +526,13 @@ def fit_gravity(
                     determined=bool(determined[sl][k]),
                 )
             )
-        mass = mass0 + float(delta[sl][0])
+        mass = mass0 + float(x_phys[sl][0])
         urdf_links[link] = LinkInertial(mass_kg=mass0, com_m=_vec3(com0))
         if mass <= 0.0:
             violations.append(f"{link}: fitted mass {mass:.3f} kg is not positive")
             continue
-        com = (mass0 * com0 + delta[sl][1:]) / mass
-        shift = com - com0
+        shift = x_phys[sl][1:]
+        com = com0 + shift
         if np.abs(shift).max() > COM_BOX_M:
             violations.append(
                 f"{link}: COM moved {np.abs(shift).max() * 1000:.0f} mm from the URDF COM "
@@ -522,7 +551,7 @@ def fit_gravity(
         links=links,
         urdf_links=urdf_links,
         rank=rank,
-        singular_values=tuple(float(v) for v in s[:rank]),
+        singular_values=tuple(float(v) for v in sigma),
         condition_number=condition,
         ridge_nm=ridge_nm,
         bound_violations=violations,
@@ -531,6 +560,17 @@ def fit_gravity(
         arm_id=arm.arm_id,
         measured_joints=arm.measured_joints,
     )
+
+
+def _identifiable_directions(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Singular values of ``a`` above ``FIT_RANK_TOLERANCE`` of the largest, and their directions.
+
+    The directions are orthonormal columns, spanning part of ``a``'s row space;
+    none when ``a`` is zero.
+    """
+    _, s, vt = np.linalg.svd(a, full_matrices=False)
+    rank = int((s > FIT_RANK_TOLERANCE * s[0]).sum()) if s.size and s[0] > 0 else 0
+    return s[:rank], vt[:rank].T
 
 
 def _vec3(values: np.ndarray) -> tuple[float, float, float]:
