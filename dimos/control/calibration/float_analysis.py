@@ -31,8 +31,8 @@ from typing import Any
 
 import numpy as np
 
-from dimos.robot.manipulators.calibration.gravity_poses import ArmModel
-from dimos.robot.manipulators.calibration.spec import ArmCalibrationSpec
+from dimos.control.calibration.gravity_poses import ArmModel
+from dimos.control.calibration.spec import ArmCalibrationSpec
 
 # Milestone: a floated arm, let go, stays within this at the fingertip over 10 s.
 DRIFT_LIMIT_MM = 2.0

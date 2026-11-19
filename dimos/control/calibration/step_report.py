@@ -14,7 +14,7 @@
 
 """Offline step-response report from a joint step-test recording of any arm.
 
-    python -m dimos.robot.manipulators.calibration.step_report recordings/<run-id>
+    python -m dimos.control.calibration.step_report recordings/<run-id>
 
 Reads ``memory.db``, cuts the joint stream at each ``step_events`` marker, from
 the first recorded command (``arm_position_command``) that carries the step's
@@ -40,9 +40,8 @@ import matplotlib
 from matplotlib.lines import Line2D
 import numpy as np
 
-from dimos.memory.store.sqlite import SqliteStore
-from dimos.robot.manipulators.calibration.progress import ProgressBar
-from dimos.robot.manipulators.calibration.step_analysis import (
+from dimos.control.calibration.progress import ProgressBar
+from dimos.control.calibration.step_analysis import (
     OVERSHOOT_LIMIT_PCT,
     SETTLE_TIME_LIMIT_S,
     StepEvent,
@@ -54,6 +53,7 @@ from dimos.robot.manipulators.calibration.step_analysis import (
     propose_gains,
     segment_steps,
 )
+from dimos.memory.store.sqlite import SqliteStore
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
