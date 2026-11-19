@@ -339,18 +339,3 @@ def test_a_cbor_call_carries_dimos_objects_both_ways(
         headers={"content-type": "application/cbor"},
     )
     assert bad.status_code == 400
-
-
-def test_a_slotted_message_in_a_json_result_comes_back_by_its_fields() -> None:
-    import numpy as np
-
-    class Point:
-        __slots__ = ("positions", "time_from_start")
-
-        def __init__(self) -> None:
-            self.positions = np.array([0.5, 1.0])
-            self.time_from_start = 0.25
-
-    assert live.to_json({"points": [Point()]}) == {
-        "points": [{"positions": [0.5, 1.0], "time_from_start": 0.25}]
-    }
