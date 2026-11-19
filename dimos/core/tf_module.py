@@ -59,9 +59,35 @@ class TfModuleConfig(ModuleConfig):
         return self
 
     @property
+    def tf_frames(self) -> dict[str, str]:
+        """Every role -> frame id, local and global together."""
+        return {**self.tf_frames_global, **self.tf_frames_local}
+
+    @property
     def tf_edge_frames(self) -> set[tuple[str, str]]:
-        frames = {**self.tf_frames_global, **self.tf_frames_local}
+        frames = self.tf_frames
         return {(frames[parent], frames[child]) for parent, child in self.tf_edges}
+
+
+class TfFrames:
+    """A module's frame ids by role, as attributes: ``self.frame.body``."""
+
+    def __init__(self, frames: dict[str, str], owner: str) -> None:
+        self._frames = frames
+        self._owner = owner
+
+    def __getattr__(self, role: str) -> str:
+        if role.startswith("_"):
+            raise AttributeError(role)
+        return self[role]
+
+    def __getitem__(self, role: str) -> str:
+        if role not in self._frames:
+            raise AttributeError(
+                f"{self._owner} has no tf frame for role {role!r}; "
+                f"declare it in tf_frames_local or tf_frames_global (declared: {sorted(self._frames)})"
+            )
+        return self._frames[role]
 
 
 class TfModule(Module):
@@ -69,6 +95,11 @@ class TfModule(Module):
 
     config: TfModuleConfig
     tf: IO[TFMessage]
+
+    @property
+    def frame(self) -> TfFrames:
+        """Frame ids by role, local and global together: ``self.frame.body``."""
+        return TfFrames(self.config.tf_frames, self.config.instance_name or type(self).__name__)
 
     @classmethod
     def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
@@ -87,10 +118,7 @@ class TfModule(Module):
         for atom in atoms:
             if not _is_checked(atom):
                 continue
-            frames = {
-                **atom.kwargs["tf_frames_global"],
-                **atom.kwargs["tf_frames_local"],
-            }
+            frames = {**atom.kwargs["tf_frames_global"], **atom.kwargs["tf_frames_local"]}
             for parent_role, child_role in atom.kwargs["tf_edges"]:
                 publishers[frames[child_role]][frames[parent_role]].append(atom.name)
         if not publishers:
