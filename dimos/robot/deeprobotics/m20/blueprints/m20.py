@@ -44,7 +44,7 @@ m20 = (
             world_frame=WORLD_FRAME,
             map_frame="premap",
             # at 0.2 m live voxels a right office match scores ~0.5-0.7 and a wrong one ~0.25-0.35
-            relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.45}),
+            relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65}),
             # body scans placed in map (odometry), so a world -> map jump leaves the kept live map as it was
             live_cloud="lidar",
             relocalize_once=False,
