@@ -64,7 +64,7 @@ Pass them to the command as flags.
 | `--steps a,b,c` | Run only these steps |
 | `hold_s` | Rest time at each pose (default 2.0 s) |
 | `--speed-deg-s S` | Peak joint speed (default 10, at most 30) |
-| `kp_scales` | Multiples of each joint's kp the sweep tries (default 1.0, 1.5, 2.0) |
+| `kp_scales`, `kd_scales` | Multiples of each joint's kp and kd the sweep tries, every kp with every kd (default 0.6, 1, 1.5 and 1, 2.5, 5; kd at most 5) |
 | `--floor-z-m`, `--min-x-m` | Table height and the line the fingertip stays in front of |
 | `--no-confirm-each` | Stop asking before every pose and joint. Not for a first run |
 
@@ -75,10 +75,10 @@ Anything else is passed on to `dimos run <robot>-calibrate`. That is how the CAN
 The command starts the robot in the background, talks to it, brings the arm home, then stops that run. Every step asks before it moves.
 
 1. **check.** Connection, joint readings and recorder work. Then move home.
-2. **gravity_poses.** Rest at each pose, nudge each joint up and down.
+2. **gravity_poses.** Rest at each pose, nudge each joint up and down, far enough to beat its friction.
 3. **gravity_fit.** Fit link masses. Shows `URDF -> running -> new` error per joint. Enter saves and applies.
-4. **float_check.** Each joint goes limp for about ten seconds. Be ready to support the arm.
-5. **step_sweep.** Each joint steps at several stiffnesses at the sweep pose.
+4. **float_check.** At each pose the arm rests, then one joint goes limp for about ten seconds. Be ready to support the arm.
+5. **step_sweep.** Each joint steps at up to nine kp and kd pairs at the sweep pose. The prompt says how long it takes.
 6. **pick_gains.** Shows the proposed gains and every rejected try. Enter saves and applies.
 7. **confirm_tracking.** Revisit the held-out poses and compare rests before and after.
 8. **summary.** Lists the file, the files it replaced and what to do next.
@@ -87,12 +87,12 @@ Saves happen with the arm at home. If applying a save would change a joint's gra
 
 The method:
 
-- Each joint is nudged up and down at every pose. The pair cancels friction, so what is left is gravity.
-- The link masses are fitted by least squares. Held-out poses give the cross validation error.
+- Each joint is nudged up and down at every pose, by 0.3 of its torque limit over its kp, 1 to 5 degrees. The pair cancels friction, so what is left is gravity. A pair the joint follows less than halfway is redone once at twice the nudge. One that still sticks stays in the fit and is listed; the held-out error judges the fit.
+- The link masses are fitted by least squares. Held-out poses give the cross validation error. Every joint whose gravity torque can change by more than 0.1 N m over the poses is nudged; one that is not keeps its URDF gravity torque.
 - The fit is offered only when it is no worse than the URDF and the running file on every joint.
-- The step sweep picks the stiffest kp and kd that settle without overshoot or buzz, and only when every softer one passed too. kd grows with the square root of the kp multiple.
+- The step sweep rejects a kp and kd pair when a 3 degree step sticks (moves less than half its size), a step overshoots more than 20 % or buzzes. A stuck 1 degree step is listed and does not count. Of the rest it picks the lowest worst rest error over max(0.1 deg, 1.5 x friction / kp) plus worst settle time over 0.5 s. Each joint's friction comes from its 3 degree steps and its nudges.
 - A joint where nothing passes keeps its robot gains.
-- The float check sets kp to 0 for one joint at a time. It fails the joint if it drifts more than 5 degrees or moves faster than 20 degrees per second.
+- The float check sets kp to 0 for one joint at a time, at the poses where it carries the most gravity with the masses the arm runs. The fingertip drift counts from the moment the joint goes limp; more than 2 mm fails. A joint that drifts more than 5 degrees or moves faster than 20 degrees per second is held again and fails.
 
 Safety:
 
