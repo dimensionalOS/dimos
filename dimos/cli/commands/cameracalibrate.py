@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from click import ClickException
 import typer
 
 
@@ -92,7 +91,8 @@ def cameracalibrate(
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     except RuntimeError as exc:
-        raise ClickException(str(exc)) from exc
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
     typer.echo(f"RMS: {float(result['rms']):.6f} px ({int(result['n_used'])} frame(s) used)")
     typer.echo(

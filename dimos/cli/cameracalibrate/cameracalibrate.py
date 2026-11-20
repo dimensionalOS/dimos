@@ -30,10 +30,11 @@ import warnings
 # Use setdefault so an explicit OPENCV_OPENCL_RUNTIME from the environment still wins.
 os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "disabled")
 
-from click import ClickException
 import numpy as np
 import typer
 import yaml
+
+from dimos.cli.commands.cameracalibrate import cameracalibrate
 
 _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg"})
 
@@ -1003,43 +1004,22 @@ def calibrate(
     ),
 ) -> None:
     """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
-    if preview_out is not None and out is None:
-        raise typer.BadParameter("preview output requires --out")
-
-    try:
-        result = run_calibration(
-            source=source,
-            device_index=device_index,
-            images=images,
-            topic=topic,
-            topic_timeout_sec=topic_timeout_sec,
-            cols=cols,
-            rows=rows,
-            square_size_m=square_size_m,
-            out=out,
-            preview_out=preview_out,
-            camera_name=camera_name,
-            target_count=target_count,
-            no_display=no_display,
-            distortion_model=distortion_model,
-        )
-    except CalibrationAbortedError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(130) from exc
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    except RuntimeError as exc:
-        raise ClickException(str(exc)) from exc
-
-    typer.echo(f"RMS: {float(result['rms']):.6f} px ({int(result['n_used'])} frame(s) used)")
-    typer.echo(
-        f"Detected pattern: {tuple(result.get('pattern_size', (cols, rows)))} "
-        f"({result.get('pattern_label', 'requested inner corners')})"
+    cameracalibrate(
+        source=source,
+        device_index=device_index,
+        images=images,
+        topic=topic,
+        topic_timeout_sec=topic_timeout_sec,
+        cols=cols,
+        rows=rows,
+        square_size_m=square_size_m,
+        out=out,
+        preview_out=preview_out,
+        camera_name=camera_name,
+        target_count=target_count,
+        no_display=no_display,
+        distortion_model=distortion_model,
     )
-    if out is not None:
-        typer.echo(f"Wrote camera info YAML to {out}")
-    if preview_out is not None:
-        typer.echo(f"Wrote preview overlay PNG to {preview_out}")
 
 
 def main(args: list[str] | None = None) -> None:
