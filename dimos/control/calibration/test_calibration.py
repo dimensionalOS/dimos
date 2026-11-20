@@ -429,6 +429,32 @@ def test_moves_default_to_10_deg_s_up_to_60_and_each_dither_holds_a_second(
     assert all(hold == pytest.approx(1.0, abs=0.011) for hold in holds[1:])
 
 
+def test_a_hold_on_a_creeping_joint_ends_not_converging_at_its_bound(arm: ArmModel) -> None:
+    def creep(max_hold_s: float) -> Motion:
+        motion = Motion(
+            arm,
+            [arm.home],
+            1.0,
+            "converge",
+            0.5,
+            np.full(3, 1e-4),
+            np.full(3, np.inf),
+            max_hold_s=max_hold_s,
+        )
+        for k in range(1000):
+            motion.feed(
+                Sample(k / 100.0, arm.home + np.array([0.0, 0.0, 0.002 * k / 100.0]), np.zeros(3))
+            )
+        return motion
+
+    bounded = creep(CalibrationModuleConfig(robot="openyam").max_hold_s)
+    assert bounded.ended == "not converging"
+    assert bounded.t[-1] - bounded.t[0] == pytest.approx(5.0, abs=0.011)
+    assert not creep(math.inf).done.is_set()
+    with pytest.raises(ValueError, match="two rest windows"):
+        CalibrationModuleConfig(robot="openyam", max_hold_s=1.0)
+
+
 def test_the_plan_skips_what_cannot_run() -> None:
     rows = dict(plan(["gravity_fit", "float_check"], can_float=False))
     assert rows["check"] is None

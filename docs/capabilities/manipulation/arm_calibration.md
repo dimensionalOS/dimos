@@ -39,7 +39,7 @@ The command asks before every move. With `--no-confirm-each` it asks only at the
 7. **confirm_tracking.** Revisits some gravity poses with the new calibration and the proposed gains, and compares how far each joint rests from its target with the first visit. The gains are saved only if no joint stalls and each rests within 1.5 times its first visit or its rest limit; otherwise they are undone.
 8. **summary.** Shows the file the arm runs now.
 
-A hold ends once the arm has settled: one rest window of readings stays inside the noise measured in check. A step also ends if it stops settling (it oscillates in place), and that counts as a failure. A motion stops with an error if a joint falls behind its target by more than its motor can push through, or the arm reaches the table or the other arm's side.
+A hold ends once the arm has settled: one rest window of readings stays inside the noise measured in check. A hold also ends if it stops settling (it oscillates in place) or has not settled after 5 s, and that counts as a failure. A motion stops with an error if a joint falls behind its target by more than its motor can push through, or the arm reaches the table or the other arm's side.
 
 The calibration moves the arm only by streaming targets to its connection, one per reading. While it waits for you or computes a fit, it sends the arm nothing, so the connection holds the arm where it is and undoes any temporary gain change or limp joint. The same happens if the command or the calibration stops.
 
@@ -78,4 +78,4 @@ Each is a flag of `dimos arm calibrate` (and a `--calibrationmodule.` option of 
 | `--steps` | all | Steps to run after check, comma-separated |
 | `--no-confirm-each` | | Ask only at the start of each step. Not for a first run |
 
-The other numbers above are module settings, given as `--calibrationmodule.<name>`: `max-dither-deg`, `dither-torque-fraction`, `dither-hold-s`, `stuck-fraction`, `dither-span-nm`, `hold-s`, `float-window-s`, `float-trip-deg`, `kd-per-kp`, `rest-limit-deg`, `friction-rest-factor`, `settle-s` and `tracking-rest-ratio`.
+The other numbers above are module settings, given as `--calibrationmodule.<name>`: `max-hold-s`, `max-dither-deg`, `dither-torque-fraction`, `dither-hold-s`, `stuck-fraction`, `dither-span-nm`, `hold-s`, `float-window-s`, `float-trip-deg`, `kd-per-kp`, `rest-limit-deg`, `friction-rest-factor`, `settle-s` and `tracking-rest-ratio`.

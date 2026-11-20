@@ -66,6 +66,7 @@ class CalibrationModuleConfig(ModuleConfig):
         min_x_m: The fingertip stays in front of this x from the base, m.
         poses: How many gravity poses to visit.
         speed_deg_s: Peak joint speed of every move; at most 60 and the URDF velocity limits.
+        max_hold_s: A hold that waits to settle and has not after this long ends not converging.
         rest_window_s: How long the arm sits still to measure its noise; a hold is settled
             once one window of samples stays inside that noise. Long enough to catch the
             noise's peaks: the buzz check compares a step against them.
@@ -109,6 +110,7 @@ class CalibrationModuleConfig(ModuleConfig):
     poses: int = Field(default=12, ge=3)
     speed_deg_s: float = Field(default=10.0, gt=0.0, le=60.0)
     rest_window_s: float = Field(default=0.5, gt=0.0)
+    max_hold_s: float = Field(default=5.0, gt=0.0)
     dither_deg: float = Field(default=1.0, gt=0.0)
     max_dither_deg: float = Field(default=5.0, gt=0.0)
     dither_torque_fraction: float = Field(default=0.3, gt=0.0)
@@ -142,6 +144,8 @@ class CalibrationModuleConfig(ModuleConfig):
             raise ValueError(f"unknown steps {sorted(unknown)}; the steps are {list(steps.STEPS)}")
         if self.dither_deg > self.max_dither_deg:
             raise ValueError("dither_deg must not exceed max_dither_deg")
+        if self.max_hold_s <= 2.0 * self.rest_window_s:
+            raise ValueError("max_hold_s must exceed two rest windows, the least a hold judges")
         if self.dither_hold_s <= self.rest_window_s:
             raise ValueError("dither_hold_s must outlast rest_window_s, the rest it scores")
         for name, scales in (("kp_scales", self.kp_scales), ("kd_scales", self.kd_scales)):
@@ -351,6 +355,7 @@ class Calibration:
             window,
             2.0 * np.radians(band),
             stall,
+            max_hold_s=self.config.max_hold_s,
             **hold,
         )
 

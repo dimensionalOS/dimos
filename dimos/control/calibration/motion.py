@@ -18,7 +18,8 @@ Each sample gives the next target: a minimum-jerk path whose fastest joint peaks
 by the sample's measured time, then a hold at the path's end. A hold ends one window after it
 starts (``fixed``), or once the arm is settled or stops converging (``converge``: the latest
 window's spread is outside the noise band and no smaller than the one before, while its mean
-stays where the one before's was: it oscillates in place rather than creeps). Settled means every joint's spread over the latest window
+stays where the one before's was: it oscillates in place rather than creeps; or once it has held
+``max_hold_s`` unsettled). Settled means every joint's spread over the latest window
 is inside its noise band plus one encoder step (the smallest change it reads). A joint farther from
 its target than its ``stall_rad`` (its motor's torque limit over kp: the motor cannot push
 through) or a point of the arm at the table or in a keep-out region stops the motion with an
@@ -83,6 +84,7 @@ class Motion:
     stall_rad: np.ndarray
     floating: int | None = None
     drift_limit_rad: float = math.inf
+    max_hold_s: float = math.inf
     publish: bool = True
     done: threading.Event = field(default_factory=threading.Event)
     ended: str = ""
@@ -166,7 +168,7 @@ class Motion:
             return "not converging"
         if (stopped | (spread <= tolerance)).all():
             return "settled"
-        return None
+        return "not converging" if elapsed >= self.max_hold_s else None
 
     def _guard(self, q: np.ndarray, target: np.ndarray) -> str | None:
         lag = np.abs(q - target)
