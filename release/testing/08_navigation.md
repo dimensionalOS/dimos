@@ -26,8 +26,8 @@ uv run dimos --replay --replay-db go2_hongkong_office run unitree-go2
 ```
 
 * `map global` opens Rerun with `world/pgo_map/pointcloud` and red lines in `world/pgo_map/pgo/loop_closures`. It writes `go2_hongkong_office.map.db` (the keyframe premap) and `go2_hongkong_office_map.db`, whose point cloud is the named map `--map-name` gives (`v1` by default, on its `map_v1_cloud` stream), to the current directory.
-* The premap replay logs `relocalize: fix` and `PGO premap: attached`. `world/global_map` then contains the attached premap and live scan. `unitree-go2-map` saves the updated `.map.db` and backs up the previous copy.
-* The PGO replay grows `world/pgo_keyframes` and publishes loop edges to `world/pgo_loops` when the walk revisits an area.
+* The premap replay logs `relocalize: fix` and `PGO premap: attached`. `world/global_map` then contains the attached premap and live scan. `unitree-go2-map` saves the updated `.map.db` and backs up the previous copy next to it as `go2_hongkong_office.map.<timestamp>.db`.
+* The PGO replay publishes a growing `pgo_keyframes` and adds loop edges to `pgo_loops` when the walk revisits an area, first after about 70 seconds, logging `Loop closure detected`. The viewer draws them under `world/pgo` as `keyframes`, `path` and red `loops`. That group is hidden by default, so click the eye icon on `pgo` under `3D` > `world` in the blueprint tree. The `world/pgo_keyframes` and `world/pgo_loops` entities hold only a transform.
 
 Expected result: the premap exports, relocalization finds a fix, and PGO closes loops, without tracebacks.
 
