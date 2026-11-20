@@ -58,7 +58,7 @@ Expected result: the robot turns about 180 degrees, and the command shows in `hu
 
 ## 9.6 Follow person
 
-Needs a person in the camera view and `ALIBABA_API_KEY` with access to the `qwen-vl-max` model used by `follow_person` for its initial detection.
+Needs a person in the camera view and `ALIBABA_API_KEY` with access to the `qwen-vl-max` model used by `follow_person` for its initial detection. The agent often starts `look_out_for` first, which detects with the local Moondream model on the GPU and passes its detection to `follow_person`. In that case Qwen is not called.
 
 ```bash
 uv run dimos run unitree-go2-agentic
