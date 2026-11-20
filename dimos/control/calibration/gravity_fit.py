@@ -26,7 +26,8 @@ friction. A dither whose samples stop short of its hold (the recording ended
 or the next step came early) may still be moving, so its pair is left out and
 the report counts it. A pair whose two rests lie less than half the dither
 apart is stuck: friction held the joint, so the pair does not cancel it. It
-stays in the fit and is listed, and the held-out error judges the result.
+stays in the fit and is listed, and the held-out error judges the result,
+unless a later pair of the same joint at the same pose and gains redid it.
 The pose markers record the joints dithered (``DITHERED_KEY``; a
 recording that does not say dithered the spec's measured joints), which are
 the joints the fit measures, and that compensation
@@ -394,15 +395,18 @@ def extract_measurements(
     dither was cut short (``"<pose> <joint>"``), and the measured pairs that
     are stuck, where the joint moved less than ``STUCK_FRACTION`` of the
     dither between their two rests (``"<pose> <joint> moved x of d deg"``).
+    A stuck pair that a later pair of the same joint, pose and gains redid
+    is replaced by it.
     """
     recording = grec.recording
     traces = trace_names(recording, spec.joint_names)
     measured = set(spec.measured_joints)
     windows = pose_windows(grec.markers, recording.t_end)
-    # (pose, joint, kp, kd, |delta|) -> sign -> [(tau_pd, q, target), or None for a hold cut short]
+    # (pose, joint, kp, kd, |delta|) -> sign -> [(t0, (tau_pd, q, target) or None for a hold
+    # cut short)]
     groups: dict[
         tuple[str, str, float, float, float],
-        dict[int, list[tuple[float, dict[str, float], float] | None]],
+        dict[int, list[tuple[float, tuple[float, dict[str, float], float] | None]]],
     ] = defaultdict(lambda: defaultdict(list))
     for event, start, stop in segment_steps(recording.events, recording.t_end):
         joint = event.joint.rsplit("/", 1)[-1] if event.joint not in measured else event.joint
@@ -415,35 +419,45 @@ def extract_measurements(
         key = (pose, joint, event.kp, event.kd, abs(event.delta_deg))
         target = math.radians(event.target_after_deg)
         groups[key][int(math.copysign(1, event.delta_deg))].append(
-            None if q is None else (event.kp * (target - q[joint]), q, target)
+            (event.t0, None if q is None else (event.kp * (target - q[joint]), q, target))
         )
+    pairs = sorted(
+        (
+            (t0, (pose, joint, kp, kd), dither, plus, minus)
+            for (pose, joint, kp, kd, dither), signs in groups.items()
+            for (t0, plus), (_, minus) in zip(signs[1], signs[-1], strict=False)
+        ),
+        key=lambda pair: pair[0],
+    )
+    last = {key: index for index, (_, key, _, _, _) in enumerate(pairs)}
     measurements = []
     incomplete = []
     stuck = []
-    for (pose, joint, kp, kd, dither), signs in groups.items():
-        for plus, minus in zip(signs[1], signs[-1], strict=False):
-            if plus is None or minus is None:
-                incomplete.append(f"{pose} {joint}")
-                continue
-            (tau_plus, q_plus, target_plus), (tau_minus, q_minus, target_minus) = plus, minus
-            moved = math.degrees(q_plus[joint] - q_minus[joint])
-            commanded = math.degrees(target_plus - target_minus)
-            held = moved < STUCK_FRACTION * commanded
-            if held:
-                stuck.append(f"{pose} {joint} moved {moved:.2f} of {commanded:.2f} deg")
-            measurements.append(
-                Measurement(
-                    pose=pose,
-                    joint=joint,
-                    kp=kp,
-                    kd=kd,
-                    dither_deg=dither,
-                    q_rad={name: 0.5 * (q_plus[name] + q_minus[name]) for name in q_plus},
-                    tau_pd_nm=0.5 * (tau_plus + tau_minus),
-                    friction_nm=0.5 * (tau_plus - tau_minus),
-                    stuck=held,
-                )
+    for index, (_, (pose, joint, kp, kd), dither, plus, minus) in enumerate(pairs):
+        if plus is None or minus is None:
+            incomplete.append(f"{pose} {joint}")
+            continue
+        (tau_plus, q_plus, target_plus), (tau_minus, q_minus, target_minus) = plus, minus
+        moved = math.degrees(q_plus[joint] - q_minus[joint])
+        commanded = math.degrees(target_plus - target_minus)
+        held = moved < STUCK_FRACTION * commanded
+        if held and last[(pose, joint, kp, kd)] != index:
+            continue
+        if held:
+            stuck.append(f"{pose} {joint} moved {moved:.2f} of {commanded:.2f} deg")
+        measurements.append(
+            Measurement(
+                pose=pose,
+                joint=joint,
+                kp=kp,
+                kd=kd,
+                dither_deg=dither,
+                q_rad={name: 0.5 * (q_plus[name] + q_minus[name]) for name in q_plus},
+                tau_pd_nm=0.5 * (tau_plus + tau_minus),
+                friction_nm=0.5 * (tau_plus - tau_minus),
+                stuck=held,
             )
+        )
     return measurements, incomplete, stuck
 
 

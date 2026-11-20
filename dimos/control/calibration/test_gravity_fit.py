@@ -451,6 +451,7 @@ def _synthetic_recording(
     truth: pin.Model | None = None,
     compensated: bool | None = True,
     stuck: Collection[tuple[str, str]] = (),
+    redone: Collection[tuple[str, str]] = (),
 ) -> GravityRecording:
     """A +1/-1 deg dither of each measured joint at each pose, settling short of its target.
 
@@ -458,7 +459,8 @@ def _synthetic_recording(
     arm's model sags each rest by the extra gravity torque over kp. Uncompensated
     (``compensated`` False) each rest sags by the whole gravity torque over kp;
     ``None`` leaves the compensation out of the markers. A ``(pose, joint)`` in
-    ``stuck`` rests at the pose through both dithers.
+    ``stuck`` rests at the pose through both dithers; one in ``redone`` too, and
+    then follows a +2/-2 deg pair.
     """
     dt, hold, kp = 0.01, 1.0, 80.0
     truth_data = truth.createData() if truth is not None else None
@@ -480,7 +482,8 @@ def _synthetic_recording(
         for joint in arm.measured_joints:
             index = arm.joint_names.index(joint)
             sag_deg = math.degrees(error[index] / kp)
-            for delta in (1.0, -1.0):
+            redo = (pose.name, joint) in redone
+            for delta in (1.0, -1.0, *((2.0, -2.0) if redo else ())):
                 target = q_pose.copy()
                 target[index] += delta
                 events.append(
@@ -502,7 +505,7 @@ def _synthetic_recording(
                 for _ in range(0 if compensated is not False else 6):
                     load = pin.computeGeneralizedGravity(held_up, held_up_data, np.radians(reached))
                     reached[index] = target[index] - 0.1 * delta - math.degrees(load[index] / kp)
-                if (pose.name, joint) in stuck:
+                if (pose.name, joint) in stuck or (redo and abs(delta) == 1.0):
                     reached[index] = q_pose[index] - sag_deg
                 for k in range(int(hold / dt)):
                     t_all.append(t + k * dt)
@@ -629,6 +632,29 @@ def test_a_pair_the_joint_did_not_follow_is_kept_and_listed_as_stuck(
     assert LEFT_MEASURED[3] not in calibration.friction_nm
     report = (out / "report.md").read_text()
     assert f"Warning: friction not cancelled on {LEFT_MEASURED[3]}, raise the dither." in report
+
+
+def test_a_redone_pair_replaces_the_stuck_one(
+    arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec
+) -> None:
+    truth = perturbed_model(arm, PERTURBATION)
+    poses = [home_pose(arm), *pose_set.identification]
+    redone = {(poses[2].name, LEFT_MEASURED[2])}
+    plain, _, _ = extract_measurements(_synthetic_recording(arm, poses, "", truth), left_spec)
+    grec = _synthetic_recording(arm, poses, "", truth, redone=redone)
+    measurements, incomplete, stuck = extract_measurements(grec, left_spec)
+    assert incomplete == [] and stuck == []
+    assert len(measurements) == len(plain) == len(poses) * len(LEFT_MEASURED)
+    [again] = [m for m in measurements if (m.pose, m.joint) in redone]
+    assert again.dither_deg == 2.0 and not again.stuck
+    assert again.tau_pd_nm == pytest.approx(
+        next(m for m in plain if (m.pose, m.joint) in redone).tau_pd_nm, abs=1e-9
+    )
+    # A pair redone that sticks again is the one kept, and listed.
+    both = _synthetic_recording(arm, poses, "", truth, stuck=redone, redone=redone)
+    measurements, _, stuck = extract_measurements(both, left_spec)
+    assert len(measurements) == len(poses) * len(LEFT_MEASURED)
+    assert stuck == [f"{poses[2].name} {LEFT_MEASURED[2]} moved 0.00 of 4.00 deg"]
 
 
 def test_the_fit_measures_the_joints_the_markers_say_were_dithered(

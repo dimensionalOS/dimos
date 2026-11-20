@@ -351,10 +351,16 @@ def test_a_dither_pair_the_joint_did_not_follow_is_redone_once_at_twice_the_ampl
     rig = make_rig(confirm_each=False, fake={"friction_nm": friction})
     prompts: list[str] = []
 
-    status = rig.run(["check", "gravity_poses"], lambda p: prompts.append(p) or "confirm")
+    status = rig.run(
+        ["check", "gravity_poses", "gravity_fit"], lambda p: prompts.append(p) or "confirm"
+    )
 
     assert status["state"] == "done", status["message"]
     result = rig.procedure.results()["gravity_poses"]
+    # Each redone pair replaced its stuck one: one measurement per pose and joint.
+    fit = rig.procedure.results()["gravity_fit"]
+    assert fit["measurements"] == result["poses"] * len(LEFT_DITHERED)
+    assert fit["stuck_pairs"] == 0
     d = result["dither_deg"]["left_joint2"]
     retried = result["retried"]
     assert retried and all(pair.endswith(" left_joint2") for pair in retried)
