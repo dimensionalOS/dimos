@@ -351,6 +351,21 @@ def test_overshoot_at_the_kd_limit_says_to_lower_kp() -> None:
     assert below.reason == "no candidate passed every step"
 
 
+def test_a_candidate_stopped_in_the_sweep_is_rejected_with_its_reason() -> None:
+    def steps(kp: float, kd: float) -> list[StepMetrics]:
+        return [
+            analyze_step(_event(d, joint="j", kp=kp, kd=kd), *_first_order(d, 0.05))
+            for d in (3.0, -3.0)
+        ]
+
+    why = "stopped at its +1 deg step, which buzzed"
+    proposals = propose_gains(
+        [*steps(80.0, 1.0), *steps(120.0, 1.0)], stopped={"j": {(120.0, 1.0): why}}
+    )
+    assert proposals["j"].gains == (80.0, 1.0)
+    assert proposals["j"].rejected == {"kp=120 kd=1": why}
+
+
 def test_gain_candidates_are_a_kp_by_kd_grid_with_the_robot_gains_first() -> None:
     pairs = gain_candidates(80.0, 1.0, (0.6, 1.0, 1.5), (1.0, 2.5, 5.0))
     assert pairs[0] == (80.0, 1.0) and len(pairs) == 9

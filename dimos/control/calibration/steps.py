@@ -50,7 +50,8 @@
    joint limit, or ``sweep_pose_deg``), steps every joint +1, -1, +3, -3 deg
    at each candidate of a grid, kp scales of its robot kp by kd scales of its
    robot kd, kd at most kp/4 (``step_analysis.gain_candidates``), holding
-   after each step.
+   after each step. A step that buzzes stops its candidate: the joint goes
+   back to the gains it had and to where it was before that step.
 6. ``pick_gains``: analyses those steps (``step_analysis.propose_gains``),
    each joint's rest limit from its friction (the larger of what its sweep and
    its gravity dithers show), and saves and applies the gains the operator
@@ -166,9 +167,11 @@ from dimos.control.calibration.spec import (
     urdf_limits,
 )
 from dimos.control.calibration.step_analysis import (
+    BUZZ_RMS_LIMIT_DEG_S,
     KD_PER_KP_LIMIT,
     STUCK_FRACTION,
     gain_candidates,
+    gain_label,
     propose_gains,
     sweep_friction_nm,
 )
@@ -1151,7 +1154,8 @@ class StepSweepStep(Step):
         "The arm moves to the sweep pose (clear of every joint limit), and every joint in turn "
         "steps a little, +1, -1, +3 and -3 degrees, at each tried stiffness and damping "
         "(multiples of its robot kp by multiples of its robot kd), resting after each step. "
-        "The gains go back when each joint is done, and the arm returns home."
+        "A step that buzzes ends that try at once. The gains go back when each joint is done, "
+        "and the arm returns home."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -1184,6 +1188,7 @@ class StepSweepStep(Step):
             "home. Clear the workspace. Enter to start"
         )
         swept: dict[str, list[list[float]]] = {}
+        stopped: dict[str, dict[str, str]] = {}
         start: float | None = None
         with ctx.session() as session:
             session.move_to(pose)
@@ -1205,7 +1210,21 @@ class StepSweepStep(Step):
                             kp, kd = session.set_gains(joint, *pair)
                             swept[joint].append([kp, kd])
                             for delta in deltas:
-                                session.step_joint(joint, delta, settings.step_hold_s)
+                                before = session.target
+                                step = session.step_joint(joint, delta, settings.step_hold_s)
+                                if step.buzz_deg_s > BUZZ_RMS_LIMIT_DEG_S:
+                                    why = (
+                                        f"stopped at its {delta:+g} deg step, which buzzed at "
+                                        f"{step.buzz_deg_s:.1f} deg/s RMS (limit "
+                                        f"{BUZZ_RMS_LIMIT_DEG_S:g} deg/s); its other steps were "
+                                        "skipped"
+                                    )
+                                    ctx.run.buzzing.setdefault(joint, {})[(kp, kd)] = why
+                                    stopped.setdefault(joint, {})[gain_label(kp, kd)] = why
+                                    session.reset_gains()
+                                    session.ramp_to(before)
+                                    session.hold(settings.step_hold_s)
+                                    break
                     finally:
                         try:
                             session.reset_gains()
@@ -1217,6 +1236,7 @@ class StepSweepStep(Step):
             session.move_to(ctx.arm.home)
         data = {
             "joints": swept,
+            "stopped": stopped,
             "kp_scales": list(settings.kp_scales),
             "kd_scales": list(settings.kd_scales),
             "steps_deg": list(deltas),
@@ -1224,7 +1244,13 @@ class StepSweepStep(Step):
             "pose_deg": [round(math.degrees(float(v)), 3) for v in pose],
             "span": list(ctx.run.step_span),
         }
-        return StepResult(f"swept {len(swept)} of {len(spec.joint_names)} joints at {where}", data)
+        halted = sum(len(pairs) for pairs in stopped.values())
+        buzzing = (
+            f"; stopped {halted} buzzing candidates at their first buzzing step" if halted else ""
+        )
+        return StepResult(
+            f"swept {len(swept)} of {len(spec.joint_names)} joints at {where}{buzzing}", data
+        )
 
 
 class PickGainsStep(Step):
@@ -1255,7 +1281,7 @@ class PickGainsStep(Step):
             for r in extract_steps(steps, dither_friction_nm=dither)
             if r.event.joint in ctx.spec.joint_names
         ]
-        proposals = propose_gains(record.metrics for record in records)
+        proposals = propose_gains((record.metrics for record in records), stopped=ctx.run.buzzing)
         swept = sweep_friction_nm(record.metrics for record in records)
         if recording.directory is not None:
             out = recording.directory / STEP_REPORT_DIR

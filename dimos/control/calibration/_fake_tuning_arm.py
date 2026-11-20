@@ -44,7 +44,9 @@ the motor's rated torque (the spec's pose cap over
 started afresh over a stored file made for another model or arm, and a
 check refused unless the arm runs the file as it is on disk.
 
-What it does not simulate: inertia (so no overshoot or ringing), velocity
+With ``chatters`` set, a joint it names at its gains reports a velocity
+oscillating at ``CHATTER_DEG_S`` on top of its motion, as a joint buzzing in
+place does. What it does not simulate: inertia (so no overshoot or ringing), velocity
 limits, encoder noise and quantization, torque saturation, the other arm of
 a robot, grippers, CAN timing, and the connection's own threads (everything
 happens in the caller's thread as simulated time advances). With
@@ -135,6 +137,8 @@ MAX_KD = 5.0
 # Damiao connection clamps it.
 FEEDFORWARD_RATED_FRACTION = 0.2
 VISCOUS_NM_S = 0.05
+CHATTER_DEG_S = 100.0
+CHATTER_HZ = 37.0
 DEFAULT_FRICTION_NM = 0.05
 STICTION_RATIO = 1.2
 # Below this speed a joint counts as stopped, and friction may hold it.
@@ -377,6 +381,7 @@ class FakeTuningArm:
         self.call_log: list[str] = []
         self.fail_after_commands: int | None = None
         self.blocked: set[str] = set()
+        self.chatters: Callable[[str, float, float], bool] | None = None
         self.on_command: Callable[[FakeTuningArm], None] | None = None
         if applied is not None:
             self._apply(applied)
@@ -394,7 +399,9 @@ class FakeTuningArm:
                     self.now += h
                 if self.now >= self._next_sample - 1e-12:
                     if self._recording is not None:
-                        self._recording.add_sample(self.now, self._names, self.q, self.v)
+                        self._recording.add_sample(
+                            self.now, self._names, self.q, self._reported_v()
+                        )
                     self._next_sample += SAMPLE_PERIOD_S
             if self.joint_state is not None:
                 self.joint_state.publish(self._reading())
@@ -447,6 +454,15 @@ class FakeTuningArm:
                 q = float(self.q[i]) + v * h
             self.q[i], self.v[i] = q, v
             self._stopped[i] = abs(v) < STOPPED_RAD_S
+
+    def _reported_v(self) -> Vector:
+        chatters = self.chatters
+        if chatters is None:
+            return self.v
+        wobble = math.radians(CHATTER_DEG_S) * math.sin(2.0 * math.pi * CHATTER_HZ * self.now)
+        extra = [wobble if chatters(name, *self._gains(name)) else 0.0 for name in self._names]
+        reported: Vector = self.v + np.asarray(extra)
+        return reported
 
     def _gains(self, name: str) -> tuple[float, float]:
         return self._overrides.get(name) or self._calibrated.get(name) or self._defaults[name]
@@ -541,7 +557,7 @@ class FakeTuningArm:
             ts=self.now,
             name=[f"{SOURCE}/{name}" for name in self._names],
             position=[float(v) for v in self.q],
-            velocity=[float(v) for v in self.v],
+            velocity=[float(v) for v in self._reported_v()],
             effort=[0.0] * len(self._names),
         )
 

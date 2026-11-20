@@ -91,6 +91,7 @@ The method:
 - The link masses are fitted by least squares. Held-out poses give the cross validation error. Every joint whose gravity torque can change by more than 0.1 N m over the poses is nudged; one that is not keeps its URDF gravity torque.
 - The fit is judged on all joints together, at this run's held-out poses. If it is worse overall than the URDF or the running file, the prompt says so and Enter keeps the running file; s saves it anyway. Joints that got worse are listed either way.
 - The step sweep rejects a kp and kd pair when a 3 degree step sticks (moves less than half its size), a step overshoots more than 20 % or buzzes. A stuck 1 degree step is listed and does not count. Of the rest it picks the lowest worst rest error over max(0.1 deg, 1.5 x friction / kp) plus worst settle time over 0.5 s. Each joint's friction comes from its 3 degree steps and its nudges.
+- A step that buzzes (over 1 deg/s RMS at rest) stops that pair at once: its other steps are skipped and the joint goes back to its gains and to where it was before that step.
 - A joint where nothing passes keeps its robot gains.
 - The float check sets kp to 0 for one joint at a time, at the poses where it carries the most gravity with the masses the arm runs. The fingertip drift counts from the moment the joint goes limp; more than 2 mm fails. A joint that drifts more than 5 degrees or moves faster than 20 degrees per second is held again and fails.
 

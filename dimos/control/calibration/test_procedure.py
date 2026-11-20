@@ -1235,6 +1235,38 @@ def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
     assert sweep["kp_scales"] == [0.6, 1.0, 1.5] and sweep["kd_scales"] == [1.0, 2.5, 5.0]
 
 
+def test_a_candidate_stops_at_its_first_buzzing_step_and_is_rejected_for_it(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig(confirm_each=False)
+    rig.fake.chatters = lambda joint, kp, kd: joint == "left_joint5" and kd > 2.0
+
+    status = rig.run(["check", "step_sweep", "pick_gains"])
+
+    assert status["state"] == "done", status["message"]
+    results = rig.procedure.results()
+    stopped = results["step_sweep"]["stopped"]
+    assert set(stopped) == {"left_joint5"}
+    assert set(stopped["left_joint5"]) == {"kp=10 kd=2.5", "kp=15 kd=3.75"}
+    why = stopped["left_joint5"]["kp=10 kd=2.5"]
+    assert why.startswith("stopped at its +1 deg step, which buzzed at ")
+    assert why.endswith("deg/s RMS (limit 1 deg/s); its other steps were skipped")
+    assert rig.messages()["step_sweep"].endswith(
+        "; stopped 2 buzzing candidates at their first buzzing step"
+    )
+    wrist = [m for m in rig.recording.markers["step_events"] if m["joint"] == "left_joint5"]
+    tried = [(m["kp"], m["kd"]) for m in wrist]
+    assert tried.count((10.0, 2.5)) == tried.count((15.0, 3.75)) == 1
+    assert tried.count((10.0, 1.5)) == tried.count((15.0, 1.5)) == 4
+    stop = tried.index((10.0, 2.5))
+    assert wrist[stop + 1]["kp"] == 15.0 and wrist[stop + 1]["kd"] == 1.5
+    assert wrist[stop + 1]["target_before_deg"] == pytest.approx(wrist[stop]["target_before_deg"])
+    proposal = results["pick_gains"]["proposals"]["left_joint5"]
+    assert proposal["rejected"]["kp=10 kd=2.5"] == why
+    assert (proposal["kp"], proposal["kd"]) == (15.0, 1.5)
+    assert _far_from_home(rig) < 3.0
+
+
 def _heavy_forearm(arm: ArmModel, spec: ArmCalibrationSpec, extra_kg: float) -> ArmCalibration:
     forearm = arm.model.inertias[body_joint_id(arm.model, "left_link3")]
     heavy = {

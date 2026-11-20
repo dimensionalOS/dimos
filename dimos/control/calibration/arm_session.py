@@ -52,7 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import functools
 import itertools
 import math
@@ -81,7 +81,7 @@ from dimos.control.calibration.motion import (
 )
 from dimos.control.calibration.schema import ArmConfigPatch, ArmConfigState, JointGains
 from dimos.control.calibration.spec import ArmCalibrationSpec
-from dimos.control.calibration.step_analysis import REST_WINDOW_S, StepEvent
+from dimos.control.calibration.step_analysis import REST_WINDOW_S, StepEvent, buzz_rms
 from dimos.control.connection.module_config import ConfigApplied
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -285,6 +285,12 @@ class TrackingLog:
             "rest_samples": len(self._rows(rest=True, poses=poses)),
             "ramp_samples": len(self._rows(rest=False, poses=poses)),
         }
+
+
+@dataclass(frozen=True)
+class JointStep:
+    event: StepEvent
+    buzz_deg_s: float
 
 
 def _holds_on_failure(method: _Method) -> _Method:
@@ -730,11 +736,22 @@ class ArmSession:
     @_holds_on_failure
     def hold(self, seconds: float, log: TrackingLog | None = None) -> None:
         """Hold the current target for ``seconds``."""
+        self._hold(seconds, log)
+
+    def _hold(
+        self, seconds: float, log: TrackingLog | None = None, watched: int | None = None
+    ) -> tuple[Vector, Vector]:
+        times: list[float] = []
+        speeds: list[float] = []
         start = self._clock.now()
         while self._clock.now() - start < seconds - 1e-9:
             self.tick()
             if log is not None and self._clock.now() - start >= seconds - REST_WINDOW_S:
                 log.add_rest(np.degrees(self._target - self._measured))
+            if watched is not None and (not times or self._reading_ts > times[-1]):
+                times.append(self._reading_ts)
+                speeds.append(math.degrees(float(self._velocity[watched])))
+        return np.asarray(times, dtype=np.float64), np.asarray(speeds, dtype=np.float64)
 
     @_holds_on_failure
     def set_gains(self, joint: str, kp: float, kd: float) -> tuple[float, float]:
@@ -756,7 +773,7 @@ class ArmSession:
         self._gains = dict(self._arm_state().gains)
 
     @_holds_on_failure
-    def step_joint(self, joint: str, delta_deg: float, hold_s: float) -> StepEvent:
+    def step_joint(self, joint: str, delta_deg: float, hold_s: float) -> JointStep:
         """Move ``joint``'s target by ``delta_deg`` at once, mark it, and hold ``hold_s``."""
         check_step(delta_deg)
         index = self._names.index(joint)
@@ -782,9 +799,9 @@ class ArmSession:
         self._host.marker(STEP_EVENTS, asdict(event))
         self._guard = guard
         self._target = stepped
-        self.hold(hold_s)
+        t, speed = self._hold(hold_s, watched=index)
         self._guard = SegmentGuard(self._arm, stepped, stepped)
-        return event
+        return JointStep(event, buzz_rms(t - event.t0, speed) if t.size else math.nan)
 
     def mark_pose(self, label: str, data: Mapping[str, Any]) -> float:
         """Publish a ``gravity_events`` pose marker with the current targets; its time."""

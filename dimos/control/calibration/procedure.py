@@ -260,6 +260,8 @@ class RunState:
             connection reported it (``config_get``): its file and link masses.
         step_span: When the gain sweep started and ended.
         baseline: Tracking with the values the arm had before this run, by pose.
+        buzzing: By joint, the gain sweep's candidates stopped at a buzzing
+            step, by ``(kp, kd)`` as applied, and why.
     """
 
     run_id: str
@@ -269,6 +271,7 @@ class RunState:
     gravity_applied: ArmConfigState | None = None
     step_span: tuple[float, float] | None = None
     baseline: TrackingLog | None = None
+    buzzing: dict[str, dict[tuple[float, float], str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -33,7 +33,7 @@ score.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 import json
 import math
@@ -420,6 +420,7 @@ class GainProposal:
 def propose_gains(
     step_results: Iterable[StepMetrics],
     candidates: Sequence[tuple[float, float]] | None = None,
+    stopped: Mapping[str, Mapping[tuple[float, float], str]] | None = None,
 ) -> dict[str, GainProposal]:
     """Per joint, the passing candidate among ``candidates`` with the lowest score.
 
@@ -433,7 +434,8 @@ def propose_gains(
     time over 0.5 s; the lowest wins, a
     tie going to the higher kp, then the lower kd. When none passes and every
     candidate at the highest kd tried, the driver's ``KD_LIMIT``, overshoots,
-    the reason says to lower kp. ``rejected`` explains every other candidate.
+    the reason says to lower kp. ``rejected`` explains every other candidate;
+    one in ``stopped`` (by joint) is rejected with the reason given there.
     """
     by_joint: dict[str, dict[tuple[float, float], list[StepMetrics]]] = defaultdict(
         lambda: defaultdict(list)
@@ -448,9 +450,12 @@ def propose_gains(
         friction = next(iter(by_gains.values()))[0].friction_nm
         rejected: dict[str, str] = {}
         scored: list[tuple[float, float, float]] = []
+        halted = (stopped or {}).get(joint, {})
         for kp, kd in pairs:
             steps = by_gains.get((kp, kd), [])
-            if not steps:
+            if (kp, kd) in halted:
+                rejected[gain_label(kp, kd)] = halted[(kp, kd)]
+            elif not steps:
                 rejected[gain_label(kp, kd)] = "not tested"
             elif why := _gain_failures(steps):
                 rejected[gain_label(kp, kd)] = why
