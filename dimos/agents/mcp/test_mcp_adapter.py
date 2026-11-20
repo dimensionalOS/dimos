@@ -14,14 +14,25 @@
 
 from __future__ import annotations
 
+import json
 import os
 from types import SimpleNamespace
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.agents.mcp.constants import DEFAULT_MCP_TIMEOUT, mcp_url
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.core.run_registry import RunEntry
+
+
+def test_adapter_rejects_non_object_tool_arguments_before_posting(mocker: MockerFixture) -> None:
+    post = mocker.patch("dimos.agents.mcp.mcp_adapter.requests.post")
+
+    with pytest.raises(ValueError, match="MCP tool arguments must be a JSON object"):
+        McpAdapter().call_tool("server_status", json.loads("[]"))
+
+    post.assert_not_called()
 
 
 def test_call_sends_config_timeout_unless_overridden(monkeypatch: pytest.MonkeyPatch) -> None:

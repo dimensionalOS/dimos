@@ -65,6 +65,15 @@ def post(mocker: MockerFixture) -> MagicMock:
     )
 
 
+@pytest.mark.parametrize("value", ["[]", "null", '"hello"', ""])
+def test_json_tool_arguments_must_be_an_object(value: str, post: MagicMock) -> None:
+    result = CliRunner().invoke(main, ["mcp", "call", "server_status", "-j", value])
+
+    assert result.exit_code == 1
+    assert "JSON" in result.stderr
+    post.assert_not_called()
+
+
 def test_missing_endpoint_reports_uncertainty_and_relaunch_steps(
     command: list[str], run_entry: RunEntry, post: MagicMock, mcp_url: str
 ) -> None:

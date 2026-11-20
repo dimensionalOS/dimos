@@ -38,6 +38,7 @@ import requests
 from dimos.agents.base_agent import BaseAgent
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.arguments import require_tool_arguments
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
@@ -348,7 +349,7 @@ class Agent(BaseAgent):
 
         Args:
             continuation: ``{"tool": "<name>", "args": {…}}`` — the tool to
-                call and its arguments.  Argument values that are strings
+                call and its optional JSON object of named arguments. Values that are strings
                 starting with ``$`` are treated as template variables and
                 resolved against *continuation_context* (e.g. ``"$bbox"``).
             continuation_context: runtime detection data, e.g.
@@ -367,7 +368,11 @@ class Agent(BaseAgent):
             )
             return
 
-        tool_args: dict[str, Any] = dict(continuation.get("args", {}))
+        try:
+            tool_args = require_tool_arguments(continuation.get("args", {})).copy()
+        except ValueError as e:
+            self._message_queue.put(HumanMessage(f"Continuation '{tool_name}' failed: {e}"))
+            return
 
         # Substitute $-prefixed template variables from continuation_context
         for key, value in tool_args.items():

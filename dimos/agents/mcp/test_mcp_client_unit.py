@@ -263,6 +263,16 @@ def test_tool_stream_progress_frame_becomes_human_message(mcp_client: Agent) -> 
     assert str(msg.content) == "[tool:follow_person] Found a person"
 
 
+@pytest.mark.parametrize("invalid", [[], "", [["name", "unexpected"]], None])
+def test_continuation_validates_arguments_before_dispatch(mcp_client: Agent, invalid: Any) -> None:
+    mcp_client._fetch_tools()
+    with patch.object(mcp_client._http_client, "post", wraps=mcp_client._http_client.post) as post:
+        mcp_client.dispatch_continuation({"tool": "greet", "args": invalid}, {})
+
+        post.assert_not_called()
+        assert "JSON object" in mcp_client._message_queue.get_nowait().content
+
+
 def test_mcp_tool_call_sends_progress_token(mcp_client: Agent) -> None:
     """Every `tools/call` request carries a `_meta.progressToken`."""
     captured: dict[str, object] = {}
