@@ -66,6 +66,28 @@ def test_encoding_threads_require_rust() -> None:
     assert config.record_encoding_threads == 8
 
 
+@pytest.mark.parametrize(
+    ("settings", "message"),
+    [
+        ({"record_stream_periods": "lidar=2"}, "valid only with --record-events"),
+        ({"record_default_period": 10.0}, "valid only with --record-events"),
+        ({"record_events": True, "record_type_periods": "Image"}, "is not glob=seconds"),
+        ({"record_events": True, "record_stream_periods": "=2"}, "is not glob=seconds"),
+        ({"record_events": True, "record_stream_periods": "lidar=fast"}, "is not glob=seconds"),
+    ],
+)
+def test_event_settings_need_event_mode_and_glob_seconds_pairs(
+    settings: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        GlobalConfig.model_validate({"record_engine": "rust", **settings})
+
+    config = GlobalConfig.model_validate(
+        {"record_engine": "rust", "record_events": True, "record_stream_periods": "lidar=2"}
+    )
+    assert config.record_stream_periods == "lidar=2"
+
+
 def test_dotenv_is_ignored_under_pytest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / ".env").write_text("ROBOT_IP=192.0.2.17\n")
     monkeypatch.chdir(tmp_path)

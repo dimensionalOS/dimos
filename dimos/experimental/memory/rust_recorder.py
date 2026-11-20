@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
@@ -29,8 +30,9 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
@@ -39,10 +41,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
-_HEAVY_PAYLOAD_TYPES = {
-    f"{payload_type.__module__}.{payload_type.__qualname__}"
-    for payload_type in (Image, PointCloud2)
-}
+# Payload types kept at full rate unless overridden: transforms and odometry.
+_DEFAULT_TYPE_PERIODS = {payload.__name__: 0.0 for payload in (TFMessage, Odometry, PoseStamped)}
+_Period: TypeAlias = Annotated[float, Field(ge=0)]
 
 
 class RustStreamSpec(BaseModel):
@@ -132,9 +133,11 @@ class RustEventConfig(BaseModel):
 
     Every message on the ``clip_that`` stream keeps all streams at full rate from
     ``pre_s`` before it to ``post_s`` after it. Outside clips, each stream keeps at
-    most one message per its period. Messages wait in window segments until
-    no trigger can still claim them, so the artifact runs about ``pre_s + segment_s``
-    behind live.
+    most one message per its period. A stream's period comes from the first matching
+    glob in ``stream_periods``, then in ``type_periods``, then the type defaults (full
+    rate for transforms and odometry), then ``default_period``. Messages wait in window
+    segments until no trigger can still claim them, so the artifact runs about
+    ``pre_s + segment_s`` behind live.
     """
 
     kind: Literal["events"] = "events"
@@ -151,17 +154,25 @@ class RustEventConfig(BaseModel):
         gt=0,
         description="Longest a clip may grow when overlapping triggers extend it.",
     )
-    max_window_mb: float = Field(
+    max_window_mib: float = Field(
         default=2048.0,
         gt=0,
         description="Most window data waiting to be stored before the oldest segment is stored thinned.",
     )
     trigger: Literal["clip_that"] = "clip_that"
-    heavy_period_s: float = Field(
-        default=5.0,
-        ge=0,
+    default_period: _Period = Field(
         exclude=True,
-        description="Seconds between kept images and point clouds outside clips.",
+        description="Seconds between kept messages outside clips, for every stream.",
+    )
+    type_periods: dict[str, _Period] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="Seconds between kept messages outside clips, by payload type name glob.",
+    )
+    stream_periods: dict[str, _Period] = Field(
+        default_factory=dict,
+        exclude=True,
+        description="Seconds between kept messages outside clips, by stream name glob.",
     )
     periods: dict[str, float] = Field(
         default_factory=dict,
@@ -178,13 +189,18 @@ class RustEventConfig(BaseModel):
         """Fill ``periods`` for every stream and put ``window_dir`` under ``window_root``."""
         if self.trigger not in {stream.name for stream in streams}:
             raise ValueError(f"Event recording needs the trigger stream {self.trigger!r}")
-        periods = {
-            stream.name: self.heavy_period_s if stream.payload_type in _HEAVY_PAYLOAD_TYPES else 0.0
-            for stream in streams
-        }
+        periods = {stream.name: self._period(stream) for stream in streams}
         return self.model_copy(
             update={"periods": periods, "window_dir": str(window_root / artifact.parent.name)}
         )
+
+    def _period(self, stream: RustStreamSpec) -> float:
+        type_name = stream.payload_type.rsplit(".", 1)[-1]
+        for globs, name in ((self.stream_periods, stream.name), (self.type_periods, type_name)):
+            for pattern, period in globs.items():
+                if fnmatch.fnmatchcase(name, pattern):
+                    return period
+        return _DEFAULT_TYPE_PERIODS.get(type_name, self.default_period)
 
 
 class RustRecorderConfig(NativeModuleConfig):

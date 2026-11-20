@@ -42,6 +42,20 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
 
 
+def parse_periods(text: str) -> dict[str, float]:
+    """Parse comma-separated ``glob=seconds`` pairs, keeping their order."""
+    periods: dict[str, float] = {}
+    for entry in filter(None, (part.strip() for part in text.split(","))):
+        pattern, _, seconds = (part.strip() for part in entry.partition("="))
+        try:
+            if not pattern:
+                raise ValueError
+            periods[pattern] = float(seconds)
+        except ValueError:
+            raise ValueError(f"period {entry!r} is not glob=seconds") from None
+    return periods
+
+
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     robot_ips: str | None = None
@@ -54,14 +68,18 @@ class GlobalConfig(BaseSettings):
     record_encoding_threads: int | None = Field(default=None, ge=1)
     # Thin long recordings and keep full-rate clips around messages on the clip_that topic.
     record_events: bool = False
+    # Seconds between kept messages outside event recording clips, for every stream.
+    record_default_period: float = Field(default=5.0, ge=0)
+    # Overrides as comma-separated glob=seconds pairs. Payload type names (Image=10)
+    # override the default, stream names (lidar=2) override both.
+    record_type_periods: str = ""
+    record_stream_periods: str = ""
     # Event recording windows go in one subfolder per run here. Linux keeps them in RAM.
-    record_window_dir: str = (
-        "/dev/shm/dimos-recorder"
-        if sys.platform == "linux"
-        else str(Path(tempfile.gettempdir()) / "dimos-recorder")
+    record_window_dir: str = str(
+        Path("/dev/shm" if sys.platform == "linux" else tempfile.gettempdir()) / "dimos-recorder"
     )
-    # Most event window data (MB) waiting to be stored before the oldest segment is stored thinned.
-    record_window_mb: float = Field(default=2048.0, gt=0)
+    # Most event window data (MiB) waiting to be stored before the oldest segment is stored thinned.
+    record_window_mib: float = Field(default=2048.0, gt=0)
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.
@@ -145,6 +163,22 @@ class GlobalConfig(BaseSettings):
     def _validate_record_events(cls, value: bool, info: ValidationInfo) -> bool:
         if value and info.data.get("record_engine") != "rust":
             raise ValueError("--record-events is valid only with --record-engine rust")
+        return value
+
+    @field_validator(
+        "record_default_period",
+        "record_type_periods",
+        "record_stream_periods",
+        "record_window_dir",
+        "record_window_mib",
+    )
+    @classmethod
+    def _validate_event_setting(cls, value: float | str, info: ValidationInfo) -> float | str:
+        name = info.field_name or ""
+        if value != cls.model_fields[name].default and not info.data.get("record_events"):
+            raise ValueError(f"--{name.replace('_', '-')} is valid only with --record-events")
+        if isinstance(value, str) and name.endswith("_periods"):
+            parse_periods(value)
         return value
 
     def update(self, **kwargs: object) -> None:

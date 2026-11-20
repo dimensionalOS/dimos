@@ -27,7 +27,7 @@ import time
 from typing import IO, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, RUN_SHUTDOWN_TIMEOUT
-from dimos.core.global_config import global_config
+from dimos.core.global_config import global_config, parse_periods
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, session_config
 from dimos.experimental.memory.rust_recorder import (
@@ -103,12 +103,16 @@ def prepare_rust_recorder() -> Path:
 def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     """Resolve and validate the stream plan the standalone recorder will receive.
 
-    With ``--record-events`` the trigger stream is always recorded, on its own topic
-    when no module publishes it, so ``dimos topic send`` can start a clip. That topic
-    joins the recorded streams' LCM URL when they use LCM.
+    With ``--record-events`` the trigger stream is always recorded, so ``dimos topic send``
+    can start a clip.
     """
     events = (
-        RustEventConfig(max_window_mb=global_config.record_window_mb)
+        RustEventConfig(
+            default_period=global_config.record_default_period,
+            type_periods=parse_periods(global_config.record_type_periods),
+            stream_periods=parse_periods(global_config.record_stream_periods),
+            max_window_mib=global_config.record_window_mib,
+        )
         if global_config.record_events
         else None
     )
@@ -116,7 +120,7 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     selected = matching(global_config.record_topics, (name for name, _ in transports))
     if events is not None:
         if not any(name == events.trigger for name, _ in transports):
-            lcm = next(
+            lcm_transport = next(
                 (
                     transport
                     for (name, _), transport in transports.items()
@@ -126,8 +130,8 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
             )
             transports[(events.trigger, String)] = (
                 make_transport(events.trigger, String)
-                if lcm is None
-                else LCMTransport(f"/{events.trigger}", String, url=lcm.lcm.config.url)
+                if lcm_transport is None
+                else LCMTransport(f"/{events.trigger}", String, url=lcm_transport.lcm.config.url)
             )
         selected.add(events.trigger)
     unsupported_transports: list[str] = []
