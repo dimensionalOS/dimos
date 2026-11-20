@@ -75,8 +75,9 @@ class M20CameraRelayConfig(NativeModuleConfig):
     # Deskewed frame size; 0 keeps the capture's.
     deskew_width: int = Field(default=0, ge=0)
     deskew_height: int = Field(default=0, ge=0)
-    # 0 keeps only what every edge of the frame saw (no black borders), 1 the whole field of view.
-    deskew_balance: float = Field(default=0.0, ge=0.0, le=1.0)
+    # 0 keeps only what every edge of the frame saw (no black borders, crops the most), 1 the whole field of view
+    # (40% black on the M20's fisheyes). 0.5 keeps most of the view with black only past the lens' own edge (16%).
+    deskew_balance: float = Field(default=0.5, ge=0.0, le=1.0)
     deskew_interpolation: Literal["bilinear", "nearest"] = "bilinear"
     retry_s: float = Field(default=2.0, ge=0.1, le=60.0)
     # Without an answer or a frame for this long, the stream is dropped and reopened.

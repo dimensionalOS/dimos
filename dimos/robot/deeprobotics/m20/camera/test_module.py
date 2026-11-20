@@ -43,6 +43,7 @@ def test_config_dict_is_the_camera_config() -> None:
     assert wire["rear_camera_yaw_rad"] == math.pi
     assert wire["encoder"] == "rust"
     assert wire["deskew"] is False
+    assert wire["deskew_balance"] == 0.5
     assert wire["distortion_coefficients"] == [0.0, 0.0, 0.0, 0.0, 0.0]
 
 
