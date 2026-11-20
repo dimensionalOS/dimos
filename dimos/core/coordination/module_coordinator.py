@@ -849,13 +849,6 @@ def stream_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
     return result
 
 
-def _raise_check_errors(_outcomes: Any, _passed: Any, errors: list[Exception]) -> None:
-    """One failed check raises its own error; several raise them together."""
-    if len(errors) == 1:
-        raise errors[0]
-    raise ExceptionGroup("blueprint checks failed", errors)
-
-
 def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
     return sum(1 for n, _ in stream_name_types(blueprint) if n == name) == 1
 
@@ -1129,7 +1122,17 @@ def _deploy_all_modules(
             if "blueprint_checks" in vars(base)
         )
     )
-    safe_thread_map(checkers, lambda checker: checker(atoms), _raise_check_errors)
+    errors = []
+    for checker in checkers:
+        try:
+            checker(atoms)
+        except Exception as error:
+            errors.append(error)
+    # One failed check raises its own error; several raise them together.
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise ExceptionGroup("blueprint checks failed", errors)
     module_coordinator.deploy_parallel(module_specs)
 
     for bp in blueprint.active_blueprints:
