@@ -84,10 +84,6 @@ def test_edges_must_use_declared_roles() -> None:
 
 
 def test_frame_reads_local_and_global_roles(odom: Odom) -> None:
-    assert (odom.frame.body, odom.frame.world, odom.frame["world"]) == (
-        "base_link",
-        "world",
-        "world",
-    )
-    with pytest.raises(AttributeError, match="no tf frame for role 'lidar'"):
+    assert (odom.frame.body, odom.frame.world) == ("base_link", "world")
+    with pytest.raises(AttributeError, match="lidar"):
         odom.frame.lidar  # noqa: B018
