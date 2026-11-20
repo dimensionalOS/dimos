@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import AsyncGenerator, Callable
 import concurrent.futures
 import json
@@ -64,6 +65,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.state.skills = []
+app.state.module_skills = {}
 app.state.skills_by_name = {}
 app.state.rpc_calls = {}
 app.state.sse_queues = []
@@ -130,6 +132,11 @@ async def _handle_tools_call(
 
     rpc_call = rpc_calls.get(name)
     if rpc_call is None:
+        owners = [owner for owner, names in app.state.module_skills.items() if name in names]
+        if len(owners) > 1:
+            return _jsonrpc_error(
+                req_id, -32602, f"Ambiguous tool '{name}'; provided by {', '.join(sorted(owners))}"
+            )
         logger.warning("MCP tool not found", tool=name)
         return _jsonrpc_tool_error(req_id, f"Tool not found: {name}")
 
@@ -414,41 +421,48 @@ class McpServer(Module):
         # One RPC per module, in parallel: a worker still warming up blocks
         # its call on the langchain import.
         per_module = safe_thread_map(modules, lambda module: module.get_skills() or [])
-        app.state.skills = [skill_info for skills in per_module for skill_info in skills]
-        app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
-        app.state.rpc_calls = {
-            skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, module.remote_name, []
-            )
+        module_skills = {
+            module.instance_name: [skill.func_name for skill in skills]
             for module, skills in zip(modules, per_module, strict=True)
-            for skill_info in skills
         }
+        owner_counts = Counter(name for names in module_skills.values() for name in names)
+        # MCP calls name only the tool, so discovery and dispatch must agree on a single owner.
+        routable = [
+            (module, skill)
+            for module, skills in zip(modules, per_module, strict=True)
+            for skill in skills
+            if owner_counts[skill.func_name] == 1
+        ]
+        skills_by_name = {skill.func_name: skill for _, skill in routable}
+        rpc_calls = {
+            skill.func_name: RpcCall(None, self.rpc, skill.func_name, module.remote_name, [])
+            for module, skill in routable
+        }
+        app.state.module_skills = module_skills
+        app.state.skills_by_name = skills_by_name
+        app.state.skills = list(skills_by_name.values())
+        app.state.rpc_calls = rpc_calls
 
     @skill
     def server_status(self) -> str:
-        """Get MCP server status: main process PID, deployed modules, and skill count."""
+        """Get the main process PID, deployed module instance names, and callable skills."""
         from dimos.core.run_registry import get_most_recent
 
-        skills: list[SkillInfo] = app.state.skills
-        modules = list(dict.fromkeys(s.class_name for s in skills))
+        module_skills: dict[str, list[str]] = app.state.module_skills
         entry = get_most_recent()
         pid = entry.pid if entry else os.getpid()
         return json.dumps(
             {
                 "pid": pid,
-                "modules": modules,
-                "skills": [s.func_name for s in skills],
+                "modules": list(module_skills),
+                "skills": list(app.state.skills_by_name),
             }
         )
 
     @skill
     def list_modules(self) -> str:
-        """List deployed modules and their skills."""
-        skills: list[SkillInfo] = app.state.skills
-        modules: dict[str, list[str]] = {}
-        for s in skills:
-            modules.setdefault(s.class_name, []).append(s.func_name)
-        return json.dumps({"modules": modules})
+        """List every deployed module instance and its skills."""
+        return json.dumps({"modules": app.state.module_skills})
 
     @skill
     def agent_send(self, message: str) -> str:
