@@ -61,6 +61,7 @@ def test_no_vendor_bridge() -> None:
         ({}, _AOS_DRIVERS),
         ({"M20Joints": "ecan"}, _AOS_DRIVERS | {"m20ecan"}),
         ({"M20Cameras": "off"}, _AOS_DRIVERS - {"m20camerarelay"}),
+        ({"M20Cameras": "off", "M20BodyImu": "off"}, _AOS_DRIVERS - {"m20camerarelay", "m20imu"}),
     ],
 )
 def test_drivers_run_on_aos_and_the_rest_where_the_run_starts(

@@ -21,7 +21,8 @@ Everything else runs on the machine that starts the run (GOS): dimSLAM, the ray 
 The Airys are two independent streams, ``front_lidar`` and ``rear_lidar`` (each in its own lidar frame, with
 ``front_lidar_imu`` / ``rear_lidar_imu``), and dimSLAM, the ray tracer and relocalization each take both, never merged.
 dimSLAM runs on the front lidar's IMU alone (both IMUs ran under real time on GOS). The cameras' module replaces ``m20-camera.service``
-(``--choice M20Cameras=off`` leaves them to it). Nothing commands the legs.
+(``--choice M20Cameras=off`` leaves them to it); ``--choice M20BodyImu=off`` leaves the body IMU to the vendor
+yesense_node, which holds its serial port in vendor mode. Nothing commands the legs.
 """
 
 from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
@@ -39,7 +40,13 @@ from dimos.robot.urdf_manager import UrdfManager
 AOS = {"board": "aos"}
 
 m20_rust = autoconnect(
-    autoconnect(m20_airy_lidars(), M20Imu.blueprint()).hosted(tags=AOS),
+    m20_airy_lidars().hosted(tags=AOS),
+    # off while the vendor yesense_node holds the IMU's serial port
+    ChoiceAtom(
+        name="M20BodyImu",
+        default="on",
+        choices={"on": M20Imu.blueprint().hosted(tags=AOS), "off": autoconnect()},
+    ),
     ChoiceAtom(
         name="M20Cameras",
         default="relay",
