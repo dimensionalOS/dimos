@@ -53,8 +53,8 @@ STAND_JOINT_POSITIONS = {
     **{f"{leg}_knee_joint": -0.6 for leg in ("hl", "hr")},
     **{f"{leg}_wheel_joint": 0.0 for leg in ("fl", "fr", "hl", "hr")},
 }
-# rl_deploy's wheel speed clamp (rad/s), on every joint: the MJCF has no velocity limits, the URDF parser the body
-# filter loads with rejects a joint without one, and the legs' own limit is not published.
+# Placeholder (a hack, for the body filter only): rl_deploy's wheel speed clamp (rad/s) on every joint, because the
+# MJCF has no velocity limits, RoboPlan's URDF parser rejects a joint without one, and the legs' real limit is unknown.
 JOINT_VELOCITY_LIMIT_RAD_S = 79.3
 # The URDF the real robot and the sim show, derived from the same MJCF the sim steps.
 M20_MODEL = mjcf_to_urdf(mujoco.MjSpec.from_file(str(M20_MJCF))).with_joint_velocity_limits(
