@@ -131,6 +131,8 @@ class PremapModule(Module):
     local_map: In[PointCloud2]
     # TODO: clean up relocalization once the ray tracer outputs a CloudUpdate message: remove the scan input and only use that
     lidar: In[PointCloud2]
+    # A second lidar's body-frame scans, each placed by tf at its stamp like lidar's.
+    second_lidar: In[PointCloud2]
 
     _placed: bool = False
 
@@ -196,9 +198,13 @@ class PremapModule(Module):
             .subscribe(self._relocalize)
         )
 
+    def _lidar_scans(self) -> Observable[PointCloud2]:
+        """Both lidars' scans as they land, each its own message (nothing is merged)."""
+        return rx.merge(self.lidar.observable(), self.second_lidar.observable())  # type: ignore[no-untyped-call]
+
     def _clouds(self) -> Observable[PointCloud2]:
         """The live cloud to match, on one worker: each attempt takes the latest cloud the moment the last one ends, those between are dropped."""
-        scans = self.lidar.observable()  # type: ignore[no-untyped-call]
+        scans = self._lidar_scans()
         local_maps = self.local_map.observable()  # type: ignore[no-untyped-call]
         if self.config.relocalize_once:
             if self.config.live_cloud == "lidar":
@@ -332,7 +338,7 @@ class PremapModule(Module):
         self.publish_tf()
         self.register_disposable(
             rx.merge(
-                self.lidar.observable().pipe(ops.map(lambda scan: scan.ts)),  # type: ignore[no-untyped-call]
+                self._lidar_scans().pipe(ops.map(lambda scan: scan.ts)),
                 self.fixes.pipe(ops.map(lambda _: None)),
             ).subscribe(self.publish_tf)
         )
