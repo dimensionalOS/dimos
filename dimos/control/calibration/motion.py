@@ -17,8 +17,8 @@
 Each sample gives the next target: a minimum-jerk path whose fastest joint peaks at the speed,
 by the sample's measured time, then a hold at the path's end. A hold ends one window after it
 starts (``fixed``), or once the arm is settled or stops converging (``converge``: the latest
-window's spread is outside the noise band and no smaller than the one before, while the joint
-ends the window where it began: it oscillates in place rather than creeps). Settled means every joint's spread over the latest window
+window's spread is outside the noise band and no smaller than the one before, while its mean
+stays where the one before's was: it oscillates in place rather than creeps). Settled means every joint's spread over the latest window
 is inside its noise band plus one encoder step (the smallest change it reads). A joint farther from
 its target than its ``stall_rad`` (its motor's torque limit over kp: the motor cannot push
 through) or a point of the arm at the table or in a keep-out region stops the motion with an
@@ -157,9 +157,9 @@ class Motion:
         if elapsed <= 2.0 * self.window_s:
             return None
         earlier = (times > times[-1] - 2.0 * self.window_s) & (times <= times[-1] - self.window_s)
-        # Stopped: back where the window began and no calmer than the window before.
-        stopped = (np.abs(latest[-1] - latest[0]) <= tolerance) & (
-            spread >= np.ptp(q[earlier], axis=0)
+        # Stopped: centred where the window before was, and no calmer than it.
+        stopped = (np.abs(latest.mean(axis=0) - q[earlier].mean(axis=0)) <= tolerance) & (
+            np.ptp(latest, axis=0) >= np.ptp(q[earlier], axis=0)
         )
         if (stopped & (spread > tolerance + quantum)).any():
             return "not converging"

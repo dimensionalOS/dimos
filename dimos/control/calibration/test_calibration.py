@@ -29,6 +29,7 @@ from dimos.control.calibration._inertial import LinkInertial, apply_inertial_ove
 from dimos.control.calibration._toy_arm import toy_arm
 from dimos.control.calibration.gravity_poses import ArmModel
 from dimos.control.calibration.module import Calibration, CalibrationModuleConfig
+from dimos.control.calibration.motion import Motion, Sample
 from dimos.control.calibration.steps import plan
 
 TRUE_LINKS = {"fore": LinkInertial(mass_kg=0.7, com_m=(0.13, 0.0, 0.02))}
@@ -267,6 +268,15 @@ def test_a_joint_rests_then_floats_its_whole_window_and_a_falling_one_is_held_ag
     assert all(not row["passed"] and row["duration_s"] < 2.0 for row in rows.values())
     assert all(5.0 < abs(row["joint_drift_deg"]) < 5.5 for row in rows.values())
     assert falling.floating == {} and "0 of 2 floated joints" in operator.done[1]
+
+
+@pytest.mark.parametrize("hz", [15.0, 35.0])
+def test_a_hold_that_oscillates_in_place_ends_whatever_its_phase(arm: ArmModel, hz: float) -> None:
+    motion = Motion(arm, [arm.home], 1.0, "converge", 0.5, np.full(3, 1e-4), np.full(3, np.inf))
+    for k in range(500):
+        q = arm.home + np.array([0.0, 0.0, 0.01 * math.cos(2.0 * math.pi * hz * k / 100.0)])
+        motion.feed(Sample(k / 100.0, q, np.zeros(3)))
+    assert motion.done.is_set() and motion.ended == "not converging"
 
 
 def test_the_plan_skips_what_cannot_run() -> None:
