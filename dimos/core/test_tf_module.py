@@ -90,4 +90,4 @@ def test_frame_reads_local_and_global_roles(odom: Odom) -> None:
         "world",
     )
     with pytest.raises(AttributeError, match="no tf frame for role 'lidar'"):
-        _ = odom.frame.lidar
+        odom.frame.lidar  # noqa: B018
