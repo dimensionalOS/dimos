@@ -38,7 +38,7 @@ def dual_openyam_collection_camera(name: str) -> Blueprint:
         raise ValueError(f"unknown dual OpenYAM camera {name!r}")
     return RealSenseCamera.blueprint(
         instance_name=f"{name}_camera",
-        frame_id_prefix=name,
+        tf_frames_local={"link": f"{name}/camera_link"},
         width=640,
         fps=30,
         enable_depth=False,

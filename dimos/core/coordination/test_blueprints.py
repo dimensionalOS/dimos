@@ -37,6 +37,7 @@ from dimos.core.coordination.blueprints import (
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.core.tf_module import TfModule, TfModuleConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.encode.cbor import decode, encode
@@ -433,14 +434,26 @@ def test_namespace_nesting_composes() -> None:
     assert blueprint.remapping_map[("fleet/robot0/modulea", "data1")] == "fleet/robot0/data1"
 
 
-def test_namespace_stacks_user_frame_id_prefix() -> None:
-    blueprint = ModuleA.blueprint(frame_id_prefix="custom").namespace("robot0")
+class FramePrefixedConfig(TfModuleConfig):
+    tf_frames_local: dict[str, str] = {"body": "base_link"}
 
-    module = ModuleA(**blueprint.blueprints[0].kwargs)
+
+class FramePrefixed(TfModule):
+    config: FramePrefixedConfig
+
+
+def test_namespace_stacks_local_tf_frames() -> None:
+    nested = FramePrefixed.blueprint().namespace("robot0").namespace("fleet").blueprints[0]
+    user_set = FramePrefixed.blueprint(tf_frames_local={"body": "custom"}).namespace("robot0")
+    modules = [FramePrefixed(**nested.kwargs), FramePrefixed(**user_set.blueprints[0].kwargs)]
     try:
-        assert (module.namespace, module.frame_id_prefix) == ("robot0", "robot0/custom")
+        assert [(module.namespace, module.tf_frames) for module in modules] == [
+            ("fleet/robot0", {"body": "fleet/robot0/base_link"}),
+            ("robot0", {"body": "robot0/custom"}),
+        ]
     finally:
-        module.stop()
+        for module in modules:
+            module.stop()
 
 
 def test_namespace_allows_duplicate_module_classes() -> None:

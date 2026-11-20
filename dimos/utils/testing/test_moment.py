@@ -15,6 +15,7 @@ import time
 
 import pytest
 
+from dimos.core.coordination.blueprints import config_defaults
 from dimos.core.transport import LCMTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -53,7 +54,8 @@ class Go2Moment(Moment):
         # back and forth through time and the viewer doesn't get confused
         odom = self.odom.value
         odom.ts = time.time()
-        return connection.GO2Connection._odom_to_tf(odom)
+        frames = config_defaults(connection.GO2Connection)["tf_frames_local"]
+        return connection.GO2Connection._odom_to_tf(odom, frames)
 
     def publish(self) -> None:
         tf_transport = make_transport("/tf", TFMessage)

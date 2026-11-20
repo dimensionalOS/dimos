@@ -36,9 +36,11 @@ from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import config_defaults
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.tf_module import _frame_ids
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -344,7 +346,8 @@ def test_replay_logs_completion_without_requesting_shutdown(mocker) -> None:
 
 def test_odom_to_tf_unprefixed_by_default() -> None:
     odom = PoseStamped(ts=1.0, frame_id="world")
-    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom)
+    frames = ConnectionConfig.model_fields["tf_frames_local"].get_default(call_default_factory=True)
+    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, frames)
     assert (base.frame_id, base.child_frame_id) == ("world", "base_link")
     assert (camera_link.frame_id, camera_link.child_frame_id) == ("base_link", "camera_link")
     assert (camera_optical.frame_id, camera_optical.child_frame_id) == (
@@ -362,9 +365,14 @@ def connection(stub_webrtc: MagicMock) -> Iterator[Callable[[bool], GO2Connectio
         conn = GO2Connection(
             g=GlobalConfig(robot_ip="127.0.0.1"),
             publish_tf=publish_tf,
-            odom_frame_id="go2_odom",
+            tf_frames_local={
+                "world": "go2_odom",
+                "body": "base_link",
+                "camera_link": "camera_link",
+                "camera_optical": "camera_optical",
+            },
         )
-        conn.tf = MagicMock()
+        conn._tf = MagicMock()
         conn.odom = MagicMock()
         built.append(conn)
         return conn
@@ -380,14 +388,14 @@ def test_publish_tf_off_keeps_odometry_on_its_port(
     """Turning tf off hands the base_link edge to another publisher, not the odom port."""
     conn = connection(publish_tf=False)
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
-    assert conn.tf.publish.call_count == 0
+    assert conn.tfbuffer.publish.call_count == 0  # type: ignore[attr-defined]
     assert conn.odom.publish.call_count == 1
 
 
 def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -> None:
     conn = connection(publish_tf=True)
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
-    assert conn.tf.publish.call_count == 1
+    assert conn.tfbuffer.publish.call_count == 1  # type: ignore[attr-defined]
     assert conn.odom.publish.call_count == 1
 
 
@@ -451,12 +459,16 @@ def test_stop_joins_camera_info_publisher(connection, mocker, monkeypatch) -> No
         thread.join(timeout=2)
 
 
-def test_odom_to_tf_prefixed() -> None:
-    """A namespaced instance name gives frame_id_prefix: robot-local frames get prefixed, the
-    odom parent frame stays global so all robots hang off one tree root."""
-    odom = PoseStamped(ts=1.0, frame_id="world")
-    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
-    assert (base.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
+def test_namespace_prefixes_every_go2_frame() -> None:
+    """The odom origin is this go2's own world, so it gets the namespace like base_link."""
+    atom = GO2Connection.blueprint().namespace("robot0").blueprints[0]
+    frames = _frame_ids(
+        config_defaults(GO2Connection)["tf_frames_local"], {}, atom.name.rpartition("/")[0]
+    )
+    assert frames["world"] == "robot0/world"
+    odom = PoseStamped(ts=1.0, frame_id=frames["world"])
+    base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, frames)
+    assert (base.frame_id, base.child_frame_id) == ("robot0/world", "robot0/base_link")
     assert (camera_link.frame_id, camera_link.child_frame_id) == (
         "robot0/base_link",
         "robot0/camera_link",
@@ -608,6 +620,7 @@ def test_replay_loop_cli_controls_repeated_playback(tmp_path, mocker, loop):
     module = GO2Connection(g=cfg.g, replay_loop=cfg.replay_loop, lidar=False, camera=False)
     mocker.patch.object(module.cmd_vel, "subscribe", return_value=mocker.Mock())
     module.set_transport("odom", mocker.Mock())
+    module.set_transport("tf", mocker.Mock())
     received = []
     try:
         with Disposable(module.odom.subscribe(lambda msg: received.append(msg.ts))):

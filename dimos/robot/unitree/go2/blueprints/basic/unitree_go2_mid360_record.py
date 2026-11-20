@@ -62,7 +62,7 @@ unitree_go2_mid360_record = autoconnect(
         ]
     ),
     mid360_for_pointlio(),
-    PointLio.blueprint(frame_id="world").remappings(
+    PointLio.blueprint(tf_frames_local={"odom": "world", "sensor": "mid360_link"}).remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),

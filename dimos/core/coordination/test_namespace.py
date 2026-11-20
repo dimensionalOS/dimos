@@ -58,10 +58,6 @@ class Sensor(Module):
     def get_sensitivity(self) -> float:
         return self.config.sensitivity
 
-    @rpc
-    def get_frame_id(self) -> str:
-        return self.frame_id
-
 
 class LocalMapper(Module):
     local_status: In[Status]
@@ -163,9 +159,6 @@ def test_fleet_blueprint(fleet_coordinator: ModuleCoordinator):
     # Per-instance config args reach only their instance.
     assert sensor0.get_sensitivity() == 2.0
     assert sensor1.get_sensitivity() == 1.0
-
-    # TF frames carry the namespace.
-    assert sensor0.get_frame_id() == "robot0/Sensor"
 
     # Directed wiring: the shared commander drives only robot0.
     assert (

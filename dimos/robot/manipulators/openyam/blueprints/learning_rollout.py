@@ -92,9 +92,13 @@ def build_openyam_rollout(
             width=_WRIST_WIDTH,
             height=_WRIST_HEIGHT,
             fps=_WRIST_FPS,
-            frame_id_prefix="wrist",
         ),
         frame_id="wrist_camera_link",
+        tf_frames_local={
+            "parent": "base_link",
+            "camera_link": "wrist_camera_link",
+            "camera_optical": "wrist/camera_optical",
+        },
     )
 
     if quest_control:

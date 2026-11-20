@@ -20,6 +20,7 @@ from unittest import mock
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 import pytest
 
+from dimos.core.coordination.blueprints import config_defaults
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -95,7 +96,8 @@ def get_moment(tf):
         if odom_frame is None:
             raise ValueError("No odom frame found")
 
-        transforms = connection.GO2Connection._odom_to_tf(odom_frame)
+        frames = config_defaults(connection.GO2Connection)["tf_frames_local"]
+        transforms = connection.GO2Connection._odom_to_tf(odom_frame, frames)
 
         tf.receive_transform(*transforms)
 

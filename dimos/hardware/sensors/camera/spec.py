@@ -25,7 +25,6 @@ OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
 
 
 class CameraConfig(BaseConfig):
-    frame_id_prefix: str | None
     width: int
     height: int
     fps: int | float
