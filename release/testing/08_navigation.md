@@ -39,7 +39,9 @@ The first run pulls the `go2_mid360_sf_office_outdoors_2026-05-29` recording and
 uv run dimos run relocalize-mid360 --map-file go2_mid360_sf_office_outdoors_2026-05-29_map.db
 ```
 
-* In `relocalize-mid360`, `world/loaded_map` appears in Rerun once a fix lands and lies on top of the live `world/local_map`. `world/global_map`, `world/lidar` and `world/region_bounds` are hidden by default; tick them in the Blueprint panel to compare.
+* In `relocalize-mid360`, `world/loaded_map` appears in Rerun once a fix lands, about 15 seconds after `Replay started`, and lies on top of the live `world/local_map`. Both are colored by height, so hide `loaded_map` with its eye icon under `world` > `world` in the blueprint tree to tell them apart, and double-click `local_map` there to move the camera to it.
+* `world/global_map`, `world/lidar` and `world/region_bounds` are hidden by default. Click their eye icons in the same place to compare.
+* The recording is 13 minutes long. After `Replay finished` the stack stays up until Ctrl+C.
 
 Expected result: the blueprint logs `relocalize fix` followed by `placed, no further attempts`, without tracebacks.
 
