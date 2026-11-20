@@ -334,7 +334,8 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "mjcf-to-urdf>=0.1.1",
-    "playground>=0.0.5",
+    # Unitree simulation uses the menagerie downloader removed in Playground 1.0.
+    "playground>=0.0.5,<1",
     "pygame>=2.6.1",
 ]
 

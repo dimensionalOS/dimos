@@ -2630,7 +2630,7 @@ requires-dist = [
     { name = "pin", specifier = ">=3.3.0" },
     { name = "pin-pink", specifier = ">=4.3.0" },
     { name = "piper-sdk", marker = "extra == 'control'" },
-    { name = "playground", marker = "extra == 'sim'", specifier = ">=0.0.5" },
+    { name = "playground", marker = "extra == 'sim'", specifier = ">=0.0.5,<1" },
     { name = "plum-dispatch", specifier = "==2.5.7" },
     { name = "portal", marker = "extra == 'misc'" },
     { name = "protobuf", specifier = ">=6.33.5,<7" },

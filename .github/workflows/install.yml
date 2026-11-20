@@ -101,6 +101,10 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
           bash scripts/test-install.sh '${{ matrix.mode }}'
+      - name: Check the Unitree simulator's asset downloader in the unlocked library install
+        if: matrix.mode == 'library'
+        working-directory: ${{ env.INSTALL_TEST_ROOT }}/library
+        run: .venv/bin/python -c 'from mujoco_playground._src.mjx_env import ensure_menagerie_exists'
       - uses: actions/upload-artifact@v7.0.1
         # act has no GitHub artifact service; installation output stays in its log.
         if: always() && !env.ACT
