@@ -131,15 +131,16 @@ Expected result: the first run opens the web viewer at http://localhost:9878. To
 
 ## 5.9 Blueprint graph and docs site
 
-Needs Graphviz.
+Needs Graphviz. The docs images are stored in Git LFS, and a checkout cloned with `GIT_LFS_SKIP_SMUDGE=1` has only pointer files for them. The `git lfs pull` line fetches them (about 75 MB).
 
 ```bash
 uv run dimos graph unitree-go2-agentic --rpc --output /tmp/go2-agentic.svg
 uv sync --group docs --inexact
+git lfs pull --include="docs/**,assets/readme/**" --exclude=""
 uv run dimos docs
 ```
 
-Expected result: `graph` writes an SVG with the modules grouped by package, their stream channels and the RPC contracts between them. `dimos docs` serves the docs site at http://127.0.0.1:8000 with navigation and search.
+Expected result: `graph` writes an SVG with the modules grouped by package, their stream channels and the RPC contracts between them. `dimos docs` serves the docs site at http://127.0.0.1:8000 with navigation, search and images that load.
 
 ## 5.10 Host daemon
 
