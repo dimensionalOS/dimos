@@ -93,7 +93,8 @@ def code_revision() -> str:
     """The commit this checkout runs, plus a digest of its uncommitted diff; else the package version."""
     try:
         commit = _git("rev-parse", "HEAD").strip()
-        diff = _git("diff", "HEAD")
+        # Full blob ids: git shortens them by repo size, so the same change hashed differently per clone.
+        diff = _git("diff", "HEAD", "--full-index", "--no-ext-diff", "--no-color")
     except (OSError, subprocess.CalledProcessError):
         return package_version("dimos")
     return f"{commit}+{hashlib.sha256(diff.encode()).hexdigest()[:8]}" if diff else commit
