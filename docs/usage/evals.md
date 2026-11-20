@@ -298,7 +298,8 @@ n=1 mean=1.0 pass_rate=1.0 errors=0
 ```
 
 That's the whole loop: environment -> agent -> trajectory + artifacts ->
-grade -> run dir.
+grade -> run dir. ``mean_score`` and ``pass_rate`` skip cases with ``error``
+(preflight, crash); ``n`` and ``errors`` still count the whole suite.
 
 To run your cases through the CLI, put them in an importable module with
 `SUITE: Suite = [case]`, importing `Suite` from `dimos.evals.types`.

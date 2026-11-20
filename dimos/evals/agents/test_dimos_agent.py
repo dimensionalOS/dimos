@@ -59,9 +59,27 @@ def test_preflight_checks_the_agent_installation(mocker, monkeypatch, returncode
     with expected:
         agent.preflight(Dataset("unused"))
 
-    version.assert_called_once_with(
+    assert version.call_count == (1 if returncode == 0 else 2)
+    version.assert_called_with(
         ["/test/bin/dimos", "agent", "version"], capture_output=True, text=True
     )
+
+
+def test_preflight_retries_then_caches_agent_version(mocker, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    mocker.patch("dimos.evals.agents.dimos_agent.shutil.which", return_value="/test/bin/dimos")
+    version = mocker.patch(
+        "dimos.evals.agents.dimos_agent.subprocess.run",
+        side_effect=[
+            subprocess.CompletedProcess([], 1, stdout="", stderr="building"),
+            subprocess.CompletedProcess([], 0, stdout="ok", stderr=""),
+        ],
+    )
+    agent = DimosAgentAdapter()
+    env = Dataset("unused")
+    agent.preflight(env)
+    agent.preflight(env)
+    assert version.call_count == 2
 
 
 @pytest.mark.parametrize("outcome", ["done", "unanswered"])
