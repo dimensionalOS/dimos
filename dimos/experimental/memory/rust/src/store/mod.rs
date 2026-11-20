@@ -92,6 +92,32 @@ pub fn open(
     }
 }
 
+/// Reopens a crashed recording, keeping only the first `stored` observations of each stream.
+pub fn recover(
+    config: &RecordingStoreConfig,
+    streams: &[StreamConfig],
+    compression_threads: usize,
+    stored: &[u64],
+) -> Result<Box<dyn RecordingStore>> {
+    anyhow::ensure!(
+        stored.len() == streams.len(),
+        "{} stored counts for {} streams",
+        stored.len(),
+        streams.len()
+    );
+    match config {
+        RecordingStoreConfig::Sqlite { path } => Ok(Box::new(
+            sqlite::SqliteRecordingStore::recover(path, streams, stored)?,
+        )),
+        RecordingStoreConfig::Mcap { path, .. } => Ok(Box::new(mcap::McapRecordingStore::recover(
+            path,
+            streams,
+            compression_threads,
+            stored,
+        )?)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
