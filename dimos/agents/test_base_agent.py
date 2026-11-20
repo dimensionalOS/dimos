@@ -15,12 +15,13 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import new_class
-from typing import Any, Generic, TypedDict, TypeVar
+from typing import Any, Generic, TypeVar
 
 from langchain_core.messages import AIMessage, HumanMessage
 import numpy as np
 from numpy.typing import NDArray
 import pytest
+from typing_extensions import TypedDict  # pydantic refuses typing.TypedDict before 3.12
 
 from dimos.agents.agent import Agent
 from dimos.agents.base_agent import BaseAgent
