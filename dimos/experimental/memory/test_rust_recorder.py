@@ -139,7 +139,9 @@ def test_event_periods_cover_every_stream_by_payload_type(tmp_path: Path) -> Non
     ]
     events = RustEventConfig(heavy_period_s=2.0)
 
-    native = events.resolve(streams, tmp_path / "memory.mcap").model_dump()
+    native = events.resolve(
+        streams, tmp_path / "run" / "memory.mcap", tmp_path / "windows"
+    ).model_dump()
 
     assert native["periods"] == {
         "color_image": 2.0,
@@ -148,7 +150,7 @@ def test_event_periods_cover_every_stream_by_payload_type(tmp_path: Path) -> Non
         "odom": 0.0,
         "clip_that": 0.0,
     }
-    assert native["window_dir"] == str(tmp_path / "window")
+    assert native["window_dir"] == str(tmp_path / "windows" / "run")
     assert set(native) == {
         "kind",
         "window_dir",

@@ -132,7 +132,7 @@ class RustEventConfig(BaseModel):
 
     Every message on the ``clip_that`` stream keeps all streams at full rate from
     ``pre_s`` before it to ``post_s`` after it. Outside clips, each stream keeps at
-    most one message per its period. Messages wait in on-disk window segments until
+    most one message per its period. Messages wait in window segments until
     no trigger can still claim them, so the artifact runs about ``pre_s + segment_s``
     behind live.
     """
@@ -164,11 +164,13 @@ class RustEventConfig(BaseModel):
     )
     window_dir: str = Field(
         default="",
-        description="Window directory beside the artifact, populated internally before native launch.",
+        description="Window directory of this run, populated internally before native launch.",
     )
 
-    def resolve(self, streams: list[RustStreamSpec], artifact: Path) -> RustEventConfig:
-        """Fill ``periods`` for every stream and put ``window_dir`` beside ``artifact``."""
+    def resolve(
+        self, streams: list[RustStreamSpec], artifact: Path, window_root: Path
+    ) -> RustEventConfig:
+        """Fill ``periods`` for every stream and put ``window_dir`` under ``window_root``."""
         if self.trigger not in {stream.name for stream in streams}:
             raise ValueError(f"Event recording needs the trigger stream {self.trigger!r}")
         periods = {
@@ -176,7 +178,7 @@ class RustEventConfig(BaseModel):
             for stream in streams
         }
         return self.model_copy(
-            update={"periods": periods, "window_dir": str(artifact.parent / "window")}
+            update={"periods": periods, "window_dir": str(window_root / artifact.parent.name)}
         )
 
 

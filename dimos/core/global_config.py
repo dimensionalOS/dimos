@@ -18,6 +18,9 @@ Module and subsystem settings belong to their owners' configuration classes.
 """
 
 import os
+from pathlib import Path
+import sys
+import tempfile
 from typing import Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
@@ -51,6 +54,12 @@ class GlobalConfig(BaseSettings):
     record_encoding_threads: int | None = Field(default=None, ge=1)
     # Thin long recordings and keep full-rate clips around messages on the clip_that topic.
     record_events: bool = False
+    # Event recording windows go in one subfolder per run here. Linux keeps them in RAM.
+    record_window_dir: str = (
+        "/dev/shm/dimos-recorder"
+        if sys.platform == "linux"
+        else str(Path(tempfile.gettempdir()) / "dimos-recorder")
+    )
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.

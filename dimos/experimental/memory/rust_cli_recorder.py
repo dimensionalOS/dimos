@@ -203,7 +203,11 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
         streams=streams,
         payload_types=payload_types,
         path=path,
-        mode=RustContinuousMode() if events is None else events.resolve(streams, path),
+        mode=(
+            RustContinuousMode()
+            if events is None
+            else events.resolve(streams, path, Path(global_config.record_window_dir))
+        ),
     )
 
 
@@ -328,7 +332,7 @@ class RustRecordingSession:
             return
         recover = self._executable.with_name("dimos-memory-recover")
         logger.error(
-            "Event recording window left on disk; recover it into the recording",
+            "Event recording window left behind; recover it into the recording",
             window_dir=str(window),
             command=f"{recover} {window}",
         )
