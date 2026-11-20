@@ -16,7 +16,7 @@ Expected result: MuJoCo shows the G1 standing in the office scene. The tool list
 
 ## 10.2 G1 whole-body control in MuJoCo
 
-The first run pulls the GR00T model and the office scene. The arm teleop needs a Quest headset on the same network.
+The first run pulls the GR00T model and the office scene. The arm teleop needs a Quest headset on the same network. MuJoCo runs headless in both blueprints, so no MuJoCo window opens. The GR00T blueprint opens the DimOS Viewer and the teleop blueprint opens no window.
 
 ```bash
 uv run dimos --simulation mujoco --scene-package office run unitree-g1-groot-wbc
