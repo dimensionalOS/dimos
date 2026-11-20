@@ -42,6 +42,8 @@ class M20EcanConfig(NativeModuleConfig):
     executable: str = "result/bin/m20_ecan"
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
+    # frame_id is a NativeModuleConfig field the native config needs too
+    base_fields: frozenset[str] = frozenset({"frame_id"})
 
     # "tap": read the frames of whoever owns the motor bus (rl_deploy through its shim, or the Rust controller);
     # "owner" (rust mode, rl_deploy stopped): own the bus, rl_deploy's startup then zero-gain sitting commands only
