@@ -61,7 +61,7 @@ dimos run unitree-go2-temporal-memory --temporalmemory.new-memory true
 dimos run unitree-go2 --help
 ```
 
-Use `--config robot.json` for structured settings:
+Use `--config robot.json` for structured settings. The named file must exist and contain a JSON object encoded as UTF-8, UTF-16 or UTF-32. Without the flag, `dimos run` uses defaults when the default config file is missing and reports other file errors.
 
 ```json
 {

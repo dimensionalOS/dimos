@@ -117,6 +117,7 @@ class BlueprintConfigParser:
         cli_tokens: Iterable[str] = (),
         *,
         config_path: Path | str | None = None,
+        missing_config_ok: bool = False,
         environ: Mapping[str, str] | None = None,
         global_overrides: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -129,7 +130,7 @@ class BlueprintConfigParser:
         """
         values = global_schema_defaults()
         if config_path is not None:
-            config_values = read_config_file(Path(config_path))
+            config_values = read_config_file(Path(config_path), missing_ok=missing_config_ok)
             raw_global = config_values.get("g")
             if raw_global is not None:
                 if not isinstance(raw_global, Mapping):
@@ -153,6 +154,7 @@ class BlueprintConfigParser:
         cli_tokens: Iterable[str] = (),
         *,
         config_path: Path | str | None = None,
+        missing_config_ok: bool = False,
         environ: Mapping[str, str] | None = None,
         global_overrides: Mapping[str, Any] | None = None,
         overrides: Mapping[str, Any] | None = None,
@@ -188,7 +190,7 @@ class BlueprintConfigParser:
         file_cli_transports: dict[str, Any] = {}
 
         if config_path is not None:
-            config_values = read_config_file(Path(config_path))
+            config_values = read_config_file(Path(config_path), missing_ok=missing_config_ok)
             for sections in (
                 (module_values, global_values, transport_values),
                 (file_cli_modules, file_cli_globals, file_cli_transports),

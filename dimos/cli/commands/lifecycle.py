@@ -186,8 +186,11 @@ def run(
     choice: list[str] = typer.Option(
         [], "--choice", help="Select a blueprint alternative as NAME=OPTION; may be repeated"
     ),
-    config_path: Path = typer.Option(
-        DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config file"
+    config_path: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help=f"Read a JSON config file (defaults to {DEFAULT_CONFIG_PATH} if present)",
     ),
     local_relay: bool | None = typer.Option(
         None,
@@ -207,8 +210,10 @@ def run(
     # Log this at the start so that people get immediate feedback that the program has started.
     logger.info("Starting DimOS")
 
-    if config_path == DEFAULT_CONFIG_PATH:
+    implicit_config = config_path is None
+    if implicit_config:
         _reject_legacy_config()
+        config_path = DEFAULT_CONFIG_PATH
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
     from dimos.core.coordination.blueprint_config.parser import (
         BlueprintConfigParser,
@@ -259,6 +264,7 @@ def run(
         preparsed_global_config = BlueprintConfigParser.preparse_global_config(
             config_tokens,
             config_path=config_path,
+            missing_config_ok=implicit_config,
             environ=os.environ,
             global_overrides=global_option_overrides,
         )
@@ -315,6 +321,7 @@ def run(
         parsed_config = parser.parse(
             config_tokens,
             config_path=config_path,
+            missing_config_ok=implicit_config,
             environ=os.environ,
             global_overrides=global_option_overrides,
         )
