@@ -32,6 +32,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
+from reactivex.disposable import Disposable
 import requests
 
 from dimos.agents.base_agent import BaseAgent
@@ -45,6 +46,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import RPCClient
+from dimos.core.stream import In, Out
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -99,6 +101,9 @@ class AgentConfig(ModuleConfig):
 
 class Agent(BaseAgent[HumanMessage, AIMessage]):
     config: AgentConfig
+
+    agent_input: In[HumanMessage]
+    agent_output: Out[AIMessage]
 
     # Injected when the blueprint has an McpServer.
     _mcp_server: McpServerSpec | None = None
@@ -283,6 +288,11 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
     @rpc
     def start(self) -> None:
         super().start()
+        # No transport: the agent is used as a plain class and only infer() reaches it.
+        if self.agent_input.transport is not None:
+            self.register_disposable(
+                Disposable(self.agent_input.subscribe(self._message_queue.put))
+            )
 
         # Subscribe directly over LCM rather than through the server's GET
         # /mcp SSE channel.  HTTP would add a startup race: the first few
@@ -353,9 +363,6 @@ class Agent(BaseAgent[HumanMessage, AIMessage]):
             self.config.trace_dir = Path(path) if path is not None else None
             if self._state_graph is not None:
                 self._rebuild_agent()
-
-    def _on_agent_input(self, x: HumanMessage) -> None:
-        self._message_queue.put(x)
 
     @rpc
     def add_message(self, message: BaseMessage) -> None:

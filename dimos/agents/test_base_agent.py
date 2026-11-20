@@ -21,15 +21,16 @@ from langchain_core.messages import AIMessage, HumanMessage
 import numpy as np
 from numpy.typing import NDArray
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.agents.agent import Agent
 from dimos.agents.base_agent import BaseAgent
 from dimos.agents.typesafe.types import SystemOneRequest
-from dimos.core.coordination.blueprints import BlueprintAtom, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -76,6 +77,28 @@ class CaptionAgent(BaseAgent[ImageQuery, str]):
 
 
 class RobotAgent(BaseAgent[RobotQuery, dict[str, float]]):
+    @rpc
+    def infer(self, x: RobotQuery) -> dict[str, float]:
+        return {
+            "joints": float(len(x.state.name)),
+            "x": x.odom.pose.position.x,
+            "words": float(len(x.command.split())),
+        }
+
+
+class StreamedAgent(BaseAgent[RobotQuery, dict[str, float]]):
+    """Reads its own stream and answers on its own stream, through infer."""
+
+    query: In[RobotQuery]
+    result: Out[dict[str, float]]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(
+            Disposable(self.query.subscribe(lambda x: self.result.publish(self.infer(x))))
+        )
+
     @rpc
     def infer(self, x: RobotQuery) -> dict[str, float]:
         return {
@@ -272,31 +295,9 @@ def test_infer_runs_over_rpc(
     assert coordinator.get_instance(agent).infer(value) == answer
 
 
-def test_an_agent_gets_its_streams_from_its_types() -> None:
-    streams = {s.name: (s.type, s.direction) for s in BlueprintAtom.create(RobotAgent, {}).streams}
-    assert streams["agent_input"] == (RobotQuery, "in")
-    assert streams["agent_output"] == (dict[str, float], "out")
-
-
-def test_a_stream_an_agent_declares_itself_is_kept() -> None:
-    class GoalAgent(BaseAgent[RobotQuery, str]):
-        agent_input: In[str]
-
-    class Inherits(GoalAgent):
-        pass
-
-    for agent in (GoalAgent, Inherits):
-        streams = {s.name: s.type for s in BlueprintAtom.create(agent, {}).streams}
-        assert streams["agent_input"] is str
-        assert streams["agent_output"] is str
-
-
-def test_agents_with_different_input_types_cannot_share_the_stream_name(
-    coordinator: ModuleCoordinator,
-) -> None:
-    coordinator.load_module(TextAgent)
-    with pytest.raises(ValueError, match="agent_input"):
-        coordinator.load_module(CaptionAgent)
+def test_base_agent_gives_an_agent_no_input_or_output_stream() -> None:
+    streams = {s.name for s in BlueprintAtom.create(RobotAgent, {}).streams}
+    assert streams == {"agent", "agent_idle"}
 
 
 def test_the_messages_an_agent_takes_and_returns_survive_the_wire() -> None:
@@ -317,27 +318,51 @@ def test_the_messages_an_agent_takes_and_returns_survive_the_wire() -> None:
     assert Agent.accepts(cbor.decode(cbor.encode(human)))
 
 
-def test_a_value_on_agent_input_is_answered_on_agent_output() -> None:
-    """The stream route of an agent that only defines infer."""
-    blueprint = autoconnect(RobotAgent.blueprint()).global_config(n_workers=1, viewer="none")
-    coordinator = ModuleCoordinator.build(blueprint)
+def _built(*blueprints: Blueprint) -> ModuleCoordinator:
+    return ModuleCoordinator.build(autoconnect(*blueprints).global_config(viewer="none"))
+
+
+def test_an_agent_feeds_its_own_stream_to_infer() -> None:
+    coordinator = _built(StreamedAgent.blueprint())
     try:
-        transports = coordinator.get_instance(RobotAgent).agent_transports()
+        query = coordinator.transports["query", RobotQuery]
+        result = coordinator.transports["result", dict[str, float]]
         answers: list[dict[str, float]] = []
-        for transport in transports.values():
-            transport.start()
-        transports["agent_output"].subscribe(answers.append)
-        try:
-            wait_until(
-                lambda: transports["agent_input"].publish(_robot_query()) or bool(answers),
-                timeout=20,
-                interval=0.5,
-            )
-        finally:
-            for transport in transports.values():
-                transport.stop()
+        result.subscribe(answers.append)
+
+        def answered() -> bool:
+            query.publish(_robot_query())
+            return bool(answers)
+
+        wait_until(answered, timeout=20, interval=0.5)
         assert answers[0] == {"joints": 2.0, "x": 1.5, "words": 4.0}
-        assert coordinator.get_instance(RobotAgent).infer(_robot_query()) == answers[0]
+        assert coordinator.get_instance(StreamedAgent).infer(_robot_query()) == answers[0]
+    finally:
+        coordinator.stop()
+
+
+def test_agents_of_different_classes_share_a_blueprint() -> None:
+    coordinator = _built(TextAgent.blueprint(), CaptionAgent.blueprint(), StreamedAgent.blueprint())
+    try:
+        agents = coordinator.get_instances(BaseAgent)
+        assert sorted(agents) == ["captionagent", "streamedagent", "textagent"]
+        assert agents["textagent"].infer("hello") == "HELLO"
+        assert coordinator.get_instances(TextAgent).keys() == {"textagent"}
+    finally:
+        coordinator.stop()
+
+
+def test_agents_of_one_class_are_separated_by_namespaces() -> None:
+    coordinator = _built(
+        StreamedAgent.blueprint().namespace("left"), StreamedAgent.blueprint().namespace("right")
+    )
+    try:
+        agents = coordinator.get_instances(StreamedAgent)
+        assert sorted(agents) == ["left/streamedagent", "right/streamedagent"]
+        topics = {name: agent.query.transport.topic for name, agent in agents.items()}
+        assert topics["left/streamedagent"] != topics["right/streamedagent"]
+        for agent in agents.values():
+            assert agent.infer(_robot_query())["words"] == 4.0
     finally:
         coordinator.stop()
 
