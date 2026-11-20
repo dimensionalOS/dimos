@@ -77,10 +77,17 @@ class CalibrationModuleConfig(ModuleConfig):
             stuck; it is redone once at twice the dither (at most ``max_dither_deg``).
         dither_span_nm: A joint the spec does not measure is dithered too when its gravity
             torque over the poses, or that of one column scale of correction, spans more.
-        kp_scales: Multiples of each joint's kp the gain sweep tries (kd times the square
-            root); must include 1, the baseline.
+        kp_scales: Multiples of each joint's kp the gain sweep tries, each with every kd scale;
+            must include 1, the baseline.
+        kd_scales: Multiples of each joint's kd it tries with each kp; must include 1.
+        kd_per_kp: A candidate's kd is at most this times its kp, and the driver's limit.
         step_deltas_deg: The gain sweep's steps, applied in turn; both signs needed.
         max_overshoot_pct: A sweep step that overshoots this share of itself fails.
+        rest_limit_deg: The smallest rest limit of a sweep step; ``friction_rest_factor``
+            times the joint's friction over kp widens it.
+        friction_rest_factor: How many times its friction over kp a joint may rest off target.
+        settle_s: A candidate scores its worst rest error over its limit plus its worst settle
+            over this; the lowest wins.
         hold_s: How long a joint rests at full gains at its float pose before it floats.
         float_window_s: How long each joint floats.
         float_drift_limit_mm: A float passes when the fingertip ends within this of where it was
@@ -104,9 +111,14 @@ class CalibrationModuleConfig(ModuleConfig):
     dither_torque_fraction: float = Field(default=0.3, gt=0.0)
     stuck_fraction: float = Field(default=0.5, gt=0.0, lt=1.0)
     dither_span_nm: float = Field(default=0.1, gt=0.0)
-    kp_scales: list[float] = Field(default_factory=lambda: [1.0, 1.5, 2.0])
+    kp_scales: list[float] = Field(default_factory=lambda: [0.6, 1.0, 1.5])
+    kd_scales: list[float] = Field(default_factory=lambda: [1.0, 2.5, 5.0])
+    kd_per_kp: float = Field(default=0.25, gt=0.0)
     step_deltas_deg: list[float] = Field(default_factory=lambda: [1.0, -1.0, 3.0, -3.0])
     max_overshoot_pct: float = Field(default=20.0, gt=0.0)
+    rest_limit_deg: float = Field(default=0.1, gt=0.0)
+    friction_rest_factor: float = Field(default=1.5, gt=0.0)
+    settle_s: float = Field(default=0.5, gt=0.0)
     hold_s: float = Field(default=2.0, gt=0.0)
     float_window_s: float = Field(default=10.0, gt=0.0)
     float_drift_limit_mm: float = Field(default=2.0, gt=0.0)
@@ -125,8 +137,9 @@ class CalibrationModuleConfig(ModuleConfig):
             raise ValueError(f"unknown steps {sorted(unknown)}; the steps are {list(steps.STEPS)}")
         if self.dither_deg > self.max_dither_deg:
             raise ValueError("dither_deg must not exceed max_dither_deg")
-        if 1.0 not in self.kp_scales or min(self.kp_scales) <= 0.0:
-            raise ValueError("kp_scales must be positive and include 1, the baseline")
+        for name, scales in (("kp_scales", self.kp_scales), ("kd_scales", self.kd_scales)):
+            if 1.0 not in scales or min(scales) <= 0.0:
+                raise ValueError(f"{name} must be positive and include 1, the baseline")
         if not (min(self.step_deltas_deg) < 0.0 < max(self.step_deltas_deg)):
             raise ValueError("step_deltas_deg needs a positive and a negative step")
         return self
@@ -207,6 +220,8 @@ class Calibration:
         self.measurements: list[Measurement] = []
         self.baseline: dict[str, np.ndarray] = {}
         self.step_metrics: list[StepMetrics] = []
+        self.stopped: dict[str, dict[tuple[float, float], str]] = {}
+        self.friction: dict[str, float] = {}
         self.at_home = False
 
     def feed(self, msg: JointState) -> None:

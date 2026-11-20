@@ -47,7 +47,9 @@ from dimos.control.calibration.step_analysis import (
     StepMetrics,
     analyze_step,
     propose_gains,
+    rest_limit_deg,
     rest_noise,
+    sweep_friction_nm,
 )
 from dimos.robot.manipulators.damiao.arm import MIT_KD_MAX, MIT_KP_MAX
 
@@ -69,8 +71,8 @@ TITLES = {
     "gravity_poses": "visit the gravity poses and dither each measured joint",
     "gravity_fit": "fit the link masses, save and apply them on confirm",
     "float_check": "rest, then float each measured joint and measure the fingertip drift",
-    "step_sweep": "step each joint at each kp scale",
-    "pick_gains": "propose the stiffest gains that pass, save and apply them on confirm",
+    "step_sweep": "step each joint at its gains, then at each kp by kd scale",
+    "pick_gains": "propose the gains that rest and settle best, save and apply them on confirm",
     "confirm_tracking": "revisit gravity poses and compare the rest error with the first visit",
     "summary": "show the calibration file the arm runs now",
 }
@@ -384,8 +386,47 @@ def float_check(run: Calibration) -> str:
     return f"{passed} of {len(joints)} floated joints ended within {limit:g} mm"
 
 
+def _candidates(run: Calibration, joint: str) -> list[tuple[float, float]]:
+    kp0, kd0 = run.gains(joint)
+
+    def capped(kp: float, kd: float) -> tuple[float, float]:
+        kp = min(kp, MIT_KP_MAX)
+        return kp, min(kd, MIT_KD_MAX, run.config.kd_per_kp * kp)
+
+    grid = [capped(kp0 * p, kd0 * d) for p in run.config.kp_scales for d in run.config.kd_scales]
+    return list(dict.fromkeys([capped(kp0, kd0), *grid]))
+
+
+def _step_metrics(run: Calibration, event: StepEvent, hold: Motion, limit: float) -> StepMetrics:
+    i = run.arm.joint_names.index(event.joint)
+    q, dq = np.degrees(np.asarray(hold.q)[:, i]), np.degrees(np.asarray(hold.dq)[:, i])
+    metrics = analyze_step(
+        event,
+        hold.t,
+        q,
+        dq,
+        run.noise[event.joint],
+        max_overshoot_pct=run.config.max_overshoot_pct,
+        rest_limit_deg=limit,
+        stuck_fraction=run.config.stuck_fraction,
+    )
+    if hold.ended != "settled":
+        step = f"{event.delta_deg:+g} deg step"
+        metrics = replace(metrics, failures=(*metrics.failures, f"{step} {hold.ended}"))
+    return metrics
+
+
+def _rest_limit(run: Calibration, joint: str, kp: float) -> float:
+    return rest_limit_deg(
+        run.friction.get(joint, 0.0),
+        kp,
+        smallest_deg=run.config.rest_limit_deg,
+        friction_factor=run.config.friction_rest_factor,
+    )
+
+
 def step_sweep(run: Calibration) -> str:
-    deltas, low_high = run.config.step_deltas_deg, run.spec.joint_ranges
+    config, deltas, low_high = run.config, run.config.step_deltas_deg, run.spec.joint_ranges
     low, high = (np.asarray([low_high[n][k] for n in run.arm.joint_names]) for k in (0, 1))
     excursion = math.radians(max(abs(x) for x in itertools.accumulate(deltas)))
     candidates = [("home", run.arm.home)] + [
@@ -394,41 +435,33 @@ def step_sweep(run: Calibration) -> str:
     name, pose = max(candidates, key=lambda c: float(np.minimum(c[1] - low, high - c[1]).min()))
     if float(np.minimum(pose - low, high - pose).min()) < excursion:
         raise ValueError(f"no pose keeps every joint {math.degrees(excursion):g} deg from a limit")
-    scales = sorted(set(run.config.kp_scales), key=lambda s: (s != 1.0, s))
+    tried = {joint: _candidates(run, joint) for joint in run.arm.joint_names}
     run.confirm(
-        f"At {name}, each joint steps {', '.join(f'{d:+g}' for d in deltas)} deg at kp x "
-        f"{', '.join(f'{s:g}' for s in scales)} (kd x its square root), then the arm returns home."
+        f"At {name}, each joint steps {', '.join(f'{d:+g}' for d in deltas)} deg at its gains, "
+        f"then at kp x {', '.join(f'{s:g}' for s in config.kp_scales)} by kd x "
+        f"{', '.join(f'{s:g}' for s in config.kd_scales)} (kd at most {MIT_KD_MAX:g} and kp x "
+        f"{config.kd_per_kp:g}; {', '.join(f'{j} {len(c)}' for j, c in tried.items())} "
+        "candidates); a step that buzzes ends its candidate. Then the arm returns home."
     )
     run.move(pose, name, ask=False)
-    records: list[tuple[float, StepEvent, Motion]] = []
+    records: list[tuple[bool, StepEvent, Motion]] = []
     for joint in run.arm.joint_names:
         i = run.arm.joint_names.index(joint)
         try:
-            if run.config.confirm_each:
+            if config.confirm_each:
                 run.confirm(f"Sweep {joint}?")
         except SkippedError:
             continue
         kp0, kd0 = run.gains(joint)
-        converging = True
+        baseline = {"gains": {joint: {"kp": kp0, "kd": kd0}}}
         try:
-            for scale in scales:
-                if not converging:
-                    break
-                live = {
-                    joint: {
-                        "kp": min(kp0 * scale, MIT_KP_MAX),
-                        "kd": min(kd0 * math.sqrt(scale), MIT_KD_MAX),
-                    }
-                }
-                rest = run.stream(run.motion([pose], "converge"), patch={"gains": live})
+            for index, pair in enumerate(tried[joint]):
+                live = {"gains": {joint: {"kp": pair[0], "kd": pair[1]}}}
+                rest = run.stream(run.motion([pose], "converge"), patch=live)
                 kp, kd = run.gains(joint)
-                if rest.ended != "settled":
-                    run.show(
-                        f"{joint} at kp {kp:g} kd {kd:g} is {rest.ended} at rest; its sweep stops"
-                    )
-                    break
+                why = None if rest.ended == "settled" else f"{rest.ended} at rest"
                 target = pose.copy()
-                for delta in deltas:
+                for delta in deltas if why is None else []:
                     before, target = target[i], target.copy()
                     target[i] += math.radians(delta)
                     hold = run.stream(run.motion([target], "converge"))
@@ -443,47 +476,67 @@ def step_sweep(run: Calibration) -> str:
                         math.degrees(before),
                         math.degrees(target[i]),
                     )
-                    records.append((scale, event, hold))
-                    converging = hold.ended == "settled"
-                    if not converging:
+                    records.append((index == 0, event, hold))
+                    if hold.ended != "settled":
+                        why = f"stopped at its {delta:+g} deg step, which was {hold.ended}"
+                    elif _step_metrics(run, event, hold, config.rest_limit_deg).buzzing:
+                        why = f"stopped at its {delta:+g} deg step, which buzzed"
+                    if why is not None:
                         break
+                if why is not None:
+                    run.stopped.setdefault(joint, {})[(kp, kd)] = why
+                    run.show(f"{joint} at kp {kp:g} kd {kd:g}: {why}; back to its own gains")
+                    run.stream(run.motion([pose], "converge"), patch=baseline)
         finally:
-            run.configure({"gains": {joint: {"kp": kp0, "kd": kd0}}})
+            run.configure(baseline)
     run.move(run.arm.home, "home")
-    baseline: dict[tuple[str, float], StepMetrics] = {}
-    for scale, event, hold in records:
-        i = run.arm.joint_names.index(event.joint)
-        q, dq = np.degrees(np.asarray(hold.q)[:, i]), np.degrees(np.asarray(hold.dq)[:, i])
-        metrics = analyze_step(
-            event,
-            hold.t,
-            q,
-            dq,
-            run.noise[event.joint],
-            max_overshoot_pct=run.config.max_overshoot_pct,
-            baseline=None if scale == 1.0 else baseline[(event.joint, event.delta_deg)],
-        )
-        if hold.ended != "settled":
-            step = f"{event.delta_deg:+g} deg step"
-            metrics = replace(metrics, failures=(*metrics.failures, f"{step} {hold.ended}"))
-        if scale == 1.0:
-            baseline[(event.joint, event.delta_deg)] = metrics
-        run.step_metrics.append(metrics)
+    first = [
+        _step_metrics(run, event, hold, config.rest_limit_deg)
+        for base, event, hold in records
+        if base
+    ]
+    run.friction = sweep_friction_nm(first)
+    for joint, friction in dither_friction_nm(run.measurements).items():
+        run.friction[joint] = max(friction, run.friction.get(joint, 0.0))
+    run.step_metrics = [
+        _step_metrics(run, event, hold, _rest_limit(run, event.joint, event.kp))
+        for _, event, hold in records
+    ]
     failed = [m for m in run.step_metrics if not m.passed]
     run.show(
-        "Steps (kp kd delta: settle s, overshoot %, failures):\n"
+        "Friction, N m: "
+        + ", ".join(f"{j} {f:.3f}" for j, f in run.friction.items())
+        + "\nSteps (kp kd delta: rest error / limit deg, settle s, overshoot %, failures):\n"
         + "\n".join(
-            f"  {m.joint} {m.kp:g} {m.kd:g} {m.delta_deg:+g}: {m.settle_time_s:.2f}, "
-            f"{m.overshoot_pct:.0f}{', ' + '; '.join(m.failures) if m.failures else ''}"
+            f"  {m.joint} {m.kp:g} {m.kd:g} {m.delta_deg:+g}: "
+            f"{m.steady_state_error_deg:+.2f} / {m.rest_limit_deg:.2f}, "
+            + ("stuck" if m.stuck else f"{m.settle_time_s:.2f}, {m.overshoot_pct:.0f}")
+            + (", " + "; ".join(m.failures) if m.failures else "")
             for m in run.step_metrics
         )
     )
-    return f"{len(run.step_metrics)} steps at {name}, {len(failed)} failed"
+    stopped = sum(len(pairs) for pairs in run.stopped.values())
+    return (
+        f"{len(run.step_metrics)} steps at {name}, {len(failed)} failed or stuck, "
+        f"{stopped} candidates stopped"
+    )
 
 
 def pick_gains(run: Calibration) -> str:
-    proposals = propose_gains(run.step_metrics)
-    run.show("Proposed gains:\n" + "\n".join(f"  {j}: {p.reason}" for j, p in proposals.items()))
+    proposals = propose_gains(
+        run.step_metrics,
+        stopped=run.stopped,
+        settle_s=run.config.settle_s,
+        kd_limit=MIT_KD_MAX,
+        max_overshoot_pct=run.config.max_overshoot_pct,
+    )
+    run.show(
+        "Proposed gains:\n"
+        + "\n".join(
+            f"  {j}: {p.reason}" + "".join(f"\n    {k}: {why}" for k, why in p.rejected.items())
+            for j, p in proposals.items()
+        )
+    )
     chosen = {j: {"kp": p.kp, "kd": p.kd} for j, p in proposals.items() if p.kp is not None}
     if not chosen:
         return "no gains passed every step; nothing saved"

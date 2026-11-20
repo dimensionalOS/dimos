@@ -149,20 +149,45 @@ def test_a_refused_set_config_fails_the_run_and_the_arm_holds(arm: ArmModel) -> 
     assert fake.live == {}
 
 
-def test_a_buzzing_gain_fails_its_steps_and_is_not_picked(arm: ArmModel) -> None:
+def test_a_buzzing_candidate_stops_at_its_first_buzzing_step_and_the_sweep_goes_on(
+    arm: ArmModel,
+) -> None:
     fake = FakeArm(arm, buzz_above_kp=50.0)
     operator = FakeOperator()
     run = calibration(arm, operator, fake, steps=["step_sweep", "pick_gains"])
     run.run()
 
     assert operator.done is not None and operator.done[0], operator.done
-    buzzed = [m for m in run.step_metrics if any("not converging" in f for f in m.failures)]
-    assert {(m.joint, m.kp, m.delta_deg) for m in buzzed} == {
-        (joint, 60.0, 3.0) for joint in arm.joint_names
+    assert {(j, pair) for j, pairs in run.stopped.items() for pair in pairs} == {
+        (j, (60.0, kd)) for j in arm.joint_names for kd in (1.0, 2.5, 5.0)
     }
-    assert {m.kp for m in run.step_metrics} == {40.0, 60.0}
+    stiff = [m for m in run.step_metrics if m.kp == 60.0]
+    assert sorted({m.delta_deg for m in stiff}) == [-1.0, 1.0, 3.0]
+    assert {m.kp for m in run.step_metrics} == {24.0, 40.0, 60.0}
     saved = {g["kp"] for g in fake.file["gains"].values()}
-    assert saved == {40.0}
+    assert 60.0 not in saved
+    assert fake.live == {}
+
+
+def test_friction_sets_each_joints_rest_limit_and_a_stuck_largest_step_rejects_its_gains(
+    arm: ArmModel,
+) -> None:
+    fake, operator = FakeArm(arm, friction_nm={"elbow": 0.4}), FakeOperator()
+    run = calibration(arm, operator, fake, steps=["step_sweep", "pick_gains"])
+    run.run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert run.friction["elbow"] == pytest.approx(0.4, rel=0.02) and run.friction["yaw"] < 0.01
+    for m in run.step_metrics:
+        friction = 0.4 if m.joint == "elbow" else 0.0
+        assert m.rest_limit_deg == pytest.approx(
+            max(0.1, math.degrees(1.5 * friction / m.kp)), rel=0.02
+        )
+    elbow = [m for m in run.step_metrics if m.joint == "elbow"]
+    assert all(m.stuck for m in elbow if abs(m.delta_deg) == 1.0)
+    assert all(m.stuck for m in elbow if m.kp == 24.0 and abs(m.delta_deg) == 3.0)
+    assert all(not m.stuck for m in elbow if m.kp > 24.0 and abs(m.delta_deg) == 3.0)
+    assert fake.file["gains"]["elbow"]["kp"] > 24.0
 
 
 @pytest.mark.parametrize(
