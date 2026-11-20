@@ -126,7 +126,7 @@ record() {
         "udp port $basic_udp or tcp port $basic_tcp or udp port $note_port or (udp portrange $dds_ports)" \
         2> "$session/tcpdump.log" &
     tcpdump_pid=$!
-    sleep 1
+    sleep 1  # tcpdump gives no readiness signal; let it open its capture before the session starts
     rm -f "$dir/last_stats"
     start_ns=$(date +%s%N)
     touch "$dir/enable"
@@ -143,8 +143,9 @@ record() {
     rm -f "$dir/enable" "$dir/recording.pid"
     end_ns=$(date +%s%N)
     echo "M20TOOL $end_ns $(hostname) record.sh session end" > /dev/udp/127.0.0.1/$note_port || true
+    # the shim's writer writes last_stats when it closes the capture (it checks the enable file every 50 ms)
     for _ in $(seq 1 50); do [ -f "$dir/last_stats" ] && break; sleep 0.1; done
-    sleep 0.5
+    sleep 0.5  # tcpdump has no flush signal; let its last packets land before stopping it
     kill -INT "$tcpdump_pid" 2>/dev/null || true
     wait "$tcpdump_pid" 2>/dev/null || true
     tx1=$(cat /sys/class/net/eth1/statistics/tx_packets); rx1=$(cat /sys/class/net/eth1/statistics/rx_packets)

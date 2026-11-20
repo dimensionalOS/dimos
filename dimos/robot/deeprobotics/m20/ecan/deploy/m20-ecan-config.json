@@ -14,7 +14,8 @@
     "frame_id": "base_link",
     "silence_warning_s": 5.0,
     "guard_max_torque": 1.0,
-    "guard_max_velocity": 0.5
+    "guard_max_velocity": 0.5,
+    "progress_log_replies": 5000
   },
   "session": {
     "mode": "client",
