@@ -37,6 +37,8 @@ stage() {
     sudo install -d -o "$USER" -g "$USER" "$dest"
     cd "$dest"
     [ -d .git ] || git init -q
+    # Revisions hashed without --full-index carry short blob ids, so short ids match the root's length.
+    git config core.abbrev "$(($(git -C "$src" rev-parse --short HEAD | wc -c) - 1))"
     git -c core.hooksPath=/dev/null fetch -q "$src" HEAD
     # LFS assets stay pointers: dimos fetches the data it needs on first use.
     GIT_LFS_SKIP_SMUDGE=1 git -c advice.detachedHead=false checkout -q --force --detach FETCH_HEAD
