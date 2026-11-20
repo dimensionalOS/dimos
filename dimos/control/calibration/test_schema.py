@@ -27,6 +27,13 @@ from pytest_mock import MockerFixture
 
 from dimos.constants import STATE_DIR
 from dimos.control.calibration import schema
+from dimos.control.calibration._calibration_test_helpers import (
+    CREATED,
+    SHA,
+    TOY_MODEL,
+    TOY_URDF,
+    calibration,
+)
 from dimos.control.calibration._inertial import LinkInertial, apply_inertial_overrides
 from dimos.control.calibration.schema import (
     LEGACY_NOTES,
@@ -47,77 +54,11 @@ from dimos.control.calibration.schema import (
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.control.calibration.spec import ArmCalibrationSpec, urdf_sha256
+from dimos.control.calibration.spec import ArmCalibrationSpec
 from dimos.control.connection.module_config import AppliedFile, ConfigApplied, ConfigPatch
 from dimos.utils.testing.cbor import roundtrip
 
 REFERENCE = Path(__file__).resolve().parent / "reference" / "gravity_both_2026-10-16.json"
-SHA = "a" * 64
-CREATED = datetime(2026, 11, 18, 9, 30, tzinfo=timezone.utc)
-
-# A base, one moving link and a tool fixed to it.
-TOY_URDF = """<?xml version="1.0"?>
-<robot name="toy">
-  <!-- kept -->
-  <link name="base"/>
-  <link name="arm">
-    <inertial>
-      <origin xyz="0.1 0 0" rpy="0 0 0"/>
-      <mass value="1.0"/>
-      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
-    </inertial>
-  </link>
-  <link name="tool">
-    <inertial>
-      <origin xyz="0 0 0.05" rpy="0 0 0"/>
-      <mass value="0.5"/>
-      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
-    </inertial>
-  </link>
-  <link name="other">
-    <inertial>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <mass value="0.3"/>
-      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
-    </inertial>
-  </link>
-  <joint name="shoulder" type="revolute">
-    <parent link="base"/>
-    <child link="arm"/>
-    <axis xyz="0 1 0"/>
-    <limit lower="-1" upper="1" effort="10" velocity="1"/>
-  </joint>
-  <joint name="tool_mount" type="fixed">
-    <parent link="arm"/>
-    <child link="tool"/>
-    <origin xyz="0.3 0 0" rpy="0 0 1.5707963267948966"/>
-  </joint>
-  <joint name="other_mount" type="fixed">
-    <parent link="base"/>
-    <child link="other"/>
-    <origin xyz="0 0.2 0" rpy="0 0 0"/>
-  </joint>
-</robot>
-"""
-TOY_MODEL = RobotModelRef(name="toy", sha256=urdf_sha256(TOY_URDF))
-
-
-def calibration(**fields: object) -> ArmCalibration:
-    values: dict[str, object] = {
-        "arm_id": "toy/arm",
-        "robot_model": RobotModelRef(name="toy", sha256=SHA),
-        "created": CREATED,
-        "gravity": GravityCalibration(
-            links={"arm": LinkGravity(mass_kg=2.0, com_m=(0.2, 0.0, 0.01), merged_links=["tool"])},
-            fit={"ridge_nm": 0.1, "holdout_poses": ["pose_05"]},
-        ),
-        "gains": {"shoulder": JointGains(kp=80.0, kd=5.0)},
-        "friction_nm": {"shoulder": 0.21},
-        "checks": {"float": {"passed": True, "drift_mm": 1.2}},
-        "notes": "bench run",
-    }
-    values.update(fields)
-    return ArmCalibration.model_validate(values)
 
 
 def test_calibration_round_trips_through_its_file(tmp_path: Path) -> None:

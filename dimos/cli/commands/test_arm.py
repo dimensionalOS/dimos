@@ -30,8 +30,12 @@ from typer.testing import CliRunner
 from dimos.cli.commands import arm as arm_command
 from dimos.cli.commands.arm_run import OurRun, calibrate_lock
 from dimos.cli.dimos import main
+from dimos.control.calibration._calibration_test_helpers import (
+    TOY_MODEL,
+    TOY_URDF,
+    calibration,
+)
 from dimos.control.calibration.schema import calibration_path, save_calibration
-from dimos.control.calibration.test_schema import TOY_MODEL, TOY_URDF, calibration
 
 ARM_ID = "dual_openyam/left"
 BENCH = ("--floor-z-m", "-0.03", "--min-x-m", "0.15")
