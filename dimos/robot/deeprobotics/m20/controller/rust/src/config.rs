@@ -69,6 +69,12 @@ pub struct Safety {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Gains {
+    pub kp: Vec<f64>,
+    pub kd: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Passive {
     pub kp: Vec<f64>,
     pub kd: Vec<f64>,
@@ -137,6 +143,7 @@ pub struct Enable {
 pub struct States {
     pub enable: Enable,
     pub passive: Passive,
+    pub start_damping: Gains,
     pub joint_damping: JointDamping,
     pub stand_up: StandUp,
     pub lie_down: LieDown,

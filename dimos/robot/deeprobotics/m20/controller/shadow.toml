@@ -25,6 +25,13 @@ cpus = [1, 2, 3]
 nice = 10
 status_every = 10000
 
+# the guard (deploy/shadow/guard.sh) stops the shadow when rl_deploy's "send Data update timeout" count rises faster
+# than guard_per_hour + guard_slack, counted from guard_settle_s after rl_deploy (re)starts. Background measured
+# 2026-11-20: 8-11 per 10 min; a fresh rl_deploy logs a burst while the bus comes up
+guard_per_hour = 90
+guard_slack = 5
+guard_settle_s = 120
+
 # /NAV_CMD from NOS (m/s, rad/s) and the charge manager's steer (normalized x, y, z, roll, pitch, yaw)
 [[command_writers]]
 entity = "00000503"

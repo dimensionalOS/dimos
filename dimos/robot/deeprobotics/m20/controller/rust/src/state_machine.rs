@@ -33,6 +33,7 @@ pub fn state_name(state: State) -> &'static str {
         State::RlControl => "rl_control",
         State::LieDown => "lie_down",
         State::JointDamping => "joint_damping",
+        State::StartDamping => "start_damping",
     }
 }
 
@@ -43,6 +44,8 @@ pub enum State {
     RlControl,
     LieDown,
     JointDamping,
+    /// rl_deploy's state after a (re)start, until the operator stands it up
+    StartDamping,
 }
 
 /// Hermite cubic from (p0, v0) at 0 to (p1, v1) at T (rl_deploy's GetCubicSplinePos/Vel); holds p1 past T.
@@ -248,7 +251,7 @@ impl Controller {
         let (roll, pitch) = (roll.abs().to_degrees(), pitch.abs().to_degrees());
         let st = &self.cfg.states;
         let tilted = match self.state {
-            State::Passive => roll.max(pitch) > st.passive.max_tilt_deg,
+            State::Passive | State::StartDamping => roll.max(pitch) > st.passive.max_tilt_deg,
             State::StandUp => roll.max(pitch) > st.stand_up.max_tilt_deg,
             State::RlControl => match self.runner.as_ref().and_then(|n| self.cfg.runners.get(n)) {
                 Some(spec) if spec.tilt_check => {
@@ -282,12 +285,12 @@ impl Controller {
             return State::JointDamping;
         }
         match self.state {
-            State::Passive => {
+            State::Passive | State::StartDamping => {
                 let ready = self.time >= st.passive.min_s_before_stand;
                 if ready && matches!(target, Target::Stand | Target::RlControl) {
                     State::StandUp
                 } else {
-                    State::Passive
+                    self.state
                 }
             }
             State::StandUp => match target {
@@ -395,6 +398,7 @@ impl Controller {
         let st = self.cfg.states.clone();
         let out = match self.state {
             State::Passive => self.constant(&st.passive.kp, &st.passive.kd),
+            State::StartDamping => self.constant(&st.start_damping.kp, &st.start_damping.kd),
             State::JointDamping => self.constant(&st.joint_damping.kp, &st.joint_damping.kd),
             State::StandUp => self.stand_up(),
             State::LieDown => self.lie_down(),

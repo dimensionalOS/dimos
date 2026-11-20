@@ -104,6 +104,7 @@ fn state_of(name: &str) -> Result<(State, Target)> {
         "lie_down" => (State::LieDown, Target::LieDown),
         "joint_damping" => (State::JointDamping, Target::JointDamping),
         "rl_control" => (State::RlControl, Target::RlControl),
+        "start_damping" => (State::StartDamping, Target::Passive),
         other => bail!("unknown state {other}"),
     })
 }

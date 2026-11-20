@@ -33,12 +33,13 @@ use crate::policy::{InlinePolicy, PolicyRequest, RunnerSet};
 use crate::state_machine::{Controller, State};
 use crate::types::{JointCommand, RobotState, Target, UserCommand};
 
-pub const STATES: [&str; 5] = [
+pub const STATES: [&str; 6] = [
     "passive",
     "stand_up",
     "rl_control",
     "lie_down",
     "joint_damping",
+    "start_damping",
 ];
 /// how much input history is kept (s)
 const KEEP_S: f64 = 30.0;
@@ -57,6 +58,7 @@ fn state_of(name: &str) -> Option<(State, Target)> {
         "lie_down" => (State::LieDown, Target::LieDown),
         "joint_damping" => (State::JointDamping, Target::JointDamping),
         "rl_control" => (State::RlControl, Target::RlControl),
+        "start_damping" => (State::StartDamping, Target::Passive),
         _ => return None,
     })
 }

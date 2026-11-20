@@ -3,9 +3,18 @@
 # its background rate while the shadow runs. Event-driven: it follows rl_deploy's log and judges on each line. A
 # restart of rl_deploy (its "start logging" banner, or a new MainPID seen on any event) resets the count, and the
 # timeouts of its first SETTLE_S are not counted (a fresh rl_deploy logs a burst while the bus comes up).
-#   guard.sh PER_HOUR SLACK SETTLE_S
+#   guard.sh SHADOW_TOML     (reads guard_per_hour, guard_slack, guard_settle_s from it)
 set -uo pipefail
-per_hour="${1:?per hour}"; slack="${2:?slack}"; settle="${3:?settle seconds}"
+conf="${1:?shadow.toml}"
+val() {
+    local v
+    v=$(awk -F= -v k="$1" '{gsub(/[ \t]/, "", $1)} $1 == k {gsub(/[ \t"]/, "", $2); sub(/#.*/, "", $2); print $2; exit}' "$conf")
+    [ -n "$v" ] || { echo "guard: $1 missing from $conf" >&2; exit 2; }
+    echo "$v"
+}
+per_hour=$(val guard_per_hour) || exit 2
+slack=$(val guard_slack) || exit 2
+settle=$(val guard_settle_s) || exit 2
 log() { echo "/var/opt/robot/log/$(date +%Y_%m%d)/rl_deploy.$(date +%Y_%m%d).log"; }
 pid() { systemctl show -p MainPID --value rl_deploy; }
 restart() {

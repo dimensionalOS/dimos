@@ -60,7 +60,7 @@ shutdown_damping_ticks = 500
 # rl_deploy's SetJointEnable() x3: on entering these states the first `ticks` frames are all zero with the enable
 # control word ([ecan] enable_control_word); the state's own clock already runs (seen on the robot)
 ticks = 3
-on_enter = ["stand_up", "lie_down", "rl_control"]
+on_enter = ["stand_up", "lie_down", "rl_control", "start_damping"]
 
 [states.passive]
 # Idle: all-zero command (motors limp)
@@ -69,6 +69,13 @@ kd = [0.0]
 # stand-up is accepted only this long after start
 min_s_before_stand = 2.0
 max_tilt_deg = 20.0
+
+[states.start_damping]
+# rl_deploy's state after a (re)start until stand-up (it leaves it like passive does). Captured on the robot
+# (2026-11-20, 17:22 and 18:17 restarts, from 23 s after entry): all-zero commands; the disassembly suggested
+# kd = 0.5 x damping, which the bus never showed
+kp = [0.0]
+kd = [0.0]
 
 [states.joint_damping]
 kp = [0.0]
