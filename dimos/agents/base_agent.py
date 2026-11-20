@@ -32,11 +32,10 @@ from langchain_core.messages.base import BaseMessage
 import numpy as np
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 from pydantic.errors import PydanticUserError
-from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
 from dimos.protocol.encode import cbor
 
 I = TypeVar("I")
@@ -81,16 +80,6 @@ def _matches(tp: Any, value: Any) -> bool:
     except ValidationError:
         return False
     return True
-
-
-def _declared(cls: type, stream: str) -> bool:
-    """Whether cls or an agent it extends wrote this stream's annotation by hand."""
-    for klass in cls.__mro__:
-        if klass.__name__ == "BaseAgent" and klass.__module__ == __name__:
-            return False
-        if stream in klass.__dict__.get("__annotations__", {}):
-            return stream not in klass.__dict__.get("_typed_streams", ())
-    return False
 
 
 _PLAIN = (type(None), bool, int, float, str, bytes, Path)
@@ -139,20 +128,17 @@ def _unsendable(tp: Any, seen: frozenset[int] = frozenset()) -> str | None:
 
 
 class BaseAgent(Module, Generic[I, O]):
-    """Base for agents: one inference call and the streams that feed it.
+    """Base for agents: one typed inference call.
 
-    A subclass names its types, ``class Agent(BaseAgent[HumanMessage, AIMessage])``. They are
-    kept on the class as ``input_type`` and ``output_type``, and the class gets the streams
-    ``agent_input: In[Input]`` and ``agent_output: Out[Output]`` unless it declares a stream
-    of that name itself. An input with several parts is one dataclass.
+    A subclass names its types, ``class Agent(BaseAgent[HumanMessage, AIMessage])``, and they
+    are kept on the class as ``input_type`` and ``output_type``. An input with several parts
+    is one dataclass. An agent declares the streams it reads and writes itself and passes
+    what arrives to ``infer``.
     """
 
     input_type: ClassVar[Any]
     output_type: ClassVar[Any]
-    _typed_streams: ClassVar[frozenset[str]] = frozenset()
 
-    agent_input: In[Any]
-    agent_output: Out[Any]
     agent: Out[BaseMessage]
     agent_idle: Out[bool]
 
@@ -179,13 +165,6 @@ class BaseAgent(Module, Generic[I, O]):
                     f"{reason}"
                 )
         cls.input_type, cls.output_type = types
-        if not unbound:
-            in_stream: Any = In
-            out_stream: Any = Out
-            streams = {"agent_input": in_stream[types[0]], "agent_output": out_stream[types[1]]}
-            typed = {name: hint for name, hint in streams.items() if not _declared(cls, name)}
-            cls.__annotations__ = {**cls.__dict__.get("__annotations__", {}), **typed}
-            cls._typed_streams = frozenset(typed)
         super().__init_subclass__(**kwargs)
 
     @classmethod
@@ -194,23 +173,12 @@ class BaseAgent(Module, Generic[I, O]):
         return _matches(cls.input_type, x)
 
     @rpc
-    def start(self) -> None:
-        super().start()
-        # No transport: the agent is used as a plain class and only infer() reaches it.
-        if "agent_input" in self._typed_streams and self.agent_input.transport is not None:
-            self.register_disposable(Disposable(self.agent_input.subscribe(self._on_agent_input)))
-
-    def _on_agent_input(self, x: I) -> None:
-        """A value from agent_input: the same call as infer, with the answer on agent_output."""
-        # ponytail: runs on the transport's callback thread, so one input at a time and the
-        # next waits. An agent with long turns queues them itself, as Agent does.
-        self.agent_output.publish(self.infer(x))
-
-    @rpc
     def agent_transports(self) -> dict[str, Any]:
-        """The transport each agent stream is on, for a client outside the blueprint."""
+        """The transport of each chat stream this agent has, for a client outside the blueprint."""
         streams = ("agent_input", "agent_output", "agent", "agent_idle")
-        transports = {name: getattr(self, name).transport for name in streams}
+        transports = {
+            name: getattr(getattr(self, name, None), "transport", None) for name in streams
+        }
         return {name: transport for name, transport in transports.items() if transport is not None}
 
     @rpc
