@@ -29,6 +29,7 @@ from dimos.calibration import DEFAULT_BASE_FRAME, DEFAULT_MARKER_SIZE_M
 from dimos.calibration.hand_eye import (
     TAG_DICTIONARY,
     HandEyeSample,
+    MarkerObservationError,
     check_marker,
     checked_camera_matrices,
     detect_sample,
@@ -139,7 +140,13 @@ def record_sample(
     callers are responsible for stationary, timestamp-matched observations.
     """
     data = load_session(directory)
-    sample = observe_sample(data, image, base_from_ee)
+    try:
+        sample = observe_sample(data, image, base_from_ee)
+    except MarkerObservationError as error:
+        path = save_rejected_frame(
+            directory, data, image, base_from_ee, str(error), validation=validation
+        )
+        raise MarkerObservationError(f"{error}. Saved rejected frame to {path}") from error
     return save_observation(directory, data, image, sample, validation=validation)
 
 
@@ -162,6 +169,37 @@ def observe_sample(data: dict[str, Any], image: Image, base_from_ee: Transform) 
         settings["marker_size_m"],
         settings["marker_id"],
     )
+
+
+def save_rejected_frame(
+    directory: Path,
+    data: dict[str, Any],
+    image: Image,
+    base_from_ee: Transform,
+    reason: str,
+    *,
+    validation: bool,
+) -> Path:
+    """Keep the raw frame and rejection details outside the accepted sample list."""
+    rejected = directory / "rejected"
+    rejected.mkdir(exist_ok=True)
+    role = "validation" if validation else "train"
+    view = 1 + sum(entry["role"] == role for entry in data["samples"])
+    attempt = 1
+    while (path := rejected / f"{role}-{view:04d}-{attempt:02d}.png").exists():
+        attempt += 1
+    if not image.save(str(path)):
+        raise RuntimeError(f"Could not save rejected frame to {path}: {reason}")
+    _write_json(
+        path.with_suffix(".json"),
+        {
+            "reason": reason,
+            "image_timestamp": float(image.ts),
+            "camera_frame": image.frame_id,
+            "base_from_ee": base_from_ee.to_matrix().tolist(),
+        },
+    )
+    return path
 
 
 def save_observation(

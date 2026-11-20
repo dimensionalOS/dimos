@@ -135,6 +135,8 @@ Use `hand_eye.json` when `validated` is `true`. A failed grade gives a nonzero e
 
 ## Saved result and hardware acceptance
 
+Open `rejected/` inside the session to inspect failed tag observations and operator-requested retakes. For example, `train-0009-01.png` contains the original image from the first rejection at training view 9. The matching JSON gives the reason, image timestamp, optical frame and measured arm pose. Further rejections at that view use `-02`, `-03` and so on, including after a resume. Only accepted images count toward the solve and validation.
+
 `session.json` pairs the numbered PNGs with measured poses and intrinsics. In `hand_eye.json`, `parent_frame` is the mounting link and `child_frame` the camera optical frame. For a homogeneous optical-frame point `[x, y, z, 1]`, `camera_to_ee @ point` gives mounting-link coordinates in metres.
 
 Both workflows below passed on the physical A1Z/D405 using the original tilt-in-place rings with 8 training and 4 held-out views. The table gives the maximum held-out errors.

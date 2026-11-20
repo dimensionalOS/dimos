@@ -44,6 +44,7 @@ from dimos.calibration.hand_eye_session import (
     open_session,
     save_home_tool_pose,
     save_observation,
+    save_rejected_frame,
     solve_session,
     validate_session,
 )
@@ -346,10 +347,19 @@ def run_hand_eye(
                     sample = observe_sample(capture_session, image, pose)
                 except MarkerObservationError as error:
                     reason = f"{label}: {error}"
-                    report(f"Image rejected. {reason}")
+                    path = save_rejected_frame(
+                        directory,
+                        capture_session,
+                        image,
+                        pose,
+                        reason,
+                        validation=role == "validation",
+                    )
+                    diagnostic = f"{reason}. Saved rejected frame to {path}"
+                    report(f"Image rejected. {diagnostic}")
                     if review is None:
                         if view_pose is None:
-                            raise MarkerObservationError(reason) from error
+                            raise MarkerObservationError(diagnostic) from error
                         rejected = "halfway"
                     elif review_rejected is None:
                         rejected = "quit" if review(image, reason) == "quit" else "retry"
@@ -370,6 +380,15 @@ def run_hand_eye(
                     report("Stopped at the current pose. Accepted observations are saved.")
                     return None
                 if choice == "retry":
+                    path = save_rejected_frame(
+                        directory,
+                        capture_session,
+                        image,
+                        pose,
+                        f"{label}: operator requested a retake",
+                        validation=role == "validation",
+                    )
+                    report(f"Saved rejected frame to {path}")
                     continue
                 if choice != "accept":
                     raise ValueError(f"Unknown image review choice {choice!r}")

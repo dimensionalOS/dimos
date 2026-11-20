@@ -48,16 +48,34 @@ def test_records_raw_image_pose_and_resumes_without_losing_samples(tmp_path, mar
         open_session(tmp_path, info, ee_frame="arm_link6", marker_size_m=0.12)
 
 
-def test_rejected_sample_does_not_write_an_image_or_manifest_entry(tmp_path, marker_image):
+def test_resumed_capture_preserves_rejected_frames_outside_the_manifest(tmp_path, marker_image):
     image, info, _ = marker_image
-    open_session(tmp_path, info, ee_frame="arm_link6", marker_id=1)
     pose = Transform(frame_id="base_link", child_frame_id="arm_link6")
 
-    with pytest.raises(ValueError, match="exactly one"):
-        record_sample(tmp_path, image, pose)
+    for attempt in (1, 2):
+        open_session(tmp_path, info, ee_frame="arm_link6", marker_id=1)
+        frame = image.copy()
+        frame.ts += attempt
+        frame.data[0, 0] = attempt
+        path = tmp_path / "rejected" / f"validation-0001-{attempt:02d}.png"
+        with pytest.raises(ValueError, match="exactly one") as caught:
+            record_sample(tmp_path, frame, pose, validation=True)
+        assert str(path) in str(caught.value)
+        details = json.loads(path.with_suffix(".json").read_text())
+        assert "ID 1; detected 0" in details["reason"]
+        assert details["image_timestamp"] == frame.ts
+        assert details["camera_frame"] == image.frame_id
+        np.testing.assert_allclose(details["base_from_ee"], pose.to_matrix())
+        np.testing.assert_array_equal(
+            cv2.imread(str(path), cv2.IMREAD_UNCHANGED), frame.to_opencv()
+        )
 
     assert load_session(tmp_path)["samples"] == []
     assert list(tmp_path.glob("*.png")) == []
+    assert (
+        cv2.imread(str(tmp_path / "rejected/validation-0001-01.png"), cv2.IMREAD_UNCHANGED)[0, 0]
+        == 1
+    )
 
 
 def test_resumes_after_an_interrupted_image_save(tmp_path, marker_image):

@@ -79,7 +79,9 @@ def test_capture_cli_retries_then_saves_a_held_out_pair(tmp_path, marker_image, 
     )
     source = topic_capture.return_value.__enter__.return_value
     pose = Transform(frame_id="base_link", child_frame_id="arm_link6", ts=image.ts)
-    source.capture.side_effect = [RuntimeError("No fresh TF"), (image, pose)]
+    blank = image.copy()
+    blank.data.fill(255)
+    source.capture.side_effect = [RuntimeError("No fresh TF"), (blank, pose), (image, pose)]
     directory = tmp_path / "capture"
 
     result = CliRunner().invoke(
@@ -96,11 +98,14 @@ def test_capture_cli_retries_then_saves_a_held_out_pair(tmp_path, marker_image, 
             "1",
             "--validation",
         ],
-        input="\n\n",
+        input="\n\n\n",
     )
 
     assert result.exit_code == 0, result.output
     assert "Rejected: No fresh TF" in result.output
+    rejected = directory / "rejected/validation-0001-01.png"
+    assert str(rejected) in result.output
+    assert list(rejected.parent.glob("*.png")) == [rejected]
     assert "Saved 0001.png" in result.output
     assert load_session(directory)["samples"][0]["role"] == "validation"
     topic_capture.return_value.__exit__.assert_called_once()

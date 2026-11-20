@@ -171,6 +171,14 @@ def test_retake_quit_and_resume_reuses_saved_home_and_approved_views(
     approved = load_session(tmp_path)["samples"]
     assert [s["image_timestamp"] for s in approved] == [images[1].ts]
     assert [p.name for p in tmp_path.glob("*.png")] == [approved[0]["image"]]
+    retake = tmp_path / "rejected/train-0001-01.png"
+    np.testing.assert_array_equal(
+        cv2.imread(str(retake), cv2.IMREAD_UNCHANGED), images[0].to_opencv()
+    )
+    assert (
+        "operator requested a retake"
+        in json.loads(retake.with_suffix(".json").read_text())["reason"]
+    )
     with pytest.raises(ValueError, match="settings changed"):
         run(choices, count=9)
     assert len(commands) == 2
@@ -587,7 +595,12 @@ def test_unreviewed_run_stops_at_home_or_after_one_rejected_retry(
     with pytest.raises(MarkerObservationError) as caught:
         run(None)
 
-    assert str(caught.value) == f"{label}: {error}"
+    rejected = sorted((tmp_path / "rejected").glob("*.png"))
+    assert len(rejected) == attempts
+    assert str(caught.value) == f"{label}: {error}. Saved rejected frame to {rejected[-1]}"
+    assert (
+        json.loads(rejected[-1].with_suffix(".json").read_text())["reason"] == f"{label}: {error}"
+    )
     assert len(commands) == len(images) == view - 1 + attempts
     assert len(load_session(tmp_path)["samples"]) == view - 1
     assert len(list(tmp_path.glob("*.png"))) == view - 1
