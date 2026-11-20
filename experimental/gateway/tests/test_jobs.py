@@ -121,6 +121,69 @@ def test_a_child_dying_right_after_a_record_still_scans_the_rest(
     assert set(scanned.scanner.cache()["results"]) == {"dies_after", "good", "missing"}
 
 
+@pytest.mark.parametrize("path", ["/catalog/scan", "/catalog/scan/blueprints/good"])
+@pytest.mark.parametrize(
+    ("program", "error"),
+    [
+        (
+            f'print({introspect.MARKER!r} + \'{{"error":"cannot read registry"}}\')',
+            "cannot read registry",
+        ),
+        ("raise SystemExit('checkout unavailable')", "exit 1): checkout unavailable"),
+        ("pass", "scanner exited before reporting completion (exit 0)"),
+    ],
+)
+def test_a_failed_scan_keeps_the_previous_catalog(
+    client: TestClient,
+    scanned: State,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    program: str,
+    error: str,
+) -> None:
+    scanned.listed = [{"name": "good", "kind": "builtin"}]
+    first = client.post(path).json()["job"]
+    until(lambda: client.get(f"/jobs/{first}").json()["done"])
+    assert client.get(f"/jobs/{first}").json()["ok"]
+    before = client.get("/catalog/modules").json()["modules"]
+    assert [module["name"] for module in before] == ["cam"]
+    cache_file = discovery.saved_scan_file(scanned.dimos_dir)
+    saved = cache_file.read_bytes()
+    monkeypatch.setattr(scanned.scanner, "command", [sys.executable, "-c", program])
+
+    second = client.post(path).json()["job"]
+    until(lambda: client.get(f"/jobs/{second}").json()["done"])
+
+    result = client.get(f"/jobs/{second}").json()
+    assert result["ok"] is False and error in result["error"]
+    assert client.get("/catalog/modules").json()["modules"] == before
+    assert cache_file.read_bytes() == saved
+
+
+def test_a_bad_checkout_fails_the_scan_job_and_keeps_the_catalog(
+    client: TestClient, scanned: State
+) -> None:
+    scanned.listed = [{"name": "good", "kind": "builtin"}]
+    first = client.post("/catalog/scan").json()["job"]
+    until(lambda: client.get(f"/jobs/{first}").json()["done"])
+    saved = discovery.saved_scan_file(scanned.dimos_dir).read_bytes()
+    project = scanned.dimos_dir / "pyproject.toml"
+    original = project.read_bytes()
+    project.write_text('project = ["dimos"]')
+
+    second = client.post("/catalog/scan").json()["job"]
+    until(lambda: client.get(f"/jobs/{second}").json()["done"])
+    failed = client.get(f"/jobs/{second}").json()
+    assert failed["ok"] is False and "project" in failed["error"]
+    assert client.get("/catalog/blueprints").json()["scan"]["state"] == "failed"
+    assert discovery.saved_scan_file(scanned.dimos_dir).read_bytes() == saved
+
+    project.write_bytes(original)
+    retry = client.post("/catalog/scan").json()["job"]
+    until(lambda: client.get(f"/jobs/{retry}").json()["done"])
+    assert client.get(f"/jobs/{retry}").json()["ok"]
+
+
 def test_a_scan_takes_its_per_blueprint_timeout_from_the_request(
     client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -157,7 +220,7 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     status = client.get(f"/jobs/{job}").json()
     assert status["ok"] and status["kind"] == "scan"
     assert status["progress"] == {"done": 3, "total": 3, "current": None}
-    assert any("crashed" in line for line in status["lines"])
+    assert any("exit 3" in line for line in status["lines"])
     answer = client.get("/catalog/blueprints").json()
     scan = answer["scan"]
     assert {key: scan[key] for key in ("job", "state", "scanned", "stale", "finished_at")} == {
@@ -171,7 +234,7 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     found = {blueprint["name"]: blueprint for blueprint in answer["blueprints"]}
     assert found["good"]["robot"] == "go2" and found["good"]["modules"] == ["cam"]
     assert found["good"]["scanned_at"] == status["finished_at"]
-    assert "crashed" in found["crashes"]["import_error"]
+    assert "exit 3" in found["crashes"]["import_error"]
     assert found["missing"]["suggested_extras"] == ["unitree-dds"]
     assert found["other"]["importable"] is None and found["other"]["scanned_at"] is None
     catalog = client.get("/catalog").json()
