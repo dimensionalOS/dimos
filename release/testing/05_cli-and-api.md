@@ -216,4 +216,4 @@ uv run dimos logout
 
 * Open https://console.dimensional.org and find the upload with its map, path and camera previews.
 
-Expected result: login prints a code and a URL, and after approval names the account, which `whoami` repeats. The upload prints `memory.db: complete (<id>)` and `console preview: sent`. `data ls` opens a browser that lists it (q quits). `pull` prints `pulled to /tmp/pulled.db`, and `logout` signs out.
+Expected result: login prints a code and a URL, and after approval names the account, which `whoami` repeats. The upload prints `memory.db: complete (<id>)` and `console preview: sent`. `data ls` opens an interactive list in the terminal that shows it (q quits). `pull` prints `pulled to /tmp/pulled.db`, and `logout` signs out.
