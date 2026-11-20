@@ -78,6 +78,9 @@ def status(
 RESULTS = {
     "gravity_fit": {
         "holdout_rms_nm": {"left_joint2": {"before": 0.5, "after": 0.1}},
+        "holdout_total_nm": {"before": 0.5, "running": 0.4, "after": 0.1},
+        "regressed": ["left_joint3 0.154 -> 0.200 Nm (running calibration)"],
+        "worse_overall": [],
         "at_bounds": ["left_link3 mass at its upper bound"],
         "refusals": [],
         "saved": "/state/arms/dual_openyam/left/calibration.json",
@@ -290,6 +293,8 @@ def test_calibrate_answers_the_right_prompts_goes_home_and_only_then_stops_its_r
     assert "Move to home?" in out and "Save and apply?" in out
     # The results of a finished step come as a table.
     assert "left_joint2  0.500 -> 0.100" in out
+    assert "all joints   0.500 -> 0.100" in out
+    assert "regressed: left_joint3 0.154 -> 0.200 Nm (running calibration)" in out
     assert "at a bound" in out and "left_joint3" in out and "FAIL" in out
     assert "Calibration file: /state/arms/dual_openyam/left/calibration.json" in out
     assert "history/" in out and "calibration off" in out
@@ -696,7 +701,7 @@ def test_a_bad_robot_lists_the_known_ones_and_a_guardless_arm_needs_the_bench_nu
     [
         (["--poses", "0"], "--poses: Input should be greater than or equal to 1"),
         (["--speed-deg-s", "0"], "--speed-deg-s: Input should be greater than 0"),
-        (["--speed-deg-s", "45"], "--speed-deg-s: Input should be less than or equal to 30"),
+        (["--speed-deg-s", "75"], "--speed-deg-s: Input should be less than or equal to 60"),
     ],
 )
 def test_poses_and_speed_are_checked_before_anything_starts(
@@ -866,3 +871,20 @@ def test_every_forwarded_flag_parses_on_the_real_blueprint_to_the_value_given() 
         "follower_r",
     )
     assert connection["config_sessions"] is True
+
+
+def test_the_tracking_check_says_whether_it_saved_the_gains(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stall = "stopped: the arm is more than 10 deg from its target (left_joint4 -10.6 deg)"
+    arm_command.print_results(
+        "confirm_tracking",
+        {"rest_rms_deg": {"left_joint4": 0.3}, "gains": {"saved": None, "failed": [stall]}},
+    )
+    assert f"gains not saved: {stall}" in capsys.readouterr().out
+    saved = "/state/arms/dual_openyam/left/calibration.json"
+    results = {"confirm_tracking": {"saved": None, "gains": {"saved": saved, "failed": []}}}
+    arm_command.print_results("confirm_tracking", results["confirm_tracking"])
+    assert f"saved gains to {saved}" in capsys.readouterr().out
+    assert arm_command.saved_files(results) == Path(saved)
+    assert arm_command.saved_files({"pick_gains": {"saved": None, "accepted": {}}}) is None
