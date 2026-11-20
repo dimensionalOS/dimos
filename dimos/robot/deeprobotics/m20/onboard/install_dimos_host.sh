@@ -10,10 +10,13 @@
 # absolute paths hold), then rsyncs checkout + venv + uv + uv's Python to each board. The
 # boards need no internet (NOS has none) and their system Python 3.8 is not touched.
 #
-# Routers: every Host is its own zenoh router on the robot LAN (eth 10.21.31.0/24), linked
-# AOS <- NOS and both -> GOS:7447 (a Host there, when it runs; zenoh keeps redialing until
-# then). None of it goes through the drdds-zenoh-bridge's router (NOS:7447), so dropping the
-# bridge changes nothing here; NOS's Host may then move to :7447.
+# Routers: every Host is its own zenoh router on the robot LAN (eth 10.21.31.0/24); NOS dials
+# AOS:7447 and both dial GOS:7447 (a Host there, when it runs; zenoh keeps redialing).
+# NOS:7447 is the router everything else dials (GOS's ZENOH_CONNECT, AOS's m20-camera). In
+# vendor mode the drdds-zenoh-bridge owns it and NOS's Host is dimos-host.service on :7448,
+# unlinked from the bridge. In rust mode (bridge stopped) NOS's Host is
+# dimos-host-router.service on :7447 and takes over as that router. The two units conflict;
+# this script enables the one that fits whether the bridge is running now.
 set -euo pipefail
 
 src="${DIMOS_CHECKOUT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || echo "$HOME/dimos")}"
@@ -23,11 +26,11 @@ boards=("$@")
 sudo_pass="${M20_SUDO_PASS-}"
 [ -n "$sudo_pass" ] || sudo_pass="'"
 
-# name ip listen connect tags cpus: NOS's :7447 belongs to the drdds-zenoh-bridge, so its Host is on :7448.
+# ip connect tags cpus port [rust-mode port]
 board_config() {
     case "$1" in
-        aos) echo "10.21.31.103 tcp/127.0.0.1:7447,tcp/10.21.31.103:7447 tcp/10.21.31.104:7447 board=aos,m20,lidar,imu,ecan,camera 1-3" ;;
-        nos) echo "10.21.31.106 tcp/127.0.0.1:7448,tcp/10.21.31.106:7448 tcp/10.21.31.103:7447,tcp/10.21.31.104:7447 board=nos,m20 0-3" ;;
+        aos) echo "10.21.31.103 tcp/10.21.31.104:7447 board=aos,m20,lidar,imu,ecan,camera 1-3 7447" ;;
+        nos) echo "10.21.31.106 tcp/10.21.31.103:7447,tcp/10.21.31.104:7447 board=nos,m20 0-3 7448 7447" ;;
         *) echo "unknown board $1" >&2; return 1 ;;
     esac
 }
@@ -52,33 +55,44 @@ stage() {
 }
 
 install_board() {
-    local name="$1" ip listen connect tags cpus
-    read -r ip listen connect tags cpus < <(board_config "$name")
+    local name="$1" ip connect tags cpus port router_port
+    read -r ip connect tags cpus port router_port < <(board_config "$name")
     echo "== $name ($ip)"
-    ssh "$ip" "echo \"$sudo_pass\" | sudo -S -p '' install -d -o \$USER -g \$USER $dest && mkdir -p ~/.local/bin ~/.local/share/uv/python"
+    ssh "$ip" "printf '%s\n' $(printf '%q' "$sudo_pass") | sudo -S -p '' install -d -o \$USER -g \$USER $dest && mkdir -p ~/.local/bin ~/.local/share/uv/python"
     nice rsync -a "$HOME/.local/bin/uv" "$ip:.local/bin/uv"
     nice rsync -a "$HOME/.local/share/uv/python/" "$ip:.local/share/uv/python/"
     nice rsync -a --delete --exclude /logs --exclude /.env "$dest/" "$ip:$dest/"
-    ssh "$ip" bash -s -- "$name" "$listen" "$connect" "$tags" "$cpus" "$dest" "$sudo_pass" <<'REMOTE'
+    # ssh joins its arguments unquoted, and the sudo password is a quote.
+    ssh "$ip" "bash -s -- $(printf '%q ' "$name" "$ip" "$connect" "$tags" "$cpus" "$port" "${router_port:-}" "$dest" "$sudo_pass")" <<'REMOTE'
 set -euo pipefail
-name="$1" listen="$2" connect="$3" tags="$4" cpus="$5" dest="$6" sudo_pass="$7"
+name="$1" ip="$2" connect="$3" tags="$4" cpus="$5" port="$6" router_port="$7" dest="$8" sudo_pass="$9"
+as_root() { echo "$sudo_pass" | sudo -S -p '' "$@"; }
 cd "$dest"
-.venv/bin/dimos host config name="$name" tags="$tags" listen="$listen" connect="$connect" autodiscovery=false >/dev/null
-unit=$(mktemp)
-cat > "$unit" <<UNIT
+# Listen is per unit (HOST__LISTEN in its environment beats .env); the rest is the Host's .env.
+.venv/bin/dimos host config name="$name" tags="$tags" connect="$connect" listen= autodiscovery=false >/dev/null
+
+write_unit() {
+    local unit="$1" port="$2" conflicts="$3" role="$4" tmp
+    tmp=$(mktemp)
+    cat > "$tmp" <<UNIT
 [Unit]
-Description=DimOS Host ($name): zenoh router + fragment supervisor
+Description=DimOS Host $name on :$port ($role): zenoh router + fragment supervisor
 After=network-online.target
 Wants=network-online.target
+${conflicts:+Conflicts=$conflicts}
 
 [Service]
 User=$USER
 WorkingDirectory=$dest
 ExecStart=$dest/.venv/bin/dimos host start --foreground
 Environment=PATH=$dest/.venv/bin:/usr/local/bin:/usr/bin:/bin
+# Loopback first: the Host's own fragments dial it.
+Environment=HOST__LISTEN=tcp/127.0.0.1:$port,tcp/$ip:$port
 # Off the vendor's real-time cores (isolcpus); fragments inherit both.
 CPUAffinity=$cpus
 Nice=10
+# The memlock a fragment's system check asks for (it cannot sudo prlimit itself).
+LimitMEMLOCK=67108864
 Restart=always
 RestartSec=3
 KillSignal=SIGINT
@@ -87,13 +101,27 @@ TimeoutStopSec=45
 [Install]
 WantedBy=multi-user.target
 UNIT
-echo "$sudo_pass" | sudo -S -p '' install -m 644 "$unit" /etc/systemd/system/dimos-host.service
-rm -f "$unit"
-echo "$sudo_pass" | sudo -S -p '' systemctl daemon-reload
-echo "$sudo_pass" | sudo -S -p '' systemctl enable dimos-host.service >/dev/null 2>&1
+    as_root install -m 644 "$tmp" "/etc/systemd/system/$unit"
+    rm -f "$tmp"
+}
+
+if [ -z "$router_port" ]; then
+    write_unit dimos-host.service "$port" "" "the board's Host"
+    wanted=dimos-host.service
+else
+    write_unit dimos-host.service "$port" dimos-host-router.service "vendor mode, beside the drdds bridge"
+    write_unit dimos-host-router.service "$router_port" dimos-host.service "rust mode, the robot's router"
+    wanted=dimos-host.service other=dimos-host-router.service
+    if ! systemctl is-active -q drdds-zenoh-bridge.service; then
+        wanted=dimos-host-router.service other=dimos-host.service
+    fi
+    as_root systemctl disable "$other" >/dev/null 2>&1
+fi
+as_root systemctl daemon-reload
+as_root systemctl enable "$wanted" >/dev/null 2>&1
 # A Host reads its revision once at start, so a re-sync restarts it.
-echo "$sudo_pass" | sudo -S -p '' systemctl restart dimos-host.service
-systemctl is-active dimos-host.service
+as_root systemctl restart "$wanted"
+echo "$wanted: $(systemctl is-active "$wanted")"
 REMOTE
 }
 
