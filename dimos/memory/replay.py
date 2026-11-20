@@ -30,9 +30,15 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 import reactivex as rx
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
-from reactivex.disposable import Disposable, SerialDisposable, SingleAssignmentDisposable
+from reactivex.disposable import (
+    CompositeDisposable,
+    Disposable,
+    SerialDisposable,
+    SingleAssignmentDisposable,
+)
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
+from reactivex.subject import AsyncSubject
 
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.base import Store, StreamAccessor
@@ -246,7 +252,9 @@ class ReplayStream(Generic[T]):
             return None
         return self._decode(obs)
 
-    def observable(self, *, skip_late: bool = True) -> Observable[T]:
+    def observable(
+        self, *, skip_late: bool = True, start_on: AsyncSubject[None] | None = None
+    ) -> Observable[T]:
         """Timed Observable scheduled against the Replay's shared anchor.
 
         The first subscribe across the whole :class:`Replay` pins
@@ -257,8 +265,8 @@ class ReplayStream(Generic[T]):
 
         With *skip_late* off nothing is skipped: frames already behind wall
         time are emitted at once, in order, and the rest keep their timing.
-        Disabled by a subscriber that is only behind by its own setup, like a module
-        subscribing every stream right after pinning the anchor.
+        For grouped startup, *start_on* delays scheduling until the signal while
+        opening the cursor at subscription time. Every selected stream keeps its first row.
 
         Disposing cancels pending emissions and waits for an active callback
         before releasing its iterator, so the store can then be closed safely.
@@ -326,8 +334,10 @@ class ReplayStream(Generic[T]):
                 terminate(error)
                 return Disposable()
 
-            wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
-            now_replay = replay_t0 + (time.time() - wall_t0) * speed
+            now_replay = first_ts
+            if skip_late and start_on is None:
+                wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
+                now_replay = replay_t0 + (time.time() - wall_t0) * speed
 
             # Late-subscribe skip: drop frames behind the wall clock. Stop
             # if the iterator wraps (ts < prev) — that means we've exhausted
@@ -396,8 +406,19 @@ class ReplayStream(Generic[T]):
                 pending.disposable = scheduled
                 scheduled.disposable = sched.schedule_relative(delay, emit)
 
-            schedule((first_ts, first_data, False), wrap_offset, prev_ts)
+            def begin(_: None = None) -> None:
+                nonlocal wall_t0, replay_t0
+                if disposed.is_set():
+                    return
+                if start_on is not None or not skip_late:
+                    wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
+                schedule((first_ts, first_data, False), wrap_offset, prev_ts)
 
+            if start_on is not None:
+                return CompositeDisposable(
+                    Disposable(dispose), start_on.subscribe(begin, on_error=terminate)
+                )
+            begin()
             return Disposable(dispose)
 
         return rx.create(subscribe)

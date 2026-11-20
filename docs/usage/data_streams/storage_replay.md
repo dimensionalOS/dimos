@@ -185,6 +185,9 @@ dimos --replay run unitree-go2
 Replay your own recording with
 `dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2`.
 
+When using `ReplayConnection` directly, subscribe to the desired sensors and call
+`seal_subscriptions()` to start playback. Their shared clock begins at the earliest selected sample.
+
 ## Data Format
 
 Each pickle file of a `TimedSensorStorage` recording contains a tuple `(timestamp, data)`:

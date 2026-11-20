@@ -170,15 +170,11 @@ class SpotReplay(Module):
                 logger.warning(f"Spot replay: stream {name!r} missing from recording; skipping")
                 continue
             subscriptions.add(
-                progress.track(replay.stream(name).observable()).subscribe(
-                    getattr(self, name).publish
-                )
+                progress.play(replay.stream(name)).subscribe(getattr(self, name).publish)
             )
 
         if "tf" in available:
-            subscriptions.add(
-                progress.track(replay.stream("tf").observable()).subscribe(self._republish_tf)
-            )
+            subscriptions.add(progress.play(replay.stream("tf")).subscribe(self._republish_tf))
         else:
             logger.warning("Spot replay: no tf stream in recording; 3D frames will be missing")
 

@@ -42,8 +42,6 @@ from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from reactivex import Observable
-
     from dimos.memory.replay import Replay, ReplayStream
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
@@ -152,8 +150,7 @@ class ReplayModule(Module):
         # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
         # would spend that lead time emitting nothing.
         static: dict[str, DimosMsg] = {}
-        timed_streams: dict[str, Observable[DimosMsg]] = {}
-        timed_starts = []
+        timed_streams: dict[str, ReplayStream[DimosMsg]] = {}
         for name, stream in streams.items():
             if issubclass(self.outputs[name].type, TFMessage):
                 # Frozen frames describe the coordinate system even when their
@@ -167,7 +164,7 @@ class ReplayModule(Module):
                         start = dynamic.order_by("ts").first().ts
                     except LookupError:
                         continue
-                    stream = streams[name] = replay.stream(
+                    stream = replay.stream(
                         name,
                         autocast=partial(_dynamic_tf, edges),
                         source=dynamic.time_range(start, float("inf")),
@@ -177,16 +174,12 @@ class ReplayModule(Module):
                 if message is not None:
                     static[name] = message
                 continue
-            first_ts = stream.first_ts()
-            if first_ts is not None:
-                timed_starts.append(first_ts)
-                timed_streams[name] = stream.observable(skip_late=False)
+            timed_streams[name] = stream
         for name, message in static.items():
             if isinstance(message, TFMessage):
                 self.outputs[name].publish(message)
         progress = ReplayProgress(str(path))
-        progress.start(replay, (streams[n] for n in timed_streams))
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
+        progress.start(replay, timed_streams.values())
         port: Out[DimosMsg]
         for name, port in self.outputs.items():
             logger.info("Replaying %s -> %s", name, port)
@@ -195,9 +188,7 @@ class ReplayModule(Module):
                     interval(1.0).subscribe(partial(_republish, port, static[name]))
                 )
             if name in timed_streams:
-                self.register_disposable(
-                    progress.track(timed_streams[name]).subscribe(port.publish)
-                )
+                self.register_disposable(progress.play(timed_streams[name]).subscribe(port.publish))
         progress.seal()
 
     @rpc
