@@ -611,19 +611,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-yesense-imu"
-version = "0.1.0"
-dependencies = [
- "dimos-module",
- "lcm-msgs",
- "serde",
- "tokio",
- "tracing",
- "validator",
- "yesense-imu",
-]
-
-[[package]]
 name = "dimos-module"
 version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos?rev=9ac42e97ac754f026fc418b5534960dba71c2c0f#9ac42e97ac754f026fc418b5534960dba71c2c0f"
@@ -653,6 +640,19 @@ dependencies = [
  "quote",
  "syn 3.0.5",
  "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "dimos-yesense-imu"
+version = "0.1.0"
+dependencies = [
+ "dimos-module",
+ "lcm-msgs",
+ "serde",
+ "tokio",
+ "tracing",
+ "validator",
+ "yesense-imu",
 ]
 
 [[package]]
