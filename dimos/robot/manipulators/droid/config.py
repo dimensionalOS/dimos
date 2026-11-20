@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -35,6 +36,27 @@ DROID_HOME_JOINTS = [0.0, -math.pi / 5, 0.0, -4 * math.pi / 5, 0.0, 3 * math.pi 
 # RoboLab's USD (see its SOURCE.md). The fingers are fixed open; grasp_frame is midway
 # between the open pads, z along the approach and y along which the pads close.
 DROID_MODEL_PATH = LfsPath("robolab_droid") / "droid.urdf"
+DROID_HARDWARE_ID = "arm"
+DROID_GRIPPER_TASK = "arm_gripper"
+
+# The Robotiq's pads in GraspGenX's convention (approach +Z, jaws closing along X), the
+# origin at RoboLab's gripper base_link: pads 0.1111-0.1491 m out, 85 mm apart open,
+# 22 mm wide, 38 mm deep.
+DROID_GRIPPER_SWEEP_VOLUME = {
+    "extents_open": (0.085, 0.022, 0.038),
+    "offset_open": (0.0, 0.0, 0.1301),
+    "extents_half_open": (0.0425, 0.022, 0.038),
+    "offset_half_open": (0.0, 0.0, 0.1301),
+    "fingertip_depth": 0.1491,
+}
+# That origin -> grasp_frame, the planning tip: out the 0.1301 m to the pad midpoint, and
+# the quarter turn from GraspGenX's X onto grasp_frame's y.
+DROID_GRASP_FRAME_TO_TCP = (
+    (0.0, 1.0, 0.0, 0.0),
+    (-1.0, 0.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, 0.1301),
+    (0.0, 0.0, 0.0, 1.0),
+)
 
 
 def make_droid_model_config() -> RobotModelConfig:
@@ -55,4 +77,15 @@ def make_droid_model_config() -> RobotModelConfig:
         auto_convert_meshes=True,
         home_joints=list(DROID_HOME_JOINTS),
         pre_grasp_offset=0.05,
+    )
+
+
+def droid_robolab_hardware() -> HardwareComponent:
+    """The DROID robot RoboLab simulates; its runner is reached at the sim_robolab default."""
+    return HardwareComponent(
+        hardware_id=DROID_HARDWARE_ID,
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=list(DROID_JOINTS),
+        adapter_type="sim_robolab",
+        auto_enable=True,
     )
