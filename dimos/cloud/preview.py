@@ -15,14 +15,13 @@
 """Console preview of a recording, built by `dimos data upload` while the recording is at hand:
 LiDAR map and timed scans with the robot's path (from the poses the store keeps with every
 LiDAR observation, else the recording's tf), timed camera thumbnails, joystick input, and an
-H.264 timelapse."""
+H.264 timelapse. SQLite recordings also report stored timestamp gaps."""
 
 from __future__ import annotations
 
 import base64
 from contextlib import closing
 import itertools
-import json
 import math
 from pathlib import Path
 import sqlite3
@@ -46,7 +45,6 @@ from dimos.cloud.constants import (
     PREVIEW_MAP_POINTS,
     PREVIEW_MAP_SCANS,
     PREVIEW_MAP_VOXEL,
-    PREVIEW_MAX_BYTES,
     PREVIEW_SCALE,
     PREVIEW_SCAN_POINTS,
     PREVIEW_THUMB_PX,
@@ -57,6 +55,7 @@ from dimos.cloud.constants import (
     TIMELAPSE_MAX_S,
     WORLD_FRAMES,
 )
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.msgs.foxglove_msgs.CompressedVideo import VIDEO_DECODERS, CompressedVideo
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -72,7 +71,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from dimos.memory.store.base import Store
-    from dimos.memory.store.sqlite import SqliteStore
     from dimos.memory.type.observation import Observation
 
 
@@ -201,64 +199,46 @@ def _timing(path: Path, streams: dict[str, Any], t0: float) -> dict[str, Any]:
     SELECT only ts: stream iteration may decode even without .data access when
     eager_blobs is configured. Use a read-only connection to the staged recording,
     explicit timestamp ordering, and the existing preview origin. Names/counts
-    live in doc.streams. This first slice does not support other store formats.
+    live in doc.streams.
     """
     report = {}
     with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as db:
         for kind, stream in streams.items():
             if stream is None or kind == "joystick":
                 continue
-            first = last = None
+            name = stream.name.replace('"', '""')
+            rows = db.execute(f'SELECT ts FROM "{name}" ORDER BY ts')
+            offsets = (ts - t0 for (ts,) in rows)
+            first = next(offsets, None)
+            if first is None:
+                continue
+
+            last = first
             max_gap = 0.0
             gaps: list[list[float]] = []
             gap_count = 0
-            name = stream.name.replace('"', '""')
-            for (ts,) in db.execute(f'SELECT ts FROM "{name}" ORDER BY ts'):
-                if ts is None or not math.isfinite(ts - t0):
-                    raise ValueError("Timing timestamps must be finite")
-                t = float(ts - t0)
-                if first is None:
-                    first = t
-                if last is not None:
-                    gap = t - last
-                    max_gap = max(max_gap, gap)
-                    if gap > PREVIEW_GAP_THRESHOLD_S:
-                        gap_count += 1
-                        if len(gaps) < PREVIEW_TIMING_GAPS:
-                            gaps.append([last, t])
+            for t in offsets:
+                gap = t - last
+                max_gap = max(max_gap, gap)
+                if gap > PREVIEW_GAP_THRESHOLD_S:
+                    gap_count += 1
+                    if len(gaps) < PREVIEW_TIMING_GAPS:
+                        gaps.append([last, t])
                 last = t
-            if first is not None and last is not None:
-                if not math.isfinite(last - first):
-                    raise ValueError("Timing span must be finite")
-                report[kind] = {
-                    "first_s": first,
-                    "last_s": last,
-                    "span_s": last - first,
-                    "max_gap_s": max_gap,
-                    "gaps": gaps,
-                    "gap_count": gap_count,
-                    "truncated": gap_count > len(gaps),
-                }
+            # Non-finite endpoints or an overflowing interval make this sorted span non-finite.
+            span = last - first
+            if not math.isfinite(span):
+                raise ValueError("Timing timestamps and span must be finite")
+            report[kind] = {
+                "first_s": first,
+                "last_s": last,
+                "span_s": span,
+                "max_gap_s": max_gap,
+                "gaps": gaps,
+                "gap_count": gap_count,
+                "truncated": gap_count > len(gaps),
+            }
     return {"version": 1, "gap_threshold_s": PREVIEW_GAP_THRESHOLD_S, "streams": report}
-
-
-def trim_timing(doc: dict[str, Any]) -> None:
-    """Drop only optional timing if the full wire JSON exceeds the endpoint budget.
-
-    Call again after adding video metadata. Existing previews keep their old behavior
-    if they are already too large without timing. Encoding matches HttpCloudRequest.
-    """
-    if "timing" not in doc:
-        return
-    try:
-        if len(json.dumps(doc, allow_nan=False).encode()) <= PREVIEW_MAX_BYTES:
-            return
-    except (TypeError, ValueError):
-        pass  # invalid optional timing must not break an otherwise usable preview
-    doc.pop("timing")
-    if "lidar" in doc.get("streams", {}):
-        doc["streams"].pop("odom", None)  # added only for timing when LiDAR is present
-    logger.warning("Preview timing omitted: invalid JSON or preview exceeds size limit")
 
 
 def build(store: Store) -> dict[str, Any] | None:
@@ -326,6 +306,14 @@ def build(store: Store) -> dict[str, Any] | None:
         "odom": odom,
         "joystick": joy,
     }
+    timing = None
+    if isinstance(store, SqliteStore):
+        try:
+            timing = _timing(Path(store.config.path), streams, t0)
+        except (sqlite3.Error, OSError, TypeError, ValueError) as exc:
+            logger.warning("Preview timing unavailable", error=str(exc))
+    if timing is None and lidar is not None:
+        streams.pop("odom")  # the spatial preview already reports the LiDAR's path
     doc = {
         "format": PREVIEW_FORMAT,
         "duration_s": round(t1 - t0, 3),
@@ -333,9 +321,7 @@ def build(store: Store) -> dict[str, Any] | None:
         "scale": PREVIEW_SCALE,
         "bounds": [np.round(pts.min(axis=0), 2).tolist(), np.round(pts.max(axis=0), 2).tolist()],
         "streams": {
-            k: {"name": s.name, "count": s.count()}
-            for k, s in streams.items()
-            if s is not None and (k != "odom" or lidar is None)
+            k: {"name": s.name, "count": s.count()} for k, s in streams.items() if s is not None
         },
         "trajectory": np.round(traj, 3).tolist(),
         "map": _pack(world, origin) if world is not None else "",
@@ -356,20 +342,8 @@ def build(store: Store) -> dict[str, Any] | None:
         ],
     }
 
-    try:  # timing is optional; a metadata failure must not discard the spatial preview
-        timing = _timing(Path(cast("SqliteStore", store).config.path), streams, t0)
-        # Old previews omit the odom count when LiDAR is present; timing needs it.
-        odom_meta = (
-            {"name": odom.name, "count": odom.count()}
-            if lidar is not None and odom is not None
-            else None
-        )
+    if timing is not None:
         doc["timing"] = timing
-        if odom_meta is not None:
-            doc["streams"]["odom"] = odom_meta
-        trim_timing(doc)
-    except Exception as exc:
-        logger.warning("Preview timing unavailable", error=str(exc))
     return doc
 
 
