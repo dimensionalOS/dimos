@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -38,7 +38,20 @@ from dimos.utils.nvidia_env import driver_env, sdk_variant
 logger = setup_logger()
 
 
-class CameraConfig(BaseModel):
+class _Strict(BaseModel):
+    """A field this model does not have is an error, never silently dropped."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+# dimSLAM v0.4 fields with no meaning since v1.0, and what replaced each
+REMOVED_FIELDS = {
+    "publish_rate": "the filter publishes as its inputs move it, not on a timer; use publish_every to keep every Nth pose",
+    "replay_buffer_seconds": "a late message is carried forward to the filter's instant by its own motion, so nothing is replayed",
+}
+
+
+class CameraConfig(_Strict):
     """Settings for one camera, identified by the frame_id its images carry. A depth stream
     is a camera of its own here, and need not be a rig camera."""
 
@@ -61,7 +74,7 @@ class CameraConfig(BaseModel):
     provides_depth: bool = False
 
 
-class Covariance(BaseModel):
+class Covariance(_Strict):
     """Per-axis variances. For a pose x/y/z are metres and roll/pitch/yaw radians; for a
     twist they are the linear (m/s) and angular (rad/s) rates about the same axes."""
 
@@ -76,7 +89,7 @@ class Covariance(BaseModel):
         return any(self.model_dump().values())
 
 
-class ImuConfig(BaseModel):
+class ImuConfig(_Strict):
     """One IMU, identified by the frame_id its samples carry; tf places it relative to the output frame. Each keeps its
     own noise figures and its own estimated biases, so a good gyro next to a cheap one keeps its say. The noise defaults
     are Point-LIO's; the init defaults are dimSLAM v0.4's."""
@@ -108,7 +121,7 @@ class ImuConfig(BaseModel):
     time_offset_s: float = 0.0
 
 
-class LidarConfig(BaseModel):
+class LidarConfig(_Strict):
     """One lidar, identified by the frame_id its scans carry; tf places it relative to the output frame. Defaults are Point-LIO's."""
 
     frame_id: str
@@ -132,7 +145,7 @@ class LidarConfig(BaseModel):
     neighbor_range: float = Field(default=5.0, gt=0)
 
 
-class SourceConfig(BaseModel):
+class SourceConfig(_Strict):
     """One external odometry source and how much it is trusted. A variance below zero takes the message covariance, zero
     drops that dimension, above zero is a fixed variance. A drifting source's covariance describes its accumulated drift
     rather than the delta being fused, so a fixed value is usually the right answer."""
@@ -153,7 +166,7 @@ class SourceConfig(BaseModel):
     still_angular_speed: float = 0.0
 
 
-class ProcessNoise(BaseModel):
+class ProcessNoise(_Strict):
     """Random-walk variances, per s^2, of velocity, angular velocity and specific force (Point-LIO's defaults)."""
 
     velocity: float = 20.0
@@ -161,7 +174,7 @@ class ProcessNoise(BaseModel):
     specific_force: float = 500.0
 
 
-class InitialStds(BaseModel):
+class InitialStds(_Strict):
     """1-sigma uncertainty the filter starts with per state block. position, velocity, rotation and bias keep dimSLAM
     v0.4's defaults; the blocks Point-LIO's state adds take Point-LIO's (variance 0.01, gravity 1e-4). bias applies to
     every IMU's gyro and accel biases."""
@@ -177,7 +190,7 @@ class InitialStds(BaseModel):
     gravity: float = math.sqrt(0.0001)
 
 
-class MapConfig(BaseModel):
+class MapConfig(_Strict):
     """The map scans are matched against (Point-LIO's defaults)."""
 
     # m: a scan point is added only where the map has none in its cube of this side.
@@ -194,7 +207,7 @@ class MapConfig(BaseModel):
     point_lio_neighbor_order: bool = False
 
 
-class DeskewConfig(BaseModel):
+class DeskewConfig(_Strict):
     """Each scan's points moved by the filter's own pose at each point's instant to the scan's end, on deskewed_cloud."""
 
     enabled: bool = False
@@ -293,6 +306,20 @@ class DimSlamConfig(NativeModuleConfig):
     # the directions the platform cannot move in. Above zero pulls that dimension toward zero
     # with this variance; zero leaves it free.
     per_dimension_error_variance: Covariance = Field(default_factory=Covariance)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_removed_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            removed = [name for name in REMOVED_FIELDS if name in data]
+            if removed:
+                raise ValueError(
+                    "; ".join(
+                        f"{name} was removed in dimSLAM v1.0: {REMOVED_FIELDS[name]}"
+                        for name in removed
+                    )
+                )
+        return data
 
     @model_validator(mode="after")
     def _multisensor_lists_its_rig(self) -> DimSlamConfig:
