@@ -21,21 +21,33 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.mapping.dim_slam_lio.dim_slam_lio import DimSlamLio, ImuConfig, LidarConfig
+from dimos.mapping.dim_slam_lio.dim_slam_lio import (
+    DimSlamLio,
+    ImuConfig,
+    LidarConfig,
+    ProcessNoise,
+)
 from dimos.robot.deeprobotics.m20.constants import MAP_FRAME
 
 
 def m20_dim_slam(
     lidar_frames: tuple[str, ...] = ("front_lidar", "rear_lidar"),
-    imu_frames: tuple[str, ...] = ("front_lidar",),
+    imu_frames: tuple[str, ...] = ("rear_lidar",),
     **overrides: Any,
 ) -> Blueprint:
-    """``imu_frames``: the first drives and levels the filter; one lidar IMU ran 3x real time on
-    the GOS RK3588, both lidar IMUs together did not keep up and drifted more at rest."""
+    """``imu_frames``: the first drives and levels the filter. The rear Airy's IMU, its gyro bias
+    ~0.006 rad/s against the front's ~0.043; both together ran under real time on the GOS RK3588."""
     return DimSlamLio.blueprint(
         odom_frame_id=MAP_FRAME,
         output_frame_id="base_link",
-        lidars=[LidarConfig(frame_id=frame) for frame in lidar_frames],
-        imus=[ImuConfig(frame_id=frame) for frame in imu_frames],
+        # m^2: Point-LIO's 0.01 jittered 4 mm per scan at rest on the Airys; 0.05 steadied it to 1.1 mm
+        lidars=[LidarConfig(frame_id=frame, point_variance=0.05) for frame in lidar_frames],
+        # an Airy IMU at rest (90 s, 200 Hz): gyro variance ~5e-7 rad^2/s^2, accel ~1e-4 m^2/s^4 per axis
+        imus=[
+            ImuConfig(frame_id=frame, gyro_variance=1e-6, accel_variance=1e-4)
+            for frame in imu_frames
+        ],
+        # a walking dog's body changes motion far slower than Point-LIO's handheld defaults allow
+        process_noise=ProcessNoise(velocity=2.0, angular_velocity=100.0, specific_force=50.0),
         **overrides,
     ).remappings([(DimSlamLio, "odometry", "slam_odom")])
