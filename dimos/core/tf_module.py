@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# A frame that belongs to one robot (base_link, lidar); it goes under the module's frame_id_prefix.
+# A frame that belongs to one robot (base_link, lidar); it goes under the module's namespace.
 TransformFrameLocal: TypeAlias = str
 # A frame shared by everything in the blueprint (world, map); never prefixed.
 TransformFrameGlobal: TypeAlias = str
@@ -69,10 +69,8 @@ class TfModule(Module):
 
     @cached_property
     def tf_frames(self) -> dict[str, str]:
-        """Every role -> frame id, local (under frame_id_prefix) and global together."""
-        return _frame_ids(
-            self.config.tf_frames_local, self.config.tf_frames_global, self.frame_id_prefix
-        )
+        """Every role -> frame id, local (under the namespace) and global together."""
+        return _frame_ids(self.config.tf_frames_local, self.config.tf_frames_global, self.namespace)
 
     @cached_property
     def frame(self) -> SimpleNamespace:
@@ -89,11 +87,7 @@ class TfModule(Module):
             frames = _frame_ids(
                 atom.kwargs["tf_frames_local"],
                 atom.kwargs["tf_frames_global"],
-                "/".join(
-                    part
-                    for part in (atom.name.rpartition("/")[0], atom.kwargs["frame_id_prefix"])
-                    if part
-                ),
+                atom.name.rpartition("/")[0],
             )
             for parent_role, child_role in atom.kwargs["tf_edges"]:
                 publishers[frames[child_role]][frames[parent_role]].append(atom.name)
