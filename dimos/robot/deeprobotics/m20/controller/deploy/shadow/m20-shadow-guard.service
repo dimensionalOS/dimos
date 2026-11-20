@@ -4,8 +4,8 @@ PartOf=m20-shadow.service
 After=m20-shadow.service
 
 [Service]
-# background ~36 / hour; slack 3; check every 30 s
-ExecStart=/var/opt/robot/data/m20_shadow/bin/guard.sh 36 3 30
+# background measured 8-11 per 10 min (~66 / hour, 2026-11-20); allow 90 / hour + 5; check every 30 s
+ExecStart=/var/opt/robot/data/m20_shadow/bin/guard.sh 90 5 30
 CPUAffinity=1 2 3
 Nice=10
 Restart=no
