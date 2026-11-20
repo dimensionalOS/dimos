@@ -24,7 +24,6 @@ from dimos.control.calibration.step_analysis import (
     analyze_step,
     propose_gains,
     rest_noise,
-    settle_time_limit_s,
 )
 
 RATE_HZ = 100.0
@@ -32,7 +31,7 @@ INERTIA = 0.02
 
 
 def simulate(
-    kp: float, kd: float, inertia: float = INERTIA, delta: float = 2.0, hold: float = 2.0
+    kp: float, kd: float, delta: float = 2.0, hold: float = 2.0
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """An ideal spring-damper stepping ``delta`` deg from rest at t = 0, sampled at RATE_HZ."""
     dt = 1e-4
@@ -40,7 +39,7 @@ def simulate(
     for k in range(round(hold / dt) + 1):
         if k % round(1 / (RATE_HZ * dt)) == 0:
             samples.append((k * dt, q, dq))
-        ddq = (kp * (delta - q) - kd * dq) / inertia
+        ddq = (kp * (delta - q) - kd * dq) / INERTIA
         dq += ddq * dt
         q += dq * dt
     t, q_, dq_ = (np.asarray(column) for column in zip(*samples, strict=True))
@@ -73,58 +72,73 @@ def test_rest_noise_measures_the_window(noise: RestNoise) -> None:
     assert 0.2 < noise.speed_peak_deg_s < 1.0
 
 
-@pytest.mark.parametrize("zeta", [0.3, 1.0, 2.0])
-def test_the_settle_limit_bounds_an_ideal_response_closely(zeta: float) -> None:
-    kp, band = 30.0, 0.02
-    kd = zeta * 2.0 * math.sqrt(kp * INERTIA)
-    t, q, _ = simulate(kp, kd, hold=4.0)
-    actual = t[np.flatnonzero(np.abs(q - 2.0) > band)[-1] + 1]
-    limit = settle_time_limit_s(INERTIA, kp, kd, 2.0, band)
-    assert actual <= limit + 1 / RATE_HZ <= 2.0 * actual
-
-
-def test_a_well_damped_step_passes(rng: np.random.Generator, noise: RestNoise) -> None:
-    kp = 30.0
-    t, q, dq = simulate(kp, 2.0 * math.sqrt(kp * INERTIA))
-    metrics = analyze_step(
-        event(kp, 1.55), t, *noisy(rng, q, dq), noise, max_overshoot_pct=20.0, inertia_kgm2=INERTIA
+def test_a_well_damped_step_passes_alone_and_against_itself(
+    rng: np.random.Generator, noise: RestNoise
+) -> None:
+    kp, kd = 30.0, 2.0 * math.sqrt(30.0 * INERTIA)
+    t, q, dq = simulate(kp, kd)
+    baseline = analyze_step(
+        event(kp, kd), t, *noisy(rng, q, dq), noise, max_overshoot_pct=20.0, baseline=None
     )
-    assert metrics.passed, metrics.failures
-    assert metrics.settle_limit_s is not None and metrics.settle_time_s <= metrics.settle_limit_s
-    assert metrics.first_motion_s is not None and metrics.first_motion_s < 0.05
-    assert abs(metrics.steady_state_error_deg) < 0.01
+    assert baseline.passed, baseline.failures
+    assert baseline.first_motion_s is not None and baseline.first_motion_s < 0.05
+    assert abs(baseline.steady_state_error_deg) < 0.01
+    t, q, dq = simulate(2 * kp, 1.5 * kd)
+    stiffer = analyze_step(
+        event(2 * kp, 1.5 * kd),
+        t,
+        *noisy(rng, q, dq),
+        noise,
+        max_overshoot_pct=20.0,
+        baseline=baseline,
+    )
+    assert stiffer.baseline_settle_s == baseline.settle_time_s and stiffer.passed, stiffer.failures
 
 
-def test_an_underdamped_step_fails_only_on_overshoot(
+def test_an_underdamped_baseline_fails_only_on_overshoot(
     rng: np.random.Generator, noise: RestNoise
 ) -> None:
     kp, kd = 30.0, 0.2 * 2.0 * math.sqrt(30.0 * INERTIA)
     t, q, dq = simulate(kp, kd, hold=3.0)
     metrics = analyze_step(
-        event(kp, kd, hold=3.0),
-        t,
-        *noisy(rng, q, dq),
-        noise,
-        max_overshoot_pct=20.0,
-        inertia_kgm2=INERTIA,
+        event(kp, kd, hold=3.0), t, *noisy(rng, q, dq), noise, max_overshoot_pct=20.0, baseline=None
     )
     assert metrics.overshoot_pct == pytest.approx(52.7, abs=2.0)
     assert len(metrics.failures) == 1 and "overshot" in metrics.failures[0]
 
 
-def test_a_joint_heavier_than_its_model_settles_too_slowly(
+def test_a_candidate_slower_than_its_baseline_fails(
     rng: np.random.Generator, noise: RestNoise
 ) -> None:
-    kp, kd = 30.0, 1.55
-    t, q, dq = simulate(kp, kd, inertia=8 * INERTIA)
-    metrics = analyze_step(
-        event(kp, kd), t, *noisy(rng, q, dq), noise, max_overshoot_pct=100.0, inertia_kgm2=INERTIA
+    kd = 2.0 * math.sqrt(30.0 * INERTIA)
+    t, q, dq = simulate(30.0, kd)
+    baseline = analyze_step(
+        event(30.0, kd), t, *noisy(rng, q, dq), noise, max_overshoot_pct=100.0, baseline=None
     )
-    assert any("settled in" in reason for reason in metrics.failures)
-    unknown = analyze_step(
-        event(kp, kd), t, *noisy(rng, q, dq), noise, max_overshoot_pct=100.0, inertia_kgm2=None
+    t, q, dq = simulate(10.0, 4 * kd)
+    slow = analyze_step(
+        event(10.0, 4 * kd),
+        t,
+        *noisy(rng, q, dq),
+        noise,
+        max_overshoot_pct=100.0,
+        baseline=baseline,
     )
-    assert unknown.settle_limit_s is None and unknown.passed
+    assert slow.settle_time_s > baseline.settle_time_s
+    assert slow.failures == (
+        f"+2 deg step settled in {slow.settle_time_s:.2f} s, slower than the baseline's "
+        f"{baseline.settle_time_s:.2f} s",
+    )
+    with pytest.raises(ValueError, match="baseline"):
+        analyze_step(
+            event(10.0, kd, delta=-2.0),
+            t,
+            -q,
+            -dq,
+            noise,
+            max_overshoot_pct=100.0,
+            baseline=baseline,
+        )
 
 
 def test_a_buzzing_rest_fails(rng: np.random.Generator, noise: RestNoise) -> None:
@@ -132,9 +146,7 @@ def test_a_buzzing_rest_fails(rng: np.random.Generator, noise: RestNoise) -> Non
     t, q, dq = simulate(kp, kd)
     buzz = 0.05 * np.sin(2 * math.pi * 5 * t)
     q, dq = noisy(rng, q + buzz, dq + 0.05 * 2 * math.pi * 5 * np.cos(2 * math.pi * 5 * t))
-    metrics = analyze_step(
-        event(kp, kd), t, q, dq, noise, max_overshoot_pct=20.0, inertia_kgm2=None
-    )
+    metrics = analyze_step(event(kp, kd), t, q, dq, noise, max_overshoot_pct=20.0, baseline=None)
     assert any("buzzes" in reason for reason in metrics.failures)
 
 
@@ -142,9 +154,7 @@ def test_a_step_that_never_moves_fails(rng: np.random.Generator) -> None:
     t = np.arange(201) / RATE_HZ
     q, dq = (np.tile(v, 5)[: t.size] for v in noisy(rng, np.zeros(50), np.zeros(50)))
     noise = rest_noise(t[:50], q[:50], dq[:50])
-    metrics = analyze_step(
-        event(30.0, 1.0), t, q, dq, noise, max_overshoot_pct=20.0, inertia_kgm2=None
-    )
+    metrics = analyze_step(event(30.0, 1.0), t, q, dq, noise, max_overshoot_pct=20.0, baseline=None)
     assert metrics.first_motion_s is None and "never moved" in metrics.failures[0]
 
 
@@ -158,15 +168,15 @@ def test_samples_that_stop_short_or_are_not_finite_raise(noise: RestNoise) -> No
             dq[:150],
             noise,
             max_overshoot_pct=20.0,
-            inertia_kgm2=None,
+            baseline=None,
         )
     with pytest.raises(ValueError, match="outlast"):
         analyze_step(
-            event(30.0, 1.55, hold=0.4), t, q, dq, noise, max_overshoot_pct=20.0, inertia_kgm2=None
+            event(30.0, 1.55, hold=0.4), t, q, dq, noise, max_overshoot_pct=20.0, baseline=None
         )
     q[10] = math.nan
     with pytest.raises(ValueError, match="NaN"):
-        analyze_step(event(30.0, 1.55), t, q, dq, noise, max_overshoot_pct=20.0, inertia_kgm2=None)
+        analyze_step(event(30.0, 1.55), t, q, dq, noise, max_overshoot_pct=20.0, baseline=None)
 
 
 def metrics(kp: float, kd: float, delta: float, *failures: str, settle: float = 0.2) -> StepMetrics:

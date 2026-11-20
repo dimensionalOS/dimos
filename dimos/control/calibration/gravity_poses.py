@@ -158,10 +158,6 @@ class ArmModel:
     def gravity(self, q: np.ndarray) -> np.ndarray:
         return np.asarray(pin.computeGeneralizedGravity(self.model, self.data, q))
 
-    def joint_inertia(self, q: np.ndarray) -> np.ndarray:
-        """Each joint's own inertia (the mass matrix diagonal) at ``q``, kg m^2, from the URDF."""
-        return np.diag(pin.crba(self.model, self.data, q)).copy()
-
     def scaled_regressor(self, q: np.ndarray) -> np.ndarray:
         """Rows: measured joints; columns: ``(m, m*c)`` of the fitted bodies over ``column_scale``."""
         zero = np.zeros(self.model.nv)

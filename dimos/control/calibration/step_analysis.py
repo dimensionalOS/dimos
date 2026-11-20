@@ -17,8 +17,8 @@
 Plain arrays in degrees and seconds. The settle band, the first-motion threshold and the buzz
 limit come from a rest window the caller measured (``rest_noise``), widened to the encoder's
 step when the rest reads one value throughout. A step settles when it stays inside the band
-around where it came to rest; given the joint's inertia it must do so no slower than an ideal
-spring-damper with its kp and kd would.
+around where it came to rest; a candidate's step must settle no slower than the joint's
+baseline step (its current gains) of the same delta.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 import math
 
 import numpy as np
-from scipy.special import lambertw
 
 
 @dataclass(frozen=True)
@@ -67,7 +66,7 @@ class StepMetrics:
     band_deg: float
     first_motion_s: float | None
     settle_time_s: float
-    settle_limit_s: float | None
+    baseline_settle_s: float | None
     overshoot_pct: float
     steady_state_error_deg: float
     buzz_rms_deg_s: float
@@ -131,27 +130,6 @@ def rest_window(t: np.ndarray, end: float, window_s: float) -> np.ndarray:
     return mask
 
 
-def settle_time_limit_s(
-    inertia_kgm2: float, kp: float, kd: float, step_deg: float, band_deg: float
-) -> float:
-    """When an ideal spring-damper (inertia, kp, kd) is sure to be within ``band_deg`` of a step's end.
-
-    The decay envelope of its error: ``A e^(-zeta wn t) / sqrt(1 - zeta^2)`` when underdamped,
-    ``A (1 + p t) e^(-p t)`` with ``p`` its slower pole otherwise.
-    """
-    ratio = band_deg / abs(step_deg)
-    if ratio >= 1.0:
-        return 0.0
-    wn = math.sqrt(kp / inertia_kgm2)
-    zeta = kd / (2.0 * math.sqrt(kp * inertia_kgm2))
-    if ratio == 0.0 or zeta == 0.0:
-        return math.inf
-    if zeta < 1.0:
-        return max(0.0, -math.log(ratio * math.sqrt(1.0 - zeta**2)) / (zeta * wn))
-    pole = wn * (zeta - math.sqrt(zeta**2 - 1.0))
-    return float(-1.0 - lambertw(-ratio / math.e, -1).real) / pole
-
-
 def analyze_step(
     event: StepEvent,
     t: Sequence[float] | np.ndarray,
@@ -160,13 +138,13 @@ def analyze_step(
     noise: RestNoise,
     *,
     max_overshoot_pct: float,
-    inertia_kgm2: float | None,
+    baseline: StepMetrics | None,
 ) -> StepMetrics:
     """Metrics of one step from its samples (``t`` in seconds, the clock of ``event.t0``).
 
     The step's rest is its last ``noise.window_s``. It fails when the joint never moved past
-    the band, settles slower than ``settle_time_limit_s`` (only with ``inertia_kgm2``),
-    overshoots ``max_overshoot_pct`` (an operator setting) or more of the step, or moves
+    the band, settles slower than ``baseline`` (the joint's step of the same delta at its
+    current gains; None for the baseline itself, judged without it), overshoots ``max_overshoot_pct`` (an operator setting) or more of the step, or moves
     faster at rest (RMS) than at the rest the noise came from. Raises ``ValueError`` for
     non-finite samples, a hold no longer than the noise window, or samples that stop short.
     """
@@ -189,18 +167,19 @@ def analyze_step(
     overshoot_pct = 100.0 * overshoot / abs(event.delta_deg)
     buzz = float(np.sqrt(np.mean(np.square(dq[rest]))))
     buzz_limit = max(noise.speed_peak_deg_s, _quantum(dq))
-    limit = (
-        None
-        if inertia_kgm2 is None
-        else settle_time_limit_s(inertia_kgm2, event.kp, event.kd, event.delta_deg, band)
-    )
+    if baseline is not None and (baseline.joint, baseline.delta_deg) != (
+        event.joint,
+        event.delta_deg,
+    ):
+        raise ValueError(f"the baseline is a {baseline.joint} {baseline.delta_deg:+g} deg step")
+    limit = None if baseline is None else baseline.settle_time_s
     step = f"{event.delta_deg:+g} deg step"
     failures = []
     if not moved.size:
         failures.append(f"{step} never moved past twice its {band:.3f} deg noise band")
     if limit is not None and settle > limit:
         failures.append(
-            f"{step} settled in {settle:.2f} s; an ideal spring-damper takes {limit:.2f} s"
+            f"{step} settled in {settle:.2f} s, slower than the baseline's {limit:.2f} s"
         )
     if overshoot_pct >= max_overshoot_pct:
         failures.append(f"{step} overshot {overshoot_pct:.0f} % (limit {max_overshoot_pct:g} %)")
@@ -217,7 +196,7 @@ def analyze_step(
         band_deg=band,
         first_motion_s=float(t_[moved[0]]) if moved.size else None,
         settle_time_s=settle,
-        settle_limit_s=limit,
+        baseline_settle_s=limit,
         overshoot_pct=overshoot_pct,
         steady_state_error_deg=float(q[rest].mean() - event.target_after_deg),
         buzz_rms_deg_s=buzz,
