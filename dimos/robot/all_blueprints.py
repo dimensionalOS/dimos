@@ -329,6 +329,7 @@ all_modules = {
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
     "le-robot-policy-module": "dimos.imitation.policy.lerobot.module.LeRobotPolicyModule",
     "local-planner-native": "dimos.navigation.local_planner.native.LocalPlannerNative",
+    "m20-body-imu-sniff": "dimos.robot.deeprobotics.m20.body_imu_sniff.module.M20BodyImuSniff",
     "m20-camera-relay": "dimos.robot.deeprobotics.m20.camera.module.M20CameraRelay",
     "m20-connection": "dimos.robot.deeprobotics.m20.connection.M20Connection",
     "m20-ecan": "dimos.robot.deeprobotics.m20.ecan.module.M20Ecan",

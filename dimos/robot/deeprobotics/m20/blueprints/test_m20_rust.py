@@ -40,7 +40,7 @@ _HOSTS = (
         host_id="nos", name="nos", tags={"board": "nos"}, revision=_REVISION, active_run_ids=()
     ),
 )
-_AOS_DRIVERS = {"front_lidar/m20lidar", "rear_lidar/m20lidar", "m20camerarelay"}
+_AOS_DRIVERS = {"front_lidar/m20lidar", "rear_lidar/m20lidar", "m20bodyimusniff", "m20camerarelay"}
 
 
 def _solid(**choices: str) -> Blueprint:
@@ -64,7 +64,11 @@ def test_no_vendor_bridge() -> None:
         ({}, _AOS_DRIVERS),
         ({"M20Joints": "ecan"}, _AOS_DRIVERS | {"m20ecan"}),
         ({"M20Cameras": "off"}, _AOS_DRIVERS - {"m20camerarelay"}),
-        ({"M20Cameras": "off", "M20BodyImu": "on"}, _AOS_DRIVERS - {"m20camerarelay"} | {"m20imu"}),
+        (
+            {"M20Cameras": "off", "M20BodyImu": "serial"},
+            _AOS_DRIVERS - {"m20camerarelay", "m20bodyimusniff"} | {"m20imu"},
+        ),
+        ({"M20BodyImu": "off"}, _AOS_DRIVERS - {"m20bodyimusniff"}),
     ],
 )
 def test_drivers_run_on_aos_and_the_rest_where_the_run_starts(
