@@ -15,13 +15,15 @@
 mod msg_convert;
 
 use dim_slam::{
-    DimSlamCore, DimSlamCoreConfig, ImuConfig, LidarConfig, ProcessNoise, SourceConfig,
+    DeskewConfig, DimSlamCore, DimSlamCoreConfig, ImuConfig, InitialStds, LidarConfig, MapConfig,
+    ProcessNoise, SourceConfig,
 };
 use dimos_module::{native_config, run_with_transport, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{Imu, PointCloud2};
 use msg_convert::{
-    tf_lookup, to_estimate, to_imu_sample, to_lidar_scan, to_odometry_msg, to_transform,
+    tf_lookup, to_deskewed_cloud_msg, to_estimate, to_imu_sample, to_lidar_scan, to_odometry_msg,
+    to_transform,
 };
 
 #[native_config]
@@ -39,12 +41,25 @@ struct DimSlamLioConfig {
     stats_every_scans: u64,
     /// CPUs the process runs on (Linux); empty leaves it to the scheduler.
     cpus: Vec<usize>,
-    /// Scan thinning before fusion: every `keep_every`th usable point, then one per `scan_cube` m cube.
-    keep_every: u32,
-    scan_cube: f32,
+    /// m/s^2 per g: IMU samples arrive in m/s^2 and are divided by this.
+    standard_gravity: f64,
+    /// m/s^2: the world's gravity once the first IMU levels the filter.
+    initial_gravity_estimate: f64,
+    initial_stds: InitialStds,
+    map: MapConfig,
+    /// <0 the 99% chi-squared bound, 0 no gate, >0 this many times a measurement's rows.
+    outlier_rejection_allowed_variance: f64,
+    /// m: a pose farther than this from the origin is not published; 0 disables.
+    max_position_m: f64,
+    /// Zero-twist [vx vy vz wx wy wz] fused after each source update; >0 pins that axis.
+    per_dimension_error_variance: [f64; 6],
     /// Publish every this many poses the filter makes (1 = all), for lidars split into short slices.
     #[validate(range(min = 1))]
-    publish_every: u64,
+    publish_every: u32,
+    /// s between repeats of one throttled warning.
+    warn_throttle_s: f64,
+    /// Each scan deskewed onto `deskewed_cloud`.
+    deskew: DeskewConfig,
 }
 
 /// What `stats_every_scans` reports: handler seconds and arrival ages, per input, since the last report.
@@ -84,6 +99,8 @@ struct DimSlamLio {
     odom_sources: Input<Odometry>,
     #[output(encode = Odometry::encode)]
     odometry: Output<Odometry>,
+    #[output(encode = PointCloud2::encode)]
+    deskewed_cloud: Output<PointCloud2>,
     #[tf]
     tf: Tf,
     #[config]
@@ -91,7 +108,6 @@ struct DimSlamLio {
 
     slam: Option<DimSlamCore>,
     stats: Stats,
-    poses: u64,
 }
 
 impl DimSlamLio {
@@ -104,11 +120,24 @@ impl DimSlamLio {
             lidars: self.config.lidars.clone(),
             odom_sources: self.config.odom_sources.clone(),
             process_noise: self.config.process_noise,
-            keep_every: self.config.keep_every,
-            scan_cube: self.config.scan_cube,
+            standard_gravity: self.config.standard_gravity,
+            initial_gravity_estimate: self.config.initial_gravity_estimate,
+            initial_stds: self.config.initial_stds,
+            map: self.config.map,
+            outlier_rejection_allowed_variance: self.config.outlier_rejection_allowed_variance,
+            max_position_m: self.config.max_position_m,
+            per_dimension_error_variance: self.config.per_dimension_error_variance,
+            publish_every: self.config.publish_every,
+            warn_throttle_s: self.config.warn_throttle_s,
+            deskew: self.config.deskew.clone(),
             ..Default::default()
         });
-        self.slam = Some(slam.unwrap_or_else(|error| panic!("{error}")));
+        match slam {
+            Ok(slam) => self.slam = Some(slam),
+            Err(error) => {
+                tracing::error!(%error, "dim_slam config refused; every input is dropped")
+            }
+        }
     }
 
     async fn handle_lidar(&mut self, msg: PointCloud2) {
@@ -118,9 +147,10 @@ impl DimSlamLio {
         };
         let (start, age) = (std::time::Instant::now(), age_s(scan.timestamp_ns));
         let Self { slam, tf, .. } = self;
-        slam.as_mut()
-            .expect("setup ran")
-            .handle_cloud(&scan, &tf_lookup(tf));
+        let Some(slam) = slam.as_mut() else {
+            return;
+        };
+        slam.handle_cloud(&scan, &tf_lookup(tf));
         let took = start.elapsed().as_secs_f64();
         let stats = &mut self.stats;
         stats.scans += 1;
@@ -138,9 +168,10 @@ impl DimSlamLio {
         let sample = to_imu_sample(&msg);
         let (start, age) = (std::time::Instant::now(), age_s(sample.timestamp_ns));
         let Self { slam, tf, .. } = self;
-        slam.as_mut()
-            .expect("setup ran")
-            .handle_imu(&sample, &tf_lookup(tf));
+        let Some(slam) = slam.as_mut() else {
+            return;
+        };
+        slam.handle_imu(&sample, &tf_lookup(tf));
         self.stats.imus += 1;
         self.stats.imu_s += start.elapsed().as_secs_f64();
         self.stats.imu_age_s += age;
@@ -149,20 +180,26 @@ impl DimSlamLio {
 
     async fn handle_odom_sources(&mut self, msg: Odometry) {
         let Self { slam, tf, .. } = self;
-        slam.as_mut()
-            .expect("setup ran")
-            .handle_source(&to_estimate(&msg), &tf_lookup(tf));
+        let Some(slam) = slam.as_mut() else {
+            return;
+        };
+        slam.handle_source(&to_estimate(&msg), &tf_lookup(tf));
         self.publish().await;
     }
 
     async fn publish(&mut self) {
-        let Some(estimate) = self.slam.as_mut().expect("setup ran").maybe_publish() else {
+        let Some(slam) = self.slam.as_mut() else {
             return;
         };
-        self.poses += 1;
-        if self.poses % self.config.publish_every != 0 {
-            return;
+        for deskewed in slam.take_deskewed() {
+            self.deskewed_cloud
+                .publish(&to_deskewed_cloud_msg(&deskewed))
+                .await
+                .ok();
         }
+        let Some(estimate) = slam.maybe_publish() else {
+            return;
+        };
         self.stats.pose_ages.push(age_s(estimate.timestamp_ns));
         self.odometry
             .publish(&to_odometry_msg(&estimate))
