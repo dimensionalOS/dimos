@@ -25,6 +25,10 @@ Wire format: msgpack over zenoh, under ``<prefix>/``:
     camera  RoboLab -> dimos, with each state: one RGB-D frame, its intrinsics and pose
     status  RoboLab -> dimos, episode start and end; never the task's success
     cmd     dimos -> RoboLab, {"seq", "q": [7], "gripper": 0..1} or {"release": true}
+
+On release (dimos is done) the robot holds its last target for ``release_settle_steps`` so
+what it let go of comes to rest, then the episode ends through RoboLab's own time limit:
+success is checked every step, so it can only have come by then.
 """
 
 from __future__ import annotations
@@ -52,6 +56,17 @@ def open_session(listen: str | None, connect: str | None) -> zenoh.Session:
     return zenoh.open(config)
 
 
+def _end_episode_at_next_step() -> None:
+    """Run RoboLab's clock to its last step, so its time limit ends the episode."""
+    from robolab.core.world import world_state  # type: ignore[import-not-found]
+
+    world = getattr(world_state, "_global_world", None)
+    env = getattr(getattr(world, "env", None), "unwrapped", None)
+    if env is None:
+        return
+    env.episode_length_buf[:] = env.max_episode_length - 1
+
+
 class DimosClient(InferenceClient):  # type: ignore[misc]
     """Hands each observation to dimos and steps with the target dimos last sent."""
 
@@ -66,6 +81,7 @@ class DimosClient(InferenceClient):  # type: ignore[misc]
         settle_steps: int = 15,
         joint_tolerance: float = 0.01,
         paused_publish_s: float = 0.2,
+        release_settle_steps: int = 30,
     ) -> None:
         super().__init__()
         self._camera = camera
@@ -73,6 +89,7 @@ class DimosClient(InferenceClient):  # type: ignore[misc]
         self._settle_steps = settle_steps
         self._joint_tolerance = joint_tolerance
         self._paused_publish_s = paused_publish_s
+        self._release_settle_steps = release_settle_steps
         self._state_pub = session.declare_publisher(f"{prefix}/state")
         self._camera_pub = session.declare_publisher(f"{prefix}/camera")
         self._status_pub = session.declare_publisher(f"{prefix}/status")
@@ -89,6 +106,7 @@ class DimosClient(InferenceClient):  # type: ignore[misc]
         self._step = 0
         self._steps_since_change = 0
         self._released = False
+        self._steps_since_release = 0
         self._last_step_wall = 0.0
 
     def _on_cmd(self, sample: zenoh.Sample) -> None:
@@ -192,6 +210,10 @@ class DimosClient(InferenceClient):  # type: ignore[misc]
         self._last_step_wall = time.monotonic()
         self._step += 1
         self._steps_since_change += 1
+        if self._released:
+            self._steps_since_release += 1
+            if self._steps_since_release == self._release_settle_steps:
+                _end_episode_at_next_step()
         action = np.concatenate([self._target, [1.0 if self._gripper > 0.5 else 0.0]])
         return {"action": action.astype(np.float32), "viz": None}
 

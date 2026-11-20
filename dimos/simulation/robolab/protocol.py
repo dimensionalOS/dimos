@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import os
 import threading
 import time
 from typing import Any
@@ -37,7 +38,8 @@ import numpy as np
 from numpy.typing import NDArray
 import zenoh
 
-DEFAULT_ENDPOINT = "tcp/127.0.0.1:7448"
+# Where RoboLab's runner listens; an eval sets ROBOLAB_ENDPOINT per run.
+DEFAULT_ENDPOINT = os.environ.get("ROBOLAB_ENDPOINT", "tcp/127.0.0.1:7448")
 DEFAULT_PREFIX = "robolab"
 ARM_DOF = 7
 # RoboLab's Robotiq finger_joint: 0 open, pi/4 closed (rad).

@@ -35,6 +35,7 @@ parser.add_argument("--connect", default=None, help="Zenoh endpoint to connect t
 parser.add_argument("--prefix", default="robolab", help="Zenoh key prefix.")
 parser.add_argument("--camera", default="over_shoulder_left_camera")
 parser.add_argument("--settle-steps", type=int, default=15)
+parser.add_argument("--release-settle-steps", type=int, default=30)
 
 from robolab.eval.runner import (  # type: ignore[import-not-found]
     add_common_eval_args,
@@ -72,7 +73,11 @@ session = open_session(args_cli.listen, args_cli.connect)
 
 def make_client(args: argparse.Namespace) -> DimosClient:
     return DimosClient(
-        session, prefix=args.prefix, camera=args.camera, settle_steps=args.settle_steps
+        session,
+        prefix=args.prefix,
+        camera=args.camera,
+        settle_steps=args.settle_steps,
+        release_settle_steps=args.release_settle_steps,
     )
 
 
