@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -123,26 +124,16 @@ def coerce_cli_value(value: Any, target: OptionTarget, option: str) -> Any:
 
 
 def coerce_environment_value(value: str, target: OptionTarget, name: str) -> Any:
-    """Coerce an environment value like a CLI value.
-
-    Booleans keep pydantic's lax coercion and pure-str fields keep their raw
-    string (a value starting with '[' or '{' must not become an error), so
-    environment usage that predates the coercion keeps working.
-    """
-    scalars = target.scalar_types
-    parse_json = scalars != {bool} and scalars != {str}
-    return coerce_string_value(value, target, f"Environment variable {name}", parse_json=parse_json)
+    return coerce_string_value(value, target, f"Environment variable {name}")
 
 
-def coerce_string_value(
-    value: Any, target: OptionTarget, label: str, *, parse_json: bool = True
-) -> Any:
+def coerce_string_value(value: Any, target: OptionTarget, label: str) -> Any:
     if not isinstance(value, str):
         return value
     stripped = value.strip()
     if stripped == "null" and target.allows_none:
         return None
-    if parse_json and stripped.startswith(("[", "{")):
+    if stripped.startswith(("[", "{")) and not target.scalar_types <= {str, Path, bool}:
         try:
             return json.loads(stripped)
         except json.JSONDecodeError as error:
