@@ -26,8 +26,9 @@ inside physical bounds (mass >= 0, COM within the arm's reach of its joint). An 
 was not dithered is held at its URDF torque at every pose, so the fit cannot move gravity onto a
 joint it never measured. The ridge is
 chosen by leave-one-pose-out cross-validation, and the fit is scored on every pose with that
-pose left out (the selection of the ridge nested inside), so a fit is offered only when its
-held-out error is no worse than the URDF's and the running model's on every measured joint.
+pose left out (the selection of the ridge nested inside). A fit is refused only when a dithered
+joint has no measurement; one whose held-out RMS over the dithered joints is worse than the
+running model's is offered only on request, with the joints it makes worse listed.
 """
 
 from __future__ import annotations
@@ -341,22 +342,36 @@ def fit_gravity(
 
 
 def refusals(fit: GravityFit) -> list[str]:
-    """Why the fit should not be offered: on any measured joint, held-out RMS above the URDF's or
-    the running model's, or no measurement. Empty when it may be offered."""
-    held, urdf, running = (
-        fit.rms(v) for v in (fit.held_out_error, fit.urdf_error, fit.running_error)
-    )
-    reasons = []
-    for joint in fit.joints:
-        if joint not in held:
-            reasons.append(f"{joint} has no measurement")
-            continue
-        for name, other in (("URDF", urdf[joint]), ("running model", running[joint])):
-            if held[joint] > other:
-                reasons.append(
-                    f"{joint} held-out RMS {held[joint]:.3f} Nm is worse than the {name}'s {other:.3f} Nm"
-                )
-    return reasons
+    """Why the fit cannot be offered: a dithered joint with no measurement. Empty when it may be."""
+    held = fit.rms(fit.held_out_error)
+    return [f"{joint} has no measurement" for joint in fit.joints if joint not in held]
+
+
+def total_rms(rms: Mapping[str, float]) -> float:
+    """The RMS over joints of each joint's RMS."""
+    return math.sqrt(sum(value * value for value in rms.values()) / len(rms))
+
+
+def totals(fit: GravityFit) -> dict[str, float]:
+    """``total_rms`` of the URDF's, the running model's and the held-out error, N m."""
+    return {
+        kind: total_rms(fit.rms(values))
+        for kind, values in (
+            ("urdf", fit.urdf_error),
+            ("running", fit.running_error),
+            ("held_out", fit.held_out_error),
+        )
+    }
+
+
+def regressions(fit: GravityFit) -> list[str]:
+    """The joints whose held-out RMS is above the running model's, "<joint> <running> -> <held>"."""
+    held, running = fit.rms(fit.held_out_error), fit.rms(fit.running_error)
+    return [
+        f"{joint} {running[joint]:.3f} -> {held[joint]:.3f} N m"
+        for joint in held
+        if held[joint] > running[joint]
+    ]
 
 
 def fit_stats(fit: GravityFit) -> dict[str, Any]:
@@ -376,6 +391,7 @@ def fit_stats(fit: GravityFit) -> dict[str, Any]:
         "singular_values": list(fit.singular_values),
         "poses": list(dict.fromkeys(m.pose for m in fit.measurements)),
         "measurements": len(fit.measurements),
+        "total_rms_nm": totals(fit),
         "stuck_pairs": stuck_pairs(fit.measurements)[0],
         "held_joints": dict(fit.held_joints),
         "rms_nm": {

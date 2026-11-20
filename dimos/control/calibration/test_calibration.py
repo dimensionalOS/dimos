@@ -213,6 +213,24 @@ def test_every_joint_whose_gravity_torque_can_vary_is_dithered(arm: ArmModel) ->
     assert fake.file["fit"]["held_joints"] == {}
 
 
+@pytest.mark.parametrize("answer", ["keep", "save anyway"])
+def test_a_fit_worse_over_all_than_the_running_model_is_saved_only_when_asked(
+    arm: ArmModel, answer: str
+) -> None:
+    fake = FakeArm(arm, true_links=TRUE_LINKS, friction_nm={"shoulder": 0.5, "elbow": 0.5})
+    fake.file = {
+        "links": {k: {"mass_kg": v.mass_kg, "com_m": list(v.com_m)} for k, v in TRUE_LINKS.items()}
+    }
+    for _ in range(100):
+        fake.tick()
+    operator = FakeOperator(lambda prompt, c: answer if "anyway" in prompt else c[0])
+    calibration(arm, operator, fake, steps=["gravity_poses", "gravity_fit"]).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert any("worse over all the dithered joints" in prompt for prompt in operator.asked)
+    assert ("fit" in fake.file) == (answer == "save anyway")
+
+
 def test_the_plan_skips_what_cannot_run() -> None:
     rows = dict(plan(["gravity_fit", "float_check"], can_float=False))
     assert rows["check"] is None

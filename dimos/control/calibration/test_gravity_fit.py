@@ -31,7 +31,9 @@ from dimos.control.calibration.gravity_fit import (
     fit_stats,
     measure_dither,
     refusals,
+    regressions,
     stuck_pairs,
+    totals,
 )
 from dimos.control.calibration.gravity_poses import ArmModel, generate_poses
 from dimos.control.calibration.step_analysis import RestNoise, StepEvent
@@ -127,7 +129,7 @@ def test_the_fit_recovers_the_true_gravity_and_is_offered(
     arm: ArmModel, poses: list[np.ndarray], compensation: Compensation
 ) -> None:
     fit = fit_gravity(arm, dithers(arm, compensation, poses), compensation)
-    assert refusals(fit) == []
+    assert refusals(fit) == [] and regressions(fit) == []
     fitted = arm.model.copy()
     apply_inertial_overrides(fitted, fit.links)
     for q in poses:
@@ -144,7 +146,7 @@ def test_the_fit_recovers_the_true_gravity_and_is_offered(
     assert fit_stats(fit)["rms_nm"].keys() == {"shoulder", "elbow"}
 
 
-def test_a_fit_no_better_than_the_running_model_is_refused(
+def test_a_fit_no_better_than_the_running_model_lists_its_regressions(
     arm: ArmModel, poses: list[np.ndarray]
 ) -> None:
     running = Compensation(True, dict(TRUE_LINKS))
@@ -154,8 +156,10 @@ def test_a_fit_no_better_than_the_running_model_is_refused(
         Measurement(m.pose, m.joint, m.kp, m.dither_deg, m.q_rad, m.tau_pd_nm + n, m.friction_nm)
         for m, n in zip(measurements, noise, strict=True)
     ]
-    reasons = refusals(fit_gravity(arm, noisy, running))
-    assert reasons and all("worse than the running model" in reason for reason in reasons)
+    fit = fit_gravity(arm, noisy, running)
+    assert refusals(fit) == []
+    assert totals(fit)["held_out"] > totals(fit)["running"]
+    assert [line.split()[0] for line in regressions(fit)] == ["shoulder", "elbow"]
 
 
 def test_a_pair_the_joint_followed_less_than_halfway_is_kept_stuck(

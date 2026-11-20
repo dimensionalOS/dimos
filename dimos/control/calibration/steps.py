@@ -35,7 +35,9 @@ from dimos.control.calibration.gravity_fit import (
     fit_stats,
     measure_dither,
     refusals,
+    regressions,
     stuck_pairs,
+    totals,
 )
 from dimos.control.calibration.gravity_poses import ArmModel, Pose, generate_poses
 from dimos.control.calibration.schema import gravity_links_from_inertial
@@ -262,16 +264,35 @@ def gravity_fit(run: Calibration) -> str:
     urdf, running, held = (
         fit.rms(v) for v in (fit.urdf_error, fit.running_error, fit.held_out_error)
     )
+    total = totals(fit)
     run.show(
         "Gravity torque error, RMS N m: URDF -> running -> fitted (each pose held out)\n"
         + "\n".join(
             f"  {j}: {urdf[j]:.3f} -> {running[j]:.3f} -> {held[j]:.3f}" for j in sorted(held)
         )
+        + f"\n  all: {total['urdf']:.3f} -> {total['running']:.3f} -> {total['held_out']:.3f}"
     )
     reasons = refusals(fit)
     if reasons:
         return "not offered: " + "; ".join(reasons)
-    run.confirm("Save the fitted masses to the arm's calibration file and apply them now?")
+    worse = regressions(fit)
+    listed = f" Worse than the running model: {', '.join(worse)}." if worse else ""
+    if total["held_out"] > total["running"]:
+        answer = run.ask(
+            f"The fit is worse over all the dithered joints than the running model "
+            f"({total['running']:.3f} -> {total['held_out']:.3f} N m RMS).{listed} "
+            "Keep what the arm runs, or save and apply the fit anyway?",
+            ["keep", "save anyway"],
+        )
+        if answer != "save anyway":
+            return (
+                f"not saved: worse over all than the running model, {total['running']:.3f} -> "
+                f"{total['held_out']:.3f} N m RMS"
+            )
+    else:
+        run.confirm(
+            f"Save the fitted masses to the arm's calibration file and apply them now?{listed}"
+        )
     fitted = gravity_links_from_inertial(run.spec, fit.links)
     run.configure(
         {
