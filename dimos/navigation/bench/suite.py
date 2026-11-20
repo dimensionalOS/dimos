@@ -140,6 +140,17 @@ class Case(Candidate):
     feature: tuple[float, float] | None = None
     premap_objects: bool = True
 
+    # The exact digest remains available for comparisons with older manifests.
+    portable_scene_digest: str | None = None
+
+    def matches_geometry(self, exact: str, portable: str | None) -> bool:
+        if self.portable_scene_digest is not None and portable is not None:
+            return self.portable_scene_digest == portable
+        return self.scene_digest == exact
+
+    def matches_scene(self, scene: Scene) -> bool:
+        return self.matches_geometry(scene.digest(), scene.portable_digest())
+
 
 @dataclass
 class Manifest:
@@ -160,9 +171,12 @@ class Manifest:
 
     def check_drift(self) -> None:
         """Fail if any case's scene no longer generates the geometry it was frozen with."""
-        drifted = sorted({c.id for c in self.cases if c.scene().digest() != c.scene_digest})
+        drifted = sorted({c.id for c in self.cases if not c.matches_scene(c.scene())})
         if drifted:
-            raise RuntimeError(f"scene generator drifted for cases: {', '.join(drifted)}")
+            message = f"scene generator drifted for cases: {', '.join(drifted)}"
+            if any(c.id in drifted and c.portable_scene_digest is None for c in self.cases):
+                message += ". For older suites, freeze again on the original host to compare across platforms."
+            raise RuntimeError(message)
 
 
 _MANIFEST = TypeAdapter(Manifest)
@@ -470,6 +484,7 @@ def _validate(
         difficulty=gt.difficulty(route),
         route_length=route.length,
         scene_digest=gt.scene.digest(),
+        portable_scene_digest=gt.scene.portable_digest(),
     )
 
 
@@ -918,6 +933,7 @@ def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -
                     difficulty=gt.difficulty(route),
                     route_length=route.length,
                     scene_digest=gt.scene.digest(),
+                    portable_scene_digest=gt.scene.portable_digest(),
                     level=Level(probe.variable, value, control=value == probe.control),
                     feature=placed.feature,
                     premap_objects=probe.premap_objects,

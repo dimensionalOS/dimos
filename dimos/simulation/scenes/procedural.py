@@ -186,6 +186,16 @@ class Scene:
         }
         return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()[:16]
 
+    def portable_digest(self) -> str:
+        """Hash geometry in nanometres and nanoradians, independent of libm's last bits."""
+
+        def quantize(values: tuple[float, ...]) -> tuple[int, ...]:
+            return tuple(round(value * 1_000_000_000) for value in values)
+
+        boxes = [(box.kind, quantize((*box.center, *box.half, box.yaw))) for box in self.boxes]
+        record = (quantize(self.start), boxes)
+        return hashlib.sha256(json.dumps(record).encode()).hexdigest()[:16]
+
 
 def _uniform(rng: np.random.Generator, low: float, high: float) -> float:
     """A uniform draw with the arithmetic done in Python, so every platform rounds it the same way."""

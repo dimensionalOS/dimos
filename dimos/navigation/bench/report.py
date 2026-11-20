@@ -492,7 +492,7 @@ def thumbnail(report: Report) -> Thumbnail | None:
         scene = case.scene()
     except (TypeError, ValueError):
         return None
-    if scene.digest() != case.scene_digest:
+    if not case.matches_scene(scene):
         return None
     saved = snapshot_path(report.run_dir, case)
     shapes = [

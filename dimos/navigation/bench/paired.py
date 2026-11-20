@@ -118,7 +118,7 @@ def pair(base: Mapping[str, Attempt], new: Mapping[str, Attempt]) -> Pairing:
         reason: Reason
         if b.outcome is None or n.outcome is None:
             reason = "invalid"
-        elif b.case.scene_digest != n.case.scene_digest:
+        elif not b.case.matches_geometry(n.case.scene_digest, n.case.portable_scene_digest):
             reason = "scene differs"
             scene_differs.append(case_id)
         else:
