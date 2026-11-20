@@ -22,12 +22,12 @@ from typing import (
     TypeVar,
     get_args,
     get_origin,
-    is_typeddict,
 )
 
 from langchain_core.messages.base import BaseMessage
 import numpy as np
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic.errors import PydanticUserError
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -58,9 +58,12 @@ def _matches(tp: Any, value: Any) -> bool:
     try:
         return isinstance(value, tp)
     except TypeError:  # dict[str, float], a TypedDict: isinstance refuses them
-        config = None if is_typeddict(tp) else ConfigDict(arbitrary_types_allowed=True)
         try:
-            TypeAdapter(tp, config=config).validate_python(value, strict=True)
+            adapter = TypeAdapter(tp, config=ConfigDict(arbitrary_types_allowed=True))
+        except PydanticUserError:  # a TypedDict carries its own config
+            adapter = TypeAdapter(tp)
+        try:
+            adapter.validate_python(value, strict=True)
         except ValidationError:
             return False
         return True
