@@ -40,6 +40,7 @@ from dimos.orchestration.engine import (
     SendStart,
     SetTimer,
     StreamItem,
+    Timer,
     TimerItem,
 )
 from dimos.orchestration.loader import load_and_check
@@ -92,14 +93,25 @@ def _battery(status: int, level: float) -> StreamItem:
 
 
 DRAIN = 0.04
+SWAPPED = 0.25
 CHARGING = LCMBatteryState.POWER_SUPPLY_STATUS_CHARGING
 DISCHARGING = LCMBatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+NOT_CHARGING = LCMBatteryState.POWER_SUPPLY_STATUS_NOT_CHARGING
 
 
-def _walk(undocks: int) -> tuple[list[str], list[str], list[float], list[FaultReport]]:
+def _walk(
+    undocks: int,
+    drain: float = DRAIN,
+    failed_docks: int = 0,
+    stalled_docks: int = 0,
+    silent: str | None = None,
+) -> tuple[list[str], list[str], list[float], list[FaultReport]]:
     """Run the file from the charger until the given undock.
 
-    Every drive uses 4% of the battery, and every dock charges it to 75% and then 80%.
+    Every drive uses `drain` of the battery, and every dock after the first `failed_docks`
+    charges it to 75% and then 80%, except the next `stalled_docks`, which stop charging
+    at 75%. Sitting down swaps in a battery at 25%. The planner never reports on the
+    `silent` goal. Time passes only when nothing else is waiting, so timers fire last.
     """
     checked = _checked()
     calls: list[str] = []
@@ -107,11 +119,13 @@ def _walk(undocks: int) -> tuple[list[str], list[str], list[float], list[FaultRe
     undocked_at: list[float] = []
     faults: list[FaultReport] = []
     level = 0.85
+    docks = 0
     queue: deque[QueueItem] = deque([_battery(CHARGING, level)])
+    timers: list[Timer] = []
     runtime = engine.Runtime({})
 
     def perform(effects: Sequence[Effect]) -> None:
-        nonlocal level
+        nonlocal level, docks
         for effect in effects:
             match effect:
                 case SendStart(call) if call.rpc == "LocalMapRelocalization.location":
@@ -123,7 +137,9 @@ def _walk(undocks: int) -> tuple[list[str], list[str], list[float], list[FaultRe
                         facing.append(calls[-1])
                     stamp = Time(len(calls), 0)
                     queue.append(ReturnItem(call, to_plain(stamp)))
-                    level = round(level - DRAIN, 2)
+                    if calls[-1] == silent:
+                        continue
+                    level = round(level - drain, 2)
                     queue.append(_battery(DISCHARGING, level))
                     status = GoalStatus(goal_id=GoalID(stamp=stamp), status=GoalStatus.SUCCEEDED)
                     reached = {
@@ -141,20 +157,44 @@ def _walk(undocks: int) -> tuple[list[str], list[str], list[float], list[FaultRe
                         queue.append(ReturnItem(call))
                 case SendStart(call) if call.rpc == "M20Connection.dock":
                     calls.append("dock")
+                    docks += 1
+                    if docks <= failed_docks:
+                        queue.append(ReturnItem(call, raised=True))
+                        continue
                     queue.append(ReturnItem(call))
+                    if docks <= failed_docks + stalled_docks:
+                        level = 0.75
+                        queue.extend([_battery(CHARGING, level), _battery(NOT_CHARGING, level)])
+                        continue
                     level = 0.80
                     queue.extend([_battery(CHARGING, 0.75), _battery(CHARGING, level)])
+                case SendStart(call) if call.rpc == "M20Connection.liedown":
+                    calls.append("sit")
+                    queue.append(ReturnItem(call, True))
+                    level = SWAPPED
+                    queue.append(_battery(DISCHARGING, level))
+                case SendStart(call) if call.rpc == "M20Connection.standup":
+                    calls.append("stand")
+                    queue.append(ReturnItem(call, True))
                 case SendStart(call) | SendCancel(call):
                     queue.append(ReturnItem(call))
                 case SetTimer(timer):
-                    queue.append(TimerItem(timer))
+                    timers.append(timer)
                 case FaultReport():
                     faults.append(effect)
 
-    runtime, effects = engine.start(checked, 0.0)
+    now = 0.0
+    runtime, effects = engine.start(checked, now)
     perform(effects)
-    while queue:
-        runtime, effects = engine.step(checked, runtime, queue.popleft(), 0.0)
+    while queue or timers:
+        if queue:
+            item = queue.popleft()
+        else:
+            timer = min(timers, key=lambda timer: timer.due)
+            timers.remove(timer)
+            now = max(now, timer.due)
+            item = TimerItem(timer)
+        runtime, effects = engine.step(checked, runtime, item, now)
         perform(effects)
     return calls, facing, undocked_at, faults
 
@@ -170,3 +210,50 @@ def test_the_robot_loops_until_the_battery_is_low_then_charges_and_resumes() -> 
     assert undocked_at == pytest.approx([0.85, 0.80, 0.80])
     # Only the two docking points ask the planner to turn to their heading.
     assert facing == ["dock_approach", "predock"] * 2
+
+
+def test_after_three_failed_docks_the_robot_walks_a_loop_and_docks_again() -> None:
+    calls, _, undocked_at, faults = _walk(undocks=2, drain=0.02, failed_docks=3)
+
+    assert faults == []
+    # 2% per drive: the eighth goal reads 69%. After three failed docks the robot resumes
+    # that goal and walks all ten before it heads for the dock again. The next goal's
+    # lookup has started by the time the low battery takes over.
+    dock = ["dock_approach", "predock", "dock"]
+    loop = [*GOALS[7:], *GOALS[:7]]
+    assert calls == ["undock", *GOALS[:8], *dock * 3, *loop, GOALS[7], *dock, "undock"]
+    assert undocked_at == pytest.approx([0.85, 0.80])
+
+
+def test_a_flat_robot_sits_until_a_charged_battery_goes_in_then_docks() -> None:
+    calls, _, undocked_at, faults = _walk(undocks=2, failed_docks=3)
+
+    assert faults == []
+    # After three failed docks the loop drains the battery to 9% at its ninth goal.
+    # The swapped battery reads 25%, so the robot stands and heads straight for the dock.
+    dock = ["dock_approach", "predock", "dock"]
+    flat = [*GOALS[3:], *GOALS[:2]]
+    after_swap = ["sit", "stand", GOALS[1], *dock, "undock"]
+    assert calls == ["undock", *GOALS[:4], *dock * 3, *flat, *after_swap]
+    assert undocked_at == pytest.approx([0.85, 0.80])
+
+
+def test_a_dock_that_stops_charging_docks_again() -> None:
+    calls, _, undocked_at, faults = _walk(undocks=3, stalled_docks=1)
+
+    assert faults == []
+    # The first dock stops charging at 75%, so after a minute the robot undocks, drives the
+    # approach again and docks. The second dock charges to 80%.
+    dock = ["dock_approach", "predock", "dock"]
+    assert calls == ["undock", *GOALS[:4], *dock, "undock", *dock, "undock"]
+    assert undocked_at == pytest.approx([0.85, 0.75, 0.80])
+
+
+def test_a_goal_the_planner_never_finishes_is_skipped_after_ten_minutes() -> None:
+    calls, _, _, faults = _walk(undocks=2, silent=GOALS[1])
+
+    assert faults == []
+    # The planner never reports on kitchenette, so its timeout skips it without a retry.
+    # Each reported drive uses 4%, and side_entrance reads 69%.
+    dock = ["dock_approach", "predock", "dock"]
+    assert calls == ["undock", *GOALS[:5], *dock, "undock"]
