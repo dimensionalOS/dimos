@@ -86,7 +86,7 @@ Expected result: the robot performs the requested gesture.
 uv run dimos run demo-camera
 ```
 
-Expected result: the webcam feed appears in Rerun.
+Expected result: the webcam feed appears in Rerun, drawn on the camera frustum in the 3D view. If the view only shows the lines of the frustum, scroll to zoom out until the picture comes into view.
 
 ## 9.9 Go2 discovery and connection
 
