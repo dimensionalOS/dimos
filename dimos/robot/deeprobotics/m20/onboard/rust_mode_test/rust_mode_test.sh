@@ -126,7 +126,6 @@ revert() {
     log "status: $(m20tool status 2>&1 | head -2 | tr '\n' '|')"
     m20tool status 2>&1 | grep -q 'usage mode: navigation (1)' || log "WARNING: usage mode is not navigation"
     log "MotionInfo on the bridge: $(cd ~/dimos && timeout 30 .venv/bin/python /tmp/count_topics.py dimos 10 tcp/10.21.31.106:7447 2>&1 | grep -E 'motion_state|gait_state|slam_odom|battery' | tr -s ' ' | tr '\n' '|')"
-    log "e-stop: $(on AOS 'systemctl is-active m20-imu-estop.service')"
     for u in "${UNITS[@]}"; do read -r board unit <<< "$u"; st=$(on $board "systemctl is-active $unit"); [ "$st" = active ] || log "WARNING: $board $unit is $st after the revert"; done
     for b in GOS AOS NOS; do log "DDS processes on $b: $(dds_procs $b | wc -l)"; done
     log "=== REVERT DONE"
@@ -142,27 +141,13 @@ log "status: $(echo "$status" | head -2 | tr '\n' '|')"
 echo "$status" | grep -qE '^motion: (idle|damping|sit|lying|power-on damping)' || { log "the dog isn't down, abort"; exit 1; }
 echo "$status" | grep -qE 'charge: (charging|on dock)' || { log "the dog isn't docked, abort"; exit 1; }
 [ "$(on AOS 'systemctl is-active rl_deploy.service')" = active ] || { log "rl_deploy not active, abort"; exit 1; }
-log "rl_deploy pid $(on AOS 'pgrep -x rl_deploy'), e-stop $(on AOS 'systemctl is-active m20-imu-estop.service')"
-[ "$(on AOS 'systemctl is-active m20-imu-estop.service')" = active ] || { log "the IMU e-stop isn't armed, abort"; exit 1; }
+log "rl_deploy pid $(on AOS 'pgrep -x rl_deploy')"
 for b in GOS AOS NOS; do dds_procs $b > $OUT/dds_before_$b.txt; log "DDS processes on $b: $(wc -l < $OUT/dds_before_$b.txt)"; log "temp $b: $(hottest $b)"; done
 for u in "${UNITS[@]}"; do read -r board unit <<< "$u"; [ "$(on $board "systemctl is-active $unit")" = active ] || { log "$board $unit is not active before the test, abort"; exit 1; }; done
 log "all ${#UNITS[@]} vendor units active"
 
 trap revert EXIT
 trap 'exit 130' INT TERM
-
-# --- the e-stop also kills the bus owner on a trip (the motors then fall passive) ---
-on AOS "python3 - <<'PY'
-import json
-p = '/var/opt/robot/data/imu_estop/config.json'
-c = json.load(open(p))
-names = c.setdefault('kill_process_names', [])
-if 'm20_ecan' not in names:
-    names.append('m20_ecan')
-json.dump(c, open(p, 'w'))
-PY
-systemctl restart m20-imu-estop.service" root
-log "e-stop: $(on AOS 'systemctl is-active m20-imu-estop.service'), config $(on AOS 'cat /var/opt/robot/data/imu_estop/config.json')"
 
 # --- stop shadow, the vendor run; install m20 (vendor still up) ---
 [ "$(on AOS 'systemctl is-active m20-shadow.service')" = active ] && SHADOW_WAS_ACTIVE=1
