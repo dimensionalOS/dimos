@@ -1,0 +1,89 @@
+# Eval worker image for RoboLab cases (dimos.evals.suites.robolab): RoboLab's own image,
+# where Isaac Sim runs, with the dimos eval stack added. One container runs one case:
+# RoboLab's runner and dimos, side by side.
+#
+# Build RoboLab's image first, from a RoboLab v0.3.3 checkout with its LFS assets:
+#     docker build -t robolab:0.3.3 -f docker/Dockerfile .
+# then, from the dimos repo root:
+#     docker build -t dimos-evals:robolab -f docker/evals/Dockerfile.robolab \
+#         --build-arg ROBOLAB_IMAGE=robolab:0.3.3 .
+ARG ROBOLAB_IMAGE=robolab:0.3.3
+FROM ${ROBOLAB_IMAGE}
+
+ARG DENO_VERSION=v2.9.8
+ARG PYTHON_VERSION=3.12
+# The dimos agent needs Node 24 or 26.
+ARG NODE_MAJOR=24
+
+USER 0:0
+ENV DEBIAN_FRONTEND=noninteractive
+# The base image points npm at NVIDIA's internal mirror; use the public registry.
+ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+RUN rm -f /root/.npmrc
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl wget git unzip build-essential pkg-config \
+    libgl1 libegl1 libopengl0 libturbojpeg0-dev portaudio19-dev libusb-1.0-0 iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# RoboLab's runner (dimos/simulation/robolab/runner) talks to dimos over zenoh.
+RUN /workspace/isaaclab/_isaac_sim/python.sh -m pip install --no-cache-dir \
+    eclipse-zenoh==1.10.1 msgpack==1.1.2
+
+ENV XDG_CACHE_HOME=/cache \
+    XDG_STATE_HOME=/state \
+    XDG_CONFIG_HOME=/config \
+    DENO_DIR=/cache/deno
+
+RUN curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" \
+        -o /tmp/deno.zip \
+    && unzip -q /tmp/deno.zip -d /usr/local/bin && rm /tmp/deno.zip \
+    && chmod +x /usr/local/bin/deno
+
+RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* /root/.npm
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+WORKDIR /app
+
+# Dependencies first so code edits don't invalidate the deps layer.
+COPY pyproject.toml uv.lock README.md setup.py ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv python install "${PYTHON_VERSION}" \
+    && uv sync --frozen --no-install-project --python "${PYTHON_VERSION}" \
+        --group tests-self-hosted
+
+# GraspGenX's own environment, where its module looks for it (isolated_python_environment),
+# so a run starts without installing torch.
+COPY native/python/graspgenx native/python/graspgenx
+RUN --mount=type=cache,target=/root/.cache/uv \
+    key=$(printf %s /app/native/python/graspgenx | sha256sum | cut -c1-16) \
+    && cd native/python/graspgenx \
+    && UV_CACHE_DIR=/root/.cache/uv UV_PROJECT_ENVIRONMENT=/cache/dimos/isolated-python/$key/.venv \
+        uv sync --frozen
+
+COPY . /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --python "${PYTHON_VERSION}" --group tests-self-hosted \
+    && uv run python setup.py build_ext --inplace
+
+# The dimos agent's npm install and build, so its preflight does nothing at run time.
+RUN /app/.venv/bin/dimos agent version
+# The relay the dimos agent's harness starts, its modules fetched (see relay_run_cmd).
+RUN deno cache --frozen --node-modules-dir=none --config web/deno.json web/relay/main.ts
+
+ENV PATH="/app/.venv/bin:${PATH}" \
+    VIEWER=none \
+    PYTHONUNBUFFERED=1 \
+    OMNI_KIT_ACCEPT_EULA=YES \
+    ACCEPT_EULA=Y \
+    ROBOLAB_PYTHON=/workspace/isaaclab/_isaac_sim/python.sh \
+    ROBOLAB_DIR=/workspace/robolab
+
+RUN mkdir -p /state /config
+
+COPY docker/evals/entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]
