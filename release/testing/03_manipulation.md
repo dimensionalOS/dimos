@@ -5,7 +5,7 @@ These checks need the `manipulation` extra. Most run on mock arms or in MuJoCo w
 ## 3.1 Motion planning in Viser
 
 ```bash
-uv run dimos run xarm7-planner-coordinator --visualization.backend viser
+uv run dimos run lite6-planner-coordinator
 # In another terminal:
 uv run dimos shell
 ```
