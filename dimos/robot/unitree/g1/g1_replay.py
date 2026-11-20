@@ -34,6 +34,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.timeseries.base import ReplaySpeed
 
 if TYPE_CHECKING:
     from dimos.memory.replay import ReplayStream
@@ -52,7 +53,7 @@ def _default_g1_dataset(model: dict[str, Any]) -> str:
 
 class G1ReplayConfig(ModuleConfig):
     dataset: str = Field(default_factory=_default_g1_dataset)
-    speed: float = 1.0
+    speed: ReplaySpeed = 1.0
     loop: bool = False
     seek: float | None = None
     duration: float | None = None

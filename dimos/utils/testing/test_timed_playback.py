@@ -134,3 +134,8 @@ def test_completion_can_close_the_source_database(frame_count: int, mocker: Mock
     assert received == ["first", "second"][:frame_count]
     completed.assert_called_once_with()
     on_error.assert_not_called()
+
+
+def test_invalid_speed_rejected_before_opening_playback_source() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        timed_playback(lambda: iter(()), speed=float("nan"))

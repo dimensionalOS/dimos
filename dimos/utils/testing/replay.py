@@ -41,6 +41,7 @@ from reactivex.scheduler import TimeoutScheduler
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from dimos.utils.timeseries.base import validate_replay_speed
 
 T = TypeVar("T")
 
@@ -103,6 +104,8 @@ def timed_playback(
 
     Source failures close the iterator before notifying on_error.
     """
+
+    speed = validate_replay_speed(speed)
 
     def subscribe(
         observer: ObserverBase[T],

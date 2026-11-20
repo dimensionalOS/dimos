@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import time
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Annotated, Generic, TypeVar
 
+from pydantic import Field, TypeAdapter
 import reactivex as rx
 from reactivex import operators as ops
 
@@ -30,6 +31,12 @@ if TYPE_CHECKING:
     from dimos.types.timestamped import Timestamped
 
 T = TypeVar("T", bound="Timestamped")
+
+ReplaySpeed = Annotated[
+    float,
+    Field(gt=0, allow_inf_nan=False, description="Finite positive playback speed multiplier."),
+]
+validate_replay_speed = TypeAdapter(ReplaySpeed).validate_python
 
 
 class TimeSeriesStore(Generic[T], ABC):
@@ -267,6 +274,7 @@ class TimeSeriesStore(Generic[T], ABC):
         loop: bool = False,
     ) -> Iterator[T]:
         """Iterate data, sleeping to match original timing."""
+        speed = validate_replay_speed(speed)
         prev_ts: float | None = None
         for ts, data in self.iterate_items(
             seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
