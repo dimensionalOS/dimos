@@ -33,10 +33,10 @@ import threading
 import time
 from typing import Any
 
-import msgpack
+import msgpack  # type: ignore[import-untyped]
 import numpy as np
+from robolab.eval.base_client import InferenceClient  # type: ignore[import-not-found]
 import zenoh
-from robolab.eval.base_client import InferenceClient
 
 ARM_DOF = 7
 
@@ -51,7 +51,7 @@ def open_session(listen: str | None, connect: str | None) -> zenoh.Session:
     return zenoh.open(config)
 
 
-class DimosClient(InferenceClient):
+class DimosClient(InferenceClient):  # type: ignore[misc]
     """Hands each observation to dimos and steps with the target dimos last sent."""
 
     open_loop_horizon = 1
@@ -107,7 +107,7 @@ class DimosClient(InferenceClient):
         self._publish_status(event="episode_end", episode=self._eval_episode_idx, steps=self._step)
         super().reset(env_id=env_id)
 
-    def _extract_observation(self, raw_obs: Any, *, env_id: int = 0) -> dict:
+    def _extract_observation(self, raw_obs: Any, *, env_id: int = 0) -> dict[str, Any]:
         image = raw_obs["image_obs"]
         proprio = raw_obs["proprio_obs"]
         cam = self._camera
@@ -123,7 +123,7 @@ class DimosClient(InferenceClient):
             "ee_quat": self._to_numpy(proprio["ee_quat"], env_id).astype(np.float64),
         }
 
-    def _publish_obs(self, obs: dict, paused: bool) -> None:
+    def _publish_obs(self, obs: dict[str, Any], paused: bool) -> None:
         msg = {
             "step": self._step,
             "sim_time": self._step * self._period,
@@ -131,7 +131,10 @@ class DimosClient(InferenceClient):
             "seq": self._seq,
             "rgb": {"shape": obs["rgb"].shape, "data": obs["rgb"].tobytes()},
             "depth": {"shape": obs["depth"].shape, "data": obs["depth"].tobytes()},
-            **{k: obs[k].reshape(-1).tolist() for k in ("K", "cam_pos", "cam_quat", "q", "ee_pos", "ee_quat")},
+            **{
+                k: obs[k].reshape(-1).tolist()
+                for k in ("K", "cam_pos", "cam_quat", "q", "ee_pos", "ee_quat")
+            },
             "gripper": obs["gripper"],
         }
         self._obs_pub.put(msgpack.packb(msg))
@@ -164,7 +167,7 @@ class DimosClient(InferenceClient):
         at_target = float(np.max(np.abs(q[:ARM_DOF] - self._target))) < self._joint_tolerance
         return at_target and self._steps_since_change >= self._settle_steps
 
-    def infer(self, obs: Any, instruction: Any, *, env_id: int = 0) -> dict:
+    def infer(self, obs: Any, instruction: Any, *, env_id: int = 0) -> dict[str, Any]:
         extracted = self._extract_observation(obs, env_id=env_id)
         q = extracted["q"].reshape(-1)
         if self._target is None:
@@ -188,7 +191,7 @@ class DimosClient(InferenceClient):
         return {"action": action.astype(np.float32), "viz": None}
 
     # The base's query-then-chunk flow is replaced by infer above.
-    def _pack_request(self, extracted_obs: dict, instruction: Any) -> Any:
+    def _pack_request(self, extracted_obs: dict[str, Any], instruction: Any) -> Any:
         raise NotImplementedError
 
     def _query_server(self, request: Any) -> Any:

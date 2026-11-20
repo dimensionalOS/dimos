@@ -27,7 +27,7 @@ import sys
 import traceback
 
 import cv2  # noqa: F401 -- RoboLab: import before isaaclab
-from isaaclab.app import AppLauncher
+from isaaclab.app import AppLauncher  # type: ignore[import-not-found]
 
 parser = argparse.ArgumentParser(description="Evaluate dimos on RoboLab.")
 parser.add_argument("--listen", default="tcp/0.0.0.0:7448", help="Zenoh endpoint to listen on.")
@@ -36,7 +36,10 @@ parser.add_argument("--prefix", default="robolab", help="Zenoh key prefix.")
 parser.add_argument("--camera", default="over_shoulder_left_camera")
 parser.add_argument("--settle-steps", type=int, default=15)
 
-from robolab.eval.runner import add_common_eval_args, run_evaluation  # noqa: E402
+from robolab.eval.runner import (  # type: ignore[import-not-found]
+    add_common_eval_args,
+    run_evaluation,
+)
 
 add_common_eval_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -44,13 +47,15 @@ args_cli, _ = parser.parse_known_args()
 args_cli.enable_cameras = True
 simulation_app = AppLauncher(args_cli).app
 
-import robolab.constants  # noqa: E402
-from robolab.registrations.droid.auto_env_registrations_jointpos import (  # noqa: E402
+from dimos_client import DimosClient, open_session  # type: ignore[import-not-found]
+import robolab.constants  # type: ignore[import-not-found]
+from robolab.registrations.droid.auto_env_registrations_jointpos import (  # type: ignore[import-not-found]
     auto_register_droid_envs,
 )
-from robolab.variations.camera import OverShoulderLeftCameraCfg, with_depth  # noqa: E402
-
-from dimos_client import DimosClient, open_session  # noqa: E402
+from robolab.variations.camera import (  # type: ignore[import-not-found]
+    OverShoulderLeftCameraCfg,
+    with_depth,
+)
 
 robolab.constants.ENABLE_SUBTASK_PROGRESS_CHECKING = args_cli.enable_subtask
 
@@ -66,7 +71,9 @@ session = open_session(args_cli.listen, args_cli.connect)
 
 
 def make_client(args: argparse.Namespace) -> DimosClient:
-    return DimosClient(session, prefix=args.prefix, camera=args.camera, settle_steps=args.settle_steps)
+    return DimosClient(
+        session, prefix=args.prefix, camera=args.camera, settle_steps=args.settle_steps
+    )
 
 
 def main() -> None:
