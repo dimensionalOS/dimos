@@ -15,11 +15,15 @@
 """The M20's two RoboSense Airys: an ``M20Lidar`` module per lidar (front or rear), both onto one ``lidar`` stream and
 their IMUs onto ``lidar_imu``, told apart by frame_id, each publishing its own mount onto the one global tf.
 
+Each cuts the robot's own body (the M20 URDF's collision geometry) out of its scans before publishing them, at the
+standing pose or, with ``body_filter_joint_source="joint_state"``, at the joint state nearest each scan.
+
 Runs on AOS (eth0 is on the lidars' network) next to the vendor rslidar, which keeps receiving the same multicast.
 """
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -59,6 +63,8 @@ class M20LidarConfig(AiryConfig):
     # The vendor driver's config.yaml: up to 60 m, PTP-synced lidar clock.
     max_distance: float = Field(default=60.0, ge=0)
     use_lidar_clock: bool = True
+    # The body is cut out here (the M20 URDF at the standing pose unless set), so the lidar stream is body-free.
+    body_filter: bool = True
 
     @model_validator(mode="after")
     def _hardware_of_the_chosen_lidar(self) -> M20LidarConfig:
@@ -73,6 +79,12 @@ class M20LidarConfig(AiryConfig):
             "mount_xyz": hardware["mount_xyz"],
             "mount_rpy": hardware["mount_rpy"],
         }
+        if self.body_filter:
+            urdf, standing = _m20_body()
+            if self.body_filter_urdf is None:
+                chosen["body_filter_urdf"] = urdf
+            if not self.body_filter_joint_positions:
+                chosen["body_filter_joint_positions"] = standing
         for key, value in chosen.items():
             if key not in self.model_fields_set:
                 object.__setattr__(self, key, value)
@@ -85,14 +97,33 @@ class M20LidarConfig(AiryConfig):
         return config
 
 
+@cache
+def _m20_body() -> tuple[str, dict[str, float]]:
+    """The M20 URDF's XML and its standing pose (imported here: the model needs mujoco)."""
+    from dimos.robot.deeprobotics.m20.model import M20_MODEL, STAND_JOINT_POSITIONS
+
+    return M20_MODEL.load().xml, dict(STAND_JOINT_POSITIONS)
+
+
 class M20Lidar(Airy):
     """One of the M20's two Airys (front or rear), with its mount on tf."""
 
     config: M20LidarConfig
 
 
-def m20_lidars(lidar: str = "lidar", imu: str = "lidar_imu", **overrides: Any) -> MetaBlueprint:
-    """Both M20Lidars, each namespaced, onto `lidar` and `imu`; tf stays global. `overrides` (e.g. voxel=0.1) go to both."""
+def m20_lidars(
+    lidar: str = "lidar",
+    imu: str = "lidar_imu",
+    joint_state: str = "coordinator_joint_state",
+    **overrides: Any,
+) -> MetaBlueprint:
+    """Both M20Lidars, each namespaced, onto `lidar` and `imu` (their body filter reading `joint_state`); tf stays
+    global. `overrides` (e.g. voxel=0.1, body_filter_joint_source="joint_state") go to both."""
+    if overrides.get("body_filter", True):
+        # resolved here, where the blueprint is built, so the board running the lidars never loads the model
+        urdf, standing = _m20_body()
+        overrides.setdefault("body_filter_urdf", urdf)
+        overrides.setdefault("body_filter_joint_positions", standing)
     fragments: list[Blueprint] = []
     for which, frame in (
         ("front", constants.FRONT_LIDAR_FRAME),
@@ -107,7 +138,13 @@ def m20_lidars(lidar: str = "lidar", imu: str = "lidar_imu", **overrides: Any) -
                 mount_parent_frame_id="base_link",
                 **overrides,
             )
-            .remappings([(M20Lidar, "lidar", lidar), (M20Lidar, "imu", imu)])
-            .namespace(frame, expose={lidar, imu, "tf"})
+            .remappings(
+                [
+                    (M20Lidar, "lidar", lidar),
+                    (M20Lidar, "imu", imu),
+                    (M20Lidar, "joint_state", joint_state),
+                ]
+            )
+            .namespace(frame, expose={lidar, imu, joint_state, "tf"})
         )
     return autoconnect(*fragments)

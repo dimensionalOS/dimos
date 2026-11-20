@@ -27,6 +27,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.deeprobotics.m20.constants import FRONT_LIDAR_XYZ_M, REAR_LIDAR_XYZ_M
 from dimos.robot.deeprobotics.m20.lidar import M20Lidar, M20LidarConfig, m20_lidars
+from dimos.robot.deeprobotics.m20.model import M20_MODEL, STAND_JOINT_POSITIONS
 
 FRONT, REAR = "front_lidar/m20lidar", "rear_lidar/m20lidar"
 
@@ -101,8 +102,31 @@ def test_both_namespaced_lidars_land_on_lidar_and_the_global_tf() -> None:
         assert blueprint.remapping_map[(name, "imu")] == "lidar_imu"
         # tf is exposed, never namespaced
         assert blueprint.remapping_map.get((name, "tf"), "tf") == "tf"
+        # the body filter's joint state is exposed too
+        assert blueprint.remapping_map[(name, "joint_state")] == "coordinator_joint_state"
     assert stream_name_types(blueprint) >= {("tf", TFMessage)}
-    assert {name for name, _ in stream_name_types(blueprint)} == {"lidar", "lidar_imu", "tf"}
+    assert {name for name, _ in stream_name_types(blueprint)} == {
+        "lidar",
+        "lidar_imu",
+        "tf",
+        "coordinator_joint_state",
+    }
+
+
+def test_the_body_is_cut_in_the_driver_at_the_standing_pose_by_default() -> None:
+    for name in (FRONT, REAR):
+        wire = _wire(name)
+        assert wire["body_filter"] is True
+        assert wire["body_filter_joint_source"] == "fixed"
+        assert wire["body_filter_joint_positions"] == STAND_JOINT_POSITIONS
+        assert wire["body_filter_urdf"] == M20_MODEL.load().xml
+        # the URDF's root is the frame the lidar is mounted in, which places the body around the lidar
+        assert wire["mount_parent_frame_id"] == M20_MODEL.load().root_link
+        live = _wire(name, body_filter_joint_source="joint_state")
+        assert live["body_filter_joint_source"] == "joint_state"
+    off = _wire(FRONT, body_filter=False)
+    assert off["body_filter"] is False
+    assert off["body_filter_urdf"] is None
 
 
 def test_frames_come_from_config_not_the_namespace() -> None:

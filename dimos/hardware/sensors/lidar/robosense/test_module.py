@@ -83,7 +83,8 @@ def test_ports_match_registry() -> None:
         return {
             name
             for name, hint in cls.__annotations__.items()
-            if getattr(hint, "__origin__", None) is not None or "Out[" in str(hint)
+            if getattr(hint, "__origin__", None) is not None
+            or str(hint).startswith(("Out[", "In["))
         } - {"config"}
 
     manifest = tomllib.loads((_RUST_DIR / "Cargo.toml").read_text())

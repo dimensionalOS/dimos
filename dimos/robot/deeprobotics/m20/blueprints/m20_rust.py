@@ -19,9 +19,11 @@ with ``--choice M20Joints=ecan``, the motor-bus joint state and batteries (needs
 Everything else runs on the machine that starts the run (GOS): dimSLAM, the ray tracer, planners and relocalization.
 
 Both Airys publish onto one ``lidar`` stream (their IMUs onto ``lidar_imu``), each scan in its own frame (front_lidar,
-rear_lidar). The URDF filter cuts the robot's body out of each scan, frame kept, onto ``lidar_filtered``: dimSLAM
-tells the lidars apart by frame_id, the ray tracer traces each from its own lidar's origin, and relocalization places
-each by tf at its stamp. dimSLAM runs on the front lidar's IMU alone (both ran under real time
+rear_lidar), with the robot's body already cut out by the lidar driver (the URDF's collision geometry at the standing
+pose, or at ecan's joint state with ``--choice M20Joints=ecan``): dimSLAM tells the lidars apart by frame_id, the ray
+tracer traces each from its own lidar's origin, and relocalization places each by tf at its stamp.
+``--choice M20BodyFilter=python`` cuts it with the Python UrdfManagerPointClearing instead (lidars onto ``lidar_raw``,
+the filter onto ``lidar``). dimSLAM runs on the front lidar's IMU alone (both ran under real time
 on GOS). Each Airy is namespaced but publishes its mount onto the one global tf. The cameras' module replaces ``m20-camera.service``
 (``--choice M20Cameras=off`` leaves them to it); the body IMU (``imu``) is sniffed off the vendor
 yesense_node by default; ``--choice M20BodyImu=serial`` reads the UART instead, with yesense_node stopped. Nothing commands the legs.
@@ -54,19 +56,59 @@ from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 AOS = {"board": "aos"}
 
 
-def _body_filter(**config: Any) -> Blueprint:
-    """The robot's own body cut out of every raw scan, at the joint state nearest its stamp, onto lidar_filtered."""
+def _python_body_filter(**config: Any) -> Blueprint:
+    """The Python filter: the body cut out of every raw scan, at the joint state nearest its stamp, onto lidar."""
     return UrdfManagerPointClearing.blueprint(model=M20_MODEL, **config).remappings(
         [
-            (UrdfManagerPointClearing, "pointcloud", "lidar"),
-            (UrdfManagerPointClearing, "filtered_pointcloud", "lidar_filtered"),
+            (UrdfManagerPointClearing, "pointcloud", "lidar_raw"),
+            (UrdfManagerPointClearing, "filtered_pointcloud", "lidar"),
         ]
     )
 
 
-m20_rust = autoconnect(
+def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
+    """Both lidars and where the body is cut out of their scans, for one joint source (standing or ecan)."""
+    joint_source: Blueprint = (
+        M20StandingJointState.blueprint()
+        if joints == "standing"
+        else M20Ecan.blueprint()
+        .remappings([(M20Ecan, "joint_state", "coordinator_joint_state")])
+        .hosted(tags=AOS)
+    )
     # the lidars voxelize at the ray tracer's voxel, the only thinning its scans get
-    m20_lidars(voxel=VOXEL_SIZE_M).hosted(tags=AOS),
+    in_driver = m20_lidars(
+        voxel=VOXEL_SIZE_M,
+        body_filter_joint_source="fixed" if joints == "standing" else "joint_state",
+    ).hosted(tags=AOS)
+    python = autoconnect(
+        m20_lidars(lidar="lidar_raw", voxel=VOXEL_SIZE_M, body_filter=False).hosted(tags=AOS),
+        joint_source,
+        # a fixed pose republished every period is matched within that period
+        _python_body_filter(state_tolerance_s=M20StandingJointStateConfig().publish_period_s)
+        if joints == "standing"
+        else _python_body_filter(),
+    )
+    return ChoiceAtom(
+        name="M20BodyFilter",
+        default="lidar",
+        choices={
+            # cut in each lidar's driver on AOS before publishing: no extra hop
+            "lidar": in_driver if joints == "standing" else autoconnect(joint_source, in_driver),
+            "python": python,
+        },
+    )
+
+
+m20_rust = autoconnect(
+    # the body pose comes from the standing pose or the motor bus (ecan, needs rl_deploy with the shim)
+    ChoiceAtom(
+        name="M20Joints",
+        default="standing",
+        choices={
+            "standing": _lidars_and_body_filter("standing"),
+            "ecan": _lidars_and_body_filter("ecan"),
+        },
+    ),
     # sniff: the vendor yesense_node's samples copied off its DDS traffic (needs it running); serial: the UART read
     # directly (needs yesense_node stopped, it holds the port)
     ChoiceAtom(
@@ -83,28 +125,9 @@ m20_rust = autoconnect(
         default="relay",
         choices={"relay": M20CameraRelay.blueprint().hosted(tags=AOS), "off": autoconnect()},
     ),
-    # the body filter takes the joint state nearest each scan, so a fixed pose republished every period matches within it
-    ChoiceAtom(
-        name="M20Joints",
-        default="standing",
-        choices={
-            "standing": autoconnect(
-                M20StandingJointState.blueprint(),
-                _body_filter(state_tolerance_s=M20StandingJointStateConfig().publish_period_s),
-            ),
-            "ecan": autoconnect(
-                M20Ecan.blueprint()
-                .remappings([(M20Ecan, "joint_state", "coordinator_joint_state")])
-                .hosted(tags=AOS),
-                _body_filter(),
-            ),
-        },
-    ),
-    m20_dim_slam(cpus=GOS_SLAM_CPUS).remappings(
-        [(DimSlamLio, "lidar", "lidar_filtered"), (DimSlamLio, "imu", "lidar_imu")]
-    ),
-    m20_nav_stack(lidar="lidar_filtered", pre_trace_subsample=1, ray_subsample=1),
-    m20_relocalization(lidar="lidar_filtered"),
+    m20_dim_slam(cpus=GOS_SLAM_CPUS).remappings([(DimSlamLio, "imu", "lidar_imu")]),
+    m20_nav_stack(lidar="lidar", pre_trace_subsample=1, ray_subsample=1),
+    m20_relocalization(lidar="lidar"),
 ).global_config(
     n_workers=5,
     transport="zenoh",
