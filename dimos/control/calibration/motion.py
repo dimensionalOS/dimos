@@ -70,7 +70,7 @@ class Motion:
 
     ``tolerance_rad`` is each joint's noise band as a spread.
     A ``floating`` joint follows its measured position, and its hold also ends ("drifted")
-    once the fingertip moves ``drift_limit_m`` from where the hold began. Without
+    once it turns ``drift_limit_rad`` from where the hold began. Without
     ``publish`` it only watches: the connection holds the arm.
     """
 
@@ -82,7 +82,7 @@ class Motion:
     tolerance_rad: np.ndarray
     stall_rad: np.ndarray
     floating: int | None = None
-    drift_limit_m: float = math.inf
+    drift_limit_rad: float = math.inf
     publish: bool = True
     done: threading.Event = field(default_factory=threading.Event)
     ended: str = ""
@@ -91,7 +91,6 @@ class Motion:
     q: list[np.ndarray] = field(default_factory=list)
     dq: list[np.ndarray] = field(default_factory=list)
     _t0: float | None = None
-    _tip0: np.ndarray | None = None
     _quantum: np.ndarray = field(default_factory=lambda: np.asarray(np.inf))
 
     def __post_init__(self) -> None:
@@ -138,13 +137,12 @@ class Motion:
             step = np.abs(self.q[-1] - self.q[-2])
             self._quantum = np.where(step > 0.0, np.minimum(self._quantum, step), self._quantum)
         elapsed = self.t[-1] - self.t[0]
+        if self.floating is not None and (
+            abs(self.q[-1][self.floating] - self.q[0][self.floating]) > self.drift_limit_rad
+        ):
+            return "drifted"
         if self.mode == "fixed":
             return "rested" if elapsed >= self.window_s else None
-        if self.floating is not None:
-            if self._tip0 is None:
-                self._tip0 = self.arm.fingertip(self.q[0])
-            if np.linalg.norm(self.arm.fingertip(self.q[-1]) - self._tip0) > self.drift_limit_m:
-                return "drifted"
         if elapsed <= self.window_s:
             return None
         tail = bisect.bisect_right(self.t, self.t[-1] - 2.0 * self.window_s)

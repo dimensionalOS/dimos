@@ -80,7 +80,8 @@ def test_a_full_run_saves_the_fit_and_the_gains_and_ends_home(arm: ArmModel) -> 
         )
     assert set(fake.file["gains"]) == set(arm.joint_names)
     # The fit made the floats pass, and the tracking compared both visits.
-    assert "2 of 2 floated joints stayed within" in text
+    assert "2 of 2 floated joints ended within 2 mm" in text
+    assert all(row["passed"] for row in fake.file["checks"]["float"]["joints"].values())
     assert "2 poses compared" in text
     assert fake.live == {} and fake.floating == {}
     np.testing.assert_allclose(fake.q, arm.home, atol=1e-3)
@@ -229,6 +230,43 @@ def test_a_fit_worse_over_all_than_the_running_model_is_saved_only_when_asked(
     assert operator.done is not None and operator.done[0], operator.done
     assert any("worse over all the dithered joints" in prompt for prompt in operator.asked)
     assert ("fit" in fake.file) == (answer == "save anyway")
+
+
+def test_a_joint_rests_then_floats_its_whole_window_and_a_falling_one_is_held_again(
+    arm: ArmModel,
+) -> None:
+    fake, operator = FakeArm(arm), FakeOperator()
+    limp: dict[str, list[float]] = {}
+    held: list[tuple[float, np.ndarray]] = []
+
+    def watch(arm_: FakeArm) -> None:
+        for joint in arm_.floating:
+            limp.setdefault(joint, []).append(arm_.t)
+        if not arm_.floating:
+            held.append((arm_.t, arm_.target.copy()))
+
+    fake.on_tick = watch
+    calibration(arm, operator, fake, steps=["float_check"]).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert set(limp) == {"shoulder", "elbow"}
+    for times in limp.values():
+        assert times[-1] - times[0] == pytest.approx(10.0, abs=0.05)
+        before = [(t, target) for t, target in held if t < times[0]]
+        moving = [t for t, target in before if not np.array_equal(target, before[-1][1])]
+        assert before[-1][0] - moving[-1] > 2.0
+    assert "2 of 2 floated joints ended within 2 mm" in operator.done[1]
+    float_check = fake.file["checks"]["float"]
+    assert float_check["window_s"] == 10.0 and float_check["limit_mm"] == 2.0
+
+    falling, operator = FakeArm(arm, true_links=TRUE_LINKS), FakeOperator()
+    calibration(arm, operator, falling, steps=["float_check"]).run()
+    assert operator.done is not None and operator.done[0], operator.done
+    rows = falling.file["checks"]["float"]["joints"]
+    assert {row["ended"] for row in rows.values()} == {"drifted"}
+    assert all(not row["passed"] and row["duration_s"] < 2.0 for row in rows.values())
+    assert all(5.0 < abs(row["joint_drift_deg"]) < 5.5 for row in rows.values())
+    assert falling.floating == {} and "0 of 2 floated joints" in operator.done[1]
 
 
 def test_the_plan_skips_what_cannot_run() -> None:

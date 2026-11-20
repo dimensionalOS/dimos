@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import datetime, timezone
 import itertools
 import math
 from typing import TYPE_CHECKING
@@ -67,7 +68,7 @@ TITLES = {
     "check": "measure the noise at rest and the sample period, then go home",
     "gravity_poses": "visit the gravity poses and dither each measured joint",
     "gravity_fit": "fit the link masses, save and apply them on confirm",
-    "float_check": "float each measured joint and measure the fingertip drift",
+    "float_check": "rest, then float each measured joint and measure the fingertip drift",
     "step_sweep": "step each joint at each kp scale",
     "pick_gains": "propose the stiffest gains that pass, save and apply them on confirm",
     "confirm_tracking": "revisit gravity poses and compare the rest error with the first visit",
@@ -306,29 +307,39 @@ def gravity_fit(run: Calibration) -> str:
 
 
 def float_check(run: Calibration) -> str:
-    poses, limit = _gravity_poses(run), run.config.float_drift_limit_mm
-    torques = [np.abs(run.arm.gravity(np.asarray(p.joints_rad))) for p in poses]
+    config, poses = run.config, _gravity_poses(run)
+    limit, applied = config.float_drift_limit_mm, _applied(run)
+    torques = [applied.gravity(np.asarray(p.joints_rad)) for p in poses]
     where = {
-        joint: poses[int(np.argmax([torque[i] for torque in torques]))]
+        joint: poses[int(np.argmax([abs(torque[i]) for torque in torques]))]
         for i, joint in enumerate(run.arm.joint_names)
         if joint in run.arm.measured_joints
     }
     run.confirm(
-        f"Each of {', '.join(where)} floats in turn (kp 0, gravity compensated) at the pose "
-        f"where it carries the most gravity; its fingertip must stay within {limit:g} mm."
+        f"Each of {', '.join(where)} rests {config.hold_s:g} s, then floats {config.float_window_s:g} s "
+        "(kp 0, gravity compensated) at the pose where it carries the most gravity; its "
+        f"fingertip must end within {limit:g} mm of where it went limp, and a joint that turns "
+        f"{config.float_trip_deg:g} deg is held again."
     )
-    rows, passed, visited = [], 0, []
+    rows, joints, passed, visited = [], {}, 0, []
     for joint, pose in where.items():
         i, target = run.arm.joint_names.index(joint), np.asarray(pose.joints_rad)
         try:
-            if run.config.confirm_each:
+            if config.confirm_each:
                 run.confirm(f"Float {joint} at {pose.name}?")
             run.move(target, pose.name, ask=False)
         except SkippedError:
             continue
         visited.append(target)
+        run.stream(run.motion([target], "fixed", config.hold_s))
         kp, kd = run.gains(joint)
-        motion = run.motion([target], "converge", floating=i, drift_limit_m=limit / 1e3)
+        motion = run.motion(
+            [target],
+            "fixed",
+            config.float_window_s,
+            floating=i,
+            drift_limit_rad=math.radians(config.float_trip_deg),
+        )
         try:
             hold = run.stream(motion, patch={"gains": {joint: {"kp": 0.0, "kd": kd}}})
         finally:
@@ -340,15 +351,37 @@ def float_check(run: Calibration) -> str:
             duration_s=hold.t[-1] - hold.t[0],
             drift_limit_mm=limit,
         )
-        ok = hold.ended == "settled" and drift.passed
+        ok = hold.ended == "rested" and drift.passed
         passed += ok
+        joints[joint] = {
+            "pose": pose.name,
+            "gravity_nm": float(torques[poses.index(pose)][i]),
+            "ended": hold.ended,
+            "duration_s": drift.duration_s,
+            "fingertip_drift_mm": drift.fingertip_drift_mm,
+            "fingertip_peak_mm": drift.fingertip_peak_mm,
+            "joint_drift_deg": drift.joint_drift_deg[joint],
+            "passed": ok,
+        }
+        ended = "tripped" if hold.ended == "drifted" else f"{drift.duration_s:.1f} s"
         rows.append(
-            f"  {joint} at {pose.name}: {'pass' if ok else 'FAIL'} ({hold.ended}, fingertip "
-            f"{drift.fingertip_drift_mm:.1f} mm, at most {drift.fingertip_peak_mm:.1f} mm)"
+            f"  {joint} at {pose.name}: {'pass' if ok else 'FAIL'} ({ended}, {joint} turned "
+            f"{drift.joint_drift_deg[joint]:+.2f} deg, fingertip {drift.fingertip_drift_mm:.1f} "
+            f"mm, at most {drift.fingertip_peak_mm:.1f} mm)"
         )
     run.show("Float check:\n" + "\n".join(rows))
     run.home(visited)
-    return f"{passed} of {len(rows)} floated joints stayed within {limit:g} mm"
+    if joints:
+        check = {
+            "created": datetime.now(timezone.utc).isoformat(),
+            "limit_mm": limit,
+            "window_s": config.float_window_s,
+            "hold_s": config.hold_s,
+            "trip_deg": config.float_trip_deg,
+            "joints": joints,
+        }
+        run.configure({"checks": {"float": check}}, save=True)
+    return f"{passed} of {len(joints)} floated joints ended within {limit:g} mm"
 
 
 def step_sweep(run: Calibration) -> str:

@@ -81,7 +81,11 @@ class CalibrationModuleConfig(ModuleConfig):
             root); must include 1, the baseline.
         step_deltas_deg: The gain sweep's steps, applied in turn; both signs needed.
         max_overshoot_pct: A sweep step that overshoots this share of itself fails.
-        float_drift_limit_mm: How far the fingertip may drift while a joint floats.
+        hold_s: How long a joint rests at full gains at its float pose before it floats.
+        float_window_s: How long each joint floats.
+        float_drift_limit_mm: A float passes when the fingertip ends within this of where it was
+            at the first limp sample.
+        float_trip_deg: A floating joint that turns this far is held again, and fails.
         confirm_poses: How many gravity poses confirm_tracking revisits.
         grid_points: About how many candidate poses the pose search considers.
         steps: Which steps to run after check (``steps.STEPS``).
@@ -103,7 +107,10 @@ class CalibrationModuleConfig(ModuleConfig):
     kp_scales: list[float] = Field(default_factory=lambda: [1.0, 1.5, 2.0])
     step_deltas_deg: list[float] = Field(default_factory=lambda: [1.0, -1.0, 3.0, -3.0])
     max_overshoot_pct: float = Field(default=20.0, gt=0.0)
-    float_drift_limit_mm: float = Field(default=5.0, gt=0.0)
+    hold_s: float = Field(default=2.0, gt=0.0)
+    float_window_s: float = Field(default=10.0, gt=0.0)
+    float_drift_limit_mm: float = Field(default=2.0, gt=0.0)
+    float_trip_deg: float = Field(default=5.0, gt=0.0)
     confirm_poses: int = Field(default=3, ge=1)
     grid_points: int = Field(default=3000, ge=1)
     steps: list[str] = Field(default_factory=lambda: list(steps.STEPS))
@@ -179,8 +186,8 @@ class Calibration:
                 *(abs(x) for x in itertools.accumulate(config.step_deltas_deg)),
             )
         )
-        self.arm.clearance_m = (
-            self.arm.reach_m * self.excursion_rad + config.float_drift_limit_mm / 1e3
+        self.arm.clearance_m = self.arm.reach_m * (
+            self.excursion_rad + math.radians(config.float_trip_deg)
         )
         self._call, self._publish, self._block = call, publish, block
         self._torque_limit = torque_limit_nm
@@ -291,15 +298,24 @@ class Calibration:
             assert self._latest is not None
             return self._latest.q
 
-    def motion(self, path: list[np.ndarray], mode: HoldMode, **hold: Any) -> Motion:
-        """A motion along ``path`` with the current gains, noise and settings."""
+    def motion(
+        self,
+        path: list[np.ndarray],
+        mode: HoldMode,
+        window_s: float | None = None,
+        **hold: Any,
+    ) -> Motion:
+        """A motion along ``path`` with the current gains, noise and settings (``window_s``:
+        a hold's window other than the noise's)."""
         kp = np.asarray([self.gains(joint)[0] for joint in self.spec.joint_names])
         stall = np.divide(self._torque_limit, kp, out=np.full(kp.shape, np.inf), where=kp > 0.0)
         band = [
             self.noise[joint].band_deg if self.noise else 0.0 for joint in self.spec.joint_names
         ]
         # Once measured, the noise's own window: a settled hold then outlasts it.
-        window = max((n.window_s for n in self.noise.values()), default=self.config.rest_window_s)
+        window = window_s or max(
+            (n.window_s for n in self.noise.values()), default=self.config.rest_window_s
+        )
         return Motion(
             self.arm,
             path,
