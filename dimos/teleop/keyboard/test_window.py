@@ -36,10 +36,19 @@ def module(request) -> Iterator[Any]:
         instance.stop()
 
 
-def test_start_reports_the_display_error(module, monkeypatch) -> None:
+@pytest.fixture
+def velocities(module) -> list[Twist]:
+    received: list[Twist] = []
+    port = module.outputs.get("cmd_vel") or module.outputs["ee_twist_command"]
+    port.subscribe(received.append)
+    return received
+
+
+def test_start_reports_the_display_error(module, velocities, monkeypatch) -> None:
     monkeypatch.setenv("SDL_VIDEODRIVER", "unavailable-teleop-test")
     with pytest.raises(RuntimeError, match="unavailable-teleop-test"):
         module.start()
+    assert velocities == []
 
 
 def test_stop_closes_the_open_display(module, monkeypatch) -> None:
@@ -53,6 +62,25 @@ def test_stop_closes_the_open_display(module, monkeypatch) -> None:
     assert process.returncode == 0
 
 
+def test_idle_window_can_close_and_reopen(module, velocities, monkeypatch) -> None:
+    monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+    module.start()
+    first = module._window
+    module.start()
+    assert module._window is first
+
+    # Ask the child to exit its event loop without stopping the parent module.
+    first._connection.send_bytes(b"")
+    first._reader.join(timeout=5)
+    assert first._process.returncode == 0
+    assert first._connection.closed
+    assert velocities == []
+
+    module.start()
+    assert module._window is not first
+    assert module._window._process.poll() is None
+
+
 class _MovingWindow(KeyboardWindow):
     def open(self) -> None:
         pass
@@ -60,11 +88,16 @@ class _MovingWindow(KeyboardWindow):
     def run(self) -> None:
         motion = Twist(linear=Vector3(1, 0, 0))
         self.publish("cmd_vel", motion)
-        self.connection.recv_bytes()  # Stop requested while a key is held.
-        self.publish("cmd_vel", motion)
+        event = self.connection.recv_bytes()
+        self.publish("cmd_vel", Twist() if event == b"release" else motion)
 
 
-def test_buffered_movement_cannot_follow_stop() -> None:
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [(None, [1.0, 0.0]), (b"quit", [1.0, 1.0, 0.0]), (b"release", [1.0, 0.0])],
+    ids=["module-stop", "quit-while-moving", "release-then-quit"],
+)
+def test_window_stops_outstanding_movement(event: bytes | None, expected: list[float]) -> None:
     output = Out(Twist, "cmd_vel")
     commands: list[float] = []
     moving = Event()
@@ -78,10 +111,14 @@ def test_buffered_movement_cannot_follow_stop() -> None:
     window = WindowProcess(__name__, {}, {"cmd_vel": output}, lambda: output.publish(Twist()))
     try:
         assert moving.wait(timeout=5)
+        if event is not None:
+            window._connection.send_bytes(event)
+            window._reader.join(timeout=5)
+            assert not window._reader.is_alive()
     finally:
         window.stop()
 
-    assert commands == [1.0, 0.0]
+    assert commands == expected
 
 
 if __name__ == "__main__":

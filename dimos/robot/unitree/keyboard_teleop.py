@@ -131,8 +131,11 @@ class KeyboardTeleop(Module):
     @rpc
     def start(self) -> None:
         if self._window is not None:
-            return
-        super().start()
+            if self._window.running:
+                return
+            self._window.stop()
+        else:
+            super().start()
 
         self._window = WindowProcess(
             __name__,

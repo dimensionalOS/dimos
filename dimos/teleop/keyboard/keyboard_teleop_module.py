@@ -104,13 +104,16 @@ class KeyboardTeleopModule(Module):
 
     @rpc
     def start(self) -> None:
-        if self._window is not None:
-            return
         if pygame is None:
             raise ImportError(
                 "pygame is required for keyboard teleop. Install it with: pip install pygame"
             )
-        super().start()
+        if self._window is not None:
+            if self._window.running:
+                return
+            self._window.stop()
+        else:
+            super().start()
         self._window = WindowProcess(
             __name__,
             {

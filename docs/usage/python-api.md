@@ -38,7 +38,8 @@ app.stop()
 ```
 
 The drive and arm keyboard teleop modules open a pygame window on the worker's machine.
-Startup waits for the display to open. Closing the window or stopping the module publishes a zero velocity command.
+Startup waits for the display to open. Closing a moving keyboard publishes a zero velocity command.
+Closing an idle window leaves other velocity publishers in control. Call `start()` to reopen it.
 
 ## RPC calls
 

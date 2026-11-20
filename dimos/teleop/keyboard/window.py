@@ -29,6 +29,7 @@ from typing import Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.encode.cbor import decode, encode
 
 
@@ -79,6 +80,7 @@ class WindowProcess:
         self._publish_stop = publish_stop
         self._lock = threading.RLock()
         self._ended = False
+        self._moving = False
         self._reader = threading.Thread(target=self._forward, daemon=True)
         self._connection, child = Pipe()
         try:
@@ -105,26 +107,36 @@ class WindowProcess:
             self.stop()
             raise
 
+    @property
+    def running(self) -> bool:
+        return not self._ended and self._process.poll() is None
+
     def _forward(self) -> None:
         try:
             while not self._ended:
                 name, message = decode(self._connection.recv_bytes())
                 with self._lock:
                     if not self._ended:
+                        if isinstance(message, Twist):
+                            self._moving = bool(message)
                         self._outputs[name].publish(message)
         except (EOFError, ConnectionResetError):
             pass
         finally:
-            self._finish()
+            try:
+                self._finish()
+            finally:
+                self._connection.close()
 
-    def _finish(self) -> None:
+    def _finish(self, *, explicit_stop: bool = False) -> None:
         try:
             with self._lock:
                 if not self._ended:
                     self._ended = True
                     with suppress(BrokenPipeError, ConnectionResetError):
                         self._connection.send_bytes(b"")
-                    self._publish_stop()
+                    if self._moving or explicit_stop:
+                        self._publish_stop()
         finally:
             try:
                 self._process.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
@@ -134,7 +146,7 @@ class WindowProcess:
 
     def stop(self) -> None:
         try:
-            self._finish()
+            self._finish(explicit_stop=self._reader.ident is not None and self.running)
         finally:
             if self._reader.is_alive() and self._reader is not threading.current_thread():
                 self._reader.join()
