@@ -28,8 +28,9 @@ from typing import (
 from pydantic import BaseModel
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.disposable import Disposable
+from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.scheduler import TimeoutScheduler
+from reactivex.subject import Subject
 
 from dimos.core.resource import Resource
 from dimos.utils import colors
@@ -340,6 +341,17 @@ class In(Stream[T], ObservableMixin[T]):
     connection: RemoteOut[T] | None = None
     _transport: Transport[T]
 
+    def __init__(
+        self,
+        type: type[T],
+        name: str,
+        owner: Any | None = None,
+        transport: Transport[T] | None = None,
+    ) -> None:
+        super().__init__(type, name, owner, transport)
+        self._local: Subject[T] = Subject()
+        self._connections = CompositeDisposable()
+
     def __str__(self) -> str:
         mystr = super().__str__()
 
@@ -366,7 +378,19 @@ class In(Stream[T], ObservableMixin[T]):
         self._transport = value
 
     def connect(self, value: Out[T]) -> None:
-        value.subscribe(self.transport.publish)
+        """Forward a local output until this input stops."""
+
+        def forward(msg: T) -> None:
+            if (transport := self.transport) is not None:
+                transport.publish(msg)
+            self._local.on_next(msg)
+
+        self._connections.add(Disposable(value.subscribe(forward)))
+
+    def stop(self) -> None:
+        self._connections.dispose()
+        self._local.on_completed()
+        super().stop()
 
     @property
     def state(self) -> State:
@@ -374,7 +398,9 @@ class In(Stream[T], ObservableMixin[T]):
 
     # returns unsubscribe function
     def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
-        return self.transport.subscribe(cb, self)
+        if (transport := self.transport) is not None:
+            return transport.subscribe(cb, self)
+        return self._local.subscribe(cb).dispose
 
 
 # representation of input outside of module

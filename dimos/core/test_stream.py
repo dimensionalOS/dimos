@@ -18,13 +18,14 @@ import threading
 import time
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from dimos.core.coordination.python_worker import Actor
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out, RemoteOut
+from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -305,6 +306,42 @@ def test_out_publish_reaches_subscribers_after_one_unsubscribes_mid_publish() ->
     out.publish(2)
 
     assert received == [1, 2]
+
+
+@pytest.mark.parametrize("subscribe_first", [True, False])
+def test_local_input_receives_until_unsubscribed_or_stopped(subscribe_first: bool) -> None:
+    source: Out[int] = Out(int, "numbers")
+    sink: In[int] = In(int, "numbers")
+    received: list[int] = []
+    if subscribe_first:
+        unsubscribe = sink.subscribe(received.append)
+        sink.connect(source)
+    else:
+        sink.connect(source)
+        unsubscribe = sink.subscribe(received.append)
+    source.publish(1)
+    unsubscribe()
+    sink.subscribe(received.append)
+    source.publish(2)
+    sink.stop()
+    source.publish(3)
+    assert received == [1, 2]
+
+
+@pytest.mark.parametrize("configure_first", [True, False])
+def test_connected_output_forwards_to_input_transport(configure_first: bool) -> None:
+    source: Out[int] = Out(int, "numbers")
+    sink: In[int] = In(int, "numbers")
+    transport = Mock(spec=Transport)
+    if configure_first:
+        sink.transport = transport
+    sink.connect(source)
+    if not configure_first:
+        sink.transport = transport
+    source.publish(1)
+    sink.stop()
+    source.publish(2)
+    transport.publish.assert_called_once_with(1)
 
 
 def test_module_stream_crosses_processes_as_a_remote_handle() -> None:

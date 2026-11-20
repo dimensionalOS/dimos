@@ -472,7 +472,9 @@ Most of the time this is a bad idea, but you can peak behind blueprints, autocon
 
 ### Connecting via transports
 
-`.connect` wires two modules living in the same process. Alternatively, you can assign a **transport** a typed pub/sub channel such as LCM or Zenoh. The modules never hold a reference to each other, so they can run as separate scripts.
+`input.connect(output)` wires two modules in one process. You can subscribe before or after connecting. With no transport, the callback runs on the publisher's thread and receives the same message object. Stopping the input disconnects its outputs.
+
+To receive over a **transport** such as LCM or Zenoh, assign the input's transport before subscribing. Connected outputs also publish to the input's current transport. The modules in the following example can run as separate scripts.
 
 `camera_script.py`:
 
