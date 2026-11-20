@@ -16,6 +16,7 @@
 scan keeping its own frame, at the standing pose M20StandingJointState publishes."""
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
@@ -87,3 +88,38 @@ def test_both_lidars_lose_the_body_and_keep_their_frame(body_filter) -> None:
         np.testing.assert_allclose(
             filtered.points_f32(), scan.points_f32()[len(_BODY) :], atol=1e-6
         )
+
+
+def test_interleaved_scans_come_out_one_per_scan_in_order_with_their_stamp_and_frame(
+    body_filter,
+) -> None:
+    """Both lidars share one stream: every scan in gives exactly one scan out, its stamp, frame and points kept."""
+    module, mounts = body_filter
+    published: list[PointCloud2] = []
+    cast("dict[str, Any]", module.__dict__)["filtered_pointcloud"] = SimpleNamespace(
+        publish=published.append
+    )
+    scans = []
+    for i in range(6):
+        frame = ("front_lidar", "rear_lidar")[i % 2]
+        # overlapping scans, as the two Airys' are: each starts 30 ms after the other
+        scan = _scan(_CLEAR, frame, mounts[frame])
+        scan.ts = 1.0 + 0.03 * i
+        # each lidar publishes its mount stamped like its scan; the joint state is republished alongside
+        module.tfbuffer.receive_transform(
+            Transform.from_matrix(
+                mounts[frame], frame_id="base_link", child_frame_id=frame, ts=scan.ts
+            )
+        )
+        module.add_joint_state(
+            JointState(
+                ts=scan.ts,
+                name=list(STAND_JOINT_POSITIONS),
+                position=list(STAND_JOINT_POSITIONS.values()),
+            )
+        )
+        scans.append(scan)
+        module._on_pointcloud(scan)
+    assert [(p.frame_id, p.ts) for p in published] == [(s.frame_id, s.ts) for s in scans]
+    for scan, out in zip(scans, published, strict=True):
+        np.testing.assert_array_equal(out.points_f32(), scan.points_f32())
