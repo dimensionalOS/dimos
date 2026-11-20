@@ -331,6 +331,7 @@ def test_nothing_takes_cmd_vel_unless_a_walker_is_chosen_and_the_controller_neve
         (controller,) = walkers(**choices).values()
         assert controller["mode"] == "owner" and controller["policy"] is True
         assert controller.get("allow_gains", False) is False
+        assert controller["command_timeout_s"] == 0.3
     # the joint source alone is the shim reader: no bus ownership, no policy
     (tap,) = walkers(M20Joints="controller").values()
     assert tap.get("mode", "tap") == "tap" and not tap.get("policy", False)

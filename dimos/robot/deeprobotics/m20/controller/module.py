@@ -80,6 +80,9 @@ class M20ControllerConfig(NativeModuleConfig):
     policy_dir: str = ""
     # policy: seconds an IMU sample stays usable (older, the state machine sees stale state and faults)
     imu_timeout_s: float = Field(default=0.05, gt=0.0)
+    # policy: seconds without a new command before the velocity is zeroed, over the TOML's
+    # safety.command_timeout_s (0 keeps the TOML's; the native config takes no None)
+    command_timeout_s: float = Field(default=0.0, ge=0.0)
 
 
 class M20Controller(NativeModule):

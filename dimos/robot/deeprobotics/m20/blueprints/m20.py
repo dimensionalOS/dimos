@@ -399,7 +399,12 @@ _m20_real = autoconnect(
         choices={
             "off": autoconnect(),
             "rl_deploy": M20CmdVel.blueprint().hosted(tags=AOS),
-            "controller": M20Controller.blueprint(mode="owner", policy=True).hosted(tags=AOS),
+            "controller": M20Controller.blueprint(
+                mode="owner",
+                policy=True,
+                # tolerates one late or lost 10 Hz trajectory_follower tick
+                command_timeout_s=0.3,
+            ).hosted(tags=AOS),
         },
     ),
     # sniff: the vendor yesense_node's samples copied off its DDS traffic (needs it running); serial: the UART read

@@ -90,6 +90,10 @@ pub struct Config {
     /// policy: seconds an IMU sample stays usable; older, the state is stale and the state machine faults.
     #[validate(range(exclusive_min = 0.0))]
     imu_timeout_s: f64,
+    /// policy: seconds without a new command before the velocity is zeroed, over the TOML's
+    /// safety.command_timeout_s; 0 (unset) keeps the TOML's.
+    #[validate(range(min = 0.0))]
+    command_timeout_s: f64,
 }
 
 #[derive(Module)]
@@ -424,7 +428,7 @@ fn run_policy(
     use crate::policy::{RunnerSet, ThreadedPolicy};
     use crate::rt::{self, Pacing};
     use crate::state_machine::{Controller, State};
-    let mut cfg = match load_controller_config(&config.controller_config) {
+    let cfg = match controller_config(config) {
         Ok(cfg) => cfg,
         Err(error) => {
             warn!(
@@ -434,10 +438,6 @@ fn run_policy(
             return;
         }
     };
-    // the module's own fields are the ones in force on the bus
-    cfg.ecan.interface = config.interface.clone();
-    cfg.ecan.charge_enable = config.charge_enable;
-    cfg.ecan.allow_gains = config.allow_gains;
     let policy_dir = if config.policy_dir.is_empty() {
         std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
             .join(".cache/dimos/m20_policies")
@@ -569,6 +569,18 @@ fn run_policy(
 #[cfg(not(target_os = "linux"))]
 fn run_policy(_: &Config, _: Latest, _: Arc<Shared>, _: watch::Sender<Option<Status>>) {
     warn!("the policy on the motor bus needs Linux (the vendor motor-bus socket)");
+}
+
+/// The controller config in force: the TOML with the module's own fields over it.
+pub fn controller_config(config: &Config) -> anyhow::Result<crate::config::Config> {
+    let mut cfg = load_controller_config(&config.controller_config)?;
+    cfg.ecan.interface = config.interface.clone();
+    cfg.ecan.charge_enable = config.charge_enable;
+    cfg.ecan.allow_gains = config.allow_gains;
+    if config.command_timeout_s > 0.0 {
+        cfg.safety.command_timeout_s = config.command_timeout_s;
+    }
+    Ok(cfg)
 }
 
 /// The controller's m20_controller.toml: the built-in one, or a path.
@@ -768,6 +780,27 @@ mod tests {
     fn the_built_in_config_loads_with_gains_off() {
         let cfg = load_controller_config("").unwrap();
         assert!(!cfg.ecan.allow_gains);
+    }
+
+    fn module_config(command_timeout_s: f64) -> Config {
+        let fields = serde_json::json!({
+            "mode": "owner", "socket_path": "", "interface": "eth1", "charge_enable": false,
+            "frame_id": "base_link", "guard_max_torque": 1.0, "guard_max_velocity": 0.5,
+            "silence_warning_s": 5.0, "progress_log_replies": 5000, "policy": true, "allow_gains": false,
+            "controller_config": "", "policy_dir": "", "imu_timeout_s": 0.05,
+            "command_timeout_s": command_timeout_s,
+        });
+        serde_json::from_value(fields).unwrap()
+    }
+
+    #[test]
+    fn command_timeout_overrides_the_toml_only_when_set() {
+        let toml = load_controller_config("").unwrap().safety.command_timeout_s;
+        let unset = controller_config(&module_config(0.0)).unwrap();
+        assert_eq!(unset.safety.command_timeout_s, toml);
+        let set = controller_config(&module_config(0.3)).unwrap();
+        assert_eq!(set.safety.command_timeout_s, 0.3);
+        assert!(!set.ecan.allow_gains);
     }
 
     #[test]
