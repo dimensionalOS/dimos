@@ -12,13 +12,16 @@ import { runStop } from "#dimos/agents/cli/commands/stop.ts";
 import { runTui } from "#dimos/agents/cli/commands/tui.ts";
 import { runVersion } from "#dimos/agents/cli/commands/version.ts";
 import { ensureGateway } from "#dimos/agents/cli/process.ts";
+import commandLine from "./command-line.json" with { type: "json" };
 
-const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]              open a terminal (a new conversation without --conversation)
-dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT   submit one input and print the answer, as JSON lines with --json
-dimos agent conversations                                         list conversations, newest first
-dimos agent gateway [--daemon]                                    run the gateway, in the background with --daemon
-dimos agent status [--json]                                       the gateway, DimOS, conversations, modules, jobs, streams
-dimos agent stop | version`;
+const USAGE = commandLine.usage.join("\n");
+
+// JSON imports widen the option type strings. Preserve parseArgs' typed return values.
+type Options = {
+  [K in keyof typeof commandLine.options]: (typeof commandLine.options)[K] extends { default: boolean }
+    ? { type: "boolean"; default: boolean }
+    : { type: "string" };
+};
 
 const commands: ReadonlyMap<string, Command> = new Map([
   ["gateway", runGatewayCommand],
@@ -45,14 +48,7 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
   const { values, positionals } = parseArgs({
     args: [...argv],
     allowPositionals: true,
-    options: {
-      conversation: { type: "string" },
-      view: { type: "boolean", default: false },
-      json: { type: "boolean", default: false },
-      daemon: { type: "boolean", default: false },
-      cwd: { type: "string" },
-      help: { type: "boolean", default: false },
-    },
+    options: commandLine.options as Options,
   });
   const [command, ...args] = positionals;
   if (values.help || command === "help") {
