@@ -28,6 +28,7 @@ def _clean_env(monkeypatch):
     monkeypatch.delenv("DIMOS_RUN_LOG_DIR", raising=False)
     monkeypatch.setattr(logging_config, "_RUN_LOG_DIR", None)
     monkeypatch.setattr(logging_config, "_LOG_FILE_PATH", None)
+    monkeypatch.setattr(logging_config, "_STARTUP_LOG_FILE", None)
 
 
 class TestSetRunLogDir:

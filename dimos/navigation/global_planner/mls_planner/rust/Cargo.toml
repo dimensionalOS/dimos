@@ -27,7 +27,7 @@ local_map = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
 seed_map = "sensor_msgs.PointCloud2"
 seed_bounds = "geometry_msgs.PoseStamped"
-goal = "geometry_msgs.PointStamped"
+goal = "geometry_msgs.PoseStamped"
 tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.mls_planner.outputs]
@@ -38,7 +38,7 @@ path = "nav_msgs.Path"
 nav_status = "actionlib_msgs.GoalStatus"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "5eb9e7ae757a82f3481d537a86f3a96884c77fb1" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }

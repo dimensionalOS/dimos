@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from dataclasses import dataclass
+
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType
@@ -21,6 +23,14 @@ from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.hand_guiding_task.hand_guiding_task import HandGuidingTask, create_task
 from dimos.hardware.whole_body.spec import WholeBodyAdapter, WholeBodyConfig
+
+
+@dataclass
+class Source:
+    """A connection robot as the task sees it, without building a real model."""
+
+    joint_names: list[str]
+    zero_stiffness_joints: frozenset[str]
 
 
 @pytest.mark.parametrize("position", [None, float("nan"), float("inf")])
@@ -74,3 +84,33 @@ def test_hand_guiding_rejects_unconnected_joints():
     config = TaskConfig(name="teach", type="hand_guiding", joint_names=["missing"])
     with pytest.raises(ValueError, match="no connected hardware"):
         create_task(config, {})
+
+
+def test_hand_guiding_accepts_connection_with_declared_zero_stiffness():
+    config = TaskConfig(name="teach", type="hand_guiding", joint_names=["arm/joint1"])
+    source = Source(joint_names=["arm/joint1"], zero_stiffness_joints=frozenset({"arm/joint1"}))
+
+    task = create_task(config, {}, {"arm": source})
+
+    assert task.claim().joints == frozenset({"arm/joint1"})
+
+
+def test_hand_guiding_rejects_connection_that_declares_nothing():
+    config = TaskConfig(name="teach", type="hand_guiding", joint_names=["arm/joint1"])
+    source = Source(joint_names=["arm/joint1"], zero_stiffness_joints=frozenset())
+
+    with pytest.raises(ValueError, match="explicit zero kp"):
+        create_task(config, {}, {"arm": source})
+
+
+def test_hand_guiding_rejects_partially_declared_connection():
+    config = TaskConfig(
+        name="teach", type="hand_guiding", joint_names=["arm/joint1", "arm/gripper"]
+    )
+    source = Source(
+        joint_names=["arm/joint1", "arm/gripper"],
+        zero_stiffness_joints=frozenset({"arm/joint1"}),
+    )
+
+    with pytest.raises(ValueError, match="explicit zero kp"):
+        create_task(config, {}, {"arm": source})

@@ -30,5 +30,13 @@ PLANNING_HEIGHT_M = 0.65
 FRONT_CAMERA_RTSP_URL = "rtsp://10.21.31.103:8554/video1"
 REAR_CAMERA_RTSP_URL = "rtsp://10.21.31.103:8554/video2"
 
+# The NOS bridge's watchdog, kCommandTimeoutS in drdds-zenoh-bridge.
+CMD_VEL_TIMEOUT_S = 0.4
+
 # The vendor LIO's odometry frame, passed through by drdds-zenoh-bridge.
 WORLD_FRAME = "map"
+
+# Lidar mounts in base_link from the vendor URDF, each Airy looking straight out
+# its end of the body with its spin axis level.
+FRONT_LIDAR_XYZ_M = (0.32028, 0.0, -0.013)
+REAR_LIDAR_XYZ_M = (-0.32028, 0.0, -0.013)

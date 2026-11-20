@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-    "setuptools>=70",
+    "setuptools>=77.0.3",
     "wheel",
     "pybind11>=2.12",
     "tomli>=2.0; python_version < '3.11'",
@@ -49,9 +49,10 @@ exclude = [
     "**/*.tcss",
     "**/*.pyi",
     "robot/galaxea/r1pro/vendor_setup.sh",
+    "robot/manipulators/piper/can_setup.sh",
 ]
 
-"experimental.gateway" = ["annotations.yaml"]
+"experimental.gateway" = ["annotations.yaml", "assets/**/*"]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures,
@@ -75,17 +76,17 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.15"
+version = "0.0.16"
 description = "Powering agentive generalist robotics"
-requires-python = ">=3.10,<3.13"
+# tarfile's data extraction filter was backported in 3.10.12 and 3.11.4.
+requires-python = ">=3.10.12,<3.13,!=3.11.0,!=3.11.1,!=3.11.2,!=3.11.3"
 readme = {file = "README.md", content-type = "text/markdown"}
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
@@ -104,7 +105,7 @@ dependencies = [
     # Transport Protocols
     "dimos-lcm>=0.1.6",
     "lcm>=1.5.3", # the `lcm` module itself (protocol/service/lcmservice.py)
-    "eclipse-zenoh>=1.10.1,<2.0",
+    "eclipse-zenoh==1.10.2",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
     "jsonlines>=4,<5",
@@ -165,6 +166,7 @@ dependencies = [
     # (wrong ELF class), which fails to load on aarch64. Fixed from 0.1.7 on.
     "sqlite-vec>=0.1.7",
     "lz4>=4.4.5",
+    "mcap-ros2-support>=0.5",  # ROS 2 (CDR) mcap channels decode from their embedded schema
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
@@ -179,7 +181,7 @@ lcmspy = "dimos.cli.spy.run_spy:lcm_main"
 agentspy = "dimos.cli.agentspy.agentspy:main"
 humancli = "dimos.cli.human.humanclianim:main"
 dimos = "dimos.cli.entry:main"
-rerun-bridge = "dimos.visualization.rerun.bridge:app"
+rerun-bridge = "dimos.cli.entry:rerun_bridge"
 doclinks = "dimos.cli.doclinks:main"
 dtop = "dimos.cli.dtop:main"
 
@@ -226,7 +228,7 @@ agents = [
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
     "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
-    "langgraph>=1.0",  # agents/mcp/mcp_client.py
+    "langgraph>=1.0",  # agents/agent.py
     "httpx>=0.28",  # LLM trace (agents/llm_trace.py)
 
     # Audio
@@ -246,7 +248,8 @@ web = [
     "jinja2>=3.1.6",
     "av>=16.1",  # browser audio decode (stream/audio/decode.py)
     "soundfile",
-    "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
+    "aioquic==1.3.0",  # Ordered stream credit/pacing use the tested QUIC internals
+    "uvloop>=0.21",  # the topic provider's event loop (topic_service.py)
 ]
 
 perception = [
@@ -298,7 +301,7 @@ planning = [
     "dimos[control]",
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-    "roboplan>=0.7.0,<0.8.0",
+    "roboplan==0.8.0",
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
@@ -310,6 +313,9 @@ planning = [
 # Complete manipulation workflow: control, planning, perception, agents, and simulation.
 manipulation = [
     "dimos[planning,base,sim,cpu]",
+]
+leader-teleop = [
+    "ftservo-python-sdk",  # robot/manipulators/feetech/arm.py
 ]
 
 cpu = [
@@ -327,6 +333,7 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
+    "mjcf-to-urdf>=0.1.1",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
@@ -462,8 +469,9 @@ tests = [
     # RoboPlan 0.7 splits its bindings into packages. The roboplan meta-package
     # in the manipulation extra includes core, RRT, Cartesian and TOPPRA.
     # Tests-only installs need core for native point-cloud Narrowphase queries.
-    "roboplan-core>=0.7.0,<0.8.0",
+    "roboplan-core==0.8.0",
     "mujoco>=3.3.4",
+    "mjcf-to-urdf>=0.1.1",
     "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
@@ -493,7 +501,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan>=0.7.0,<0.8.0",
+    "roboplan==0.8.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -540,7 +548,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -650,6 +658,7 @@ bosdyn-client = "bosdyn"
 drake = "pydrake"
 eclipse-zenoh = "zenoh"
 edgetam-dimos = "sam2"
+ftservo-python-sdk = "scservo_sdk"
 GitPython = "git"
 gtsam-extended = "gtsam"
 hydra-core = "hydra"
@@ -712,6 +721,7 @@ ignore = [
 # Wire-protocol/manifest mirrors: model field names are the wire names
 # (camelCase, pinned to the TS side by the golden fixtures).
 "dimos/web/relay_bridge/protocol.py" = ["N815"]
+"dimos/web/relay_bridge/topic_protocol.py" = ["N815"]
 "dimos/web/relay_bridge/manifest.py" = ["N815"]
 "experimental/gateway/routes/*.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
@@ -763,6 +773,7 @@ module = [
     "h5py.*",
     "mcap",
     "mcap.*",
+    "mcap_ros2.*",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
@@ -788,6 +799,8 @@ module = [
     "sam2.*",
     "scipy",
     "scipy.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "sensor_msgs.*",
     "sqlite_vec",
     "std_msgs.*",
@@ -844,6 +857,10 @@ asyncio_default_fixture_loop_scope = "function"
 branch = true
 source = ["dimos"]
 concurrency = ["multiprocessing", "thread"]
+# Outside the repo root "dimos" in source is a package name, not a directory.
+# A forked child never runs dimos/__init__.py again, so coverage would report
+# the package as unmeasured on the child's stderr.
+disable_warnings = ["module-not-measured"]
 
 [tool.coverage.report]
 exclude_also = [
@@ -870,4 +887,5 @@ ignore = [
     "misc/DimSim/src/engine.js",
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
+    "web/shared/fixtures/topics_invalid.json",
 ]

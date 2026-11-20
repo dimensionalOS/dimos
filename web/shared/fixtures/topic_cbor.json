@@ -1,0 +1,58 @@
+[
+  {
+    "name": "json_like",
+    "hex": "a3656c6162656c68726f626f7420ceb265666c61677383f5f4f668706f736974696f6ea26178fb3ff4000000000000617922",
+    "value": {
+      "label": "robot \u03b2",
+      "flags": [
+        true,
+        false,
+        null
+      ],
+      "position": {
+        "x": 1.25,
+        "y": -3
+      }
+    }
+  },
+  {
+    "name": "tuple",
+    "hex": "d90fc883016161f6",
+    "value": [
+      1,
+      "a",
+      null
+    ]
+  },
+  {
+    "name": "custom_dataclass",
+    "hex": "d90fd082705f5f6d61696e5f5f3a52656164696e67a3656c6162656c6673656e736f726573636f7265fb3fe80000000000006773616d706c657383010203",
+    "value": {
+      "$type": "__main__:Reading",
+      "fields": {
+        "label": "sensor",
+        "score": 0.75,
+        "samples": [
+          1,
+          2,
+          3
+        ]
+      }
+    }
+  },
+  {
+    "name": "class_reference_is_opaque",
+    "hex": "d90fd3705f5f6d61696e5f5f3a52656164696e67",
+    "opaque": true
+  },
+  {
+    "name": "function_reference_is_opaque",
+    "hex": "d90fd47818756e747275737465642e6d6f64756c653a65786563757465",
+    "opaque": true
+  },
+  {
+    "name": "custom_decoder_is_opaque",
+    "hex": "d90fd68276756e747275737465642e6d6f64756c653a436c617373a0",
+    "opaque": true
+  }
+]

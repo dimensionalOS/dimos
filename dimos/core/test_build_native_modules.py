@@ -196,6 +196,16 @@ def test_recorder_is_in_the_publish_manifest() -> None:
     assert _SCRIPT._flake_ref_of(recorder) == "path:."
 
 
+def test_a_build_chosen_at_runtime_is_published_too() -> None:
+    """V4L2CameraConfig swaps in the Jetson package from a validator; the publish still has to build it."""
+    camera = next(
+        module
+        for module in _SCRIPT.discover()
+        if module.qualname.endswith("v4l2.module.V4L2CameraConfig")
+    )
+    assert camera.alternate_builds == ("nix build -L path:.#jetson",)
+
+
 @pytest.mark.parametrize("override", [None, "build_command", "source_dir"])
 def test_inherited_build_coverage_tracks_overrides(override: str | None) -> None:
     owner = _ClassDef(
@@ -463,24 +473,11 @@ def test_module_locks_pin_the_shared_code_as_it_is_now() -> None:
     while every module still builds against the revision before it. The revision is
     free to be older than HEAD; what must match is the content it pins.
     """
-    stale = {
-        _rel(lock): names
-        for lock in _RELOCK.flake_locks()
-        if (names := _RELOCK.stale_flake_inputs(lock))
-    }
-    stale |= {
-        _rel(manifest): why
-        for manifest in _RELOCK.cargo_manifests()
-        if (why := _RELOCK.stale_cargo_pins(manifest))
-    }
+    stale = _RELOCK.stale_pins()
     assert not stale, (
         "these modules pin shared code that is not the code in this commit, so they build "
         f"against the older version: {stale} -- push, run bin/relock-shared-flakes, commit"
     )
-
-
-def _rel(path: Path) -> str:
-    return path.relative_to(DIMOS_PROJECT_ROOT).as_posix()
 
 
 _BUILD_EDGES = ("nixpkgs", "dimos-native-rust", "dimos-native-cpp")

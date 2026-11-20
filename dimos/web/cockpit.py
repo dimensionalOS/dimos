@@ -558,9 +558,9 @@ class Teleop(Panel):
 @dataclass(frozen=True)
 class Chat(Panel):
     """Agent conversation: the humancli contract as a panel. Typed text
-    goes out on `input` (McpClient.human_input); the LangChain transcript
-    comes back on `messages` (McpClient.agent, one chat.json.v1 frame per
-    message, none dropped) and `idle` (McpClient.agent_idle) drives the
+    goes out on `input` (Agent.human_input); the LangChain transcript
+    comes back on `messages` (Agent.agent, one chat.json.v1 frame per
+    message, none dropped) and `idle` (Agent.agent_idle) drives the
     thinking spinner. The composer's push-to-talk mic ships recordings as
     audio.json.v1 chunks on `audio` (VoiceInput.audio_in); the transcript
     joins the conversation like typed text. A grid panel next to video/map;
@@ -932,7 +932,6 @@ def cockpit(
         raise RuntimeError(
             "the cockpit blueprint needs the web extra: `uv sync --extra web --inexact`"
         ) from e
-    from dimos.core.coordination.blueprints import autoconnect
     from dimos.web.codecs import resolve_decoder, resolve_encoder
 
     layout = _default_preset() if layout is None and not declared else layout
@@ -1043,7 +1042,7 @@ def cockpit(
     # Generated classes carry only the custom ports; the built-ins are
     # inherited. No custom streams means the plain static class.
     module_class = make_relay_bridge_class(ports) if ports else RelayBridgeModule
-    blueprint = autoconnect(module_class.blueprint(manifest=data, channels=tuple(specs)))
+    blueprint = module_class.blueprint(manifest=data, channels=tuple(specs))
     if any(isinstance(p, Stats) for p in (*_panels(layout), *_panels(tuple(pages)))):
         # Blueprint-level config is the lowest-precedence source, applied by
         # ModuleCoordinator.build before the worker pool (and its

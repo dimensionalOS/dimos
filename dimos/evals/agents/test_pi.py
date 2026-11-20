@@ -29,13 +29,14 @@ from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import request_path, response_path
 from dimos.evals.agents import pi
+from dimos.evals.agents.agent_adapter import AgentAdapter
 from dimos.evals.agents.blind import Blind
 from dimos.evals.agents.lib.pi_config import Provider, RunPaths, RuntimeConfig
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.pi import PiAdapter, recording_file
 from dimos.evals.cli import load_agent
+from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.evals.types import (
     FinalMetrics,
     Observation,
@@ -64,7 +65,7 @@ def test_invalid_tool_policy_rejected_before_startup() -> None:
         with pytest.raises(ValueError):
             PiAdapter(allowed_tools=names)
     with pytest.raises(ValueError, match="does not support allowed_tools"):
-        McpClientAdapter(allowed_tools=())
+        AgentAdapter(allowed_tools=())
     with pytest.raises(ValueError, match="has no tools"):
         Blind(allowed_tools=("bash",))
     assert Blind(allowed_tools=()).available_tools(()) == ()
@@ -282,6 +283,19 @@ def test_model_proxy_keeps_native_provider_and_no_secret(
         assert env.get(name) == os.environ.get(name)
 
 
+@pytest.mark.parametrize("offline", [None, "0", "1"])
+def test_pi_offline_setting_reaches_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, offline: str | None
+) -> None:
+    monkeypatch.delenv("PI_OFFLINE", raising=False)
+    if offline is not None:
+        monkeypatch.setenv("PI_OFFLINE", offline)
+
+    env = PiAdapter()._build_process_env(RunPaths.for_run(tmp_path))
+
+    assert env.get("PI_OFFLINE") == offline
+
+
 def test_anthropic_sse_usage_and_trace_matching(tmp_path: Path) -> None:
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -343,6 +357,19 @@ def test_pi_retains_its_stock_prompt(tmp_path: Path) -> None:
     )
     assert "--append-system-prompt" in command
     assert "--system-prompt" not in command
+
+
+def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path, mocker: MockerFixture) -> None:
+    listing = mocker.patch("dimos.evals.agents.pi.tool_listing")
+    run_dir = tmp_path / "case"
+    run_dir.mkdir()
+    adapter = PiAdapter()
+    env = RunningEnvironment(mcp_url="", streams=(), artifacts={}, python_guide=PYTHON_API_GUIDE)
+    prompt = adapter._prepare_case(env, run_dir)
+    assert (run_dir / "DIMOS.md").read_text() == PYTHON_API_GUIDE
+    assert f"- robot: {run_dir / 'DIMOS.md'}" in prompt
+    assert "dimos mcp call" not in prompt
+    listing.assert_not_called()
 
 
 @pytest.mark.parametrize(

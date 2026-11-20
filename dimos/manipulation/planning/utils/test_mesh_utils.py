@@ -15,6 +15,7 @@
 from pathlib import Path
 import re
 from urllib.parse import unquote, urlparse
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -217,3 +218,17 @@ def test_convex_hull_returns_the_centroid_it_centered_on(
     verts = _obj_vertices(Path(hull.path))
     np.testing.assert_allclose(verts.min(axis=0) + hull.centroid, points.min(axis=0), atol=1e-5)
     np.testing.assert_allclose(verts.max(axis=0) + hull.centroid, points.max(axis=0), atol=1e-5)
+
+
+def test_prepare_urdf_for_drake_encodes_absolute_obj_paths(tmp_path: Path) -> None:
+    mesh = tmp_path / "meshes with spaces" / "visual.obj"
+    description = LoadedRobotModel(
+        xml=f'<robot name="r"><link name="base"><visual><geometry>'
+        f'<mesh filename="{mesh}"/></geometry></visual></link></robot>',
+        source_path=tmp_path / "robot.urdf",
+        package_paths={},
+    )
+
+    prepared = mesh_utils.prepare_urdf_for_drake(description)
+
+    assert ET.fromstring(prepared.xml).find(".//mesh").get("filename") == mesh.as_uri()

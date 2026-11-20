@@ -6,7 +6,7 @@ Go2 hardware checks are in [hardware](09_hardware.md). This checklist covers the
 
 ```bash
 uv run dimos --simulation run unitree-g1-agentic-sim
-# In another terminal, once the MuJoCo and Rerun windows are up:
+# In another terminal, once the MuJoCo and DimOS Viewer windows are up:
 uv run dimos mcp list-tools
 uv run dimos mcp call move --arg x=0.3 --arg duration=3.0
 uv run dimos agent-send "walk forward one meter"
@@ -23,7 +23,7 @@ uv run dimos --simulation mujoco --scene-package office run unitree-g1-groot-wbc
 uv run dimos --simulation mujoco --scene-package office run unitree-g1-teleop
 ```
 
-* GR00T: once the costmap appears in Rerun, click a point on the floor a few meters away. The G1 walks there.
+* GR00T: once the costmap appears in the DimOS Viewer, click a point on the floor a few meters away. The G1 walks there. The viewer opens on the office roof. Hide `world/scene` and double-click `world/global_costmap` in the Blueprint panel to see the floor.
 * Teleop: open https://<host-ip>:8443/teleop in the Quest browser, accept the certificate and press Connect. Hold both grips and move the controllers.
 
 Expected result: the G1 walks to the clicked point, and its arms follow the controllers in Viser at http://<host-ip>:8095.

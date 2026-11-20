@@ -17,8 +17,9 @@
 Owns all ROS 2 traffic for the R1 Pro and exposes it as dimos streams:
 whole-body joint control (18 DOF: torso 4 + left arm 7 + right arm 7) for
 the whole-body adapter, chassis ``cmd_vel``/``odom`` for the twist-base
-adapter, plus cameras and IMUs. The chassis lidar is ours, not the vendor's:
-see ``r1pro_lidar_odometry``.
+adapter, plus head depth and IMUs. The chassis lidar and the head and wrist
+cameras are ours, not the vendor's: see ``r1pro_lidar_odometry``,
+``head_cameras`` and ``r1pro_control``.
 
 Sensors run on a second RawROS node. Conversion happens on per-stream workers
 behind latest-wins queues.
@@ -55,7 +56,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -77,17 +77,6 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
-# JPEG color streams gated by config.enable_wrist_color: stream name → ROS topic.
-_COLOR_CAMERAS: dict[str, str] = {
-    "wrist_left_color": "/hdas/camera_wrist_left/color/image_raw/compressed",
-    "wrist_right_color": "/hdas/camera_wrist_right/color/image_raw/compressed",
-}
-
-# Raw-image depth streams, gated by config.enable_wrist_depth.
-_WRIST_DEPTH_CAMERAS: dict[str, str] = {
-    "wrist_left_depth": "/hdas/camera_wrist_left/aligned_depth_to_color/image_raw",
-    "wrist_right_depth": "/hdas/camera_wrist_right/aligned_depth_to_color/image_raw",
-}
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 
 
@@ -131,6 +120,9 @@ def _ros_stamp_now() -> Any:
 
 class R1ProConnectionConfig(ModuleConfig):
     publish_rate_hz: float = Field(default=100.0)
+    # Runs beside the robot's ROS driver, so losing Desktop/the coordinator
+    # cannot leave its last chassis velocity active.
+    cmd_vel_timeout_s: float = Field(default=0.2, gt=0, le=1.0)
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
     tracking_speed: float = Field(default=0.5)
     # Wheel odometry always goes out on `odometry`; this gates its odom -> base_link tf and the `odom` pose.
@@ -139,13 +131,6 @@ class R1ProConnectionConfig(ModuleConfig):
     odom_frame_id: str = Field(default="odom")
     # Seconds between per-stream sensor-stats log lines (0 disables).
     sensor_stats_interval_s: float = Field(default=10.0)
-    # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
-    # on-robot CPU budget by default; enable when manipulation needs it.
-    enable_wrist_depth: bool = Field(default=False)
-    # Each wrist copies and publishes JPEG frames even when unread; turn off if nothing reads them.
-    enable_wrist_color: bool = Field(default=True)
-    # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
-    color_publish_hz: float = Field(default=30.0)
     # Boot the vendor stack (HDAS, mobiman), which serves every ROS topic used here, if it is not running.
     boot_vendor_stack: bool = Field(default=True)
     # "" boots vendor_setup.sh's own set; a vendor profile, e.g. "ATCStandard/R1PROVRTeleop", boots that.
@@ -175,10 +160,6 @@ class R1ProConnection(Module):
 
     # Perception.
     head_depth: Out[Image]
-    wrist_left_color: Out[CompressedImage]
-    wrist_left_depth: Out[Image]
-    wrist_right_color: Out[CompressedImage]
-    wrist_right_depth: Out[Image]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -230,6 +211,10 @@ class R1ProConnection(Module):
 
         self._stop_event = threading.Event()
         self._publish_thread: Thread | None = None
+        self._cmd_vel_condition = threading.Condition()
+        self._cmd_vel_deadline = 0.0
+        self._cmd_vel_closed = True
+        self._cmd_vel_thread: Thread | None = None
 
     # Lifecycle
 
@@ -276,6 +261,7 @@ class R1ProConnection(Module):
             )
 
         self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
+        self._start_cmd_vel_watchdog()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
 
         self._publish_thread = Thread(target=self._publish_loop, name="r1pro-publish", daemon=True)
@@ -283,6 +269,7 @@ class R1ProConnection(Module):
 
     @rpc
     def stop(self) -> None:
+        self._stop_cmd_vel_watchdog()
         self._stop_event.set()
         self._sensor_stop.set()
 
@@ -374,7 +361,6 @@ class R1ProConnection(Module):
     def _setup_sensor_streams(self) -> None:
         try:
             from sensor_msgs.msg import (
-                CompressedImage as RosCompressedImage,
                 Image as RosImage,
                 Imu as RosImu,
             )
@@ -408,15 +394,7 @@ class R1ProConnection(Module):
                 Thread(target=worker, args=(stream, q, *args), daemon=True, name=f"r1pro-{stream}")
             )
 
-        if self.config.enable_wrist_color:
-            for stream, topic in _COLOR_CAMERAS.items():
-                add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
-
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
-
-        if self.config.enable_wrist_depth:
-            for stream, topic in _WRIST_DEPTH_CAMERAS.items():
-                add_stream(stream, topic, RosImage, self._convert_loop, Image)
 
         add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
         add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
@@ -548,6 +526,63 @@ class R1ProConnection(Module):
         return [speed if (v == 0.0 or v == VEL_STOP) else float(v) for v in dqs]
 
     def _on_cmd_vel(self, msg: Twist) -> None:
+        with self._cmd_vel_condition:
+            if self._cmd_vel_closed:
+                return
+            self._publish_cmd_vel(msg)
+            self._cmd_vel_deadline = time.monotonic() + self.config.cmd_vel_timeout_s
+            self._cmd_vel_condition.notify()
+
+    def _start_cmd_vel_watchdog(self) -> None:
+        with self._cmd_vel_condition:
+            if not self._cmd_vel_closed:
+                return
+            self._cmd_vel_closed = False
+            self._cmd_vel_deadline = 0.0
+            self._cmd_vel_thread = Thread(
+                target=self._cmd_vel_watchdog, name="r1pro-cmd-vel", daemon=True
+            )
+            self._cmd_vel_thread.start()
+
+    def _stop_cmd_vel_watchdog(self) -> None:
+        with self._cmd_vel_condition:
+            if self._cmd_vel_closed:
+                return
+            self._cmd_vel_closed = True
+            self._cmd_vel_condition.notify()
+            if self._cmd_vel_deadline:
+                try:
+                    self._publish_cmd_vel(Twist())
+                except (OSError, RuntimeError):
+                    logger.exception("Failed to stop R1 Pro chassis during shutdown")
+                finally:
+                    self._cmd_vel_deadline = 0.0
+        if self._cmd_vel_thread is not None:
+            self._cmd_vel_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._cmd_vel_thread = None
+
+    def _cmd_vel_watchdog(self) -> None:
+        # Independent of sensor decoding, coordinator ticks and browser timers.
+        # Hold the same lock as _on_cmd_vel so an expired command cannot stop
+        # a newer one after it has already been forwarded.
+        with self._cmd_vel_condition:
+            while not self._cmd_vel_closed:
+                if not self._cmd_vel_deadline:
+                    self._cmd_vel_condition.wait()
+                    continue
+                remaining = self._cmd_vel_deadline - time.monotonic()
+                if remaining > 0:
+                    self._cmd_vel_condition.wait(timeout=remaining)
+                    continue
+                try:
+                    self._publish_cmd_vel(Twist())
+                except (OSError, RuntimeError):
+                    logger.exception("Failed to stop R1 Pro chassis after command timeout")
+                    self._cmd_vel_deadline = time.monotonic() + self.config.cmd_vel_timeout_s
+                else:
+                    self._cmd_vel_deadline = 0.0
+
+    def _publish_cmd_vel(self, msg: Twist) -> None:
         from geometry_msgs.msg import TwistStamped
 
         ros = self._ros
@@ -706,38 +741,6 @@ class R1ProConnection(Module):
                 next_tick = time.perf_counter()
 
     # Sensor workers
-
-    def _compressed_image_loop(self, stream: str, q: queue.Queue[Any]) -> None:
-        out: Out[CompressedImage] = getattr(self, stream)
-        hz = self.config.color_publish_hz
-        min_period = 1.0 / hz if hz > 0 else 0.0
-        last_pub = 0.0
-        while not self._sensor_stop.is_set():
-            try:
-                msg = q.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            if msg is None:
-                break
-            t0 = time.perf_counter()
-            if min_period > 0.0 and t0 - last_pub < min_period:
-                continue
-            last_pub = t0
-            try:
-                stamp = msg.header.stamp
-                ts = stamp.sec + stamp.nanosec * 1e-9
-                out.publish(
-                    CompressedImage(
-                        data=bytes(msg.data),
-                        format="jpeg",
-                        frame_id=msg.header.frame_id or stream,
-                        ts=ts if ts > 0 else time.time(),
-                    )
-                )
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
-            except Exception:
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
-                logger.exception(f"R1Pro {stream} conversion error")
 
     def _convert_loop(self, stream: str, q: queue.Queue[Any], dimos_type: type) -> None:
         """ros_to_dimos passthrough worker (depth images)."""

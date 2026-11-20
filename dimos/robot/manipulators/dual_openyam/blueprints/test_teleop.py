@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -25,8 +26,10 @@ def test_visualization_configuration_preserves_teleop_composition(mocker):
     download = mocker.patch(
         "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
     )
-    base = teleop_webxr_dual_openyam
-    configured = build_dual_openyam_webxr(visualization=ViserVisualizationConfig(host="0.0.0.0"))
+    base = teleop_webxr_dual_openyam.solidify()
+    configured = build_dual_openyam_webxr(
+        visualization=ViserVisualizationConfig(host="0.0.0.0")
+    ).solidify()
 
     assert configured.remapping_map == base.remapping_map
     assert [atom.module for atom in configured.blueprints] == [
@@ -51,7 +54,15 @@ def test_visualization_configuration_preserves_teleop_composition(mocker):
     ]
 
     parsed = BlueprintConfigParser(configured).parse(
-        ["--manipulationmodule.visualization.host", "127.0.0.1"], environ={}
+        [
+            "--manipulationmodule.visualization.host",
+            "127.0.0.1",
+            "--left-can-port",
+            "left",
+            "--right-can-port",
+            "right",
+        ],
+        environ={},
     )
     assert parsed.module_kwargs(updated.name)["visualization"]["host"] == "127.0.0.1"
     download.assert_not_called()

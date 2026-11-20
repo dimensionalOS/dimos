@@ -10,13 +10,13 @@
     <meta charset="utf-8" />
     <title>DimOS chat input</title>
     <style>
-      body {
-        font-family: monospace;
-        margin: 1rem;
-      }
-      #log div {
-        margin-top: 0.25rem;
-      }
+    body {
+      font-family: monospace;
+      margin: 1rem;
+    }
+    #log div {
+      margin-top: 0.25rem;
+    }
     </style>
   </head>
   <body>
@@ -29,39 +29,39 @@
     </p>
     <div id="log"></div>
     <script type="module">
-      import { connect } from "/sdk.js";
+    import { connect } from "/sdk.js";
 
-      const statusEl = document.querySelector("#status");
-      const logEl = document.querySelector("#log");
-      const textEl = document.querySelector("#text");
+    const statusEl = document.querySelector("#status");
+    const logEl = document.querySelector("#log");
+    const textEl = document.querySelector("#text");
 
-      const session = connect();
-      session.status.subscribe(() => {
-        statusEl.textContent = `status: ${session.status.get().transport.phase}`;
-      });
+    const session = connect();
+    session.status.subscribe(() => {
+      statusEl.textContent = `status: ${session.status.get().transport.phase}`;
+    });
 
-      const log = (text) => {
-        const line = document.createElement("div");
-        line.textContent = text;
-        logEl.append(line);
-      };
+    const log = (text) => {
+      const line = document.createElement("div");
+      line.textContent = text;
+      logEl.append(line);
+    };
 
-      const publish = async (value) => {
-        try {
-          const receipt = await session.publish("human_input", value, {
-            clientTs: Date.now() / 1000,
-          });
-          log(`acked ${receipt.ch} bridgeTs=${receipt.bridgeTs}`);
-        } catch (e) {
-          log(`${e.outcome ?? "failed"} ${e.code ?? ""}: ${e.message}`);
-        }
-      };
+    const publish = async (value) => {
+      try {
+        const receipt = await session.publish("human_input", value, {
+          clientTs: Date.now() / 1000,
+        });
+        log(`acked ${receipt.ch} bridgeTs=${receipt.bridgeTs}`);
+      } catch (e) {
+        log(`${e.outcome ?? "failed"} ${e.code ?? ""}: ${e.message}`);
+      }
+    };
 
-      document.querySelector("#send").addEventListener(
-        "click",
-        () => publish(textEl.value),
-      );
-      document.querySelector("#send-bad").addEventListener("click", () => publish(12.5));
+    document.querySelector("#send").addEventListener(
+      "click",
+      () => publish(textEl.value),
+    );
+    document.querySelector("#send-bad").addEventListener("click", () => publish(12.5));
     </script>
   </body>
 </html>

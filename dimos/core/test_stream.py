@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 from types import SimpleNamespace
@@ -29,6 +30,15 @@ from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.unitree.type.odometry import Odometry
+from dimos.utils.testing.waiting import wait_until
+
+
+class OdometryPublisher(Module):
+    odometry: Out[Odometry]
+
+    @rpc
+    def publish(self, odom: Odometry) -> None:
+        self.odometry.publish(odom)
 
 
 class SubscriberBase(Module):
@@ -183,14 +193,14 @@ def test_subscription(dimos, subscriber_class) -> None:
 
     robot.start()
     subscriber.sub1()
-    subscriber.wait_for_sub1_msg()
+    assert subscriber.wait_for_sub1_msg(), "no odometry reached sub1 within its wait"
 
     assert subscriber.sub1_msgs_len() > 0
     assert subscriber.sub2_msgs_len() == 0
     assert subscriber.active_subscribers() == 1
 
     subscriber.sub2()
-    subscriber.wait_for_sub2_msg()
+    assert subscriber.wait_for_sub2_msg(), "no odometry reached sub2 within its wait"
 
     subscriber.unsub_all()
 
@@ -210,36 +220,36 @@ def test_subscription(dimos, subscriber_class) -> None:
     robot.stop_rpc_client()
 
 
-@pytest.mark.self_hosted
-def test_get_next(dimos) -> None:
-    robot = dimos.deploy(MockRobotClient)
+@pytest.fixture
+def odometry_publisher(dimos):
+    publisher = dimos.deploy(OdometryPublisher)
+    with SpyLCMTransport("/test_get_next/odom", Odometry) as transport:
+        publisher.odometry.transport = transport
+        publisher.start()
+        yield publisher
 
-    robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
-    robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
-    robot.mov.transport = pLCMTransport("/mov")
 
+def test_get_next(dimos, odometry_publisher) -> None:
     subscriber = dimos.deploy(RXPYSubscriber)
-    subscriber.odom.connect(robot.odometry)
+    subscriber.odom.connect(odometry_publisher.odometry)
 
-    robot.start()
-    time.sleep(0.1)
+    # The replay thread imports open3d between odometry samples, which exceeded
+    # get_next's timeout on a loaded runner. Publish only what we test.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        for x in (1.0, 2.0):
+            expected = Odometry(position=[x, 0.0, 0.0], ts=x, frame_id="world")
+            received = executor.submit(subscriber.get_next)
+            wait_until(lambda: subscriber.active_subscribers() == 1, timeout=5.0)
+            assert not received.done()
 
-    odom = subscriber.get_next()
+            odometry_publisher.publish(expected)
 
-    assert isinstance(odom, Odometry)
-    assert subscriber.active_subscribers() == 0
-
-    time.sleep(0.2)
-
-    next_odom = subscriber.get_next()
-
-    assert isinstance(next_odom, Odometry)
-    assert subscriber.active_subscribers() == 0
-
-    assert next_odom != odom
-    robot.stop()
-    subscriber.stop_rpc_client()
-    robot.stop_rpc_client()
+            odom = received.result(timeout=5.0)
+            assert isinstance(odom, Odometry)
+            assert odom == expected
+            assert odom.ts == expected.ts
+            assert odom.frame_id == expected.frame_id
+            wait_until(lambda: subscriber.active_subscribers() == 0, timeout=5.0)
 
 
 @pytest.mark.self_hosted

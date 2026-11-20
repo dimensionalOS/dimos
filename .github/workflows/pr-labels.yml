@@ -48,7 +48,7 @@ jobs:
       contents: read        # For listPullRequestsAssociatedWithCommit
       pull-requests: write  # To add/remove label
     steps:
-      - uses: actions/github-script@v9
+      - uses: actions/github-script@v9.0.0
         with:
           script: |
             const label = 'ready-to-merge';
@@ -142,7 +142,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Check contribution history and label
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        uses: actions/github-script@v9.0.0
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
         with:

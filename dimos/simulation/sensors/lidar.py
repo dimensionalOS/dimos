@@ -99,11 +99,13 @@ class SimLidar:
         origin: NDArray[np.float64],
         world_from_sensor: NDArray[np.float64],
         n: int,
+        keep_every: int = 1,
     ) -> NDArray[np.float32]:
-        """The next n points of the pattern cast from one sensor pose, as sensor-frame returns."""
+        """Every keep_every-th of the pattern's next n points cast, as sensor-frame returns."""
         rm = self.returns
-        dirs = self.pattern.directions(self._k, n)
+        dirs = self.pattern.directions(self._k, n)[-self._k % keep_every :: keep_every]
         self._k += n
+        n = len(dirs)
         world_dirs = dirs @ world_from_sensor.T
         lens = np.array([0.0, 0.0, self.lens_height])
         dist, normals = self.raycaster.cast(

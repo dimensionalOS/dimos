@@ -36,6 +36,7 @@ from dimos.core.introspection.utils import (
     RPC_COLOR,
     TYPE_COLORS,
     color_for_string,
+    render_dot_svg,
     sanitize_id,
 )
 from dimos.core.module import ModuleBase, is_module_type
@@ -334,18 +335,9 @@ def render_svg(
         layout: Set of layout algorithms to apply.
         include_rpc: Whether to include RPC contracts and relationships.
     """
-    import subprocess
-
     if layout is None:
         layout = set()
 
     dot_code = render(blueprint_set, layout=layout, include_rpc=include_rpc)
     engine = "fdp" if LayoutAlgo.FDP in layout else "dot"
-    result = subprocess.run(
-        [engine, "-Tsvg", "-o", output_path],
-        input=dot_code,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"graphviz failed: {result.stderr}")
+    render_dot_svg(dot_code, output_path, engine=engine)

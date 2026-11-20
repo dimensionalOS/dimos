@@ -125,6 +125,8 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
             "_resolve",
             "__reduce__",
             "__reduce_ex__",
+            "__deepcopy__",
+            "__class__",
         }:
             return object.__getattribute__(self, name)
 

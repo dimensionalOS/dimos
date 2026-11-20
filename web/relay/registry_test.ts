@@ -440,15 +440,18 @@ Deno.test("unsub disposes the channel's policy and releases its stream", async (
   assertEquals(viewer.sink.sent.length, 2);
 });
 
-Deno.test("a delivery change disposes the superseded policy", async () => {
+Deno.test("a new registration replaces old delivery policies", async () => {
   const reg = new Registry();
-  const robot = new FakeRobot("r1", []); // no manifest: the frame header rules
+  const robot = new FakeRobot("r1", [rxSpec("tele", "json.v1", "reliable")]);
   reg.registerRobot(robot);
   const viewer = attach(reg, "r1", ["tele"]);
   reg.onRobotFrame(robot, frame("tele", 1, "reliable"));
   await tick();
   assert(viewer.policies.get("tele") instanceof ReliableChannel);
-  reg.onRobotFrame(robot, frame("tele", 2, "latest"));
+  reg.robotClosed(robot);
+  const replacement = new FakeRobot("r1", [rxSpec("tele", "json.v1", "latest")]);
+  reg.registerRobot(replacement);
+  reg.onRobotFrame(replacement, frame("tele", 2, "latest"));
   assert(viewer.policies.get("tele") instanceof LatestChannel);
   assertEquals(viewer.sink.streamsAborted, 1); // the reliable writer released
   await tick();
@@ -488,15 +491,19 @@ Deno.test("sub to an undeclared channel is rejected", () => {
   assertEquals(robot.subs().length, before); // no new snapshot went out
 });
 
-Deno.test("a robot that declared no manifest accepts any sub", () => {
-  // The transport e2e tests hello without a manifest and steer delivery via
-  // frame headers; with nothing to validate against, subs pass through.
-  const reg = new Registry();
-  const robot = new FakeRobot("r1", []);
-  reg.registerRobot(robot);
-  const viewer = attach(reg, "r1", ["anything"]);
-  assertEquals(robot.lastSubs().chs, ["anything"]);
-  assertEquals(viewer.replies.filter((m) => m.t === "error"), []);
+Deno.test("empty and absent manifests grant no arbitrary subscriptions", () => {
+  for (const manifest of [null, { version: 1, channels: [], panels: [] }]) {
+    const reg = new Registry();
+    const robot = new FakeRobot("r1", [], manifest);
+    reg.registerRobot(robot);
+    const viewer = attach(reg, "r1", ["anything", "dimos/**"]);
+    assertEquals(robot.lastSubs().chs, []);
+    assertEquals(viewer.subs.size, 0);
+    assertEquals(viewer.replies.filter((m) => m.t === "error").map((m) => m.code), [
+      "unknown_channel",
+      "unknown_channel",
+    ]);
+  }
 });
 
 Deno.test("sub to a reserved @-channel is rejected even without a manifest", () => {
@@ -538,7 +545,7 @@ Deno.test("sub while the watched robot is offline is rejected", () => {
   assertEquals(viewer.subs.size, 0);
 });
 
-Deno.test("reconnect-stale sub is filtered from snapshots, frames fall back to header delivery", () => {
+Deno.test("reconnect-stale sub is filtered from snapshots and cannot receive undeclared frames", () => {
   const reg = new Registry();
   const withMystery: ChannelSpec[] = [...SPECS, rxSpec("mystery", "x", "latest")];
   const first = new FakeRobot("r1", withMystery);
@@ -552,10 +559,10 @@ Deno.test("reconnect-stale sub is filtered from snapshots, frames fall back to h
   // The surviving sub is no longer in the manifest: snapshots must not carry
   // it (the bridge has no input to activate for it) ...
   assertEquals(second.lastSubs().chs, []);
-  // ... but if the robot still sends the channel, routing falls back to the
-  // frame header's delivery.
+  // An old subscription does not authorize the new source's undeclared data.
   reg.onRobotFrame(second, frame("mystery", 1, "latest"));
-  assert(viewer.policies.get("mystery") instanceof LatestChannel);
+  assertEquals(viewer.policies.has("mystery"), false);
+  assertEquals(viewer.sink.sent, []);
 });
 
 Deno.test("invalid and unregistered frames are dropped and counted", () => {
@@ -664,14 +671,13 @@ Deno.test("undeclared channel frames aggregate into one per-robot bucket", async
   assertEquals(stats.perRobot.r1.undeclared.framesIn, 2);
   assert(stats.perRobot.r1.undeclared.bytesIn > 0);
 
-  // A manifest-less robot still forwards to subscribed viewers while all its
-  // traffic lands in the aggregate.
+  // A manifest-less robot's traffic lands in the aggregate but grants no read.
   const bare = new FakeRobot("r2", []);
   reg.registerRobot(bare);
   const viewer = attach(reg, "r2", ["tele"]);
   reg.onRobotFrame(bare, frame("tele", 1, "latest"));
   await tick();
-  assertEquals(viewer.sink.sent.length, 1);
+  assertEquals(viewer.sink.sent.length, 0);
   stats = reg.stats() as typeof stats;
   assertEquals(stats.perRobot.r2.channels, {});
   assertEquals(stats.perRobot.r2.undeclared.framesIn, 1);

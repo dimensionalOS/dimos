@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/test-install.sh'
+      - 'scripts/test_install.py'
       - 'pyproject.toml'
       - 'uv.lock'
       - 'setup.py'
@@ -25,23 +26,47 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@v10.2.0
       - name: Shell syntax and lint
         run: |
           /bin/bash -n scripts/install.sh
           /bin/bash -n scripts/test-install.sh
           uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh
+      - name: Test installation harness
+        run: uvx --from pytest pytest -c /dev/null scripts/test_install.py
+
+  package:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/build-cockpit
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Build the PR source distribution
+        run: uv build --sdist
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dimos-sdist
+          path: dist/dimos-*.tar.gz
+          if-no-files-found: error
 
   ubuntu:
-    needs: lint
+    needs: [lint, package]
+    # Manual runs exercise the published PyPI package and skip the PR build.
+    if: >-
+      ${{ !cancelled() && needs.lint.result == 'success' &&
+          (github.event_name == 'workflow_dispatch' || needs.package.result == 'success') }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
-        version: ['22.04', '24.04']
+        version: ['22.04', '24.04', '26.04']
         mode: [library, dev]
     runs-on: ${{ matrix.os }}
     container: ubuntu:${{ matrix.version }}
@@ -55,17 +80,28 @@ jobs:
         run: |
           apt-get update
           apt-get install -y ca-certificates curl git
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Install and verify
+      - name: Download the PR distribution for library mode
+        if: github.event_name == 'pull_request' && matrix.mode == 'library'
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: dimos-sdist
+          path: /tmp/dimos-package
+      - name: Select the PR distribution for the installer
+        if: github.event_name == 'pull_request' && matrix.mode == 'library'
+        run: |
+          printf 'dimos @ file://%s\n' /tmp/dimos-package/dimos-*.tar.gz > /tmp/dimos-constraint.txt
+          echo 'UV_CONSTRAINT=/tmp/dimos-constraint.txt' >> "$GITHUB_ENV"
+      - name: Install and verify without an audio server
         run: |
           # checkout's safe.directory setting uses a temporary HOME. The
           # container's later steps need to trust this mounted checkout too.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
           bash scripts/test-install.sh '${{ matrix.mode }}'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@v7.0.1
         # act has no GitHub artifact service; installation output stays in its log.
         if: always() && !env.ACT
         with:

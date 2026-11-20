@@ -7,11 +7,12 @@ import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
 import type { TimelineRow } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
 import type { ToolCard } from "#dimos/agents/frontends/tui/cards/base.ts";
 import { AssistantMessageComponent, UserMessageComponent, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { Gallery } from "#dimos/agents/frontends/tui/views/gallery.ts";
 import { accent, amber, muted } from "#dimos/agents/frontends/tui/style.ts";
 import { cardFor } from "#dimos/agents/frontends/tui/cards/choose.ts";
 import { clean, cleanMultiline } from "#dimos/agents/shared/view-models/text.ts";
+import { movedToBackground } from "#dimos/agents/shared/view-models/conversation/tools.ts";
 
 /** What the chat shows now: the conversation's timeline and how many older items the transfer budget left out. */
 export type TranscriptSource = { readonly rows: readonly TimelineRow[]; readonly omitted: number };
@@ -97,6 +98,27 @@ function line(text: string): Text {
   return new Text(text, 0, 0);
 }
 
+class ToolBlock extends Container {
+  override render(width: number): string[] {
+    // Pi finds a scrolled image's anchor by walking back through empty continuation rows.
+    return super.render(Math.max(1, width - 4)).map((line) => (line === "" ? line : `  ${line}`));
+  }
+
+  override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
+    if (event.x < 2 || event.x >= event.width - 2) return undefined;
+    return super.handleMouse({ ...event, x: event.x - 2, width: Math.max(1, event.width - 4) });
+  }
+}
+
+function userBlock(text: string): Component {
+  const message = new UserMessageComponent(text, undefined, 3);
+  if (text.trim() === "") return message;
+  const block = new Container();
+  block.addChild(new Spacer(1));
+  block.addChild(message);
+  return block;
+}
+
 const FROM_LABELS: { readonly [F in QueuedRow["from"]]: string } = {
   you: "",
   module: "⚡",
@@ -105,14 +127,11 @@ const FROM_LABELS: { readonly [F in QueuedRow["from"]]: string } = {
   runtime: "↻",
 };
 
-/** A background call's result as the chat shows it; the model got all of it. */
-const BACKGROUND_LINES = 3;
+function backgroundLine(tool: string, status: string): TruncatedText {
+  return new TruncatedText(muted(` ⇢ ${clean(tool)} ${status}`));
+}
 
 const SELECTED_GUTTER = "┃ ";
-
-const BACKGROUND_ENDS: {
-  readonly [E in Extract<DimosInput["source"], { readonly kind: "background" }>["end"]]: string;
-} = { finished: "finished", failed: "failed", stopped: "was stopped", interrupted: "was interrupted" };
 
 function queuedLine(row: QueuedRow): string {
   const label = row.from === "you" ? (row.mode === "steer" ? "steer" : "follow") : FROM_LABELS[row.from];
@@ -151,7 +170,7 @@ export class TranscriptView implements Component {
     tui: TUI,
     cwd: () => string,
     source: () => TranscriptSource | null,
-    openPanel: (gallery: Gallery, index: number) => void,
+    openPanel: TranscriptView["openPanel"],
   ) {
     this.tui = tui;
     this.cwd = cwd;
@@ -168,7 +187,11 @@ export class TranscriptView implements Component {
 
   /** Reconciles to `source` and lays it out at `width`; returns each part's key and height in order. */
   show(source: TranscriptSource, width: number): readonly { readonly key: string; readonly height: number }[] {
-    const { rows, omitted } = source;
+    const { omitted } = source;
+    const rows = source.rows.filter((row) => {
+      if (row.kind === "tool") return row.call.arguments.run_in_background !== true;
+      return row.kind !== "queued" || row.row.from !== "background";
+    });
     const parts: { readonly key: string; readonly component: Component }[] = [];
     if (rows.length === 0 && omitted === 0) parts.push({ key: "banner", component: this.banner });
     if (omitted > 0) {
@@ -312,12 +335,17 @@ export class TranscriptView implements Component {
       case "item":
         return this.itemView(row.item, row.outcome, rows);
       case "streaming": {
-        let text = partialText(row.message);
-        const markdown = new Markdown(text, 1, 1, getMarkdownTheme());
-        return this.fixed(markdown, (next) => {
-          if (next.kind !== "streaming" || partialText(next.message) === text) return;
-          text = partialText(next.message);
+        let text = partialText(row.message).trim();
+        const markdown = new Markdown(text, 1, 0, getMarkdownTheme());
+        const block = new Container();
+        const gap = new Spacer(text === "" ? 0 : 1);
+        block.addChild(gap);
+        block.addChild(markdown);
+        return this.fixed(block, (next) => {
+          if (next.kind !== "streaming" || partialText(next.message).trim() === text) return;
+          text = partialText(next.message).trim();
           markdown.setText(text);
+          gap.setLines(text === "" ? 0 : 1);
         });
       }
       case "tool":
@@ -348,7 +376,7 @@ export class TranscriptView implements Component {
     card.setExpanded(this.expanded);
     if (output !== "") card.output(output);
     const hint = new Container();
-    const block = new Container();
+    const block = new ToolBlock();
     block.addChild(card);
     block.addChild(hint);
     let shownOutput = output;
@@ -390,19 +418,25 @@ export class TranscriptView implements Component {
         );
         break;
       case "user":
-        block.addChild(new UserMessageComponent(userText(item.message)));
+        block.addChild(userBlock(userText(item.message)));
         break;
       case "assistant":
         block.addChild(new AssistantMessageComponent(cleanAssistant(item.message), true));
         break;
       case "tool_result": {
+        if (movedToBackground(item.result)) {
+          block.addChild(backgroundLine(item.result.toolName, "sent to background"));
+          break;
+        }
+        const tools = new ToolBlock();
+        block.addChild(tools);
         const card = cardFor(callOf(rows, item.result), this.tui, this.cwd());
         card.setExpanded(this.expanded);
         card.end(withPlaceholders(item.result));
-        block.addChild(card);
+        tools.addChild(card);
         cards.push(card);
         const render = renderOf(item.result);
-        if (render !== null) galleries.push(this.gallery(block, render));
+        if (render !== null) galleries.push(this.gallery(tools, render));
         break;
       }
       case "compaction":
@@ -452,11 +486,12 @@ export class TranscriptView implements Component {
 
   /** An input by its source: the user's text, "⚡ module: text", "⏰ job: text", "⇢ text", or only its runtime change. */
   private input(block: Container, input: DimosInput, images: readonly string[], galleries: Gallery[]): void {
-    if (input.change !== null) block.addChild(line(muted(` ↻ runtime: ${clean(input.change.summary)}`)));
     const source = input.source;
+    if (source.kind !== "background" && input.change !== null)
+      block.addChild(line(muted(` ↻ runtime: ${clean(input.change.summary)}`)));
     switch (source.kind) {
       case "user":
-        block.addChild(new UserMessageComponent(cleanMultiline(input.text)));
+        block.addChild(userBlock(cleanMultiline(input.text)));
         break;
       case "event":
         block.addChild(line(amber(" ⚡ ") + clean(`${source.event.module}: ${source.event.text}`)));
@@ -465,9 +500,7 @@ export class TranscriptView implements Component {
         block.addChild(line(accent(" ⏰ ") + clean(`${source.job}: ${input.text}`)));
         break;
       case "background":
-        block.addChild(line(muted(" ⇢ ") + clean(`${source.tool} ${BACKGROUND_ENDS[source.end]} in the background`)));
-        for (const text of input.text.split("\n").slice(0, BACKGROUND_LINES))
-          block.addChild(line(muted(`   ${clean(text)}`)));
+        block.addChild(backgroundLine(source.tool, source.end));
         break;
       case "runtime":
         return;

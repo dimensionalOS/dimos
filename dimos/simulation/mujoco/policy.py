@@ -38,6 +38,7 @@ class OnnxController(ABC):
         input_controller: InputController,
         ctrl_dt: float | None = None,
         drift_compensation: list[float] | None = None,
+        robot_label: str | None = None,
     ) -> None:
         self._output_names = ["continuous_actions"]
         # The policy is a small MLP: CPU inference beats CUDA, TensorRT and CoreML
@@ -48,7 +49,12 @@ class OnnxController(ABC):
         self._policy = ort.InferenceSession(
             policy_path, sess_options=options, providers=["CPUExecutionProvider"]
         )
-        logger.info(f"Loaded policy: {policy_path} with providers: {self._policy.get_providers()}")
+        logger.info(
+            "Loaded policy",
+            robot=robot_label,
+            policy_path=policy_path,
+            providers=self._policy.get_providers(),
+        )
 
         self._action_scale = action_scale
         self._default_angles = default_angles
@@ -110,6 +116,7 @@ class G1OnnxController(OnnxController):
         action_scale: float,
         input_controller: InputController,
         drift_compensation: list[float] | None = None,
+        robot_label: str | None = None,
     ) -> None:
         super().__init__(
             policy_path,
@@ -119,6 +126,7 @@ class G1OnnxController(OnnxController):
             input_controller,
             ctrl_dt,
             drift_compensation,
+            robot_label=robot_label,
         )
 
         self._phase = np.array([0.0, np.pi])

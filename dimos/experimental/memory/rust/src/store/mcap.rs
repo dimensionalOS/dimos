@@ -13,15 +13,15 @@
 // limitations under the License.
 
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::BufWriter;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use mcap::records::MessageHeader;
-use mcap::{Compression, WriteOptions, Writer};
+use mcap::{Attachment, Compression, WriteOptions, Writer};
 
-use super::{Observation, RecordingStore};
+use super::{McapAttachmentConfig, Observation, RecordingStore};
 use crate::StreamConfig;
 
 pub struct McapRecordingStore {
@@ -31,14 +31,41 @@ pub struct McapRecordingStore {
 }
 
 impl McapRecordingStore {
-    pub fn open(path: &str, _streams: &[StreamConfig], compression_threads: usize) -> Result<Self> {
+    pub fn open(
+        path: &str,
+        _streams: &[StreamConfig],
+        compression_threads: usize,
+        attachments: &[McapAttachmentConfig],
+    ) -> Result<Self> {
+        // Fail before creating the output if any source file is unreadable.
+        let attachments = attachments
+            .iter()
+            .map(|attachment| {
+                let data = fs::read(&attachment.path).with_context(|| {
+                    format!("failed to read MCAP attachment {:?}", attachment.path)
+                })?;
+                let time = timestamp_ns(crate::wall_time())?;
+                Ok(Attachment {
+                    log_time: time,
+                    create_time: time,
+                    name: attachment.name.clone(),
+                    media_type: attachment.media_type.clone(),
+                    data: data.into(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         let file = File::create(path).with_context(|| format!("failed to create {path}"))?;
         let options = WriteOptions::new()
             .profile("dimos")
             .library("dimos-memory-recorder")
             .compression(Some(Compression::Zstd))
             .compression_threads(compression_threads.try_into().unwrap_or(u32::MAX));
-        let writer = Writer::with_options(BufWriter::new(file), options)?;
+        let mut writer = Writer::with_options(BufWriter::new(file), options)?;
+        for attachment in attachments {
+            writer.attach(&attachment).with_context(|| {
+                format!("failed to write MCAP attachment {:?}", attachment.name)
+            })?;
+        }
         Ok(Self {
             writer,
             channels: HashMap::new(),
@@ -111,7 +138,7 @@ impl RecordingStore for McapRecordingStore {
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.writer.finish()?;
+        self.writer.finish().context("failed to finalize MCAP")?;
         Ok(())
     }
 }
@@ -147,9 +174,13 @@ mod tests {
             port: "idle".into(),
             ..(*active).clone()
         };
-        let mut store =
-            McapRecordingStore::open(file.path().to_str().unwrap(), &[(*active).clone(), idle], 1)
-                .unwrap();
+        let mut store = McapRecordingStore::open(
+            file.path().to_str().unwrap(),
+            &[(*active).clone(), idle],
+            1,
+            &[],
+        )
+        .unwrap();
         for source_ts in [12.5, 13.5] {
             store
                 .write_batch(&[Observation {
@@ -203,7 +234,7 @@ mod tests {
             json_schema: Some(serde_json::json!({"type": "object"})),
         });
         let mut store =
-            McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)
+            McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1, &[])
                 .unwrap();
         let observation = Observation {
             stream,
@@ -251,7 +282,7 @@ mod tests {
             json_schema: None,
         });
         let mut store =
-            McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)
+            McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1, &[])
                 .unwrap();
         let mut observation = Observation {
             stream,

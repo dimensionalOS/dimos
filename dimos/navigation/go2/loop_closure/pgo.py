@@ -71,7 +71,9 @@ class PGOConfig(BaseConfig):
     key_pose_delta_trans: float = 0.5
     key_pose_delta_deg: float = 10.0
 
-    # Loop closure
+    # Loop closure, live and against the premap. None is on; PGOVoxelMapper turns it off
+    # in simulation, where the odometry has no drift to correct.
+    loop_closure: bool | None = None
     loop_search_radius: float = 2.0
     loop_time_thresh: float = 20.0
     loop_score_thresh: float = 0.3
@@ -112,6 +114,7 @@ class PGOKwargs(TypedDict, total=False):
 
     key_pose_delta_trans: float
     key_pose_delta_deg: float
+    loop_closure: bool | None
     loop_search_radius: float
     loop_time_thresh: float
     loop_score_thresh: float
@@ -793,6 +796,8 @@ class PGOState:
         return cloud.voxel_downsample(self._cfg.submap_resolution)
 
     def _search_for_loops(self) -> _LoopPair | None:
+        if self._cfg.loop_closure is False:
+            return None
         if len(self._key_poses) < self._cfg.min_keyframes_for_loop_search:
             return None
 
@@ -878,7 +883,7 @@ class PGOState:
 
     def _search_premap(self) -> bool:
         """Close a loop from the newest keyframe into the nearest premap keyframe. True if one landed."""
-        if not self._attached or self._premap is None:
+        if self._cfg.loop_closure is False or not self._attached or self._premap is None:
             return False
         cur_ts = self._key_poses[-1].timestamp
         if (

@@ -21,6 +21,9 @@ import pytest
 
 from dimos.control.components import HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
+from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
+    PlanarBaseTrajectoryTaskConfig,
+)
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
@@ -58,10 +61,10 @@ def _forward(distance: float, duration: float) -> JointTrajectory:
 
 
 def test_planar_preview_plans_on_the_planar_base_limits() -> None:
-    parsed = BlueprintConfigParser(r1pro_planar_preview).parse(environ={})
+    parsed = BlueprintConfigParser(r1pro_planar_preview.solidify()).parse(environ={})
     atom = next(
         atom
-        for atom in r1pro_planar_preview.active_blueprints
+        for atom in r1pro_planar_preview.solidify().active_blueprints
         if issubclass(atom.module, ManipulationModule)
     )
     manipulation = ManipulationModuleConfig.model_validate(parsed.module_kwargs(atom.name))
@@ -79,7 +82,7 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
 )
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
-    config = _coordinator_config(r1pro_planar_preview)
+    config = _coordinator_config(r1pro_planar_preview.solidify())
     coordinator = ControlCoordinator(
         publish_joint_state=False,
         tick_rate=config.tick_rate,
@@ -98,13 +101,17 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
             timeout=5.0,
             message="the base trajectory never completed",
         )
-        assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(0.2, abs=0.03)
+        # The mock base moves a fixed step per tick, so a slow tick loop leaves it
+        # behind, and COMPLETED only promises it got within the goal tolerance.
+        assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(
+            0.2, abs=PlanarBaseTrajectoryTaskConfig.position_goal_tolerance
+        )
     finally:
         coordinator.stop()
 
 
 def test_real_control_keeps_planar_joints_out_of_hardware() -> None:
-    blueprint = r1pro_control()
+    blueprint = r1pro_control().solidify()
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
     coordinator_atom = next(
         atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)

@@ -1,0 +1,3 @@
+import mujoco
+
+def mjcf_spec_to_urdf(spec: mujoco.MjSpec) -> str: ...

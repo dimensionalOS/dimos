@@ -1,7 +1,7 @@
 # Agent development
 
 `dimos/agents/` holds two things. The Python agent tooling that dimOS blueprints use: the `@skill` decorator,
-`SkillResult`, the capability registry, `McpServer` and `McpClient`, the skill containers in `skills/`, and
+`SkillResult`, the capability registry, `McpServer` and `Agent`, the skill containers in `skills/`, and
 `HarnessRuntime` in `harness/runtime/`. And the on-robot agent, written in TypeScript and run as `dimos agent`: a
 gateway process that hosts every conversation, a terminal that attaches to it, and the harness that runs the model with
 its tools. This guide is about the TypeScript agent and names the Python parts at the end.
@@ -167,7 +167,9 @@ These parts predate the TypeScript agent and serve dimOS blueprints and Claude C
   [skill_result.py](/dimos/agents/skill_result.py) is its return type. [capabilities.py](/dimos/agents/capabilities.py) keeps two skills that need
   the same capability, such as movement, from running at once.
 - [mcp/](/dimos/agents/mcp/README.md) holds `McpServer`, which serves every `@skill` of a running system as an MCP tool on port 9990,
-  `McpClient`, the LangGraph agent that calls them, and `McpAdapter`.
+  and `McpAdapter`, a JSON-RPC client for it.
+- [agent.py](/dimos/agents/agent.py) is `Agent`, the LangGraph agent that calls those tools, on the chat streams of
+  [base_agent.py](/dimos/agents/base_agent.py).
 - [system_prompt.py](/dimos/agents/system_prompt.py) is the Go2 system prompt for that agent. [skills/](/dimos/agents/skills/) holds the skill
   containers: navigation, observation, speech, GPS, person following and more.
 - [Python agent runtime](/docs/usage/agent/runtime.md) is `HarnessRuntime`, the dimOS module the gateway talks to: inventory, stream

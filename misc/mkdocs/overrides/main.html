@@ -2,14 +2,13 @@
   Material's page template, plus a menu beside the edit button offering the
   page as markdown. Every page is served as markdown at its docs/ path (see
   on_post_page in hooks.py); the menu copies that, or opens it.
+
+  The menu's link also declares the markdown as an alternate of the page. Do
+  not declare it with a <link rel="alternate"> in the head. Material takes
+  every one of those for a translation of the site and requests a sitemap.xml
+  next to it, which does not exist.
 -#}
 {% extends "base.html" %}
-
-{% block extrahead %}
-  {% if page %}
-    <link rel="alternate" type="text/markdown" href="{{ page.file.src_uri | url }}">
-  {% endif %}
-{% endblock %}
 
 {% block content %}
   {% set markdown = page.file.src_uri | url %}
@@ -20,7 +19,7 @@
     </button>
     <div class="dim-markdown__menu">
       <button class="dim-markdown__copy" data-href="{{ markdown }}">Copy as markdown</button>
-      <a href="{{ markdown }}">View as markdown</a>
+      <a rel="alternate" type="text/markdown" href="{{ markdown }}">View as markdown</a>
     </div>
   </div>
   {{ super() }}

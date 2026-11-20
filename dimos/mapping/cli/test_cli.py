@@ -93,6 +93,15 @@ def _stream_counts(db_path: Path) -> dict[str, int]:
         store.stop()
 
 
+def _entity_paths(rrd: Path) -> set[str]:
+    """Entities of a finished .rrd. Raises while the recording is still open."""
+    from rerun.experimental import RrdReader
+
+    reader = RrdReader(rrd)
+    reader.store()  # reads the footer, which is written when the recording is closed
+    return set(reader.stream().collect().schema().entity_paths())
+
+
 @pytest.fixture(scope="module")
 def dataset() -> str:
     """Ensure the go2_short recording is present locally; return its bare name."""
@@ -169,7 +178,8 @@ def test_replay_snippet(dataset: str, tmp_path: Path) -> None:
     out = tmp_path / "replay.rrd"
     res = _run("replay", dataset, "--out", str(out), "--no-gui", "--duration", str(DURATION))
     assert res.returncode == 0, res.stderr
-    assert out.exists() and out.stat().st_size > 0
+    # Flushed and closed by the time the viewer would open it.
+    assert "/world/camera/image" in _entity_paths(out)
 
 
 @requires_turbojpeg
@@ -177,7 +187,7 @@ def test_replay_marker_snippet(dataset: str, tmp_path: Path) -> None:
     out = tmp_path / "markers.rrd"
     res = _run("replay-marker", dataset, "--out", str(out), "--no-gui", "--duration", str(DURATION))
     assert res.returncode == 0, res.stderr
-    assert out.exists() and out.stat().st_size > 0
+    assert "/world/camera/image" in _entity_paths(out)
 
 
 @requires_turbojpeg
@@ -222,22 +232,25 @@ def test_global_snippet(dataset: str, tmp_path: Path) -> None:
         timeout=600.0,
     )
     assert res.returncode == 0, res.stderr
-    assert out.exists() and out.stat().st_size > 0
+    # The path is a few hundred bytes, so it sits in the SDK batcher until a flush.
+    assert "/world/raw_map/path" in _entity_paths(out)
 
 
-def test_view_pc2(tmp_path: Path) -> None:
+def test_view_map_cloud(tmp_path: Path) -> None:
     import numpy as np
 
+    from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-    pc2 = tmp_path / "map.pc2.lcm"
+    recording = tmp_path / "map.db"
     cloud = PointCloud2.from_numpy(
         np.random.default_rng(0).random((256, 3)), frame_id="world", timestamp=0.0
     )
-    pc2.write_bytes(cloud.lcm_encode())
+    with SqliteStore(path=str(recording)) as store:
+        store.stream("map_v1_cloud", PointCloud2).append(cloud, ts=0.0)
 
     out = tmp_path / "view.rrd"
-    res = _run("view", str(pc2), "--out", str(out))
+    res = _run("view", str(recording), "--out", str(out))
     assert res.returncode == 0, res.stderr
     assert "256 points" in res.stdout
     assert out.exists() and out.stat().st_size > 0

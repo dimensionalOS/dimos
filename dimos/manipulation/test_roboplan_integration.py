@@ -304,7 +304,7 @@ def test_materialized_cartesian_plan_respects_reduced_joint_speeds(
 ) -> None:
     atom = next(
         a
-        for a in seeed_b601_dm_planner_coordinator.active_blueprints
+        for a in seeed_b601_dm_planner_coordinator.solidify().active_blueprints
         if issubclass(a.module, ManipulationModule)
     )
     config = atom.kwargs["model"]
