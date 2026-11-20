@@ -355,6 +355,7 @@ pub struct Realtime {
 
 /// The eth1 motor bus (see the ECAN backend); defaults are the values seen on the robot.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct Ecan {
     pub interface: String,
     pub ethertype: u16,
@@ -366,9 +367,13 @@ pub struct Ecan {
     pub control_word: u16,
     pub kp_scale: f64,
     pub kd_scale: f64,
-    // controller joint angle = direction * (motor angle - offset); unknown on the robot, so identity by default
+    // controller joint angle = direction * (motor angle - offset), hips and knees wrapped into (-pi, pi]; defaults are
+    // the vendor calibration (m20-ecan `Calibration::m20`), checked on the robot through a stand-up
     pub position_offset: Vec<f64>,
     pub direction: Vec<f64>,
+    // send the BMS charge-enable request (0xb3) when m20-battery's rule asks, in place of the next joint commands
+    // (rl_deploy's way); off by default
+    pub charge_enable: bool,
 }
 
 impl Default for Ecan {
@@ -384,10 +389,24 @@ impl Default for Ecan {
             control_word: 4,
             kp_scale: 10.0,
             kd_scale: 10.0,
-            position_offset: vec![0.0],
-            direction: vec![1.0],
+            position_offset: vendor_calibration().0,
+            direction: vendor_calibration().1,
+            charge_enable: false,
         }
     }
+}
+
+/// (position_offset, direction) in this file's convention from the vendor's `urdf = motor * dir + offset`.
+fn vendor_calibration() -> (Vec<f64>, Vec<f64>) {
+    let calibration = m20_ecan::Calibration::m20();
+    let direction: Vec<f64> = calibration.direction.iter().map(|&d| d as f64).collect();
+    let offset = calibration
+        .offset_rad
+        .iter()
+        .zip(&direction)
+        .map(|(&o, &d)| -(o as f64) * d)
+        .collect();
+    (offset, direction)
 }
 
 /// Where operator commands arrive: JSON lines over UDP.
@@ -406,7 +425,7 @@ impl Default for CommandInput {
 
 /// A 1-element array broadcast, or a shorter array repeated, to length n.
 pub fn tile(values: &[f64], n: usize) -> Result<Vec<f64>> {
-    if values.is_empty() || n % values.len() != 0 {
+    if values.is_empty() || !n.is_multiple_of(values.len()) {
         bail!("cannot tile {} values to {}", values.len(), n);
     }
     Ok((0..n).map(|i| values[i % values.len()]).collect())
@@ -464,7 +483,7 @@ impl Config {
             }
             tile(&r.kp, JOINTS).with_context(|| format!("runner {name} kp"))?;
             tile(&r.kd, JOINTS).with_context(|| format!("runner {name} kd"))?;
-            let size: usize = r.obs.iter().map(|b| block_size(b)).sum();
+            let size: usize = r.obs.iter().map(block_size).sum();
             if size != r.frame {
                 bail!(
                     "runner {name}: obs blocks add up to {size}, frame is {}",

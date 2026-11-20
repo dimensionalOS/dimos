@@ -282,8 +282,7 @@ impl Pipeline {
     pub fn network_input(&mut self, frame: Vec<f32>) -> Result<Vec<Tensor>> {
         let n = self.spec.history;
         if self.history.is_empty() {
-            self.history
-                .extend(std::iter::repeat(frame.clone()).take(n));
+            self.history.extend(std::iter::repeat_n(frame.clone(), n));
         } else {
             self.history.pop_front();
             self.history.push_back(frame.clone());

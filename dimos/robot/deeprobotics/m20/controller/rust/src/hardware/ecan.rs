@@ -89,8 +89,9 @@ impl Mapping {
     }
 }
 
+/// Like rl_deploy (`ECAN2DDS::Handler`): f32 multiply, truncate toward zero (`fcvtzs`), saturating.
 fn gain_i16(v: f64, scale: f64) -> i16 {
-    (v * scale).round().clamp(i16::MIN as f64, i16::MAX as f64) as i16
+    (v as f32 * scale as f32) as i16
 }
 
 /// The full Ethernet frame for one joint command.
@@ -161,7 +162,13 @@ pub fn decode_state(frame: &[u8], ethertype: u16, map: &Mapping) -> Result<Optio
         };
         let f = |o: usize| f32::from_le_bytes([u[o], u[o + 1], u[o + 2], u[o + 3]]) as f64;
         let dir = map.direction[i];
-        s.q[i] = dir * (f(4) - map.offset[i]);
+        let q = dir * (f(4) - map.offset[i]);
+        // single-turn hip / knee encoders: the (-pi, pi] branch, as the vendor picks at startup; wheels accumulate
+        s.q[i] = if i % 4 == 3 {
+            q
+        } else {
+            (q + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
+        };
         s.dq[i] = dir * f(8);
         s.tau[i] = dir * f(12);
         seen |= 1 << i;
@@ -330,6 +337,71 @@ pub struct EcanBus {
     started: std::time::Instant,
     last: Option<RobotState>,
     buf: Vec<u8>,
+    charge: Option<Charge>,
+}
+
+/// The charge-enable request on this bus: m20-battery's rule fed by the board's battery frames and the legs' gains.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub struct Charge {
+    rule: m20_battery::charge::ChargeEnabler,
+    legs_passive: bool,
+    // request frames still to send, one per tick in place of a joint command
+    pending: usize,
+}
+
+impl Charge {
+    pub fn new() -> Self {
+        Charge {
+            rule: m20_battery::charge::ChargeEnabler::new(),
+            legs_passive: false,
+            pending: 0,
+        }
+    }
+
+    /// Note the command about to go out; a switch to no position gain on any leg is a lie-down.
+    pub fn on_command(&mut self, cmd: &JointCommand) {
+        let passive = (0..JOINTS).filter(|i| i % 4 != 3).all(|i| cmd.kp[i] == 0.0);
+        if passive && !self.legs_passive {
+            self.rule.lay_down();
+        }
+        self.legs_passive = passive;
+    }
+
+    /// A frame from the board: a battery report may ask for a request.
+    pub fn on_frame(&mut self, frame: &[u8]) {
+        if let Ok(report) = m20_battery::BatteryReport::from_ethernet(frame) {
+            if self.rule.on_report(&report, self.legs_passive)
+                == m20_battery::charge::Decision::Request
+            {
+                self.pending = m20_battery::charge::FRAMES_PER_REQUEST;
+            }
+        }
+    }
+
+    /// Whether this tick sends a request frame instead of the joint command.
+    pub fn take_tick(&mut self) -> bool {
+        if self.pending == 0 {
+            return false;
+        }
+        self.pending -= 1;
+        true
+    }
+}
+
+impl Default for Charge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The full Ethernet frame of one charge-enable request (header only, as rl_deploy sends it).
+pub fn encode_charge_enable(seq: u8, src_mac: [u8; 6], cfg: &Ecan) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(ETH_HEADER + ECAN_HEADER);
+    frame.extend_from_slice(&cfg.destination_mac);
+    frame.extend_from_slice(&src_mac);
+    frame.extend_from_slice(&cfg.ethertype.to_be_bytes());
+    frame.extend_from_slice(&m20_battery::charge::encode_charge_enable(seq));
+    frame
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -350,6 +422,7 @@ impl EcanBus {
             started: std::time::Instant::now(),
             last: None,
             buf: vec![0u8; 2048],
+            charge: cfg.charge_enable.then(Charge::new),
         })
     }
 
@@ -374,6 +447,18 @@ impl Hardware for EcanBus {
     fn exchange(&mut self, cmd: &JointCommand) -> Result<RobotState> {
         #[cfg(target_os = "linux")]
         {
+            if let Some(charge) = self.charge.as_mut() {
+                charge.on_command(cmd);
+                // rl_deploy sends the request in place of joint commands; the board does not answer it
+                if charge.take_tick() {
+                    let frame = encode_charge_enable(self.seq, self.socket.mac, &self.cfg);
+                    self.seq = self.seq.wrapping_add(1);
+                    self.socket.send(&frame, self.cfg.send_flags)?;
+                    if let Some(last) = self.last.clone() {
+                        return Ok(last);
+                    }
+                }
+            }
             let frame = encode_command(cmd, self.seq, self.socket.mac, &self.cfg, &self.map);
             self.seq = self.seq.wrapping_add(1);
             self.socket.send(&frame, self.cfg.send_flags)?;
@@ -387,6 +472,9 @@ impl Hardware for EcanBus {
                     bail!("no joint-state reply within {} s", self.cfg.reply_timeout_s);
                 };
                 let frame = self.buf[..n].to_vec();
+                if let Some(charge) = self.charge.as_mut() {
+                    charge.on_frame(&frame);
+                }
                 if let Some(s) = decode_state(&frame, self.cfg.ethertype, &self.map)? {
                     let s = self.with_imu(s)?;
                     self.last = Some(s.clone());
@@ -406,9 +494,17 @@ impl Hardware for EcanBus {
 mod tests {
     use super::*;
 
+    fn identity() -> Ecan {
+        Ecan {
+            position_offset: vec![0.0],
+            direction: vec![1.0],
+            ..Ecan::default()
+        }
+    }
+
     #[test]
     fn command_frame_layout() {
-        let cfg = Ecan::default();
+        let cfg = identity();
         let map = Mapping::new(&cfg).unwrap();
         let mut cmd = JointCommand::default();
         cmd.q[5] = 1.25;
@@ -428,8 +524,49 @@ mod tests {
     }
 
     #[test]
-    fn state_frame_round_trip() {
+    fn gains_truncate_like_rl_deploy() {
+        assert_eq!(gain_i16(1.5 * 1.3, 10.0), 19);
+        assert_eq!(gain_i16(60.0 * 1.3, 10.0), 780);
+        assert_eq!(gain_i16(0.6, 10.0), 6);
+    }
+
+    #[test]
+    fn default_mapping_is_the_vendor_calibration() {
         let cfg = Ecan::default();
+        let map = Mapping::new(&cfg).unwrap();
+        let calibration = m20_ecan::Calibration::m20();
+        let cmd = JointCommand {
+            q: [
+                0.1, -0.7, 1.4, 3.0, -0.1, -0.7, 1.4, 3.0, 0.1, 0.7, -1.4, 3.0, -0.1, 0.7, -1.4,
+                3.0,
+            ],
+            ..Default::default()
+        };
+        let f = encode_command(&cmd, 0, [0; 6], &cfg, &map);
+        for (i, joint) in m20_ecan::JointId::all().enumerate() {
+            let u = &f[24 + i * 24..24 + (i + 1) * 24];
+            let motor = f32::from_le_bytes([u[4], u[5], u[6], u[7]]);
+            assert!(
+                (calibration.urdf_position(joint, motor) as f64 - cmd.q[i]).abs() < 1e-5,
+                "{joint:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn charge_enable_frame() {
+        let f = encode_charge_enable(0x24, [0xf2, 0x53, 0xbb, 0xa2, 0x93, 0xad], &Ecan::default());
+        assert_eq!(f.len(), 24);
+        assert_eq!(
+            &f[..14],
+            &[0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0xf2, 0x53, 0xbb, 0xa2, 0x93, 0xad, 0x44, 0x52]
+        );
+        assert_eq!(&f[14..], &[0, 0, 0x24, 0, 0x11, 0xb3, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn state_frame_round_trip() {
+        let cfg = identity();
         let map = Mapping::new(&cfg).unwrap();
         let mut payload = vec![0u8; STATE_IMU_BYTES];
         for i in 0..JOINTS {

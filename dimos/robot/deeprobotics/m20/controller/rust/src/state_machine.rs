@@ -353,7 +353,7 @@ impl Controller {
             || self
                 .fault
                 .as_deref()
-                .map_or(false, |f| f.starts_with("policy"))
+                .is_some_and(|f| f.starts_with("policy"))
         {
             self.fault = fault.or(self.fault.take());
         } else {
@@ -399,9 +399,8 @@ impl Controller {
         let (t, total) = (self.state_time, p.phase_s);
         if t <= total {
             let goal = leg_pose_for_height(&self.cfg.robot, p.crouch_height, p.hipx);
-            for i in 0..JOINTS {
-                (c.q[i], c.dq[i]) =
-                    cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, total);
+            for (i, &target) in goal.iter().enumerate() {
+                (c.q[i], c.dq[i]) = cubic(self.enter_q[i], self.enter_dq[i], target, 0.0, t, total);
             }
         } else {
             let (h, _) = cubic(p.crouch_height, 0.0, p.stand_height, 0.0, t - total, total);
@@ -415,8 +414,8 @@ impl Controller {
             );
             c.q = leg_pose_for_height(&self.cfg.robot, h, p.hipx);
             let next = leg_pose_for_height(&self.cfg.robot, h_next, p.hipx);
-            for i in 0..JOINTS {
-                c.dq[i] = (next[i] - c.q[i]) / self.dt;
+            for (dq, (&n, &q)) in c.dq.iter_mut().zip(next.iter().zip(&c.q)) {
+                *dq = (n - q) / self.dt;
             }
         }
         for i in (3..JOINTS).step_by(4) {
@@ -445,11 +444,8 @@ impl Controller {
             kd,
             ..Default::default()
         };
-        for i in 0..JOINTS {
-            if i % 4 != 3 {
-                (c.q[i], c.dq[i]) =
-                    cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, total);
-            }
+        for (i, &target) in goal.iter().enumerate().filter(|(i, _)| i % 4 != 3) {
+            (c.q[i], c.dq[i]) = cubic(self.enter_q[i], self.enter_dq[i], target, 0.0, t, total);
         }
         c
     }
@@ -528,7 +524,8 @@ impl Controller {
             }
         }
         let (mut kp, mut kd) = self.runner_gains[&wanted];
-        for i in 0..JOINTS {
+        // legs only: on the robot NaviCharge's x1.3 start-up gains left the wheels' kd at 0.6
+        for i in (0..JOINTS).filter(|i| i % 4 != 3) {
             kp[i] *= self.gain_scale;
             kd[i] *= self.gain_scale;
         }

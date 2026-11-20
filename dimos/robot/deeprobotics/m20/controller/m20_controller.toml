@@ -217,7 +217,7 @@ action = { layout = "legs_by_type_then_wheels", clip = 100.0, leg_mode = "offset
 [runners.navi_charge]
 gaits = [0x3001]
 policy = "m20_navi_charge_v8_0_isaaclab.onnx"
-# kp / kd x start_gain_scale for the first start_gain_steps policy steps
+# leg kp / kd x start_gain_scale for the first start_gain_steps policy steps (wheels unscaled; seen on the robot)
 start_gain_scale = 1.3
 start_gain_steps = 29
 kind = "frames"
