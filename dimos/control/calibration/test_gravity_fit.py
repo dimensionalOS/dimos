@@ -585,7 +585,7 @@ def test_a_dither_cut_short_leaves_its_pair_out_of_the_fit(
     assert "Left out 1 incomplete dither pair(s)" in report
 
 
-def test_a_pair_the_joint_did_not_follow_is_left_out_and_listed(
+def test_a_pair_the_joint_did_not_follow_is_kept_and_listed_as_stuck(
     tmp_path: Path,
     arm: ArmModel,
     pose_set: PoseSet,
@@ -599,25 +599,35 @@ def test_a_pair_the_joint_did_not_follow_is_left_out_and_listed(
     measurements, incomplete, stuck = extract_measurements(grec, left_spec)
     assert incomplete == []
     assert sorted(stuck) == sorted(f"{p} {j} moved 0.00 of 2.00 deg" for p, j in held)
-    assert len(measurements) == len(poses) * len(LEFT_MEASURED) - len(held)
-    assert not {(m.pose, m.joint) for m in measurements} & held
+    assert len(measurements) == len(poses) * len(LEFT_MEASURED)
+    assert {(m.pose, m.joint) for m in measurements if m.stuck} == held
+    # A stuck pair measures no friction.
+    assert (
+        sum(1 for m in measurements if m.joint == LEFT_MEASURED[3] and not m.stuck)
+        == len(poses) - 1
+    )
+    flags = friction_flags(measurements)
+    assert all(flags[i].startswith("stuck") for i, m in enumerate(measurements) if m.stuck)
 
     monkeypatch.setattr(gravity_fit, "calibration_path", lambda arm_id: tmp_path / "none.json")
     monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: grec)
     result, out, calibration = generate_gravity_report(tmp_path, left_spec, arm=arm)
     assert result.stuck_pairs == stuck and result.incomplete_pairs == []
+    assert len(result.measurements) == len(measurements) and result.all_stuck == []
     assert calibration is not None and calibration.gravity is not None
     assert calibration.gravity.fit["stuck_pairs"] == stuck
     report = (out / "report.md").read_text()
-    assert "Left out 2 stuck dither pair(s)" in report
+    assert "Kept 2 stuck dither pair(s)" in report and "friction not cancelled" not in report
     assert all(f"- {pair}" in report for pair in stuck)
-    every = {(pose.name, joint) for pose in poses for joint in LEFT_MEASURED}
-    all_stuck = _synthetic_recording(arm, poses, "", truth, stuck=every)
-    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: all_stuck)
-    with pytest.raises(
-        ValueError, match=f"no dither pair to fit: {len(every)} stuck, 0 incomplete"
-    ):
-        generate_gravity_report(tmp_path, left_spec, arm=arm)
+    wrist = {(pose.name, LEFT_MEASURED[3]) for pose in poses}
+    held_wrist = _synthetic_recording(arm, poses, "", truth, stuck=wrist)
+    monkeypatch.setattr(gravity_fit, "load_gravity_recording", lambda _: held_wrist)
+    result, out, calibration = generate_gravity_report(tmp_path, left_spec, arm=arm)
+    assert result.all_stuck == [LEFT_MEASURED[3]] and len(result.stuck_pairs) == len(poses)
+    assert calibration is not None and calibration.friction_nm is not None
+    assert LEFT_MEASURED[3] not in calibration.friction_nm
+    report = (out / "report.md").read_text()
+    assert f"Warning: friction not cancelled on {LEFT_MEASURED[3]}, raise the dither." in report
 
 
 def test_the_fit_takes_the_resting_torque_against_what_was_compensated(
@@ -972,7 +982,7 @@ def _bench_recording(side: str) -> Path:
 
 
 @pytest.mark.parametrize("side", ["left", "right"])
-def test_the_bench_recordings_fit_without_their_stuck_pairs(
+def test_the_bench_recordings_fit_with_their_stuck_pairs_listed(
     side: str, dual_openyam_specs: list[ArmCalibrationSpec]
 ) -> None:
     # Reads the recording only; no report is written next to it.
@@ -981,7 +991,8 @@ def test_the_bench_recordings_fit_without_their_stuck_pairs(
     grec = load_gravity_recording(recording)
     measurements, incomplete, stuck = extract_measurements(grec, spec)
     assert incomplete == [] and len(stuck) == BENCH_STUCK_PAIRS[side]
-    assert len(measurements) + len(stuck) == 60  # 15 poses, 4 measured joints
+    assert len(measurements) == 60  # 15 poses, 4 measured joints
+    assert sum(m.stuck for m in measurements) == len(stuck)
     result = fit_gravity(ArmModel(spec), measurements, stuck_pairs=stuck)
     assert result.bounds_ok and result.stuck_pairs == stuck
     assert set(result.held_joints) == {f"{side}_joint6"}

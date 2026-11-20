@@ -24,8 +24,9 @@ the gravity model the connection compensated (friction, which flips sign with
 the approach direction, cancels) and half their difference is the Coulomb
 friction. A dither whose samples stop short of its hold (the recording ended
 or the next step came early) may still be moving, so its pair is left out and
-the report counts it; so is a pair whose two rests lie less than half the
-dither apart, where friction held the joint and the pair cancels nothing.
+the report counts it. A pair whose two rests lie less than half the dither
+apart is stuck: friction held the joint, so the pair does not cancel it. It
+stays in the fit and is listed, and the held-out error judges the result.
 The pose markers record that compensation
 (``Compensation``: none, the URDF or the masses of a calibration file), which
 turns the PD torque into the error of the URDF; a recording that does not say
@@ -216,6 +217,7 @@ class Measurement:
     q_rad: dict[str, float]  # every arm joint by name, mean of the two rest windows
     tau_pd_nm: float  # kp (q_target - q) averaged over the pair: what the compensation left
     friction_nm: float  # half the difference: Coulomb friction (>= 0 when the joint settles)
+    stuck: bool = False
 
     def as_row(self) -> dict[str, Any]:
         row = asdict(self)
@@ -266,6 +268,13 @@ class FitResult:
     @property
     def bounds_ok(self) -> bool:
         return not self.bound_violations
+
+    @property
+    def all_stuck(self) -> list[str]:
+        by_joint: dict[str, list[bool]] = defaultdict(list)
+        for m in self.measurements:
+            by_joint[m.joint].append(m.stuck)
+        return [joint for joint, stuck in by_joint.items() if all(stuck)]
 
     def rms_by_joint(self, *, holdout: bool, after: bool) -> dict[str, float]:
         return self.rms_of(self.residual_after if after else self.residual_before, holdout=holdout)
@@ -378,9 +387,9 @@ def extract_measurements(
     """Pair the +d and -d dithers of each of ``spec``'s measured joints at each pose.
 
     Returns the measurements, the pairs left out because the hold of either
-    dither was cut short (``"<pose> <joint>"``), and the pairs left out
-    because the joint moved less than ``STUCK_FRACTION`` of the dither
-    between their two rests (``"<pose> <joint> moved x of d deg"``).
+    dither was cut short (``"<pose> <joint>"``), and the measured pairs that
+    are stuck, where the joint moved less than ``STUCK_FRACTION`` of the
+    dither between their two rests (``"<pose> <joint> moved x of d deg"``).
     """
     recording = grec.recording
     traces = trace_names(recording, spec.joint_names)
@@ -415,9 +424,9 @@ def extract_measurements(
             (tau_plus, q_plus, target_plus), (tau_minus, q_minus, target_minus) = plus, minus
             moved = math.degrees(q_plus[joint] - q_minus[joint])
             commanded = math.degrees(target_plus - target_minus)
-            if moved < STUCK_FRACTION * commanded:
+            held = moved < STUCK_FRACTION * commanded
+            if held:
                 stuck.append(f"{pose} {joint} moved {moved:.2f} of {commanded:.2f} deg")
-                continue
             measurements.append(
                 Measurement(
                     pose=pose,
@@ -428,6 +437,7 @@ def extract_measurements(
                     q_rad={name: 0.5 * (q_plus[name] + q_minus[name]) for name in q_plus},
                     tau_pd_nm=0.5 * (tau_plus + tau_minus),
                     friction_nm=0.5 * (tau_plus - tau_minus),
+                    stuck=held,
                 )
             )
     return measurements, incomplete, stuck
@@ -513,9 +523,9 @@ def fit_gravity(
     convex quadratic program, physical by construction.
     Standard errors come from the ridge covariance with the residual variance
     of the training rows; a parameter is "determined" when at least half of
-    its direction lies in the identifiable subspace. ``incomplete_pairs`` and
-    ``stuck_pairs``, the pairs ``extract_measurements`` left out, are carried
-    to the report.
+    its direction lies in the identifiable subspace. ``incomplete_pairs``, the
+    pairs ``extract_measurements`` left out, and ``stuck_pairs``, those it
+    kept stuck, are carried to the report.
     """
     if not measurements:
         raise ValueError("no paired +/- dithers found; nothing to fit")
@@ -757,7 +767,9 @@ def friction_flags(measurements: list[Measurement]) -> dict[int, str]:
         # A joint that never moved for +d/-d reports exactly kp*d/2 as "friction":
         # stiction exceeded the dither torque, and the pair cancels nothing.
         saturated = m.kp * math.radians(m.dither_deg) / 2.0
-        if m.friction_nm >= DITHER_SATURATION_FRACTION * saturated:
+        if m.stuck:
+            flags[index] = f"stuck: moved less than {STUCK_FRACTION:.0%} of the dither"
+        elif m.friction_nm >= DITHER_SATURATION_FRACTION * saturated:
             flags[index] = (
                 f"joint did not move for the {m.dither_deg:g} deg dither "
                 f"(friction {m.friction_nm:.2f} = kp*d/2); raise --dither-deg or kp"
@@ -998,10 +1010,13 @@ def format_report(
     if result.stuck_pairs:
         out.append("")
         out.append(
-            f"Left out {len(result.stuck_pairs)} stuck dither pair(s), where friction held the "
+            f"Kept {len(result.stuck_pairs)} stuck dither pair(s), where friction held the "
             f"joint and it moved less than {STUCK_FRACTION:.0%} of the dither:"
         )
         out.extend(f"- {pair}" for pair in result.stuck_pairs)
+    for joint in result.all_stuck:
+        out.append("")
+        out.append(f"Warning: friction not cancelled on {joint}, raise the dither.")
     if result.held_joints:
         out.append("")
         out.append(
@@ -1237,8 +1252,7 @@ def generate_gravity_report(
     paired, incomplete, stuck = extract_measurements(grec, spec)
     if not paired:
         raise ValueError(
-            f"{recording_dir} holds no dither pair to fit: {len(stuck)} stuck, "
-            f"{len(incomplete)} incomplete"
+            f"{recording_dir} holds no dither pair to fit: {len(incomplete)} incomplete"
         )
     measurements = to_urdf_error(arm, paired, compensation)
     result = fit_gravity(

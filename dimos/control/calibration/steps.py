@@ -828,8 +828,7 @@ class GravityFitStep(Step):
         measurements, incomplete, stuck = extract_measurements(grec, ctx.spec)
         if not measurements:
             raise StepFailedError(
-                f"the recording holds no paired dithers to fit ({len(stuck)} stuck, "
-                f"{len(incomplete)} incomplete)"
+                f"the recording holds no paired dithers to fit ({len(incomplete)} incomplete)"
             )
         compensation = recorded_compensation(grec)
         if compensation is None:
@@ -874,10 +873,11 @@ class GravityFitStep(Step):
             f"{joint} {row['before']:.3f} -> {row['running']:.3f} -> {row['after']:.3f}"
             for joint, row in holdout.items()
         )
-        left_out = (
-            f"; {len(stuck)} stuck and {len(incomplete)} incomplete dither pairs left out"
-            if stuck or incomplete
-            else ""
+        left_out = "".join(
+            [
+                f"; {len(stuck)} stuck dither pairs kept" if stuck else "",
+                f"; {len(incomplete)} incomplete dither pairs left out" if incomplete else "",
+            ]
         )
         if refusals:
             return StepResult(f"not saved: {'; '.join(refusals)}{left_out}", data)
