@@ -45,8 +45,8 @@ _HOSTS = (
 )
 _AOS_DRIVERS = {"m20bodyimusniff", "m20camerarelay"}
 # both lidar pairs read the multicast on NOS: the full scans (body cut) for the map, the slices for dimSLAM
-_NOS_LIDARS = {"front_lidar/m20lidar", "rear_lidar/m20lidar"}
-_NOS_SLAM = {"front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar", "dimslamlio"}
+_NOS_LIDARS = {"front_lidar/airy", "rear_lidar/airy"}
+_NOS_SLAM = {"front_lidar_slices/airy", "rear_lidar_slices/airy", "dimslamlio"}
 
 
 # m20 on the vendor's sensors was these with the vendor bridge; the real mode keeps their settings
@@ -113,7 +113,7 @@ def test_dimslam_on_gos_stays_selectable() -> None:
 def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
     blueprint = _solid()
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
-    slices = ("front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar")
+    slices = ("front_lidar_slices/airy", "rear_lidar_slices/airy")
     for name in slices:
         kwargs = atoms[name].kwargs
         assert (_topic(blueprint, name, "lidar"), _topic(blueprint, name, "imu")) == (
@@ -123,7 +123,7 @@ def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
         # raw slices, ~10 ms of the 10 Hz sweep each, at the same voxel as the full sweeps
         assert kwargs["split_blocks"] == 179
         assert kwargs["body_filter"] is False
-        assert kwargs["voxel"] == atoms["front_lidar/m20lidar"].kwargs["voxel"]
+        assert kwargs["voxel"] == atoms["front_lidar/airy"].kwargs["voxel"]
     # each lidar is the same frame in both pairs: dimSLAM's lidar and IMU frames are the slices'
     assert {atoms[n].kwargs["frame_id"] for n in slices} == {"front_lidar", "rear_lidar"}
     assert _readers(blueprint, "lidar_slices") == {"dimslamlio"}
@@ -142,10 +142,10 @@ def test_every_lidar_mount_has_one_publisher(joints: str) -> None:
     publishers = [
         atoms[name].kwargs["frame_id"]
         for name in atoms
-        if name.endswith("m20lidar") and atoms[name].kwargs.get("mount_parent_frame_id")
+        if name.endswith("/airy") and atoms[name].kwargs.get("mount_parent_frame_id")
     ]
     assert sorted(publishers) == ["front_lidar", "rear_lidar"]
-    for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+    for name in ("front_lidar/airy", "rear_lidar/airy"):
         assert atoms[name].kwargs["mount_parent_frame_id"] == "base_link"
 
 
@@ -166,7 +166,7 @@ def _readers(blueprint: Blueprint, topic: str) -> set[str]:
 def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: str) -> None:
     blueprint = _solid(M20Joints=joints)
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
-    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+    for lidar in ("front_lidar/airy", "rear_lidar/airy"):
         assert (_topic(blueprint, lidar, "lidar"), _topic(blueprint, lidar, "imu")) == (
             "lidar",
             "lidar_imu",
@@ -177,8 +177,8 @@ def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: s
         )
         assert _topic(blueprint, lidar, "joint_state") == "coordinator_joint_state"
     assert {
-        atoms["front_lidar/m20lidar"].kwargs["frame_id"],
-        atoms["rear_lidar/m20lidar"].kwargs["frame_id"],
+        atoms["front_lidar/airy"].kwargs["frame_id"],
+        atoms["rear_lidar/airy"].kwargs["frame_id"],
     } == {
         "front_lidar",
         "rear_lidar",
@@ -196,7 +196,7 @@ def test_the_lidars_cut_the_body_and_every_consumer_takes_their_stream(joints: s
 def test_the_python_filter_stays_selectable_between_lidar_raw_and_lidar(joints: str) -> None:
     blueprint = _solid(M20Joints=joints, M20BodyFilter="python")
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
-    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+    for lidar in ("front_lidar/airy", "rear_lidar/airy"):
         assert _topic(blueprint, lidar, "lidar") == "lidar_raw"
         assert atoms[lidar].kwargs["body_filter"] is False
     assert _readers(blueprint, "lidar_raw") == {"urdfmanagerpointclearing"}
@@ -210,7 +210,7 @@ def test_the_lidars_thin_at_or_above_the_ray_tracers_voxel_and_it_subsamples_as_
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
     m20_atoms = {atom.name: atom for atom in _VENDOR_NAV.solidify().active_blueprints}
     voxel = atoms["raytracingvoxelmap"].kwargs["voxel_size"]
-    for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
+    for lidar in ("front_lidar/airy", "rear_lidar/airy"):
         assert atoms[lidar].kwargs["voxel"] >= voxel
         assert atoms[lidar].kwargs["point_format"] == "minimal"
     for key in ("pre_trace_subsample", "ray_subsample"):
@@ -221,7 +221,7 @@ def test_the_lidars_thin_at_or_above_the_ray_tracers_voxel_and_it_subsamples_as_
 
 def test_dimslams_slices_keep_every_field_at_the_ray_tracers_voxel() -> None:
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
-    for lidar in ("front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar"):
+    for lidar in ("front_lidar_slices/airy", "rear_lidar_slices/airy"):
         assert atoms[lidar].kwargs["voxel"] == atoms["raytracingvoxelmap"].kwargs["voxel_size"]
         assert "point_format" not in atoms[lidar].kwargs
 
@@ -234,7 +234,7 @@ def test_dimslam_keeps_its_own_lidar_and_imu_frames() -> None:
     assert (slam["lidars"], slam["imus"]) == (expected["lidars"], expected["imus"])
     lidar_frames = {
         atoms[name].kwargs["imu_frame_id"]
-        for name in ("front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar")
+        for name in ("front_lidar_slices/airy", "rear_lidar_slices/airy")
     }
     assert {imu.frame_id for imu in slam["imus"]} <= lidar_frames
     assert {lidar.frame_id for lidar in slam["lidars"]} == lidar_frames
@@ -299,7 +299,7 @@ def test_one_local_map_and_one_relocalization_per_sweep_of_both_lidars() -> None
         == 2 * m20_atoms["raytracingvoxelmap"].kwargs["emit_every"]
     )
     lidar_frames = {
-        atoms[name].kwargs["frame_id"] for name in ("front_lidar/m20lidar", "rear_lidar/m20lidar")
+        atoms[name].kwargs["frame_id"] for name in ("front_lidar/airy", "rear_lidar/airy")
     }
     assert set(atoms["premapmodule"].kwargs["attempt_after_frames"]) == lidar_frames
     assert atoms["premapmodule"].kwargs["attempt_every_sweeps"] == 10
