@@ -1,0 +1,104 @@
+# Carry crates until something gets in the way.
+# Shows `graceful` and `immediate` transitions: an obstacle leaves gracefully, so Working's `ensures` makes the robot
+# put its crate down first; an e-stop leaves immediately, skipping every check.
+root = "Robot"
+resources = ["base", "arm"]
+
+[vars]
+carrying = false
+
+[[stream_value]]
+name = "obstacle"
+stream = "ToyRobot.obstacle"
+field = "data"
+
+[[stream_value]]
+name = "estop"
+stream = "ToyRobot.estop"
+field = "data"
+
+[[activity]]
+name = "drive"
+start = "ToyRobot.drive_to"
+cancel = "ToyRobot.stop_driving"
+uses = ["base"]
+
+[[activity]]
+name = "pick"
+start = "ToyRobot.pick"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[activity]]
+name = "place"
+start = "ToyRobot.place_item"
+cancel = "ToyRobot.release_arm"
+uses = ["arm"]
+
+[[node]]
+name = "Robot"
+children = ["Working", "Stowing", "Paused", "EStopped"]
+initial = "Working"
+
+[[node]]
+name = "Working"
+children = ["Fetching", "Carrying"]
+initial = "Fetching"
+ensures = [{ expect = ["!carrying"], fallback = "Stowing" }]
+
+[[node.transition]]
+on = "ToyRobot.estop"
+if = "estop"
+goto = "EStopped"
+mode = "immediate"
+
+[[node.transition]]
+on = "ToyRobot.obstacle"
+if = "obstacle"
+goto = "Paused"
+
+[[node]]
+name = "Fetching"
+activity = "pick"
+args = { item = "'crate'" }
+
+[[node.transition]]
+on = "succeeded"
+goto = "Carrying"
+set = { carrying = true }
+
+[[node]]
+name = "Carrying"
+activity = "drive"
+args = { place = "'loading dock'" }
+
+[[node.transition]]
+on = "succeeded"
+goto = "Fetching"
+set = { carrying = false }
+
+[[node]]
+name = "Stowing"
+activity = "place"
+args = { item = "'crate'" }
+
+[[node.transition]]
+on = "succeeded"
+goto = "Paused"
+set = { carrying = false }
+
+[[node]]
+name = "Paused"
+
+[[node.transition]]
+on = "ToyRobot.obstacle"
+if = "!obstacle"
+goto = "Working"
+
+[[node]]
+name = "EStopped"
+
+[[node.transition]]
+on = "ToyRobot.estop"
+if = "!estop"
+goto = "Working"
