@@ -433,7 +433,9 @@ Deno.test({
     // to get one (traversal guards are covered by the cockpit-dist test).
     const index = await fetch(`${httpBase}/`);
     assertEquals(index.status, 404);
-    assert((await index.text()).includes("cockpit dist not built"));
+    const hint = await index.text();
+    assert(hint.includes("cockpit dist not built"));
+    assert(hint.includes("(cd web && deno task -r build)"));
     const stray = await fetch(`${httpBase}/debug.html`);
     await stray.body?.cancel();
     assertEquals(stray.status, 404);
@@ -1135,6 +1137,7 @@ Deno.test({
     assertEquals(sdk.headers.get("access-control-allow-origin"), "*");
     const body = await sdk.text();
     assert(body.includes("sdk bundle not built"));
+    assert(body.includes("(cd web && deno task -r build)"));
     // An HTML fallback imported as a module would be a baffling syntax error
     // in the consumer page; the hint must win over the static root.
     assert(!body.includes("fake cockpit index"));
