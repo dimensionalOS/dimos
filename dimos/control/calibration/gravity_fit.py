@@ -109,6 +109,7 @@ import matplotlib.pyplot as plt
 
 GRAVITY_EVENTS_STREAM = "gravity_events"
 COMPENSATION_KEY = "compensation"
+END_LABEL = "end"
 REPORT_DIR_NAME = "gravity_report"
 DEFAULT_RIDGE_NM = 0.05  # torque-equivalent weight of one column scale of correction
 # Ridge weights tried by leave-one-pose-out cross-validation when none is given.
@@ -313,11 +314,17 @@ def load_gravity_recording(
 
 
 def pose_windows(markers: list[PoseMarker], t_end: float) -> list[tuple[str, float, float]]:
-    """``(label, start, stop)`` per marker; without markers the whole recording is one pose."""
+    """``(label, start, stop)`` per pose marker; without markers the whole recording is one pose.
+
+    An ``END_LABEL`` marker closes the pose before it and opens none, so the
+    steps recorded after the sweep (a gain sweep) are no dithers.
+    """
     if not markers:
         return [("all", -math.inf, math.inf)]
     windows = []
     for index, marker in enumerate(markers):
+        if marker.label == END_LABEL:
+            continue
         stop = markers[index + 1].t0 if index + 1 < len(markers) else max(t_end, marker.t0)
         windows.append((marker.label, marker.t0, stop))
     return windows

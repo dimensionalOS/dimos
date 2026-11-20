@@ -880,6 +880,35 @@ def test_pose_windows_without_markers_cover_everything() -> None:
     assert pose_windows([], 10.0) == [("all", -math.inf, math.inf)]
     markers = [PoseMarker("a", 1.0, {}, {}), PoseMarker("b", 5.0, {}, {})]
     assert pose_windows(markers, 9.0) == [("a", 1.0, 5.0), ("b", 5.0, 9.0)]
+    ended = [*markers, PoseMarker("end", 7.0, {}, {})]
+    assert pose_windows(ended, 20.0) == [("a", 1.0, 5.0), ("b", 5.0, 7.0)]
+
+
+def test_steps_after_the_end_marker_are_no_dithers(
+    arm: ArmModel, pose_set: PoseSet, left_spec: ArmCalibrationSpec
+) -> None:
+    poses = pose_set.identification[:3]
+    sweep = _synthetic_recording(arm, poses, "")
+    later = _synthetic_recording(arm, poses, "")
+    end = sweep.recording.t_end + 0.01
+    shifted = [replace(e, t0=e.t0 + end + 0.01) for e in later.recording.events]
+    traces = {
+        name: JointTrace(
+            t=np.concatenate([trace.t, later.recording.traces[name].t + end + 0.01]),
+            q_deg=np.concatenate([trace.q_deg, later.recording.traces[name].q_deg]),
+            dq_deg_s=np.concatenate([trace.dq_deg_s, later.recording.traces[name].dq_deg_s]),
+        )
+        for name, trace in sweep.recording.traces.items()
+    }
+    whole = GravityRecording(
+        recording=Recording(
+            traces=traces,
+            events=[*sweep.recording.events, *shifted],
+            t_end=float(next(iter(traces.values())).t[-1]),
+        ),
+        markers=[*sweep.markers, PoseMarker("end", end, {}, {})],
+    )
+    assert extract_measurements(whole, left_spec) == extract_measurements(sweep, left_spec)
 
 
 @pytest.mark.skipif(not OLD_RECORDING.exists(), reason="rig recording not present")

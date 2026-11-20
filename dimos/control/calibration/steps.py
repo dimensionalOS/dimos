@@ -97,6 +97,7 @@ from dimos.control.calibration.float_analysis import (
 )
 from dimos.control.calibration.gravity_fit import (
     COMPENSATION_KEY,
+    END_LABEL,
     REPORT_DIR_NAME as GRAVITY_REPORT_DIR,
     Compensation,
     FitResult,
@@ -154,7 +155,6 @@ from dimos.control.calibration.step_report import (
 )
 from dimos.control.connection.module_config import ConfigApplied, ConfigKeys
 
-END_LABEL = "end"
 # A reading this far past a joint limit fails the check.
 LIMIT_TOLERANCE_DEG = 2.0
 # The sweep pose keeps every joint this much farther from its limits than the
