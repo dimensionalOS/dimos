@@ -237,6 +237,9 @@ class MultipartBackend:
                 if "lidar" in doc["streams"]:
                     doc["streams"].pop("odom", None)  # only the timing report needed both counts
                 logger.warning("Preview timing omitted: preview exceeds size limit", size=size)
+                size = len(json.dumps(doc, allow_nan=False))
+            if size > PREVIEW_MAX_BYTES:
+                return f"failed: preview size {size} exceeds {PREVIEW_MAX_BYTES} bytes"
             sent = self.api.put_preview(upload_id, doc)
             if not (video and sent.get("video_url")):
                 return "sent" + note

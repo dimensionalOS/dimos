@@ -230,6 +230,11 @@ def test_preview_timing_budget_includes_video(
     expected = {k: v for k, v in full.items() if k != "timing"}
     expected["streams"] = {k: v for k, v in full["streams"].items() if k != "odom"}
     assert transport.previews[uid] == expected
+    transport.previews.clear()
+    monkeypatch.setattr(cd, "PREVIEW_MAX_BYTES", len(json.dumps(expected)) - 1)
+    result = cloud.upload(timing_recording)
+    assert result["skipped"] and "exceeds" in result["preview"]
+    assert transport.previews == {}
     assert timing_recording.read_bytes() == original
 
 
@@ -735,7 +740,7 @@ def test_mcap_upload_sends_its_preview(
 ) -> None:
     from dimos.memory.store.test_mcap import ros2_odom, write_ros2_mcap
 
-    cloud, _t, db = env
+    cloud, transport, db = env
     mcap = db.parent / "run.mcap"
     write_ros2_mcap(mcap, [("/odometry", "nav_msgs/Odometry", 1.0, ros2_odom(1.0, 0, 0))])
     before = mcap.read_bytes()
@@ -745,6 +750,10 @@ def test_mcap_upload_sends_its_preview(
 
     monkeypatch.setattr(cd.preview, "_timing", no_sqlite_scan, raising=False)
     assert cloud.upload(mcap)["preview"] == "sent"  # opened read-only in place, not as SQLite
+    transport.previews.clear()
+    monkeypatch.setattr(cd, "PREVIEW_MAX_BYTES", 1)
+    assert "exceeds" in cloud.upload(mcap)["preview"]
+    assert transport.previews == {}
     assert mcap.read_bytes() == before
 
 
