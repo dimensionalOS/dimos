@@ -48,6 +48,7 @@ SETTLE_TIME_LIMIT_S = 0.5
 OVERSHOOT_LIMIT_PCT = 20.0
 STUCK_FRACTION = 0.5
 KD_LIMIT = 5.0
+KD_PER_KP_LIMIT = 0.25
 # RMS joint velocity over the last part of the hold; a joint at rest reads
 # encoder noise only, a buzzing one oscillates at a few deg/s.
 BUZZ_RMS_LIMIT_DEG_S = 1.0
@@ -326,11 +327,15 @@ def sweep_friction_nm(steps: Iterable[StepMetrics]) -> dict[str, float]:
     return friction
 
 
+def capped_kd(kp: float, kd: float) -> float:
+    return min(kd, KD_LIMIT, KD_PER_KP_LIMIT * kp)
+
+
 def gain_candidates(
     kp0: float, kd0: float, kp_scales: Sequence[float], kd_scales: Sequence[float]
 ) -> list[tuple[float, float]]:
-    baseline = (kp0, min(kd0, KD_LIMIT))
-    grid = [(kp0 * p, min(kd0 * d, KD_LIMIT)) for p in kp_scales for d in kd_scales]
+    baseline = (kp0, capped_kd(kp0, kd0))
+    grid = [(kp0 * p, capped_kd(kp0 * p, kd0 * d)) for p in kp_scales for d in kd_scales]
     return list(dict.fromkeys(sorted(grid, key=lambda pair: pair != baseline)))
 
 

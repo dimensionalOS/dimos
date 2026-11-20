@@ -49,7 +49,8 @@
 5. ``step_sweep``: at the sweep pose (the gravity pose farthest from every
    joint limit, or ``sweep_pose_deg``), steps every joint +1, -1, +3, -3 deg
    at each candidate of a grid, kp scales of its robot kp by kd scales of its
-   robot kd (``step_analysis.gain_candidates``), holding after each step.
+   robot kd, kd at most kp/4 (``step_analysis.gain_candidates``), holding
+   after each step.
 6. ``pick_gains``: analyses those steps (``step_analysis.propose_gains``),
    each joint's rest limit from its friction (the larger of what its sweep and
    its gravity dithers show), and saves and applies the gains the operator
@@ -165,6 +166,7 @@ from dimos.control.calibration.spec import (
     urdf_limits,
 )
 from dimos.control.calibration.step_analysis import (
+    KD_PER_KP_LIMIT,
     STUCK_FRACTION,
     gain_candidates,
     propose_gains,
@@ -1137,7 +1139,8 @@ class StepSweepStep(Step):
     shoulder and elbow, the OpenArm's elbow), where half the steps would pass
     the limit, so the sweep runs at :func:`sweep_pose`. A joint's candidates
     are its robot ``kp0`` times each kp scale by its robot ``kd0`` times each
-    kd scale, kd clamped to the MIT frame's 5 N m s/rad and duplicates
+    kd scale, kd clamped to the MIT frame's 5 N m s/rad and to kp/4, so a
+    10 deg/s ramp lags at most 2.5 deg for its damping, and duplicates
     dropped (``gain_candidates``); the robot's own gains go first, as
     ``sweep_friction_nm`` reads the joint's friction off them.
     """
@@ -1174,7 +1177,8 @@ class StepSweepStep(Step):
             f"deg/s; there each of the {len(spec.joint_names)} joints will step "
             f"{', '.join(f'{d:+g}' for d in deltas)} deg at kp x "
             f"{', '.join(f'{s:g}' for s in settings.kp_scales)} by kd x "
-            f"{', '.join(f'{s:g}' for s in settings.kd_scales)} "
+            f"{', '.join(f'{s:g}' for s in settings.kd_scales)}, kd capped at "
+            f"kp/{1.0 / KD_PER_KP_LIMIT:g} for ramp tracking "
             f"({', '.join(f'{j} {len(p)}' for j, p in candidates.items())} candidates), "
             f"{steps} steps, about {_minutes(steps * settings.step_hold_s)}, then it returns "
             "home. Clear the workspace. Enter to start"

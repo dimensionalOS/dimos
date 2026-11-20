@@ -20,6 +20,7 @@ import pytest
 
 from dimos.control.calibration.step_analysis import (
     KD_LIMIT,
+    KD_PER_KP_LIMIT,
     SETTLE_BAND_DEG,
     StepEvent,
     StepMetrics,
@@ -355,11 +356,14 @@ def test_gain_candidates_are_a_kp_by_kd_grid_with_the_robot_gains_first() -> Non
     assert pairs[0] == (80.0, 1.0) and len(pairs) == 9
     assert set(pairs) == {(kp, kd) for kp in (48.0, 80.0, 120.0) for kd in (1.0, 2.5, KD_LIMIT)}
     wrist = gain_candidates(10.0, 1.5, (0.6, 1.0, 1.5), (1.0, 2.5, 5.0))
-    assert {kd for _, kd in wrist} == {1.5, 3.75, KD_LIMIT}
+    assert wrist == [(10.0, 1.5), (6.0, 1.5), (10.0, 2.5), (15.0, 1.5), (15.0, 3.75)]
+    assert all(kd <= KD_PER_KP_LIMIT * kp for kp, kd in wrist)
     two = gain_candidates(18.0, 2.0, (0.6, 1.0, 1.5), (1.0, 2.5, 5.0))
-    assert len(two) == 6 and {kd for _, kd in two} == {2.0, KD_LIMIT}
+    expected = [(18.0, 2.0), (10.8, 2.0), (10.8, 2.7), (18.0, 4.5), (27.0, 2.0), (27.0, 5.0)]
+    assert [pytest.approx(pair) for pair in expected] == two
     clamped = gain_candidates(80.0, 5.0, (0.6, 1.0, 1.5), (1.0, 2.5, 5.0))
     assert clamped == [(80.0, 5.0), (48.0, 5.0), (120.0, 5.0)]
+    assert gain_candidates(10.0, 5.0, (1.0,), (1.0,)) == [(10.0, 2.5)]
 
 
 def test_friction_comes_from_the_largest_steps_at_the_first_gains() -> None:

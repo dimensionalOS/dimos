@@ -236,12 +236,14 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     results = rig.procedure.results()
     gains = results["pick_gains"]
     wrist = gains["proposals"]["left_joint4"]
-    # Its kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5, kd clamped to 5.
+    # Its kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5, kd clamped to 5 and to kp/4.
     assert set(wrist["rejected"]) == {
-        f"kp={kp:g} kd={kd:g}" for kp in (6, 10, 15) for kd in (1.5, 3.75, 5)
-    } - {"kp=15 kd=1.5"}
-    # A stuck 3 deg step rejects; stuck 1 deg steps only drop out of the score.
-    assert "-3 deg step is stuck" in wrist["rejected"]["kp=6 kd=5"]
+        "kp=6 kd=1.5",
+        "kp=10 kd=1.5",
+        "kp=10 kd=2.5",
+        "kp=15 kd=3.75",
+    }
+    # Stuck 1 deg steps only drop out of the score.
     assert wrist["rejected"]["kp=6 kd=1.5"].startswith("passes, but scores")
     assert wrist["rejected"]["kp=6 kd=1.5"].endswith("stuck and do not count")
     assert wrist["reason"].startswith("kp=15 kd=1.5: lowest score")
@@ -277,7 +279,7 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
         assert fit["holdout_rms_nm"][joint]["after"] < fit["holdout_rms_nm"][joint]["before"]
     assert rig.labels() == [f"pose_{i:02d}" for i in range(1, 9)] + ["end"]
     steps = rig.recording.markers["step_events"]
-    assert len(steps) == 8 * 5 * 2 + 6 * 9 * 4
+    assert len(steps) == 8 * 5 * 2 + (3 * 9 + 3 * 5) * 4
     dither = {
         joint: min(
             math.degrees(0.3 * left_spec.max_torque_nm[joint] / left_spec.gains[joint][0]), 5.0
@@ -1212,7 +1214,7 @@ def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
 
     assert status["state"] == "done", status["message"]
     [plan] = [p for p in prompts if p.startswith("The arm will move to")]
-    assert "kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5" in plan
+    assert "kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5, kd capped at kp/4 for ramp tracking" in plan
     # Its first joints run at kd 5 already, so kd x 2.5 and 5 add nothing there;
     # its wrists at kd 2 reach the kd limit at x 2.5 already.
     assert "(joint1 3, joint2 3, joint3 3, joint4 6, joint5 6, joint6 6 candidates)" in plan
@@ -1223,11 +1225,10 @@ def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
     pose = np.radians(sweep["pose_deg"])
     assert math.degrees(limit_margin_rad(pose, lower, upper)) >= 3.0 + 2.0
     # Back home after the sweep: the robot's gains first, then kp x 0.6, 1,
-    # 1.5 by kd x 1, 2.5, 5 with kd clamped to 5, so a kd of 2 gives 2 and 5.
+    # 1.5 by kd x 1, 2.5, 5 with kd clamped to 5 and to kp/4.
     assert _far_from_home(rig) < 3.0
     assert b601_spec.gains["joint4"] == (18.0, 2.0)
-    grid = [(kp, kd) for kp in (10.8, 18.0, 27.0) for kd in (2.0, 5.0)]
-    expected = [(18.0, 2.0), *(pair for pair in grid if pair != (18.0, 2.0))]
+    expected = [(18.0, 2.0), (10.8, 2.0), (10.8, 2.7), (18.0, 4.5), (27.0, 2.0), (27.0, 5.0)]
     assert sweep["joints"]["joint4"] == [
         [pytest.approx(kp), pytest.approx(kd)] for kp, kd in expected
     ]
