@@ -188,6 +188,35 @@ def test_provenance_names_the_commit_and_notices_uncommitted_changes(
     assert _provenance(tmp_path) == {"commit": None, "dirty": None}
 
 
+def test_run_checks_drift_only_for_selected_cases(suite: Path, tmp_path: Path) -> None:
+    manifest = Manifest.load(suite)
+    selected, other = manifest.cases[:2]
+    stale = replace(other, scene_digest="stale")
+    held_out = replace(selected, id="mined-held-out", split="held_out", scene_digest="stale")
+    cases = [selected, stale, held_out]
+    replace(manifest, cases=cases).save(suite)
+    script = tmp_path / "fake.py"
+    script.write_text(FAKE_BLUEPRINT)
+    config = RunConfig(
+        suite=suite,
+        cases=("mined",),
+        out_dir=tmp_path / "run",
+        procs=1,
+        min_free_gb=0,
+        command=(sys.executable, str(script)),
+        overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
+    )
+    dest = run(config)
+    result = json.loads((dest / RESULTS_FILE).read_text())
+    assert (result["case_id"], result["outcome"]) == (selected.id, "success")
+    assert Manifest.load(dest / SUITE_FILE).cases == cases
+
+    refused = tmp_path / "refused"
+    with pytest.raises(RuntimeError, match=stale.id):
+        run(replace(config, split=stale.split, cases=(stale.id,), out_dir=refused))
+    assert not refused.exists()
+
+
 def test_run_scores_every_episode_and_rescores_the_same(
     suite: Path, checkout: Path, tmp_path: Path
 ) -> None:
