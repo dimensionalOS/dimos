@@ -19,14 +19,15 @@ The native ``m20_ecan`` module reads the frames the ``ecan_tap.so`` shim streams
 rl_deploy running with the shim installed (``tap/record.sh install`` on AOS) and runs on AOS, where the socket is.
 Joint names and the motor-to-URDF calibration match the vendor URDF/MJCF (``fl_hipx_joint`` ...).
 
-Charge enable (the 0xb3 request a docked robot needs to charge) is not sent from here: this module only reads the tap,
-and while rl_deploy runs it owns the bus and sends the request itself. Without rl_deploy, the Rust motor controller
-sends it (``[ecan] charge_enable``, off by default), using m20-battery's rule.
+In ``owner`` mode (rl_deploy stopped) the module owns the motor bus itself: rl_deploy's startup sequence, then its
+zero-gain sitting command every 1 ms, which keeps the board reporting joints and batteries without holding or moving
+anything, plus the charge-enable request from m20-battery's rule. With the Rust controller driving the motors instead,
+the controller owns the bus (same m20-ecan owner) and streams its frames to this module in ``tap`` mode.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
@@ -42,8 +43,14 @@ class M20EcanConfig(NativeModuleConfig):
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
-    # the unix datagram socket the shim inside rl_deploy streams to (this module binds it)
+    # "tap": read the frames of whoever owns the motor bus (rl_deploy through its shim, or the Rust controller);
+    # "owner" (rust mode, rl_deploy stopped): own the bus, rl_deploy's startup then zero-gain sitting commands only
+    mode: Literal["tap", "owner"] = "tap"
+    # tap: the unix datagram socket the shim inside rl_deploy streams to (this module binds it)
     socket_path: str = "/var/opt/robot/data/ecan_capture/live.sock"
+    # owner: the motor-bus interface, and whether to send the BMS charge-enable request (docked, lying)
+    interface: str = "eth1"
+    charge_enable: bool = True
     frame_id: str = "base_link"
     # seconds without a frame before warning that rl_deploy or its shim is not running
     silence_warning_s: float = Field(default=5.0, gt=0.0, le=3600.0)

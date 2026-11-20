@@ -136,8 +136,10 @@ fn main() -> Result<()> {
     let bytes = std::fs::read(dir.join("ticks.bin")).context("ticks.bin")?;
     let ticks = Ticks(
         bytes
-            .chunks_exact(8)
-            .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| f64::from_le_bytes(*c))
             .collect(),
     );
     let plan: Plan = serde_json::from_str(&std::fs::read_to_string(dir.join("plan.json"))?)?;

@@ -15,6 +15,8 @@
 //! The motor bus as the controller sees it: send one 1 ms joint command, get the joint and IMU state back.
 
 #[cfg(feature = "ecan")]
+pub mod bus;
+#[cfg(feature = "ecan")]
 pub mod ecan;
 pub mod mujoco;
 

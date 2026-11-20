@@ -574,3 +574,11 @@ obs = [
     { kind = "last_action" },
 ]
 action = { layout = "legs_by_type_then_wheels", clip = 100.0, leg_mode = "offset", leg_scale = [0.25], wheel_scale = 10.0 }
+
+# The eth1 motor bus (backends "ecan" and "bus"); everything not set here takes the values seen on the robot.
+[ecan]
+# backend "bus": commands carrying kp / kd reach the motors only with this on; off, the controller runs but every
+# command goes out as rl_deploy's sitting command. Never on on the robot without an operator's go.
+allow_gains = false
+# the BMS charge-enable request from m20-battery's rule (docked, lying)
+charge_enable = false
