@@ -16,15 +16,20 @@ import csv
 import gzip
 import json
 import math
+import os
 from pathlib import Path
 import struct
 
+import pytest
+
 from dimos.robot.deeprobotics.m20.imu_estop.imu_estop import (
+    BodyImuRelay,
     BodyImuSniffer,
     Estop,
     EstopConfig,
     HighGLatch,
     parse_airy_imu,
+    parse_relay_line,
     soft_estop_frame,
 )
 
@@ -143,3 +148,35 @@ def test_body_imu_sniffer_decodes_the_vendor_sample_once() -> None:
     assert abs(math.sqrt(sum(v * v for v in accel_g)) - 1.0) < 0.02
     assert max(abs(v) for v in gyro) < 0.05
     assert list(sniffer.feed(imu)) == []
+
+
+def test_relay_lines_become_samples_in_g() -> None:
+    accel, gyro = parse_relay_line(b"0.0 0.0 9.80665 0.1 -0.2 0.3")
+    assert accel == pytest.approx((0.0, 0.0, 1.0)) and gyro == pytest.approx((0.1, -0.2, 0.3))
+    assert parse_relay_line(b"garbage") is None
+    assert parse_relay_line(b"1 2 3") is None
+
+
+def test_the_relay_feeds_the_latch_and_a_dead_relay_is_restarted_up_to_its_limit(tmp_path) -> None:
+    lines = "".join("0 0 49.0 0 0 0\n" for _ in range(6))
+    config = EstopConfig(
+        state_dir=str(tmp_path),
+        body_imu_relay_cmd=["python3", "-c", f"import sys; sys.stdout.write({lines!r})"],
+        body_imu_relay_restarts=1,
+    )
+    estop = Estop(config)
+    relay = BodyImuRelay(config, estop)
+    samples = []
+    for _ in range(config.body_imu_relay_restarts + 2):
+        fd = relay.start()
+        if fd is None:
+            break
+        os.set_blocking(fd, True)
+        while (batch := relay.read()) is not None:
+            samples.extend(batch)
+    # it ran 1 + body_imu_relay_restarts times, then gave up
+    assert relay.starts == config.body_imu_relay_restarts + 1
+    assert len(samples) == 6 * relay.starts
+    for sample in samples[: config.consecutive_samples]:
+        estop.on_sample("body_dimos", *sample)
+    assert estop.latch.tripped is not None and estop.latch.tripped["stream"] == "body_dimos"

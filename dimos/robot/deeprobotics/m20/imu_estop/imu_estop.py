@@ -18,6 +18,8 @@ Standalone, stdlib only, Python 3.8 (AOS's system python), so it runs beside wha
 second ``dimos run``. It reads the Airys' IMU multicast (51-byte packets, 200 Hz each) like any other listener, and
 the body IMU by a receive-only raw capture of the vendor yesense_node's DDS samples on loopback (as the
 ``m20_body_imu_sniff`` module does): it never sends, never joins the DDS domain and never opens the serial port.
+With yesense_node stopped (rust mode) the body IMU comes from the dimos ``imu`` stream instead, through
+body_imu_relay.py run as a child by a dimos venv's Python (stream ``body_dimos``).
 
 A sample is "over" when its specific-force magnitude (g) or gyro norm (rad/s) passes its threshold; a stream that
 has ``consecutive_samples`` overs in a row trips. A trip latches (in memory and in ``latch_file``) until ``reset``.
@@ -41,6 +43,7 @@ import os
 import signal
 import socket
 import struct
+import subprocess
 import sys
 import time
 
@@ -75,6 +78,16 @@ class EstopConfig:
     interface_ip: str = "10.21.33.103"
     basic_server_host: str = "10.21.31.103"
     basic_server_port: int = 30000
+    # the dimos ``imu`` stream (body_imu_relay.py run by a dimos venv's Python): the body IMU from whichever module
+    # publishes it, the sniffer (vendor mode) or the Yesense serial module (rust mode, yesense_node stopped); empty: off
+    body_imu_relay_cmd: list[str] = field(
+        default_factory=lambda: [
+            "/var/opt/robot/data/dimos_host/.venv/bin/python",
+            "/var/opt/robot/data/imu_estop/body_imu_relay.py",
+        ]
+    )
+    # times a relay that exits is started again before the e-stop goes on without it
+    body_imu_relay_restarts: int = 20
     kill_process_names: list[str] = field(
         default_factory=lambda: ["send_charge_enable", "zero_gain"]
     )
@@ -429,8 +442,23 @@ def run(config: EstopConfig) -> None:
         )
         body = _open_capture(config, True, bytes(12))
         selector.register(body, selectors.EVENT_READ, "body")
+    relay = BodyImuRelay(config, estop)
+    relay_fd = relay.start()
+    if relay_fd is not None:
+        selector.register(relay_fd, selectors.EVENT_READ, "body_dimos")
     while True:
         for key, _mask in selector.select():
+            if key.data == "body_dimos":
+                samples = relay.read()
+                if samples is None:
+                    selector.unregister(key.fileobj)
+                    relay_fd = relay.start()
+                    if relay_fd is not None:
+                        selector.register(relay_fd, selectors.EVENT_READ, "body_dimos")
+                    continue
+                for sample in samples:
+                    estop.on_sample("body_dimos", *sample)
+                continue
             if key.data == "body_discovery":
                 known = sniffer.prefix
                 list(sniffer.feed(_udp_payload(key.fileobj.recv(65536))))
@@ -445,6 +473,60 @@ def run(config: EstopConfig) -> None:
             sample = parse_airy_imu(key.fileobj.recv(2048))
             if sample is not None:
                 estop.on_sample(key.data, *sample)
+
+
+def parse_relay_line(
+    text: bytes,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    """One body_imu_relay line (m/s^2, rad/s) as (accel in g, gyro), or None for anything else."""
+    try:
+        values = [float(v) for v in text.split()]
+    except ValueError:
+        return None
+    if len(values) != 6:
+        return None
+    ax, ay, az, gx, gy, gz = values
+    return (ax / STANDARD_GRAVITY, ay / STANDARD_GRAVITY, az / STANDARD_GRAVITY), (gx, gy, gz)
+
+
+class BodyImuRelay:
+    """The relay child and the lines it writes; restarted when it exits, up to ``body_imu_relay_restarts`` times."""
+
+    def __init__(self, config: EstopConfig, estop: Estop) -> None:
+        self.config = config
+        self.estop = estop
+        self.starts = 0
+        self.process: subprocess.Popen[bytes] | None = None
+        self.pending = b""
+
+    def start(self) -> int | None:
+        """The child's stdout fd, or None when there is no relay (off, or restarted too often)."""
+        if not self.config.body_imu_relay_cmd or self.starts > self.config.body_imu_relay_restarts:
+            return None
+        self.starts += 1
+        try:
+            self.process = subprocess.Popen(
+                self.config.body_imu_relay_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+            )
+        except OSError as error:
+            self.estop.log({"event": "body_imu_relay_failed", "error": str(error)})
+            return None
+        self.estop.log(
+            {"event": "body_imu_relay_started", "pid": self.process.pid, "start": self.starts}
+        )
+        os.set_blocking(self.process.stdout.fileno(), False)
+        return self.process.stdout.fileno()
+
+    def read(self) -> list[tuple[tuple[float, float, float], tuple[float, float, float]]] | None:
+        """Samples from what the child wrote; None when it has exited."""
+        chunk = os.read(self.process.stdout.fileno(), 65536)
+        if not chunk:
+            self.process.wait()
+            self.estop.log({"event": "body_imu_relay_exited", "code": self.process.returncode})
+            return None
+        self.pending += chunk
+        *lines, self.pending = self.pending.split(b"\n")
+        return [sample for sample in map(parse_relay_line, lines) if sample is not None]
 
 
 def load_config(path: str | None, armed: bool) -> EstopConfig:
