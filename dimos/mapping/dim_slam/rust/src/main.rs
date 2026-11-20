@@ -16,7 +16,7 @@ mod msg_convert;
 
 use dim_slam::{
     CameraConfig, DeskewConfig, DimSlamCore, DimSlamCoreConfig, ImuConfig, InitialStds,
-    LidarConfig, MapConfig, ProcessNoise, SourceConfig, SourceKind,
+    LidarConfig, ProcessNoise, SourceConfig, SourceKind,
 };
 use dimos_module::{native_config, run_with_transport, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Odometry;
@@ -58,6 +58,32 @@ struct OdomSourceConfig {
     still_variance: f64,
     still_speed: f64,
     still_angular_speed: f64,
+}
+
+/// The local map lidar scans are matched against.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct MapConfig {
+    spacing: f64,
+    cube: f32,
+    capacity: usize,
+    seed_points: usize,
+    grow_min_points: usize,
+    /// Neighbors from the full search in its original order; off: a pruned search finding the same neighbors.
+    unpruned_neighbor_order: bool,
+}
+
+impl MapConfig {
+    fn core(&self) -> dim_slam::MapConfig {
+        dim_slam::MapConfig {
+            spacing: self.spacing,
+            cube: self.cube,
+            capacity: self.capacity,
+            seed_points: self.seed_points,
+            grow_min_points: self.grow_min_points,
+            point_lio_neighbor_order: self.unpruned_neighbor_order,
+        }
+    }
 }
 
 #[native_config]
@@ -146,7 +172,7 @@ impl DimSlamConfig {
             standard_gravity: self.standard_gravity,
             initial_gravity_estimate: self.initial_gravity_estimate,
             initial_stds: self.initial_stds,
-            map: self.map,
+            map: self.map.core(),
             outlier_rejection_allowed_variance: self.outlier_rejection_allowed_variance,
             max_position_m: self.max_position_m,
             per_dimension_error_variance: self.per_dimension_error_variance.to_array(),
