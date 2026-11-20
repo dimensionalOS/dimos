@@ -64,7 +64,7 @@ Pass them to the command as flags.
 | `--steps a,b,c` | Run only these steps |
 | `hold_s` | Rest time at each pose (default 2.0 s) |
 | `--speed-deg-s S` | Peak joint speed (default 10, at most 30) |
-| `kp_scales`, `kd_scales` | Multiples of each joint's kp and kd the sweep tries, every kp with every kd (default 0.6, 1, 1.5 and 1, 2, 3.5; kd at most 5) |
+| `kp_scales`, `kd_scales` | Multiples of each joint's kp and kd the sweep tries, every kp with every kd (default 0.6, 1, 1.5 and 1, 2.5, 5; kd at most 5) |
 | `--floor-z-m`, `--min-x-m` | Table height and the line the fingertip stays in front of |
 | `--no-confirm-each` | Stop asking before every pose and joint. Not for a first run |
 

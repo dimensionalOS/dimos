@@ -351,12 +351,14 @@ def test_overshoot_at_the_kd_limit_says_to_lower_kp() -> None:
 
 
 def test_gain_candidates_are_a_kp_by_kd_grid_with_the_robot_gains_first() -> None:
-    pairs = gain_candidates(80.0, 1.0, (0.6, 1.0, 1.5), (1.0, 2.0, 3.5))
+    pairs = gain_candidates(80.0, 1.0, (0.6, 1.0, 1.5), (1.0, 2.5, 5.0))
     assert pairs[0] == (80.0, 1.0) and len(pairs) == 9
-    assert set(pairs) == {(kp, kd) for kp in (48.0, 80.0, 120.0) for kd in (1.0, 2.0, 3.5)}
-    wrist = gain_candidates(10.0, 1.5, (0.6, 1.0, 1.5), (1.0, 2.0, 3.5))
-    assert {kd for _, kd in wrist} == {1.5, 3.0, KD_LIMIT}
-    clamped = gain_candidates(80.0, 5.0, (0.6, 1.0, 1.5), (1.0, 2.0, 3.5))
+    assert set(pairs) == {(kp, kd) for kp in (48.0, 80.0, 120.0) for kd in (1.0, 2.5, KD_LIMIT)}
+    wrist = gain_candidates(10.0, 1.5, (0.6, 1.0, 1.5), (1.0, 2.5, 5.0))
+    assert {kd for _, kd in wrist} == {1.5, 3.75, KD_LIMIT}
+    two = gain_candidates(18.0, 2.0, (0.6, 1.0, 1.5), (1.0, 2.5, 5.0))
+    assert len(two) == 6 and {kd for _, kd in two} == {2.0, KD_LIMIT}
+    clamped = gain_candidates(80.0, 5.0, (0.6, 1.0, 1.5), (1.0, 2.5, 5.0))
     assert clamped == [(80.0, 5.0), (48.0, 5.0), (120.0, 5.0)]
 
 
