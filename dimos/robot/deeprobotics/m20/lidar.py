@@ -79,7 +79,11 @@ class M20LidarConfig(AiryConfig):
             "mount_xyz": hardware["mount_xyz"],
             "mount_rpy": hardware["mount_rpy"],
         }
-        if self.body_filter:
+        # the model is loaded only when the blueprint did not resolve it already (it needs mujoco, which the board
+        # running the lidars has not)
+        if self.body_filter and (
+            self.body_filter_urdf is None or not self.body_filter_joint_positions
+        ):
             urdf, standing = _m20_body()
             if self.body_filter_urdf is None:
                 chosen["body_filter_urdf"] = urdf

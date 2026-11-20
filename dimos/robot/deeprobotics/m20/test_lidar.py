@@ -162,3 +162,18 @@ def test_mounts() -> None:
         assert np.allclose(rotation @ [1, 0, 0], [0, 0, 1], atol=1e-9)
         assert np.allclose(rotation @ [0, 0, 1], [outward, 0, 0], atol=1e-9)
         assert math.isclose(np.linalg.det(rotation), 1.0)
+
+
+def test_a_resolved_lidar_config_needs_no_mujoco(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The board running the lidars has no mujoco: a config the blueprint resolved must not load the model again."""
+    import sys
+
+    atom = next(iter(m20_lidars().solidify().blueprints))
+    kwargs = {key: value for key, value in atom.kwargs.items() if key != "instance_name"}
+    monkeypatch.setitem(sys.modules, "mujoco", None)
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.lidar._m20_body", _no_model)
+    M20LidarConfig(**kwargs)
+
+
+def _no_model() -> None:
+    raise AssertionError("the lidar config loaded the robot model")
