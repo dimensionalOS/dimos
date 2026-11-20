@@ -96,6 +96,8 @@ class DimSlamLioConfig(NativeModuleConfig):
     lidars: list[LidarConfig] = Field(default_factory=list)
     odom_sources: list[SourceConfig] = Field(default_factory=list)
     process_noise: ProcessNoise = Field(default_factory=ProcessNoise)
+    # Every this many scans, log the handlers' time and the inputs' age on arrival (lidar clock vs host); 0 never.
+    stats_every_scans: int = Field(default=100, ge=0)
 
     @model_validator(mode="after")
     def _frames_are_distinct(self) -> DimSlamLioConfig:

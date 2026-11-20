@@ -35,6 +35,20 @@ struct DimSlamLioConfig {
     /// External sources, each identified by the transform its estimates carry.
     odom_sources: Vec<SourceConfig>,
     process_noise: ProcessNoise,
+    /// Every this many scans, log the handlers' time and the inputs' age on arrival; 0 never.
+    stats_every_scans: u64,
+}
+
+/// What `stats_every_scans` reports: handler seconds and arrival ages, per input, since the last report.
+#[derive(Default)]
+struct Stats {
+    scans: u64,
+    scan_s: f64,
+    scan_max_s: f64,
+    scan_age_s: f64,
+    imus: u64,
+    imu_s: f64,
+    imu_age_s: f64,
 }
 
 #[derive(Module)]
@@ -56,6 +70,7 @@ struct DimSlamLio {
     config: DimSlamLioConfig,
 
     slam: Option<DimSlamCore>,
+    stats: Stats,
 }
 
 impl DimSlamLio {
@@ -77,18 +92,33 @@ impl DimSlamLio {
             tracing::warn!(frame = %msg.header.frame_id, "cloud dropped: no little-endian float32 x/y/z");
             return;
         };
+        let (start, age) = (std::time::Instant::now(), age_s(scan.timestamp_ns));
         let Self { slam, tf, .. } = self;
         slam.as_mut()
             .expect("setup ran")
             .handle_cloud(&scan, &tf_lookup(tf));
+        let took = start.elapsed().as_secs_f64();
+        let stats = &mut self.stats;
+        stats.scans += 1;
+        stats.scan_s += took;
+        stats.scan_max_s = stats.scan_max_s.max(took);
+        stats.scan_age_s += age;
+        if self.config.stats_every_scans > 0 && stats.scans >= self.config.stats_every_scans {
+            self.log_stats();
+        }
         self.publish().await;
     }
 
     async fn handle_imu(&mut self, msg: Imu) {
+        let sample = to_imu_sample(&msg);
+        let (start, age) = (std::time::Instant::now(), age_s(sample.timestamp_ns));
         let Self { slam, tf, .. } = self;
         slam.as_mut()
             .expect("setup ran")
-            .handle_imu(&to_imu_sample(&msg), &tf_lookup(tf));
+            .handle_imu(&sample, &tf_lookup(tf));
+        self.stats.imus += 1;
+        self.stats.imu_s += start.elapsed().as_secs_f64();
+        self.stats.imu_age_s += age;
         self.publish().await;
     }
 
@@ -113,11 +143,37 @@ impl DimSlamLio {
         }
     }
 
+    fn log_stats(&mut self) {
+        let stats = std::mem::take(&mut self.stats);
+        let (scans, imus) = (stats.scans as f64, stats.imus.max(1) as f64);
+        tracing::info!(
+            scans = stats.scans,
+            scan_ms_mean = 1e3 * stats.scan_s / scans,
+            scan_ms_max = 1e3 * stats.scan_max_s,
+            scan_age_ms_mean = 1e3 * stats.scan_age_s / scans,
+            imus = stats.imus,
+            imu_ms_mean = 1e3 * stats.imu_s / imus,
+            imu_age_ms_mean = 1e3 * stats.imu_age_s / imus,
+            "input stats"
+        );
+        if let Some(slam) = &self.slam {
+            slam.report();
+        }
+    }
+
     async fn report(&mut self) {
         if let Some(slam) = &self.slam {
             slam.report();
         }
     }
+}
+
+/// Seconds from a message's stamp to now on this host's clock (the stamps are the lidar's PTP clock).
+fn age_s(stamp_ns: i64) -> f64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    now - stamp_ns as f64 / 1e9
 }
 
 #[tokio::main]
