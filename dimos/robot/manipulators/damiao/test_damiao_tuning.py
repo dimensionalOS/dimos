@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live tuning in the motor layer: gains, floating joints, feed-forward and their limits."""
+"""Live tuning in the motor layer: gains, floating joints, hold and torque limits."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -29,7 +28,7 @@ from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
     make_calibrated_test_robot,
     mass_test_model,
 )
-from dimos.robot.manipulators.damiao.arm import DamiaoArm, PhysicalModel, TuningReset
+from dimos.robot.manipulators.damiao.arm import DamiaoArm, PhysicalModel
 from dimos.robot.manipulators.damiao.robot import DamiaoProfile, DamiaoRobot
 
 # TEST_ROBOT with gravity compensation on, which floating a joint needs; its
@@ -48,15 +47,15 @@ def _rows(boundary, bus: str) -> np.ndarray:
     return boundary[0].groups[bus].commands[-1]
 
 
-def test_a_gain_override_holds_its_joint_and_reset_restores_the_bus_gains(boundary):
+def test_a_gain_override_holds_its_joint_and_hold_restores_the_bus_gains(boundary):
     arm = _arm(boundary)
-    assert arm.set_gains("joint2", 40.0, 2.0) == (40.0, 2.0)
+    arm.set_gains("joint2", 40.0, 2.0)
     # Sent at once, without waiting for a command.
     np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[80, 5], [40, 2]])
     arm.command({"joint1": 0.5})
     np.testing.assert_equal(_rows(boundary, "left_arm")[:, :3], [[80, 5, 0.5], [40, 2, 0.2]])
     assert arm.get_gains() == {"joint1": (80, 5), "joint2": (40, 2), "joint3": (20, 0.6)}
-    arm.reset_gains()
+    arm.hold()
     np.testing.assert_equal(_rows(boundary, "left_arm")[:, :2], [[80, 5], [10, 1.5]])
     assert arm.get_gains()["joint2"] == (10.0, 1.5)
 
@@ -72,29 +71,13 @@ def test_gains_set_before_enable_apply_from_enable(boundary):
 
 
 @pytest.mark.parametrize(
-    "kp,kd,applied",
-    [(900.0, 7.0, (500.0, 5.0)), (-3.0, -1.0, (0.0, 0.0)), (500.0, 5.0, (500.0, 5.0))],
+    "kp,kd", [(500.5, 1.0), (1.0, 5.5), (-1.0, 1.0), (float("nan"), 1.0), (1.0, float("inf"))]
 )
-def test_gains_are_clamped_into_the_mit_frame_range(boundary, kp, kd, applied):
+def test_gains_outside_the_mit_range_are_refused_and_change_nothing(boundary, kp, kd):
     arm = _arm(boundary)
-    assert arm.set_gains("joint1", kp, kd) == applied
-    np.testing.assert_equal(_rows(boundary, "left_arm")[0, :2], applied)
-
-
-@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
-def test_non_finite_gains_are_refused_and_change_nothing(boundary, bad):
-    arm = _arm(boundary)
-    with pytest.raises(ValueError, match="finite"):
-        arm.set_gains("joint1", bad, 1.0)
-    with pytest.raises(ValueError, match="finite"):
-        arm.set_gains("joint1", 1.0, bad)
-    with pytest.raises(ValueError, match="finite"):
-        arm.set_feedforward("joint1", bad)
-    floatable = _arm(boundary, robot=FLOATABLE)
-    with pytest.raises(ValueError, match="finite"):
-        floatable.set_float("joint1", True, kd=bad)
+    with pytest.raises(ValueError, match="outside the Damiao MIT range"):
+        arm.set_gains("joint1", kp, kd)
     assert arm.get_gains()["joint1"] == (80.0, 5.0)
-    assert arm.floating == {} and arm.feedforward == {} and floatable.floating == {}
 
 
 @pytest.mark.parametrize("joint", ["missing", "left_finger"])
@@ -102,8 +85,7 @@ def test_tuning_names_an_arm_joint(boundary, joint):
     arm = _arm(boundary, robot=FLOATABLE)
     for call in (
         lambda: arm.set_gains(joint, 1.0, 1.0),
-        lambda: arm.set_float(joint, True),
-        lambda: arm.set_feedforward(joint, 0.1),
+        lambda: arm.set_float(joint, 1.0),
         lambda: arm.apply_calibration({joint: (1.0, 1.0)}, {}),
     ):
         with pytest.raises(ValueError, match="is not an arm joint"):
@@ -118,7 +100,7 @@ def test_a_floating_joint_has_no_stiffness_keeps_gravity_and_is_held_where_relea
     mocker.patch.object(arm._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0]))
     native = boundary[0]
     arm.command({"joint2": -0.5})
-    arm.set_float("joint2", True)
+    arm.set_float("joint2", 1.0)
     np.testing.assert_equal(_rows(boundary, "left_arm"), [[80, 5, 0.2, 0, 1], [0, 1, 0.2, 0, 2]])
     # Moved by hand: the reader re-sends the gravity torque and the target follows.
     native.groups["left_arm"].q[:] = [0.2, 0.6]
@@ -129,7 +111,7 @@ def test_a_floating_joint_has_no_stiffness_keeps_gravity_and_is_held_where_relea
     # A coordinator's stale target for the floating joint is ignored too.
     arm.command({"joint2": -0.5})
     assert _rows(boundary, "left_arm")[1, 2] == 0.6
-    arm.set_float("joint2", False)
+    arm.set_gains("joint2", 10.0, 1.5)
     np.testing.assert_equal(_rows(boundary, "left_arm")[1], [10, 1.5, 0.6, 0, 2])
     # Not floating any more: the reader stops re-commanding the arm.
     sent = len(native.groups["left_arm"].commands)
@@ -137,48 +119,23 @@ def test_a_floating_joint_has_no_stiffness_keeps_gravity_and_is_held_where_relea
     assert len(native.groups["left_arm"].commands) == sent
 
 
-def test_float_damping_is_given_else_teach_kd_else_the_holding_kd(boundary):
-    arm = _arm(boundary, robot=FLOATABLE)
-    arm.set_float("joint3", True)
-    assert arm.floating == {"joint3": 0.6}
-    arm.set_float("joint3", True, kd=9.0)
-    assert arm.floating == {"joint3": 5.0}
-    np.testing.assert_equal(_rows(boundary, "right_arm")[0, :2], [0, 5])
-    taught = _arm(boundary, robot=replace(FLOATABLE, teach_kd=[2.0, 1.0, 0.5]))
-    taught.set_float("joint3", True)
-    assert taught.floating == {"joint3": 0.5}
-
-
 def test_a_robot_without_gravity_compensation_refuses_to_float_a_joint(boundary):
     # METAL and DUAL_METAL run like this: kp 0 and tau 0 would let the joint fall.
     arm = _arm(boundary)
     sent = len(boundary[0].groups["left_arm"].commands)
     with pytest.raises(ValueError, match="does not compensate gravity"):
-        arm.set_float("joint2", True)
+        arm.set_float("joint2", 1.0)
     assert arm.floating == {}
     assert len(boundary[0].groups["left_arm"].commands) == sent
-    # Holding a joint that is not floating is still fine.
-    arm.set_float("joint2", False)
 
 
-def test_feed_forward_is_friction_sized_and_the_total_stays_within_the_motor_range(
-    boundary, mocker
-):
+def test_the_torque_is_clipped_to_the_motor_mit_range(boundary, mocker):
     arm = _arm(boundary)
-    gravity = mocker.patch.object(arm._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0]))
-    assert arm.set_feedforward("joint3", 0.5) == 0.5
-    assert _rows(boundary, "right_arm")[0, 4] == 3.5
-    # A fifth of the rated torque: 2 N m on a DM4310, 5.6 N m on a DM4340.
-    assert arm.set_feedforward("joint3", 50.0) == 2.0
-    assert arm.set_feedforward("joint1", -50.0) == pytest.approx(-5.6)
-    assert _rows(boundary, "right_arm")[0, 4] == 5.0
-    # The MIT range still caps the total, gravity included: 28 N m on a DM4340.
-    gravity.return_value = np.array([100.0, -100.0, 9.0])
+    mocker.patch.object(arm._physical, "gravity", return_value=np.array([100.0, -100.0, 9.0]))
     arm.command({"joint1": 0.1})
+    # 28 N m on a DM4340, 10 N m on a DM4310.
     np.testing.assert_equal(_rows(boundary, "left_arm")[:, 4], [28.0, -10.0])
-    assert _rows(boundary, "right_arm")[0, 4] == 10.0
-    arm.set_feedforward("joint3", 0.0)
-    assert arm.feedforward == {"joint1": pytest.approx(-5.6)}
+    assert _rows(boundary, "right_arm")[0, 4] == 9.0
 
 
 def test_a_motor_without_a_known_torque_range_fails_at_connect_before_any_bus(boundary):
@@ -213,10 +170,8 @@ def test_rated_torques_come_from_the_motor_type_and_a_custom_profile_gets_the_sm
     }
 
 
-def test_torque_saturation_is_logged_once_per_joint_every_few_seconds(boundary, mocker):
+def test_torque_saturation_is_logged_as_each_joint_enters_it(boundary, mocker):
     arm = _arm(boundary)
-    now = [100.0]
-    mocker.patch.object(arm_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
     warning = mocker.spy(arm_module.logger, "warning")
     gravity = mocker.patch.object(arm._physical, "gravity", return_value=np.array([30.0, 1.0, 3.0]))
 
@@ -224,47 +179,38 @@ def test_torque_saturation_is_logged_once_per_joint_every_few_seconds(boundary, 
         return [str(call.args[0]) for call in warning.call_args_list if "saturated" in call.args[0]]
 
     arm.command({"joint1": 0.1})
-    assert _rows(boundary, "left_arm")[0, 4] == 28.0
     assert saturated() == [
         "Damiao joint1 torque +30.00 N m saturated at the motor's 28 N m MIT range"
     ]
-    now[0] += 1.0
     gravity.return_value = np.array([30.0, -12.0, 3.0])
     arm.command({"joint1": 0.1})
-    # joint1 again within the interval stays quiet; joint2 is new.
+    # joint1 is still saturated, so quiet; joint2 enters.
     assert len(saturated()) == 2 and "joint2 torque -12.00" in saturated()[1]
-    now[0] += arm_module.SATURATION_LOG_INTERVAL_S
-    arm.command({"joint1": 0.1})
-    assert len(saturated()) == 4
     gravity.return_value = np.array([1.0, 2.0, 3.0])
-    now[0] += arm_module.SATURATION_LOG_INTERVAL_S
     arm.command({"joint1": 0.1})
-    assert len(saturated()) == 4
+    gravity.return_value = np.array([30.0, 2.0, 3.0])
+    arm.command({"joint1": 0.1})
+    assert len(saturated()) == 3
 
 
-def test_reset_tuning_undoes_every_live_change_and_keeps_the_calibration(boundary, mocker):
+def test_hold_undoes_every_live_change_and_keeps_the_calibration(boundary, mocker):
     arm = _arm(boundary, robot=FLOATABLE)
     arm.apply_calibration({"joint3": (60.0, 3.0)}, {})
     mocker.patch.object(arm._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0]))
     arm.set_gains("joint1", 200.0, 4.0)
     arm.set_gains("joint3", 30.0, 1.0)
-    arm.set_float("joint2", True, kd=0.5)
-    arm.set_feedforward("joint3", 0.5)
+    arm.set_float("joint2", 0.5)
     boundary[0].groups["left_arm"].q[:] = [0.2, 0.7]
     sent = len(boundary[0].groups["left_arm"].commands)
-    assert arm.reset_tuning() == TuningReset(
-        released=["joint2"], feedforward=["joint3"], gains=["joint1", "joint3"]
-    )
-    # Sent once, at once: the floating joint is held where the hand left it.
+    arm.hold()
+    # Sent once: every joint held where it is, the floating one where the hand left it.
     assert len(boundary[0].groups["left_arm"].commands) == sent + 1
     np.testing.assert_equal(_rows(boundary, "left_arm"), [[80, 5, 0.2, 0, 1], [10, 1.5, 0.7, 0, 2]])
     np.testing.assert_equal(_rows(boundary, "right_arm"), [[60, 3, 0.2, 0, 3]])
-    assert arm.floating == {} and arm.feedforward == {}
-    # Nothing left to undo, and still every joint is held where it is now.
+    assert arm.floating == {}
+    # The next command moves the arm again.
     arm.command({"joint1": 0.5})
-    assert not arm.reset_tuning().changed
-    assert len(boundary[0].groups["left_arm"].commands) == sent + 3
-    np.testing.assert_equal(_rows(boundary, "left_arm")[:, 2], [0.2, 0.7])
+    assert _rows(boundary, "left_arm")[0, 2] == 0.5
 
 
 def test_gravity_is_reported_for_any_masses_and_pose(boundary):
@@ -290,9 +236,8 @@ def test_teaching_wins_over_overrides_and_floating(boundary, mocker):
     arm = _arm(boundary, teach=True, robot=robot)
     mocker.patch.object(arm._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0]))
     arm.set_gains("joint1", 200.0, 4.0)
-    arm.set_float("joint2", True, kd=3.0)
-    arm.set_feedforward("joint1", 0.25)
-    np.testing.assert_equal(_rows(boundary, "left_arm")[:, [0, 1, 4]], [[0, 2, 1.25], [0, 1, 2]])
+    arm.set_float("joint2", 3.0)
+    np.testing.assert_equal(_rows(boundary, "left_arm")[:, [0, 1, 4]], [[0, 2, 1], [0, 1, 2]])
     assert arm.get_gains()["joint1"] == (200.0, 4.0)
 
 
@@ -306,7 +251,7 @@ def test_effort_is_the_torque_the_motors_report_not_the_one_commanded(boundary, 
     assert arm.read().effort == [0.7, -0.3, 0.05, 0.0, 0.0]
 
 
-def test_a_calibration_replaces_gains_and_masses_and_reset_returns_to_it(boundary):
+def test_a_calibration_replaces_gains_and_masses_and_hold_returns_to_it(boundary):
     robot = make_calibrated_test_robot()
     arm = _arm(boundary, robot=robot)
     arm.command({"joint1": 0.2})
@@ -319,7 +264,7 @@ def test_a_calibration_replaces_gains_and_masses_and_reset_returns_to_it(boundar
     assert after[4] == pytest.approx(2 * before)
     assert arm.inertial_overrides == heavy
     arm.set_gains("joint3", 20.0, 1.0)
-    arm.reset_gains()
+    arm.hold()
     assert arm.get_gains()["joint3"] == (60.0, 3.0)
     arm.apply_calibration({}, {})
     assert arm.get_gains()["joint3"] == (20.0, 0.6)

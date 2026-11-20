@@ -10,36 +10,34 @@ one owner and one gain declaration.
 Direct-connection coordinators communicate through
 `position_command` and `joint_state` streams.
 
-## Calibration sessions
+## Calibration
 
-Every Damiao connection serves the config contract
-(`dimos/control/connection/module_config.py`) with one target per arm id and
-the arm's keys, `ArmConfigPatch` and `ArmConfigState` in
-`dimos/control/calibration/schema.py`. Reading it (`config_keys`,
-`config_get`) always works. Changing how the energized arm is driven
-(`config_set`, `config_reset`) needs `config_sessions=True`, which only the
-`<robot>-calibrate` blueprints set; see
+At connect each arm runs its saved
+`~/.local/state/dimos/arms/<arm id>/calibration.json` (`calibration: auto`),
+none (`off`), or one file given by path. A file that does not load or fit the
+robot (model fingerprint, arm id, joints, links, MIT gain range, rated
+torques) makes connect fail; set `calibration: off` to run without it.
+
+`get_config()` returns, per arm id, an `ArmConfigState`
+(`dimos/control/calibration/schema.py`): the gains each joint is sent with,
+the floating joints, the fitted link masses, the file it runs and whether the
+robot can float a joint. `set_config(patch, save=False)` takes
+`{arm_id: ArmConfigPatch}` and needs `config_writes=True`, which only the
+`<robot>-calibrate` blueprints set, and never with `--simulation`; see
 [Calibrate a Damiao arm](/docs/capabilities/manipulation/arm_calibration.md).
 
-- A session does not stop position commands. The calibration blueprint moves
-  the arm through its control coordinator, whose pass-through task sends the
-  wizard's targets to `position_command` unchanged. The command deadman runs
-  as usual, and a halt ends the session.
-
-- Gains are those of the MIT frame: kp is clamped to 0 to 500 N m/rad and kd
-  to 0 to 5 N m s/rad, live and in a save alike. A calibration file with kp 0
-  or a gain past that range is not loaded.
-- kp 0 floats a joint, with kd as its damping and gravity still compensated.
-  A robot without gravity compensation refuses it.
-- A torque offset is added to a joint's gravity torque for the session only,
-  clamped to a fifth of the motor's rated torque.
-- A save (scope `persist`) merges into the arm's
-  `~/.local/state/dimos/arms/<arm id>/calibration.json` and applies it. It
-  writes nothing when applying it would change a joint's gravity torque at the
-  measured pose by more than 2 N m, unless forced, nor when nothing in it
-  belongs in a file. A check is saved only while the arm runs the file as it
-  is on disk.
-- When a session ends, every joint is held where it is, with the file's gains.
+- It is all or nothing: one bad entry raises an error naming every bad entry,
+  and nothing changes.
+- Live, it takes gains only, within the MIT frame's range (0 to 500 N m/rad,
+  0 to 5 N m s/rad). kp 0 floats a joint with kd as its damping and gravity
+  still compensated; a robot without gravity compensation refuses it.
+- Every halt undoes the live changes: the command deadman, a failed write,
+  or stop. The arm then holds where it is with the file's gains, and the next
+  position command moves it again. So live changes last only while commands
+  keep arriving.
+- `save=True` merges gains, links, fit and notes into the arm's file, keeps
+  the old one in `history/`, and applies it, dropping the live changes. It
+  refuses to save over a file it cannot read or one made for another model.
 
 ## Run software tests first
 

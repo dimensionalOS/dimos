@@ -12,26 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One calibration file per arm: fitted gravity, gains, friction and checks.
+"""One calibration file per arm: fitted gravity and gains.
 
 The file lives at ``calibration_path(arm_id)``, i.e.
 ``STATE_DIR/arms/<arm_id>/calibration.json``. ``save_calibration`` replaces
 it atomically and keeps the file it replaces in ``history/``. It records the
 fingerprint of the robot model it was made against (``ArmCalibrationSpec.
 model_sha256``), and ``load_calibration`` refuses a file made for a different
-model, since the fitted masses are corrections to that model;
-``load_for_spec`` always checks both the model and the arm. ``merge_patch``
-changes a stored calibration by an :class:`ArmConfigPatch`.
+model, since the fitted masses are corrections to that model.
 
-The arm's keys of the connection config contract
-(``dimos.control.connection.module_config``) live here too: a calibration
-tool builds an :class:`ArmConfigPatch` and sends it as the contract's
-``ConfigPatch`` (``to_patch``), and reads a connection's ``ConfigState`` as an
-:class:`ArmConfigState`. A connection that drives arms reads a patch back
-with ``ArmConfigPatch.from_patch``, strictly, since the RPC codec rebuilds
-models without validating them. Joints are named as in the robot's model,
-without the connection's source prefix, e.g. "left_joint2"; gains are kp in
-N m/rad and kd in N m s/rad, torques in N m.
+``ArmConfigPatch`` and ``ArmConfigState`` are one arm's entry in a Damiao
+connection's ``set_config`` and ``get_config``. Joints are named as in the
+robot's model, without the connection's source prefix, e.g. "left_joint2";
+kp is in N m/rad and kd in N m s/rad.
 
 A fitted link's mass and centre of mass are those of the link's pinocchio body:
 the link plus the links merged into it (``merged_links``: fixed children and
@@ -68,12 +61,6 @@ from dimos.control.calibration.spec import (
     ArmCalibrationSpec,
     merged_links,
     urdf_sha256,
-)
-from dimos.control.connection.module_config import (
-    AppliedFile,
-    ConfigApplied,
-    ConfigPatch,
-    ConfigState,
 )
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.assets.model import RobotModel
@@ -113,122 +100,53 @@ class LinkGravity(BaseConfig):
     """
 
     mass_kg: PositiveFloat
-    # A list too, as JSON gives it: a connection validates patches strictly.
     com_m: Annotated[tuple[FiniteFloat, FiniteFloat, FiniteFloat], BeforeValidator(_tuple_of)]
     merged_links: list[str] = Field(default_factory=list)
 
 
 class ArmConfigPatch(BaseConfig):
-    """A change to how one arm is driven; only what is given changes.
+    """One arm's entry in ``set_config``; only what is given changes.
 
     Attributes:
-        arm_id: The arm, e.g. "dual_openyam/left"; the patch's target.
-        gains: By joint, merged per joint. kp 0 floats the joint with kd
-            damping, gravity still held (session only).
-        torque_offset_nm: By joint, added to its gravity torque; 0 removes it
-            (session only).
-        links: Fitted link masses; replace the stored set as a whole (persist
-            only).
-        fit: The fit's statistics, stored with the links (persist only).
-        friction_nm: Coulomb friction by joint; stored, not applied (persist
-            only).
-        checks: Validation results by name, merged by name (persist only).
-        notes: Free text for the operator (persist only).
+        gains: By joint, merged per joint. Live, kp 0 floats the joint with kd
+            damping; saved, kp must be above 0.
+        links: Fitted link masses; replace the stored set as a whole (save only).
+        fit: The fit's statistics, stored with the links (save only).
+        notes: Free text for the operator (save only).
     """
 
-    arm_id: str
     gains: dict[str, JointGains] | None = None
-    torque_offset_nm: dict[str, FiniteFloat] | None = None
     links: dict[str, LinkGravity] | None = None
     fit: dict[str, Any] | None = None
-    friction_nm: dict[str, NonNegativeFloat] | None = None
-    checks: dict[str, Any] | None = None
     notes: str | None = None
 
-    def keys(self) -> list[str]:
-        """Every value the patch gives, dotted, e.g. "gains.left_joint2.kp", "links.link3".
 
-        A field given as an empty mapping is named alone, e.g. "links".
-        """
-        out: list[str] = []
-        if self.gains is not None:
-            out += [f"gains.{joint}.{gain}" for joint in self.gains for gain in ("kp", "kd")]
-            out += [] if self.gains else ["gains"]
-        for name in ("torque_offset_nm", "links", "friction_nm", "checks"):
-            value = getattr(self, name)
-            if value is not None:
-                out += [f"{name}.{key}" for key in value] or [name]
-        if self.fit is not None:
-            out.append("fit")
-        if self.notes is not None:
-            out.append("notes")
-        return out
+class AppliedFile(BaseConfig):
+    """The calibration file an arm runs, as it was when applied."""
 
-    def to_patch(self) -> ConfigPatch:
-        """The change as a connection takes it: the arm its target, the rest its values."""
-        values = self.model_dump(mode="json", exclude={"arm_id"}, exclude_none=True)
-        return ConfigPatch(target=self.arm_id, values=values)
-
-    @classmethod
-    def from_patch(cls, patch: ConfigPatch) -> Self:
-        """``patch`` read strictly as one arm's change.
-
-        Raises:
-            ValidationError: A key no arm has, or a value no arm could take.
-            ValueError: The values name the arm; the target does.
-        """
-        if "arm_id" in patch.values:
-            raise ValueError("the arm is the patch's target, not one of its values")
-        return cls.model_validate({**patch.values, "arm_id": patch.target}, strict=True)
-
-    @classmethod
-    def from_applied(cls, applied: ConfigApplied) -> Self:
-        """What one ``config_set`` applied, as one arm's change."""
-        return cls.from_patch(ConfigPatch(target=applied.target, values=applied.applied))
+    path: str
+    sha256: str
+    created: datetime
 
 
 class ArmConfigState(BaseConfig):
-    """How one arm is driven now.
+    """One arm's entry in ``get_config``: how it is driven now.
 
     Attributes:
-        arm_id: The arm; the state's target.
-        gains: Every arm joint's holding gains: a session override, else the
-            file's, else the robot's defaults.
-        floating: Joints at kp 0, with the damping each floats with.
-        torque_offset_nm: Torques added to the gravity torque; non-zero only.
-        links: Links whose masses differ from the URDF, as the arm runs them.
+        gains: Every arm joint's gains as sent: kp 0 and the damping for a
+            floating joint, else a live override, else the file's, else the
+            robot's defaults.
+        floating: The joints at kp 0.
+        links: The fitted link masses the arm runs; empty for the URDF's.
         file: The calibration file it runs, or ``None`` for its defaults.
-        session_id: The live config session, if any.
+        can_float: Whether the robot compensates gravity, which floating needs.
     """
 
-    arm_id: str
     gains: dict[str, JointGains]
-    floating: dict[str, float] = Field(default_factory=dict)
-    torque_offset_nm: dict[str, float] = Field(default_factory=dict)
-    links: dict[str, LinkGravity] = Field(default_factory=dict)
-    file: AppliedFile | None = None
-    session_id: str | None = None
-
-    def to_state(self) -> ConfigState:
-        """The state as a connection reports it: the arm its target, the arm's keys its values."""
-        values = self.model_dump(
-            mode="json", include={"gains", "floating", "torque_offset_nm", "links"}
-        )
-        return ConfigState(
-            target=self.arm_id, values=values, file=self.file, session_id=self.session_id
-        )
-
-    @classmethod
-    def from_state(cls, state: ConfigState) -> Self:
-        """``state`` read as one arm's; raises ``ValidationError`` when it is not one."""
-        return cls.model_validate(
-            {
-                **state.values,
-                "arm_id": state.target,
-                "file": state.file,
-                "session_id": state.session_id,
-            }
-        )
+    floating: list[str]
+    links: dict[str, LinkGravity]
+    file: AppliedFile | None
+    can_float: bool
 
 
 class ArmCalibrationError(RuntimeError):
@@ -264,8 +182,6 @@ class ArmCalibration(BaseConfig):
         created: When the file was written, UTC.
         gravity: Fitted link masses and centres of mass, if identified.
         gains: Position and velocity gains per joint, if tuned.
-        friction_nm: Coulomb friction per joint, if measured; never negative.
-        checks: Results of validation runs (float drift and the like).
         notes: Free text for the operator.
     """
 
@@ -275,8 +191,6 @@ class ArmCalibration(BaseConfig):
     created: datetime
     gravity: GravityCalibration | None = None
     gains: dict[str, JointGains] | None = None
-    friction_nm: dict[str, NonNegativeFloat] | None = None
-    checks: dict[str, Any] | None = None
     notes: str | None = None
 
     @field_validator("created")
@@ -319,17 +233,31 @@ def calibration_text(calibration: ArmCalibration) -> str:
 def save_calibration(path: Path, calibration: ArmCalibration) -> Path:
     """Write ``calibration`` atomically, keeping the file it replaces in ``history/``.
 
-    The previous file is copied to ``history/<its created time>.json`` next to
-    it before the new file is moved into place, so a crash leaves either the old
-    or the new file, never half of one.
+    The file it replaces must load as one for the same arm and model, else
+    ``ArmCalibrationError`` and nothing is written. It is copied to
+    ``history/<its created time>.json`` before the new file is moved into
+    place, so a crash leaves either the old or the new file, never half of one.
     """
     target = calibration_file(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
+        try:
+            old = load_calibration(
+                target,
+                expected_model_sha256=calibration.robot_model.sha256,
+                expected_arm_id=calibration.arm_id,
+            )
+        except ArmCalibrationError as error:
+            raise ArmCalibrationError(
+                f"{error} Not saving over it; move it away to start {calibration.arm_id} afresh."
+            ) from error
         history = target.parent / HISTORY_DIR_NAME
         history.mkdir(exist_ok=True)
-        shutil.copy2(target, _history_name(history, target))
-    text = calibration_text(calibration)
+        stem = old.created.strftime("%Y-%m-%dT%H-%M-%SZ")
+        candidate, index = history / f"{stem}.json", 1
+        while candidate.exists():
+            candidate, index = history / f"{stem}-{index}.json", index + 1
+        shutil.copy2(target, candidate)
+    target.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
         "w",
         encoding="utf-8",
@@ -340,7 +268,7 @@ def save_calibration(path: Path, calibration: ArmCalibration) -> Path:
     )
     try:
         with handle:
-            handle.write(text)
+            handle.write(calibration_text(calibration))
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(handle.name, target)
@@ -435,9 +363,7 @@ def check_arm_fits(
 
     Every gain must be for one of ``joints``, with 0 < kp <= ``kp_max`` (a
     file holds every joint; kp 0 would float it) and 0 <= kd <= ``kd_max``,
-    and every fitted link one that ``joints`` move (``moved_links``). What a
-    connection checks of a file before it loads or saves it, beside what
-    only its motors can say (finite torques, ratings).
+    and every fitted link one that ``joints`` move (``moved_links``).
 
     Raises:
         ArmCalibrationError: Naming what does not fit, and ``path``.
@@ -474,51 +400,25 @@ def merge_patch(
     """``stored`` with what ``patch`` gives changed, written at ``created``.
 
     Gains merge by joint. Links replace the stored set as a whole, with the
-    patch's fit, else none; the stored checks ran with the old masses, so
-    they are kept only when the links are unchanged (the file they were in
-    stays in ``history/``). Fit alone replaces the stored fit; friction
-    replaces the stored friction; checks merge by name; notes replace the
-    stored notes. The arm and its model stay those of ``stored``.
+    patch's fit, else the stored fit if the links are unchanged, else none.
+    Fit alone replaces the stored fit; notes replace the stored notes.
 
     Raises:
-        ValueError: The patch is for another arm, gives a torque offset (a
-            live change a file has no place for), or a fit without links to
-            go with it.
+        ValueError: A fit without links, stored or given, to go with it.
     """
-    if patch.arm_id != stored.arm_id:
-        raise ValueError(
-            f"the patch is for arm {patch.arm_id!r}, the calibration for {stored.arm_id!r}"
-        )
-    if patch.torque_offset_nm is not None:
-        raise ValueError(
-            "torque_offset_nm is a live change only; a calibration file does not hold it"
-        )
     gains = stored.gains if patch.gains is None else {**(stored.gains or {}), **patch.gains}
-    gravity, checks = stored.gravity, stored.checks
+    gravity = stored.gravity
     if patch.links is not None:
-        same = stored.gravity is not None and stored.gravity.links == patch.links
-        if patch.fit is not None:
-            fit = dict(patch.fit)
-        else:
-            fit = dict(stored.gravity.fit) if same and stored.gravity is not None else {}
-        gravity = GravityCalibration(links=dict(patch.links), fit=fit)
-        if not same:
-            checks = None
+        same = gravity is not None and gravity.links == patch.links
+        fit = patch.fit if patch.fit is not None else (gravity.fit if same and gravity else {})
+        gravity = GravityCalibration(links=dict(patch.links), fit=dict(fit))
     elif patch.fit is not None:
-        if stored.gravity is None:
+        if gravity is None:
             raise ValueError(f"{stored.arm_id}: a fit needs its fitted links; give links with it")
-        gravity = GravityCalibration(links=dict(stored.gravity.links), fit=dict(patch.fit))
-    if patch.checks is not None:
-        checks = {**(checks or {}), **patch.checks}
+        gravity = GravityCalibration(links=dict(gravity.links), fit=dict(patch.fit))
+    notes = stored.notes if patch.notes is None else patch.notes
     return ArmCalibration(
-        arm_id=stored.arm_id,
-        robot_model=stored.robot_model,
-        created=created,
-        gravity=gravity,
-        gains=gains,
-        friction_nm=stored.friction_nm if patch.friction_nm is None else dict(patch.friction_nm),
-        checks=checks,
-        notes=stored.notes if patch.notes is None else patch.notes,
+        **{**dict(stored), "created": created, "gravity": gravity, "gains": gains, "notes": notes}
     )
 
 
@@ -545,63 +445,6 @@ def gravity_links_from_inertial(
         )
         for name, link in links.items()
     }
-
-
-LEGACY_NOTES = "legacy fit; model hash supplied by caller"
-
-
-def calibration_from_legacy_gravity(
-    source: Path | Mapping[str, Any], spec: ArmCalibrationSpec, *, model_sha256: str
-) -> ArmCalibration:
-    """Convert a pre-spec ``gravity_fit`` file (``{"links": ...}``) into one arm's calibration.
-
-    Only the links among ``spec.gravity_links`` are taken, so one file holding
-    both arms of a rig converts into each arm's calibration in turn.
-
-    Args:
-        source: The legacy file, or its parsed content.
-        spec: The arm the links belong to.
-        model_sha256: The fingerprint (``model_sha256``) of the model the
-            legacy fit was made against. The file recorded none, so the
-            caller vouches for it: stamping the current model's would let a
-            fit made against an older URDF load as if it were current.
-    """
-    data: Mapping[str, Any]
-    if isinstance(source, Path):
-        data = json.loads(source.read_text())
-    else:
-        data = source
-    raw_links = data.get("links")
-    if not isinstance(raw_links, Mapping):
-        raise ArmCalibrationError("a legacy gravity file needs a 'links' mapping")
-    links = {
-        name: LinkInertial(mass_kg=value["mass_kg"], com_m=tuple(value["com_m"]))
-        for name, value in raw_links.items()
-        if name in spec.gravity_links
-    }
-    if not links:
-        raise ArmCalibrationError(f"the legacy gravity file has none of {spec.gravity_links}")
-    created = datetime.fromisoformat(str(data["created"])) if "created" in data else None
-    if created is not None and created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    try:
-        model = RobotModelRef(name=spec.model_name(), sha256=model_sha256)
-    except ValidationError as error:
-        raise ArmCalibrationError(f"{model_sha256!r} is not a model fingerprint: {error}")
-    return ArmCalibration(
-        arm_id=spec.arm_id,
-        robot_model=model,
-        created=created or datetime.now(timezone.utc),
-        gravity=GravityCalibration(
-            links=gravity_links_from_inertial(spec, links),
-            fit={
-                "source": "converted from a legacy gravity_fit file",
-                "legacy_source": data.get("source"),
-                "merged_from": data.get("merged_from"),
-            },
-        ),
-        notes=LEGACY_NOTES,
-    )
 
 
 def bake_into_urdf(
@@ -682,22 +525,6 @@ def _bake_one(calibration: ArmCalibration, urdf_xml: str) -> str:
             )
         _set_inertial(element, mass, moment / mass)
     return ET.tostring(root, encoding="unicode")
-
-
-def _history_name(history: Path, current: Path) -> Path:
-    try:
-        created = datetime.fromisoformat(json.loads(current.read_text())["created"])
-        stem = created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
-    except (OSError, ValueError, KeyError, TypeError):
-        stem = datetime.fromtimestamp(current.stat().st_mtime, timezone.utc).strftime(
-            "unreadable-%Y-%m-%dT%H-%M-%SZ"
-        )
-    candidate = history / f"{stem}.json"
-    index = 1
-    while candidate.exists():
-        candidate = history / f"{stem}-{index}.json"
-        index += 1
-    return candidate
 
 
 def _link_transforms(urdf_xml: str) -> dict[str, np.ndarray]:

@@ -87,7 +87,7 @@ def arm_declaration(connection: type[DamiaoConnection]) -> ConnectionConfig:
 
 
 def arm_connection(
-    connection: type[DamiaoConnection], *, teach: bool = False, config_sessions: bool = False
+    connection: type[DamiaoConnection], *, teach: bool = False, config_writes: bool = False
 ) -> Blueprint:
     """The deployed connection, or an independent mock when ``--simulation`` is on.
 
@@ -98,24 +98,23 @@ def arm_connection(
     Args:
         connection: The robot's connection.
         teach: Drive every arm joint with zero stiffness.
-        config_sessions: Serve config sessions (``config_set`` and the like),
-            for calibration blueprints only. Calibration drives the real arm,
-            so this refuses ``--simulation``.
+        config_writes: Serve ``set_config``, for calibration blueprints only.
+            Calibration drives the real arm, so this refuses ``--simulation``.
     """
     declaration = arm_declaration(connection)
     if global_config.simulation:
-        if config_sessions:
+        if config_writes:
             raise ValueError(
-                "calibration drives the real arm: the simulated connection is not one to "
-                "calibrate; run the calibration blueprint without --simulation"
+                "calibration drives the real arm: run the calibration blueprint without "
+                "--simulation"
             )
         return MockJointConnection.blueprint(
             **declaration.model_dump(),
             initial_positions=mock_initial_positions(connection.robot),
         )
-    # The declaration is a ConnectionConfig, so it carries config_sessions too.
-    settings = {**declaration.model_dump(), "config_sessions": config_sessions}
-    return connection.blueprint(**settings, teach=teach)
+    return connection.blueprint(
+        **declaration.model_dump(), teach=teach, config_writes=config_writes
+    )
 
 
 def arm_remaps(

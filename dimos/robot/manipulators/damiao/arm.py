@@ -22,11 +22,9 @@ The DimOS connection module only translates ports and time into those calls.
 
 Calibration changes how each joint is held, never where it is told to go:
 :meth:`DamiaoArm.apply_calibration` puts a calibration file's gains and link
-masses in place, and :meth:`DamiaoArm.set_gains`, :meth:`DamiaoArm.set_float`
-and :meth:`DamiaoArm.set_feedforward` tune one joint live, until
-:meth:`DamiaoArm.reset_tuning`. Every MIT row is limited in one place,
-``DamiaoArm._send``: kp to ``MIT_KP_MAX``, kd to ``MIT_KD_MAX`` and the torque
-to the motor's MIT range, with a warning when the torque saturates.
+masses in place, and :meth:`DamiaoArm.set_gains` and :meth:`DamiaoArm.set_float`
+change one joint live until the next :meth:`DamiaoArm.hold`. The torque of every
+MIT row is clipped to the motor's MIT range in ``DamiaoArm._send``.
 """
 
 from __future__ import annotations
@@ -35,7 +33,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import math
 import sys
-import time
 from typing import Any
 
 import can_motor_control
@@ -71,18 +68,9 @@ MOTOR_TYPES: dict[str, Any] = {
     "DM8009": damiao.MotorType.DM8009,
 }
 
-#: The highest position gain the Damiao MIT frame carries; a higher one is
-#: clamped to it.
+#: The kp and kd ranges the Damiao MIT frame encodes (firmware fact, every motor type).
 MIT_KP_MAX = 500.0
-#: The highest velocity gain the Damiao MIT frame carries; a higher one is
-#: clamped to it.
 MIT_KD_MAX = 5.0
-#: Live feed-forward (:meth:`DamiaoArm.set_feedforward`) is for friction-sized
-#: terms: at most this share of the motor's rated torque, 5.6 N m on a DM4340
-#: and 2 N m on a DM4310, whatever the MIT frame could carry.
-FEEDFORWARD_RATED_FRACTION = 0.2
-#: A joint whose torque saturates is logged at most once per this many seconds.
-SATURATION_LOG_INTERVAL_S = 5.0
 
 
 class PhysicalModel:
@@ -160,26 +148,6 @@ class PhysicalModel:
 
 
 @dataclass(frozen=True, slots=True)
-class TuningReset:
-    """What :meth:`DamiaoArm.reset_tuning` undid, by joint.
-
-    Attributes:
-        released: Joints that floated and are now held where they are.
-        feedforward: Joints whose feed-forward torque was dropped.
-        gains: Joints whose gain override was dropped.
-    """
-
-    released: list[str]
-    feedforward: list[str]
-    gains: list[str]
-
-    @property
-    def changed(self) -> bool:
-        """Whether anything was undone."""
-        return bool(self.released or self.feedforward or self.gains)
-
-
-@dataclass(frozen=True, slots=True)
 class ArmReading:
     """One synchronous sample of every commanded joint, in ``joint_names`` order.
 
@@ -244,14 +212,12 @@ class DamiaoArm:
         self._gain_overrides: dict[str, tuple[float, float]] = {}
         # Joints floating with zero stiffness, by joint, with their damping.
         self._floating: dict[str, float] = {}
-        # Extra torque added to a joint's gravity torque, N m.
-        self._feedforward: dict[str, float] = {}
         self._inertial_overrides: dict[str, LinkInertial] = {}
         # Each arm motor's MIT torque range and rated torque, N m, joint order.
         self._torque_limits: NDArray[np.float64] | None = None
         self._rated_torques: NDArray[np.float64] | None = None
-        # When each joint's torque saturation was last logged, monotonic s.
-        self._saturation_logged: dict[str, float] = {}
+        # Joints whose torque is clipped now; logged as each one enters.
+        self._saturated: set[str] = set()
 
     @property
     def robot(self) -> DamiaoRobot:
@@ -270,11 +236,6 @@ class DamiaoArm:
     def floating(self) -> dict[str, float]:
         """The joints floating with zero stiffness, with the damping each floats with."""
         return dict(self._floating)
-
-    @property
-    def feedforward(self) -> dict[str, float]:
-        """The extra torque added to each joint's gravity torque, N m; absent means 0."""
-        return dict(self._feedforward)
 
     @property
     def inertial_overrides(self) -> dict[str, LinkInertial]:
@@ -345,7 +306,17 @@ class DamiaoArm:
         self._send()
 
     def hold(self) -> None:
-        """Hold every joint where it is now, e.g. when commands stop arriving."""
+        """Undo every live change and hold every joint where it is now; the calibration stays.
+
+        Floating joints and gain overrides are dropped, so each joint is held
+        with the calibration's gains, else the bus defaults. The next
+        :meth:`command` moves the arm again.
+        """
+        undone = sorted({*self._floating, *self._gain_overrides})
+        if undone:
+            logger.info(f"Damiao live gains and floating of {undone} undone")
+        self._floating.clear()
+        self._gain_overrides.clear()
         if self._native is None or not self._active:
             return
         self._targets = dict(zip(self.joint_names, self._sample().position, strict=True))
@@ -374,118 +345,34 @@ class DamiaoArm:
             for motor, kp, kd in zip(bus.arm, bus.kp, bus.kd, strict=True)
         }
 
-    def set_gains(self, joint: str, kp: float, kd: float) -> tuple[float, float]:
-        """Hold ``joint`` with ``kp`` and ``kd`` instead, sent at once when enabled.
+    def set_gains(self, joint: str, kp: float, kd: float) -> None:
+        """Hold ``joint`` with ``kp`` and ``kd`` until the next :meth:`hold`, sent at once.
 
-        Gains are clamped into the MIT frame's range, kp 0 to ``MIT_KP_MAX``
-        and kd 0 to ``MIT_KD_MAX``; a non-finite gain or a joint that is not
-        an arm joint is refused with ``ValueError``. Teaching and floating
-        still win while they last. Returns the gains as applied.
+        A floating joint is held again where it is now. Gains outside the MIT
+        frame's range raise ``ValueError`` (:func:`check_mit_gains`).
+        """
+        index = self._arm_index(joint)
+        check_mit_gains(joint, kp, kd)
+        if self._floating.pop(joint, None) is not None and self._arms:
+            self._targets[joint] = float(self._arm_positions()[index])
+        self._gain_overrides[joint] = (float(kp), float(kd))
+        logger.info(f"Damiao {joint} gains kp {kp:g}, kd {kd:g}")
+        self._resend()
+
+    def set_float(self, joint: str, kd: float) -> None:
+        """Let ``joint`` float with zero stiffness and ``kd`` damping until the next :meth:`hold`.
+
+        Its gravity torque is still applied, so it stays where a hand leaves
+        it. A robot that does not compensate gravity raises ``ValueError``:
+        nothing would hold the joint up.
         """
         self._arm_index(joint)
-        gains, clamped = _mit_gains(joint, kp, kd)
-        if clamped:
-            logger.warning(f"Damiao {joint} gains kp={kp}, kd={kd} clamped to {gains}")
-        before = self.get_gains()[joint]
-        self._gain_overrides[joint] = gains
-        if gains != before:
-            logger.info(
-                f"Damiao {joint} gains: kp {before[0]:g} -> {gains[0]:g}, "
-                f"kd {before[1]:g} -> {gains[1]:g}"
-            )
+        check_mit_gains(joint, 0.0, kd)
+        if not self._robot.gravity:
+            raise ValueError(f"Damiao {joint} cannot float: this robot does not compensate gravity")
+        self._floating[joint] = float(kd)
+        logger.info(f"Damiao {joint} floating with kd {kd:g}")
         self._resend()
-        return gains
-
-    def reset_gains(self) -> None:
-        """Drop every live gain override: back to the calibration's gains, else the bus defaults."""
-        if self._gain_overrides:
-            logger.info(f"Damiao gain overrides cleared for {sorted(self._gain_overrides)}")
-        self._gain_overrides.clear()
-        self._resend()
-
-    def set_float(self, joint: str, on: bool, kd: float | None = None) -> None:
-        """Let ``joint`` float, or hold it again; sent at once when enabled.
-
-        A floating joint has zero stiffness and ``kd`` damping (by default the
-        robot's ``teach_kd``, else the joint's holding kd), and its gravity
-        and feed-forward torques are still applied, so it stays where a hand
-        leaves it. Holding it again holds it where it is now, never where it
-        was told to be before it floated. A robot that does not compensate
-        gravity refuses to float a joint with ``ValueError``: nothing would
-        hold it up.
-        """
-        index = self._arm_index(joint)
-        if on and not self._robot.gravity:
-            raise ValueError(
-                f"Damiao {joint} cannot float: this robot does not compensate gravity, "
-                "so with zero stiffness the joint would fall"
-            )
-        if on:
-            if kd is None:
-                teach_kd = self._robot.teach_kd
-                kd = teach_kd[index] if teach_kd is not None else self.get_gains()[joint][1]
-            (_, damping), clamped = _mit_gains(joint, 0.0, kd)
-            if clamped:
-                logger.warning(f"Damiao {joint} float damping kd={kd} clamped to {damping}")
-            self._floating[joint] = damping
-            logger.info(f"Damiao {joint} floating with kd {damping:g}")
-        elif joint in self._floating:
-            del self._floating[joint]
-            if self._native is not None and self._active:
-                self._targets[joint] = float(self._arm_positions()[index])
-            logger.info(f"Damiao {joint} held again where it is")
-        self._resend()
-
-    def set_feedforward(self, joint: str, tau_nm: float) -> float:
-        """Add ``tau_nm`` to ``joint``'s gravity torque on every tick; 0 removes it.
-
-        For friction-sized terms: clamped to ``FEEDFORWARD_RATED_FRACTION`` of
-        the motor's rated torque (:attr:`rated_torques`), 5.6 N m on a DM4340.
-        A non-finite torque or a joint that is not an arm joint is refused
-        with ``ValueError``. Sent at once when enabled. Returns the torque as
-        applied, N m.
-        """
-        index = self._arm_index(joint)
-        if not math.isfinite(tau_nm):
-            raise ValueError(f"Damiao {joint} feed-forward torque must be finite, got {tau_nm}")
-        _, rated = self._torque_tables()
-        limit = FEEDFORWARD_RATED_FRACTION * float(rated[index])
-        tau = min(max(float(tau_nm), -limit), limit)
-        if tau != tau_nm:
-            logger.warning(f"Damiao {joint} feed-forward {tau_nm} N m clamped to {tau} N m")
-        if tau == 0.0:
-            self._feedforward.pop(joint, None)
-        else:
-            self._feedforward[joint] = tau
-        logger.info(f"Damiao {joint} feed-forward torque {tau:g} N m")
-        self._resend()
-        return tau
-
-    def reset_tuning(self) -> TuningReset:
-        """Undo every live change; the calibration stays.
-
-        Feed-forward torques and gain overrides are dropped and floating
-        joints held again, so each joint is held with the calibration's
-        gains, else the bus defaults, and every arm joint is held where it
-        is now: a joint pushed off its target while it was held softly, or
-        commanded somewhere it never reached, is not pulled back there with
-        the restored gains. The state is reset first, then sent at once when
-        enabled.
-        """
-        reset = TuningReset(
-            released=sorted(self._floating),
-            feedforward=sorted(self._feedforward),
-            gains=sorted(self._gain_overrides),
-        )
-        self._floating.clear()
-        self._feedforward.clear()
-        self._gain_overrides.clear()
-        if self._native is not None and self._active:
-            measured = self._arm_positions()
-            for joint, position in zip(self._robot.arm_joint_names, measured, strict=True):
-                self._targets[joint] = float(position)
-            self._send()
-        return reset
 
     def gravity(
         self,
@@ -537,21 +424,20 @@ class DamiaoArm:
     ) -> None:
         """Hold the named joints with these gains and use these link masses for gravity.
 
-        Replaces the previous calibration as a whole, and drops live gain
-        overrides so the arm runs exactly this one; floating joints and
-        feed-forward torques are kept. Everything is checked first: an
-        unknown joint or link, or a non-finite value, raises ``ValueError``
-        and leaves the arm as it was. Sent at once when enabled. Gains are
-        clamped as in :meth:`set_gains`.
+        Replaces the previous calibration as a whole and drops every live
+        change, so the arm runs exactly this one; a floating joint is held
+        where it is. Everything is checked first: an unknown joint or link, a
+        non-finite value or a gain outside the MIT range raises ``ValueError``
+        and leaves the arm as it was. Sent at once when enabled.
         """
-        limited, physical = self._prepare_calibration(gains, inertial_overrides)
-        for joint, (kp, kd) in gains.items():
-            if limited[joint] != (kp, kd):
-                logger.warning(
-                    f"Damiao {joint} calibration gains kp={kp}, kd={kd} clamped to {limited[joint]}"
-                )
-        self._calibration_gains = limited
+        physical = self._prepare_calibration(gains, inertial_overrides)
+        if self._arms:
+            measured = self._arm_positions()
+            for joint in self._floating:
+                self._targets[joint] = float(measured[self._arm_index(joint)])
+        self._calibration_gains = dict(gains)
         self._gain_overrides.clear()
+        self._floating.clear()
         self._inertial_overrides = dict(inertial_overrides)
         if self._physical is not None:
             # Before connect, connect builds the model with these overrides.
@@ -685,35 +571,14 @@ class DamiaoArm:
             self._rated_torques = np.minimum(rated, limits).astype(np.float64)
         return self._torque_limits, self._rated_torques
 
-    def _log_saturation(
-        self,
-        bus: DamiaoBus,
-        requested: NDArray[np.float64],
-        limits: NDArray[np.float64],
-    ) -> None:
-        """Warn about each joint whose torque was clipped, once per ``SATURATION_LOG_INTERVAL_S``."""
-        now = time.monotonic()
-        for motor, tau, limit in zip(bus.arm, requested, limits, strict=True):
-            if abs(tau) <= limit:
-                continue
-            last = self._saturation_logged.get(motor.name)
-            if last is not None and now - last < SATURATION_LOG_INTERVAL_S:
-                continue
-            self._saturation_logged[motor.name] = now
-            logger.warning(
-                f"Damiao {motor.name} torque {tau:+.2f} N m saturated at the motor's "
-                f"{limit:g} N m MIT range"
-            )
-
     def _prepare_calibration(
         self,
         gains: Mapping[str, tuple[float, float]],
         inertial_overrides: Mapping[str, LinkInertial],
-    ) -> tuple[dict[str, tuple[float, float]], PhysicalModel]:
-        limited: dict[str, tuple[float, float]] = {}
+    ) -> PhysicalModel:
         for joint, (kp, kd) in gains.items():
             self._arm_index(joint)
-            limited[joint], _ = _mit_gains(joint, kp, kd)
+            check_mit_gains(joint, kp, kd)
         physical = PhysicalModel(
             self._robot.gravity_model,
             self._robot.arm_joint_names,
@@ -723,7 +588,7 @@ class DamiaoArm:
         if self._arms:
             # The new masses must give finite torques at the measured pose.
             physical.gravity(self._arm_positions())
-        return limited, physical
+        return physical
 
     def _resend(self) -> None:
         """Send changed gains or torques at once; before enable they apply from enable."""
@@ -783,22 +648,21 @@ class DamiaoArm:
             for index, motor in enumerate(bus.arm, start=offset):
                 default = (bus.kp[index - offset], bus.kd[index - offset])
                 kp, kd = self._wire_gains(index, motor.name, default)
-                tau = gravity[index]
-                if motor.name in self._feedforward:
-                    tau = tau + self._feedforward[motor.name]
-                values.append([kp, kd, positions[index], 0.0, tau])
+                values.append([kp, kd, positions[index], 0.0, gravity[index]])
             rows = np.asarray(values, dtype=np.float64)
             if not np.isfinite(rows).all():
                 raise ValueError(f"arm {bus.name!r} command contains non-finite values")
-            # The one place every MIT row is limited: the gains to the frame's
-            # range, the torque to the motor's.
             limits = torque_limits[offset : offset + len(bus.arm)]
-            rows[:, 0] = np.clip(rows[:, 0], 0.0, MIT_KP_MAX)
-            rows[:, 1] = np.clip(rows[:, 1], 0.0, MIT_KD_MAX)
-            torques = np.clip(rows[:, 4], -limits, limits)
-            if (torques != rows[:, 4]).any():
-                self._log_saturation(bus, rows[:, 4], limits)
-            rows[:, 4] = torques
+            for motor, tau, limit in zip(bus.arm, rows[:, 4], limits, strict=True):
+                if abs(tau) <= limit:
+                    self._saturated.discard(motor.name)
+                elif motor.name not in self._saturated:
+                    self._saturated.add(motor.name)
+                    logger.warning(
+                        f"Damiao {motor.name} torque {tau:+.2f} N m saturated at the motor's "
+                        f"{limit:g} N m MIT range"
+                    )
+            rows[:, 4] = np.clip(rows[:, 4], -limits, limits)
             arm_rows.append((bus.name, rows))
             offset += len(bus.arm)
         for name, rows in arm_rows:
@@ -839,9 +703,10 @@ class DamiaoArm:
         return ArmReading(position=q, velocity=dq, effort=tau)
 
 
-def _mit_gains(joint: str, kp: float, kd: float) -> tuple[tuple[float, float], bool]:
-    """``(kp, kd)`` clamped into the MIT frame's range, and whether either was clamped."""
-    if not math.isfinite(kp) or not math.isfinite(kd):
-        raise ValueError(f"Damiao {joint} gains must be finite, got kp={kp}, kd={kd}")
-    limited = (min(max(float(kp), 0.0), MIT_KP_MAX), min(max(float(kd), 0.0), MIT_KD_MAX))
-    return limited, limited != (kp, kd)
+def check_mit_gains(joint: str, kp: float, kd: float) -> None:
+    """Raise ``ValueError`` unless 0 <= kp <= ``MIT_KP_MAX`` and 0 <= kd <= ``MIT_KD_MAX``."""
+    if not (0.0 <= kp <= MIT_KP_MAX and 0.0 <= kd <= MIT_KD_MAX):
+        raise ValueError(
+            f"{joint} gains kp={kp}, kd={kd} are outside the Damiao MIT range "
+            f"0 <= kp <= {MIT_KP_MAX:g}, 0 <= kd <= {MIT_KD_MAX:g}"
+        )

@@ -19,29 +19,19 @@ robot's data in :mod:`dimos.robot.manipulators.damiao.robot`. This module only
 translates streams into targets, publishes readings at a fixed rate, and
 latches a fault when feedback breaks.
 
-At start it applies each arm's saved calibration file, if there is one
+At connect it applies each arm's saved calibration file
 (``DamiaoConnectionConfig.calibration``): the file's gains and fitted link
-masses. Without a file the arm runs exactly its URDF and bus defaults.
-
-Every connection serves the config contract of
-:mod:`dimos.control.connection.module_config` with one target per arm id and
-the arm's keys of :mod:`dimos.control.calibration.schema`
-(``ArmConfigPatch``, ``ArmConfigState``). One deployed with
-``config_sessions=True`` (calibration blueprints only) lets one calibration
-tool hold a config session and change its gains, float its joints
-(kp 0) and add torque offsets live, and save calibrations to each arm's file
-(scope "persist"). Gains are those of a Damiao MIT frame: kp 0 to 500 N m/rad
-and kd 0 to 5 N m s/rad, the range of the frame's fields, so a larger gain is
-clamped to them. Stopping such a connection first gives the calibration tool,
-stopping at the same time, up to ``CONFIG_PARK_WAIT_S`` to park the arm and
-end its session (:meth:`DamiaoConnection.stop`): the modules of a run stop in
-parallel, so nothing else orders the two.
+masses. A file that does not load or fit the robot makes connect raise.
+``get_config`` reports how each arm is driven; with ``config_writes`` on
+(calibration blueprints only) ``set_config`` changes gains live or saves them,
+with fitted masses, to each arm's file. Every halt (the deadman, a failed
+write, stop) undoes the live changes and holds the arm where it is.
 """
 
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -51,7 +41,7 @@ import time
 from typing import Any, ClassVar
 import uuid
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
 
@@ -59,6 +49,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.calibration._inertial import LinkInertial
 from dimos.control.calibration.schema import (
     ARMS_STATE_DIR,
+    AppliedFile,
     ArmCalibration,
     ArmCalibrationError,
     ArmConfigPatch,
@@ -74,20 +65,8 @@ from dimos.control.calibration.schema import (
     save_calibration,
     to_inertial_overrides,
 )
-from dimos.control.calibration.spec import calibration_keys, model_name, model_sha256
-from dimos.control.connection.connection_module import (
-    ConnectionConfig,
-    ConnectionModule,
-    Values,
-)
-from dimos.control.connection.module_config import (
-    AppliedFile,
-    ConfigApplied,
-    ConfigKeys,
-    ConfigPatch,
-    ConfigScope,
-    ConfigState,
-)
+from dimos.control.calibration.spec import model_name, model_sha256
+from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule, Values
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import limits as limits_of, movable_joints
@@ -100,8 +79,7 @@ from dimos.robot.manipulators.damiao.arm import (
     MIT_KP_MAX,
     ArmReading,
     DamiaoArm,
-    TuningReset,
-    _mit_gains,
+    check_mit_gains,
 )
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.utils.logging_config import setup_logger
@@ -111,11 +89,6 @@ logger = setup_logger()
 #: Where "auto" looks for each arm's calibration, ``<root>/<arm_id>/calibration.json``.
 #: Read at every load, so tests can point it at a scratch directory.
 CALIBRATION_ROOT: Path = ARMS_STATE_DIR
-#: The most any joint's gravity torque at the measured pose may change when a
-#: saved calibration is applied live without ``force``, N m.
-MAX_GRAVITY_STEP_NM = 2.0
-#: Why a session does not take what only a calibration file holds.
-_FILE_ONLY = "saved with scope 'persist' only; a session changes gains, floating and torque offsets"
 
 
 def zero_stiffness_joints(robot: DamiaoRobot, *, teach: bool, source: str = "arm") -> list[str]:
@@ -142,19 +115,19 @@ class DamiaoConnectionConfig(ConnectionConfig):
             guide it by hand.
         state_rate_hz: How often the joints are read and published.
         deadman_timeout_s: How long without a command before the arm holds.
-        calibration: Which calibration to apply at start. "auto" applies each
+        calibration: Which calibration to apply at connect. "auto" applies each
             arm's saved file (``calibration_path(arm_id)``) when there is one;
             "off" applies none; anything else is the path of one calibration
-            file, applied to the arm it names. An arm without a file, or whose
-            file does not fit this robot, runs its URDF masses and bus gains.
-            A calibration saved through ``config_set`` always goes to
-            ``calibration_path(arm_id)``, whatever this says.
+            file, applied to the arm it names. A file that does not load or
+            fit makes connect raise.
+        config_writes: Serve ``set_config``; calibration blueprints only.
     """
 
     teach: bool = False
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
     deadman_timeout_s: float = Field(default=0.1, gt=0, allow_inf_nan=False)
     calibration: str = Field(default="auto", min_length=1)
+    config_writes: bool = False
 
     @model_validator(mode="after")
     def _position_only(self) -> Self:
@@ -173,44 +146,12 @@ class _ArmFile:
     links: dict[str, LinkInertial]
     sha256: str
 
-    def applied_file(self) -> AppliedFile:
-        return AppliedFile(
-            path=str(self.path), created=self.calibration.created.isoformat(), sha256=self.sha256
-        )
-
-
-def _merged(
-    files: Mapping[str, _ArmFile | None],
-) -> tuple[dict[str, tuple[float, float]], dict[str, LinkInertial]]:
-    """Every file's gains and link masses together; arms never share joints or links."""
-    gains: dict[str, tuple[float, float]] = {}
-    links: dict[str, LinkInertial] = {}
-    for item in files.values():
-        if item is not None:
-            gains.update(item.gains)
-            links.update(item.links)
-    return gains, links
-
-
-def _undone(reset: TuningReset) -> str:
-    parts = []
-    if reset.released:
-        parts.append(f"held {reset.released} where they are")
-    if reset.feedforward:
-        parts.append(f"dropped the feed-forward of {reset.feedforward}")
-    if reset.gains:
-        parts.append(f"gains of {reset.gains} back to the calibration")
-    return f"{'; '.join(parts) or 'nothing to undo'}; every joint holds where it is"
-
 
 class DamiaoConnection(ConnectionModule):
     """Own one Damiao robot, its measured states and position targets.
 
-    It serves the config contract in full (see ``ConnectionModule``) in the
-    arm's keys (``ArmConfigPatch``): a config session changes gains (kp 0
-    floats a joint, gravity still held) and torque offsets of the energized
-    arm live, and a save merges into each arm's calibration file and applies
-    it. Calibration tools only, and only with ``config.config_sessions``.
+    ``get_config`` and ``set_config`` read and change how each arm is held;
+    see the module docstring.
     """
 
     #: The robot this connection deploys: motors, gains, grippers and models.
@@ -229,9 +170,9 @@ class DamiaoConnection(ConnectionModule):
         self._state_frame = ""
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
-        # Guarded by _lock: the calibration file each arm runs, None for none.
+        # Guarded by _hardware_lock: the calibration file each arm runs, None for none.
         self._applied: dict[str, _ArmFile | None] = {}
-        self._model_hash: str | None = None
+        self._model_sha256 = ""
 
     @property
     def joint_names(self) -> list[str]:
@@ -250,7 +191,7 @@ class DamiaoConnection(ConnectionModule):
         """Return one explicitly configured CAN selector per robot bus, in order."""
 
     def connect(self) -> None:
-        """Validate the deployed model and topology, then open the buses."""
+        """Validate the deployed model and topology, open the buses and read the calibrations."""
         assert self.config.model is not None
         if {joint.name for joint in movable_joints(self.config.model)} != set(self.joint_names):
             raise ValueError("connection model joints must match the vendor topology")
@@ -265,8 +206,31 @@ class DamiaoConnection(ConnectionModule):
         self._arm = arm
         self._read_state()
         # Before enable, so the first torque the motors get is the calibrated one.
-        files = self._read_calibrations(arm, self.config.calibration, strict=False)
-        self._apply_calibrations(arm, files, always=False)
+        self._model_sha256 = model_sha256(self.robot.gravity_model)
+        files: dict[str, _ArmFile | None] = dict.fromkeys(self._arm_joints())
+        source = self.config.calibration
+        expected: dict[Path, str | None] = {}
+        if source == "auto":
+            expected = {calibration_path(arm_id, CALIBRATION_ROOT): arm_id for arm_id in files}
+            expected = {path: arm_id for path, arm_id in expected.items() if path.exists()}
+        elif source != "off":
+            expected = {calibration_file(Path(source).expanduser()): None}
+        for path, arm_id in expected.items():
+            try:
+                calibration = load_calibration(
+                    path, expected_model_sha256=self._model_sha256, expected_arm_id=arm_id
+                )
+                item = self._read_file(arm, calibration, path)
+            except (ArmCalibrationError, ValueError) as error:
+                raise ArmCalibrationError(
+                    f"{error} Set calibration: off to run without it."
+                ) from error
+            files[item.calibration.arm_id] = item
+        logger.info(
+            f"{self._label}: calibration {source}; URDF defaults for "
+            f"{[arm_id for arm_id, item in files.items() if item is None]}"
+        )
+        self._apply(arm, files)
 
     @rpc
     def start(self) -> None:
@@ -309,8 +273,6 @@ class DamiaoConnection(ConnectionModule):
 
     @rpc
     def stop(self) -> None:
-        # Before the reader stops: a calibration tool may still be parking the arm.
-        self._await_config_park()
         self._stop_reading.set()
         if (
             self._reader is not None
@@ -323,7 +285,6 @@ class DamiaoConnection(ConnectionModule):
                 super().stop()
             finally:
                 with self._hardware_lock:
-                    self._end_config_session("the connection stopped")
                     arm, self._arm = self._arm, None
                     try:
                         if arm is not None:
@@ -342,437 +303,177 @@ class DamiaoConnection(ConnectionModule):
                     self._report(error)
                     raise RuntimeError(error)
 
-    def _config_keys(self) -> ConfigKeys:
-        """``calibration_keys`` of the robot, and where each arm's file is saved."""
-        keys = calibration_keys(self.robot, self.config.source)
-        return keys.model_copy(
-            update={
-                "sessions": self.config.config_sessions,
-                "persist_paths": {
-                    arm_id: str(calibration_path(arm_id, CALIBRATION_ROOT))
-                    for arm_id in keys.targets
-                },
-            }
-        )
+    @rpc
+    def get_config(self) -> dict[str, Any]:
+        """How each arm is driven now, by arm id: ``ArmConfigState`` as a dict."""
+        with self._hardware_lock:
+            arm = self._live_arm()
+            gains, floating = arm.get_gains(), arm.floating
+            states = {}
+            for arm_id, joints in self._arm_joints().items():
+                item = self._applied.get(arm_id)
+                gravity = None if item is None else item.calibration.gravity
+                states[arm_id] = ArmConfigState(
+                    gains={
+                        joint: JointGains(kp=0.0, kd=floating[joint])
+                        if joint in floating
+                        else JointGains(kp=gains[joint][0], kd=gains[joint][1])
+                        for joint in joints
+                    },
+                    floating=[joint for joint in joints if joint in floating],
+                    links={} if gravity is None else dict(gravity.links),
+                    file=None
+                    if item is None
+                    else AppliedFile(
+                        path=str(item.path), sha256=item.sha256, created=item.calibration.created
+                    ),
+                    can_float=self.robot.gravity,
+                ).model_dump(mode="json")
+            return states
 
-    def _config_state(self) -> dict[str, ConfigState]:
-        """How each arm is driven now (``ArmConfigState``): gains, floating joints, offsets, file."""
-        arm = self._live_arm()
-        gains, floating, offsets = arm.get_gains(), arm.floating, arm.feedforward
-        with self._lock:
-            applied = dict(self._applied)
-        states: dict[str, ConfigState] = {}
-        for arm_id, joints in self._arm_joints_by_id().items():
-            item = applied.get(arm_id)
-            gravity = None if item is None else item.calibration.gravity
-            states[arm_id] = ArmConfigState(
-                arm_id=arm_id,
-                gains={
-                    joint: JointGains(kp=gains[joint][0], kd=gains[joint][1]) for joint in joints
-                },
-                floating={joint: floating[joint] for joint in joints if joint in floating},
-                torque_offset_nm={joint: offsets[joint] for joint in joints if offsets.get(joint)},
-                links={} if gravity is None else dict(gravity.links),
-                file=None if item is None else item.applied_file(),
-            ).to_state()
-        return states
+    @rpc
+    def set_config(self, patch: dict[str, Any], save: bool = False) -> dict[str, Any]:
+        """Change how arms are held, all or nothing; returns ``get_config()``.
 
-    def _config_check(self, patch: ConfigPatch) -> None:
-        """Refuse a patch that is not an arm's change (``ArmConfigPatch.from_patch``)."""
-        ArmConfigPatch.from_patch(patch)
-
-    def _config_apply(
-        self, patch: ConfigPatch, scope: ConfigScope, force: bool, apply_now: bool
-    ) -> ConfigApplied:
-        """Change one arm live (session) or save its calibration file and apply it (persist).
-
-        Live, gains are clamped to the MIT frame's range; kp 0 floats the
-        joint with kd damping (``DamiaoArm.set_float``), refused without
-        gravity compensation; kp above 0 holds a floating joint again where it
-        is, then with those gains. A torque offset is clamped to a fifth of
-        the motor's rated torque. Links, fit, friction, checks and notes are
-        for a save only. See ``_save`` for a save.
+        ``patch`` maps arm ids to ``ArmConfigPatch`` dicts. Live (``save``
+        False) it takes gains only: kp 0 floats the joint with kd damping
+        (needs gravity compensation), kp above 0 holds it with those gains,
+        until the next halt. Saved, its gains (kp above 0), links, fit and
+        notes are merged into each arm's calibration file, which is then
+        applied, dropping every live change. Any bad entry raises
+        ``ValueError`` naming every bad entry, and nothing changes.
         """
-        arm_patch = ArmConfigPatch.from_patch(patch)
-        arm = self._live_arm()
-        arms = self._arm_joints_by_id()
-        joints = arms.get(arm_patch.arm_id)
-        if joints is None:
-            raise ValueError(
-                f"{arm_patch.arm_id!r} is not an arm of this Damiao robot; "
-                f"its arms are {list(arms)}"
+        if not self.config.config_writes:
+            raise RuntimeError(
+                f"{self._label} does not take set_config: config_writes is off; "
+                "the calibration blueprints (<robot>-calibrate) turn it on"
             )
-        named = set(arm_patch.gains or {}) | set(arm_patch.torque_offset_nm or {})
-        strangers = sorted(named - set(joints))
-        if strangers:
-            raise ValueError(
-                f"not arm joints of {arm_patch.arm_id}: {strangers}; its joints are {joints}"
-            )
-        if scope == "persist":
-            return self._save(arm, arm_patch, joints, force=force, apply_now=apply_now)
-        unsupported: dict[str, str] = {}
-        file_only = arm_patch.model_copy(update={"gains": None, "torque_offset_nm": None})
-        unsupported.update(dict.fromkeys(file_only.keys(), _FILE_ONLY))
-        gains: dict[str, JointGains] = {}
-        clamped: list[str] = []
-        for joint, asked in (arm_patch.gains or {}).items():
-            keys = [f"gains.{joint}.kp", f"gains.{joint}.kd"]
-            if asked.kp == 0.0:
-                if not self.robot.gravity:
-                    unsupported.update(
-                        dict.fromkeys(
-                            keys,
-                            "this robot does not compensate gravity, so a joint at kp 0 would fall",
+        with self._hardware_lock:
+            arm = self._live_arm()
+            arms = self._arm_joints()
+            errors: list[str] = []
+            patches: dict[str, ArmConfigPatch] = {}
+            for arm_id, raw in patch.items():
+                if arm_id not in arms:
+                    errors.append(f"{arm_id}: not an arm of this robot; its arms are {list(arms)}")
+                    continue
+                try:
+                    patches[arm_id] = ArmConfigPatch.model_validate(raw, strict=True)
+                except ValidationError as error:
+                    errors += [
+                        f"{arm_id}.{'.'.join(map(str, item['loc']))}: {item['msg']}"
+                        for item in error.errors()
+                    ]
+                    continue
+                for joint, gains in (patches[arm_id].gains or {}).items():
+                    name = f"{arm_id}.gains.{joint}"
+                    if joint not in arms[arm_id]:
+                        errors.append(f"{name}: not a joint of {arm_id}; it has {arms[arm_id]}")
+                    elif gains.kp == 0.0 and save:
+                        errors.append(f"{name}: kp 0 floats a joint, which is live only")
+                    elif gains.kp == 0.0 and not self.robot.gravity:
+                        errors.append(f"{name}: kp 0 needs gravity compensation, which is off")
+                    else:
+                        try:
+                            check_mit_gains(joint, gains.kp, gains.kd)
+                        except ValueError as error:
+                            errors.append(f"{name}: {error}")
+                if not save:
+                    errors += [
+                        f"{arm_id}.{key}: saved only (save=True); live takes gains"
+                        for key in patches[arm_id].model_dump(exclude_none=True)
+                        if key != "gains"
+                    ]
+            files = dict(self._applied)
+            now = datetime.now(timezone.utc)
+            for arm_id, arm_patch in patches.items() if save and not errors else ():
+                path = calibration_path(arm_id, CALIBRATION_ROOT)
+                try:
+                    stored = (
+                        load_calibration(
+                            path,
+                            expected_model_sha256=self._model_sha256,
+                            expected_arm_id=arm_id,
+                        )
+                        if path.exists()
+                        else ArmCalibration(
+                            arm_id=arm_id,
+                            robot_model=RobotModelRef(
+                                name=model_name(self.robot.gravity_model),
+                                sha256=self._model_sha256,
+                            ),
+                            created=now,
                         )
                     )
-                    continue
-                arm.set_float(joint, True, asked.kd)
-                gains[joint] = JointGains(kp=0.0, kd=arm.floating[joint])
+                    files[arm_id] = self._read_file(
+                        arm, merge_patch(stored, arm_patch, created=now), path
+                    )
+                except (ArmCalibrationError, ValueError) as error:
+                    errors.append(f"{arm_id}: {error}")
+            if errors:
+                raise ValueError("set_config changed nothing: " + "; ".join(errors))
+            if save:
+                for arm_id in patches:
+                    item = files[arm_id]
+                    assert item is not None
+                    save_calibration(item.path, item.calibration)
+                self._apply(arm, files)
             else:
-                if joint in arm.floating:
-                    arm.set_float(joint, False)
-                kp, kd = arm.set_gains(joint, asked.kp, asked.kd)
-                gains[joint] = JointGains(kp=kp, kd=kd)
-            clamped += [
-                key
-                for key, want, got in zip(
-                    keys, (asked.kp, asked.kd), (gains[joint].kp, gains[joint].kd), strict=True
-                )
-                if want != got
-            ]
-        offsets: dict[str, float] = {}
-        for joint, tau in (arm_patch.torque_offset_nm or {}).items():
-            offsets[joint] = arm.set_feedforward(joint, tau)
-            if offsets[joint] != tau:
-                clamped.append(f"torque_offset_nm.{joint}")
-        return ConfigApplied(
-            target=arm_patch.arm_id,
-            scope="session",
-            applied=ArmConfigPatch(
-                arm_id=arm_patch.arm_id, gains=gains or None, torque_offset_nm=offsets or None
-            )
-            .to_patch()
-            .values,
-            clamped=clamped,
-            unsupported=list(unsupported),
-            why=unsupported,
-        )
-
-    def _save(
-        self,
-        arm: DamiaoArm,
-        patch: ArmConfigPatch,
-        joints: list[str],
-        *,
-        force: bool,
-        apply_now: bool,
-    ) -> ConfigApplied:
-        """Merge ``patch`` into the arm's calibration file, check it, write it and apply it.
-
-        The file is always ``calibration_path(arm_id, CALIBRATION_ROOT)``.
-        Torque offsets and kp 0 are live changes only and are left out. Gains
-        are clamped to the MIT frame's range before they are merged, so the
-        file holds, and ``applied`` reports, what the arm runs. The merged
-        calibration is checked as a file read at start is; applying
-        it must not step any joint's gravity torque at the measured pose by
-        more than ``MAX_GRAVITY_STEP_NM`` unless ``force``, else nothing is
-        written. ``apply_now`` False only writes the file. A save without
-        gains or links changes nothing the arm runs, so it is not applied; one
-        with nothing a file holds writes nothing. Checks are refused unless
-        the arm runs the file as it is on disk (``_checks_refused``).
-        ``details["gravity_step_nm"]`` is, by joint, how much its gravity
-        torque at the measured pose changed, or would have.
-        """
-        arm_id = patch.arm_id
-        unsupported: dict[str, str] = dict.fromkeys(
-            [key for key in patch.keys() if key.startswith("torque_offset_nm")],
-            "a torque offset is a live change only (scope 'session'); a calibration file "
-            "does not hold it",
-        )
-        floats = [joint for joint, gains in (patch.gains or {}).items() if gains.kp == 0.0]
-        unsupported.update(
-            dict.fromkeys(
-                [f"gains.{joint}.{gain}" for joint in floats for gain in ("kp", "kd")],
-                "kp 0 floats a joint, which only a session does; a calibration holds every joint",
-            )
-        )
-        kept: dict[str, JointGains] = {}
-        clamped: list[str] = []
-        for joint, asked in (patch.gains or {}).items():
-            if asked.kp == 0.0:
-                continue
-            (kp, kd), _ = _mit_gains(joint, asked.kp, asked.kd)
-            kept[joint] = JointGains(kp=kp, kd=kd)
-            clamped += [f"gains.{joint}.kp"] if kp != asked.kp else []
-            clamped += [f"gains.{joint}.kd"] if kd != asked.kd else []
-        path = calibration_path(arm_id, CALIBRATION_ROOT)
-        checks_refused = self._checks_refused(arm_id, path) if patch.checks is not None else None
-        if checks_refused is not None:
-            unsupported.update(
-                dict.fromkeys(
-                    [key for key in patch.keys() if key.split(".")[0] == "checks"], checks_refused
-                )
-            )
-        saved = patch.model_copy(
-            update={
-                "gains": kept or None,
-                "torque_offset_nm": None,
-                **({"checks": None} if checks_refused is not None else {}),
-            }
-        )
-        if not saved.keys():
-            # Nothing a file holds: the file and its history stay as they are.
-            return ConfigApplied(
-                target=arm_id,
-                scope="persist",
-                unsupported=list(unsupported),
-                why=unsupported,
-                applied_now=False,
-            )
-        now = datetime.now(timezone.utc)
-        merged = merge_patch(self._stored(path, arm_id, now), saved, created=now)
-        sha256 = hashlib.sha256(calibration_text(merged).encode("utf-8")).hexdigest()
-        item = self._check_calibration(arm, path, merged, joints, sha256)
-        with self._lock:
-            running = dict(self._applied)
-        files = {**running, arm_id: item}
-        live = apply_now and (saved.gains is not None or saved.links is not None)
-        step: dict[str, float] = {}
-        if live:
-            _, links = _merged(files)
-            before, after = arm.gravity(), arm.gravity(links)
-            step = {joint: after[joint] - before[joint] for joint in before}
-            large = {
-                joint: round(value, 2)
-                for joint, value in step.items()
-                if abs(value) > MAX_GRAVITY_STEP_NM
-            }
-            if large and not force:
-                return ConfigApplied(
-                    target=arm_id,
-                    scope="persist",
-                    unsupported=list(unsupported),
-                    why=unsupported,
-                    applied_now=False,
-                    refused=(
-                        f"applying it would change the gravity torque at this pose by more than "
-                        f"{MAX_GRAVITY_STEP_NM:g} N m: {large} (N m), so nothing was written; "
-                        "save calibrations near home, or pass force=True"
-                    ),
-                    details={"gravity_step_nm": step},
-                )
-        target = save_calibration(path, merged)
-        if live:
-            self._apply_calibrations(arm, files, always=True)
-        else:
-            current = running.get(arm_id)
-            if (
-                current is not None
-                and current.path == item.path
-                and (current.gains, current.links) == (item.gains, item.links)
-            ):
-                # The arm runs what the file now holds; only its record is new.
+                for arm_patch in patches.values():
+                    for joint, gains in (arm_patch.gains or {}).items():
+                        if gains.kp == 0.0:
+                            arm.set_float(joint, gains.kd)
+                        else:
+                            arm.set_gains(joint, gains.kp, gains.kd)
+                # Live changes last only while commands stream: the deadman undoes them.
                 with self._lock:
-                    self._applied[arm_id] = item
-        return ConfigApplied(
-            target=arm_id,
-            scope="persist",
-            applied=saved.to_patch().values,
-            clamped=clamped,
-            unsupported=list(unsupported),
-            why=unsupported,
-            path=str(target),
-            applied_now=live,
-            details={"gravity_step_nm": step},
-        )
-
-    def _checks_refused(self, arm_id: str, path: Path) -> str | None:
-        """Why a check may not be recorded in ``path`` now, or ``None`` when it may.
-
-        A check says how the arm ran, so it belongs only in the file the arm
-        runs as it is on disk: not in one saved without being applied, nor
-        in one rewritten since it was applied.
-        """
-        with self._lock:
-            running = self._applied.get(arm_id)
-        on_disk = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
-        if (None if running is None else running.sha256) == on_disk:
-            return None
-        runs = (
-            "no calibration file"
-            if running is None
-            else f"the calibration created {running.calibration.created:%Y-%m-%d %H:%M} UTC"
-        )
-        return (
-            f"the arm does not run {path} as it is on disk (it runs {runs}), so a check made "
-            "now does not describe that file; apply it (restart the robot) and check again"
-        )
-
-    def _stored(self, path: Path, arm_id: str, now: datetime) -> ArmCalibration:
-        """The arm's saved calibration, or an empty one for this model if none fits."""
-        if path.exists():
-            try:
-                return load_calibration(
-                    path, expected_model_sha256=self._robot_model_sha256(), expected_arm_id=arm_id
-                )
-            except ArmCalibrationError as error:
-                logger.warning(
-                    f"{self._label}: saving {arm_id}'s calibration afresh; the saved one "
-                    f"goes to history/: {error}"
-                )
-        return ArmCalibration(
-            arm_id=arm_id,
-            robot_model=RobotModelRef(
-                name=model_name(self.robot.gravity_model), sha256=self._robot_model_sha256()
-            ),
-            created=now,
-        )
-
-    def _config_undo(self) -> str:
-        """Drop offsets, gain overrides and floating, and hold every joint where it is."""
-        arm = self._arm
-        if arm is None:
-            return "nothing undone"
-        return _undone(arm.reset_tuning())
-
-    def _config_parkable(self) -> bool:
-        return self._connected and self._fault is None and self._arm is not None
+                    self._command_seq += 1
+                    seq = self._command_seq
+                self._on_loop(lambda: self._arm_deadman(seq))
+        return self.get_config()
 
     def _live_arm(self) -> DamiaoArm:
-        """The connected arm, for a config hook called under the hardware lock."""
+        """The connected arm; call under the hardware lock."""
         if self._fault is not None:
             raise RuntimeError(self._fault)
-        if self._arm is None:
+        if self._arm is None or not self._connected:
             raise RuntimeError("Damiao robot is disconnected")
         return self._arm
 
-    def _arm_joints_by_id(self) -> dict[str, list[str]]:
-        ids = self.robot.arm_ids()
-        if not ids:
-            return {}
+    def _arm_joints(self) -> dict[str, list[str]]:
+        """Each arm id's joints; none for an unnamed robot."""
         return {
             arm_id: [motor.name for motor in bus.arm]
-            for arm_id, bus in zip(ids, self.robot.buses, strict=True)
+            for arm_id, bus in zip(self.robot.arm_ids(), self.robot.buses, strict=False)
         }
 
-    def _robot_model_sha256(self) -> str:
-        if self._model_hash is None:
-            self._model_hash = model_sha256(self.robot.gravity_model)
-        return self._model_hash
+    def _read_file(self, arm: DamiaoArm, calibration: ArmCalibration, path: Path) -> _ArmFile:
+        """``calibration``, once it fits this robot's model, one of its arms and its motors.
 
-    def _read_calibrations(
-        self,
-        arm: DamiaoArm,
-        source: str,
-        *,
-        strict: bool,
-        keep: Mapping[str, _ArmFile | None] | None = None,
-    ) -> dict[str, _ArmFile | None]:
-        """Each arm's calibration from ``source`` ("auto", "off" or a file), checked.
-
-        A file that does not fit is logged as a warning and that arm gets its
-        defaults, or, when ``strict``, raised. With one file, the arms it does
-        not name get what ``keep`` gives them, else their defaults.
+        Every gain must be for one of the arm's joints, inside the MIT range
+        with kp above 0, and every mass for a link they move; the masses must
+        give finite torques, none above a motor's rated torque at the measured
+        pose or at home.
         """
-        arms = self._arm_joints_by_id()
-        files: dict[str, _ArmFile | None] = dict.fromkeys(arms)
-        if source == "off":
-            logger.info(f"{self._label}: calibration is off, using URDF defaults for {list(arms)}")
-            return files
-        if source == "auto":
-            if not arms:
-                logger.debug(f"{self._label}: the robot has no name, so no calibration is applied")
-            for arm_id in arms:
-                path = calibration_path(arm_id, CALIBRATION_ROOT)
-                if not path.exists():
-                    logger.info(f"No calibration for {arm_id}, using URDF defaults")
-                    continue
-                try:
-                    files[arm_id] = self._read_file(arm, path, arm_id)
-                except (ArmCalibrationError, ValueError) as error:
-                    logger.warning(
-                        f"Ignoring the calibration for {arm_id}, using URDF defaults: {error}"
-                    )
-            return files
-        files.update({arm_id: item for arm_id, item in (keep or {}).items() if arm_id in files})
-        path = calibration_file(Path(source).expanduser())
-        try:
-            item = self._read_file(arm, path)
-            files[item.calibration.arm_id] = item
-        except (ArmCalibrationError, ValueError) as error:
-            if strict:
-                raise
-            logger.warning(f"Ignoring the calibration {path}, using URDF defaults: {error}")
-        for arm_id, found in files.items():
-            if found is None:
-                logger.info(f"No calibration for {arm_id}, using URDF defaults")
-        return files
-
-    def _read_file(self, arm: DamiaoArm, path: Path, arm_id: str | None = None) -> _ArmFile:
-        """One calibration file, refused unless made for this model and one of its arms."""
-        calibration = load_calibration(
-            path, expected_model_sha256=self._robot_model_sha256(), expected_arm_id=arm_id
-        )
-        sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
-        arms = self._arm_joints_by_id()
-        if calibration.arm_id not in arms:
+        arms = self._arm_joints()
+        joints = arms.get(calibration.arm_id)
+        if joints is None:
             raise ArmCalibrationError(
                 f"The arm calibration at {path} is for arm {calibration.arm_id!r}; "
                 f"this robot's arms are {list(arms)}."
             )
-        return self._check_calibration(arm, path, calibration, arms[calibration.arm_id], sha256)
-
-    def _check_calibration(
-        self,
-        arm: DamiaoArm,
-        path: Path,
-        calibration: ArmCalibration,
-        joints: list[str],
-        sha256: str,
-    ) -> _ArmFile:
-        """The file's gains and masses, once they are safe for the arm that ``joints`` move.
-
-        Every gain must be for one of ``joints``, inside the MIT frame's
-        range with kp above 0 (a file holds every joint; kp 0 would float
-        it), and every mass for a link they move; the masses must give
-        finite torques, and none above a motor's rated torque at the
-        measured pose or at home.
-        """
-        check_arm_fits(
-            calibration,
-            path,
-            joints,
-            self._links_moved_by(joints),
-            kp_max=MIT_KP_MAX,
-            kd_max=MIT_KD_MAX,
-        )
+        moved = {
+            joint.child_link
+            for joint in self.robot.gravity_model.load().joints
+            if joint.name in joints
+        }
+        check_arm_fits(calibration, path, joints, moved, kp_max=MIT_KP_MAX, kd_max=MIT_KD_MAX)
         gains = {name: (item.kp, item.kd) for name, item in (calibration.gains or {}).items()}
         links = to_inertial_overrides(calibration)
         arm.check_calibration(gains, links)
-        self._check_rated_torques(arm, path, links, joints)
-        # TODO(calibration): calibration.friction_nm is read but not applied;
-        # apply it through DamiaoArm.set_feedforward once friction compensation
-        # (direction from velocity, a dead band near zero) is designed.
-        return _ArmFile(path=path, calibration=calibration, gains=gains, links=links, sha256=sha256)
-
-    def _links_moved_by(self, joints: Sequence[str]) -> set[str]:
-        """The links ``joints`` move directly: each one's child link in the gravity model."""
-        names = set(joints)
-        return {
-            joint.child_link
-            for joint in self.robot.gravity_model.load().joints
-            if joint.name in names
-        }
-
-    def _check_rated_torques(
-        self, arm: DamiaoArm, path: Path, links: Mapping[str, LinkInertial], joints: list[str]
-    ) -> None:
-        """Refuse masses that need more than a motor's rated torque, measured or at home."""
         rated = arm.rated_torques
-        poses: list[tuple[str, Sequence[float] | None]] = [("the measured pose", None)]
-        if self.robot.home_joints is not None:
-            poses.append(("home", self.robot.home_joints))
-        for label, pose in poses:
+        home = self.robot.home_joints
+        for label, pose in [("the measured pose", None), *([("home", home)] if home else [])]:
             torques = arm.gravity(links, pose)
             for joint in joints:
                 if abs(torques[joint]) > rated[joint]:
@@ -781,29 +482,24 @@ class DamiaoConnection(ConnectionModule):
                         f"gravity torque on {joint} at {label}, more than its motor's rated "
                         f"{rated[joint]:g} N m; its masses cannot be right."
                     )
+        sha256 = hashlib.sha256(calibration_text(calibration).encode("utf-8")).hexdigest()
+        return _ArmFile(path=path, calibration=calibration, gains=gains, links=links, sha256=sha256)
 
-    def _apply_calibrations(
-        self, arm: DamiaoArm, files: dict[str, _ArmFile | None], *, always: bool
-    ) -> None:
-        """Put the files' gains and masses in place, log one line per arm, and record them.
-
-        Without ``always`` and without a file, the arm is left untouched.
-        """
-        found = {arm_id: item for arm_id, item in files.items() if item is not None}
-        if found or always:
-            arm.apply_calibration(*_merged(files))
-        for arm_id, item in found.items():
-            created = item.calibration.created
-            notes = "" if self.robot.gravity else " (gravity compensation is off, masses unused)"
-            if item.calibration.friction_nm:
-                notes += " (its friction is not applied yet)"
-            logger.info(
-                f"Calibration for {arm_id} from {item.path}, created "
-                f"{created:%Y-%m-%d %H:%M} UTC: gains for {sorted(item.gains) or 'no joints'}, "
-                f"masses for {sorted(item.links) or 'no links'}{notes}"
-            )
-        with self._lock:
-            self._applied = dict(files)
+    def _apply(self, arm: DamiaoArm, files: Mapping[str, _ArmFile | None]) -> None:
+        """Run every file's gains and masses (arms share no joints or links) and record them."""
+        gains: dict[str, tuple[float, float]] = {}
+        links: dict[str, LinkInertial] = {}
+        for item in files.values():
+            if item is not None:
+                gains.update(item.gains)
+                links.update(item.links)
+                logger.info(
+                    f"Calibration for {item.calibration.arm_id} from {item.path}, created "
+                    f"{item.calibration.created:%Y-%m-%d %H:%M} UTC: gains for "
+                    f"{sorted(item.gains) or 'no joints'}, masses for {sorted(item.links) or 'no links'}"
+                )
+        arm.apply_calibration(gains, links)
+        self._applied = dict(files)
 
     def _on_position(self, msg: JointState) -> None:
         try:
@@ -828,7 +524,7 @@ class DamiaoConnection(ConnectionModule):
         )
 
     def halt(self) -> None:
-        # The config session already ended (ConnectionModule._call_halt).
+        """Undo the live changes and hold every joint where it is (``DamiaoArm.hold``)."""
         if self._fault is not None or self._arm is None:
             return
         self._arm.hold()
@@ -845,25 +541,14 @@ class DamiaoConnection(ConnectionModule):
             raise
 
     def _feedback_failed(self, error: Exception) -> None:
-        self._latch_fault(f"feedback failed: {type(error).__name__}: {error}")
-
-    def _config_fault(self, reason: str) -> None:
-        """Undo and halt both failed: the last frames may float a joint with stale gravity."""
-        if self._fault is None:
-            self._latch_fault(reason)
-
-    def _latch_fault(self, fault: str) -> None:
-        """Latch ``fault``: disable the motors, then end any config session. Lock held."""
-        self._fault = fault
-        self._report(fault)
+        self._fault = f"feedback failed: {type(error).__name__}: {error}"
+        self._report(self._fault)
         arm = self._arm
         if arm is not None:
             try:
                 arm.disable()
             except Exception as disable_error:
-                self._report(f"{fault}; disable failed: {disable_error}")
-        # Disabled first, so ending it sends nothing to the failed buses.
-        self._end_config_session(fault)
+                self._report(f"{self._fault}; disable failed: {disable_error}")
 
     def _read_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz
@@ -873,8 +558,6 @@ class DamiaoConnection(ConnectionModule):
                 with self._hardware_lock:
                     if self._arm is None or not self._connected:
                         return
-                    # Besides the lease timer, which needs the module's loop.
-                    self._end_config_session("no config call within its lease", lapsed=True)
                     reading = self._read_state()
                 if self._stop_reading.is_set():
                     return

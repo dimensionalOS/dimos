@@ -19,44 +19,18 @@ says what the robot is told, and fills in ``connect``, ``write`` and
 ``halt``. It declares its own ports, hands their messages to ``command`` as
 named values (``dimos.control.contract.convert``), and publishes canonical
 joint readings. Vendor geometry and frame conversion stay inside that implementation.
-
-Every connection also serves the config contract
-(``dimos.control.connection.module_config``): ``config_keys`` and
-``config_get`` say what it can change and how each of its targets is driven
-now; with ``config_sessions`` on (calibration blueprints only) ``config_set``
-and ``config_reset`` let one tool hold a config session and change how the
-robot is driven. Position commands keep arriving on the module's own ports
-meanwhile, e.g. from a control coordinator. A driver that can change
-something defines its keys and overrides the underscore hooks
-(``_config_keys``, ``_config_state``, ``_config_check``, ``_config_apply``,
-``_config_undo``, ``_config_parkable``, ``_config_fault``); by default it can
-change nothing.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
 from dataclasses import dataclass
-import numbers
 import threading
 import time
-from typing import Any, ClassVar, final
+from typing import Any, ClassVar
 import uuid
 
-from pydantic import BaseModel
-
-from dimos.control.connection.module_config import (
-    DEFAULT_CONFIG_LEASE_S,
-    MAX_CONFIG_LEASE_S,
-    ConfigApplied,
-    ConfigKeys,
-    ConfigPatch,
-    ConfigScope,
-    ConfigState,
-)
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
@@ -68,13 +42,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 Values = dict[str, float]
-
-#: How long ``_await_config_park`` waits for the tool holding the config
-#: session to park the robot and end it before the stop goes on, seconds.
-CONFIG_PARK_WAIT_S = 10.0
-#: How long ``_await_config_park`` waits for a tool that is about to park (no
-#: session yet, or one that just ended) to begin its park session, seconds.
-CONFIG_PARK_GRACE_S = 1.0
 
 
 class ConnectionConfig(ModuleConfig):
@@ -88,16 +55,12 @@ class ConnectionConfig(ModuleConfig):
             listed joints are commanded; planar axes are ordinary joints.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
-        config_sessions: Serve ``config_set`` and ``config_reset``, which
-            change how the energized robot is driven. Only a calibration
-            blueprint turns this on; without it they raise.
     """
 
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
     deadman_timeout_s: float = 0.1
-    config_sessions: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,8 +77,6 @@ class ConnectionStatus:
             it, and none has been accepted since.
         last_rejection: Why the last refused command was refused, or ``None``.
         last_error: The last failure in ``write`` or ``halt``, or ``None``.
-        config_session_id: The live config session (``config_set``), or
-            ``None``.
     """
 
     session_id: str
@@ -124,44 +85,6 @@ class ConnectionStatus:
     deadman_fired: bool
     last_rejection: str | None
     last_error: str | None
-    config_session_id: str | None = None
-
-
-@dataclass(slots=True)
-class _ConfigSession:
-    """A tool's hold on the robot's config, until ``deadline`` (``time.monotonic``)."""
-
-    session_id: str
-    lease_s: float
-    deadline: float
-
-
-def _real(name: str, value: Any) -> float:
-    """``value`` as a float; a bool, a string or anything else not a number raises ``TypeError``."""
-    if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        raise TypeError(f"{name} must be a number, got {value!r}")
-    return float(value)
-
-
-def _flag(name: str, value: Any) -> bool:
-    """``value`` if it is a real bool; anything else, the string "false" included, raises."""
-    if not isinstance(value, bool):
-        raise TypeError(f"{name} must be True or False, got {value!r}")
-    return value
-
-
-def _patch_of(patch: Any) -> ConfigPatch:
-    """``patch``'s shape validated strictly: the RPC codec rebuilds models without validating them.
-
-    Its values are the driver's to check (``ConnectionModule._config_check``).
-    """
-    if isinstance(patch, BaseModel):
-        data: Any = patch.model_dump(warnings=False)
-    elif isinstance(patch, Mapping):
-        data = dict(patch)
-    else:
-        raise TypeError(f"patch must be a ConfigPatch, got {patch!r}")
-    return ConfigPatch.model_validate(data, strict=True)
 
 
 class ConnectionModule(Module, ABC):
@@ -192,20 +115,6 @@ class ConnectionModule(Module, ABC):
     delivers them, stamped with ``frame``. Once a command is accepted, if no
     other is within ``deadman_timeout_s``, ``halt`` is called once. To close
     the hardware, override ``stop`` and close it after ``super().stop()``.
-
-    The ``config_*`` RPCs are the config contract and are final; a driver
-    fills in the underscore hooks instead, all but ``_config_check`` called
-    with ``_hardware_lock`` held. A config session (``config_set`` with scope
-    "session") belongs to one tool. Position commands are taken as at any
-    other time, and the deadman runs as usual. The session ends,
-    undoing its live changes (``_config_undo``), on ``config_reset``, when its
-    lease passes without a ``config_set`` that carries its ``session_id``,
-    when the robot halts (the command deadman included), when a ``config_*``
-    call raises, and when the module stops. When the undo
-    raises the robot is halted, and when that fails too ``_config_fault`` is
-    called. A driver that can fault ends it with ``_end_config_session``, and
-    one that serves sessions calls ``_await_config_park`` first in its own
-    ``stop``.
     """
 
     config: ConnectionConfig
@@ -234,13 +143,6 @@ class ConnectionModule(Module, ABC):
         self._last_error: str | None = None
         # When a rejection (True) or an error (False) was last logged.
         self._last_logged: dict[bool, float] = {}
-        # Guarded by _lock, and changed only under _hardware_lock as well: the
-        # config session, why the last one ended, and when (time.monotonic()).
-        self._config_session: _ConfigSession | None = None
-        self._config_ended = ""
-        self._config_ended_at: float | None = None
-        # Only touched on the module's event loop: when the session's lease is up.
-        self._config_lease: asyncio.TimerHandle | None = None
 
     @property
     def limits(self) -> dict[str, Limits]:
@@ -293,17 +195,14 @@ class ConnectionModule(Module, ABC):
         with self._hardware_lock:
             if self._connected:
                 self._call_halt()
-            self._end_config_session("the connection stopped")
             self._connected = False
         self._on_loop(self._disarm_deadman)
-        self._on_loop(self._disarm_config_lease)
         super().stop()
 
     @rpc
     def status(self) -> ConnectionStatus:
         """A snapshot of the connection. See ``ConnectionStatus``."""
         with self._lock:
-            session = self._config_session
             return ConnectionStatus(
                 session_id=self._session_id,
                 connected=self._connected,
@@ -311,7 +210,6 @@ class ConnectionModule(Module, ABC):
                 deadman_fired=self._deadman_fired,
                 last_rejection=self._last_rejection,
                 last_error=self._last_error,
-                config_session_id=None if session is None else session.session_id,
             )
 
     def command(self, values: Values) -> None:
@@ -320,8 +218,7 @@ class ConnectionModule(Module, ABC):
         Call it from a port subscription, on any thread. A refused command
         (an unknown key, a value past a limit that does not clamp) is dropped
         and shown in ``status()``; an accepted one restarts the deadman and
-        goes to ``write``. If ``write`` raises, the robot is halted, which
-        ends any config session. A config session changes nothing here.
+        goes to ``write``. If ``write`` raises, the robot is halted.
 
         Args:
             values: Named values in each key's unit, e.g.
@@ -351,341 +248,6 @@ class ConnectionModule(Module, ABC):
                 self._report(f"write failed: {type(error).__name__}: {error}")
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
-
-    @rpc
-    @final
-    def config_keys(self) -> ConfigKeys:
-        """What this connection lets a tool read and change. See ``ConfigKeys``.
-
-        Answers whether or not config sessions are served. It carries no
-        session id, so it renews no session's lease.
-        """
-        with self._config_call("config_keys", gated=False):
-            with self._hardware_lock:
-                keys = self._config_keys()
-            return keys.model_copy(
-                update={
-                    "source": self.config.source,
-                    "sessions": self.config.config_sessions,
-                    "max_lease_s": MAX_CONFIG_LEASE_S,
-                }
-            )
-
-    @rpc
-    @final
-    def config_get(self) -> dict[str, ConfigState]:
-        """How each target is driven now, by target. See ``ConfigState``.
-
-        Answers whether or not config sessions are served. It carries no
-        session id, so it renews no session's lease.
-        """
-        with self._config_call("config_get", gated=False):
-            with self._hardware_lock:
-                with self._lock:
-                    session = self._config_session
-                states = self._config_state()
-            session_id = None if session is None else session.session_id
-            return {
-                target: state.model_copy(update={"session_id": session_id})
-                for target, state in states.items()
-            }
-
-    @rpc
-    @final
-    def config_set(
-        self,
-        patch: ConfigPatch,
-        scope: ConfigScope = "session",
-        force: bool = False,
-        apply_now: bool = True,
-        session_id: str | None = None,
-        lease_s: float = DEFAULT_CONFIG_LEASE_S,
-    ) -> ConfigApplied:
-        """Change how one target is driven: for the config session, or saved to its file.
-
-        The driver checks the patch's values first (``_config_check``). With
-        scope "session" and no session live, this starts the one config
-        session (an empty patch only starts it), whose live changes are undone
-        when it ends. While one is live, every ``config_set`` must carry its
-        ``session_id``, and an empty patch with it only renews the lease.
-        With scope "persist" the patch is merged into the target's file and
-        applied from it; ``force`` applies it even past the driver's guard on
-        applying a file live, and ``apply_now`` False only writes the file.
-        What the connection cannot change is listed in ``unsupported``,
-        unchanged. For calibration tools only; refused unless
-        ``config_sessions``.
-
-        Args:
-            patch: What to change; see ``ConfigPatch``.
-            scope: "session" or "persist".
-            force: Persist even past the driver's guard.
-            apply_now: Persist: apply the saved file at once.
-            session_id: The live session, as the call that started it returned.
-            lease_s: The lease of a session this call starts, above 0 and at
-                most ``MAX_CONFIG_LEASE_S`` seconds.
-        """
-        with self._config_call("config_set"):
-            checked = _patch_of(patch)
-            self._config_check(checked)
-            if scope not in ("session", "persist"):
-                raise ValueError(f"scope must be 'session' or 'persist', got {scope!r}")
-            force = _flag("force", force)
-            apply_now = _flag("apply_now", apply_now)
-            lease = _real("lease_s", lease_s)
-            if not 0.0 < lease <= MAX_CONFIG_LEASE_S:
-                raise ValueError(
-                    f"lease_s must be above 0 and at most {MAX_CONFIG_LEASE_S:g} s, got {lease_s}"
-                )
-            with self._hardware_lock:
-                if not self._connected:
-                    raise RuntimeError(f"{self._label} is not running")
-                session = self._check_config_session(session_id)
-                if session is None and scope == "session":
-                    session = self._begin_config_session(lease)
-                applied = self._config_apply(checked, scope, force, apply_now)
-            if session is None:
-                return applied
-            return applied.model_copy(
-                update={"session_id": session.session_id, "lease_s": session.lease_s}
-            )
-
-    @rpc
-    @final
-    def config_reset(self, keep_session: bool = False) -> None:
-        """Undo every live change and end the config session, unless ``keep_session``.
-
-        Needs no session id, so any thread may end the session; without one
-        it does nothing. For the same reason it renews no session's lease. A
-        saved file stays as the robot runs it: no file is read again.
-        Refused unless ``config_sessions``.
-        """
-        with self._config_call("config_reset"):
-            keep = _flag("keep_session", keep_session)
-            with self._hardware_lock:
-                if not keep:
-                    self._end_config_session("config_reset", expected=True)
-                    return
-                undone = self._config_undo()
-            logger.info(f"{self._label}: config reset, the session goes on: {undone}")
-
-    def _config_keys(self) -> ConfigKeys:
-        """What this driver lets a tool read and change; by default nothing.
-
-        Called with ``_hardware_lock`` held. ``config_keys`` fills in
-        ``source``, ``sessions`` and ``max_lease_s``.
-        """
-        return ConfigKeys(source=self.config.source, sessions=self.config.config_sessions)
-
-    def _config_state(self) -> dict[str, ConfigState]:
-        """How each target is driven now, by target; by default none. ``_hardware_lock`` held."""
-        return {}
-
-    def _config_check(self, patch: ConfigPatch) -> None:
-        """Raise for a patch whose values this driver could never take; by default none.
-
-        Called before ``_hardware_lock`` is taken and before a session
-        begins, so a refused patch changes nothing; a live session still
-        ends. The driver defines the keys and how strictly it checks them.
-        """
-
-    def _config_apply(
-        self, patch: ConfigPatch, scope: ConfigScope, force: bool, apply_now: bool
-    ) -> ConfigApplied:
-        """Apply a patch ``_config_check`` passed in ``scope``; by default every key is unsupported.
-
-        Called with ``_hardware_lock`` held, inside the config session for
-        scope "session". Raise to refuse the patch as a whole: that ends the
-        session and undoes it.
-        """
-        keys = patch.keys()
-        return ConfigApplied(
-            target=patch.target,
-            scope=scope,
-            unsupported=keys,
-            why=dict.fromkeys(keys, f"{self._label} cannot change it"),
-            applied_now=False,
-        )
-
-    def _config_undo(self) -> str:
-        """Undo every live change of the config session; says what, in a few words.
-
-        Called with ``_hardware_lock`` held when a session ends and on
-        ``config_reset``. By default there is nothing to undo.
-        """
-        return "nothing to undo"
-
-    def _config_parkable(self) -> bool:
-        """Whether the robot can still be parked, so a stop waits. ``_hardware_lock`` held."""
-        return self._connected
-
-    @contextmanager
-    def _config_call(self, name: str, *, gated: bool = True) -> Iterator[None]:
-        """One ``config_*`` call: refused unless ``config_sessions`` when ``gated``;
-        raising ends the config session."""
-        if gated and not self.config.config_sessions:
-            raise RuntimeError(
-                f"{self._label}: config sessions are off; only a connection deployed for "
-                f"calibration (config_sessions=True) serves {name}"
-            )
-        try:
-            yield
-        except Exception as error:
-            with self._hardware_lock:
-                self._end_config_session(f"{name} raised {type(error).__name__}: {error}")
-            raise
-
-    def _check_config_session(self, session_id: str | None) -> _ConfigSession | None:
-        """The live config session, renewed, once ``session_id`` names it.
-
-        The one place a lease is renewed: only a call that carries the live
-        session's id keeps it. ``None`` without one and without an id. A
-        missing or foreign id for
-        a live session raises, and so does an id once its session ended.
-        Call with ``_hardware_lock`` held.
-        """
-        if session_id is not None and not isinstance(session_id, str):
-            raise TypeError(f"session_id must be a string or None, got {session_id!r}")
-        with self._lock:
-            session = self._config_session
-            ended = self._config_ended
-            if session is not None and session_id == session.session_id:
-                session.deadline = time.monotonic() + session.lease_s
-                return session
-        if session is not None:
-            if session_id is None:
-                raise RuntimeError(
-                    "a config session is live; pass the session_id the config_set that "
-                    "started it returned"
-                )
-            raise RuntimeError(f"{session_id[:8]!r} is not the live config session")
-        if session_id is None:
-            return None
-        raise RuntimeError(
-            f"the config session ended ({ended})" if ended else "no config session is live"
-        )
-
-    def _begin_config_session(self, lease_s: float) -> _ConfigSession:
-        """Start the config session. Call with ``_hardware_lock`` held and none live."""
-        session = _ConfigSession(uuid.uuid4().hex, lease_s, time.monotonic() + lease_s)
-        with self._lock:
-            self._config_session = session
-        self._on_loop(self._arm_config_lease)
-        logger.info(
-            f"{self._label}: config session {session.session_id[:8]} started, lease {lease_s:g} s"
-        )
-        return session
-
-    def _end_config_session(
-        self, reason: str, *, expected: bool = False, lapsed: bool = False
-    ) -> bool:
-        """End the config session, if any (with ``lapsed``, only one past its lease).
-
-        Undoes its live changes (``_config_undo``) and logs one line: why and
-        what was undone. Call with ``_hardware_lock`` held. Returns whether a
-        session ended.
-        """
-        with self._lock:
-            session = self._config_session
-            if session is None or (lapsed and time.monotonic() <= session.deadline):
-                return False
-            if lapsed:
-                reason = f"{reason} of {session.lease_s:g} s"
-            self._config_session = None
-            self._config_ended = reason
-            self._config_ended_at = time.monotonic()
-        self._on_loop(self._disarm_config_lease)
-        try:
-            undone = self._config_undo()
-        except Exception as error:
-            self._report(f"config session end failed: {type(error).__name__}: {error}")
-            undone = (
-                f"undoing it failed: {type(error).__name__}: {error}; "
-                f"{self._halt_after_failed_undo(error)}"
-            )
-        message = (
-            f"{self._label}: config session {session.session_id[:8]} ended ({reason}): {undone}"
-        )
-        if expected:
-            logger.info(message)
-        else:
-            logger.warning(message)
-        return True
-
-    def _halt_after_failed_undo(self, error: Exception) -> str:
-        """After ``_config_undo`` raised: halt the robot, and fault when that fails too.
-
-        The robot may still run the session's changes, a floating joint say,
-        so it is held where it is (``halt``); when the halt raises as well,
-        ``_config_fault`` latches the driver's fault. Says what was done.
-        Call with ``_hardware_lock`` held.
-        """
-        try:
-            self.halt()
-        except Exception as halt_error:
-            halted = f"{type(halt_error).__name__}: {halt_error}"
-            self._report(f"halt failed: {halted}")
-            self._config_fault(
-                f"undoing the config session failed ({type(error).__name__}: {error}) and "
-                f"halting failed ({halted})"
-            )
-            return f"halting failed too ({halted}); the connection faulted"
-        return "the robot was halted"
-
-    def _config_fault(self, reason: str) -> None:
-        """Undoing a config session and halting the robot both failed; latch a fault.
-
-        The robot may be left running the session's changes with nothing to
-        keep them safe. A driver that can fault latches it here and makes the
-        robot safe, e.g. de-energizes it; by default the failure is only
-        reported. Called with ``_hardware_lock`` held, the session already
-        ended.
-        """
-
-    def _await_config_park(self) -> None:
-        """Before stopping, let the tool holding the config session park the robot and end it.
-
-        The modules of a run stop in parallel, so a calibration tool may still
-        be backing the robot out home when its connection is told to stop, and
-        cutting the motors then would drop it where it is. A driver that
-        serves config sessions calls this first in its own ``stop``, before
-        its readings stop; ``stop`` here never does. Without
-        ``config_sessions`` it returns at once. Waits while a session lasts,
-        and for ``CONFIG_PARK_GRACE_S`` after the stop began or the last
-        session ended for one about to begin, at most ``CONFIG_PARK_WAIT_S``
-        in all, and not once the robot cannot be parked (``_config_parkable``).
-        The deadman and the session lease run as usual meanwhile.
-        """
-        if not self.config.config_sessions:
-            return
-        started = time.monotonic()
-        deadline = started + CONFIG_PARK_WAIT_S
-        logged = False
-        while True:
-            with self._hardware_lock:
-                parkable = self._config_parkable()
-            with self._lock:
-                active = self._config_session is not None
-                ended_at = self._config_ended_at
-            if not parkable:
-                return
-            now = time.monotonic()
-            if not active:
-                since = max(started, ended_at if ended_at is not None else started)
-                if now - since >= CONFIG_PARK_GRACE_S:
-                    return
-            elif not logged:
-                logger.warning(
-                    f"{self._label}: stopping; waiting up to {CONFIG_PARK_WAIT_S:g} s for the "
-                    "calibration tool to park the robot and end its config session"
-                )
-                logged = True
-            if now >= deadline:
-                logger.error(
-                    f"{self._label}: the calibration tool did not end its config session within "
-                    f"{CONFIG_PARK_WAIT_S:g} s; stopping with the robot where it is"
-                )
-                return
-            time.sleep(0.02)
 
     def frame(self, name: str) -> str:
         """The frame to stamp a reading with: ``name`` behind the config's
@@ -726,32 +288,7 @@ class ConnectionModule(Module, ABC):
             with self._lock:
                 self._deadman_fired = True
 
-    def _arm_config_lease(self) -> None:
-        """On the loop: end the config session once its lease is up, unless renewed."""
-        self._disarm_config_lease()
-        with self._lock:
-            session = self._config_session
-            if session is None:
-                return
-            delay = max(0.0, session.deadline - time.monotonic())
-        self._config_lease = asyncio.get_running_loop().call_later(delay, self._config_lease_due)
-
-    def _disarm_config_lease(self) -> None:
-        if self._config_lease is not None:
-            self._config_lease.cancel()
-            self._config_lease = None
-
-    def _config_lease_due(self) -> None:
-        self._config_lease = None
-        with self._hardware_lock:
-            self._end_config_session("no config call within its lease", lapsed=True)
-        # Renewed meanwhile, or a new session began: wait for its deadline.
-        self._arm_config_lease()
-
     def _call_halt(self) -> None:
-        # A halt ends the config session first: its live changes are undone,
-        # then the robot holds.
-        self._end_config_session("the connection halted")
         try:
             self.halt()
         except Exception as error:
