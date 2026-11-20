@@ -84,7 +84,7 @@ def test_speed_is_capped_at_the_bench_limit(speed):
 
 
 def test_speed_up_to_the_cap_is_taken():
-    assert speed_rad_s(MAX_SPEED_DEG_S) == pytest.approx(math.radians(30.0))
+    assert speed_rad_s(MAX_SPEED_DEG_S) == pytest.approx(math.radians(60.0))
 
 
 @pytest.mark.parametrize("delta", [0.0, 5.5, -6.0, float("inf")])

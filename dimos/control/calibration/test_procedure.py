@@ -236,18 +236,26 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     results = rig.procedure.results()
     gains = results["pick_gains"]
     wrist = gains["proposals"]["left_joint4"]
-    # Its kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5, kd clamped to 5.
+    # Its kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5, kd clamped to 5 and to kp/4.
     assert set(wrist["rejected"]) == {
-        f"kp={kp:g} kd={kd:g}" for kp in (6, 10, 15) for kd in (1.5, 3.75, 5)
-    } - {"kp=15 kd=1.5"}
-    # A stuck 3 deg step rejects; stuck 1 deg steps only drop out of the score.
-    assert "-3 deg step is stuck" in wrist["rejected"]["kp=6 kd=5"]
+        "kp=6 kd=1.5",
+        "kp=10 kd=1.5",
+        "kp=10 kd=2.5",
+        "kp=15 kd=3.75",
+    }
+    # Stuck 1 deg steps only drop out of the score.
     assert wrist["rejected"]["kp=6 kd=1.5"].startswith("passes, but scores")
     assert wrist["rejected"]["kp=6 kd=1.5"].endswith("stuck and do not count")
     assert wrist["reason"].startswith("kp=15 kd=1.5: lowest score")
     assert 0.05 <= wrist["friction_nm"] <= 0.07
     assert gains["friction_nm"]["left_joint4"]["sweep"] > 0.0
     assert gains["friction_nm"]["left_joint1"]["dither"] is None
+    assert gains["saved"] is None and set(gains["accepted"]) == set(left_spec.joint_names)
+    assert rig.messages()["pick_gains"].startswith("accepted gains for ")
+    tracked = results["confirm_tracking"]["gains"]
+    assert tracked["saved"] == str(path) and tracked["applied"] and tracked["failed"] == []
+    assert tracked["proposed"] == {j: [g.kp, g.kd] for j, g in calibration.gains.items()}
+    assert not any("gains" in line for line in results["summary"]["next_steps"])
     assert calibration.checks is not None and set(calibration.checks) == {"float", "tracking"}
     floats = calibration.checks["float"]["joints"]
     assert set(floats) == set(LEFT_MEASURED) and all(row["passed"] for row in floats.values())
@@ -277,7 +285,7 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
         assert fit["holdout_rms_nm"][joint]["after"] < fit["holdout_rms_nm"][joint]["before"]
     assert rig.labels() == [f"pose_{i:02d}" for i in range(1, 9)] + ["end"]
     steps = rig.recording.markers["step_events"]
-    assert len(steps) == 8 * 5 * 2 + 6 * 9 * 4
+    assert len(steps) == 8 * 5 * 2 + (3 * 9 + 3 * 5) * 4
     dither = {
         joint: min(
             math.degrees(0.3 * left_spec.max_torque_nm[joint] / left_spec.gains[joint][0]), 5.0
@@ -325,6 +333,15 @@ def test_a_full_run_on_the_bench_arm_saves_gravity_gains_and_checks(
     assert not rig.fake.session_active()
     for value in (rig.procedure.plan(), rig.procedure.status(), results):
         assert json.loads(json.dumps(value)) == value
+
+
+def test_the_defaults_nudge_for_a_second_at_10_deg_s_and_allow_up_to_60() -> None:
+    settings = ProcedureSettings()
+    assert settings.dither_hold_s == 1.0 and settings.hold_s == 2.0
+    assert settings.speed_deg_s == 10.0
+    assert ProcedureSettings(speed_deg_s=60.0).speed_deg_s == 60.0
+    with pytest.raises(ValueError, match="speed must be in"):
+        ProcedureSettings(speed_deg_s=61.0)
 
 
 def test_every_joint_whose_gravity_torque_can_vary_is_dithered(arm: ArmModel) -> None:
@@ -1212,26 +1229,170 @@ def test_the_gain_sweep_runs_clear_of_the_limits_home_sits_on(
 
     assert status["state"] == "done", status["message"]
     [plan] = [p for p in prompts if p.startswith("The arm will move to")]
-    assert "kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5" in plan
+    assert "kp x 0.6, 1, 1.5 by kd x 1, 2.5, 5, kd capped at kp/4 for ramp tracking" in plan
     # Its first joints run at kd 5 already, so kd x 2.5 and 5 add nothing there;
     # its wrists at kd 2 reach the kd limit at x 2.5 already.
     assert "(joint1 3, joint2 3, joint3 3, joint4 6, joint5 6, joint6 6 candidates)" in plan
-    assert "108 steps, about 1.8 min" in plan
+    assert "108 steps, about 2.1 min" in plan
     sweep = rig.procedure.results()["step_sweep"]
     assert set(sweep["joints"]) == set(b601_spec.joint_names)
     assert sweep["pose"].startswith("gravity pose ")
     pose = np.radians(sweep["pose_deg"])
     assert math.degrees(limit_margin_rad(pose, lower, upper)) >= 3.0 + 2.0
     # Back home after the sweep: the robot's gains first, then kp x 0.6, 1,
-    # 1.5 by kd x 1, 2.5, 5 with kd clamped to 5, so a kd of 2 gives 2 and 5.
+    # 1.5 by kd x 1, 2.5, 5 with kd clamped to 5 and to kp/4.
     assert _far_from_home(rig) < 3.0
     assert b601_spec.gains["joint4"] == (18.0, 2.0)
-    grid = [(kp, kd) for kp in (10.8, 18.0, 27.0) for kd in (2.0, 5.0)]
-    expected = [(18.0, 2.0), *(pair for pair in grid if pair != (18.0, 2.0))]
+    expected = [(18.0, 2.0), (10.8, 2.0), (10.8, 2.7), (18.0, 4.5), (27.0, 2.0), (27.0, 5.0)]
     assert sweep["joints"]["joint4"] == [
         [pytest.approx(kp), pytest.approx(kd)] for kp, kd in expected
     ]
     assert sweep["kp_scales"] == [0.6, 1.0, 1.5] and sweep["kd_scales"] == [1.0, 2.5, 5.0]
+
+
+def test_a_candidate_stops_at_its_first_buzzing_step_and_is_rejected_for_it(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig(confirm_each=False)
+    rig.fake.chatters = lambda joint, kp, kd: joint == "left_joint5" and kd > 2.0
+
+    status = rig.run(["check", "step_sweep", "pick_gains"])
+
+    assert status["state"] == "done", status["message"]
+    results = rig.procedure.results()
+    stopped = results["step_sweep"]["stopped"]
+    assert set(stopped) == {"left_joint5"}
+    assert set(stopped["left_joint5"]) == {"kp=10 kd=2.5", "kp=15 kd=3.75"}
+    why = stopped["left_joint5"]["kp=10 kd=2.5"]
+    assert why.startswith("stopped at its +1 deg step, which buzzed at ")
+    assert why.endswith("deg/s RMS (limit 1 deg/s); its other steps were skipped")
+    assert rig.messages()["step_sweep"].endswith(
+        "; stopped 2 buzzing candidates at their first buzzing step"
+    )
+    wrist = [m for m in rig.recording.markers["step_events"] if m["joint"] == "left_joint5"]
+    tried = [(m["kp"], m["kd"]) for m in wrist]
+    assert tried.count((10.0, 2.5)) == tried.count((15.0, 3.75)) == 1
+    assert tried.count((10.0, 1.5)) == tried.count((15.0, 1.5)) == 4
+    stop = tried.index((10.0, 2.5))
+    assert wrist[stop + 1]["kp"] == 15.0 and wrist[stop + 1]["kd"] == 1.5
+    assert wrist[stop + 1]["target_before_deg"] == pytest.approx(wrist[stop]["target_before_deg"])
+    proposal = results["pick_gains"]["proposals"]["left_joint5"]
+    assert proposal["rejected"]["kp=10 kd=2.5"] == why
+    assert (proposal["kp"], proposal["kd"]) == (15.0, 1.5)
+    assert rig.messages()["pick_gains"].endswith(
+        "not saved: confirm_tracking, which tries and saves them, is not selected"
+    )
+    assert _far_from_home(rig) < 3.0
+
+
+GAINS_ONLY = ["check", "step_sweep", "pick_gains", "confirm_tracking", "summary"]
+
+
+def _arm_gains(rig: Rig, spec: ArmCalibrationSpec) -> dict[str, tuple[float, float]]:
+    state = ArmConfigState.from_state(rig.fake.config_get()[spec.arm_id])
+    return {joint: (g.kp, g.kd) for joint, g in state.gains.items()}
+
+
+def test_gains_alone_are_tracked_against_a_first_pass_and_then_saved(
+    make_rig: Callable[..., Rig], arm: ArmModel, left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig(fake={"truth": arm.model.copy()})
+    prompts: list[str] = []
+
+    status = rig.run(GAINS_ONLY, lambda p: prompts.append(p) or "confirm")
+
+    assert status["state"] == "done", status["message"]
+    results = rig.procedure.results()
+    [start] = [p for p in prompts if p.startswith("The arm will revisit")]
+    assert re.search(r"\(pose_05\), about \d+\.\d min, first with the gains it runs, then", start)
+    assert ", first with the gains it runs, then with the proposed gains (left_joint1 kp=" in start
+    assert "rests within 1.5 times its baseline, or what its friction allows" in start
+    assert any(p.startswith("Baseline pose 1/") for p in prompts)
+    tracking = results["confirm_tracking"]
+    assert tracking["baseline"]["rest_samples"] > 0 and tracking["gains"]["failed"] == []
+    path = calibration_path(left_spec.arm_id, rig.root)
+    saved = load_for_spec(left_spec, path).gains
+    assert saved is not None and tracking["gains"]["saved"] == str(path)
+    assert _arm_gains(rig, left_spec) == {j: (g.kp, g.kd) for j, g in saved.items()}
+    assert rig.messages()["confirm_tracking"].endswith(f"saved gains for {sorted(saved)} to {path}")
+
+
+def test_a_stall_with_the_proposed_gains_saves_nothing_and_gives_the_gains_back(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig()
+
+    def answer(prompt: str) -> str:
+        if prompt.startswith("Tracking pose 1/"):
+            rig.fake.blocked = {"left_joint2"}
+        return "confirm"
+
+    status = rig.run(GAINS_ONLY, answer)
+
+    assert status["state"] == "done", status["message"]
+    assert rig.statuses()["confirm_tracking"] == "done"
+    message = rig.messages()["confirm_tracking"]
+    assert message.startswith("gains not saved: stopped: the arm is ")
+    assert "(left_joint2 " in message
+    assert message.endswith("the arm runs its earlier gains again; the arm holds where it stopped")
+    results = rig.procedure.results()
+    (failed,) = results["confirm_tracking"]["gains"]["failed"]
+    assert failed in message and results["confirm_tracking"]["gains"]["saved"] is None
+    assert not calibration_path(left_spec.arm_id, rig.root).exists()
+    assert _arm_gains(rig, left_spec) == dict(left_spec.gains)
+    assert not rig.fake.session_active()
+    assert any(
+        line.startswith(
+            f"The proposed gains were not saved: they failed confirm_tracking: {failed}"
+        )
+        for line in results["summary"]["next_steps"]
+    )
+
+
+def test_proposed_gains_that_rest_worse_than_the_baseline_are_not_saved(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig(confirm_each=False)
+
+    status = rig.run(GAINS_ONLY)
+
+    assert status["state"] == "done", status["message"]
+    results = rig.procedure.results()
+    assert results["pick_gains"]["accepted"]["left_joint4"] == [6.0, 1.5]
+    tracking = results["confirm_tracking"]
+    (failed,) = tracking["gains"]["failed"]
+    rest, before = tracking["rest_rms_deg"]["left_joint4"], tracking["baseline"]["rest_rms_deg"]
+    assert rest > 1.5 * before["left_joint4"]
+    assert failed == (
+        f"left_joint4 rests {rest:.2f} deg RMS against {before['left_joint4']:.2f} deg before "
+        f"(limit {1.5 * before['left_joint4']:.2f} deg)"
+    )
+    assert rig.messages()["confirm_tracking"] == (
+        f"gains not saved: {failed}; the arm runs its earlier gains again"
+    )
+    assert not calibration_path(left_spec.arm_id, rig.root).exists()
+    assert _arm_gains(rig, left_spec) == dict(left_spec.gains)
+
+
+def test_skipping_the_tracking_check_saves_no_gains_and_the_summary_says_so(
+    make_rig: Callable[..., Rig], left_spec: ArmCalibrationSpec
+) -> None:
+    rig = make_rig(confirm_each=False)
+
+    status = rig.run(
+        GAINS_ONLY, lambda p: "skip" if p.startswith("The arm will revisit") else "confirm"
+    )
+
+    assert status["state"] == "done", status["message"]
+    assert rig.statuses()["confirm_tracking"] == "skipped"
+    assert not calibration_path(left_spec.arm_id, rig.root).exists()
+    results = rig.procedure.results()
+    summary = results["summary"]
+    assert summary["proposed_gains"] == results["pick_gains"]["accepted"]
+    assert (
+        "The proposed gains were not saved: confirm_tracking, which saves them, was skipped. "
+        "Run step_sweep, pick_gains and confirm_tracking again."
+    ) in summary["next_steps"]
 
 
 def _heavy_forearm(arm: ArmModel, spec: ArmCalibrationSpec, extra_kg: float) -> ArmCalibration:
@@ -1279,10 +1440,9 @@ def test_the_fit_refuses_when_the_file_on_disk_is_not_what_the_arm_runs(
     assert load_for_spec(left_spec, path) == c1
 
 
-def test_a_fit_worse_than_the_running_file_is_not_saved(
-    make_rig: Callable[..., Rig], arm: ArmModel, truth: pin.Model, left_spec: ArmCalibrationSpec
-) -> None:
-    # The arm already runs its true masses; a fit from eight poses cannot beat them.
+def _running_true_masses(
+    make_rig: Callable[..., Rig], truth: pin.Model, left_spec: ArmCalibrationSpec
+) -> tuple[Rig, Path]:
     exact = {
         link: LinkInertial(
             mass_kg=float(truth.inertias[body_joint_id(truth, link)].mass),
@@ -1298,21 +1458,55 @@ def test_a_fit_worse_than_the_running_file_is_not_saved(
             gravity=GravityCalibration(links=gravity_links_from_inertial(left_spec, exact)),
         ),
     )
-    saved = load_for_spec(left_spec, root_path)
-    rig = make_rig(confirm_each=False, fake={"applied": root_path})
+    return make_rig(confirm_each=False, fake={"applied": root_path}), root_path
 
-    status = rig.run(["check", "gravity_poses", "gravity_fit"])
+
+def test_a_fit_worse_than_the_running_file_over_all_joints_is_not_saved_by_default(
+    make_rig: Callable[..., Rig], truth: pin.Model, left_spec: ArmCalibrationSpec
+) -> None:
+    # The arm already runs its true masses; a fit from eight poses cannot beat them.
+    rig, root_path = _running_true_masses(make_rig, truth, left_spec)
+    saved = load_for_spec(left_spec, root_path)
+    prompts: list[str] = []
+
+    status = rig.run(
+        ["check", "gravity_poses", "gravity_fit"], lambda p: prompts.append(p) or "confirm"
+    )
 
     assert status["state"] == "done", status["message"]
     fit = rig.procedure.results()["gravity_fit"]
-    assert fit["saved"] is None and fit["refusals"]
-    assert all("is worse than the running calibration's" in r for r in fit["refusals"])
-    refused = {refusal.split(" ")[0] for refusal in fit["refusals"]}
-    for joint, row in fit["holdout_rms_nm"].items():
-        # URDF -> running -> new: the fit beats the URDF, not what the arm runs.
-        assert row["after"] < row["before"] or row["before"] < 1e-3, joint
-        assert row["running"] <= row["after"] or joint not in refused, joint
+    assert fit["saved"] is None and fit["refusals"] == []
+    (worse,) = fit["worse_overall"]
+    assert worse.startswith("held-out RMS over the joints ")
+    assert "is worse than the running calibration's" in worse
+    totals = fit["holdout_total_nm"]
+    # URDF -> running -> new over all the joints: the fit beats the URDF, not what the arm runs.
+    assert totals["running"] < totals["after"] < totals["before"]
+    assert fit["regressed"] and all(r.endswith("(running calibration)") for r in fit["regressed"])
+    [prompt] = [p for p in prompts if "Save anyway?" in p]
+    assert f"Not better overall: {worse}" in prompt
+    assert f"regressed: {', '.join(fit['regressed'])}" in prompt
+    assert prompt.endswith("Enter keeps what the arm runs, s saves and applies the fit")
+    assert rig.messages()["gravity_fit"].startswith(f"not saved: {worse}; regressed: ")
     assert load_for_spec(left_spec, root_path) == saved
+
+
+def test_a_fit_worse_over_all_joints_is_saved_when_asked_anyway(
+    make_rig: Callable[..., Rig], truth: pin.Model, left_spec: ArmCalibrationSpec
+) -> None:
+    rig, root_path = _running_true_masses(make_rig, truth, left_spec)
+    saved = load_for_spec(left_spec, root_path)
+
+    status = rig.run(
+        ["check", "gravity_poses", "gravity_fit"],
+        lambda p: "skip" if "Save anyway?" in p else "confirm",
+    )
+
+    assert status["state"] == "done", status["message"]
+    fit = rig.procedure.results()["gravity_fit"]
+    assert fit["saved"] == str(root_path) and fit["saved_anyway"] and fit["applied"]
+    assert " though not better overall; held-out RMS " in rig.messages()["gravity_fit"]
+    assert load_for_spec(left_spec, root_path).gravity != saved.gravity
 
 
 def test_a_recorder_that_is_not_writing_fails_the_check_before_any_motion(

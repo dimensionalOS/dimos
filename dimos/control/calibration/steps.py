@@ -34,9 +34,12 @@
    not from the file on disk.
 3. ``gravity_fit``: fits the sweep's recording (``gravity_fit``) against the
    masses the arm ran, shows the held-out error of the URDF, of the running
-   file and of the fit, and saves and applies the fit when it is no worse
-   than either on any joint and the operator agrees. It refuses to fit when
-   the arm's calibration file on disk holds other masses than the arm runs.
+   file and of the fit, by joint and over all of them, at this run's held-out
+   poses, and saves and applies the fit when the operator agrees. A fit
+   worse over all the joints than either is saved only when the operator
+   asks for it at a prompt whose Enter keeps what the arm runs. It refuses
+   to fit when the arm's calibration file on disk holds other masses than
+   the arm runs.
 4. ``float_check``: floats each measured joint at up to two gravity poses
    where the gravity torque of the masses the arm runs is largest and it is
    clear of its limits (or at ``float_pose_deg``), after resting there
@@ -46,14 +49,21 @@
 5. ``step_sweep``: at the sweep pose (the gravity pose farthest from every
    joint limit, or ``sweep_pose_deg``), steps every joint +1, -1, +3, -3 deg
    at each candidate of a grid, kp scales of its robot kp by kd scales of its
-   robot kd (``step_analysis.gain_candidates``), holding after each step.
+   robot kd, kd at most kp/4 (``step_analysis.gain_candidates``), holding
+   after each step. A step that buzzes stops its candidate: the joint goes
+   back to the gains it had and to where it was before that step.
 6. ``pick_gains``: analyses those steps (``step_analysis.propose_gains``),
    each joint's rest limit from its friction (the larger of what its sweep and
-   its gravity dithers show), and saves and applies the gains the operator
-   accepts.
+   its gravity dithers show), and keeps the gains the operator accepts for
+   ``confirm_tracking``; nothing is saved here.
 7. ``confirm_tracking``: revisits the held-out gravity poses with what is
-   applied and compares how well the arm rests there with the gravity sweep's
-   own rests at the same poses.
+   applied, and the accepted gains for its session only, and compares how
+   well the arm rests there with the gravity sweep's own rests at the same
+   poses (without a sweep in this run, with a first pass on the gains the arm
+   runs). The accepted gains are saved and applied only when no joint
+   stalled and every joint rests within ``TRACKING_REST_RATIO`` times its
+   baseline, or within the rest limit its friction allows at its new kp;
+   otherwise ending the session puts the arm's gains back.
 8. ``summary``: the calibration file, its history and what the arm runs.
 
 Every step but ``check`` and ``summary`` needs a connection that serves
@@ -93,6 +103,7 @@ from dimos.control.calibration.arm_session import (
     HOME_TOLERANCE_DEG,
     ArmSession,
     JointDriftedError,
+    JointLaggedError,
     StepFailedError,
     TrackingLog,
     joint_reading,
@@ -115,11 +126,14 @@ from dimos.control.calibration.gravity_fit import (
     dithered_arm,
     extract_measurements,
     fit_gravity,
+    fit_refusals,
     format_report,
+    holdout_totals,
+    joint_regressions,
     median_friction,
+    overall_regressions,
     plot_resting_torque,
     recorded_compensation,
-    save_refusals,
     to_urdf_error,
     write_measurements_csv,
 )
@@ -159,9 +173,14 @@ from dimos.control.calibration.spec import (
     urdf_limits,
 )
 from dimos.control.calibration.step_analysis import (
+    BUZZ_RMS_LIMIT_DEG_S,
+    KD_PER_KP_LIMIT,
+    SETTLE_BAND_DEG,
     STUCK_FRACTION,
     gain_candidates,
+    gain_label,
     propose_gains,
+    rest_limit_deg,
     sweep_friction_nm,
 )
 from dimos.control.calibration.step_report import (
@@ -183,6 +202,14 @@ FLOAT_POSES_PER_JOINT = 2
 FLOAT_LIMIT_MARGIN_DEG = 5.0
 MIN_FLOAT_GRAVITY_NM = 0.2
 NO_GRAVITY_LOAD = "no gravity load to test"
+TRACKING_REST_RATIO = 1.5
+_DID_NOT_RUN = {
+    "skipped": "was skipped",
+    "not_selected": "was not selected",
+    "unsupported": "cannot run here",
+    "failed": "failed",
+    "aborted": "was aborted",
+}
 DITHER_TORQUE_FRACTION = 0.3
 DITHER_MIN_SPAN_NM = 0.1
 # Two link masses differ when any value differs by more than this.
@@ -858,9 +885,10 @@ class GravityFitStep(Step):
     instructions = (
         "Fits the link masses and centres of mass to what the gravity poses recorded, keeping "
         "some poses out of the fit to score it against the URDF and against the file the arm "
-        "runs. It is saved only when it is no worse than either on any joint, and only when you "
-        "agree; it is then applied with the arm at home, and the replaced file is kept in the "
-        "history. It does not fit when the file on disk holds other masses than the arm runs."
+        "runs, by joint and over all the joints. It is saved only when you agree; one worse over "
+        "all the joints than either is saved only when you ask for it anyway. It is applied with "
+        "the arm at home, and the replaced file is kept in the history. It does not fit when the "
+        "file on disk holds other masses than the arm runs."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -900,17 +928,23 @@ class GravityFitStep(Step):
         # The raw resting torque is the error of the masses the arm ran.
         running = result.rms_of(np.asarray([m.tau_pd_nm for m in measurements]), holdout=True)
         refusals = (
-            save_refusals(result, running)
+            fit_refusals(result)
             if result.bounds_ok
             else [f"the fit failed its physical bounds: {'; '.join(result.bound_violations)}"]
         )
+        worse = [] if refusals else overall_regressions(result, running)
+        regressed = [] if refusals else joint_regressions(result, running)
         holdout = _rms_table(
             result.rms_by_joint(holdout=True, after=False),
             running,
             result.rms_by_joint(holdout=True, after=True),
         )
+        totals = {key: round(value, 4) for key, value in holdout_totals(result, running).items()}
         data: dict[str, Any] = {
             "holdout_rms_nm": holdout,
+            "holdout_total_nm": totals,
+            "worse_overall": worse,
+            "regressed": regressed,
             "rank": result.rank,
             "condition_number": round(result.condition_number, 2),
             "at_bounds": list(result.at_bounds),
@@ -925,10 +959,18 @@ class GravityFitStep(Step):
             "saved": None,
         }
         if recording.directory is not None:
-            data["report"] = str(self._write_report(result, recording.directory, refusals, running))
+            data["report"] = str(
+                self._write_report(result, recording.directory, refusals + worse, running)
+            )
         table = ", ".join(
-            f"{joint} {row['before']:.3f} -> {row['running']:.3f} -> {row['after']:.3f}"
-            for joint, row in holdout.items()
+            [
+                *(
+                    f"{joint} {row['before']:.3f} -> {row['running']:.3f} -> {row['after']:.3f}"
+                    for joint, row in holdout.items()
+                ),
+                f"all joints {totals['before']:.3f} -> {totals['running']:.3f} -> "
+                f"{totals['after']:.3f}",
+            ]
         )
         left_out = "".join(
             [
@@ -939,13 +981,23 @@ class GravityFitStep(Step):
         if refusals:
             return StepResult(f"not saved: {'; '.join(refusals)}{left_out}", data)
         bounds = f"; at bounds: {'; '.join(result.at_bounds)}" if result.at_bounds else ""
-        try:
-            ctx.confirm(
-                f"Held-out RMS (Nm, URDF -> running -> new): {table}; rank {result.rank}{bounds}. "
-                "Save and apply? Enter to save"
-            )
-        except SkipRequestedError:
-            return StepResult("not saved, as asked", data, skipped=True)
+        joints = f"; regressed: {', '.join(regressed)}" if regressed else ""
+        shown = f"Held-out RMS (Nm, URDF -> running -> new): {table}{joints}; rank {result.rank}"
+        if worse:
+            try:
+                ctx.confirm(
+                    f"{shown}{bounds}. Not better overall: {'; '.join(worse)}. Save anyway? "
+                    "Enter keeps what the arm runs, s saves and applies the fit"
+                )
+            except SkipRequestedError:
+                data["saved_anyway"] = True
+            else:
+                return StepResult(f"not saved: {'; '.join(worse)}{joints}{left_out}", data)
+        else:
+            try:
+                ctx.confirm(f"{shown}{bounds}. Save and apply? Enter to save")
+            except SkipRequestedError:
+                return StepResult("not saved, as asked", data, skipped=True)
         calibration = calibration_from_fit(
             result, ctx.spec, recording_dir=recording.directory, created=_now()
         )
@@ -961,8 +1013,10 @@ class GravityFitStep(Step):
         )
         data.update(_save(ctx, patch))
         outcome = "applied" if data["applied"] else "not applied"
+        anyway = " though not better overall" if worse else ""
         return StepResult(
-            f"saved {data['saved']} and {outcome}; held-out RMS {table}{left_out}", data
+            f"saved {data['saved']} and {outcome}{anyway}; held-out RMS {table}{joints}{left_out}",
+            data,
         )
 
     @staticmethod
@@ -1104,7 +1158,8 @@ class StepSweepStep(Step):
     shoulder and elbow, the OpenArm's elbow), where half the steps would pass
     the limit, so the sweep runs at :func:`sweep_pose`. A joint's candidates
     are its robot ``kp0`` times each kp scale by its robot ``kd0`` times each
-    kd scale, kd clamped to the MIT frame's 5 N m s/rad and duplicates
+    kd scale, kd clamped to the MIT frame's 5 N m s/rad and to kp/4, so a
+    10 deg/s ramp lags at most 2.5 deg for its damping, and duplicates
     dropped (``gain_candidates``); the robot's own gains go first, as
     ``sweep_friction_nm`` reads the joint's friction off them.
     """
@@ -1115,7 +1170,8 @@ class StepSweepStep(Step):
         "The arm moves to the sweep pose (clear of every joint limit), and every joint in turn "
         "steps a little, +1, -1, +3 and -3 degrees, at each tried stiffness and damping "
         "(multiples of its robot kp by multiples of its robot kd), resting after each step. "
-        "The gains go back when each joint is done, and the arm returns home."
+        "A step that buzzes ends that try at once. The gains go back when each joint is done, "
+        "and the arm returns home."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -1136,17 +1192,20 @@ class StepSweepStep(Step):
             for joint in spec.joint_names
         }
         steps = sum(len(pairs) for pairs in candidates.values()) * len(deltas)
+        travel = 2.0 * _ramp_s(ctx.arm.home, pose, settings.speed_deg_s)
         ctx.confirm(
             f"The arm will move to {where} [{_angles(pose)}] deg at {settings.speed_deg_s:g} "
             f"deg/s; there each of the {len(spec.joint_names)} joints will step "
             f"{', '.join(f'{d:+g}' for d in deltas)} deg at kp x "
             f"{', '.join(f'{s:g}' for s in settings.kp_scales)} by kd x "
-            f"{', '.join(f'{s:g}' for s in settings.kd_scales)} "
+            f"{', '.join(f'{s:g}' for s in settings.kd_scales)}, kd capped at "
+            f"kp/{1.0 / KD_PER_KP_LIMIT:g} for ramp tracking "
             f"({', '.join(f'{j} {len(p)}' for j, p in candidates.items())} candidates), "
-            f"{steps} steps, about {_minutes(steps * settings.step_hold_s)}, then it returns "
-            "home. Clear the workspace. Enter to start"
+            f"{steps} steps, about {_minutes(steps * settings.step_hold_s + travel)}, then it "
+            "returns home. Clear the workspace. Enter to start"
         )
         swept: dict[str, list[list[float]]] = {}
+        stopped: dict[str, dict[str, str]] = {}
         start: float | None = None
         with ctx.session() as session:
             session.move_to(pose)
@@ -1168,7 +1227,21 @@ class StepSweepStep(Step):
                             kp, kd = session.set_gains(joint, *pair)
                             swept[joint].append([kp, kd])
                             for delta in deltas:
-                                session.step_joint(joint, delta, settings.step_hold_s)
+                                before = session.target
+                                step = session.step_joint(joint, delta, settings.step_hold_s)
+                                if step.buzz_deg_s > BUZZ_RMS_LIMIT_DEG_S:
+                                    why = (
+                                        f"stopped at its {delta:+g} deg step, which buzzed at "
+                                        f"{step.buzz_deg_s:.1f} deg/s RMS (limit "
+                                        f"{BUZZ_RMS_LIMIT_DEG_S:g} deg/s); its other steps were "
+                                        "skipped"
+                                    )
+                                    ctx.run.buzzing.setdefault(joint, {})[(kp, kd)] = why
+                                    stopped.setdefault(joint, {})[gain_label(kp, kd)] = why
+                                    session.reset_gains()
+                                    session.ramp_to(before)
+                                    session.hold(settings.step_hold_s)
+                                    break
                     finally:
                         try:
                             session.reset_gains()
@@ -1180,6 +1253,7 @@ class StepSweepStep(Step):
             session.move_to(ctx.arm.home)
         data = {
             "joints": swept,
+            "stopped": stopped,
             "kp_scales": list(settings.kp_scales),
             "kd_scales": list(settings.kd_scales),
             "steps_deg": list(deltas),
@@ -1187,7 +1261,13 @@ class StepSweepStep(Step):
             "pose_deg": [round(math.degrees(float(v)), 3) for v in pose],
             "span": list(ctx.run.step_span),
         }
-        return StepResult(f"swept {len(swept)} of {len(spec.joint_names)} joints at {where}", data)
+        halted = sum(len(pairs) for pairs in stopped.values())
+        buzzing = (
+            f"; stopped {halted} buzzing candidates at their first buzzing step" if halted else ""
+        )
+        return StepResult(
+            f"swept {len(swept)} of {len(spec.joint_names)} joints at {where}{buzzing}", data
+        )
 
 
 class PickGainsStep(Step):
@@ -1196,8 +1276,8 @@ class PickGainsStep(Step):
     instructions = (
         "Scores every step of the gain sweep and proposes, for each joint, the gains that rest "
         "closest to target for their friction and settle fastest, among those that never stick, "
-        "overshoot more than 20 % or buzz. Accepted gains are saved with the gravity fit and "
-        "applied."
+        "overshoot more than 20 % or buzz. Nothing is saved here: confirm_tracking tries the "
+        "accepted gains and saves them only if the arm tracks with them."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -1218,7 +1298,7 @@ class PickGainsStep(Step):
             for r in extract_steps(steps, dither_friction_nm=dither)
             if r.event.joint in ctx.spec.joint_names
         ]
-        proposals = propose_gains(record.metrics for record in records)
+        proposals = propose_gains((record.metrics for record in records), stopped=ctx.run.buzzing)
         swept = sweep_friction_nm(record.metrics for record in records)
         if recording.directory is not None:
             out = recording.directory / STEP_REPORT_DIR
@@ -1251,17 +1331,33 @@ class PickGainsStep(Step):
         if not chosen:
             return StepResult("no gains passed every step; nothing to save", data)
         listed = ", ".join(f"{j} kp={g[0]:g} kd={g[1]:g}" for j, g in sorted(chosen.items()))
+        statuses = {state["id"]: state["status"] for state in ctx.step_states()}
+        if statuses.get("confirm_tracking") == "not_selected":
+            return StepResult(
+                f"proposed {listed}; not saved: confirm_tracking, which tries and saves them, "
+                "is not selected",
+                data,
+            )
         try:
-            ctx.confirm(f"Proposed gains: {listed}. Save and apply? Enter to save")
+            ctx.confirm(
+                f"Proposed gains: {listed}. confirm_tracking tries them at the held-out poses "
+                "and saves them only if every joint keeps up and rests as well as before. "
+                "Enter to accept them"
+            )
         except SkipRequestedError:
-            return StepResult("not saved, as asked", data, skipped=True)
-        gains = {joint: JointGains(kp=kp, kd=kd) for joint, (kp, kd) in chosen.items()}
-        # Merged by joint into the stored file and applied from it. Applying a file
-        # (DamiaoArm.apply_calibration) drops every live gain override, so from here
-        # on the arm holds the saved gains, in any session too: confirm_tracking
-        # runs on the file's gains, as it should.
-        data.update(_save(ctx, ArmConfigPatch(arm_id=ctx.spec.arm_id, gains=gains)))
-        return StepResult(f"saved gains for {sorted(chosen)} to {data['saved']}", data)
+            return StepResult("not accepted, as asked", data, skipped=True)
+        ctx.run.proposed_gains = {
+            joint: JointGains(kp=kp, kd=kd) for joint, (kp, kd) in sorted(chosen.items())
+        }
+        ctx.run.proposed_friction_nm = {
+            joint: proposals[joint].friction_nm for joint in sorted(chosen)
+        }
+        data["accepted"] = {joint: [kp, kd] for joint, (kp, kd) in sorted(chosen.items())}
+        return StepResult(
+            f"accepted gains for {sorted(chosen)}; confirm_tracking tries them before they are "
+            "saved",
+            data,
+        )
 
     @staticmethod
     def _dither_friction(ctx: StepContext) -> dict[str, float]:
@@ -1277,10 +1373,13 @@ class ConfirmTrackingStep(Step):
     id = "confirm_tracking"
     title = "Confirm tracking"
     instructions = (
-        "Revisits the gravity poses the fit held out with the values now applied and measures "
-        "how closely each joint follows its target, while moving and at rest, against the same "
-        "measure at the same poses from this run's gravity sweep, taken before any new values "
-        "were applied."
+        "Revisits the gravity poses the fit held out with the values now applied, and the gains "
+        "accepted at pick_gains for this session only, and measures how closely each joint "
+        "follows its target, while moving and at rest, against the same measure at the same "
+        "poses from this run's gravity sweep, or from a first pass with the gains the arm runs. "
+        "The accepted gains are saved only if no joint stalls and every joint rests within "
+        f"{TRACKING_REST_RATIO:g} times its baseline, or within what its friction allows at its "
+        "new kp; otherwise the arm's gains come back."
     )
 
     def supported(self, spec: ArmCalibrationSpec, caps: Capabilities) -> bool | str:
@@ -1306,59 +1405,146 @@ class ConfirmTrackingStep(Step):
         return [candidates[name] for name in names], bool(held)
 
     def run(self, ctx: StepContext) -> StepResult:
-        settings, arm = ctx.settings, ctx.arm
         poses, paired = self.poses(ctx)
         if not poses:
             raise StepUnavailableError("there is no gravity pose to revisit")
-        ctx.confirm(
-            f"The arm will revisit {len(poses)} held-out gravity poses "
-            f"({', '.join(p.name for p in poses)}). Enter to start"
+        proposed = ctx.run.proposed_gains
+        stops = [ctx.arm.home, *(np.asarray(p.joints_rad) for p in poses), ctx.arm.home]
+        visit = len(poses) * ctx.settings.hold_s + sum(
+            _ramp_s(a, b, ctx.settings.speed_deg_s) for a, b in itertools.pairwise(stops)
         )
+        passes = 2 if proposed is not None and not paired else 1
+        where = (
+            f"{len(poses)} held-out gravity poses ({', '.join(p.name for p in poses)}), about "
+            f"{_minutes(passes * visit)}"
+        )
+        if proposed is None:
+            ctx.confirm(f"The arm will revisit {where}. Enter to start")
+        else:
+            first = "" if paired else ", first with the gains it runs, then"
+            ctx.confirm(
+                f"The arm will revisit {where}{first} with the proposed gains "
+                f"({_gains_text(proposed)}). They are saved only if every joint keeps up and "
+                f"rests within {TRACKING_REST_RATIO:g} times its baseline, or what its friction "
+                "allows at its new kp. Enter to start"
+            )
+        before = ctx.run.baseline if paired else None
+        if proposed is not None and not paired:
+            before = TrackingLog(ctx.spec.joint_names)
+            with ctx.session() as session:
+                self._visit(ctx, session, poses, before, "Baseline pose")
         log = TrackingLog(ctx.spec.joint_names)
-        visited: list[Vector] = []
-        names: list[str] = []
-        with ctx.session() as session:
-            session.move_to(arm.home)
-            for index, pose in enumerate(poses, 1):
-                ctx.progress(index - 1, len(poses), f"tracking pose {index}/{len(poses)}")
-                target = np.asarray(pose.joints_rad, dtype=np.float64)
-                if settings.confirm_each:
-                    try:
-                        ctx.confirm(
-                            f"Tracking pose {index}/{len(poses)} {pose.name} [{_angles(target)}] "
-                            "deg: Enter to move there"
-                        )
-                    except SkipRequestedError:
-                        continue
-                path = plan_path(arm, session.target, target)
-                if path is None:
-                    continue
-                log.pose = pose.name
-                for waypoint in path:
-                    session.ramp_to(waypoint, log)
-                visited.append(target)
-                names.append(pose.name)
-                session.hold(settings.hold_s, log)
-            session.retrace_home(visited)
+        stalled: str | None = None
+        try:
+            with ctx.session() as session:
+                for joint, gains in (proposed or {}).items():
+                    session.set_gains(joint, gains.kp, gains.kd)
+                self._visit(ctx, session, poses, log, "Tracking pose")
+        except JointLaggedError as error:
+            if proposed is None:
+                raise
+            stalled = str(error)
+        names = log.poses
         tracking = log.summary()
-        baseline = (
-            ctx.run.baseline.summary(poses=names)
-            if paired and ctx.run.baseline is not None
-            else None
-        )
+        baseline = None if before is None else before.summary(poses=names)
         check = {
             "created": _now().isoformat(),
-            "poses": len(visited),
+            "poses": len(names),
             "pose_names": names,
             **tracking,
             "baseline": baseline,
         }
-        data = {**check, **_record_check(ctx, "tracking", check)}
-        rest = tracking["rest_rms_deg"]
-        worst = max(rest.values(), default=0.0)
-        return StepResult(
-            f"{len(visited)} poses; worst resting RMS {worst:.3f} deg{_not_recorded(data)}", data
+        worst = max(tracking["rest_rms_deg"].values(), default=0.0)
+        if proposed is None:
+            data = {**check, **_record_check(ctx, "tracking", check)}
+            return StepResult(
+                f"{len(names)} poses; worst resting RMS {worst:.3f} deg{_not_recorded(data)}", data
+            )
+        failed = (
+            [stalled]
+            if stalled is not None
+            else self._worse_rests(tracking, baseline, self._rest_floors(ctx, proposed))
         )
+        gains_data: dict[str, Any] = {
+            "proposed": {joint: [g.kp, g.kd] for joint, g in proposed.items()},
+            "failed": failed,
+            "saved": None,
+        }
+        if failed:
+            held = "; the arm holds where it stopped" if stalled is not None else ""
+            return StepResult(
+                f"gains not saved: {'; '.join(failed)}; the arm runs its earlier gains again{held}",
+                {**check, "saved": None, "gains": gains_data},
+            )
+        gains_data.update(_save(ctx, ArmConfigPatch(arm_id=ctx.spec.arm_id, gains=proposed)))
+        ctx.run.proposed_gains = None
+        data = {**check, **_record_check(ctx, "tracking", check), "gains": gains_data}
+        return StepResult(
+            f"{len(names)} poses; worst resting RMS {worst:.3f} deg; saved gains for "
+            f"{sorted(proposed)} to {gains_data['saved']}{_not_recorded(data)}",
+            data,
+        )
+
+    @staticmethod
+    def _visit(
+        ctx: StepContext, session: ArmSession, poses: Sequence[Pose], log: TrackingLog, label: str
+    ) -> None:
+        settings, arm = ctx.settings, ctx.arm
+        visited: list[Vector] = []
+        session.move_to(arm.home)
+        for index, pose in enumerate(poses, 1):
+            ctx.progress(index - 1, len(poses), f"{label.lower()} {index}/{len(poses)}")
+            target = np.asarray(pose.joints_rad, dtype=np.float64)
+            if settings.confirm_each:
+                try:
+                    ctx.confirm(
+                        f"{label} {index}/{len(poses)} {pose.name} [{_angles(target)}] deg: "
+                        "Enter to move there"
+                    )
+                except SkipRequestedError:
+                    continue
+            path = plan_path(arm, session.target, target)
+            if path is None:
+                continue
+            log.pose = pose.name
+            for waypoint in path:
+                session.ramp_to(waypoint, log)
+            visited.append(target)
+            session.hold(settings.hold_s, log)
+        session.retrace_home(visited)
+
+    @staticmethod
+    def _rest_floors(ctx: StepContext, proposed: Mapping[str, JointGains]) -> dict[str, float]:
+        friction = ctx.run.proposed_friction_nm
+        return {
+            joint: rest_limit_deg(friction.get(joint, 0.0), gains.kp)
+            for joint, gains in proposed.items()
+            if gains.kp > 0.0
+        }
+
+    @staticmethod
+    def _worse_rests(
+        tracking: Mapping[str, Any],
+        baseline: Mapping[str, Any] | None,
+        floors: Mapping[str, float],
+    ) -> list[str]:
+        rest: Mapping[str, float] = tracking["rest_rms_deg"]
+        before: Mapping[str, float] = {} if baseline is None else baseline["rest_rms_deg"]
+        if not rest:
+            return ["no pose was revisited with the proposed gains"]
+        if not before:
+            return ["no baseline rest at these poses to compare with"]
+        worse = []
+        for joint, value in rest.items():
+            if joint not in before:
+                continue
+            limit = max(TRACKING_REST_RATIO * before[joint], floors.get(joint, SETTLE_BAND_DEG))
+            if value > limit:
+                worse.append(
+                    f"{joint} rests {value:.2f} deg RMS against {before[joint]:.2f} deg before "
+                    f"(limit {limit:.2f} deg)"
+                )
+        return worse
 
 
 class SummaryStep(Step):
@@ -1384,8 +1570,23 @@ class SummaryStep(Step):
         ]
         if stored is None or stored.gravity is None:
             next_steps.append("The arm has no fitted gravity yet: run gravity_poses and the fit.")
-        if stored is None or not stored.gains:
-            next_steps.append("No gains are saved: run step_sweep and pick_gains.")
+        proposed = ctx.run.proposed_gains
+        if proposed is not None:
+            failed = ((ctx.results.get("confirm_tracking") or {}).get("gains") or {}).get("failed")
+            status = steps.get("confirm_tracking", "pending")
+            why = (
+                f"they failed confirm_tracking: {'; '.join(failed)}"
+                if failed
+                else f"confirm_tracking, which saves them, {_DID_NOT_RUN.get(status, 'did not run')}"
+            )
+            next_steps.append(
+                f"The proposed gains were not saved: {why}. Run step_sweep, pick_gains and "
+                "confirm_tracking again."
+            )
+        elif stored is None or not stored.gains:
+            next_steps.append(
+                "No gains are saved: run step_sweep, pick_gains and confirm_tracking."
+            )
         data: dict[str, Any] = {
             "file": None if stored is None else str(path),
             "created": None if stored is None else stored.created.isoformat(),
@@ -1397,12 +1598,19 @@ class SummaryStep(Step):
             else {j: [g.kp, g.kd] for j, g in sorted(stored.gains.items())},
             "checks": [] if stored is None or not stored.checks else sorted(stored.checks),
             "history": history,
+            "proposed_gains": None
+            if proposed is None
+            else {j: [g.kp, g.kd] for j, g in sorted(proposed.items())},
             "applied": None if applied is None else applied.model_dump(),
             "steps": steps,
             "next_steps": next_steps,
         }
         where = "no calibration file" if stored is None else str(path)
         return StepResult(f"{ctx.spec.arm_id}: {where}; {len(history)} earlier files", data)
+
+
+def _gains_text(gains: Mapping[str, JointGains]) -> str:
+    return ", ".join(f"{joint} kp={g.kp:g} kd={g.kd:g}" for joint, g in sorted(gains.items()))
 
 
 def calibration_steps() -> list[Step]:
