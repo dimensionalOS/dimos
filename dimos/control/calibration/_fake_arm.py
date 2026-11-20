@@ -113,8 +113,9 @@ class FakeArm:
         if save:
             self.file = {
                 **self.file,
-                **{k: v for k, v in entry.items() if k != "gains"},
+                **{k: v for k, v in entry.items() if k not in ("gains", "checks")},
                 "gains": {**self.file.get("gains", {}), **entry.get("gains", {})},
+                "checks": {**self.file.get("checks", {}), **entry.get("checks", {})},
             }
             self.live.clear()
             self.floating.clear()

@@ -42,7 +42,7 @@ from dimos.control.calibration.motion import HoldMode, Motion, Sample, plan_path
 from dimos.control.calibration.robots import KNOWN_ROBOTS, arm_spec
 from dimos.control.calibration.spec import ArmCalibrationSpec, motor_torque_limit_nm
 from dimos.control.calibration.step_analysis import RestNoise, StepMetrics
-from dimos.control.calibration.steps import AbortedError, SkippedError
+from dimos.control.calibration.steps import AbortedError, SkippedError, StalledError
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -94,6 +94,8 @@ class CalibrationModuleConfig(ModuleConfig):
             at the first limp sample.
         float_trip_deg: A floating joint that turns this far is held again, and fails.
         confirm_poses: How many gravity poses confirm_tracking revisits.
+        tracking_rest_ratio: The proposed gains are saved only if every joint rests within this
+            times its first visit, or within its rest limit at its new kp.
         grid_points: About how many candidate poses the pose search considers.
         steps: Which steps to run after check (``steps.STEPS``).
         confirm_each: Ask before every move, not only at the start of each step.
@@ -124,6 +126,7 @@ class CalibrationModuleConfig(ModuleConfig):
     float_drift_limit_mm: float = Field(default=2.0, gt=0.0)
     float_trip_deg: float = Field(default=5.0, gt=0.0)
     confirm_poses: int = Field(default=3, ge=1)
+    tracking_rest_ratio: float = Field(default=1.5, gt=0.0)
     grid_points: int = Field(default=3000, ge=1)
     steps: list[str] = Field(default_factory=lambda: list(steps.STEPS))
     confirm_each: bool = True
@@ -222,6 +225,7 @@ class Calibration:
         self.step_metrics: list[StepMetrics] = []
         self.stopped: dict[str, dict[tuple[float, float], str]] = {}
         self.friction: dict[str, float] = {}
+        self.proposed: dict[str, dict[str, float]] = {}
         self.at_home = False
 
     def feed(self, msg: JointState) -> None:
@@ -358,27 +362,38 @@ class Calibration:
                 if self._motion is motion:
                     self._motion = None
         if motion.error:
-            raise RuntimeError(motion.error)
+            raise (StalledError if motion.stalled else RuntimeError)(motion.error)
         return motion
 
-    def move(self, target: np.ndarray, what: str, *, ask: bool = True) -> Motion:
-        """Go to ``target`` along a clear path and settle there, asking first with ``confirm_each``."""
+    def move(
+        self,
+        target: np.ndarray,
+        what: str,
+        *,
+        ask: bool = True,
+        patch: dict[str, Any] | None = None,
+    ) -> Motion:
+        """Go to ``target`` along a clear path and settle there, asking first with ``confirm_each``,
+        with the live ``patch`` applied as it streams."""
         if ask and self.config.confirm_each:
             degrees = ", ".join(f"{math.degrees(v):.1f}" for v in target)
             self.confirm(f"Move to {what} [{degrees}] deg?")
-        motion = self.stream(self.motion(plan_path(self.arm, self.measured(), target), "converge"))
+        path = plan_path(self.arm, self.measured(), target)
+        motion = self.stream(self.motion(path, "converge"), patch)
         if motion.ended != "settled":
             raise RuntimeError(f"the arm is {motion.ended} at {what}")
         self.at_home = what == "home"
         return motion
 
-    def home(self, trail: list[np.ndarray] | None = None) -> None:
+    def home(
+        self, trail: list[np.ndarray] | None = None, patch: dict[str, Any] | None = None
+    ) -> None:
         """Go home, back through the poses of ``trail`` until a clear path home opens."""
         for back in reversed(trail or []):
             if self.arm.transition_ok(self.measured(), self.arm.home):
                 break
-            self.move(back, "the previous pose", ask=False)
-        self.move(self.arm.home, "home")
+            self.move(back, "the previous pose", ask=False, patch=patch)
+        self.move(self.arm.home, "home", patch=patch)
 
     def run(self) -> None:
         """Every step in order; on a failure or abort the arm holds and home is offered."""

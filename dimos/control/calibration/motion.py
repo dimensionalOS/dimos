@@ -87,6 +87,7 @@ class Motion:
     done: threading.Event = field(default_factory=threading.Event)
     ended: str = ""
     error: str | None = None
+    stalled: bool = False
     t: list[float] = field(default_factory=list)
     q: list[np.ndarray] = field(default_factory=list)
     dq: list[np.ndarray] = field(default_factory=list)
@@ -175,6 +176,7 @@ class Motion:
             if e > limit
         ]
         if stalled:
+            self.stalled = True
             return (
                 f"stalled or blocked, past what the motor can push: {', '.join(stalled)} off target"
             )

@@ -21,7 +21,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 import itertools
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -66,14 +66,18 @@ class SkippedError(Exception):
     """The operator skipped what was asked."""
 
 
+class StalledError(RuntimeError):
+    """A joint fell behind its target by more than its motor can push."""
+
+
 TITLES = {
     "check": "measure the noise at rest and the sample period, then go home",
     "gravity_poses": "visit the gravity poses and dither each measured joint",
     "gravity_fit": "fit the link masses, save and apply them on confirm",
     "float_check": "rest, then float each measured joint and measure the fingertip drift",
     "step_sweep": "step each joint at its gains, then at each kp by kd scale",
-    "pick_gains": "propose the gains that rest and settle best, save and apply them on confirm",
-    "confirm_tracking": "revisit gravity poses and compare the rest error with the first visit",
+    "pick_gains": "propose the gains that rest and settle best for confirm_tracking to try",
+    "confirm_tracking": "revisit gravity poses with the proposed gains, save them if they track",
     "summary": "show the calibration file the arm runs now",
 }
 NEEDS = {"gravity_fit": "gravity_poses", "pick_gains": "step_sweep"}
@@ -537,43 +541,119 @@ def pick_gains(run: Calibration) -> str:
             for j, p in proposals.items()
         )
     )
-    chosen = {j: {"kp": p.kp, "kd": p.kd} for j, p in proposals.items() if p.kp is not None}
+    chosen = {
+        j: {"kp": p.kp, "kd": p.kd}
+        for j, p in proposals.items()
+        if p.kp is not None and p.kd is not None
+    }
     if not chosen:
-        return "no gains passed every step; nothing saved"
-    run.confirm(f"Save the gains of {', '.join(chosen)} and apply them now?")
-    run.configure({"gains": chosen}, save=True)
-    return f"saved gains for {', '.join(chosen)} to {run.state['file']['path']}"
-
-
-def confirm_tracking(run: Calibration) -> str:
-    poses = _gravity_poses(run)[: run.config.confirm_poses]
+        return "no gains passed every step; nothing to try"
+    listed = _gains_text(chosen)
+    if "confirm_tracking" not in run.config.steps:
+        return f"proposed {listed}; not saved: confirm_tracking, which tries and saves them, is not selected"
     run.confirm(
-        f"The arm revisits {', '.join(p.name for p in poses)} with the calibration now applied, "
-        "comparing how far each joint rests from its target with the first visit."
+        f"Proposed gains: {listed}. confirm_tracking tries them and saves them only if no joint "
+        "stalls and each rests about as well as before. Accept them?"
     )
-    before, after, visited = [], [], []
+    run.proposed = chosen
+    return f"accepted gains for {', '.join(chosen)}; confirm_tracking tries them before saving"
+
+
+def _gains_text(gains: dict[str, dict[str, float]]) -> str:
+    return ", ".join(f"{j} kp {g['kp']:g} kd {g['kd']:g}" for j, g in gains.items())
+
+
+def _revisit(
+    run: Calibration, poses: list[Pose], patch: dict[str, Any] | None
+) -> dict[str, np.ndarray]:
+    rests, visited = {}, []
     for pose in poses:
         target = np.asarray(pose.joints_rad)
         try:
-            rest = run.move(target, pose.name)
+            rest = run.move(target, pose.name, patch=patch)
         except SkippedError:
             continue
         visited.append(target)
-        if pose.name in run.baseline:
-            before.append(run.baseline[pose.name])
-            after.append(_rest_error(run, rest, target))
-    run.home(visited)
-    if not after:
-        return f"visited {len(visited)} poses; none has a first visit in this run to compare"
-    rms = [np.degrees(np.sqrt(np.mean(np.square(e), axis=0))) for e in (before, after)]
+        rests[pose.name] = _rest_error(run, rest, target)
+    run.home(visited, patch)
+    return rests
+
+
+def _rms_deg(errors: list[np.ndarray]) -> np.ndarray:
+    rms: np.ndarray = np.degrees(np.sqrt(np.mean(np.square(errors), axis=0)))
+    return rms
+
+
+def confirm_tracking(run: Calibration) -> str:
+    poses, proposed, ratio = (
+        _gravity_poses(run)[: run.config.confirm_poses],
+        run.proposed,
+        run.config.tracking_rest_ratio,
+    )
+    trying = (
+        f" and the proposed gains ({_gains_text(proposed)}), re-applied as each move streams; "
+        f"they are saved only if no joint stalls and each rests within {ratio:g} times its first "
+        "visit or what its friction allows at its new kp"
+        if proposed
+        else ""
+    )
+    run.confirm(
+        f"The arm revisits {', '.join(p.name for p in poses)} with the calibration now "
+        f"applied{trying}, comparing how far each joint rests from its target with the first visit."
+    )
+    if proposed and any(pose.name not in run.baseline for pose in poses):
+        run.show("No first visit of these poses in this run: a first pass with the running gains")
+        run.baseline.update(_revisit(run, poses, None))
+    held = {joint: dict(zip(("kp", "kd"), run.gains(joint), strict=True)) for joint in proposed}
+    try:
+        rests = _revisit(run, poses, {"gains": proposed} if proposed else None)
+    except StalledError as error:
+        if not proposed:
+            raise
+        run.configure({"gains": held})
+        run.proposed = {}
+        if run.ask(f"{error}; the proposed gains are undone. Go home?", ["home", "stay"]) == "home":
+            run.home()
+        return f"gains not saved: {error}"
+    names = [name for name in rests if name in run.baseline]
+    if not names:
+        if proposed:
+            run.configure({"gains": held})
+        return f"visited {len(rests)} poses; none has a first visit in this run to compare"
+    before = _rms_deg([run.baseline[name] for name in names])
+    after = _rms_deg([rests[name] for name in names])
     run.show(
         "Rest error, RMS deg: first visit -> now\n"
         + "\n".join(
             f"  {name}: {b:.3f} -> {a:.3f}"
-            for name, b, a in zip(run.arm.joint_names, *rms, strict=True)
+            for name, b, a in zip(run.arm.joint_names, before, after, strict=True)
         )
     )
-    return f"{len(after)} poses compared; worst joint now {rms[1].max():.3f} deg RMS"
+    worse = []
+    for joint, gains in proposed.items():
+        i = run.arm.joint_names.index(joint)
+        limit = max(ratio * before[i], _rest_limit(run, joint, gains["kp"]))
+        if after[i] > limit:
+            worse.append(f"{joint} rests {after[i]:.2f} deg RMS (limit {limit:.2f})")
+    check = {
+        "created": datetime.now(timezone.utc).isoformat(),
+        "pose_names": names,
+        "rest_rms_deg": dict(zip(run.arm.joint_names, map(float, after), strict=True)),
+        "baseline": {
+            "rest_rms_deg": dict(zip(run.arm.joint_names, map(float, before), strict=True))
+        },
+    }
+    compared = f"{len(names)} poses compared; worst joint now {after.max():.3f} deg RMS"
+    run.proposed = {}
+    if worse:
+        run.configure({"gains": held})
+        return f"{compared}; gains not saved: {'; '.join(worse)}"
+    patch: dict[str, Any] = {"checks": {"tracking": check}}
+    if proposed:
+        patch["gains"] = proposed
+    run.configure(patch, save=True)
+    saved = f"; saved gains for {', '.join(proposed)}" if proposed else ""
+    return f"{compared}{saved} to {run.state['file']['path']}"
 
 
 def summary(run: Calibration) -> str:

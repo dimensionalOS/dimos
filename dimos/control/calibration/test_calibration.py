@@ -154,7 +154,7 @@ def test_a_buzzing_candidate_stops_at_its_first_buzzing_step_and_the_sweep_goes_
 ) -> None:
     fake = FakeArm(arm, buzz_above_kp=50.0)
     operator = FakeOperator()
-    run = calibration(arm, operator, fake, steps=["step_sweep", "pick_gains"])
+    run = calibration(arm, operator, fake, steps=["step_sweep", "pick_gains", "confirm_tracking"])
     run.run()
 
     assert operator.done is not None and operator.done[0], operator.done
@@ -173,7 +173,7 @@ def test_friction_sets_each_joints_rest_limit_and_a_stuck_largest_step_rejects_i
     arm: ArmModel,
 ) -> None:
     fake, operator = FakeArm(arm, friction_nm={"elbow": 0.4}), FakeOperator()
-    run = calibration(arm, operator, fake, steps=["step_sweep", "pick_gains"])
+    run = calibration(arm, operator, fake, steps=["step_sweep", "pick_gains", "confirm_tracking"])
     run.run()
 
     assert operator.done is not None and operator.done[0], operator.done
@@ -302,6 +302,83 @@ def test_a_hold_that_oscillates_in_place_ends_whatever_its_phase(arm: ArmModel, 
         q = arm.home + np.array([0.0, 0.0, 0.01 * math.cos(2.0 * math.pi * hz * k / 100.0)])
         motion.feed(Sample(k / 100.0, q, np.zeros(3)))
     assert motion.done.is_set() and motion.ended == "not converging"
+
+
+TRY_GAINS = {
+    "steps": ["gravity_poses", "step_sweep", "pick_gains", "confirm_tracking"],
+    "kp_scales": [1.0, 1.5],
+    "kd_scales": [1.0],
+}
+
+
+def test_the_proposed_gains_stream_with_every_move_and_are_saved_once_they_track(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm)
+    trying: list[dict[str, tuple[float, float]]] = []
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if "Accept them?" in prompt:
+            fake.on_tick = lambda arm_: (
+                trying.append(arm_.gains()) if arm_.commands[-1] == arm_.t else None
+            )
+        if trying and "Move to" in prompt:
+            for _ in range(30):
+                fake.tick()
+        return choices[0]
+
+    operator = FakeOperator(answer)
+    calibration(arm, operator, fake, **TRY_GAINS).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    proposed = {j: (g["kp"], g["kd"]) for j, g in fake.file["gains"].items()}
+    assert proposed == dict.fromkeys(arm.joint_names, (60.0, 1.0))
+    assert trying and all(gains == proposed for gains in trying)
+    assert any(t > 0.0 for t in fake.halts)
+    assert set(fake.file["checks"]) == {"tracking"}
+    assert "saved gains for yaw, shoulder, elbow" in operator.done[1]
+
+
+def test_a_stall_with_the_proposed_gains_saves_nothing_and_gives_the_gains_back(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm)
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if "The arm revisits" in prompt:
+            pinned = fake.q[2]
+
+            def pin_elbow(arm_: FakeArm) -> None:
+                arm_.q[2] = pinned
+
+            fake.on_tick = pin_elbow
+        return "stay" if "Go home?" in prompt else choices[0]
+
+    operator = FakeOperator(answer)
+    calibration(arm, operator, fake, **TRY_GAINS).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert "confirm_tracking: gains not saved: stalled or blocked" in operator.done[1]
+    assert any("the proposed gains are undone. Go home?" in prompt for prompt in operator.asked)
+    assert "gains" not in fake.file and fake.gains() == fake.defaults
+
+
+def test_proposed_gains_that_rest_worse_than_the_first_visit_are_not_saved(
+    arm: ArmModel,
+) -> None:
+    fake = FakeArm(arm)
+
+    def answer(prompt: str, choices: list[str]) -> str:
+        if "The arm revisits" in prompt:
+            fake.friction[2] = 1.5
+        return choices[0]
+
+    operator = FakeOperator(answer)
+    calibration(arm, operator, fake, **TRY_GAINS).run()
+
+    assert operator.done is not None and operator.done[0], operator.done
+    assert "gains not saved: elbow rests" in operator.done[1]
+    assert "gains" not in fake.file and fake.gains() == fake.defaults
 
 
 def test_the_plan_skips_what_cannot_run() -> None:
