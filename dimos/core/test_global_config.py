@@ -66,6 +66,20 @@ def test_encoding_threads_require_rust() -> None:
     assert config.record_encoding_threads == 8
 
 
+def test_global_updates_validate_together_before_changing_the_instance() -> None:
+    config = GlobalConfig(record="mcap", record_engine="rust")
+    config.update(record_engine="python", record="sqlite")
+    assert (config.record, config.record_engine) == ("sqlite", "python")
+
+    before = config.model_dump()
+    with pytest.raises(ValidationError, match="requires --record-engine rust"):
+        config.update(n_workers=8, record="mcap")
+    assert config.model_dump() == before
+    with pytest.raises(AttributeError, match="typo"):
+        config.update(n_workers=8, typo="value")
+    assert config.model_dump() == before
+
+
 def test_dotenv_is_ignored_under_pytest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / ".env").write_text("ROBOT_IP=192.0.2.17\n")
     monkeypatch.chdir(tmp_path)
