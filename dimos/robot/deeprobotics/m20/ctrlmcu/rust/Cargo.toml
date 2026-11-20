@@ -1,0 +1,55 @@
+[package]
+name = "dimos-m20-ctrlmcu"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: the Deep Robotics M20's body control MCU (LEDs, fill lights, fans, lidar/camera/load power) on the AOS board's /dev/ttyS3, in place of the vendor ctrlmcu_node"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_m20_ctrlmcu"
+path = "src/lib.rs"
+
+[[bin]]
+name = "m20_ctrlmcu"
+path = "src/bin/m20_ctrlmcu.rs"
+
+[package.metadata.dimos.module.m20_ctrlmcu]
+path = "dimos_m20_ctrlmcu::module::M20CtrlMcu"
+python = "dimos.robot.deeprobotics.m20.ctrlmcu.module:M20CtrlMcu"
+
+[package.metadata.dimos.module.m20_ctrlmcu.inputs]
+led_status = "std_msgs.UInt8MultiArray"
+fill_light = "std_msgs.Int32"
+fan_speed = "std_msgs.Int32"
+fan_speed_query = "std_msgs.Int32"
+ext_load_current_query = "std_msgs.Int32"
+ext_load_power = "std_msgs.Int32"
+host_led = "std_msgs.Int32"
+ext_led = "std_msgs.Int32"
+fp_power = "std_msgs.Int32"
+lidar_power = "std_msgs.Int32"
+gps_power = "std_msgs.Int32"
+video_power = "std_msgs.Int32"
+
+[package.metadata.dimos.module.m20_ctrlmcu.outputs]
+status = "std_msgs.String"
+fan_speeds = "std_msgs.UInt32MultiArray"
+ext_load_current = "std_msgs.UInt32"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+m20-ctrlmcu = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+
+[workspace]
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0
