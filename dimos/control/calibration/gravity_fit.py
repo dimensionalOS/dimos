@@ -895,37 +895,71 @@ def calibration_from_fit(
     )
 
 
-def save_refusals(result: FitResult, running_rms: Mapping[str, float] | None = None) -> list[str]:
-    """Why a fit should not become the arm's calibration file; empty when it may.
-
-    The solver's hard bounds keep every fit physical, so passing them says
-    nothing about whether the fit is right: it must improve, or at least not
-    worsen, the resting error at poses it never saw, on every measured joint,
-    compared with the URDF and, given ``running_rms`` (the held-out RMS of the
-    masses the arm ran while recording, by joint), with those too, by more
-    than ``SAVE_TOLERANCE_NM``. A fit pressed against a bound
-    (``at_bounds``) is not refused for that alone.
-    """
+def fit_refusals(result: FitResult) -> list[str]:
     if not result.holdout_poses:
         return ["no pose was held out, so the fit was never scored on poses it did not see"]
     before = result.rms_by_joint(holdout=True, after=False)
+    return [
+        f"{joint} has no held-out measurement"
+        for joint in result.measured_joints
+        if joint not in before
+    ]
+
+
+def total_rms(rms: Mapping[str, float]) -> float:
+    if not rms:
+        return math.nan
+    return math.sqrt(sum(value * value for value in rms.values()) / len(rms))
+
+
+def holdout_totals(
+    result: FitResult, running_rms: Mapping[str, float] | None = None
+) -> dict[str, float]:
+    totals = {
+        "before": total_rms(result.rms_by_joint(holdout=True, after=False)),
+        "after": total_rms(result.rms_by_joint(holdout=True, after=True)),
+    }
+    if running_rms is not None:
+        totals["running"] = total_rms(running_rms)
+    return totals
+
+
+def _reference(before: float, running: float | None) -> tuple[float, str]:
+    if running is None or before <= running:
+        return before, "URDF"
+    return running, "running calibration"
+
+
+def overall_regressions(
+    result: FitResult, running_rms: Mapping[str, float] | None = None
+) -> list[str]:
+    totals = holdout_totals(result, running_rms)
+    reference, what = _reference(totals["before"], totals.get("running"))
+    if totals["after"] > reference + SAVE_TOLERANCE_NM:
+        return [
+            f"held-out RMS over the joints {totals['after']:.3f} Nm is worse than the "
+            f"{what}'s {reference:.3f} Nm"
+        ]
+    return []
+
+
+def joint_regressions(
+    result: FitResult, running_rms: Mapping[str, float] | None = None
+) -> list[str]:
+    before = result.rms_by_joint(holdout=True, after=False)
     after = result.rms_by_joint(holdout=True, after=True)
-    reasons: list[str] = []
-    for joint in result.measured_joints:
-        if joint not in before:
-            reasons.append(f"{joint} has no held-out measurement")
-            continue
-        if after[joint] > before[joint] + SAVE_TOLERANCE_NM:
-            reasons.append(
-                f"{joint} held-out RMS rose from {before[joint]:.3f} to {after[joint]:.3f} Nm"
-            )
-        running = None if running_rms is None else running_rms.get(joint)
-        if running is not None and after[joint] > running + SAVE_TOLERANCE_NM:
-            reasons.append(
-                f"{joint} held-out RMS {after[joint]:.3f} Nm is worse than the running "
-                f"calibration's {running:.3f} Nm"
-            )
-    return reasons
+    regressed: list[str] = []
+    for joint, new in after.items():
+        reference, what = _reference(
+            before[joint], None if running_rms is None else running_rms.get(joint)
+        )
+        if new > reference + SAVE_TOLERANCE_NM:
+            regressed.append(f"{joint} {reference:.3f} -> {new:.3f} Nm ({what})")
+    return regressed
+
+
+def save_refusals(result: FitResult, running_rms: Mapping[str, float] | None = None) -> list[str]:
+    return fit_refusals(result) or overall_regressions(result, running_rms)
 
 
 def report_json_name(arm_id: str, created: datetime) -> str:
@@ -992,6 +1026,7 @@ def _rms_table(
         lines = ["| joint | RMS before (Nm) | RMS after (Nm) |", "|---|---|---|"]
         for joint in before:
             lines.append(f"| {joint} | {before[joint]:.3f} | {after[joint]:.3f} |")
+        lines.append(f"| all joints | {total_rms(before):.3f} | {total_rms(after):.3f} |")
         return "\n".join(lines) + "\n"
     lines = [
         "| joint | URDF RMS (Nm) | running file RMS (Nm) | new RMS (Nm) |",
@@ -1003,6 +1038,10 @@ def _rms_table(
             f"| {joint} | {before[joint]:.3f} | {'-' if ran is None else f'{ran:.3f}'} "
             f"| {after[joint]:.3f} |"
         )
+    lines.append(
+        f"| all joints | {total_rms(before):.3f} | {total_rms(running):.3f} "
+        f"| {total_rms(after):.3f} |"
+    )
     return "\n".join(lines) + "\n"
 
 

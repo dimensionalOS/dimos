@@ -33,7 +33,7 @@ score.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 import json
 import math
@@ -48,6 +48,7 @@ SETTLE_TIME_LIMIT_S = 0.5
 OVERSHOOT_LIMIT_PCT = 20.0
 STUCK_FRACTION = 0.5
 KD_LIMIT = 5.0
+KD_PER_KP_LIMIT = 0.25
 # RMS joint velocity over the last part of the hold; a joint at rest reads
 # encoder noise only, a buzzing one oscillates at a few deg/s.
 BUZZ_RMS_LIMIT_DEG_S = 1.0
@@ -326,11 +327,15 @@ def sweep_friction_nm(steps: Iterable[StepMetrics]) -> dict[str, float]:
     return friction
 
 
+def capped_kd(kp: float, kd: float) -> float:
+    return min(kd, KD_LIMIT, KD_PER_KP_LIMIT * kp)
+
+
 def gain_candidates(
     kp0: float, kd0: float, kp_scales: Sequence[float], kd_scales: Sequence[float]
 ) -> list[tuple[float, float]]:
-    baseline = (kp0, min(kd0, KD_LIMIT))
-    grid = [(kp0 * p, min(kd0 * d, KD_LIMIT)) for p in kp_scales for d in kd_scales]
+    baseline = (kp0, capped_kd(kp0, kd0))
+    grid = [(kp0 * p, capped_kd(kp0 * p, kd0 * d)) for p in kp_scales for d in kd_scales]
     return list(dict.fromkeys(sorted(grid, key=lambda pair: pair != baseline)))
 
 
@@ -415,6 +420,7 @@ class GainProposal:
 def propose_gains(
     step_results: Iterable[StepMetrics],
     candidates: Sequence[tuple[float, float]] | None = None,
+    stopped: Mapping[str, Mapping[tuple[float, float], str]] | None = None,
 ) -> dict[str, GainProposal]:
     """Per joint, the passing candidate among ``candidates`` with the lowest score.
 
@@ -428,7 +434,8 @@ def propose_gains(
     time over 0.5 s; the lowest wins, a
     tie going to the higher kp, then the lower kd. When none passes and every
     candidate at the highest kd tried, the driver's ``KD_LIMIT``, overshoots,
-    the reason says to lower kp. ``rejected`` explains every other candidate.
+    the reason says to lower kp. ``rejected`` explains every other candidate;
+    one in ``stopped`` (by joint) is rejected with the reason given there.
     """
     by_joint: dict[str, dict[tuple[float, float], list[StepMetrics]]] = defaultdict(
         lambda: defaultdict(list)
@@ -443,9 +450,12 @@ def propose_gains(
         friction = next(iter(by_gains.values()))[0].friction_nm
         rejected: dict[str, str] = {}
         scored: list[tuple[float, float, float]] = []
+        halted = (stopped or {}).get(joint, {})
         for kp, kd in pairs:
             steps = by_gains.get((kp, kd), [])
-            if not steps:
+            if (kp, kd) in halted:
+                rejected[gain_label(kp, kd)] = halted[(kp, kd)]
+            elif not steps:
                 rejected[gain_label(kp, kd)] = "not tested"
             elif why := _gain_failures(steps):
                 rejected[gain_label(kp, kd)] = why
