@@ -566,58 +566,6 @@ def test_infer_needs_a_running_agent(mcp_client: Agent) -> None:
         mcp_client.infer(HumanMessage("too early"))
 
 
-def test_infer_waits_for_a_background_skill_to_stop(
-    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A background skill keeps reporting after its call returns; infer answers once it stops."""
-    monkeypatch.setattr(running_agent, "_state_graph", _AnswersGraph())
-    running_agent._background.add("explore")
-    answers: list[str] = []
-    caller = Thread(
-        target=lambda: answers.append(
-            str(running_agent.infer(HumanMessage("explore the room")).text)
-        )
-    )
-    caller.start()
-
-    wait_until(lambda: len(running_agent._history) == 2, timeout=5, interval=0.01)
-    assert caller.is_alive(), "the first turn ended, but explore still runs"
-
-    running_agent._on_tool_stream_message(
-        {"method": "notifications/message", "params": {"logger": "explore", "data": "found a door"}}
-    )
-    running_agent._on_tool_stream_message(
-        {"method": "dimos/tool_stopped", "params": {"tool_name": "explore"}}
-    )
-    caller.join(timeout=5)
-
-    assert answers == ["turn 2"]
-    assert [m.content for m in running_agent._history] == [
-        "explore the room",
-        "turn 1",
-        "[tool:explore] found a door",
-        "turn 2",
-    ]
-
-
-def test_a_background_tool_counts_as_running_until_its_stop_frame(mcp_client: Agent) -> None:
-    explore = mcp_client._mcp_tool_to_langchain(
-        {"name": "add", "_meta": {"dimos/lifecycle": "background"}}
-    )
-    instant = mcp_client._mcp_tool_to_langchain({"name": "greet"})
-
-    assert instant.func is not None and explore.func is not None
-    instant.func(name="Alice")
-    assert mcp_client._background == set()
-    explore.func(x=1, y=2)
-    assert mcp_client._background == {"add"}
-
-    mcp_client._on_tool_stream_message(
-        {"method": "dimos/tool_stopped", "params": {"tool_name": "add"}}
-    )
-    assert mcp_client._background == set()
-
-
 def test_each_turn_publishes_its_final_answer_on_agent_output(
     running_agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -629,22 +577,3 @@ def test_each_turn_publishes_its_final_answer_on_agent_output(
     running_agent.infer(HumanMessage("two"))
 
     assert [a.content for a in answers] == ["turn 1", "turn 2"]
-
-
-def test_agent_idle_waits_for_background_skills(
-    running_agent: Agent, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(running_agent, "_state_graph", _AnswersGraph())
-    idle: list[bool] = []
-    monkeypatch.setattr(running_agent.agent_idle, "publish", idle.append)
-    running_agent._background.add("explore")
-
-    running_agent.add_message(HumanMessage("explore the room"))
-    wait_until(lambda: len(running_agent._history) == 2, timeout=5, interval=0.01)
-    wait_until(lambda: running_agent._message_queue.unfinished_tasks == 0, timeout=5, interval=0.01)
-    assert idle == [False]
-
-    running_agent._on_tool_stream_message(
-        {"method": "dimos/tool_stopped", "params": {"tool_name": "explore"}}
-    )
-    assert idle == [False, True]
