@@ -66,8 +66,7 @@ def _dim_slam_on_nos() -> Blueprint:
     sweeps, each pose's work 1.5 ms p50 / 8.7 ms p95 against 56 ms mean)."""
     return autoconnect(
         # the lidars' own stream (body cut, full sweeps) still feeds the map and relocalization from AOS; this pair
-        # is dimSLAM's alone: raw 36 degree slices (10 ms of a 10 Hz sweep), cut at the same azimuths on both lidars so
-        # dimSLAM never waits on the other lidar's offset slice, voxelized as the ray tracer's
+        # is dimSLAM's alone: raw slices of ~179 blocks (10 ms of a 10 Hz sweep), voxelized as the ray tracer's
         m20_lidars(
             lidar="lidar_slices",
             imu="lidar_slices_imu",
@@ -76,7 +75,7 @@ def _dim_slam_on_nos() -> Blueprint:
             publish_mounts=False,
             body_filter=False,
             voxel=VOXEL_SIZE_M,
-            split_sectors=10,
+            split_blocks=179,
         ).hosted(tags=NOS),
         m20_dim_slam(
             cpus=NOS_SLAM_CPUS,

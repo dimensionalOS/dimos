@@ -84,9 +84,9 @@ class AiryConfig(NativeModuleConfig):
     start_angle: float = 0.0
     end_angle: float = 360.0
     split_angle: float = 0.0
-    # Above 0, a scan is each 360 / split_sectors degrees of azimuth instead, cut at the same azimuths every turn: a
-    # partial sweep reaches whatever consumes it as soon as it is measured, and lidars spinning in phase slice together.
-    split_sectors: int = Field(default=0, ge=0, le=3600)
+    # Above 0, a scan is every this many blocks instead (a revolution is ~1790 at 10 Hz): a partial sweep reaches
+    # whatever consumes it as soon as it is measured.
+    split_blocks: int = Field(default=0, ge=0, le=65535)
     # Voxel edge in metres (first point per voxel kept), 0 = off.
     voxel: float = Field(default=0.0, ge=0)
     # Keep every Nth point of a scan / every Nth scan.
