@@ -1,6 +1,6 @@
 {
   "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#dimos-lcm@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
   "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#lcm-msgs@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
-  "git+https://github.com/dimensionalOS/dimos?rev=762ef36d6b693d24f2002a01f454f62f38a02412#dimos-module-macros@0.1.0": "sha256-wNKZVz3eBE3L00BdDvcpp6on7uoLy7ZkmmSr/b3MxgQ=",
-  "git+https://github.com/dimensionalOS/dimos?rev=762ef36d6b693d24f2002a01f454f62f38a02412#dimos-module@0.1.0": "sha256-wNKZVz3eBE3L00BdDvcpp6on7uoLy7ZkmmSr/b3MxgQ="
+  "git+https://github.com/dimensionalOS/dimos?rev=5eb9e7ae757a82f3481d537a86f3a96884c77fb1#dimos-module-macros@0.1.0": "sha256-RTJAOGnKXBtLBDQZ2WutfapdcN8DJ5gSiQ3dBS263Wc=",
+  "git+https://github.com/dimensionalOS/dimos?rev=5eb9e7ae757a82f3481d537a86f3a96884c77fb1#dimos-module@0.1.0": "sha256-RTJAOGnKXBtLBDQZ2WutfapdcN8DJ5gSiQ3dBS263Wc="
 }
