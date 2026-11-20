@@ -141,12 +141,18 @@ class Runner:
         self.phase = 0.0
         self.command = np.zeros(3)
         self.steps = 0
+        self.active_steps = 0
+        self.collected = 0
         self.params = dict(self.spec.get("command_params", {}))
         self.clock = GaitClock(self.spec["gait_clock"]) if "gait_clock" in self.spec else None
 
+    def activate(self) -> None:
+        """The runner becomes the active one (a gait switch): its start-up gains count from here."""
+        self.active_steps = 0
+
     def gain_scale(self) -> float:
-        """rl_deploy scales kp / kd for a runner's first steps (NaviCharge x1.3 for 29 steps)."""
-        if self.steps < self.spec.get("start_gain_steps", 0):
+        """rl_deploy scales kp / kd for a runner's first steps after each switch to it (NaviCharge x1.3 for 29)."""
+        if self.active_steps < self.spec.get("start_gain_steps", 0):
             return self.spec["start_gain_scale"]
         return 1.0
 
@@ -255,17 +261,40 @@ class Runner:
             return x if e["axis"] == "x" else y
         raise ValueError(f"unknown command source {src}")
 
+    def warmup(self, s: RobotState) -> Targets:
+        """A fresh sequence runner only collects frames for its first warmup_steps, holding the default pose."""
+        self.last_frame = self.frame(s)
+        n = self.spec["history"]
+        f = self.last_frame[None]
+        self.history = f if self.history is None else np.vstack([self.history, f])[-n:]
+        if self.clock is not None:
+            self.clock.advance(self.policy_dt, self.command)
+        act = self.spec["action"]
+        a = np.zeros(JOINTS)
+        if act["leg_mode"] == "absolute":
+            idx = LEGS_PER_LEG if act["layout"] == "per_leg" else LEGS_BY_TYPE
+            pos = np.arange(JOINTS)[idx] if act["layout"] == "per_leg" else np.arange(12)
+            a[pos] = self.default[idx] / tile(act["leg_scale"], 12)
+        self.last_action = a
+        self.collected += 1
+        q = self.default.copy()
+        return Targets(q=q, wheel_velocity=np.zeros(4), action=a, velocity_estimate=None)
+
     def step(self, s: RobotState, axes: np.ndarray) -> Targets:
         self.update_command(np.asarray(axes, np.float64))
+        if self.collected < self.spec.get("warmup_steps", 0):
+            return self.warmup(s)
+        # the gait phase advances before it is observed (rl_deploy: the first frame after a reset sees one step)
+        for block in self.spec["obs"]:
+            if block["kind"] == "phase":
+                self.phase = (self.phase + self.policy_dt * block["frequency"]) % 1.0
         self.last_frame = self.frame(s)
         outputs = self.session.run(None, self.network_input(self.last_frame))
         act = self.spec["action"]
         a = np.clip(outputs[0][0].astype(np.float64), -act["clip"], act["clip"])
         self.steps += 1
+        self.active_steps += 1
         self.last_action = a
-        for block in self.spec["obs"]:
-            if block["kind"] == "phase":
-                self.phase = (self.phase + self.policy_dt * block["frequency"]) % 1.0
         if act["layout"] == "per_leg":
             leg_a, leg_idx, wheel_a = a[LEGS_PER_LEG], LEGS_PER_LEG, a[WHEELS]
         else:

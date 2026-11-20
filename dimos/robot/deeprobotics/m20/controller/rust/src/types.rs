@@ -46,6 +46,8 @@ pub struct JointCommand {
     pub kd: [f64; JOINTS],
     pub dq: [f64; JOINTS],
     pub tau: [f64; JOINTS],
+    /// rl_deploy's SetJointEnable(): an all-zero frame with the enable control word (3 on entering some states)
+    pub enable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -68,6 +70,9 @@ pub struct UserCommand {
     pub gait: u32,
     #[serde(default)]
     pub axes: [f64; 3],
+    /// metric velocity (m/s, m/s, rad/s) in place of axes: divided by the active runner's real_steer_divisor
+    #[serde(default)]
+    pub velocity: Option<[f64; 3]>,
     #[serde(default)]
     pub params: BTreeMap<String, f64>,
     /// force a runner by name (for runners no gait code selects)

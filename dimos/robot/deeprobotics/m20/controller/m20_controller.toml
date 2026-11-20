@@ -29,6 +29,10 @@ hipx_limit_fraction = 0.75
 wheel_velocity_limit = 79.3
 # motor torque limit (N m)
 torque_limit = [76.4, 76.4, 76.4, 21.6]
+# front-leg (hipx, hipy, knee) range the stand-up / lie-down IK clamps to before mirroring (rl_deploy ControlParameters;
+# IK(0.03 m) lands on the knee's 2.793)
+ik_lower = [-0.4363, -2.2864, -2.81]
+ik_upper = [0.6109, 2.583, 2.793]
 # thigh and shank length (m), for the stand-up / lie-down height IK
 thigh_length = 0.25
 shank_length = 0.25
@@ -52,6 +56,12 @@ joint_limit_margin_rad = 0.1
 shutdown_damping_ticks = 500
 
 # rl_deploy's states (decoded from v1.5.8, see SPEC.md). Gains: 4-element arrays are (hipx, hipy, knee, wheel) per leg.
+[states.enable]
+# rl_deploy's SetJointEnable() x3: on entering these states the first `ticks` frames are all zero with the enable
+# control word ([ecan] enable_control_word); the state's own clock already runs (seen on the robot)
+ticks = 3
+on_enter = ["stand_up", "lie_down", "rl_control"]
+
 [states.passive]
 # Idle: all-zero command (motors limp)
 kp = [0.0]
@@ -96,19 +106,24 @@ max_pitch_deg = 65.0
 
 # a stand policy runs first when rl_control starts on these gaits (and, with on_switch, whenever the gait changes to
 # them): first_s on the first rl_control entry, later_s after; then settle_s with settle_params; then the gait's runner
+# on the robot (2026-11-20) the BasicFlat stand-in ran 6.14 s in all; the replay fits mode 0 for the decoded 3 s, then
+# mode -1 until the handover; the decoded settle is 0.5 s, what stretched it to 3.14 s is unknown (settle_s measured)
 [[states.rl_control.stand_in]]
 gait = 0x1001
 runner = "six_axis_stand"
+on_entry = true
 on_switch = false
 first_s = 3.0
 later_s = 1.5
 params = { mode = 0.0 }
-settle_s = 0.5
+settle_s = 3.14
 settle_params = { mode = -1.0 }
 
+# switching to NaviCharge runs the stand policy 1.5 s first; entering rl_control on NaviCharge does not (robot, 2026-11-20)
 [[states.rl_control.stand_in]]
 gait = 0x3001
 runner = "six_axis_stand"
+on_entry = false
 on_switch = true
 first_s = 1.5
 later_s = 1.5
@@ -117,7 +132,10 @@ settle_s = 0.0
 settle_params = {}
 
 # ---------------------------------------------------------------------------------------------------------------
-# Policy runners. kind "frames": network input [current frame, `history` past frames oldest->newest]; kind
+# Policy runners. real_steer_divisor: a metric velocity command (/REAL_STEER, /NAV_CMD; m/s, rad/s) becomes the
+# normalized axes by dividing by it, per gait as rl_deploy's HandlerVel does (Extre uses 0x2001 Move's; 0x2002-0x2004
+# divide by (2, 1, 2); the stand runners and "other" gaits (2, 0.4, 0.6)).
+# kind "frames": network input [current frame, `history` past frames oldest->newest]; kind
 # "sequence": state [1, 36, frame] (oldest first), plus `command` and `uncertain` inputs.
 # obs blocks (in order): gyro, gravity, accel, command, constant, phase, joint_pos, joint_vel, last_action,
 # height_map. joints: legs_by_type (hipx x4, hipy x4, knee x4), legs_per_leg, wheels, all_per_leg.
@@ -134,6 +152,8 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, 0.8, -1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [6.0, 6.0, 6.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
+# the decoded HandlerVel table says (2, 0.8, 1.5) for 0x1001, but /NAV_CMD replays against the robot match (2, 1, 2)
+real_steer_divisor = [2.0, 1.0, 2.0]
 command_slew = [0.025, 0.025, 0.04]
 # |wz| clamped to this while vx > wz_clamp_above_vx
 wz_clamp = 0.8
@@ -160,6 +180,7 @@ default_pose = [0.1, -0.6, 1.05, 0.0, -0.1, -0.6, 1.05, 0.0, 0.1, 0.6, -1.05, 0.
 kp = [80.0, 100.0, 100.0, 0.0]
 kd = [2.5, 2.5, 2.5, 2.0]
 command_max = [1.5, 0.5, 1.5]
+real_steer_divisor = [1.5, 0.5, 1.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -181,6 +202,7 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, 0.8, -1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [3.0, 3.0, 3.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
+real_steer_divisor = [2.0, 1.0, 2.0]
 command_slew = [0.04, 0.04, 0.08]
 obs = [
     { kind = "gyro", scale = [0.25] },
@@ -203,6 +225,7 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, -0.8, 1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [3.0, 3.0, 3.0, 0.6]
 command_max = [2.0, 0.8, 1.5]
+real_steer_divisor = [2.0, 0.8, 1.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -227,6 +250,7 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 0.6]
 command_max = [0.5, 0.3, 0.5]
+real_steer_divisor = [0.5, 0.3, 0.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -250,6 +274,7 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 0.6]
 command_max = [2.0, 1.0, 1.5]
+real_steer_divisor = [2.0, 1.0, 1.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -272,6 +297,7 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 0.6]
 command_max = [1.5, 1.0, 1.5]
+real_steer_divisor = [1.5, 1.0, 1.5]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -294,6 +320,7 @@ default_pose = [0.1, -0.75, 1.5, 0.0, -0.1, -0.75, 1.5, 0.0, 0.1, 0.75, -1.5, 0.
 kp = [80.0, 100.0, 100.0, 0.0]
 kd = [2.5, 2.5, 2.5, 2.0]
 command_max = [1.0, 1.0, 1.0]
+real_steer_divisor = [2.0, 0.4, 0.6]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -318,6 +345,7 @@ default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0
 kp = [80.0, 80.0, 120.0, 0.0]
 kd = [3.0, 3.0, 4.0, 0.6]
 command_max = [2.0, 0.5, 1.5]
+real_steer_divisor = [2.0, 0.4, 0.6]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -336,11 +364,15 @@ gaits = [0x2001, 0x2002, 0x2003, 0x2004]
 policy = "m20_forward_policy_2.onnx"
 kind = "sequence"
 history = 36
+# a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
+# then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
+warmup_steps = 37
 frame = 53
 default_pose = [0.0, -0.8, 1.6, 0.0, 0.0, -0.8, 1.6, 0.0, 0.0, 0.8, -1.6, 0.0, 0.0, 0.8, -1.6, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 command_max = [3.0, 1.0, 2.0]
+real_steer_divisor = [3.0, 1.0, 2.0]
 tilt_check = false
 command_params = { mode = 0.0 }
 command_vector = [{ src = "vx" }, { src = "vy" }, { src = "wz" }, 0.0, { src = "param", name = "mode" }]
@@ -360,12 +392,16 @@ gaits = [0x3004]
 policy = "m20_sixaxis_stand.onnx"
 kind = "sequence"
 history = 36
+# a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
+# then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
+warmup_steps = 37
 frame = 53
 default_pose = [0.0, -0.65, 1.3, 0.0, 0.0, -0.65, 1.3, 0.0, 0.0, 0.65, -1.3, 0.0, 0.0, 0.65, -1.3, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 # velocity is not an input: the operator's axes and params drive the body pose
 command_max = [0.0, 0.0, 0.0]
+real_steer_divisor = [2.0, 0.4, 0.6]
 # params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode = -1.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
@@ -407,12 +443,16 @@ gaits = [0xf001]
 policy = "m20_finetune_stand_15kg.onnx"
 kind = "sequence"
 history = 36
+# a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
+# then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
+warmup_steps = 37
 frame = 53
 default_pose = [0.0, -0.7, 1.4, 0.0, 0.0, -0.7, 1.4, 0.0, 0.0, 0.7, -1.4, 0.0, 0.0, 0.7, -1.4, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 # velocity is not an input: the operator's axes and params drive the body pose
 command_max = [0.0, 0.0, 0.0]
+real_steer_divisor = [2.0, 0.4, 0.6]
 # params: height in [0, 1] (lower), roll / pitch / yaw in [-1, 1], dx / dy in [-1, 1] (feet shift), mode
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0, yaw = 0.0, dx = 0.0, dy = 0.0, mode = -1.0 }
 gait_clock = { frequency = 1.0, min_frequency = 1.0, max_frequency = 1.5, wz_gain = 12.0, vx_gain = 15.0, vy_gain = 3.5 }
@@ -453,12 +493,16 @@ gaits = [0xf002]
 policy = "m20_finetune_forward.onnx"
 kind = "sequence"
 history = 36
+# a fresh runner only collects frames for its first warmup_steps (holding the default pose, last action = that pose),
+# then infers (robot, 2026-11-20: 0.74 s of default pose on first use; none when used again)
+warmup_steps = 37
 frame = 53
 default_pose = [0.0, -1.0, 1.6, 0.0, 0.0, -1.0, 1.6, 0.0, 0.0, 1.0, -1.6, 0.0, 0.0, 1.0, -1.6, 0.0]
 kp = [60.0, 60.0, 60.0, 0.0]
 kd = [1.5, 1.5, 1.5, 1.0]
 # wz max follows the speed: clamp(min(a / (vx + b) - c, d / (1 + e |vy|)), lo, hi); |axis| below deadband -> 0
 command_max = [3.9, 0.9, 1.0]
+real_steer_divisor = [3.9, 0.9, 3.0]
 axis_deadband = [0.0, 0.0, 0.1]
 wz_speed_limit = { a = 10.8, b = 2.4, c = 0.15, d = 2.85, e = 0.5, lo = 1.0, hi = 3.0 }
 command_params = { height = 0.0, roll = 0.0, pitch = 0.0 }
@@ -497,6 +541,7 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, 0.8, -1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [6.0, 6.0, 6.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
+real_steer_divisor = [2.0, 0.4, 0.6]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },
@@ -518,6 +563,7 @@ default_pose = [-0.1, -0.8, 1.6, 0.0, 0.1, -0.8, 1.6, 0.0, -0.1, 0.8, -1.6, 0.0,
 kp = [80.0, 80.0, 80.0, 0.0]
 kd = [3.0, 3.0, 3.0, 0.6]
 command_max = [2.0, 1.0, 2.0]
+real_steer_divisor = [2.0, 0.4, 0.6]
 obs = [
     { kind = "gyro", scale = [0.25] },
     { kind = "gravity" },

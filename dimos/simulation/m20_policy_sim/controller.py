@@ -49,6 +49,9 @@ class UserCommand:
     axes: np.ndarray = field(default_factory=lambda: np.zeros(3))
     params: dict[str, float] = field(default_factory=dict)
     runner: str = ""  # force a runner by name (for runners no gait code selects)
+    velocity: np.ndarray | None = (
+        None  # metric (m/s, m/s, rad/s) in place of axes, over real_steer_divisor
+    )
 
 
 @dataclass
@@ -60,6 +63,8 @@ class JointCommand:
     kd: np.ndarray
     dq: np.ndarray
     tau: np.ndarray
+    # rl_deploy's SetJointEnable(): an all-zero frame with the enable control word, 3 on entering some states
+    enable: bool = False
 
     @staticmethod
     def zero() -> JointCommand:
@@ -77,33 +82,17 @@ def cubic(p0: float, v0: float, p1: float, v1: float, t: float, T: float) -> tup
 
 
 def leg_pose_for_height(robot: dict[str, Any], h: float, hipx: float) -> np.ndarray:
-    """The 16-joint pose with each wheel axle `h` below its hip (two-link IK), hind legs mirrored."""
+    """The 16-joint pose with each wheel axle `h` below its hip (two-link IK on the front leg, clamped to the front
+    leg's ik range like rl_deploy's ControlParameters), mirrored to the other legs."""
     l1, l2 = robot["thigh_length"], robot["shank_length"]
     h = min(abs(h), 0.999 * (l1 + l2))
-    hipy = -math.acos((l1 * l1 + h * h - l2 * l2) / (2 * h * l1))
-    knee = math.pi - math.acos((l1 * l1 + l2 * l2 - h * h) / (2 * l1 * l2))
-    pose = np.array(
-        [
-            hipx,
-            hipy,
-            knee,
-            0.0,
-            -hipx,
-            hipy,
-            knee,
-            0.0,
-            hipx,
-            -hipy,
-            -knee,
-            0.0,
-            -hipx,
-            -hipy,
-            -knee,
-            0.0,
-        ]
+    lo, hi = robot["ik_lower"], robot["ik_upper"]
+    hipy = min(max(-math.acos((l1 * l1 + h * h - l2 * l2) / (2 * h * l1)), lo[1]), hi[1])
+    knee = min(max(math.pi - math.acos((l1 * l1 + l2 * l2 - h * h) / (2 * l1 * l2)), lo[2]), hi[2])
+    leg = [hipx, hipy, knee, 0.0]
+    return np.array(
+        [*leg, -hipx, hipy, knee, 0.0, hipx, -hipy, -knee, 0.0, -hipx, -hipy, -knee, 0.0]
     )
-    lo, hi = np.array(robot["joint_lower"]), np.array(robot["joint_upper"])
-    return np.clip(pose, lo, hi)
 
 
 def roll_pitch(quat: np.ndarray) -> tuple[float, float]:
@@ -150,6 +139,8 @@ class Controller:
         self.gait = 0
         self.entry_raw_gait = 0
         self.policy_tick = 0
+        self.enable_left = 0
+        self.stand_ins_run: set[int] = set()
         self.transitions: list[tuple[float, str, str]] = []
 
     def runner_named(self, name: str) -> Runner:
@@ -228,6 +219,8 @@ class Controller:
         self.state = state
         self.state_time = 0.0
         self.enter_q, self.enter_dq = s.q.copy(), s.dq.copy()
+        enable = self.cfg["states"]["enable"]
+        self.enable_left = enable["ticks"] if state in enable["on_enter"] else 0
         if state == "rl_control":
             rl = self.cfg["states"]["rl_control"]
             self.entry_raw_gait = cmd.gait
@@ -239,10 +232,11 @@ class Controller:
     def start_stand_in(self, gait: int, on_entry: bool) -> None:
         self.stand_in = None
         for spec in self.cfg["states"]["rl_control"].get("stand_in", []):
-            if spec["gait"] == gait and (on_entry or spec["on_switch"]):
-                self.stand_in = StandIn(
-                    spec, spec["first_s"] if self.rl_entries == 0 else spec["later_s"]
-                )
+            if spec["gait"] == gait and (spec["on_entry"] if on_entry else spec["on_switch"]):
+                # first_s the first time this stand-in runs, later_s after
+                first = spec["gait"] not in self.stand_ins_run
+                self.stand_ins_run.add(spec["gait"])
+                self.stand_in = StandIn(spec, spec["first_s"] if first else spec["later_s"])
 
     def tick(self, s: RobotState, cmd: UserCommand) -> JointCommand:
         self.fault = self.check_faults(s)
@@ -252,10 +246,21 @@ class Controller:
         if nxt != self.state:
             self.enter(nxt, s, cmd)
         out = getattr(self, "run_" + self.state)(s, cmd)
+        if self.enable_left > 0:
+            self.enable_left -= 1
+            out = JointCommand.zero()
+            out.enable = True
         self.state_time += self.dt
         self.time += self.dt
         self.tick_count += 1
         return out
+
+    def force(self, state: str, s: RobotState, cmd: UserCommand, enable: bool = True) -> None:
+        """Jump to `state` now (replays of recorded sessions): no stand-in policy, optional enable frames."""
+        self.enter(state, s, cmd)
+        self.stand_in = None
+        if not enable:
+            self.enable_left = 0
 
     def gains(self, p: dict[str, Any]) -> JointCommand:
         c = JointCommand.zero()
@@ -276,11 +281,13 @@ class Controller:
             goal = leg_pose_for_height(self.robot, p["crouch_height"], p["hipx"])
             for i in range(JOINTS):
                 c.q[i], c.dq[i] = cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, T)
-        else:
-            h, _ = cubic(p["crouch_height"], 0, p["stand_height"], 0, t - T, T)
-            h_next, _ = cubic(p["crouch_height"], 0, p["stand_height"], 0, t - T + self.dt, T)
-            c.q = leg_pose_for_height(self.robot, h, p["hipx"])
-            c.dq = (leg_pose_for_height(self.robot, h_next, p["hipx"]) - c.q) / self.dt
+            # the wheels' position targets follow the spline to 0 too (kp 0); their velocity targets stay 0
+            c.dq[IS_WHEEL] = 0.0
+            return c
+        h, _ = cubic(p["crouch_height"], 0, p["stand_height"], 0, t - T, T)
+        h_next, _ = cubic(p["crouch_height"], 0, p["stand_height"], 0, t - T + self.dt, T)
+        c.q = leg_pose_for_height(self.robot, h, p["hipx"])
+        c.dq = (leg_pose_for_height(self.robot, h_next, p["hipx"]) - c.q) / self.dt
         c.q[IS_WHEEL], c.dq[IS_WHEEL] = 0.0, 0.0
         return c
 
@@ -292,7 +299,7 @@ class Controller:
             goal = leg_pose_for_height(self.robot, p["lie_height"], p["hipx"])
             for i in range(JOINTS):
                 c.q[i], c.dq[i] = cubic(self.enter_q[i], self.enter_dq[i], goal[i], 0.0, t, T)
-            c.q[IS_WHEEL], c.dq[IS_WHEEL] = 0.0, 0.0
+            c.dq[IS_WHEEL] = 0.0
         elif t <= 2 * T:
             c.kp[:] = 0.0
         else:
@@ -317,14 +324,20 @@ class Controller:
             name = cmd.runner or runner_for_gait(self.cfg, self.gait) or rl["fallback_runner"]
         r = self.runner_named(name)
         if r is not self.runner:
-            r.reset()
+            # rl_deploy keeps one object per runner: its history and last action carry over to the next use
+            r.activate()
             self.runner, self.policy_tick = r, 0
         r.params.update(params)
         if self.policy_tick % self.decimation == 0:
-            self.targets = r.step(s, cmd.axes)
+            axes = cmd.axes
+            if cmd.velocity is not None and "real_steer_divisor" in r.spec:
+                div = np.array(r.spec["real_steer_divisor"], np.float64)
+                axes = np.divide(cmd.velocity, div, out=np.zeros(3), where=div > 0)
+            self.targets = r.step(s, axes)
         self.policy_tick += 1
         c = JointCommand.zero()
-        scale = r.gain_scale()
+        # start-up gain scale on the legs only (the robot keeps the wheels' kd)
+        scale = np.where(IS_WHEEL, 1.0, r.gain_scale())
         c.kp, c.kd = r.kp * scale, r.kd * scale
         c.q = self.targets.q.copy()
         c.q[IS_WHEEL] = 0.0

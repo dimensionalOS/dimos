@@ -47,6 +47,9 @@ pub struct Robot {
     pub torque_limit: Vec<f64>,
     pub thigh_length: f64,
     pub shank_length: f64,
+    /// front-leg (hipx, hipy, knee) range the stand-up / lie-down IK clamps to before mirroring
+    pub ik_lower: [f64; 3],
+    pub ik_upper: [f64; 3],
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -104,6 +107,7 @@ pub struct LieDown {
 pub struct StandIn {
     pub gait: u32,
     pub runner: String,
+    pub on_entry: bool,
     pub on_switch: bool,
     pub first_s: f64,
     pub later_s: f64,
@@ -124,7 +128,14 @@ pub struct RlControl {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Enable {
+    pub ticks: u64,
+    pub on_enter: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct States {
+    pub enable: Enable,
     pub passive: Passive,
     pub joint_damping: JointDamping,
     pub stand_up: StandUp,
@@ -309,6 +320,8 @@ pub struct RunnerSpec {
     pub kd: Vec<f64>,
     pub command_max: [f64; 3],
     #[serde(default)]
+    pub real_steer_divisor: Option<[f64; 3]>,
+    #[serde(default)]
     pub command_slew: Option<[f64; 3]>,
     #[serde(default)]
     pub wz_clamp: Option<f64>,
@@ -330,6 +343,8 @@ pub struct RunnerSpec {
     pub start_gain_scale: Option<f64>,
     #[serde(default)]
     pub start_gain_steps: u64,
+    #[serde(default)]
+    pub warmup_steps: u64,
     #[serde(default)]
     pub command_vector: Vec<CommandEntry>,
     #[serde(default)]
@@ -365,6 +380,8 @@ pub struct Ecan {
     pub recv_flags: u32,
     pub reply_timeout_s: f64,
     pub control_word: u16,
+    /// control word of the enable frames (SetJointEnable)
+    pub enable_control_word: u16,
     pub kp_scale: f64,
     pub kd_scale: f64,
     // controller joint angle = direction * (motor angle - offset), hips and knees wrapped into (-pi, pi]; defaults are
@@ -387,6 +404,7 @@ impl Default for Ecan {
             recv_flags: 0x8000_0000,
             reply_timeout_s: 0.0008,
             control_word: 4,
+            enable_control_word: 2,
             kp_scale: 10.0,
             kd_scale: 10.0,
             position_offset: vendor_calibration().0,
