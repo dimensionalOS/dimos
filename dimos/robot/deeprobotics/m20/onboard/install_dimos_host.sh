@@ -13,8 +13,9 @@
 # Routers: every Host is its own zenoh router. AOS's only link to the robot LAN (10.21.31.0/24) is a
 # USB 2.0 ethernet adapter that carries ~5 MB/s, too little for both lidars, so AOS and NOS link over
 # the gigabit lidar network (10.21.33.0/24, AOS eth0 / NOS eth0, ~110 MB/s) and NOS links to GOS over
-# the robot LAN (~95 MB/s): AOS dials NOS, NOS dials GOS:7447 (a Host there, when it runs; zenoh
-# keeps redialing), and AOS listens only on the lidar network so nothing routes over its USB link.
+# the robot LAN (~95 MB/s): AOS dials NOS's lidar-network port 7448 (NOS's Host listens there in both
+# modes, and the drdds bridge never does), NOS dials GOS:7447 (a Host there, when it runs; zenoh keeps
+# redialing), and AOS listens only on the lidar network so nothing routes over its USB link.
 # NOS:7447 is the router everything else dials (GOS's ZENOH_CONNECT, AOS's m20-camera). In
 # vendor mode the drdds-zenoh-bridge owns it and NOS's Host is dimos-host.service on :7448,
 # unlinked from the bridge. In rust mode (bridge stopped) NOS's Host is
@@ -29,11 +30,11 @@ boards=("$@")
 sudo_pass="${M20_SUDO_PASS-}"
 [ -n "$sudo_pass" ] || sudo_pass="'"
 
-# ssh-ip listen-ips connect tags cpus port [rust-mode port]
+# ssh-ip robot-LAN-listen-ip (- for none) lidar-network-listen connect tags cpus port [rust-mode port]
 board_config() {
     case "$1" in
-        aos) echo "10.21.31.103 10.21.33.103 tcp/10.21.33.106:7448,tcp/10.21.33.106:7447 board=aos,m20,lidar,imu,ecan,camera 1-3 7447" ;;
-        nos) echo "10.21.31.106 10.21.33.106,10.21.31.106 tcp/10.21.31.104:7447 board=nos,m20 0-3 7448 7447" ;;
+        aos) echo "10.21.31.103 - tcp/10.21.33.103:7447 tcp/10.21.33.106:7448 board=aos,m20,lidar,imu,ecan,camera 1-3 7447" ;;
+        nos) echo "10.21.31.106 10.21.31.106 tcp/10.21.33.106:7448 tcp/10.21.31.104:7447 board=nos,m20 0-3 7448 7447" ;;
         *) echo "unknown board $1" >&2; return 1 ;;
     esac
 }
@@ -58,21 +59,28 @@ stage() {
 }
 
 install_board() {
-    local name="$1" ip listen_ips connect tags cpus port router_port
-    read -r ip listen_ips connect tags cpus port router_port < <(board_config "$name")
+    local name="$1" ip lan_ip lidar_listen connect tags cpus port router_port
+    read -r ip lan_ip lidar_listen connect tags cpus port router_port < <(board_config "$name")
     echo "== $name ($ip)"
     ssh "$ip" "printf '%s\n' $(printf '%q' "$sudo_pass") | sudo -S -p '' install -d -o \$USER -g \$USER $dest && mkdir -p ~/.local/bin ~/.local/share/uv/python"
     nice rsync -a "$HOME/.local/bin/uv" "$ip:.local/bin/uv"
     nice rsync -a "$HOME/.local/share/uv/python/" "$ip:.local/share/uv/python/"
     nice rsync -a --delete --exclude /logs --exclude /.env "$dest/" "$ip:$dest/"
     # ssh joins its arguments unquoted, and the sudo password is a quote.
-    ssh "$ip" "bash -s -- $(printf '%q ' "$name" "$listen_ips" "$connect" "$tags" "$cpus" "$port" "${router_port:-}" "$dest" "$sudo_pass")" <<'REMOTE'
+    ssh "$ip" "bash -s -- $(printf '%q ' "$name" "$lan_ip" "$lidar_listen" "$connect" "$tags" "$cpus" "$port" "${router_port:-}" "$dest" "$sudo_pass")" <<'REMOTE'
 set -euo pipefail
-name="$1" listen_ips="$2" connect="$3" tags="$4" cpus="$5" port="$6" router_port="$7" dest="$8" sudo_pass="$9"
+name="$1" lan_ip="$2" lidar_listen="$3" connect="$4" tags="$5" cpus="$6" port="$7" router_port="$8" dest="$9" sudo_pass="${10}"
 as_root() { echo "$sudo_pass" | sudo -S -p '' "$@"; }
 cd "$dest"
 # Listen is per unit (HOST__LISTEN in its environment beats .env); the rest is the Host's .env.
 .venv/bin/dimos host config name="$name" tags="$tags" connect="$connect" listen= autodiscovery=false >/dev/null
+
+# Loopback (the Host's own fragments), the robot LAN when the board listens there, and the lidar network.
+listen_endpoints() {
+    local endpoints="tcp/127.0.0.1:$1"
+    [ "$lan_ip" = - ] || endpoints="$endpoints,tcp/$lan_ip:$1"
+    echo "$endpoints,$lidar_listen"
+}
 
 write_unit() {
     local unit="$1" port="$2" conflicts="$3" role="$4" tmp
@@ -90,7 +98,7 @@ WorkingDirectory=$dest
 ExecStart=$dest/.venv/bin/dimos host start --foreground
 Environment=PATH=$dest/.venv/bin:/usr/local/bin:/usr/bin:/bin
 # Loopback first: the Host's own fragments dial it.
-Environment=HOST__LISTEN=tcp/127.0.0.1:$port$(printf ',tcp/%s:'"$port" ${listen_ips//,/ })
+Environment=HOST__LISTEN=$(listen_endpoints "$port")
 # Off the vendor's real-time cores (isolcpus); fragments inherit both.
 CPUAffinity=$cpus
 Nice=10
