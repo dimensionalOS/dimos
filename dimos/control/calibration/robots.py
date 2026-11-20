@@ -12,22 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Damiao robots the calibration tools know by name, e.g. ``--robot dual-openyam --arm left``.
-
-``robot_specs`` derives every robot's specs from its model; their implicit
-workspace guard lets poses be fitted but not generated until the table height
-and the front line are given (``ArmCalibrationSpec.on_bench``). Arm ids are the
-robot's ``arm_ids()``.
-"""
+"""The Damiao robots the calibration tools know by name, e.g. ``--robot dual-openyam --arm left``."""
 
 from __future__ import annotations
 
-from dimos.control.calibration.spec import (
-    ArmCalibrationSpec,
-    arm_name,
-    calibration_keys as calibration_keys,
-    specs_from_damiao_robot,
-)
+from dimos.control.calibration.spec import ArmCalibrationSpec, arm_name, specs_from_damiao_robot
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
@@ -46,11 +35,6 @@ KNOWN_ROBOTS: dict[str, DamiaoRobot] = {
 }
 
 
-def robot_id(robot: str) -> str:
-    """The robot part of its arm ids, its ``DamiaoRobot.name``: ``dual-openyam`` -> ``dual_openyam``."""
-    return robot.replace("-", "_")
-
-
 def robot_specs(robot: str) -> list[ArmCalibrationSpec]:
     """Every arm of a known robot, in bus order."""
     if robot not in KNOWN_ROBOTS:
@@ -59,22 +43,14 @@ def robot_specs(robot: str) -> list[ArmCalibrationSpec]:
 
 
 def arm_spec(robot: str, arm: str | None = None) -> ArmCalibrationSpec:
-    """One arm of a known robot.
-
-    Args:
-        robot: A ``KNOWN_ROBOTS`` key, e.g. "dual-openyam".
-        arm: The arm ("left"), its bus ("left_arm") or its arm id
-            ("dual_openyam/left"); may be omitted for a single-arm robot.
-    """
+    """One arm of a known robot, by arm ("left"), bus ("left_arm") or arm id; optional for one arm."""
     specs = robot_specs(robot)
+    names = [spec.arm_id.rsplit("/", 1)[-1] for spec in specs]
     if arm is None:
         if len(specs) != 1:
-            names = [spec.arm_id.rsplit("/", 1)[-1] for spec in specs]
             raise ValueError(f"{robot} has several arms; choose one of {names}")
         return specs[0]
-    buses = KNOWN_ROBOTS[robot].buses
-    for spec, bus in zip(specs, buses, strict=True):
+    for spec, bus in zip(specs, KNOWN_ROBOTS[robot].buses, strict=True):
         if arm in (spec.arm_id, spec.arm_id.rsplit("/", 1)[-1], bus.name, arm_name(bus.name)):
             return spec
-    names = [spec.arm_id.rsplit("/", 1)[-1] for spec in specs]
     raise ValueError(f"{robot} has no arm {arm!r}; choose one of {names}")

@@ -12,47 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Step-response metrics for one joint, and the gains they argue for.
+"""Step-response metrics of one joint, judged against its own noise at rest, and the gains they argue for.
 
-Everything here works on plain arrays in degrees and seconds, keyed by joint
-name, so it can be tested on synthetic responses and reused by the offline
-report for any arm. A step passes when its whole hold was recorded, every
-sample and metric is finite, and it settles within 0.5 s to within 0.1 deg, overshoots
-less than 20 % and leaves the joint quiet at rest. ``propose_gains`` picks,
-per joint, the stiffest tried gains whose steps all pass in both directions
-and below which every tried candidate (every lower kp scale, whatever its kd)
-passed too; it says why the others did not.
+Plain arrays in degrees and seconds. The settle band, the first-motion threshold and the buzz
+limit come from a rest window the caller measured (``rest_noise``), widened to the encoder's
+step when the rest reads one value throughout. A step settles when it stays inside the band
+around where it came to rest; given the joint's inertia it must do so no slower than an ideal
+spring-damper with its kp and kd would.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import asdict, dataclass, field
-import json
+from dataclasses import dataclass, field
 import math
-from typing import Any
 
 import numpy as np
-
-FIRST_MOTION_DEG = 0.05
-SETTLE_BAND_DEG = 0.1
-SETTLE_TIME_LIMIT_S = 0.5
-OVERSHOOT_LIMIT_PCT = 20.0
-# RMS joint velocity over the last part of the hold; a joint at rest reads
-# encoder noise only, a buzzing one oscillates at a few deg/s.
-BUZZ_RMS_LIMIT_DEG_S = 1.0
-REST_WINDOW_S = 0.5
-# A hold is complete when its samples reach this close to its end (a few
-# samples at the 100 Hz joint state).
-HOLD_COMPLETE_TOLERANCE_S = 0.05
-# The metrics the pass criteria compare; a NaN or infinite one fails the step.
-CRITERIA_METRICS = ("settle_time_s", "overshoot_pct", "steady_state_error_deg", "buzz_rms_deg_s")
+from scipy.special import lambertw
 
 
 @dataclass(frozen=True)
 class StepEvent:
-    """Marker published by the step test module when a step starts."""
+    """One commanded step: ``delta_deg`` from ``target_before_deg`` at ``t0``, held ``hold_s``."""
 
     joint: str
     delta_deg: float
@@ -63,258 +45,42 @@ class StepEvent:
     target_before_deg: float
     target_after_deg: float
 
-    def to_json(self) -> str:
-        return json.dumps(asdict(self))
 
-    @classmethod
-    def from_json(cls, text: str) -> StepEvent:
-        data = json.loads(text)
-        return cls(**{key: data[key] for key in cls.__dataclass_fields__})
+@dataclass(frozen=True)
+class RestNoise:
+    """A joint at rest: the window's length, the largest sample deviation and the largest speed."""
+
+    window_s: float
+    band_deg: float
+    speed_peak_deg_s: float
 
 
 @dataclass(frozen=True)
 class StepMetrics:
-    """Metrics of one recorded step; times are from the step command.
-
-    ``hold_s`` is the hold the step asked for, ``recorded_s`` the time of its
-    last recorded sample; a hold cut short (by the next step or the end of the
-    recording) leaves the rest metrics unreliable, and the step fails.
-    ``samples`` counts the finite samples the metrics come from;
-    ``nonfinite_samples`` those left out for a NaN or infinite value, which
-    fail the step too, as does a step with no samples at all.
-    """
+    """One step's metrics (times from the command) and why it fails, if it does."""
 
     joint: str
     delta_deg: float
     kp: float
     kd: float
     samples: int
+    band_deg: float
     first_motion_s: float | None
-    settle_time_s: float | None
+    settle_time_s: float
+    settle_limit_s: float | None
     overshoot_pct: float
     steady_state_error_deg: float
     buzz_rms_deg_s: float
-    hold_s: float
-    recorded_s: float
-    nonfinite_samples: int = 0
-
-    @property
-    def hold_complete(self) -> bool:
-        """Whether the samples cover the whole hold."""
-        return self.recorded_s >= self.hold_s - HOLD_COMPLETE_TOLERANCE_S
+    failures: tuple[str, ...]
 
     @property
     def passed(self) -> bool:
-        return not self.failures()
-
-    def failures(self) -> list[str]:
-        """Why this step fails the pass criteria, in plain words; empty when it passes."""
-        reasons: list[str] = []
-        step = f"{self.delta_deg:+g} deg step"
-        if self.nonfinite_samples:
-            reasons.append(f"{step} has {self.nonfinite_samples} non-finite sample(s)")
-        if self.samples == 0:
-            reasons.append(
-                f"{step} has no {'finite' if self.nonfinite_samples else 'recorded'} samples"
-            )
-            return reasons
-        if not self.hold_complete:
-            reasons.append(
-                f"{step} hold was cut short: {self.recorded_s:.2f} of {self.hold_s:g} s recorded"
-            )
-        finite: dict[str, bool] = {}
-        for name in CRITERIA_METRICS:
-            value = getattr(self, name)
-            finite[name] = value is None or math.isfinite(value)
-            if not finite[name]:
-                reasons.append(f"{step} metric {name} is not finite")
-        if self.settle_time_s is None:
-            reasons.append(f"{step} never settled within {SETTLE_BAND_DEG:g} deg")
-        elif finite["settle_time_s"] and self.settle_time_s > SETTLE_TIME_LIMIT_S:
-            reasons.append(
-                f"{step} settled in {self.settle_time_s:.2f} s (limit {SETTLE_TIME_LIMIT_S:g} s)"
-            )
-        if finite["overshoot_pct"] and self.overshoot_pct >= OVERSHOOT_LIMIT_PCT:
-            reasons.append(
-                f"{step} overshot {self.overshoot_pct:.0f} % (limit {OVERSHOOT_LIMIT_PCT:g} %)"
-            )
-        if finite["steady_state_error_deg"] and abs(self.steady_state_error_deg) > SETTLE_BAND_DEG:
-            reasons.append(
-                f"{step} rests {self.steady_state_error_deg:+.2f} deg off target "
-                f"(limit {SETTLE_BAND_DEG:g} deg)"
-            )
-        if finite["buzz_rms_deg_s"] and self.buzz_rms_deg_s >= BUZZ_RMS_LIMIT_DEG_S:
-            reasons.append(
-                f"{step} buzzes at {self.buzz_rms_deg_s:.1f} deg/s RMS "
-                f"(limit {BUZZ_RMS_LIMIT_DEG_S:g} deg/s)"
-            )
-        return reasons
-
-    def as_row(self) -> dict[str, Any]:
-        row = asdict(self)
-        row["hold_complete"] = self.hold_complete
-        row["passed"] = self.passed
-        return row
-
-
-def first_motion_time(
-    t: np.ndarray, y: np.ndarray, y0: float, threshold_deg: float = FIRST_MOTION_DEG
-) -> float | None:
-    """Time of the first sample further than ``threshold_deg`` from the start value."""
-    moved = np.flatnonzero(np.abs(y - y0) > threshold_deg)
-    return float(t[moved[0]]) if moved.size else None
-
-
-def settle_time(
-    t: np.ndarray, y: np.ndarray, target: float, band_deg: float = SETTLE_BAND_DEG
-) -> float | None:
-    """Time after which every remaining sample stays within ``band_deg`` of ``target``.
-
-    ``None`` when the last sample is still outside the band.
-    """
-    outside = np.abs(y - target) > band_deg
-    if outside.size == 0 or outside[-1]:
-        return None
-    last_outside = np.flatnonzero(outside)
-    if last_outside.size == 0:
-        return float(t[0])
-    return float(t[last_outside[-1] + 1])
-
-
-def overshoot_pct(y: np.ndarray, y0: float, target: float) -> float:
-    """Peak excursion past the target, as a percentage of the step size (0 if none)."""
-    delta = target - y0
-    if abs(delta) < 1e-12:
-        return 0.0
-    past = (y - target) * math.copysign(1.0, delta)
-    return float(max(0.0, past.max() / abs(delta) * 100.0))
-
-
-def rest_window(t: np.ndarray, window_s: float = REST_WINDOW_S) -> np.ndarray:
-    """Mask of the last ``window_s`` of the record, at most its second half."""
-    span = min(window_s, 0.5 * (t[-1] - t[0]))
-    return t >= t[-1] - span  # type: ignore[no-any-return]
-
-
-def steady_state_error(
-    t: np.ndarray, y: np.ndarray, target: float, window_s: float = REST_WINDOW_S
-) -> float:
-    return float(y[rest_window(t, window_s)].mean() - target)
-
-
-def buzz_rms(t: np.ndarray, dy: np.ndarray, window_s: float = REST_WINDOW_S) -> float:
-    tail = dy[rest_window(t, window_s)]
-    return float(np.sqrt(np.mean(np.square(tail))))
-
-
-def analyze_step(
-    event: StepEvent,
-    t: np.ndarray,
-    y_deg: np.ndarray,
-    dy_deg_s: np.ndarray,
-    y0_deg: float | None = None,
-) -> StepMetrics:
-    """Metrics of one step from samples ``t`` (seconds since the command), ``y`` and ``dy``.
-
-    A sample with a non-finite value is left out of the metrics and fails the
-    step; with no samples left the step fails and its metrics are NaN.
-    """
-    t = np.asarray(t, dtype=np.float64)
-    y_deg = np.asarray(y_deg, dtype=np.float64)
-    dy_deg_s = np.asarray(dy_deg_s, dtype=np.float64)
-    finite = np.isfinite(t) & np.isfinite(y_deg) & np.isfinite(dy_deg_s)
-    nonfinite = int(finite.size - finite.sum())
-    t, y_deg, dy_deg_s = t[finite], y_deg[finite], dy_deg_s[finite]
-    if t.size == 0:
-        return StepMetrics(
-            joint=event.joint,
-            delta_deg=event.delta_deg,
-            kp=event.kp,
-            kd=event.kd,
-            samples=0,
-            first_motion_s=None,
-            settle_time_s=None,
-            overshoot_pct=math.nan,
-            steady_state_error_deg=math.nan,
-            buzz_rms_deg_s=math.nan,
-            hold_s=event.hold_s,
-            recorded_s=0.0,
-            nonfinite_samples=nonfinite,
-        )
-    y0 = event.target_before_deg if y0_deg is None else y0_deg
-    target = event.target_after_deg
-    return StepMetrics(
-        joint=event.joint,
-        delta_deg=event.delta_deg,
-        kp=event.kp,
-        kd=event.kd,
-        samples=int(t.size),
-        first_motion_s=first_motion_time(t, y_deg, y0),
-        settle_time_s=settle_time(t, y_deg, target),
-        overshoot_pct=overshoot_pct(y_deg, y0, target),
-        steady_state_error_deg=steady_state_error(t, y_deg, target),
-        buzz_rms_deg_s=buzz_rms(t, dy_deg_s),
-        hold_s=event.hold_s,
-        recorded_s=float(t[-1]),
-        nonfinite_samples=nonfinite,
-    )
-
-
-def segment_steps(events: list[StepEvent], t_end: float) -> list[tuple[StepEvent, float, float]]:
-    """Window ``(event, start, stop)`` per step: the hold, cut short by the next step."""
-    ordered = sorted(events, key=lambda event: event.t0)
-    windows: list[tuple[StepEvent, float, float]] = []
-    for index, event in enumerate(ordered):
-        stop = event.t0 + event.hold_s
-        if index + 1 < len(ordered):
-            stop = min(stop, ordered[index + 1].t0)
-        windows.append((event, event.t0, min(stop, t_end)))
-    return windows
-
-
-def gain_label(kp: float, kd: float) -> str:
-    return f"kp={kp:g} kd={kd:g}"
-
-
-def format_table(metrics: list[StepMetrics]) -> str:
-    """Markdown table, one row per step, grouped by joint then gains."""
-    header = (
-        "| joint | kp | kd | step (deg) | first motion (s) | settle (s) | overshoot (%) "
-        "| ss error (deg) | buzz (deg/s) | pass |"
-    )
-    lines = [header, "|" + "---|" * 10]
-    for m in sorted(metrics, key=lambda m: (m.joint, m.kp, m.kd, -abs(m.delta_deg), m.delta_deg)):
-        lines.append(
-            f"| {m.joint} | {m.kp:g} | {m.kd:g} | {m.delta_deg:+.1f} "
-            f"| {_fmt(m.first_motion_s)} | {_fmt(m.settle_time_s)} | {m.overshoot_pct:.1f} "
-            f"| {m.steady_state_error_deg:+.3f} | {m.buzz_rms_deg_s:.2f} "
-            f"| {'ok' if m.passed else 'FAIL'} |"
-        )
-    lines.append("")
-    lines.append(
-        f"Pass: settle within {SETTLE_TIME_LIMIT_S} s to {SETTLE_BAND_DEG} deg, "
-        f"overshoot under {OVERSHOOT_LIMIT_PCT:g} %, |ss error| <= {SETTLE_BAND_DEG} deg, "
-        f"buzz RMS under {BUZZ_RMS_LIMIT_DEG_S:g} deg/s over the last {REST_WINDOW_S} s."
-    )
-    return "\n".join(lines)
-
-
-def _fmt(value: float | None) -> str:
-    return "never" if value is None else f"{value:.3f}"
+        return not self.failures
 
 
 @dataclass(frozen=True)
 class GainProposal:
-    """The gains ``propose_gains`` picked for one joint, and why.
-
-    Attributes:
-        joint: The joint.
-        kp: The chosen position gain, or ``None`` when no candidate passed.
-        kd: The chosen velocity gain, or ``None`` when no candidate passed.
-        reason: One line on the choice.
-        rejected: Why each candidate that failed, was not tested or was not
-            accepted was passed over, by ``gain_label``.
-    """
+    """The gains ``propose_gains`` picked for one joint (None when nothing passed), and why."""
 
     joint: str
     kp: float | None
@@ -322,31 +88,152 @@ class GainProposal:
     reason: str
     rejected: dict[str, str] = field(default_factory=dict)
 
-    @property
-    def gains(self) -> tuple[float, float] | None:
-        if self.kp is None or self.kd is None:
-            return None
-        return (self.kp, self.kd)
+
+def _arrays(*values: Sequence[float] | np.ndarray) -> list[np.ndarray]:
+    arrays = [np.asarray(value, dtype=np.float64) for value in values]
+    if len({a.shape for a in arrays}) != 1 or arrays[0].ndim != 1 or arrays[0].size < 2:
+        raise ValueError(
+            f"need matching 1-D sample arrays of two or more, got {[a.shape for a in arrays]}"
+        )
+    if not all(np.isfinite(a).all() for a in arrays):
+        raise ValueError("samples hold NaN or infinite values")
+    return arrays
+
+
+def _quantum(values: np.ndarray) -> float:
+    """The smallest nonzero change between samples (the encoder's step), 0 when there is none."""
+    steps = np.abs(np.diff(values))
+    nonzero = steps[steps > 0]
+    return float(nonzero.min()) if nonzero.size else 0.0
+
+
+def rest_noise(
+    t: Sequence[float] | np.ndarray,
+    q_deg: Sequence[float] | np.ndarray,
+    dq_deg_s: Sequence[float] | np.ndarray,
+) -> RestNoise:
+    t_, q, dq = _arrays(t, q_deg, dq_deg_s)
+    return RestNoise(
+        window_s=float(t_[-1] - t_[0]),
+        band_deg=float(np.abs(q - q.mean()).max()),
+        speed_peak_deg_s=float(np.abs(dq).max()),
+    )
+
+
+def rest_window(t: np.ndarray, end: float, window_s: float) -> np.ndarray:
+    """Mask of the samples in the last ``window_s`` before ``end``.
+
+    Raises ``ValueError`` when the samples stop short of ``end`` by more than their largest gap.
+    """
+    if t[-1] < end - float(np.diff(t).max()):
+        raise ValueError(f"the samples stop {end - t[-1]:.3f} s before the hold ends")
+    mask: np.ndarray = t >= end - window_s
+    return mask
+
+
+def settle_time_limit_s(
+    inertia_kgm2: float, kp: float, kd: float, step_deg: float, band_deg: float
+) -> float:
+    """When an ideal spring-damper (inertia, kp, kd) is sure to be within ``band_deg`` of a step's end.
+
+    The decay envelope of its error: ``A e^(-zeta wn t) / sqrt(1 - zeta^2)`` when underdamped,
+    ``A (1 + p t) e^(-p t)`` with ``p`` its slower pole otherwise.
+    """
+    ratio = band_deg / abs(step_deg)
+    if ratio >= 1.0:
+        return 0.0
+    wn = math.sqrt(kp / inertia_kgm2)
+    zeta = kd / (2.0 * math.sqrt(kp * inertia_kgm2))
+    if ratio == 0.0 or zeta == 0.0:
+        return math.inf
+    if zeta < 1.0:
+        return max(0.0, -math.log(ratio * math.sqrt(1.0 - zeta**2)) / (zeta * wn))
+    pole = wn * (zeta - math.sqrt(zeta**2 - 1.0))
+    return float(-1.0 - lambertw(-ratio / math.e, -1).real) / pole
+
+
+def analyze_step(
+    event: StepEvent,
+    t: Sequence[float] | np.ndarray,
+    q_deg: Sequence[float] | np.ndarray,
+    dq_deg_s: Sequence[float] | np.ndarray,
+    noise: RestNoise,
+    *,
+    max_overshoot_pct: float,
+    inertia_kgm2: float | None,
+) -> StepMetrics:
+    """Metrics of one step from its samples (``t`` in seconds, the clock of ``event.t0``).
+
+    The step's rest is its last ``noise.window_s``. It fails when the joint never moved past
+    the band, settles slower than ``settle_time_limit_s`` (only with ``inertia_kgm2``),
+    overshoots ``max_overshoot_pct`` (an operator setting) or more of the step, or moves
+    faster at rest (RMS) than at the rest the noise came from. Raises ``ValueError`` for
+    non-finite samples, a hold no longer than the noise window, or samples that stop short.
+    """
+    t_, q, dq = _arrays(t, q_deg, dq_deg_s)
+    end = event.t0 + event.hold_s
+    if noise.window_s >= event.hold_s:
+        raise ValueError(
+            f"the {event.hold_s:g} s hold must outlast the {noise.window_s:g} s rest window"
+        )
+    hold = (t_ >= event.t0) & (t_ <= end)
+    t_, q, dq = _arrays(t_[hold] - event.t0, q[hold], dq[hold])
+    rest = rest_window(t_, event.hold_s, noise.window_s)
+    band = max(noise.band_deg, _quantum(q) / 2.0)
+    outside = np.flatnonzero((q < q[rest].min() - band) | (q > q[rest].max() + band))
+    settle = float(t_[outside[-1] + 1]) if outside.size else 0.0
+    moved = np.flatnonzero(np.abs(q - q[0]) > 2.0 * band)
+    overshoot = max(
+        0.0, float(((q - event.target_after_deg) * math.copysign(1.0, event.delta_deg)).max())
+    )
+    overshoot_pct = 100.0 * overshoot / abs(event.delta_deg)
+    buzz = float(np.sqrt(np.mean(np.square(dq[rest]))))
+    buzz_limit = max(noise.speed_peak_deg_s, _quantum(dq))
+    limit = (
+        None
+        if inertia_kgm2 is None
+        else settle_time_limit_s(inertia_kgm2, event.kp, event.kd, event.delta_deg, band)
+    )
+    step = f"{event.delta_deg:+g} deg step"
+    failures = []
+    if not moved.size:
+        failures.append(f"{step} never moved past twice its {band:.3f} deg noise band")
+    if limit is not None and settle > limit:
+        failures.append(
+            f"{step} settled in {settle:.2f} s; an ideal spring-damper takes {limit:.2f} s"
+        )
+    if overshoot_pct >= max_overshoot_pct:
+        failures.append(f"{step} overshot {overshoot_pct:.0f} % (limit {max_overshoot_pct:g} %)")
+    if buzz > buzz_limit:
+        failures.append(
+            f"{step} buzzes at {buzz:.2f} deg/s RMS; at rest it peaked at {buzz_limit:.2f}"
+        )
+    return StepMetrics(
+        joint=event.joint,
+        delta_deg=event.delta_deg,
+        kp=event.kp,
+        kd=event.kd,
+        samples=int(t_.size),
+        band_deg=band,
+        first_motion_s=float(t_[moved[0]]) if moved.size else None,
+        settle_time_s=settle,
+        settle_limit_s=limit,
+        overshoot_pct=overshoot_pct,
+        steady_state_error_deg=float(q[rest].mean() - event.target_after_deg),
+        buzz_rms_deg_s=buzz,
+        failures=tuple(failures),
+    )
 
 
 def propose_gains(
-    step_results: Iterable[StepMetrics],
-    candidates: Sequence[tuple[float, float]] | None = None,
+    step_results: Iterable[StepMetrics], candidates: Sequence[tuple[float, float]] | None = None
 ) -> dict[str, GainProposal]:
-    """Per joint, the highest kp (with its kd) among ``candidates`` that passes, monotonically.
+    """Per joint, the stiffest ``(kp, kd)`` among ``candidates`` (default: every one tried) that passes.
 
-    Candidates are ``(kp, kd)`` pairs; by default every pair with a recorded
-    step. A candidate passes when it has at least one positive and one
-    negative step on the joint and every one of its steps passes (whole hold
-    recorded, finite samples and metrics, settles under 0.5 s to 0.1 deg, overshoots under
-    20 %, rests on target and does not buzz). It is accepted only when every
-    tried candidate with a lower kp passed too, whatever its kd: the sweep
-    scales kd with the square root of the kp scale, so the candidates are
-    ordered by kp alone, and a lucky stiff run above a failing softer one is
-    not chosen. Among accepted candidates the highest kp wins; when several
-    kd values are accepted at that kp, the one with the shortest worst settle
-    time wins, then the lower kd. ``rejected`` explains every candidate that
-    failed, was not tried or was not accepted.
+    A pair passes when it has a positive and a negative step on the joint and they all pass.
+    It is accepted only when every tried pair with a lower kp (whatever its kd) passed too, so a
+    lucky stiff run above a failing softer one is not chosen. At the highest accepted kp the
+    shortest worst settle wins, then the lower kd.
     """
     by_joint: dict[str, dict[tuple[float, float], list[StepMetrics]]] = defaultdict(
         lambda: defaultdict(list)
@@ -355,73 +242,45 @@ def propose_gains(
         by_joint[metrics.joint][(metrics.kp, metrics.kd)].append(metrics)
     proposals: dict[str, GainProposal] = {}
     for joint, by_gains in by_joint.items():
+        failed: dict[tuple[float, float], str] = {}
+        for pair, steps in by_gains.items():
+            reasons = [reason for step in steps for reason in step.failures]
+            if not any(step.delta_deg > 0 for step in steps):
+                reasons.append("no positive step")
+            if not any(step.delta_deg < 0 for step in steps):
+                reasons.append("no negative step")
+            if reasons:
+                failed[pair] = "; ".join(reasons)
         pairs = sorted(
             set(by_gains) if candidates is None else {(float(p), float(d)) for p, d in candidates}
         )
-        # Every tried pair counts for the monotone rule, candidate or not.
-        failed = {pair: why for pair, steps in by_gains.items() if (why := _gain_failures(steps))}
-        rejected: list[tuple[float, float, str]] = []
+        rejected: dict[str, str] = {}
         accepted: list[tuple[float, float, float]] = []
         for kp, kd in pairs:
-            steps = by_gains.get((kp, kd), [])
-            if not steps:
-                rejected.append((kp, kd, "not tested"))
-                continue
-            if (kp, kd) in failed:
-                rejected.append((kp, kd, failed[(kp, kd)]))
-                continue
+            label = f"kp={kp:g} kd={kd:g}"
             softer = sorted(pair for pair in failed if pair[0] < kp)
-            if softer:
-                rejected.append(
-                    (kp, kd, f"its steps pass, but {gain_label(*softer[-1])} below it failed")
+            if (kp, kd) not in by_gains:
+                rejected[label] = "not tested"
+            elif (kp, kd) in failed:
+                rejected[label] = failed[(kp, kd)]
+            elif softer:
+                rejected[label] = (
+                    f"its steps pass, but kp={softer[-1][0]:g} kd={softer[-1][1]:g} below it failed"
                 )
-                continue
-            worst_settle = max(step.settle_time_s or 0.0 for step in steps)
-            accepted.append((kp, kd, worst_settle))
+            else:
+                accepted.append((kp, kd, max(step.settle_time_s for step in by_gains[(kp, kd)])))
         if not accepted:
             proposals[joint] = GainProposal(
-                joint,
-                None,
-                None,
-                "no candidate passed every step",
-                {gain_label(kp, kd): why for kp, kd, why in rejected},
+                joint, None, None, "no candidate passed every step", rejected
             )
             continue
         best_kp = max(kp for kp, _, _ in accepted)
-        kp, kd, settle = min(
-            (entry for entry in accepted if entry[0] == best_kp), key=lambda e: (e[2], e[1])
-        )
+        kp, kd, settle = min((a for a in accepted if a[0] == best_kp), key=lambda a: (a[2], a[1]))
         steps = by_gains[(kp, kd)]
         reason = (
-            f"{gain_label(kp, kd)}: highest kp whose {len(steps)} step(s) all pass, both ways, "
-            f"with every softer kp tried passing (worst settle {settle:.2f} s, "
-            f"overshoot {max(s.overshoot_pct for s in steps):.0f} %, "
-            f"buzz {max(s.buzz_rms_deg_s for s in steps):.2f} deg/s)"
+            f"kp={kp:g} kd={kd:g}: the stiffest whose {len(steps)} steps all pass both ways, every "
+            f"softer kp passing too (worst settle {settle:.2f} s, overshoot "
+            f"{max(s.overshoot_pct for s in steps):.0f} %)"
         )
-        proposals[joint] = GainProposal(
-            joint, kp, kd, reason, {gain_label(p, d): why for p, d, why in rejected}
-        )
+        proposals[joint] = GainProposal(joint, kp, kd, reason, rejected)
     return proposals
-
-
-def _gain_failures(steps: Sequence[StepMetrics]) -> str:
-    """Why one gain pair's steps on a joint do not pass; empty when they do."""
-    reasons = [reason for step in steps for reason in step.failures()]
-    if not any(step.delta_deg > 0.0 for step in steps):
-        reasons.append("no positive step recorded")
-    if not any(step.delta_deg < 0.0 for step in steps):
-        reasons.append("no negative step recorded")
-    return "; ".join(reasons)
-
-
-def format_proposals(proposals: dict[str, GainProposal]) -> str:
-    """Markdown list: the chosen gains per joint and why stiffer candidates lost."""
-    if not proposals:
-        return "(no steps)"
-    lines: list[str] = []
-    for joint in sorted(proposals):
-        proposal = proposals[joint]
-        lines.append(f"- {joint}: {proposal.reason}")
-        for label, why in proposal.rejected.items():
-            lines.append(f"  - {label} rejected: {why}")
-    return "\n".join(lines)
