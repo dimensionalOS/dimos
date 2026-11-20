@@ -265,7 +265,6 @@ def test_continuous_matching_starts_on_the_latest_live_map_as_the_last_attempt_e
     local_maps = Subject()
     m.local_map = SimpleNamespace(observable=lambda: local_maps)
     m.lidar = SimpleNamespace(observable=Subject)
-    m.second_lidar = SimpleNamespace(observable=Subject)
     m.premap = local_map([[0, 0, 0]])
     m._start_matching()
 
@@ -469,9 +468,7 @@ def test_tf_goes_out_at_start_with_every_scan_at_its_stamp_and_on_every_fix(modu
     m = module(map_frame="premap")
     sent, scans = [], Subject()
     m.tf = SimpleNamespace(publish=sent.append)
-    second_scans = Subject()
     m.lidar = SimpleNamespace(observable=lambda: scans)
-    m.second_lidar = SimpleNamespace(observable=lambda: second_scans)
     m._start_tf()
 
     def edges():
@@ -481,11 +478,8 @@ def test_tf_goes_out_at_start_with_every_scan_at_its_stamp_and_on_every_fix(modu
     scans.on_next(PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32), timestamp=5.0))
     assert len(sent) == 2 and edges() == [("world", "map")]
     assert sent[-1].transforms[0].ts == 5.0
-    # The second lidar's scans carry it too, at their own stamps
-    second_scans.on_next(PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32), timestamp=5.05))
-    assert len(sent) == 3 and sent[-1].transforms[0].ts == 5.05
     m.submit(_fix(2.0))
-    assert len(sent) == 4 and edges() == [("world", "map"), ("world", "premap")]
+    assert len(sent) == 3 and edges() == [("world", "map"), ("world", "premap")]
     scans.on_next(PointCloud2.from_numpy(np.zeros((1, 3), dtype=np.float32), timestamp=6.0))
     assert [t.ts for t in sent[-1].transforms] == [6.0, 6.0]
 

@@ -57,10 +57,6 @@ pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
-    // A second lidar's clouds, each traced from its own frame's origin like `lidar`'s.
-    #[input(decode = PointCloud2::decode, handler = on_lidar)]
-    second_lidar: Input<PointCloud2>,
-
     // An externally loaded map cloud. Only the first one seeds the map.
     #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
     loaded_map: Input<PointCloud2>,
