@@ -92,7 +92,7 @@ for key, kind in streams.items():
         lag = (a[:, 0] - a[:, 1]) * 1e3
         end_lag = (a[:, 0] - a[:, 3]) * 1e3
         print(
-            f"{key} [{frame}]: {len(a) / seconds:.1f} Hz, stamp-to-arrival median {np.median(lag):.0f} ms p95 {np.percentile(lag, 95):.0f} ms"
+            f"{key} [{frame}]: {len(a) / seconds:.1f} Hz, stamp-to-arrival median {np.median(lag):.0f} ms p95 {np.percentile(lag, 95):.0f} ms p99 {np.percentile(lag, 99):.0f} ms"
             + (
                 f", last-point-to-arrival median {np.median(end_lag):.0f} ms p95 {np.percentile(end_lag, 95):.0f} ms"
                 if kind == "cloud"

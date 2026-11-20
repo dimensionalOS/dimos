@@ -9,7 +9,7 @@
 # gos is the Host the blueprint root places its own modules on. It runs from the checkout itself (its full
 # venv: the GOS modules need more than the boards' base install), configured by its unit's environment
 # rather than a .env in the checkout, and its CPUAffinity keeps them off the cores m20-rust gives DimSLAM
-# alone (constants.py GOS_SLAM_CPUS).
+# alone when it runs there (M20_SLAM_BOARD=gos, constants.py GOS_SLAM_CPUS); with dimSLAM on NOS, every core.
 #
 # Layout: GOS builds the venv once at $dest (the same path the boards use, so the venv's
 # absolute paths hold), then rsyncs checkout + venv + uv + uv's Python to each board. The
@@ -32,6 +32,13 @@ src="${DIMOS_CHECKOUT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/d
 dest=/var/opt/robot/data/dimos_host
 boards=("$@")
 [ ${#boards[@]} -gt 0 ] || boards=(aos nos)
+# Where m20-rust runs dimSLAM (its M20Slam choice): on GOS it has cores 4-5 alone (constants.GOS_SLAM_CPUS), so the
+# GOS Host and every module it starts stay off them; on NOS (the default) the GOS Host gets every core.
+case "${M20_SLAM_BOARD:-nos}" in
+    gos) gos_cpus=0-3,6-7 ;;
+    nos) gos_cpus=0-7 ;;
+    *) echo "M20_SLAM_BOARD is gos or nos, not ${M20_SLAM_BOARD}" >&2; exit 1 ;;
+esac
 sudo_pass="${M20_SUDO_PASS-}"
 [ -n "$sudo_pass" ] || sudo_pass="'"
 
@@ -40,7 +47,7 @@ board_config() {
     case "$1" in
         aos) echo "10.21.31.103 - tcp/10.21.33.103:7447 tcp/10.21.33.106:7448 board=aos,m20,lidar,imu,ecan,camera 1-3 7447" ;;
         nos) echo "10.21.31.106 10.21.31.106 tcp/10.21.33.106:7448 tcp/10.21.31.104:7447 board=nos,m20 0-3 7448 7447" ;;
-        gos) echo "local 10.21.31.104 - - board=gos,m20 0-3,6-7 7447" ;;
+        gos) echo "local 10.21.31.104 - - board=gos,m20 $gos_cpus 7447" ;;
         *) echo "unknown board $1" >&2; return 1 ;;
     esac
 }

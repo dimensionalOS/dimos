@@ -69,7 +69,8 @@ IMU_XYZ_M = (0.0632, -0.0268, -0.0435)
 IMU_MOUNT_RPY_RAD = (math.pi / 2, 0.0, 0.0)
 
 # GOS cores DimSLAM runs on alone in m20-rust: two of the RK3588's A76s (4-7). The GOS Host, and so every other
-# module it starts, is kept off them (its CPUAffinity in onboard/install_dimos_host.sh).
+# module it starts, is kept off them (its CPUAffinity in onboard/install_dimos_host.sh, M20_SLAM_BOARD=gos; with
+# dimSLAM on NOS the GOS Host gets every core).
 GOS_SLAM_CPUS = (4, 5)
 # NOS cores DimSLAM runs on in m20-rust: two of its A76s (4-7, isolcpus, the vendor's real-time cores; its LIO and
 # rslidar use ~17% of each). NOS's Host and every other fragment stay on 0-3 (onboard/install_dimos_host.sh).
