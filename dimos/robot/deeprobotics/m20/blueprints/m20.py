@@ -26,7 +26,7 @@ from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
-from dimos.robot.deeprobotics.m20.blueprints._nav import VOXEL_SIZE_M, m20_nav_stack
+from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
@@ -43,16 +43,17 @@ m20 = (
         PremapModule.blueprint(
             world_frame=WORLD_FRAME,
             map_frame="premap",
-            # matches against the office premap top out near 0.7 fitness, under the nav preset's 0.8
-            relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65}),
+            # at 0.2 m live voxels a right office match scores ~0.5-0.7 and a wrong one ~0.25-0.35
+            relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.45}),
             # body scans placed in map (odometry), so a world -> map jump leaves the kept live map as it was
             live_cloud="lidar",
             relocalize_once=False,
             new_map=True,
-            # live voxels the first match waits for, under the 20k default
-            min_local_points=8_000,
-            # one kept point per ray tracer voxel, so a standing robot's map is not thinned below min_local_points
-            live_voxel_m=VOXEL_SIZE_M,
+            # a standing robot keeps ~6-7k live voxels at 0.2 m, so the first match waits for 2k, under the 20k default
+            min_local_points=2_000,
+            # coarse enough that a robot that roams the office keeps ~10k points, not ~500k (a global search in seconds, not minutes)
+            live_voxel_m=0.2,
+            match_radius_m=15.0,
         ).remappings([(PremapModule, "lidar", "slam_body_points")]),
     )
     .global_config(
