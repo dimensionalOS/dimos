@@ -15,7 +15,7 @@
 // LCM messages in and out of the dim_slam library's plain types.
 
 use dim_slam::nalgebra::{Isometry3, Matrix6, Quaternion, Translation3, UnitQuaternion, Vector3};
-use dim_slam::{ImuSample, LidarScan, OdometryEstimate, Twist};
+use dim_slam::{DeskewedCloud, ImuSample, LidarScan, OdometryEstimate, Twist};
 use dimos_module::{Tf, Transform};
 use lcm_msgs::geometry_msgs;
 use lcm_msgs::nav_msgs::Odometry;
@@ -150,7 +150,7 @@ pub fn to_transform(estimate: &OdometryEstimate) -> Transform {
 
 /// A cloud as Livox drivers write it: float32 x/y/z, and when present a uint32 `offset_time` (ns
 /// after the stamp), a uint8 `tag` and a float32 `intensity` (0..255). None when x/y/z are missing,
-/// the data is big-endian or shorter than its points.
+/// the data is big-endian, shorter than its points or a field overruns its point.
 pub fn to_lidar_scan(msg: &PointCloud2) -> Option<LidarScan> {
     let field = |name: &str, datatype: i32| {
         msg.fields
@@ -169,11 +169,26 @@ pub fn to_lidar_scan(msg: &PointCloud2) -> Option<LidarScan> {
     let intensity = field("intensity", float32);
     let step = msg.point_step as usize;
     let count = (msg.width.max(0) as usize) * (msg.height.max(0) as usize);
-    if msg.is_bigendian || step == 0 || msg.data.len() < count * step {
+    let widest = [Some(x), Some(y), Some(z), time, intensity]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(0)
+        + 4;
+    if msg.is_bigendian
+        || step == 0
+        || msg.data.len() < count * step
+        || widest > step
+        || tag.is_some_and(|at| at >= step)
+    {
         return None;
     }
-    let f32_at =
-        |p: &[u8], at: usize| f32::from_le_bytes(p[at..at + 4].try_into().expect("4 bytes"));
+    let bytes_at = |p: &[u8], at: usize| -> [u8; 4] {
+        p.get(at..at + 4)
+            .and_then(|b| b.try_into().ok())
+            .unwrap_or_default()
+    };
+    let f32_at = |p: &[u8], at: usize| f32::from_le_bytes(bytes_at(p, at));
     let mut scan = LidarScan {
         timestamp_ns: stamp_to_ns(&msg.header),
         frame_id: msg.header.frame_id.clone(),
@@ -183,18 +198,55 @@ pub fn to_lidar_scan(msg: &PointCloud2) -> Option<LidarScan> {
     for p in msg.data.chunks_exact(step).take(count) {
         scan.points.push([f32_at(p, x), f32_at(p, y), f32_at(p, z)]);
         if let Some(at) = time {
-            scan.offsets_ns.push(u32::from_le_bytes(
-                p[at..at + 4].try_into().expect("4 bytes"),
-            ));
+            scan.offsets_ns.push(u32::from_le_bytes(bytes_at(p, at)));
         }
         if let Some(at) = tag {
-            scan.tags.push(p[at]);
+            scan.tags.push(p.get(at).copied().unwrap_or_default());
         }
         if let Some(at) = intensity {
             scan.intensities.push(f32_at(p, at) / 255.0);
         }
     }
     Some(scan)
+}
+
+/// A deskewed scan as float32 x/y/z/intensity (0..255) and a uint8 `lidar`: its lidar's index in `lidars`.
+pub fn to_deskewed_cloud_msg(deskewed: &DeskewedCloud) -> PointCloud2 {
+    let field = |name: &str, offset: i32, datatype: u8| PointField {
+        name: name.into(),
+        offset,
+        datatype,
+        count: 1,
+    };
+    let step = 20usize;
+    let lidar = u8::try_from(deskewed.lidar).unwrap_or(u8::MAX);
+    let points = &deskewed.cloud.points;
+    let mut data = Vec::with_capacity(points.len() * step);
+    for (i, p) in points.iter().enumerate() {
+        for c in p {
+            data.extend_from_slice(&c.to_le_bytes());
+        }
+        let intensity = deskewed.intensities.get(i).copied().unwrap_or(0.0);
+        data.extend_from_slice(&intensity.to_le_bytes());
+        data.extend_from_slice(&[lidar, 0, 0, 0]);
+    }
+    PointCloud2 {
+        header: to_header(deskewed.cloud.timestamp_ns, &deskewed.cloud.frame_id),
+        height: 1,
+        width: points.len() as i32,
+        fields: vec![
+            field("x", 0, PointField::FLOAT32 as u8),
+            field("y", 4, PointField::FLOAT32 as u8),
+            field("z", 8, PointField::FLOAT32 as u8),
+            field("intensity", 12, PointField::FLOAT32 as u8),
+            field("lidar", 16, PointField::UINT8 as u8),
+        ],
+        is_bigendian: false,
+        point_step: step as i32,
+        row_step: (step * points.len()) as i32,
+        data,
+        is_dense: true,
+    }
 }
 
 #[cfg(test)]
