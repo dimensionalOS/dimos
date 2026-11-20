@@ -15,7 +15,7 @@
 //! On-disk window segments that hold recent observations before the main file.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{unbounded, RecvTimeoutError, Sender};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::store::{Observation, RecordingStoreConfig};
 use crate::StreamConfig;
@@ -68,25 +68,7 @@ pub(crate) fn segment_path(dir: &Path, index: u64) -> PathBuf {
     dir.join(format!("{index}.seg"))
 }
 
-/// Indexes of the segment files in `dir`, oldest first.
-pub(crate) fn segment_indexes(dir: &Path) -> Result<Vec<u64>> {
-    let mut indexes = Vec::new();
-    for entry in fs::read_dir(dir).with_context(|| format!("failed to list {}", dir.display()))? {
-        let path = entry?.path();
-        if path.extension() == Some("seg".as_ref()) {
-            if let Some(index) = path
-                .file_stem()
-                .and_then(|stem| stem.to_str()?.parse().ok())
-            {
-                indexes.push(index);
-            }
-        }
-    }
-    indexes.sort_unstable();
-    Ok(indexes)
-}
-
-/// Removes the manifest first, so a removal cut short leaves nothing recovery would act on.
+/// Removes the manifest first, so a removal cut short leaves no window that names a recording.
 pub(crate) fn remove_window(dir: &Path) -> Result<()> {
     let manifest = dir.join(MANIFEST_FILE);
     fs::remove_file(&manifest)
@@ -248,8 +230,8 @@ impl Iterator for SegmentReader {
     }
 }
 
-/// What recovery needs to reopen the recording: its store and its streams in segment index order.
-#[derive(Deserialize, Serialize)]
+/// The recording a window belongs to: its store and its streams in segment index order.
+#[derive(Serialize)]
 pub(crate) struct WindowManifest {
     pub store: RecordingStoreConfig,
     pub streams: Vec<StreamConfig>,
@@ -268,17 +250,10 @@ impl WindowManifest {
             .with_context(|| format!("failed to sync {}", path.display()))?;
         sync_dir(dir)
     }
-
-    pub fn read(dir: &Path) -> Result<Self> {
-        let path = dir.join(MANIFEST_FILE);
-        let bytes =
-            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
-        serde_json::from_slice(&bytes).with_context(|| format!("invalid {}", path.display()))
-    }
 }
 
 /// The newest segment durable in the store file, and how many observations of each stream it holds.
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize)]
 pub(crate) struct Done {
     pub segment: u64,
     pub stored: Vec<u64>,
@@ -294,18 +269,6 @@ impl Done {
         file.sync_data().context("failed to sync the done marker")?;
         fs::rename(&temporary, dir.join(DONE_FILE)).context("failed to replace the done marker")?;
         sync_dir(dir)
-    }
-
-    /// Reads the marker, or `None` before any segment was stored.
-    pub fn read(dir: &Path) -> Result<Option<Self>> {
-        let path = dir.join(DONE_FILE);
-        match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map(Some)
-                .with_context(|| format!("invalid {}", path.display())),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
-        }
     }
 }
 

@@ -231,12 +231,10 @@ class RustRecordingSession:
         self._stopping = threading.Event()
         self._failure: str | None = None
         self._process: subprocess.Popen[bytes] | None = None
-        self._executable: Path | None = None
         self._threads: list[threading.Thread] = []
 
     def start(self) -> None:
         executable = prepare_rust_recorder()
-        self._executable = executable
         _prepare_artifact(self.plan)
         store = {"kind": global_config.record, "path": str(self.plan.path)}
         launch = {
@@ -320,22 +318,6 @@ class RustRecordingSession:
             self._ready.set()
         elif not self._stopping.is_set():
             logger.error("Experimental Rust recorder exited", status=returncode)
-            self._report_leftover_window()
-
-    def _report_leftover_window(self) -> None:
-        """Point at the recovery tool when an event recording left its window behind."""
-        mode = self.plan.mode
-        if not isinstance(mode, RustEventConfig) or self._executable is None:
-            return
-        window = Path(mode.window_dir)
-        if not window.exists():
-            return
-        recover = self._executable.with_name("dimos-memory-recover")
-        logger.error(
-            "Event recording window left behind; recover it into the recording",
-            window_dir=str(window),
-            command=f"{recover} {window}",
-        )
 
     def stop(self) -> None:
         process = self._process
@@ -358,5 +340,4 @@ class RustRecordingSession:
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if process.returncode not in (None, 0):
             logger.warning("Rust recorder stopped with an error", status=process.returncode)
-            self._report_leftover_window()
         self._process = None

@@ -333,7 +333,7 @@ struct StoreWriter {
 impl StoreWriter {
     /// Stores each segment once no trigger can still reach it, then drains the rest on `Finish`.
     /// Over `max_window_bytes`, the oldest segments are stored thinned right away.
-    /// A writer that stops without `Finish` leaves the window for `dimos-memory-recover`.
+    /// A writer that stops without `Finish` leaves the window behind.
     fn run(mut self, events: Receiver<WindowEvent>) -> Result<()> {
         let mut segments: VecDeque<ClosedSegment> = VecDeque::new();
         let mut window_bytes = 0;
