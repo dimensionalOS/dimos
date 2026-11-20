@@ -110,8 +110,8 @@ def test_dimslam_on_nos_reads_only_its_own_slices_of_the_lidars() -> None:
             "lidar_slices",
             "lidar_slices_imu",
         )
-        # raw slices, ~10 ms of the 10 Hz sweep each, at the same voxel as the full sweeps
-        assert kwargs["split_blocks"] == 179
+        # raw 36 degree slices, 10 ms of the 10 Hz sweep each, at the same voxel as the full sweeps
+        assert kwargs["split_sectors"] == 10
         assert kwargs["body_filter"] is False
         assert kwargs["voxel"] == atoms["front_lidar/m20lidar"].kwargs["voxel"]
     # each lidar is the same frame in both pairs: dimSLAM's lidar and IMU frames are the slices'

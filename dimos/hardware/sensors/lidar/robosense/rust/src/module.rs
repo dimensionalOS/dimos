@@ -78,8 +78,8 @@ pub struct Config {
     start_angle: f32,
     end_angle: f32,
     split_angle: f32,
-    /// Above 0, a scan every this many blocks instead of at split_angle.
-    split_blocks: u16,
+    /// Above 0, a scan each 360 / split_sectors degrees of azimuth instead of at split_angle.
+    split_sectors: u16,
     #[validate(range(min = 0.0))]
     voxel: f32,
     #[validate(range(min = 1))]
@@ -151,8 +151,8 @@ impl Config {
                 wait_for_difop: true,
                 start_angle: self.start_angle,
                 end_angle: self.end_angle,
-                split: if self.split_blocks > 0 {
-                    SplitMode::CustomBlocks(self.split_blocks)
+                split: if self.split_sectors > 0 {
+                    SplitMode::Sectors(self.split_sectors)
                 } else {
                     SplitMode::Angle(self.split_angle)
                 },
@@ -590,7 +590,7 @@ mod tests {
             "group": "224.10.10.201", "host_ip": null, "lidar_ip": null, "msop_port": 6691, "difop_port": 7781,
             "imu_port": 6681, "enable_imu": true, "point_format": "full", "frame_id": "front_lidar",
             "imu_frame_id": "front_lidar", "imu_in_lidar_frame": true, "min_distance": 0.2, "max_distance": 60.0,
-            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
+            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_sectors": 0, "voxel": 0.0,
             "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null,
             "mount_parent_frame_id": null, "mount_xyz": [0.0, 0.0, 0.0], "mount_rpy": [0.0, 0.0, 0.0],
             "body_filter": false, "body_filter_urdf": null, "body_filter_padding_m": 0.01, "body_filter_links": null,
@@ -604,12 +604,9 @@ mod tests {
         assert_eq!(sensor.imu_port, Some(6681));
         assert_eq!(sensor.decoder.split, SplitMode::Angle(0.0));
         let mut slices = json.clone();
-        slices["split_blocks"] = serde_json::json!(179);
+        slices["split_sectors"] = serde_json::json!(10);
         let slices: Config = serde_json::from_value(slices).unwrap();
-        assert_eq!(
-            slices.sensor_config().decoder.split,
-            SplitMode::CustomBlocks(179)
-        );
+        assert_eq!(slices.sensor_config().decoder.split, SplitMode::Sectors(10));
         let mut missing = json;
         missing.as_object_mut().unwrap().remove("host_ip");
         assert!(serde_json::from_value::<Config>(missing).is_err());
@@ -622,7 +619,7 @@ mod tests {
             "group": null, "host_ip": null, "lidar_ip": null, "msop_port": 6691, "difop_port": 7781,
             "imu_port": 6681, "enable_imu": true, "point_format": "full", "frame_id": "front_lidar",
             "imu_frame_id": "front_lidar", "imu_in_lidar_frame": true, "min_distance": 0.0, "max_distance": 0.0,
-            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
+            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_sectors": 0, "voxel": 0.0,
             "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null,
             "mount_parent_frame_id": "base_link", "mount_xyz": [0.0, 0.0, 0.0], "mount_rpy": [0.0, 0.0, 0.0],
             "body_filter": true, "body_filter_urdf": urdf, "body_filter_padding_m": 0.0, "body_filter_links": null,
@@ -682,7 +679,7 @@ mod tests {
             "group": null, "host_ip": null, "lidar_ip": null, "msop_port": 6691, "difop_port": 7781,
             "imu_port": 6681, "enable_imu": true, "point_format": "full", "frame_id": "front_lidar",
             "imu_frame_id": "front_lidar", "imu_in_lidar_frame": true, "min_distance": 0.0, "max_distance": 0.0,
-            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_blocks": 0, "voxel": 0.0,
+            "use_lidar_clock": true, "start_angle": 0.0, "end_angle": 360.0, "split_angle": 0.0, "split_sectors": 0, "voxel": 0.0,
             "decimate_points": 1, "decimate_scans": 1, "scan_queue": 1, "imu_queue": 1, "recv_buffer_bytes": null,
             "mount_parent_frame_id": "base_link", "mount_xyz": [0.32028, 0.0, -0.013],
             "mount_rpy": [0.0, -std::f64::consts::FRAC_PI_2, std::f64::consts::PI],

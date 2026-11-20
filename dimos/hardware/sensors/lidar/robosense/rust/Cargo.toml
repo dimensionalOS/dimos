@@ -25,7 +25,8 @@ lidar = "sensor_msgs.PointCloud2"
 imu = "sensor_msgs.Imu"
 
 [dependencies]
-robosense-airy = "0.1"
+# Sectors split (jeff/feat/sector_split); back to the crates.io release once it carries it.
+robosense-airy = { git = "https://github.com/jeff-hykin/robosense-airy-rust", rev = "f7706ae2f73d4eff44b0ad0ec87f1ba21d84919d" }
 urdf-body-filter = "0.1"
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }

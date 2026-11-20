@@ -57,6 +57,18 @@ struct Stats {
     imus: u64,
     imu_s: f64,
     imu_age_s: f64,
+    /// s, each scan's age when it arrived and each published pose's age as it goes out (its stamp is its scan's end).
+    scan_ages: Vec<f64>,
+    pose_ages: Vec<f64>,
+}
+
+/// The `q` quantile of `values` (sorted in place), in ms.
+fn quantile_ms(values: &mut [f64], q: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(f64::total_cmp);
+    1e3 * values[((values.len() - 1) as f64 * q).round() as usize]
 }
 
 #[derive(Module)]
@@ -115,6 +127,7 @@ impl DimSlamLio {
         stats.scan_s += took;
         stats.scan_max_s = stats.scan_max_s.max(took);
         stats.scan_age_s += age;
+        stats.scan_ages.push(age);
         if self.config.stats_every_scans > 0 && stats.scans >= self.config.stats_every_scans {
             self.log_stats();
         }
@@ -150,6 +163,7 @@ impl DimSlamLio {
         if self.poses % self.config.publish_every != 0 {
             return;
         }
+        self.stats.pose_ages.push(age_s(estimate.timestamp_ns));
         self.odometry
             .publish(&to_odometry_msg(&estimate))
             .await
@@ -160,8 +174,9 @@ impl DimSlamLio {
     }
 
     fn log_stats(&mut self) {
-        let stats = std::mem::take(&mut self.stats);
+        let mut stats = std::mem::take(&mut self.stats);
         let (scans, imus) = (stats.scans as f64, stats.imus.max(1) as f64);
+        let (scan_ages, pose_ages) = (&mut stats.scan_ages, &mut stats.pose_ages);
         tracing::info!(
             scans = stats.scans,
             scan_ms_mean = 1e3 * stats.scan_s / scans,
@@ -170,6 +185,13 @@ impl DimSlamLio {
             imus = stats.imus,
             imu_ms_mean = 1e3 * stats.imu_s / imus,
             imu_age_ms_mean = 1e3 * stats.imu_age_s / imus,
+            scan_age_ms_p50 = quantile_ms(scan_ages, 0.5),
+            scan_age_ms_p95 = quantile_ms(scan_ages, 0.95),
+            scan_age_ms_max = quantile_ms(scan_ages, 1.0),
+            poses_published = pose_ages.len(),
+            pose_age_ms_p50 = quantile_ms(pose_ages, 0.5),
+            pose_age_ms_p95 = quantile_ms(pose_ages, 0.95),
+            pose_age_ms_max = quantile_ms(pose_ages, 1.0),
             "input stats"
         );
         if let Some(slam) = &self.slam {
