@@ -35,7 +35,7 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, frame_id_prefix
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -378,7 +378,7 @@ def test_namespace_prefixes_names_streams_and_frames() -> None:
     atom_a = next(a for a in blueprint.blueprints if a.module is ModuleA)
     assert atom_a.name == "robot0/modulea"
     assert atom_a.kwargs["instance_name"] == "robot0/modulea"
-    assert atom_a.kwargs["frame_id_prefix"] == "robot0"
+    assert frame_id_prefix(atom_a.name) == "robot0"
     # Every stream is remapped under the prefix.
     assert blueprint.remapping_map[("robot0/modulea", "data1")] == "robot0/data1"
     assert blueprint.remapping_map[("robot0/moduleb", "data3")] == "robot0/data3"
@@ -431,14 +431,15 @@ def test_namespace_nesting_composes() -> None:
 
     atom = blueprint.blueprints[0]
     assert atom.name == "fleet/robot0/modulea"
-    assert atom.kwargs["frame_id_prefix"] == "fleet/robot0"
+    assert frame_id_prefix(atom.name) == "fleet/robot0"
     assert blueprint.remapping_map[("fleet/robot0/modulea", "data1")] == "fleet/robot0/data1"
 
 
 def test_namespace_stacks_user_frame_id_prefix() -> None:
     blueprint = ModuleA.blueprint(frame_id_prefix="custom").namespace("robot0")
 
-    assert blueprint.blueprints[0].kwargs["frame_id_prefix"] == "robot0/custom"
+    atom = blueprint.blueprints[0]
+    assert frame_id_prefix(atom.name, atom.kwargs["frame_id_prefix"]) == "robot0/custom"
 
 
 def test_namespace_allows_duplicate_module_classes() -> None:
@@ -533,14 +534,3 @@ def test_blueprint_roundtrip_keeps_checks_and_pinned_transports() -> None:
         assert [atom.module for atom in restored.blueprints] == [ModuleA, ModuleB]
     finally:
         pinned.stop()
-
-
-class ReturnsEverything(Module):
-    @classmethod
-    def handle_blueprint_namespace(cls, config: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-        return {**config, **super().handle_blueprint_namespace(config, prefix=prefix)}
-
-
-def test_namespace_hook_must_return_only_changes() -> None:
-    with pytest.raises(ValueError, match="return only the fields it changes"):
-        ReturnsEverything.blueprint().namespace("robot0")

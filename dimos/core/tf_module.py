@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field, model_validator
 
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import Module, ModuleConfig, frame_id_prefix
 from dimos.core.stream import IO
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# A frame that belongs to one robot (base_link, lidar); frame_id_prefix (set by a namespace) prefixes it.
+# A frame that belongs to one robot (base_link, lidar); it goes under the module's frame_id_prefix.
 TransformFrameLocal: TypeAlias = str
 # A frame shared by everything in the blueprint (world, map); never prefixed.
 TransformFrameGlobal: TypeAlias = str
@@ -57,16 +57,6 @@ class TfModuleConfig(ModuleConfig):
                 f"tf_edges use undeclared tf roles {unknown} (declared: {sorted(roles)})"
             )
         return self
-
-    @property
-    def tf_frames(self) -> dict[str, str]:
-        """Every role -> frame id, local (under frame_id_prefix) and global together."""
-        return _frame_ids(self.tf_frames_local, self.tf_frames_global, self.frame_id_prefix)
-
-    @property
-    def tf_edge_frames(self) -> set[tuple[str, str]]:
-        frames = self.tf_frames
-        return {(frames[parent], frames[child]) for parent, child in self.tf_edges}
 
 
 class TfFrames:
@@ -97,9 +87,16 @@ class TfModule(Module):
     tf: IO[TFMessage]
 
     @property
+    def tf_frames(self) -> dict[str, str]:
+        """Every role -> frame id, local (under frame_id_prefix) and global together."""
+        return _frame_ids(
+            self.config.tf_frames_local, self.config.tf_frames_global, self.frame_id_prefix
+        )
+
+    @property
     def frame(self) -> TfFrames:
         """Frame ids by role, local and global together: ``self.frame.body``."""
-        return TfFrames(self.config.tf_frames, self.config.instance_name or type(self).__name__)
+        return TfFrames(self.tf_frames, self.config.instance_name or type(self).__name__)
 
     @staticmethod
     def blueprint_checks(atoms: "list[BlueprintAtom]") -> None:
@@ -111,7 +108,7 @@ class TfModule(Module):
             frames = _frame_ids(
                 atom.kwargs["tf_frames_local"],
                 atom.kwargs["tf_frames_global"],
-                atom.kwargs["frame_id_prefix"],
+                frame_id_prefix(atom.name, atom.kwargs["frame_id_prefix"]),
             )
             for parent_role, child_role in atom.kwargs["tf_edges"]:
                 publishers[frames[child_role]][frames[parent_role]].append(atom.name)
@@ -177,14 +174,17 @@ class TfModule(Module):
             )
 
     def _create_tfbuffer(self, port: Any) -> TF:
+        frames = self.tf_frames
         return TF(
             port,
-            edges=None if self.config.skip_tf_checks else self.config.tf_edge_frames,
+            edges=None
+            if self.config.skip_tf_checks
+            else {(frames[parent], frames[child]) for parent, child in self.config.tf_edges},
             module_name=self.config.instance_name or type(self).__name__,
         )
 
 
-def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str | None) -> dict[str, str]:
+def _frame_ids(local: dict[str, str], shared: dict[str, str], prefix: str) -> dict[str, str]:
     if prefix:
         local = {role: f"{prefix}/{frame}" for role, frame in local.items()}
     return {**shared, **local}
