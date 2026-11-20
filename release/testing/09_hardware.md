@@ -134,4 +134,4 @@ Needs an Intel RealSense D4xx on USB 3. The first start builds the capture binar
 uv run dimos run real-sense-camera-vis --enable-pointcloud true
 ```
 
-Expected result: Rerun shows live Color, Depth, ir_left and ir_right panes, and the 3D view shows the colored point cloud in front of the camera.
+Expected result: Rerun shows live Color, Depth, ir_left and ir_right panes, and the 3D view shows the colored point cloud in front of the camera. If no camera is found, the log shows "RealSense start: Config cannot be resolved by any active devices / stream combinations." and the blueprint keeps running with an empty viewer.
