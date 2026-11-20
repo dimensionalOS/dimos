@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One calibration file per arm: fitted gravity and gains.
+"""One calibration file per arm: fitted gravity, gains, friction and checks.
 
 The file lives at ``calibration_path(arm_id)``, i.e.
 ``STATE_DIR/arms/<arm_id>/calibration.json``. ``save_calibration`` replaces
@@ -112,12 +112,18 @@ class ArmConfigPatch(BaseConfig):
             damping; saved, kp must be above 0.
         links: Fitted link masses; replace the stored set as a whole (save only).
         fit: The fit's statistics, stored with the links (save only).
+        friction_nm: Coulomb friction by joint, N m; replaces the stored set
+            (save only).
+        checks: Validation results by name, e.g. "float", "tracking"; merged
+            by name (save only).
         notes: Free text for the operator (save only).
     """
 
     gains: dict[str, JointGains] | None = None
     links: dict[str, LinkGravity] | None = None
     fit: dict[str, Any] | None = None
+    friction_nm: dict[str, NonNegativeFloat] | None = None
+    checks: dict[str, Any] | None = None
     notes: str | None = None
 
 
@@ -185,6 +191,8 @@ class ArmCalibration(BaseConfig):
         created: When the file was written, UTC.
         gravity: Fitted link masses and centres of mass, if identified.
         gains: Position and velocity gains per joint, if tuned.
+        friction_nm: Coulomb friction per joint, N m, if measured.
+        checks: Results of the validation steps by name (float drift, tracking).
         notes: Free text for the operator.
     """
 
@@ -194,6 +202,8 @@ class ArmCalibration(BaseConfig):
     created: datetime
     gravity: GravityCalibration | None = None
     gains: dict[str, JointGains] | None = None
+    friction_nm: dict[str, NonNegativeFloat] | None = None
+    checks: dict[str, Any] | None = None
     notes: str | None = None
 
     @field_validator("created")
@@ -403,25 +413,39 @@ def merge_patch(
     """``stored`` with what ``patch`` gives changed, written at ``created``.
 
     Gains merge by joint. Links replace the stored set as a whole, with the
-    patch's fit, else the stored fit if the links are unchanged, else none.
-    Fit alone replaces the stored fit; notes replace the stored notes.
+    patch's fit, else the stored fit if the links are unchanged, else none;
+    the stored checks ran with the old links, so they stay only when the links
+    are unchanged. Fit alone replaces the stored fit; friction replaces the
+    stored friction; checks merge by name; notes replace the stored notes.
 
     Raises:
         ValueError: A fit without links, stored or given, to go with it.
     """
     gains = stored.gains if patch.gains is None else {**(stored.gains or {}), **patch.gains}
-    gravity = stored.gravity
+    gravity, checks = stored.gravity, stored.checks
     if patch.links is not None:
         same = gravity is not None and gravity.links == patch.links
         fit = patch.fit if patch.fit is not None else (gravity.fit if same and gravity else {})
         gravity = GravityCalibration(links=dict(patch.links), fit=dict(fit))
+        checks = checks if same else None
     elif patch.fit is not None:
         if gravity is None:
             raise ValueError(f"{stored.arm_id}: a fit needs its fitted links; give links with it")
         gravity = GravityCalibration(links=dict(gravity.links), fit=dict(patch.fit))
+    if patch.checks is not None:
+        checks = {**(checks or {}), **patch.checks}
+    friction = stored.friction_nm if patch.friction_nm is None else dict(patch.friction_nm)
     notes = stored.notes if patch.notes is None else patch.notes
     return ArmCalibration(
-        **{**dict(stored), "created": created, "gravity": gravity, "gains": gains, "notes": notes}
+        **{
+            **dict(stored),
+            "created": created,
+            "gravity": gravity,
+            "gains": gains,
+            "friction_nm": friction,
+            "checks": checks,
+            "notes": notes,
+        }
     )
 
 

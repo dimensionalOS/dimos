@@ -357,6 +357,52 @@ def test_a_save_merges_into_the_file_keeps_history_and_applies_it(
     assert len(list((path.parent / "history").iterdir())) == 1
 
 
+def test_a_file_with_friction_and_checks_loads_and_a_save_merges_them(start, calibration_root):
+    path = calibration_root / "rig/left/calibration.json"
+    written = {
+        **json.loads(
+            _calibration(gains={"joint1": (60.0, 3.0)}, masses={"link2": 2.0}).model_dump_json()
+        ),
+        "friction_nm": {"joint1": 0.156, "joint2": 0.142},
+        "checks": {
+            "float": {
+                "created": "2026-11-20T04:48:00.523803+00:00",
+                "limit_mm": 2.0,
+                "window_s": 10.0,
+                "joints": {
+                    "joint1": {
+                        "pose": "pose_01",
+                        "gravity_nm": -12.686,
+                        "samples": 501,
+                        "complete": True,
+                        "fingertip_drift_mm": 0.052,
+                    }
+                },
+            },
+            "tracking": {
+                "pose_names": ["pose_05"],
+                "rest_rms_deg": {"joint1": 0.21, "joint2": 0.41},
+                "baseline": {"rest_rms_deg": {"joint1": 0.18, "joint2": 0.42}},
+            },
+        },
+    }
+    _write_text(path, json.dumps(written))
+    module = start(config_writes=True)
+    assert module.get_config()["rig/left"]["file"]["path"] == str(path)
+    tracking = {"pose_names": ["pose_02"], "rest_rms_deg": {"joint1": 0.1}}
+    module.set_config(
+        {"rig/left": {"friction_nm": {"joint2": 0.2}, "checks": {"tracking": tracking}}},
+        save=True,
+    )
+    stored = load_calibration(path)
+    assert stored.friction_nm == {"joint2": 0.2}
+    assert stored.checks == {"float": written["checks"]["float"], "tracking": tracking}
+    module.set_config({"rig/left": {"links": HEAVY_LINK2}}, save=True)
+    assert load_calibration(path).checks is None
+    with pytest.raises(ValueError, match="checks: saved only"):
+        module.set_config({"rig/left": {"checks": {"float": {}}}})
+
+
 @pytest.mark.parametrize(
     "stored,reason",
     [

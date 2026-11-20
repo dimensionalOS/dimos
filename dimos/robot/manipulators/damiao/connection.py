@@ -339,10 +339,11 @@ class DamiaoConnection(ConnectionModule):
         ``patch`` maps arm ids to ``ArmConfigPatch`` dicts. Live (``save``
         False) it takes gains only: kp 0 floats the joint with kd damping
         (needs gravity compensation), kp above 0 holds it with those gains,
-        until the next halt. Saved, its gains (kp above 0), links, fit and
-        notes are merged into each arm's calibration file, which is then
-        applied, dropping every live change. Any bad entry raises
-        ``ValueError`` naming every bad entry, and nothing changes.
+        until the next halt. Saved, its gains (kp above 0), links, fit,
+        friction, checks and notes are merged into each arm's calibration
+        file, which is then applied, dropping every live change. Any bad
+        entry raises ``ValueError`` naming every bad entry, and nothing
+        changes.
         """
         if not self.config.config_writes:
             raise RuntimeError(
