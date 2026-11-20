@@ -8,6 +8,8 @@
 # stopping those pipelines, so this wins even when the vendor launched them at
 # boot. The Desktop gateway passes the H.264 through to the browser (no decode/
 # re-encode), which frees the GOS big cores the old H.265 transcode used.
+# It reaches NOS over the gigabit lidar network (AOS's robot-LAN port is a ~5 MB/s USB adapter): the router
+# on NOS's 7447 (the drdds bridge in vendor mode), else NOS's dimos Host on 7448.
 [Unit]
 Description=DimOS M20 direct camera relay (V4L2 MJPEG -> H.264 -> zenoh)
 After=network-online.target
