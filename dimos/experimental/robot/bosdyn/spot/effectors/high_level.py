@@ -43,6 +43,8 @@ from dataclasses import field
 import time
 from typing import Any
 
+from pydantic import ConfigDict, Field, field_validator
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -89,14 +91,15 @@ logger = setup_logger()
 class SpotHighLevelConfig(StaticTfPublisherConfig):
     """Cmd vel, sensors, credentials, and safety gating a Spot robot."""
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     # When left blank, main() probes `candidate_ips` and uses the first that answers on the
     # API port — so plugging in over Ethernet or joining Spot's WiFi both work.
     ip: str = ""
     candidate_ips: list[str] = field(default_factory=lambda: list(IP_LABELS))
 
-    # Auth — required. Startup fails fast if either is missing.
-    username: str | None = None
-    password: str | None = None
+    username: str = Field(description="Username for the Spot robot.")
+    password: str = Field(description="Password for the Spot robot.", repr=False)
 
     # Safety / startup gating.
     enable_estop: bool = True
@@ -124,6 +127,13 @@ class SpotHighLevelConfig(StaticTfPublisherConfig):
 
     image_rate_hz: float = CAMERA_MAX_HZ
     odom_rate_hz: float = 60.0
+
+    @field_validator("username", "password")
+    @classmethod
+    def _credential_has_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Spot credentials cannot be blank")
+        return value
 
 
 class SpotHighLevel(StaticTfPublisher):
@@ -199,13 +209,6 @@ class SpotHighLevel(StaticTfPublisher):
         ]
 
     async def main(self) -> AsyncIterator[None]:
-        username, password = self.config.username, self.config.password
-        if not username or not password:
-            raise ValueError(
-                "Spot credentials missing — pass username/password in config "
-                "(-o <module>.username=... -o <module>.password=...)"
-            )
-
         # Any setup failure past this point must undo the lease/E-stop keepalives and
         # motor power it already acquired, else Spot is left powered with no manager.
         try:
@@ -233,7 +236,9 @@ class SpotHighLevel(StaticTfPublisher):
             logger.info(f"Connecting to Spot at {ip}")
             sdk = await asyncio.to_thread(create_standard_sdk, "dimos-spot")
             self._robot = await asyncio.to_thread(sdk.create_robot, ip)
-            await asyncio.to_thread(self._robot.authenticate, username, password)
+            await asyncio.to_thread(
+                self._robot.authenticate, self.config.username, self.config.password
+            )
             await self.sync_clocks()
 
             if self.config.enable_estop:
