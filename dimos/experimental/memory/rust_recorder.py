@@ -46,20 +46,6 @@ _DEFAULT_TYPE_PERIODS = {payload.__name__: 0.0 for payload in (TFMessage, Odomet
 _Period: TypeAlias = Annotated[float, Field(ge=0)]
 
 
-def parse_periods(text: str) -> dict[str, float]:
-    """Parse comma-separated ``glob=seconds`` pairs, keeping their order."""
-    periods: dict[str, float] = {}
-    for entry in filter(None, (part.strip() for part in text.split(","))):
-        pattern, separator, seconds = entry.partition("=")
-        if not separator or not pattern.strip():
-            raise ValueError(f"period {entry!r} is not glob=seconds")
-        try:
-            periods[pattern.strip()] = float(seconds)
-        except ValueError:
-            raise ValueError(f"period {entry!r} is not glob=seconds") from None
-    return periods
-
-
 class RustStreamSpec(BaseModel):
     """Fully resolved stream settings sent to the native process."""
 
@@ -149,10 +135,9 @@ class RustEventConfig(BaseModel):
     ``pre_s`` before it to ``post_s`` after it. Outside clips, each stream keeps at
     most one message per its period. A stream's period comes from the first matching
     glob in ``stream_periods``, then in ``type_periods``, then the type defaults (full
-    rate for transforms and odometry), then ``default_period``.
-    Messages wait in window segments until
-    no trigger can still claim them, so the artifact runs about ``pre_s + segment_s``
-    behind live.
+    rate for transforms and odometry), then ``default_period``. Messages wait in window
+    segments until no trigger can still claim them, so the artifact runs about
+    ``pre_s + segment_s`` behind live.
     """
 
     kind: Literal["events"] = "events"
@@ -169,7 +154,7 @@ class RustEventConfig(BaseModel):
         gt=0,
         description="Longest a clip may grow when overlapping triggers extend it.",
     )
-    max_window_mb: float = Field(
+    max_window_mib: float = Field(
         default=2048.0,
         gt=0,
         description="Most window data waiting to be stored before the oldest segment is stored thinned.",

@@ -19,7 +19,7 @@ from typing import Any, TypeVar
 
 import pytest
 
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, parse_periods
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
@@ -29,7 +29,6 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecorderConfig,
     RustSqliteStoreConfig,
     RustStreamSpec,
-    parse_periods,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
@@ -169,7 +168,7 @@ def test_stream_periods_override_type_periods_over_the_default_period(tmp_path: 
         "segment_s",
         "sync_s",
         "max_clip_s",
-        "max_window_mb",
+        "max_window_mib",
         "trigger",
         "periods",
     }

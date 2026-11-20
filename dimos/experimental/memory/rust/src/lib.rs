@@ -406,14 +406,15 @@ impl Module for MemoryRecorder {
 
 /// Opens the recording, behind the event window in event mode.
 fn open_store(config: &RecorderConfig) -> Result<Box<dyn RecordingStore>> {
-    let store = store::open(&config.store, &config.streams, config.encoding_threads)?;
     Ok(match &config.mode {
-        RecordingMode::Continuous => store,
+        RecordingMode::Continuous => {
+            store::open(&config.store, &config.streams, config.encoding_threads)?
+        }
         RecordingMode::Events(events) => Box::new(EventWriter::start(
             events,
             &config.store,
             &config.streams,
-            store,
+            config.encoding_threads,
         )?),
     })
 }

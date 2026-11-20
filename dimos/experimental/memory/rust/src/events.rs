@@ -28,12 +28,14 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use validator::{Validate, ValidationError};
 
-use crate::store::{Observation, RecordingStore, RecordingStoreConfig};
+use crate::store::{self, Observation, RecordingStore, RecordingStoreConfig};
 use crate::window::{
     remove_window, sync_dir, ClosedSegment, Done, SegmentReader, SegmentWriter, Syncer,
     WindowManifest,
 };
 use crate::{StreamConfig, WRITE_BATCH_SIZE};
+
+const BYTES_PER_MIB: f64 = (1 << 20) as f64;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Validate)]
 #[serde(deny_unknown_fields)]
@@ -51,7 +53,7 @@ pub struct EventConfig {
     #[validate(range(exclusive_min = 0.0))]
     pub max_clip_s: f64,
     #[validate(range(exclusive_min = 0.0))]
-    pub max_window_mb: f64,
+    pub max_window_mib: f64,
     pub trigger: String,
     #[validate(custom(function = "nonnegative_periods"))]
     pub periods: HashMap<String, f64>,
@@ -118,12 +120,13 @@ pub(crate) struct EventWriter {
 }
 
 impl EventWriter {
-    /// Creates the window directory and starts the sync and store threads.
+    /// Creates the window directory, then opens the store and starts the sync and store threads.
+    /// An existing window fails the start before the store is opened, so its recording is untouched.
     pub fn start(
         config: &EventConfig,
         store_config: &RecordingStoreConfig,
         streams: &[StreamConfig],
-        store: Box<dyn RecordingStore>,
+        compression_threads: usize,
     ) -> Result<Self> {
         let dir = config.window_dir.clone();
         let parent = match dir.parent() {
@@ -140,6 +143,10 @@ impl EventWriter {
             streams: streams.to_vec(),
         }
         .write(&dir)?;
+        let store = store::open(store_config, streams, compression_threads).or_else(|error| {
+            remove_window(&dir)?;
+            Err(error)
+        })?;
         let segment = SegmentWriter::create(&dir, 0)?;
         let syncer = Syncer::start(
             segment.sync_handle()?,
@@ -158,7 +165,7 @@ impl EventWriter {
             stored: vec![0; streams.len()],
             clips: Clips::new(config.pre_s, config.post_s, config.max_clip_s),
             pre_s: config.pre_s,
-            max_window_bytes: (config.max_window_mb * 1e6) as u64,
+            max_window_bytes: (config.max_window_mib * BYTES_PER_MIB) as u64,
             dir: dir.clone(),
         };
         let store_thread = thread::Builder::new()
@@ -308,8 +315,8 @@ impl Clips {
         }
     }
 
-    /// Whether `time` falls in a clip. Times must not decrease between calls.
-    fn contains(&mut self, time: f64) -> bool {
+    /// Whether `time` falls in a clip, dropping clips that end before it. Times must not decrease.
+    fn covers(&mut self, time: f64) -> bool {
         while self.ranges.front().is_some_and(|range| range.1 < time) {
             self.ranges.pop_front();
         }
@@ -363,7 +370,7 @@ impl StoreWriter {
                 if over_cap {
                     warn!(
                         segment = segment.index,
-                        window_mb = (window_bytes + segment.bytes) as f64 / 1e6,
+                        window_mib = (window_bytes + segment.bytes) as f64 / BYTES_PER_MIB,
                         "event window over its cap; storing the oldest segment thinned"
                     );
                 }
@@ -378,8 +385,8 @@ impl StoreWriter {
     }
 
     /// Writes the segment's kept observations, makes them durable, then deletes the segment.
-    /// Without `clips`, the whole segment is thinned.
-    fn store_segment(&mut self, segment: &ClosedSegment, clips: bool) -> Result<()> {
+    /// Without `keep_clips`, the whole segment is thinned.
+    fn store_segment(&mut self, segment: &ClosedSegment, keep_clips: bool) -> Result<()> {
         let mut batch = Vec::with_capacity(WRITE_BATCH_SIZE);
         let mut records = 0;
         for record in SegmentReader::open(&segment.path)? {
@@ -387,7 +394,7 @@ impl StoreWriter {
             records += 1;
             let stream = usize::from(record.stream);
             let time = record.monotonic_ts;
-            let in_clip = clips && self.clips.contains(time);
+            let in_clip = keep_clips && self.clips.covers(time);
             if !in_clip && time - self.last_kept[stream] < self.periods[stream] {
                 continue;
             }
@@ -447,9 +454,27 @@ mod tests {
             .count()
     }
 
+    fn event_config(window_dir: PathBuf, max_window_mib: f64) -> EventConfig {
+        EventConfig {
+            window_dir,
+            pre_s: 60.0,
+            post_s: 60.0,
+            segment_s: 10.0,
+            sync_s: 1.0,
+            max_clip_s: 600.0,
+            max_window_mib,
+            trigger: "clip_that".to_string(),
+            periods: HashMap::from([
+                ("cloud".to_string(), 1.0),
+                ("odom".to_string(), 0.0),
+                ("clip_that".to_string(), 0.0),
+            ]),
+        }
+    }
+
     /// Records 400 s of `cloud` and `odom` at 8 Hz with one trigger at 200 s, then returns the
     /// stored cloud times and the odom and trigger counts. Waits for `waiting` segments first.
-    fn record_events(max_window_mb: f64, waiting: usize) -> (Vec<f64>, i64, i64) {
+    fn record_events(max_window_mib: f64, waiting: usize) -> (Vec<f64>, i64, i64) {
         let dir = tempfile::tempdir().unwrap();
         let window = dir.path().join("window");
         let database = dir.path().join("memory.db");
@@ -460,21 +485,7 @@ mod tests {
             },
             encoding_threads: 1,
             streams: streams.clone(),
-            mode: RecordingMode::Events(EventConfig {
-                window_dir: window.clone(),
-                pre_s: 60.0,
-                post_s: 60.0,
-                segment_s: 10.0,
-                sync_s: 1.0,
-                max_clip_s: 600.0,
-                max_window_mb,
-                trigger: "clip_that".to_string(),
-                periods: HashMap::from([
-                    ("cloud".to_string(), 1.0),
-                    ("odom".to_string(), 0.0),
-                    ("clip_that".to_string(), 0.0),
-                ]),
-            }),
+            mode: RecordingMode::Events(event_config(window.clone(), max_window_mib)),
         };
         let (sender, receiver) = bounded(256);
         let (permit_sender, permit_receiver) = bounded(256);
@@ -563,5 +574,22 @@ mod tests {
         assert_eq!(cloud, expected);
         assert_eq!(odom, 3200);
         assert_eq!(clip_that, 1);
+    }
+
+    #[test]
+    fn an_existing_window_fails_the_start_before_touching_its_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let window = dir.path().join("window");
+        let recording = dir.path().join("memory.mcap");
+        fs::write(&recording, b"crashed recording").unwrap();
+        fs::create_dir(&window).unwrap();
+        let store = RecordingStoreConfig::Mcap {
+            path: recording.to_string_lossy().into_owned(),
+            attachments: Vec::new(),
+        };
+        let streams = [stream("cloud"), stream("odom"), stream("clip_that")];
+
+        assert!(EventWriter::start(&event_config(window, 1000.0), &store, &streams, 1).is_err());
+        assert_eq!(fs::read(&recording).unwrap(), b"crashed recording");
     }
 }
