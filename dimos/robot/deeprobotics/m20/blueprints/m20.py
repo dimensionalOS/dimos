@@ -45,14 +45,15 @@ m20 = (
             map_frame="premap",
             # matches against the office premap top out near 0.7 fitness, under the nav preset's 0.8
             relocalize=MID360_NAV.model_copy(update={"fitness_threshold": 0.65}),
-            live_cloud="local_map",
+            # body scans placed in map (odometry), so a world -> map jump leaves the kept live map as it was
+            live_cloud="lidar",
             relocalize_once=False,
             new_map=True,
             # live voxels the first match waits for, under the 20k default
             min_local_points=8_000,
             # one kept point per ray tracer voxel, so a standing robot's map is not thinned below min_local_points
             live_voxel_m=VOXEL_SIZE_M,
-        ),
+        ).remappings([(PremapModule, "lidar", "slam_body_points")]),
     )
     .global_config(
         n_workers=5,

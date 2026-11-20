@@ -520,3 +520,22 @@ def test_refused_refinements_fall_back_to_a_global_search(module):
     # two refused refinements, then a global search that is accepted, then refining again
     assert seen == [False, False, True, False]
     np.testing.assert_allclose(m._world_to_map().translation.x, -3.0)
+
+
+def test_scans_are_kept_in_map_whatever_world_to_map_does(module):
+    """A body scan is placed by map -> base_link at its stamp, so a world -> map jump moves nothing kept."""
+    m = module(map_frame="premap", relocalize_once=False, live_cloud="lidar")
+    m.tf = SimpleNamespace(publish=lambda _: None)
+    odom = Transform(translation=Vector3(1.0, 0.0, 0.0), frame_id="map", child_frame_id="base_link")
+    m._tf = SimpleNamespace(
+        get=lambda parent, child, *_: odom if (parent, child) == ("map", "base_link") else None,
+        dispose=lambda: None,
+    )
+    scan = PointCloud2.from_numpy(np.asarray([[2, 0, 0]], dtype=np.float32), frame_id="base_link")
+    m._on_scan(scan)
+    m.submit(_fix(2.0))
+    m.submit(_fix(5.0, 90.0))  # world -> map jumps
+    m._on_scan(scan)
+    m._keep_scans()
+    assert held(m.live) == [(3, 0, 0)]
+    assert m._center == (1.0, 0.0)

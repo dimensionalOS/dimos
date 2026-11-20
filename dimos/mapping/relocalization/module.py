@@ -47,6 +47,7 @@ from dimos.mapping.relocalization.utils import (
     fix_stream,
     load_locations,
     load_premap,
+    moved,
     resolve_map,
     window,
     yaw_deg,
@@ -98,8 +99,10 @@ class Config(ModuleConfig):
     min_local_points: int = 20_000
     # Rig preset to align with, see lidar_relocalizer.PRESETS
     relocalize: RelocalizeConfig = MID360
-    # local_map with relocalize_once off: fold local_map into the kept live map at most this often (s)
+    # relocalize_once off: fold local_map (at most) or the scans since (batched) into the kept live map this often (s)
     accumulate_interval: float = 1.0
+    # ... lidar: a scan's tf must be stamped within this of the scan (s)
+    scan_tf_tolerance_s: float = 0.1
     # ... the kept live map's voxel edge (m)
     live_voxel_m: float = 0.1
     # ... match kept live points within this xy distance (m) of the latest local map; 0 matches them all
@@ -150,6 +153,8 @@ class PremapModule(Module):
         self._first_sparse_cloud: float | None = None
         self._last_skip_log: float | None = None
         self.live = LiveMap(self.config.live_voxel_m)
+        # Scans placed since the last batch was kept
+        self._scans: list[np.ndarray] = []
         self._center: tuple[float, float] | None = None
         self._refusals = 0
 
@@ -190,20 +195,24 @@ class PremapModule(Module):
 
     def _clouds(self) -> Observable[PointCloud2]:
         """The live cloud to match, at most one every ``reloc_interval``."""
-        if self.config.live_cloud == "lidar":
-            return window(
-                self.lidar.observable(),  # type: ignore[no-untyped-call]
-                self.config.relocalize,
-                self.config.reloc_interval,
-            )
+        scans = self.lidar.observable()  # type: ignore[no-untyped-call]
         local_maps = self.local_map.observable()  # type: ignore[no-untyped-call]
         if self.config.relocalize_once:
+            if self.config.live_cloud == "lidar":
+                return window(scans, self.config.relocalize, self.config.reloc_interval)
             return local_maps.pipe(ops.throttle_first(self.config.reloc_interval))
-        self.register_disposable(
-            local_maps.pipe(ops.throttle_first(self.config.accumulate_interval)).subscribe(
-                self._on_local_map
+        if self.config.live_cloud == "lidar":
+            # Every scan is placed by the tf at its stamp, then kept in one batch per accumulate_interval
+            self.register_disposable(scans.subscribe(self._on_scan))
+            self.register_disposable(
+                rx.interval(self.config.accumulate_interval).subscribe(lambda _: self._keep_scans())
             )
-        )
+        else:
+            self.register_disposable(
+                local_maps.pipe(ops.throttle_first(self.config.accumulate_interval)).subscribe(
+                    self._on_local_map
+                )
+            )
         return rx.interval(self.config.reloc_interval).pipe(
             ops.map(
                 lambda _: self.live.cloud(
@@ -211,6 +220,26 @@ class PremapModule(Module):
                 )
             )
         )
+
+    def _on_scan(self, scan: PointCloud2) -> None:
+        to_live = self.tfbuffer.get(
+            self._live_frame, scan.frame_id, scan.ts, self.config.scan_tf_tolerance_s
+        )
+        if to_live is None:
+            logger.warning(
+                f"scan skipped: no transform from {scan.frame_id!r} to {self._live_frame!r} at its stamp"
+            )
+            return
+        points = moved(scan.points_f32().reshape(-1, 3), to_live)
+        with self._lock:
+            self._scans.append(points)
+        self._center = (float(to_live.translation.x), float(to_live.translation.y))
+
+    def _keep_scans(self) -> None:
+        with self._lock:
+            scans, self._scans = self._scans, []
+        if scans:
+            self.live.add(np.concatenate(scans))
 
     def _on_local_map(self, cloud: PointCloud2) -> None:
         to_live = self.frame_to(self._live_frame, cloud.frame_id)

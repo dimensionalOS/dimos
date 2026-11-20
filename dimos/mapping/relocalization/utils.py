@@ -67,8 +67,14 @@ def _pack(points: np.ndarray, voxel: float) -> np.ndarray:
     return packed
 
 
+def moved(points: np.ndarray, tf: Transform) -> np.ndarray:
+    """*points* in tf's child frame, expressed in its parent frame."""
+    matrix = tf.to_matrix()
+    return (points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
+
+
 class LiveMap:
-    """The live (non-premap) part of the ray tracer's local maps, kept one point per voxel."""
+    """Live points (lidar scans, or the non-premap part of the ray tracer's local maps), kept one per voxel."""
 
     def __init__(self, voxel: float) -> None:
         self.voxel = voxel
@@ -87,9 +93,10 @@ class LiveMap:
                 "local_map has no flags, so premap voxels cannot be told apart: run the ray tracer with a premap"
             )
         points = local_map.points_f32().reshape(-1, 3)[(flags & _PREMAP_BIT) == 0]
-        if to_frame is not None:
-            matrix = to_frame.to_matrix()
-            points = (points @ matrix[:3, :3].T + matrix[:3, 3]).astype(np.float32)
+        self.add(points if to_frame is None else moved(points, to_frame))
+
+    def add(self, points: np.ndarray) -> None:
+        """Keep *points* (N x 3, already in the kept frame)."""
         keys = _pack(points, self.voxel)
         with self._lock:
             all_keys = np.concatenate([keys, self._keys])
