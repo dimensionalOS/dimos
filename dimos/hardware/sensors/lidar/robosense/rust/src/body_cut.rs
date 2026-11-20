@@ -170,7 +170,10 @@ impl BodyCut {
                 &self.config.root_from_lidar,
             ),
             JointSource::JointState => {
-                let history = self.history.lock().expect("joint history lock poisoned");
+                let history = self
+                    .history
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match history.nearest(scan.timestamp, self.config.state_tolerance_s) {
                     Some(positions) => self
                         .body

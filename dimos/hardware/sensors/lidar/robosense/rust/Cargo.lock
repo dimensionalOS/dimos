@@ -2373,10 +2373,11 @@ dependencies = [
 
 [[package]]
 name = "robosense-airy"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8800a022d3fc2854b4aa4e2ab762483bd9e5a33bfefb9be99c509ce72dff8d2e"
+checksum = "2d50195fe3bffae6808897335941172457b7bfd85938a2f7f2b59f9173b8a6ad"
 dependencies = [
+ "libc",
  "socket2 0.6.5",
 ]
 
@@ -3411,9 +3412,9 @@ dependencies = [
 
 [[package]]
 name = "urdf-body-filter"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd6fbb8a5e9bc5507abbbd3499d3bb1551a733137c31c1e41221db9e69df2342"
+checksum = "32b468cad9b9348a9b59348393d1245cfe082b430c20c1907d739b59b91be0b2"
 dependencies = [
  "roxmltree",
 ]

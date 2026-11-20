@@ -123,20 +123,26 @@ enum PointFormat {
 }
 
 impl Config {
-    fn sensor_config(&self) -> SensorConfig {
-        SensorConfig {
+    fn sensor_config(&self) -> Result<SensorConfig, String> {
+        let address = |name: &str, value: &str| {
+            value
+                .parse::<Ipv4Addr>()
+                .map_err(|err| format!("invalid {name} {value:?}: {err}"))
+        };
+        Ok(SensorConfig {
             group: self
                 .group
                 .0
                 .as_deref()
-                .map(|g| g.parse().expect("invalid group")),
+                .map(|g| address("group", g))
+                .transpose()?,
             interface: self
                 .host_ip
                 .0
                 .as_deref()
-                .map_or(Ipv4Addr::UNSPECIFIED, |ip| {
-                    ip.parse().expect("invalid host_ip")
-                }),
+                .map(|ip| address("host_ip", ip))
+                .transpose()?
+                .unwrap_or(Ipv4Addr::UNSPECIFIED),
             msop_port: self.msop_port,
             difop_port: self.difop_port,
             imu_port: self.enable_imu.then_some(self.imu_port),
@@ -167,7 +173,7 @@ impl Config {
             imu_queue: self.imu_queue,
             imu_in_lidar_frame: self.imu_in_lidar_frame,
             recv_buffer_bytes: self.recv_buffer_bytes.0,
-        }
+        })
     }
 }
 
@@ -182,12 +188,8 @@ impl Config {
             .0
             .clone()
             .ok_or("body_filter needs body_filter_urdf")?;
-        let mount_parent = self
-            .mount_parent_frame_id
-            .0
-            .clone()
-            .ok_or("body_filter needs mount_parent_frame_id")?;
-        let mount = mount_transform(self, 0.0).expect("mount parent checked above");
+        let mount = mount_transform(self, 0.0).ok_or("body_filter needs mount_parent_frame_id")?;
+        let mount_parent = mount.parent.clone();
         let (t, q) = (mount.translation(), mount.rotation());
         Ok(Some(CutConfig {
             urdf,
@@ -266,7 +268,7 @@ impl Airy {
         let added = self
             .joint_history
             .lock()
-            .expect("joint history lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .add(state, self.config.body_filter_state_history_s);
         if added.is_none() {
             dimos_module::warn_throttled!(std::time::Duration::from_secs(1), "joint state with mismatched names/positions, repeated names or a non-finite value; ignored");
@@ -277,18 +279,26 @@ impl Airy {
         let mut cutter = match self.config.cut_config() {
             Ok(None) => None,
             Ok(Some(cut)) => {
-                Some(BodyCut::new(cut).unwrap_or_else(|err| panic!("body filter: {err}")))
+                Some(BodyCut::new(cut).unwrap_or_else(|err| fatal(&format!("body filter: {err}"))))
             }
-            Err(err) => panic!("body filter: {err}"),
+            Err(err) => fatal(&format!("body filter: {err}")),
         };
         if let Some(cut) = &mut cutter {
             cut.history = self.joint_history.clone();
             tracing::info!(shapes = cut.body().shape_count(), padding_m = cut.body().padding_m(),
                 source = ?self.config.body_filter_joint_source, "body filter on");
         }
-        let mut sensor = Sensor::open(self.config.sensor_config())
-            .unwrap_or_else(|err| panic!("failed to open the Airy's sockets: {err}"));
-        self.stopper = Some(sensor.stop_handle().expect("clone sockets"));
+        let sensor_config = self
+            .config
+            .sensor_config()
+            .unwrap_or_else(|err| fatal(&err));
+        let mut sensor = Sensor::open(sensor_config)
+            .unwrap_or_else(|err| fatal(&format!("failed to open the Airy's sockets: {err}")));
+        self.stopper = Some(
+            sensor
+                .stop_handle()
+                .unwrap_or_else(|err| fatal(&format!("no stop handle for the Airy: {err}"))),
+        );
         tracing::info!(group = ?self.config.group.0, host_ip = ?self.config.host_ip.0, lidar_ip = ?self.config.lidar_ip.0, msop = self.config.msop_port,
             frame_id = %self.config.frame_id, "airy listening");
         let handle = Handle::current();
@@ -363,6 +373,12 @@ impl Airy {
         })
         .await;
     }
+}
+
+/// A config the module cannot run with: logged, and the process exits non-zero as the module host does for its own errors.
+fn fatal(message: &str) -> ! {
+    tracing::error!("{message}");
+    std::process::exit(1)
 }
 
 /// mount_parent_frame_id -> frame_id at `seconds`, or None without a mount parent.
@@ -598,7 +614,7 @@ mod tests {
             "body_filter_state_history_s": 5.0, "body_filter_stats_every": 0
         });
         let config: Config = serde_json::from_value(json.clone()).unwrap();
-        let sensor = config.sensor_config();
+        let sensor = config.sensor_config().unwrap();
         assert_eq!(sensor.group, Some("224.10.10.201".parse().unwrap()));
         assert_eq!(sensor.interface, Ipv4Addr::UNSPECIFIED);
         assert_eq!(sensor.imu_port, Some(6681));
@@ -607,9 +623,14 @@ mod tests {
         slices["split_blocks"] = serde_json::json!(179);
         let slices: Config = serde_json::from_value(slices).unwrap();
         assert_eq!(
-            slices.sensor_config().decoder.split,
+            slices.sensor_config().unwrap().decoder.split,
             SplitMode::CustomBlocks(179)
         );
+        let mut bad_group = json.clone();
+        bad_group["group"] = serde_json::json!("224.10.10");
+        let bad_group: Config = serde_json::from_value(bad_group).unwrap();
+        // an unparsable address used to panic inside setup; now it is an error naming the field
+        assert!(bad_group.sensor_config().unwrap_err().contains("group"));
         let mut missing = json;
         missing.as_object_mut().unwrap().remove("host_ip");
         assert!(serde_json::from_value::<Config>(missing).is_err());
@@ -702,9 +723,9 @@ mod tests {
         let sign = q.w.signum();
         let got = [q.i * sign, q.j * sign, q.k * sign, q.w * sign];
         let want = [
-            0.7071067811865475,
+            std::f64::consts::FRAC_1_SQRT_2,
             -4.329780281177466e-17,
-            0.7071067811865476,
+            std::f64::consts::FRAC_1_SQRT_2,
             4.329780281177467e-17,
         ];
         for (g, w) in got.iter().zip(want) {
