@@ -23,8 +23,10 @@ import pytest
 
 from dimos.memory.blobstore.file import FileBlobStore
 from dimos.memory.blobstore.memory import MemoryBlobStore
+from dimos.memory.blobstore.sqlite import SqliteBlobStore
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.store.memory import MemoryStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import _UNLOADED
 from dimos.memory.vectorstore.memory import MemoryVectorStore
 from dimos.models.embedding.base import Embedding
@@ -52,6 +54,18 @@ def bs(tmp_path: Path) -> Iterator[FileBlobStore]:
 def store(bs: FileBlobStore) -> Iterator[MemoryStore]:
     with MemoryStore(blob_store=bs) as s:
         yield s
+
+
+def test_external_sqlite_blobs_replay_after_reopen(tmp_path: Path) -> None:
+    metadata = tmp_path / "recording.db"
+    payloads = tmp_path / "payloads.db"
+    with SqliteStore(path=metadata) as store:
+        stream = store.stream("payload", str, blob_store=SqliteBlobStore(path=str(payloads)))
+        stream.append("first", ts=1.0)
+        stream.append("second", ts=2.0)
+
+    with SqliteStore(path=metadata, must_exist=True) as store:
+        assert list(store.replay().streams.payload.iterate()) == ["first", "second"]
 
 
 class TestBlobStoreIntegration:

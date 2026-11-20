@@ -37,6 +37,7 @@ from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import resolve_named_path
+from dimos.utils.executable import find_executable
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -84,7 +85,7 @@ def _init_recording(name: str, out: Path | None) -> None:
     if out is not None:
         rr.save(str(out))
     else:
-        rr.spawn()
+        rr.spawn(executable_path=find_executable("rerun"))
     rr.send_blueprint(
         rrb.Blueprint(
             rrb.Horizontal(

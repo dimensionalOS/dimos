@@ -13,29 +13,39 @@
 # limitations under the License.
 
 import asyncio
+from io import StringIO
+import json
 from pathlib import Path
 import sys
-from typing import Literal
+from typing import Any, Literal
 
+from pydantic import BaseModel, Field
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.agents.annotation import skill
+from dimos.core import global_config as global_config_module
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
+from dimos.robot import get_all_blueprints
+from experimental.gateway import introspect
 from experimental.gateway.introspect import (
     Cache,
     IntrospectError,
     blueprint_modules,
     field_args,
+    is_secret_name,
     module_args,
     rpcs,
     run_child,
     spec_topic,
+    targets,
 )
 
 
@@ -58,6 +68,7 @@ class RightCamera(Module):
 def test_remapped_streams_show_their_wired_topic() -> None:
     blueprint = (
         autoconnect(LeftCamera.blueprint(), RightCamera.blueprint())
+        .solidify()
         .remappings(
             [
                 (LeftCamera, "jpeg_out", "head_left_color"),
@@ -205,3 +216,100 @@ def test_config_fields_are_read_without_launches_and_its_newer_dimos_imports(
 
 def test_a_module_whose_blueprint_needs_arguments_still_lists_its_config() -> None:
     assert "rate_hz" in module_args(NeedsArgs)
+
+
+class AuthOptions(BaseModel):
+    api_key: str = ""
+    region: str = "west"
+
+
+class RecursiveOptions(BaseModel):
+    # the whole annotation is quoted: Python 3.10 leaves a string inside list[...] unresolved
+    children: "list[RecursiveOptions]" = Field(default_factory=list)
+    region: str = "west"
+
+
+class CatalogConfig(ModuleConfig):
+    auth: AuthOptions = Field(default_factory=AuthOptions)
+    profiles: list[AuthOptions] = Field(default_factory=list)
+    credentials: dict[str, Any] = Field(default_factory=dict)
+    defaults: list[dict[str, str]] = Field(default_factory=lambda: [{"token": "example"}])
+    tree: RecursiveOptions = Field(default_factory=RecursiveOptions)
+
+
+class CatalogModule(Module):
+    config: CatalogConfig
+
+
+def test_catalog_marks_nested_secret_types_and_values() -> None:
+    args = field_args(
+        CatalogConfig.model_fields,
+        set(),
+        {"credentials": {"ServiceA": {"api-key": "example", "region": "west"}}},
+    )
+
+    assert {
+        name: args[name]["secret"]
+        for name in ("auth", "profiles", "credentials", "defaults", "tree")
+    } == {
+        "auth": True,
+        "profiles": True,
+        "credentials": True,
+        "defaults": True,
+        "tree": False,
+    }
+
+
+@pytest.mark.parametrize("path", ["auth.api_key", "api-key", "auth_token.value"])
+def test_secret_names_include_nested_parents_and_hyphenated_keys(path: str) -> None:
+    assert is_secret_name(path)
+
+
+def test_parser_targets_distinguish_nested_models_from_atomic_collections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blueprint = CatalogModule.blueprint().namespace("robot0")
+    monkeypatch.setattr(get_all_blueprints, "get_by_name", lambda name: blueprint)
+
+    paths = targets("catalog")
+
+    assert set(paths["robot0/catalogmodule"]) - set(ModuleConfig.model_fields) == {
+        "auth.api_key",
+        "auth.region",
+        "profiles",
+        "credentials",
+        "defaults",
+        "tree.children",
+        "tree.region",
+    }
+    assert "robot_ip" in paths["g"]
+
+
+def test_targets_apply_launch_globals_before_selecting_blueprint(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    monkeypatch.setenv("SIMULATION", "")
+    monkeypatch.setenv("REPLAY", "true")
+    monkeypatch.setenv("ROBOT_IPS", "192.0.2.1")
+    settings = GlobalConfig(_env_file=None)
+    monkeypatch.setattr(global_config_module, "global_config", settings)
+    blueprints = {"": Dog.blueprint(), "mujoco": CatalogModule.blueprint()}
+
+    def configured_blueprint(name: str):
+        return blueprints[settings.simulation]
+
+    monkeypatch.setattr(get_all_blueprints, "get_by_name", configured_blueprint)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        StringIO(json.dumps({"simulation": "mujoco", "replay": None, "robot_ips": "192.0.2.2"})),
+    )
+    emit = mocker.patch.object(introspect, "emit")
+
+    introspect.main(["targets", "catalog"])
+
+    paths = emit.call_args.args[0]
+    assert "auth.api_key" in paths["catalogmodule"]
+    assert "dog" not in paths
+    assert settings.replay is True
+    assert settings.processed_robot_ips == ("192.0.2.2",)

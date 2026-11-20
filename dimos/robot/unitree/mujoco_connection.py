@@ -20,9 +20,11 @@ import base64
 from collections.abc import Callable
 import functools
 import json
+import logging
 import os
 from pathlib import Path
 import pickle
+import re
 import subprocess
 import sys
 import sysconfig
@@ -57,9 +59,22 @@ from dimos.simulation.mujoco.constants import (
 from dimos.simulation.mujoco.menagerie import SIM_INSTALL_HINT, ensure_menagerie
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
+from dimos.utils.executable import find_executable
 from dimos.utils.logging_config import setup_logger
 
 ODOM_FREQUENCY = 50
+
+# DimOS console output is uncolored when the child writes to our pipe.
+_SUBPROCESS_LOG_LINE = re.compile(
+    r"^\d{2}:\d{2}:\d{2}\.\d{3} \[(deb|inf|war|err|cri)\]\[([^\]]*)\] (.*)$"
+)
+_SUBPROCESS_LOG_LEVELS = {
+    "deb": logging.DEBUG,
+    "inf": logging.INFO,
+    "war": logging.WARNING,
+    "err": logging.ERROR,
+    "cri": logging.CRITICAL,
+}
 
 logger = setup_logger()
 
@@ -140,7 +155,11 @@ class MujocoConnection:
             # It needs libpython on the dylib search path; uv-installed Pythons
             # use @rpath which doesn't always resolve inside venvs, so we
             # point DYLD_LIBRARY_PATH at the real libpython directory.
-            executable = sys.executable if sys.platform != "darwin" else "mjpython"
+            executable = (
+                sys.executable
+                if sys.platform != "darwin"
+                else find_executable("mjpython") or "mjpython"
+            )
             env = os.environ.copy()
             if sys.platform == "darwin":
                 # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
@@ -201,7 +220,22 @@ class MujocoConnection:
             return
         try:
             for raw in process.stdout:
-                line = raw.decode(errors="replace").rstrip()
+                # Retain the space after the header even for an empty message.
+                line = raw.decode(errors="replace").rstrip("\r\n")
+                # Use the child's level, not words in its message, and let our
+                # logger add the sole console header. Keep the source as context.
+                formatted = _SUBPROCESS_LOG_LINE.match(line)
+                if formatted is not None:
+                    level, source, message = formatted.groups()
+                    logger.log(
+                        _SUBPROCESS_LOG_LEVELS[level],
+                        f"[mujoco] {message}",
+                        subprocess_logger=source.strip(),
+                    )
+                    continue
+
+                # Native MuJoCo/library output has no DimOS header.
+                line = line.rstrip()
                 if not line:
                     continue
                 lowered = line.lower()

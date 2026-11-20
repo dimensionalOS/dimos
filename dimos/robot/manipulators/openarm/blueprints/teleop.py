@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import MetaBlueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
@@ -96,7 +96,7 @@ _openarm_webxr_task = TaskConfig(
 )
 
 
-def openarm_teleop_control() -> Blueprint:
+def openarm_teleop_control() -> MetaBlueprint:
     """The WebXR task set over the OpenArm connection."""
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
