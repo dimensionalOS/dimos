@@ -43,6 +43,9 @@ struct DimSlamLio {
     /// Every lidar, told apart by frame_id.
     #[input(decode = PointCloud2::decode)]
     lidar: Input<PointCloud2>,
+    /// A second lidar's stream, handled like `lidar`'s.
+    #[input(decode = PointCloud2::decode, handler = handle_lidar)]
+    second_lidar: Input<PointCloud2>,
     /// Every IMU, told apart by frame_id.
     #[input(decode = Imu::decode)]
     imu: Input<Imu>,

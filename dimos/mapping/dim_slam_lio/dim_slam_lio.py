@@ -109,7 +109,7 @@ class DimSlamLioConfig(NativeModuleConfig):
 
 
 class DimSlamLio(NativeModule):
-    """Every lidar publishes onto ``lidar`` and every IMU onto ``imu``, told apart by frame_id
+    """Lidars publish onto ``lidar`` (and ``second_lidar``, for a second independent stream) and IMUs onto ``imu``, told apart by frame_id
     (clouds as Livox drivers write them: float32 x/y/z plus a uint32 ``offset_time``, ns after
     the stamp). Mounts come from tf against ``output_frame_id``. Publishes ``odometry`` and
     odom_frame_id -> output_frame_id on tf."""
@@ -117,6 +117,8 @@ class DimSlamLio(NativeModule):
     config: DimSlamLioConfig
 
     lidar: In[PointCloud2]
+    # A second lidar's stream, handled like lidar's (scans told apart by frame_id either way).
+    second_lidar: In[PointCloud2]
     imu: In[Imu]
     odom_sources: In[Odometry]
 
