@@ -1,0 +1,13 @@
+[Unit]
+Description=M20 shadow: the Rust controller in dry-run beside rl_deploy (passive inputs only; logs, never sends)
+After=rl_deploy.service
+
+[Service]
+WorkingDirectory=/var/opt/robot/data/m20_shadow
+ExecStart=/var/opt/robot/data/m20_shadow/bin/m20_shadow --config m20_controller.toml --shadow shadow.toml --policies policies
+# off rl_deploy's real-time cores (4-7)
+CPUAffinity=1 2 3
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=1G
+Restart=no

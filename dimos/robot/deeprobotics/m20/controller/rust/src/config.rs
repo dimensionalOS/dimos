@@ -414,18 +414,7 @@ impl Default for Ecan {
     }
 }
 
-/// (position_offset, direction) in this file's convention from the vendor's `urdf = motor * dir + offset`.
-fn vendor_calibration() -> (Vec<f64>, Vec<f64>) {
-    let calibration = m20_ecan::Calibration::m20();
-    let direction: Vec<f64> = calibration.direction.iter().map(|&d| d as f64).collect();
-    let offset = calibration
-        .offset_rad
-        .iter()
-        .zip(&direction)
-        .map(|(&o, &d)| -(o as f64) * d)
-        .collect();
-    (offset, direction)
-}
+use crate::frames::vendor_calibration;
 
 /// Where operator commands arrive: JSON lines over UDP.
 #[derive(Debug, Clone, Deserialize)]

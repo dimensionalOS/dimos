@@ -23,18 +23,10 @@
 use anyhow::{bail, Result};
 
 use super::Hardware;
-use crate::config::{tile, Ecan, JOINTS};
+use crate::config::{Ecan, JOINTS};
 use crate::types::{JointCommand, RobotState};
 
-pub const ETH_HEADER: usize = 14;
-pub const ECAN_HEADER: usize = 10;
-pub const JOINT_UNIT: usize = 24;
-pub const MAGIC: u16 = 0x5244;
-pub const TYPE_JOINTS: u8 = 0x89;
-pub const CODE_COMMAND: u8 = 0x12;
-pub const CODE_STATE: u8 = 0x21;
-pub const B3_COMMAND: u8 = 1;
-pub const STATE_IMU_BYTES: usize = 40;
+pub use crate::frames::*;
 
 /// Body orientation and rates from the IMU, timestamped on the controller's clock.
 #[derive(Debug, Clone, Copy, Default)]
@@ -56,127 +48,6 @@ impl ImuSource for NoImu {
     fn latest(&mut self) -> Option<ImuSample> {
         None
     }
-}
-
-/// Joint index (robot order) of a unit: can_ch = leg 0..3, can_id = 2 hipx, 3 hipy, 4 knee, 5 wheel.
-pub fn joint_index(can_ch: u8, can_id: u16) -> Option<usize> {
-    if can_ch < 4 && (2..=5).contains(&can_id) {
-        Some(can_ch as usize * 4 + (can_id as usize - 2))
-    } else {
-        None
-    }
-}
-
-pub struct Mapping {
-    offset: Vec<f64>,
-    direction: Vec<f64>,
-    kp_scale: f64,
-    kd_scale: f64,
-    board_id: u8,
-    control_word: u16,
-}
-
-impl Mapping {
-    pub fn new(cfg: &Ecan) -> Result<Mapping> {
-        Ok(Mapping {
-            offset: tile(&cfg.position_offset, JOINTS)?,
-            direction: tile(&cfg.direction, JOINTS)?,
-            kp_scale: cfg.kp_scale,
-            kd_scale: cfg.kd_scale,
-            board_id: cfg.board_id,
-            control_word: cfg.control_word,
-        })
-    }
-}
-
-/// Like rl_deploy (`ECAN2DDS::Handler`): f32 multiply, truncate toward zero (`fcvtzs`), saturating.
-fn gain_i16(v: f64, scale: f64) -> i16 {
-    (v as f32 * scale as f32) as i16
-}
-
-/// The full Ethernet frame for one joint command.
-pub fn encode_command(
-    cmd: &JointCommand,
-    seq: u8,
-    src_mac: [u8; 6],
-    cfg: &Ecan,
-    map: &Mapping,
-) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(JOINTS * JOINT_UNIT);
-    for i in 0..JOINTS {
-        let (leg, part) = (i / 4, i % 4);
-        let dir = map.direction[i];
-        payload.push(map.board_id);
-        payload.push(leg as u8);
-        payload.extend_from_slice(&(part as u16 + 2).to_le_bytes());
-        payload.extend_from_slice(&((cmd.q[i] / dir + map.offset[i]) as f32).to_le_bytes());
-        payload.extend_from_slice(&((cmd.dq[i] / dir) as f32).to_le_bytes());
-        payload.extend_from_slice(&((cmd.tau[i] / dir) as f32).to_le_bytes());
-        payload.extend_from_slice(&gain_i16(cmd.kp[i], map.kp_scale).to_le_bytes());
-        payload.extend_from_slice(&gain_i16(cmd.kd[i], map.kd_scale).to_le_bytes());
-        payload.extend_from_slice(&map.control_word.to_le_bytes());
-        payload.extend_from_slice(&0u16.to_le_bytes());
-    }
-    let checksum = payload.iter().fold(0u32, |a, &b| a + b as u32) as u16;
-    let mut frame = Vec::with_capacity(ETH_HEADER + ECAN_HEADER + payload.len());
-    frame.extend_from_slice(&cfg.destination_mac);
-    frame.extend_from_slice(&src_mac);
-    frame.extend_from_slice(&cfg.ethertype.to_be_bytes());
-    frame.extend_from_slice(&MAGIC.to_le_bytes());
-    frame.extend_from_slice(&[seq, B3_COMMAND, CODE_COMMAND, TYPE_JOINTS]);
-    frame.extend_from_slice(&(payload.len() as u16).to_le_bytes());
-    frame.extend_from_slice(&checksum.to_le_bytes());
-    frame.extend_from_slice(&payload);
-    frame
-}
-
-/// Joint state from a received frame, or None if it is not a joint-state frame.
-pub fn decode_state(frame: &[u8], ethertype: u16, map: &Mapping) -> Result<Option<RobotState>> {
-    if frame.len() < ETH_HEADER + ECAN_HEADER
-        || u16::from_be_bytes([frame[12], frame[13]]) != ethertype
-    {
-        return Ok(None);
-    }
-    let h = &frame[ETH_HEADER..];
-    if u16::from_le_bytes([h[0], h[1]]) != MAGIC || h[4] != CODE_STATE || h[5] != TYPE_JOINTS {
-        return Ok(None);
-    }
-    let len = u16::from_le_bytes([h[6], h[7]]) as usize;
-    let payload = &h[ECAN_HEADER..];
-    if payload.len() < len || len < STATE_IMU_BYTES + JOINTS * JOINT_UNIT {
-        bail!(
-            "short joint-state frame: {} bytes, header says {len}",
-            payload.len()
-        );
-    }
-    let sum = payload[..len].iter().fold(0u32, |a, &b| a + b as u32) as u16;
-    if sum != u16::from_le_bytes([h[8], h[9]]) {
-        bail!("joint-state checksum mismatch");
-    }
-    let mut s = RobotState::default();
-    let mut seen = 0u32;
-    for k in 0..JOINTS {
-        let u = &payload[STATE_IMU_BYTES + k * JOINT_UNIT..STATE_IMU_BYTES + (k + 1) * JOINT_UNIT];
-        let Some(i) = joint_index(u[1], u16::from_le_bytes([u[2], u[3]])) else {
-            continue;
-        };
-        let f = |o: usize| f32::from_le_bytes([u[o], u[o + 1], u[o + 2], u[o + 3]]) as f64;
-        let dir = map.direction[i];
-        let q = dir * (f(4) - map.offset[i]);
-        // single-turn hip / knee encoders: the (-pi, pi] branch, as the vendor picks at startup; wheels accumulate
-        s.q[i] = if i % 4 == 3 {
-            q
-        } else {
-            (q + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
-        };
-        s.dq[i] = dir * f(8);
-        s.tau[i] = dir * f(12);
-        seen |= 1 << i;
-    }
-    if seen != 0xffff {
-        bail!("joint-state frame is missing joints (mask {seen:#06x})");
-    }
-    Ok(Some(s))
 }
 
 #[cfg(target_os = "linux")]

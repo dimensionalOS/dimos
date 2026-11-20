@@ -1,0 +1,11 @@
+[Unit]
+Description=M20 shadow guard: stops m20-shadow if rl_deploy's send timeouts rise faster than their background rate
+PartOf=m20-shadow.service
+After=m20-shadow.service
+
+[Service]
+# background ~36 / hour; slack 3; check every 30 s
+ExecStart=/var/opt/robot/data/m20_shadow/bin/guard.sh 36 3 30
+CPUAffinity=1 2 3
+Nice=10
+Restart=no

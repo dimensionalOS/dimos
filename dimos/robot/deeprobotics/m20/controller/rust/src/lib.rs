@@ -18,9 +18,12 @@
 
 pub mod commands;
 pub mod config;
+pub mod frames;
 pub mod hardware;
 pub mod policy;
 pub mod rt;
 pub mod runner;
+#[cfg(feature = "shadow")]
+pub mod shadow;
 pub mod state_machine;
 pub mod types;
