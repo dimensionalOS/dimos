@@ -23,7 +23,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from dimos.calibration import DEFAULT_BASE_FRAME, DEFAULT_EE_FRAME, DEFAULT_MARKER_SIZE_M
+from dimos.calibration import DEFAULT_BASE_FRAME, DEFAULT_MARKER_SIZE_M
 from dimos.calibration.hand_eye import (
     TAG_DICTIONARY,
     HandEyeSample,
@@ -63,10 +63,10 @@ def open_session(
     directory: Path,
     camera_info: CameraInfo,
     base_frame: str = DEFAULT_BASE_FRAME,
-    ee_frame: str = DEFAULT_EE_FRAME,
+    *,
+    ee_frame: str,
     marker_size_m: float = DEFAULT_MARKER_SIZE_M,
     marker_id: int = 0,
-    *,
     automatic_views: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create or resume a session with identical intrinsics and frame settings.

@@ -50,6 +50,16 @@ def test_cli_validation_fails_when_target_moves(saved_session):
     assert not json.loads((saved_session / "hand_eye.json").read_text())["validated"]
 
 
+def test_capture_cli_requires_a_mount_frame(tmp_path, mocker):
+    read_info = mocker.patch("dimos.calibration.hand_eye_capture.read_camera_info")
+
+    result = CliRunner().invoke(handeyecalibrate_app, ["capture", "--session", str(tmp_path)])
+
+    assert result.exit_code == 2
+    assert "--ee-frame" in result.output
+    read_info.assert_not_called()
+
+
 def test_capture_cli_retries_then_saves_a_held_out_pair(tmp_path, marker_image, mocker):
     image, info, _ = marker_image
     intrinsics = tmp_path / "intrinsics.yaml"
@@ -76,6 +86,8 @@ def test_capture_cli_retries_then_saves_a_held_out_pair(tmp_path, marker_image, 
             "capture",
             "--session",
             str(directory),
+            "--ee-frame",
+            "arm_link6",
             "--intrinsics",
             str(intrinsics),
             "--count",
@@ -121,7 +133,7 @@ def live_color_stream(marker_image, mocker):
 def test_capture_cli_saves_live_intrinsics_and_checks_them_on_resume(tmp_path, live_color_stream):
     info, bus = live_color_stream
     runner = CliRunner()
-    args = ["capture", "--session", str(tmp_path), "--count", "1"]
+    args = ["capture", "--session", str(tmp_path), "--ee-frame", "wrist", "--count", "1"]
 
     result = runner.invoke(handeyecalibrate_app, args, input="\n")
 
@@ -152,6 +164,8 @@ def test_capture_cli_exits_when_no_camera_info_arrives(tmp_path, live_color_stre
             "capture",
             "--session",
             str(tmp_path),
+            "--ee-frame",
+            "wrist",
             "--camera-info-topic",
             topic,
             "--timeout-sec",
@@ -174,7 +188,9 @@ def test_capture_cli_rejects_intrinsics_from_another_optical_frame(tmp_path, liv
     info.frame_id = "other_camera_optical"
 
     result = CliRunner().invoke(
-        handeyecalibrate_app, ["capture", "--session", str(tmp_path), "--count", "1"], input="\n"
+        handeyecalibrate_app,
+        ["capture", "--session", str(tmp_path), "--ee-frame", "wrist", "--count", "1"],
+        input="\n",
     )
 
     assert result.exit_code == 1
@@ -188,7 +204,9 @@ def test_capture_cli_reports_write_failure_without_prompting_for_another_pose(
     mocker.patch("dimos.msgs.sensor_msgs.Image.Image.save", return_value=False)
 
     result = CliRunner().invoke(
-        handeyecalibrate_app, ["capture", "--session", str(tmp_path), "--count", "1"], input="\n"
+        handeyecalibrate_app,
+        ["capture", "--session", str(tmp_path), "--ee-frame", "wrist", "--count", "1"],
+        input="\n",
     )
 
     assert result.exit_code == 1

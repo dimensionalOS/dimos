@@ -160,6 +160,7 @@ async def _handle_tools_call(
                 token=acquire_token,
                 timeout=app.state.cap_acquire_timeout,
                 can_wait=_can_wait,
+                allow_reentry=skill_info.allow_reentry,
             ),
         )
         if conflict is not None:
@@ -171,6 +172,8 @@ async def _handle_tools_call(
                 holder=holder,
                 snapshot=cap_registry.snapshot(),
             )
+            if holder == name:
+                return _jsonrpc_result_text(req_id, f"'{name}' is already running.")
             # A background holder has a stop tool to call; an instant holder is
             # waited on above, so reaching here means it outlasted the timeout.
             holder_info = app.state.skills_by_name.get(holder)

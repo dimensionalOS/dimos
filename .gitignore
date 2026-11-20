@@ -66,6 +66,7 @@ data/*
 MUJOCO_LOG.TXT
 /logs
 /recordings
+/hand-eye-sessions/
 /downloads
 results/
 /assets/output/

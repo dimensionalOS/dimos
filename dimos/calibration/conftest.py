@@ -81,7 +81,7 @@ def marker_image(make_transform):
 def saved_session(tmp_path, observations, marker_image):
     samples, _, _ = observations
     _, info, _ = marker_image
-    data = open_session(tmp_path, info)
+    data = open_session(tmp_path, info, ee_frame="arm_link6")
     data["camera_frame"] = "camera_color_optical_frame"
     data["samples"] = [
         {

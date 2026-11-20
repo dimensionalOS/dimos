@@ -58,10 +58,10 @@ class CapabilityRegistry:
     `timeout`, blocks until the conflicting hold clears or the timeout expires.
 
     A hold is identified per-invocation by an opaque `token`, not by the tool
-    name. Two invocations of the *same* tool don't conflict -- the later one
-    takes over the hold -- but release is scoped to the token, so the earlier
-    invocation's teardown can't release the capability out from under the later
-    one. Different tools sharing a capability still conflict.
+    name. By default a later invocation of the same tool takes over the hold.
+    Only the current token can release the capability, so an earlier invocation's
+    teardown leaves the newer hold intact. Different tools sharing a capability
+    still conflict.
     """
 
     def __init__(self) -> None:
@@ -76,11 +76,12 @@ class CapabilityRegistry:
         *,
         timeout: float = 0.0,
         can_wait: Callable[[str], bool] | None = None,
+        allow_reentry: bool = True,
     ) -> tuple[str, str] | None:
         """Atomic all-or-nothing acquire of `caps` for one invocation.
 
-        Conflicts only with a *different* `tool_name`; a same-tool re-acquire is
-        a takeover that overwrites the holder with the new `token`.
+        A same-tool re-acquire takes over the hold with the new `token` by default.
+        With `allow_reentry=False`, an active invocation of this tool also conflicts.
 
         With the default `timeout=0.0` this is a non-blocking try-lock: it returns
         `None` on success or, on conflict, `(cap, current_tool)` for the first
@@ -96,7 +97,7 @@ class CapabilityRegistry:
         deadline = time.monotonic() + timeout
         with self._cond:
             while True:
-                conflict = self._acquire_locked(caps, tool_name, token)
+                conflict = self._acquire_locked(caps, tool_name, token, allow_reentry)
                 if conflict is None:
                     return None
                 if can_wait is not None and not can_wait(conflict[1]):
@@ -107,12 +108,12 @@ class CapabilityRegistry:
                 self._cond.wait(remaining)
 
     def _acquire_locked(
-        self, caps: list[str], tool_name: str, token: str
+        self, caps: list[str], tool_name: str, token: str, allow_reentry: bool
     ) -> tuple[str, str] | None:
         """Atomic check-and-set of `caps`; the caller must hold `self._cond`."""
         for cap in caps:
             current = self._holders.get(cap)
-            if current is not None and current.tool_name != tool_name:
+            if current is not None and (current.tool_name != tool_name or not allow_reentry):
                 return (cap, current.tool_name)
         for cap in caps:
             self._holders[cap] = _Hold(tool_name, token)

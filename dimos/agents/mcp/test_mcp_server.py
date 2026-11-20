@@ -20,7 +20,8 @@ import threading
 from unittest.mock import MagicMock
 
 from dimos.agents.capabilities import CapabilityRegistry
-from dimos.agents.mcp.mcp_server import app, handle_request
+from dimos.agents.mcp.mcp_server import _fan_out_to_sse_queues, app, handle_request
+from dimos.agents.mcp.tool_stream import make_stopped_notification
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import SkillInfo
 
@@ -251,6 +252,55 @@ def test_mcp_module_injects_acquire_token_for_capability_skill() -> None:
     finally:
         app.state.skills_by_name = saved_skills
         app.state.cap_registry = saved_registry
+
+
+async def test_non_reentrant_start_keeps_movement_until_original_stop(monkeypatch) -> None:
+    mover = SkillInfo("TestSkills", "mover", "{}", ("movement",), "background", allow_reentry=False)
+    registry = CapabilityRegistry()
+    monkeypatch.setattr(app.state, "skills_by_name", {"mover": mover})
+    monkeypatch.setattr(app.state, "cap_registry", registry)
+    monkeypatch.setattr(app.state, "event_loop", None)
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    finish_start = threading.Event()
+    tokens = []
+
+    def move(target, *, _mcp_context):
+        tokens.append(_mcp_context["acquire_token"])
+        if len(tokens) == 1:
+            loop.call_soon_threadsafe(started.set)
+            assert finish_start.wait(timeout=5)
+        return f"Moving to {target}"
+
+    async def call(args):
+        response = await handle_request(
+            {"method": "tools/call", "id": 1, "params": {"name": "mover", "arguments": args}},
+            [mover],
+            {"mover": move},
+        )
+        assert response is not None
+        return response["result"]["content"][0]["text"]
+
+    first = asyncio.create_task(call({"target": 1}))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert await call({"target": 2}) == "'mover' is already running."
+    finally:
+        finish_start.set()
+        first_result = await first
+    assert first_result == "Moving to 1"
+    # Missing required arguments would fail inside RPC and release its token.
+    assert await call({}) == "'mover' is already running."
+    assert registry.acquire(["movement"], "another_tool", "other") == ("movement", "mover")
+    (first_token,) = tokens
+    _fan_out_to_sse_queues(make_stopped_notification("mover", first_token))
+    assert await call({"target": 3}) == "Moving to 3"
+
+    # A delayed stop from the first invocation cannot release the new hold.
+    _fan_out_to_sse_queues(make_stopped_notification("mover", first_token))
+    assert registry.snapshot() == {"movement": "mover"}
+    _fan_out_to_sse_queues(make_stopped_notification("mover", tokens[1]))
+    assert registry.snapshot() == {}
 
 
 def test_refusal_message_distinguishes_holder_lifecycle() -> None:

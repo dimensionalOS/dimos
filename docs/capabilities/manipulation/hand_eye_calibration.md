@@ -1,152 +1,121 @@
 # Eye-in-hand calibration
 
-`dimos handeyecalibrate run` measures the transform from a wrist camera’s optical
-frame to the robot link carrying it. The planner moves the arm, you approve one
-image per pose, and DimOS fits the transform using **8 training views** and checks
-it using **4 separate validation views**. These are the minimum counts. For 15
-training and 5 validation images, add `--count 15 --validation-count 5`.
+Eye-in-hand calibration measures the transform from a wrist camera’s optical frame into its mounting link. Call the calibration skill for unattended capture, use `dimos handeyecalibrate run` for per-image review, or position the arm yourself. All three use the same solver and pass criteria.
 
-## Before you start
+## Before capture
 
-- Rigidly attach the camera to the mounting link. Use a flat **tag36h11, ID 0**
-  with a **150 mm outer black-square edge**, excluding the white margin. For a
-  different tag in this family, pass `--marker-id` and `--marker-size-m`.
-- Start the camera driver. It must publish an 8-bit color or grayscale `Image`
-  and `CameraInfo` for the same optical frame and pixels. The supported distortion
-  models are `plumb_bob` and `rational_polynomial`. Intrinsics are read once.
-  Keep resolution, crop, focus and zoom fixed during capture.
-- Start a planner/coordinator with one pose-capable group of rotational arm
-  joints, one measured `joint_state` output, and TF from the group base to the
-  camera’s mounting link. Timestamp images and arm feedback on the same clock.
-- Choose a `--home` that centers the tag, with one angle in radians per joint in
-  the planner’s order. Pass the mounting link as `--ee-frame`. Check clearance
-  for the arm, camera and cable through the tilts and the return move. The A1Z
-  return pose is given below. Other arms default to zero radians at every joint.
-  Automatic review requires a graphical display.
+- Attach the camera rigidly. The default target is a flat **tag36h11, ID 0**, measuring **150 mm across the outer black square**. The CLI accepts `--marker-id` and `--marker-size-m` for another tag in that family. Keep the tag fixed relative to the base through validation.
+- Publish an 8-bit color or grayscale `Image`, matching `CameraInfo` and measured base-from-mount TF. Timestamp images and arm feedback on the same clock. Keep resolution, crop, focus and zoom fixed. Supported distortion models are `plumb_bob` and `rational_polynomial`.
+- Both planner-driven modes need a planner/coordinator with one pose-capable arm group and one measured `joint_state` output. Check arm, camera and cable clearance through both rings and the return move. CLI image review also needs a display.
 
-| Input | Default topic | Override |
+**Supply `home` and `ee_frame` each time you start a planner-driven calibration.** `home` is the pose that centers the tag, with one angle per joint in planner order, in radians. `ee_frame` is the TF name of the link carrying the camera. Pass `--home` and `--ee-frame` to the CLI, include both fields in the MCP call, or give both values to the chat agent.
+
+| Stream | Default topic | CLI override |
 | --- | --- | --- |
-| Image | `zenoh:dimos/color_image` | `--image-topic` |
-| Intrinsics | `zenoh:dimos/camera_info` | `--camera-info-topic` |
+| Color or grayscale image | `zenoh:dimos/color_image` | `--image-topic` |
+| Camera intrinsics | `zenoh:dimos/camera_info` | `--camera-info-topic` |
 | Measured TF | `zenoh:dimos/tf` | `--tf-topic` |
 
-## Example with a Galaxea A1Z and RealSense D405
+Select the camera at launch by adding its DimOS module or blueprint to `dimos run`. If a camera already publishes the image and matching intrinsics, start just the calibration stack. For MCP or chat, point the skill at nondefault topics with `--handeyecalibrationskills.image-topic` and `--handeyecalibrationskills.camera-info-topic` on the launch command.
 
-The D405 is mounted on `arm_link6`. The A1Z planner moves the gripper tool
-center point (TCP), `gripper_eef_link`. The D405 driver supplies factory color
-intrinsics on `camera_info`.
+## A1Z and D405 example
 
-In the first terminal, start the stack with the gripper enabled (the default).
-The A1Z connection can move at startup and shutdown. See the
-[A1Z hardware guide](/docs/capabilities/manipulation/a1z.md).
+Mount the RealSense D405 on `arm_link6` of the Galaxea A1Z. The planner moves the gripper tool center point (TCP), `gripper_eef_link`. The D405 supplies factory intrinsics. Choose one stack and leave the gripper enabled (the default). The A1Z can move at startup and shutdown. [A1Z hardware guide](/docs/capabilities/manipulation/a1z.md)
+
+### Unattended calibration via MCP
+
+Start `a1z-hand-eye-calibration-agent` with `real-sense-camera` for the D405. For a direct MCP demo, `--disable agent` disables the chat agent and keeps the calibration skill available through the local MCP server. This demo requires no API key or per-image confirmation.
+
+```sh skip
+dimos run a1z-hand-eye-calibration-agent real-sense-camera --disable agent \
+  --a1zconnection.can-port a1zcan
+```
+
+On an Apple Silicon Mac that needs administrator access for the camera and Homebrew libraries in `/opt/homebrew/lib`, use this command from the checkout. Substitute your D405 device serial.
+
+```sh skip
+sudo env DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}" \
+  "$PWD/.venv/bin/dimos" run a1z-hand-eye-calibration-agent real-sense-camera --disable agent \
+  --a1zconnection.can-port a1zcan --realsensecamera.serial-number 260522271635
+```
+
+**Place and secure the target before starting calibration.** It should be centered at home and visible from both tilt rings. From a second terminal, pass the home and mount for your setup. The values below are from the tested A1Z/D405 setup.
+
+```sh skip
+dimos mcp call start_hand_eye_calibration \
+  --json-args '{"home":[0,1.0,-1.0,1.1,0,0],"ee_frame":"arm_link6"}'
+dimos mcp call hand_eye_calibration_status
+```
+
+Each start creates a session under `./hand-eye-sessions/`. Home counts as the first of **8 training views**. At each stationary pose, the first captured image must contain the expected tag and pass the quality checks below. A rejection stops the run at that pose and reports the reason. After solving, the skill takes **4 held-out views**, saves the grade and requests the return move. The status includes the errors and absolute path to `hand_eye.json`.
+
+While calibration holds the arm, MCP rejects another start. Use `dimos mcp call hand_eye_calibration_status` to check the active run. To stop it, call `dimos mcp call stop_hand_eye_calibration`. A move already executing can finish. If the planner is still computing a move when the stop arrives, calibration skips execution. Wait for the final status before starting again. After a failure, correct the setup and start a fresh run.
+
+**Optional chat agent.** Omit `--disable agent` from the same launch command and provide `OPENAI_API_KEY` for the default model. After placing the target, use `dimos agent-send "Start hand-eye calibration with home [0, 1.0, -1.0, 1.1, 0, 0] radians and mount frame arm_link6."` The agent asks for any missing value before calling the skill. [Agent configuration](/docs/capabilities/agents/index.md)
+
+### CLI with operator review
+
+Start the planner and camera in the first terminal.
 
 ```sh skip
 dimos run a1z-planner-coordinator real-sense-camera --a1zconnection.can-port a1zcan
 ```
 
-If your Apple Silicon Mac needs administrator access for the camera and uses
-Homebrew libraries in `/opt/homebrew/lib`, use this form from the checkout.
-Add `--realsensecamera.serial-number DEVICE_SERIAL` to select a specific D405.
+On a Mac that requires privileged camera access, use the same `sudo env` and virtual environment executable as in the MCP example with this planner-and-camera command.
 
-```sh skip
-sudo env DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}" \
-  "$PWD/.venv/bin/dimos" run a1z-planner-coordinator real-sense-camera \
-  --a1zconnection.can-port a1zcan
-```
-
-In a second terminal in the same DimOS environment, start with the arm still.
-The `--home` angles below center the tag. After calibration, the A1Z returns
-to `0 0.05 -0.05 0 0 0` radians (J1 through J6), placing J2 and J3 about
-2.9° inside their respective joint limits.
+In a second terminal using the same DimOS environment, start with the arm stationary. `--ee-frame` names the camera’s mounting link.
 
 ```sh skip
 dimos handeyecalibrate run --session ./hand-eye-01 \
   --home 0 1.0 -1.0 1.1 0 0 --ee-frame arm_link6
 ```
 
-## Capture, solve and validate
+1. At home, center the tag on the crosshair, secure it, and press **R** to refresh if you adjusted it.
+2. Press **Enter** in the image window to accept each image and its measured mount pose, or **R** to retake it. The default is **8 training views** (home and an 11° tilt ring), then **4 validation views** on an offset 7° ring. To collect more, add `--count 15 --validation-count 5`.
+3. After grading, both the CLI and MCP workflows check the arm’s return pose when the run has moved the arm. The A1Z returns to `0 0.05 -0.05 0 0 0` radians (J1–J6), using its driver’s parking tolerance of 0.05 rad (about 2.86°) per joint. Other arms default to zero on every joint with a 2° tolerance. If the return fails, the error gives the saved result path.
 
-1. The arm moves to `--home`. Center the tag on the preview crosshair and secure
-   it relative to the base. If you adjust it, press **R** in the image window
-   to refresh. Keep the target, base and mount fixed from the first accepted image.
-2. Press **Enter** (Return on Mac) to accept the displayed image, or **R** to
-   retake it. The command saves an accepted image and its measured mount pose,
-   then moves to the next view. The planner targets the same TCP position and
-   varies its orientation. The solver uses the measured mount pose at exposure.
-   Training starts at home, then tilts 11°
-   around a ring. The validation ring uses 7° and starts half a validation
-   step around the ring.
-   If the tag is rejected at a ring pose, the planner tries half the tilt once.
-3. After training, DimOS fits `camera_to_ee`. Each training view now gives an
-   estimate of the tag pose in the base frame. DimOS averages those positions
-   and rotations to get one reference pose. If training passes, DimOS uses the
-   saved transform on each held-out image and compares its tag pose with that
-   reference. Both transforms stay fixed throughout validation.
-4. A completed run saves `hand_eye.json` and reports **PASS** or **FAIL**. If
-   the run moved the arm, it requests the return pose and verifies
-   arrival within the A1Z parking tolerance of 0.05 rad (about 2.86°) per joint.
-   Other arms use 2° per joint. If that move fails, the error gives the path to
-   the saved result. Check the file’s `validated` flag before using the transform.
+## Operator-positioned capture
 
-### Stop or retry
-
-While reviewing an image, press **Q**, **Esc**, or close the window to stop at
-that pose. Use **Ctrl-C** in the calibration terminal to interrupt a move. Repeat the same
-command and session path to resume at the first unsaved view. Once you have
-accepted the first image, the saved home tool pose anchors the remaining views.
-Reopening a fully captured session repeats grading without moving the arm.
-
-If a move misses its goal, check the reported joint or TCP error and wrist
-clearance. For a failed solve or validation, check tag size and flatness,
-mount rigidity, image sharpness, pose diversity and timestamps. Start a fresh
-session after moving the target or changing the mount, intrinsics, home or view
-schedule. Older schedules can still be graded with `solve` and `validate`.
-
-### Pass criteria
-
-| Check | Requirement |
-| --- | --- |
-| Timing | Image acquired after the capture request, age ≤1 s. Each TF edge within 150 ms of image time. |
-| Stationary capture | At least 0.5 s within 1 mm and 0.5° of the first measured mount pose. |
-| Automatic arrival | Home joints within 2° of the request. TCP within 10 mm and 2° of each ring goal. Measured joints within 150 ms of exposure and within 2° of the reached posture. |
-| Detection | Exactly one matching tag ID, reprojection RMS ≤2 px. |
-| Training geometry | At least 8 views with rotations ≥15° about two axes separated by ≥30°. |
-| Target consistency | All training and validation views must agree with the training reference within 10 mm and 2°. Validation requires at least 4 held-out views. |
-
-A failed quality check gives a nonzero exit status. These limits measure
-repeatability against a fixed target. Absolute accuracy requires an independent
-measurement.
-
-## Using the saved result
-
-`session.json` records the intrinsics, frames and observations paired with the
-numbered PNGs. In `hand_eye.json`, `parent_frame` is the mounting link and
-`child_frame` is the camera optical frame. `camera_to_ee` is a 4×4 matrix with
-translation in metres. For a point expressed as `[x, y, z, 1]` in the optical
-frame, `camera_to_ee @ point` gives the point in the mounting link. Installation
-into TF is a separate step.
-
-## Manual capture or offline grading
-
-For an arm you position yourself, use a separate session and a stack publishing
-measured TF. The example assumes `base_link` and `arm_link6`. Use `--base-frame`
-and `--ee-frame` for other links. Hold still and press Enter in the terminal at
-each pose. Use `q` to end capture. Tilt about at least two axes for training,
-then choose new poses for validation.
+Move the arm with your usual controls. `capture` reads the streams at each pose you choose. Pass the camera mounting link with `--ee-frame` on both capture commands. The base frame defaults to `base_link` and can be set with `--base-frame`. Use a separate session and one writer at a time.
 
 ```sh skip
-dimos handeyecalibrate capture --session ./hand-eye-manual --count 8
+dimos handeyecalibrate capture --session ./hand-eye-manual --ee-frame arm_link6 --count 8
 dimos handeyecalibrate solve --session ./hand-eye-manual
-dimos handeyecalibrate capture --session ./hand-eye-manual --validation --count 4
+dimos handeyecalibrate capture --session ./hand-eye-manual --ee-frame arm_link6 --validation --count 4
 dimos handeyecalibrate validate --session ./hand-eye-manual
 ```
 
-`capture` reads live intrinsics by default. To use your own camera calibration,
-pass `--intrinsics PATH` with a matching color `CameraInfo` YAML. See the
-[camera calibration guide](/docs/usage/camera_calibration.md).
+Hold still and press **Enter** in the terminal at each pose. Use `q` to stop. Tilt about at least two axes during training and choose fresh poses for validation. `--count` requests additional accepted images in each invocation. For custom intrinsics, `capture` also accepts `--intrinsics PATH` with a matching `CameraInfo` YAML. [Camera calibration guide](/docs/usage/camera_calibration.md)
 
-Use one writer per session. `solve` and `validate` also work offline on saved
-sessions. After adding training images, repeat both commands. After adding
-only validation images, repeat `validate`. Python callers can use
-`dimos.calibration.hand_eye_run.run_hand_eye` with motion, capture and review
-callbacks.
+## What passes
+
+`solve` fits `camera_to_ee` using training views. Each view then predicts the fixed tag pose in the base frame. DimOS averages those positions and rotations into one reference. `validate` holds both the fitted transform and that reference fixed and checks each new prediction against it.
+
+| Check | Requirement |
+| --- | --- |
+| Timing and stillness | A new image after the capture request, age ≤1 s. Each TF edge within 150 ms of exposure. Measured mount within 1 mm and 0.5° of the first pose over ≥0.5 s. |
+| Automatic motion | Home joints within 2° of the request. TCP within 10 mm and 2° of each ring goal. Measured joint feedback within 150 ms of exposure and 2° of the reached posture. |
+| Detection | Exactly one matching tag ID. Reprojection RMS ≤2 px per accepted view. |
+| Training geometry | ≥8 views, with rotations ≥15° about two axes separated by ≥30°. |
+| Target consistency | Every training view and every held-out view within 10 mm and 2° of the training reference. ≥4 held-out views. |
+
+Use `hand_eye.json` when `validated` is `true`. A failed grade gives a nonzero exit status in the CLI. These checks measure repeatability against a fixed target. Absolute accuracy requires an independent measurement.
+
+## Stop or retry
+
+- In `run`, **Q**, **Esc** or closing the review window stops at the current pose. **Ctrl-C** in the calibration terminal interrupts a move. Repeat the same command with the same setup to resume at the first unsaved view. A fully captured run regrades without motion.
+- In the operator-reviewed CLI, a rejected tag on a ring triggers one try at half the tilt. For a missed pose, check the reported error and clearance. For a failed solve or validation, check tag size, flatness, sharpness, mounting rigidity, rotation diversity and timestamps. Start a fresh session after changing the target placement, camera or mount, intrinsics, home or view schedule.
+- `solve` and `validate` work offline. After adding training images repeat both commands. After adding just validation images repeat `validate`.
+
+## Saved result and hardware acceptance
+
+`session.json` pairs the numbered PNGs with measured poses and intrinsics. In `hand_eye.json`, `parent_frame` is the mounting link and `child_frame` the camera optical frame. For a homogeneous optical-frame point `[x, y, z, 1]`, `camera_to_ee @ point` gives mounting-link coordinates in metres.
+
+Both workflows below passed on the physical A1Z/D405 with 8 training and 4 held-out views. The table gives the maximum held-out errors.
+
+| Workflow | Position | Rotation | Reprojection |
+| --- | ---: | ---: | ---: |
+| Operator-reviewed CLI | 0.877 mm | 0.410° | 0.509 px |
+| Unattended MCP call | 2.306 mm | 0.519° | 0.346 px |
+
+The MCP demonstration used a direct tool call. A chat-initiated hardware run and a blueprint that loads the saved mount are still pending.

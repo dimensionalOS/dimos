@@ -18,4 +18,6 @@ MIN_TRAINING_SAMPLES = 8
 MIN_VALIDATION_SAMPLES = 4
 DEFAULT_MARKER_SIZE_M = 0.150
 DEFAULT_BASE_FRAME = "base_link"
-DEFAULT_EE_FRAME = "arm_link6"
+DEFAULT_IMAGE_TOPIC = "zenoh:dimos/color_image"
+DEFAULT_CAMERA_INFO_TOPIC = "zenoh:dimos/camera_info"
+DEFAULT_TF_TOPIC = "zenoh:dimos/tf"

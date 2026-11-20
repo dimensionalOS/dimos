@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from contextlib import nullcontext
 import math
+from threading import Event
 
 import pytest
 from scipy.spatial.transform import Rotation
@@ -23,15 +25,18 @@ from dimos.core.introspection.module.info import ModuleInfo, StreamInfo
 from dimos.manipulation.manipulation_spec import (
     ExecutionResult,
     ExecutionStatus,
+    ManipulationSpec,
     PlanningGroupInfo,
     PlanningGroupState,
     PlanResult,
     PlanStatus,
 )
+from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.sdk import Arm, MotionError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 # A seven-joint group whose measured stream includes its gripper and uses a different order.
 _JOINTS = tuple(f"left/J{i}" for i in range(1, 8))
@@ -261,6 +266,41 @@ def test_rejected_move_does_not_cancel_another_clients_motion(calibration_arm, r
     planner.cancel.assert_not_called()
 
 
+@pytest.mark.parametrize("cartesian", [False, True], ids=["joint-plan", "pose-plan"])
+def test_shutdown_while_planning_skips_execution_and_global_cancel(
+    calibration_arm, mocker, cartesian
+):
+    _, planner, feedback = calibration_arm
+    rpc = mocker.Mock(spec=ManipulationSpec)
+    planning, shutdown = Event(), Event()
+
+    def plan(*args, **kwargs):
+        planning.set()
+        assert shutdown.wait(5)
+        return PlanResult(PlanStatus.SUCCEEDED, plan=GeneratedPlan(("left",), JointTrajectory()))
+
+    def check_cancelled():
+        if shutdown.is_set():
+            raise CancelledError
+
+    selected = CalibrationArm(Arm(rpc, planner.info, before_execute=check_cancelled), feedback)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        if cartesian:
+            rpc.plan_to_poses.side_effect = plan
+            move = worker.submit(selected.move_pose, PoseStamped(frame_id="world"))
+        else:
+            rpc.plan_to_joints.side_effect = plan
+            move = worker.submit(selected.move_joints, (0.0,) * len(_JOINTS))
+        try:
+            assert planning.wait(5)
+        finally:
+            shutdown.set()
+        with pytest.raises(CancelledError):
+            move.result(timeout=5)
+    rpc.execute.assert_not_called()
+    rpc.cancel.assert_not_called()
+
+
 @pytest.fixture
 def deployed_arm(mocker):
     app = mocker.patch("dimos.calibration.hand_eye_motion.Dimos.connect").return_value
@@ -275,12 +315,13 @@ def deployed_arm(mocker):
     return app, discover
 
 
-def test_discovers_raw_arm_output_on_running_stack(deployed_arm):
+def test_discovers_raw_arm_output_on_running_stack(deployed_arm, mocker):
     app, discover = deployed_arm
-    with connect_calibration_arm() as arm:
+    check_cancelled = mocker.Mock()
+    with connect_calibration_arm(check_cancelled=check_cancelled) as arm:
         assert arm.info.joint_names == _JOINTS
         assert arm.return_joints == (0.0,) * len(_JOINTS)
-    discover.assert_called_once_with(app)
+    discover.assert_called_once_with(app, before_execute=check_cancelled)
     app.get_module.assert_called_once_with("WristRig")
     app.get_module.return_value.get_stream.assert_called_once_with("joint_state")
     app.stop.assert_called_once()

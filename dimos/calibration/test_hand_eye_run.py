@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.calibration.hand_eye import HandEyeSample
+from dimos.calibration.hand_eye import HandEyeSample, MarkerObservationError
 from dimos.calibration.hand_eye_run import run_hand_eye
 from dimos.calibration.hand_eye_session import load_session
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -192,6 +192,60 @@ def test_retake_quit_and_resume_reuses_saved_home_and_approved_views(
     commands.clear()
     assert run(resumed_review)["validated"]
     assert commands == []
+
+
+def test_unreviewed_run_collects_and_validates_both_rings(tmp_path, automatic_run, mocker):
+    run, commands, images = automatic_run
+    park = mocker.Mock()
+
+    # A home equal to the return target must still use the capture tolerance on the first move.
+    result = run(None, home=A1Z_RETURN, return_joints=A1Z_RETURN, return_move=park)
+
+    assert commands[0] == A1Z_RETURN
+    assert len(commands) == len(images) == 12
+    park.assert_called_once_with(A1Z_RETURN)
+    assert result["validated"]
+    assert json.loads((tmp_path / "hand_eye.json").read_text()) == result
+    roles = [entry["role"] for entry in load_session(tmp_path)["samples"]]
+    assert roles == ["train"] * 8 + ["validation"] * 4
+
+
+@pytest.mark.parametrize(
+    ("view", "label"),
+    [(1, "Train 1/8 (home)"), (2, "Train 2/8"), (10, "Validation 2/4")],
+)
+def test_unreviewed_run_stops_at_first_rejected_view(
+    tmp_path, automatic_run, observations, mocker, view, label
+):
+    run, commands, images = automatic_run
+    samples, _, _ = observations
+    error = MarkerObservationError("Expected exactly one tag36h11 ID 0; detected 0")
+    mocker.patch(
+        "dimos.calibration.hand_eye_session.detect_sample",
+        side_effect=[*samples[: view - 1], error],
+    )
+
+    with pytest.raises(MarkerObservationError) as caught:
+        run(None)
+
+    assert str(caught.value) == f"{label}: {error}"
+    assert len(commands) == len(images) == view
+    assert len(load_session(tmp_path)["samples"]) == view - 1
+    assert len(list(tmp_path.glob("*.png"))) == view - 1
+
+
+def test_stop_during_stationary_capture_prevents_save_and_next_move(tmp_path, automatic_run):
+    run, commands, images = automatic_run
+
+    def check_cancelled():
+        if images:
+            raise InterruptedError("Stop requested")
+
+    with pytest.raises(InterruptedError, match="Stop requested"):
+        run(None, check_cancelled=check_cancelled)
+
+    assert commands == [HOME]
+    assert load_session(tmp_path)["samples"] == []
 
 
 def test_resume_before_first_accepted_image_uses_remeasured_home(

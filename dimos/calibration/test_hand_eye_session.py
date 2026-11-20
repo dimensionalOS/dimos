@@ -30,11 +30,11 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 
 def test_records_raw_image_pose_and_resumes_without_losing_samples(tmp_path, marker_image):
     image, info, _ = marker_image
-    open_session(tmp_path, info)
+    open_session(tmp_path, info, ee_frame="arm_link6")
     pose = Transform(frame_id="base_link", child_frame_id="arm_link6", ts=image.ts)
 
     entry = record_sample(tmp_path, image, pose)
-    resumed = open_session(tmp_path, info)
+    resumed = open_session(tmp_path, info, ee_frame="arm_link6")
 
     assert resumed["samples"] == [entry]
     assert entry["role"] == "train"
@@ -45,12 +45,12 @@ def test_records_raw_image_pose_and_resumes_without_losing_samples(tmp_path, mar
     )
     np.testing.assert_array_equal(entry["base_from_ee"], np.eye(4))
     with pytest.raises(ValueError, match="settings changed"):
-        open_session(tmp_path, info, marker_size_m=0.12)
+        open_session(tmp_path, info, ee_frame="arm_link6", marker_size_m=0.12)
 
 
 def test_rejected_sample_does_not_write_an_image_or_manifest_entry(tmp_path, marker_image):
     image, info, _ = marker_image
-    open_session(tmp_path, info, marker_id=1)
+    open_session(tmp_path, info, ee_frame="arm_link6", marker_id=1)
     pose = Transform(frame_id="base_link", child_frame_id="arm_link6")
 
     with pytest.raises(ValueError, match="exactly one"):
@@ -62,7 +62,7 @@ def test_rejected_sample_does_not_write_an_image_or_manifest_entry(tmp_path, mar
 
 def test_resumes_after_an_interrupted_image_save(tmp_path, marker_image):
     image, info, _ = marker_image
-    open_session(tmp_path, info)
+    open_session(tmp_path, info, ee_frame="arm_link6")
     leftover = tmp_path / "0001.png"
     leftover.write_bytes(b"interrupted capture")
     pose = Transform(frame_id="base_link", child_frame_id="arm_link6", ts=image.ts)
@@ -77,7 +77,7 @@ def test_resumes_after_an_interrupted_image_save(tmp_path, marker_image):
 
 def test_cannot_reuse_training_image_as_validation(tmp_path, marker_image):
     image, info, _ = marker_image
-    open_session(tmp_path, info)
+    open_session(tmp_path, info, ee_frame="arm_link6")
     pose = Transform(frame_id="base_link", child_frame_id="arm_link6")
     record_sample(tmp_path, image, pose)
 

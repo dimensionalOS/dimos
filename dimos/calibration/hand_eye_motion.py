@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import CancelledError
 from contextlib import contextmanager
 import math
 from threading import Lock
@@ -149,6 +150,9 @@ class CalibrationArm:
         measured = self.read_joints()
         try:
             yield measured
+        except CancelledError:
+            # Cancellation at the SDK's pre-execution check has no motion to stop.
+            raise
         except (Exception, KeyboardInterrupt) as exc:
             # A plan or dispatch rejection leaves other clients' work alone.
             if isinstance(exc, MotionError) and (
@@ -225,11 +229,13 @@ class CalibrationArm:
 
 
 @contextmanager
-def connect_calibration_arm() -> Iterator[CalibrationArm]:
+def connect_calibration_arm(
+    *, check_cancelled: Callable[[], None] | None = None
+) -> Iterator[CalibrationArm]:
     """Attach to the unique pose-capable group and its measured joint-state stream."""
     app = Dimos.connect()
     try:
-        arm = Arm.from_app(app)
+        arm = Arm.from_app(app, before_execute=check_cancelled)
         sources = [
             stream.module_name
             for stream in app.list_streams()

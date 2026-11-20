@@ -39,6 +39,8 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dimos.porcelain.dimos import Dimos
 
 
@@ -76,9 +78,16 @@ class Arm:
     pending plan and execution, so use one motion-commanding client per module.
     """
 
-    def __init__(self, rpc: ManipulationSpec, info: PlanningGroupInfo) -> None:
+    def __init__(
+        self,
+        rpc: ManipulationSpec,
+        info: PlanningGroupInfo,
+        *,
+        before_execute: Callable[[], None] | None = None,
+    ) -> None:
         self.rpc = rpc
         self.info = info
+        self._before_execute = before_execute
 
     @classmethod
     def from_app(
@@ -87,11 +96,14 @@ class Arm:
         *,
         group: PlanningGroupID | None = None,
         instance_name: str | None = None,
+        before_execute: Callable[[], None] | None = None,
     ) -> Arm:
         """Select the unique pose-capable group, or an explicit group and module.
 
         Discovery does not start a runtime or command motion. Gripperless arms
         are eligible. Missing or ambiguous selections raise ``ValueError``.
+        For joint, pose and preset moves, ``before_execute`` can raise to
+        prevent a completed plan from being sent to the arm.
         """
         rpc = app.find_module_by_spec(ManipulationSpec, instance_name=instance_name)
         groups = rpc.list_planning_groups()
@@ -106,7 +118,7 @@ class Arm:
                 f"Expected one pose-capable group for {group!r}; "
                 f"available arms: {available}; all group IDs: {[info.id for info in groups]}"
             )
-        return cls(rpc, matches[0])
+        return cls(rpc, matches[0], before_execute=before_execute)
 
     def state(self) -> PlanningGroupState:
         """Read the selected group's state, including available joint presets."""
@@ -179,6 +191,8 @@ class Arm:
     def _execute(self, operation: str, plan: PlanResult, timeout: float | None) -> ExecutionResult:
         if not plan.succeeded or plan.plan is None:
             raise MotionError(operation, plan)
+        if self._before_execute is not None:
+            self._before_execute()
         result = self.rpc.execute(blocking=True, timeout=timeout, plan_id=plan.plan.plan_id)
         if result.status is not ExecutionStatus.COMPLETED:
             raise MotionError(operation, result)

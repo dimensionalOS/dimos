@@ -16,9 +16,7 @@
 
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from click import ClickException, Context
 import typer
@@ -26,33 +24,17 @@ from typer.core import TyperCommand
 
 from dimos.calibration import (
     DEFAULT_BASE_FRAME,
-    DEFAULT_EE_FRAME,
+    DEFAULT_CAMERA_INFO_TOPIC,
+    DEFAULT_IMAGE_TOPIC,
     DEFAULT_MARKER_SIZE_M,
+    DEFAULT_TF_TOPIC,
     MIN_TRAINING_SAMPLES,
     MIN_VALIDATION_SAMPLES,
 )
 
-if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-
-_COLOR_IMAGE_TOPIC = "zenoh:dimos/color_image"
-_CAMERA_INFO_TOPIC = "zenoh:dimos/camera_info"
-_TF_TOPIC = "zenoh:dimos/tf"
-
 handeyecalibrate_app = typer.Typer(
     help="Eye-in-hand calibration with a fixed tag36h11.", no_args_is_help=True
 )
-
-
-def _read_intrinsics(topic: str, timeout_sec: float, yaml_path: Path | None = None) -> CameraInfo:
-    # Keep the camera and transport dependencies off the global CLI import path.
-    from dimos.calibration.hand_eye_capture import read_camera_info
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-
-    if yaml_path is not None:
-        return CameraInfo.from_yaml(str(yaml_path))
-    typer.echo(f"Reading color intrinsics from {topic}...")
-    return read_camera_info(topic, timeout_sec)
 
 
 class _RunCommand(TyperCommand):
@@ -83,9 +65,9 @@ def run(
     validation_count: int = typer.Option(
         MIN_VALIDATION_SAMPLES, min=MIN_VALIDATION_SAMPLES, help="Additional held-out images."
     ),
-    camera_info_topic: str = typer.Option(_CAMERA_INFO_TOPIC),
-    image_topic: str = typer.Option(_COLOR_IMAGE_TOPIC),
-    tf_topic: str = typer.Option(_TF_TOPIC),
+    camera_info_topic: str = typer.Option(DEFAULT_CAMERA_INFO_TOPIC),
+    image_topic: str = typer.Option(DEFAULT_IMAGE_TOPIC),
+    tf_topic: str = typer.Option(DEFAULT_TF_TOPIC),
     marker_size_m: float = typer.Option(
         DEFAULT_MARKER_SIZE_M, help="Measured black square outer edge in metres."
     ),
@@ -94,43 +76,25 @@ def run(
 ) -> None:
     """Capture two tilt rings, solve and validate, then move to the arm's return pose."""
     # Load camera, GUI and planner dependencies only for the motion-enabled command.
-    from dimos.calibration.hand_eye_capture import TopicCapture, check_color_frame
-    from dimos.calibration.hand_eye_motion import connect_calibration_arm
-    from dimos.calibration.hand_eye_run import run_hand_eye
+    from dimos.calibration.hand_eye_run import run_live_hand_eye
     from dimos.cli.hand_eye_preview import hand_eye_preview
 
     try:
-        info = _read_intrinsics(camera_info_topic, timeout_sec)
-        with (
-            connect_calibration_arm() as arm,
-            TopicCapture(image_topic, tf_topic, arm.info.base_frame, ee_frame) as source,
-        ):
-            group = arm.info
-            # Check the camera and measured mount TF before sending the first physical goal.
-            capture_pair = partial(source.capture, timeout_sec)
-            image, _ = capture_pair()
-            check_color_frame(image, info)
-            with hand_eye_preview() as review:
-                result = run_hand_eye(
-                    session,
-                    info,
-                    home=home,
-                    return_joints=arm.return_joints,
-                    return_move=partial(arm.move_joints, returning=True),
-                    base_frame=group.base_frame,
-                    ee_frame=ee_frame,
-                    joint_names=group.joint_names,
-                    tip_frame=group.tip_frame,
-                    count=count,
-                    validation_count=validation_count,
-                    marker_size_m=marker_size_m,
-                    marker_id=marker_id,
-                    move_joints=arm.move_joints,
-                    move_pose=arm.move_pose,
-                    capture=partial(arm.capture_at_view, capture_pair),
-                    review=review,
-                    report=typer.echo,
-                )
+        result = run_live_hand_eye(
+            session,
+            home=home,
+            ee_frame=ee_frame,
+            count=count,
+            validation_count=validation_count,
+            marker_size_m=marker_size_m,
+            marker_id=marker_id,
+            image_topic=image_topic,
+            camera_info_topic=camera_info_topic,
+            tf_topic=tf_topic,
+            timeout_sec=timeout_sec,
+            preview=hand_eye_preview,
+            report=typer.echo,
+        )
     except (ValueError, RuntimeError, OSError) as exc:
         raise ClickException(str(exc)) from exc
     if result is None:
@@ -153,13 +117,13 @@ def capture(
         f"{MIN_VALIDATION_SAMPLES} validation).",
     ),
     validation: bool = typer.Option(False, help="Reserve these observations for validation only"),
-    image_topic: str = typer.Option(_COLOR_IMAGE_TOPIC),
+    image_topic: str = typer.Option(DEFAULT_IMAGE_TOPIC),
     camera_info_topic: str = typer.Option(
-        _CAMERA_INFO_TOPIC, help="CameraInfo topic for the color stream."
+        DEFAULT_CAMERA_INFO_TOPIC, help="CameraInfo topic for the color stream."
     ),
-    tf_topic: str = typer.Option(_TF_TOPIC),
+    tf_topic: str = typer.Option(DEFAULT_TF_TOPIC),
     base_frame: str = typer.Option(DEFAULT_BASE_FRAME),
-    ee_frame: str = typer.Option(DEFAULT_EE_FRAME),
+    ee_frame: str = typer.Option(..., help="TF link that the camera is rigidly mounted on."),
     marker_size_m: float = typer.Option(
         DEFAULT_MARKER_SIZE_M, help="Measured black square outer edge in metres"
     ),
@@ -170,14 +134,26 @@ def capture(
 ) -> None:
     """Press Enter at each stationary pose; capture images and measured TF poses."""
     from dimos.calibration.hand_eye import MarkerObservationError
-    from dimos.calibration.hand_eye_capture import TopicCapture, check_color_frame
+    from dimos.calibration.hand_eye_capture import TopicCapture, check_color_frame, read_camera_info
     from dimos.calibration.hand_eye_session import open_session, record_sample
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
     if count is None:
         count = MIN_VALIDATION_SAMPLES if validation else MIN_TRAINING_SAMPLES
     try:
-        camera_info = _read_intrinsics(camera_info_topic, timeout_sec, intrinsics)
-        open_session(session, camera_info, base_frame, ee_frame, marker_size_m, marker_id)
+        if intrinsics is None:
+            typer.echo(f"Reading color intrinsics from {camera_info_topic}...")
+            camera_info = read_camera_info(camera_info_topic, timeout_sec)
+        else:
+            camera_info = CameraInfo.from_yaml(str(intrinsics))
+        open_session(
+            session,
+            camera_info,
+            base_frame=base_frame,
+            ee_frame=ee_frame,
+            marker_size_m=marker_size_m,
+            marker_id=marker_id,
+        )
         with TopicCapture(image_topic, tf_topic, base_frame, ee_frame) as source:
             accepted = 0
             while accepted < count:
