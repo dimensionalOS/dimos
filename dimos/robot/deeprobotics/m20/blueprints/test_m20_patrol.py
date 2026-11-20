@@ -95,6 +95,12 @@ def _battery(status: int, level: float) -> StreamItem:
     return StreamItem("M20Connection.battery", values)
 
 
+def _request(text: str) -> StreamItem:
+    return StreamItem(
+        "Orchestrator.orchestrator_request", {"request": field_to_plain(String(text), "data")}
+    )
+
+
 DRAIN = 0.04
 SWAPPED = 0.25
 CHARGING = LCMBatteryState.POWER_SUPPLY_STATUS_CHARGING
@@ -109,13 +115,15 @@ def _walk(
     stalled_docks: int = 0,
     silent: str | None = None,
     dock_at: str | None = None,
+    release: bool = False,
 ) -> tuple[list[str], list[str], list[float], list[FaultReport]]:
     """Run the file from the charger until the given undock.
 
     Every drive uses `drain` of the battery, and every dock after the first `failed_docks`
     charges it to 75% and then 80%, except the next `stalled_docks`, which stop charging
     at 75%. Sitting down swaps in a battery at 25%. The planner never reports on the
-    `silent` goal. An operator asks to dock during the first drive to `dock_at`.
+    `silent` goal. An operator asks to dock during the first drive to `dock_at`, and asks to
+    undock once that dock has charged if `release`.
     Time passes only when nothing else is waiting, so timers fire last.
     """
     checked = _checked()
@@ -126,12 +134,13 @@ def _walk(
     level = 0.85
     docks = 0
     requested = False
+    released = False
     queue: deque[QueueItem] = deque([_battery(CHARGING, level)])
     timers: list[Timer] = []
     runtime = engine.Runtime({})
 
     def perform(effects: Sequence[Effect]) -> None:
-        nonlocal level, docks, requested
+        nonlocal level, docks, requested, released
         for effect in effects:
             match effect:
                 case SendStart(call) if call.rpc == "LocalMapRelocalization.location":
@@ -149,8 +158,7 @@ def _walk(
                     queue.append(_battery(DISCHARGING, level))
                     if calls[-1] == dock_at and not requested:
                         requested = True
-                        request = {"request": field_to_plain(String("dock"), "data")}
-                        queue.append(StreamItem("Orchestrator.orchestrator_request", request))
+                        queue.append(_request("dock"))
                     status = GoalStatus(goal_id=GoalID(stamp=stamp), status=GoalStatus.SUCCEEDED)
                     reached = {
                         "nav_state": field_to_plain(status, "status"),
@@ -178,6 +186,9 @@ def _walk(
                         continue
                     level = 0.80
                     queue.extend([_battery(CHARGING, 0.75), _battery(CHARGING, level)])
+                    if requested and release and not released:
+                        released = True
+                        queue.extend([_request("undock"), _battery(CHARGING, level)])
                 case SendStart(call) if call.rpc == "M20Connection.liedown":
                     calls.append("sit")
                     queue.append(ReturnItem(call, True))
@@ -269,13 +280,17 @@ def test_a_goal_the_planner_never_finishes_is_skipped_after_ten_minutes() -> Non
     assert calls == ["undock", *GOALS[:5], *dock, "undock"]
 
 
-def test_an_operator_request_docks_once_then_the_robot_resumes() -> None:
-    calls, _, undocked_at, faults = _walk(undocks=3, dock_at=GOALS[1])
-
-    assert faults == []
-    # "dock" arrives on the way to kitchenette. After charging the robot resumes that goal,
-    # and docks next when the battery is low, so one request docks once.
+def test_an_operator_dock_holds_on_the_charger_until_an_operator_undock() -> None:
     dock = ["dock_approach", "predock", "dock"]
+
+    calls, _, _, faults = _walk(undocks=3, dock_at=GOALS[1])
+    assert faults == []
+    # "dock" arrives on the way to kitchenette. The battery fills to 80%, but the robot stays.
+    assert calls == ["undock", *GOALS[:2], *dock]
+
+    calls, _, undocked_at, faults = _walk(undocks=3, dock_at=GOALS[1], release=True)
+    assert faults == []
+    # "undock" lets it go at 80%. It resumes kitchenette and docks next when the battery is low.
     after = [GOALS[1], GOALS[2], GOALS[3], *dock, "undock"]
     assert calls == ["undock", *GOALS[:2], *dock, "undock", *after]
     assert undocked_at == pytest.approx([0.85, 0.80, 0.80])

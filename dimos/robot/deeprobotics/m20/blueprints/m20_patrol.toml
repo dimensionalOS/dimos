@@ -28,6 +28,7 @@ skips = 0
 streak = 0
 "dock.tries" = 0
 "dock.wait" = 0
+"dock.hold" = 0
 
 [[stream_value]]
 name = "battery"
@@ -117,12 +118,12 @@ initial = "Lookup"
 if = "battery < low_battery && dock.wait == 0"
 goto = "Charging"
 
-# An operator sends "dock" on orchestrator_request to charge now.
+# An operator sends "dock" on orchestrator_request to charge now, and "undock" to let it go.
 [[node.transition]]
 on = "Orchestrator.orchestrator_request"
 if = "request == 'dock'"
 goto = "Charging"
-set = { "dock.wait" = "0" }
+set = { "dock.wait" = "0", "dock.hold" = "1" }
 
 [[node.transition]]
 if = "streak >= size(goals)"
@@ -307,7 +308,7 @@ set = { "dock.tries" = "dock.tries + 1" }
 [[node.transition]]
 on = "failed"
 goto = "failed"
-set = { "dock.tries" = "0", "dock.wait" = "size(goals)" }
+set = { "dock.tries" = "0", "dock.wait" = "size(goals)", "dock.hold" = "0" }
 
 [[node]]
 name = "TopUp"
@@ -316,8 +317,14 @@ initial = "Filling"
 outcomes = ["failed"]
 
 [[node.transition]]
-if = "battery >= full_battery"
+if = "battery >= full_battery && dock.hold == 0"
 goto = "Undocking"
+
+[[node.transition]]
+on = "Orchestrator.orchestrator_request"
+if = "request == 'undock'"
+goto = "TopUp"
+set = { "dock.hold" = "0" }
 
 [[node.transition]]
 on = "failed"
@@ -391,12 +398,12 @@ outcomes = ["done"]
 [[node.transition]]
 if = "power != DISCHARGING"
 goto = "Mission"
-set = { "dock.tries" = "0", "dock.wait" = "0" }
+set = { "dock.tries" = "0", "dock.wait" = "0", "dock.hold" = "0" }
 
 [[node.transition]]
 on = "done"
 goto = "Mission"
-set = { "dock.tries" = "0", "dock.wait" = "0" }
+set = { "dock.tries" = "0", "dock.wait" = "0", "dock.hold" = "0" }
 
 [[node]]
 name = "SitDown"
