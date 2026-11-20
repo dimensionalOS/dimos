@@ -104,6 +104,8 @@ class RoboLabSimModule(DepthCameraHardware, Module, perception.DepthCamera):
         super().__init__(**kwargs)
         self._session: zenoh.Session | None = None
         self._release_pub: Any = None
+        self._stop_event = threading.Event()
+        self._connect_thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._camera_info_base: CameraInfo | None = None
         self._latest_ts: float | None = None
@@ -133,21 +135,35 @@ class RoboLabSimModule(DepthCameraHardware, Module, perception.DepthCamera):
     @rpc
     def start(self) -> None:
         super().start()
-        self._session = open_session(self.config.address)
-        prefix = self.config.prefix
-        self._session.declare_subscriber(f"{prefix}/camera", self._on_camera)
-        self._session.declare_subscriber(f"{prefix}/status", self._on_status)
-        self._release_pub = self._session.declare_publisher(f"{prefix}/cmd")
+        self._stop_event.clear()
+        # RoboLab may still be starting Isaac: connect in the background.
+        self._connect_thread = threading.Thread(
+            target=self._connect, daemon=True, name="RoboLabSimConnect"
+        )
+        self._connect_thread.start()
         self.register_disposable(
             rx.interval(1.0 / self.config.camera_info_fps).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
                 on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
             )
         )
-        logger.info("RoboLabSimModule listening", endpoint=self.config.address, prefix=prefix)
+
+    def _connect(self) -> None:
+        session = open_session(self.config.address, stop=self._stop_event)
+        if session is None:
+            return
+        prefix = self.config.prefix
+        session.declare_subscriber(f"{prefix}/camera", self._on_camera)
+        session.declare_subscriber(f"{prefix}/status", self._on_status)
+        self._release_pub = session.declare_publisher(f"{prefix}/cmd")
+        self._session = session
+        logger.info("RoboLabSimModule connected", endpoint=self.config.address, prefix=prefix)
 
     @rpc
     def stop(self) -> None:
+        self._stop_event.set()
+        if self._connect_thread is not None:
+            self._connect_thread.join(timeout=5.0)
         session, self._session = self._session, None
         self._release_pub = None
         if session is not None:
@@ -212,6 +228,9 @@ class RoboLabSimModule(DepthCameraHardware, Module, perception.DepthCamera):
             self._latest_ts = ts
             if self._camera_info_base is None:
                 self._camera_info_base = self._camera_info_from(frame)
+            # Joined after RoboLab announced the episode: its frames say it is running.
+            if self._episode["episode"] is None:
+                self._episode["running"] = True
             self._episode["steps"] = frame.step
         self.color_image.publish(
             Image(data=frame.rgb, format=ImageFormat.RGB, frame_id=self._color_optical_frame, ts=ts)

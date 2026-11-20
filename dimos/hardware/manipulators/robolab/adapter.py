@@ -104,7 +104,10 @@ class RoboLabAdapter:
         self._first_state.set()
 
     def connect(self) -> bool:
-        self._session = open_session(self._endpoint)
+        self._session = open_session(self._endpoint, timeout_s=_FIRST_STATE_TIMEOUT_S)
+        if self._session is None:
+            logger.error("RoboLab never answered", endpoint=self._endpoint)
+            return False
         self._session.declare_subscriber(f"{self._prefix}/state", self._on_state)
         self._cmd_pub = self._session.declare_publisher(f"{self._prefix}/cmd")
         if not self._first_state.wait(_FIRST_STATE_TIMEOUT_S):

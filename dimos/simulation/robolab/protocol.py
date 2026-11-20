@@ -27,6 +27,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
+import threading
+import time
 from typing import Any
 
 import msgpack  # type: ignore[import-untyped]
@@ -41,19 +44,30 @@ ARM_DOF = 7
 GRIPPER_CLOSED_RAD = float(np.pi / 4)
 
 
-def open_session(endpoint: str) -> zenoh.Session:
-    """A zenoh session that reaches RoboLab's runner at ``endpoint`` only.
+def open_session(
+    endpoint: str, timeout_s: float = math.inf, stop: threading.Event | None = None
+) -> zenoh.Session | None:
+    """A zenoh session to RoboLab's runner at ``endpoint`` only, or None if it never answered.
 
-    RoboLab may still be starting Isaac: the session opens at once and keeps trying to
-    connect in the background.
+    RoboLab takes minutes to start Isaac, so this keeps trying for ``timeout_s`` or until
+    ``stop`` is set.
     """
-    config = zenoh.Config()
-    config.insert_json5("scouting/multicast/enabled", "false")
-    config.insert_json5("mode", json.dumps("peer"))
-    config.insert_json5("connect/endpoints", json.dumps([endpoint]))
-    config.insert_json5("connect/timeout_ms", "0")
-    config.insert_json5("connect/exit_on_failure", "false")
-    return zenoh.open(config)
+    deadline = time.monotonic() + timeout_s
+    while True:
+        config = zenoh.Config()
+        config.insert_json5("scouting/multicast/enabled", "false")
+        config.insert_json5("mode", json.dumps("client"))
+        config.insert_json5("connect/endpoints", json.dumps([endpoint]))
+        config.insert_json5("connect/timeout_ms", "2000")
+        try:
+            return zenoh.open(config)
+        except zenoh.ZError:
+            if time.monotonic() >= deadline or (stop is not None and stop.is_set()):
+                return None
+        if stop is not None and stop.wait(1.0):
+            return None
+        if stop is None:
+            time.sleep(1.0)
 
 
 def unpack(sample: zenoh.Sample) -> dict[str, Any]:

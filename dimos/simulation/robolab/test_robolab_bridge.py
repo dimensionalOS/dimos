@@ -163,3 +163,20 @@ def test_state_and_camera_frame_decode() -> None:
     assert frame.K[0, 2] == 3.0
     # RoboLab sends w, x, y, z; the frame keeps x, y, z, w.
     assert frame.quat_xyzw.tolist() == [-0.393, -0.195, 0.399, 0.805]
+
+
+def test_adapter_waits_for_a_runner_that_starts_later() -> None:
+    endpoint = _free_endpoint()
+    adapter = RoboLabAdapter(address=endpoint)
+    connected: list[bool] = []
+    thread = threading.Thread(target=lambda: connected.append(adapter.connect()))
+    thread.start()
+    time.sleep(3.0)
+    runner = FakeRunner(endpoint)
+    try:
+        thread.join(timeout=15.0)
+        assert connected == [True]
+        assert adapter.read_joint_positions()[:7] == pytest.approx(HOME)
+    finally:
+        adapter.disconnect()
+        runner.close()
