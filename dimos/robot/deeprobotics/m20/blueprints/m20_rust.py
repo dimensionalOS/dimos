@@ -116,11 +116,13 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
         "point_format": "minimal",
         "per_lidar": {"rear": {"voxel": 0.12}},
     }
+    # on NOS, which takes the Airys' multicast on its own lidar NIC like AOS (and its cores 0-3 are idle), so the
+    # scans skip the AOS -> NOS hop; ecan's joint state still comes from AOS over zenoh
     in_driver = m20_lidars(
         body_filter_joint_source="fixed" if joints == "standing" else "joint_state", **thinning
-    ).hosted(tags=AOS)
+    ).hosted(tags=NOS)
     python = autoconnect(
-        m20_lidars(lidar="lidar_raw", body_filter=False, **thinning).hosted(tags=AOS),
+        m20_lidars(lidar="lidar_raw", body_filter=False, **thinning).hosted(tags=NOS),
         joint_source,
         # a fixed pose republished every period is matched within that period
         _python_body_filter(state_tolerance_s=M20StandingJointStateConfig().publish_period_s)

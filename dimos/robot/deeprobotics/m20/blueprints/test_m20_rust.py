@@ -43,7 +43,9 @@ _HOSTS = (
         host_id="nos", name="nos", tags={"board": "nos"}, revision=_REVISION, active_run_ids=()
     ),
 )
-_AOS_DRIVERS = {"front_lidar/m20lidar", "rear_lidar/m20lidar", "m20bodyimusniff", "m20camerarelay"}
+_AOS_DRIVERS = {"m20bodyimusniff", "m20camerarelay"}
+# both lidar pairs read the multicast on NOS: the full scans (body cut) for the map, the slices for dimSLAM
+_NOS_LIDARS = {"front_lidar/m20lidar", "rear_lidar/m20lidar"}
 _NOS_SLAM = {"front_lidar_slices/m20lidar", "rear_lidar_slices/m20lidar", "dimslamlio"}
 
 
@@ -81,13 +83,15 @@ def test_no_vendor_bridge() -> None:
         ({"M20Joints": "ecan", "M20BodyFilter": "python"}, _AOS_DRIVERS | {"m20ecan"}),
     ],
 )
-def test_drivers_run_on_aos_and_the_rest_where_the_run_starts(
+def test_drivers_on_aos_lidars_and_dimslam_on_nos_and_the_rest_where_the_run_starts(
     choices: dict[str, str], on_aos: set[str]
 ) -> None:
     placement = _placement(_solid(**choices))
     assert {name for name, host in placement.items() if host == "aos"} == on_aos
-    assert {name for name, host in placement.items() if host == "nos"} == _NOS_SLAM
-    assert {host for name, host in placement.items() if name not in on_aos | _NOS_SLAM} == {"gos"}
+    assert {name for name, host in placement.items() if host == "nos"} == _NOS_LIDARS | _NOS_SLAM
+    assert {
+        host for name, host in placement.items() if name not in on_aos | _NOS_LIDARS | _NOS_SLAM
+    } == {"gos"}
     assert len(compile_fragments(_solid(**choices), placement, run_id="r", revision=_REVISION)) == 3
 
 
@@ -95,7 +99,7 @@ def test_dimslam_on_gos_stays_selectable() -> None:
     blueprint = _solid(M20Slam="gos")
     placement = _placement(blueprint)
     assert placement["dimslamlio"] == "gos"
-    assert "nos" not in placement.values()
+    assert {name for name, host in placement.items() if host == "nos"} == _NOS_LIDARS
     assert _readers(blueprint, "lidar") == {"dimslamlio", "raytracingvoxelmap", "premapmodule"}
     assert _topic(blueprint, "dimslamlio", "imu") == "lidar_imu"
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
