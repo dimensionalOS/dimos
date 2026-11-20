@@ -1,0 +1,506 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! m20_controller.toml, shared with the Python reference sim (dimos/simulation/m20_policy_sim).
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use anyhow::{bail, Context, Result};
+use serde::Deserialize;
+
+pub const JOINTS: usize = 16;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Config {
+    pub robot: Robot,
+    pub timing: Timing,
+    pub safety: Safety,
+    pub states: States,
+    pub runners: BTreeMap<String, RunnerSpec>,
+    #[serde(default)]
+    pub realtime: Realtime,
+    #[serde(default)]
+    pub ecan: Ecan,
+    #[serde(default)]
+    pub command_input: CommandInput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Robot {
+    pub joint_names: Vec<String>,
+    pub joint_lower: Vec<f64>,
+    pub joint_upper: Vec<f64>,
+    pub hipx_limit_fraction: f64,
+    pub wheel_velocity_limit: f64,
+    pub torque_limit: Vec<f64>,
+    pub thigh_length: f64,
+    pub shank_length: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Timing {
+    pub control_hz: f64,
+    pub policy_decimation: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Safety {
+    pub startup_grace_s: f64,
+    pub state_timeout_s: f64,
+    pub command_timeout_s: f64,
+    pub joint_limit_margin_rad: f64,
+    /// joint-damping commands sent after a stop request before the process exits
+    pub shutdown_damping_ticks: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Passive {
+    pub kp: Vec<f64>,
+    pub kd: Vec<f64>,
+    pub min_s_before_stand: f64,
+    pub max_tilt_deg: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct JointDamping {
+    pub kp: Vec<f64>,
+    pub kd: Vec<f64>,
+    pub min_s: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StandUp {
+    pub kp: Vec<f64>,
+    pub kd: Vec<f64>,
+    pub crouch_height: f64,
+    pub stand_height: f64,
+    pub phase_s: f64,
+    pub hipx: f64,
+    pub max_tilt_deg: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LieDown {
+    pub kp: Vec<f64>,
+    pub kd: Vec<f64>,
+    pub lie_height: f64,
+    pub phase_s: f64,
+    pub hipx: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StandIn {
+    pub gait: u32,
+    pub runner: String,
+    pub on_switch: bool,
+    pub first_s: f64,
+    pub later_s: f64,
+    pub params: BTreeMap<String, f64>,
+    pub settle_s: f64,
+    pub settle_params: BTreeMap<String, f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RlControl {
+    pub entry_gaits: Vec<u32>,
+    pub entry_fallback_gait: u32,
+    pub fallback_runner: String,
+    pub max_roll_deg: f64,
+    pub max_pitch_deg: f64,
+    #[serde(default)]
+    pub stand_in: Vec<StandIn>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct States {
+    pub passive: Passive,
+    pub joint_damping: JointDamping,
+    pub stand_up: StandUp,
+    pub lie_down: LieDown,
+    pub rl_control: RlControl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerKind {
+    Frames,
+    Sequence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JointSet {
+    LegsByType,
+    LegsPerLeg,
+    Wheels,
+    AllPerLeg,
+}
+
+impl JointSet {
+    pub fn indices(self) -> &'static [usize] {
+        match self {
+            JointSet::LegsByType => &[0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14],
+            JointSet::LegsPerLeg => &[0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14],
+            JointSet::Wheels => &[3, 7, 11, 15],
+            JointSet::AllPerLeg => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ObsBlock {
+    Gyro {
+        #[serde(default)]
+        scale: Vec<f64>,
+    },
+    Gravity {
+        #[serde(default)]
+        scale: Vec<f64>,
+    },
+    Accel {
+        #[serde(default)]
+        scale: Vec<f64>,
+    },
+    Command {
+        #[serde(default)]
+        scale: Vec<f64>,
+    },
+    Constant {
+        values: Vec<f64>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    Phase {
+        frequency: f64,
+    },
+    JointPos {
+        joints: JointSet,
+        #[serde(default = "yes")]
+        relative: bool,
+        #[serde(default)]
+        scale: Vec<f64>,
+    },
+    JointVel {
+        joints: JointSet,
+        #[serde(default)]
+        scale: Vec<f64>,
+    },
+    LastAction {
+        #[serde(default)]
+        scale: Vec<f64>,
+    },
+    HeightMap {
+        rows: usize,
+        cols: usize,
+        #[serde(default)]
+        scale: Vec<f64>,
+    },
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionLayout {
+    LegsByTypeThenWheels,
+    PerLeg,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegMode {
+    Offset,
+    Absolute,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Action {
+    pub layout: ActionLayout,
+    pub clip: f64,
+    pub leg_mode: LegMode,
+    pub leg_scale: Vec<f64>,
+    pub wheel_scale: f64,
+}
+
+/// One `command` input of a sequence runner: a constant, or a source with an affine map.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum CommandEntry {
+    Value(f64),
+    Source(CommandSource),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommandSource {
+    /// vx | vy | wz | param | gait | foot
+    pub src: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// gait: half_period | sign | remaining
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default = "one")]
+    pub scale: f64,
+    #[serde(default)]
+    pub offset: f64,
+    #[serde(default)]
+    pub leg: usize,
+    #[serde(default)]
+    pub axis: Option<String>,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GaitClockSpec {
+    pub frequency: f64,
+    pub min_frequency: f64,
+    pub max_frequency: f64,
+    pub wz_gain: f64,
+    pub vx_gain: f64,
+    pub vy_gain: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Feet {
+    pub nominal: [[f64; 2]; 4],
+    pub yaw_scale: f64,
+    pub dx_scale: f64,
+    pub dy_scale: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WzSpeedLimit {
+    pub a: f64,
+    pub b: f64,
+    pub c: f64,
+    pub d: f64,
+    pub e: f64,
+    pub lo: f64,
+    pub hi: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RunnerSpec {
+    pub gaits: Vec<u32>,
+    pub policy: String,
+    pub kind: RunnerKind,
+    pub history: usize,
+    pub frame: usize,
+    pub default_pose: Vec<f64>,
+    pub kp: Vec<f64>,
+    pub kd: Vec<f64>,
+    pub command_max: [f64; 3],
+    #[serde(default)]
+    pub command_slew: Option<[f64; 3]>,
+    #[serde(default)]
+    pub wz_clamp: Option<f64>,
+    #[serde(default)]
+    pub wz_clamp_above_vx: Option<f64>,
+    #[serde(default)]
+    pub axis_deadband: Option<[f64; 3]>,
+    #[serde(default)]
+    pub wz_speed_limit: Option<WzSpeedLimit>,
+    #[serde(default)]
+    pub gait_clock: Option<GaitClockSpec>,
+    #[serde(default)]
+    pub feet: Option<Feet>,
+    #[serde(default)]
+    pub max_pitch_deg: Option<f64>,
+    #[serde(default = "yes")]
+    pub tilt_check: bool,
+    #[serde(default)]
+    pub start_gain_scale: Option<f64>,
+    #[serde(default)]
+    pub start_gain_steps: u64,
+    #[serde(default)]
+    pub command_vector: Vec<CommandEntry>,
+    #[serde(default)]
+    pub command_params: BTreeMap<String, f64>,
+    pub obs: Vec<ObsBlock>,
+    pub action: Action,
+}
+
+/// Real-time placement of the 1 kHz loop and the policy thread (Linux; ignored elsewhere).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Realtime {
+    #[serde(default)]
+    pub control_cpu: Option<usize>,
+    #[serde(default)]
+    pub policy_cpu: Option<usize>,
+    #[serde(default)]
+    pub control_fifo_priority: Option<i32>,
+    #[serde(default)]
+    pub policy_fifo_priority: Option<i32>,
+    #[serde(default)]
+    pub lock_memory: bool,
+}
+
+/// The eth1 motor bus (see the ECAN backend); defaults are the values seen on the robot.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Ecan {
+    pub interface: String,
+    pub ethertype: u16,
+    pub destination_mac: [u8; 6],
+    pub board_id: u8,
+    pub send_flags: u32,
+    pub recv_flags: u32,
+    pub reply_timeout_s: f64,
+    pub control_word: u16,
+    pub kp_scale: f64,
+    pub kd_scale: f64,
+    // controller joint angle = direction * (motor angle - offset); unknown on the robot, so identity by default
+    pub position_offset: Vec<f64>,
+    pub direction: Vec<f64>,
+}
+
+impl Default for Ecan {
+    fn default() -> Self {
+        Ecan {
+            interface: "eth1".into(),
+            ethertype: 0x4452,
+            destination_mac: [0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+            board_id: 0x79,
+            send_flags: 0x8000_0000,
+            recv_flags: 0x8000_0000,
+            reply_timeout_s: 0.0008,
+            control_word: 4,
+            kp_scale: 10.0,
+            kd_scale: 10.0,
+            position_offset: vec![0.0],
+            direction: vec![1.0],
+        }
+    }
+}
+
+/// Where operator commands arrive: JSON lines over UDP.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommandInput {
+    pub udp_bind: String,
+}
+
+impl Default for CommandInput {
+    fn default() -> Self {
+        CommandInput {
+            udp_bind: "127.0.0.1:43920".into(),
+        }
+    }
+}
+
+/// A 1-element array broadcast, or a shorter array repeated, to length n.
+pub fn tile(values: &[f64], n: usize) -> Result<Vec<f64>> {
+    if values.is_empty() || n % values.len() != 0 {
+        bail!("cannot tile {} values to {}", values.len(), n);
+    }
+    Ok((0..n).map(|i| values[i % values.len()]).collect())
+}
+
+/// `scale` of an obs block, tiled to the block size (empty = 1).
+pub fn scale_or_one(values: &[f64], n: usize) -> Result<Vec<f64>> {
+    if values.is_empty() {
+        Ok(vec![1.0; n])
+    } else {
+        tile(values, n)
+    }
+}
+
+impl Config {
+    pub fn load(path: &Path) -> Result<Config> {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let cfg: Config =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let lens = [
+            ("joint_names", self.robot.joint_names.len()),
+            ("joint_lower", self.robot.joint_lower.len()),
+            ("joint_upper", self.robot.joint_upper.len()),
+        ];
+        for (name, len) in lens {
+            if len != JOINTS {
+                bail!("robot.{name} needs {JOINTS} entries");
+            }
+        }
+        tile(&self.robot.torque_limit, JOINTS).context("robot.torque_limit")?;
+        if !self
+            .runners
+            .contains_key(&self.states.rl_control.fallback_runner)
+        {
+            bail!("states.rl_control.fallback_runner names no runner");
+        }
+        for si in &self.states.rl_control.stand_in {
+            if !self.runners.contains_key(&si.runner) {
+                bail!(
+                    "stand_in for gait {:#x} names no runner {}",
+                    si.gait,
+                    si.runner
+                );
+            }
+        }
+        for (name, r) in &self.runners {
+            if r.default_pose.len() != JOINTS {
+                bail!("runner {name}: default_pose needs {JOINTS} entries");
+            }
+            tile(&r.kp, JOINTS).with_context(|| format!("runner {name} kp"))?;
+            tile(&r.kd, JOINTS).with_context(|| format!("runner {name} kd"))?;
+            let size: usize = r.obs.iter().map(|b| block_size(b)).sum();
+            if size != r.frame {
+                bail!(
+                    "runner {name}: obs blocks add up to {size}, frame is {}",
+                    r.frame
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The runner a gait code selects, or the fallback runner.
+    pub fn runner_for_gait(&self, gait: u32) -> &str {
+        self.runners
+            .iter()
+            .find(|(_, r)| r.gaits.contains(&gait))
+            .map(|(n, _)| n.as_str())
+            .unwrap_or(&self.states.rl_control.fallback_runner)
+    }
+
+    pub fn control_dt(&self) -> f64 {
+        1.0 / self.timing.control_hz
+    }
+}
+
+pub fn block_size(b: &ObsBlock) -> usize {
+    match b {
+        ObsBlock::Gyro { .. }
+        | ObsBlock::Gravity { .. }
+        | ObsBlock::Accel { .. }
+        | ObsBlock::Command { .. } => 3,
+        ObsBlock::Constant { values, .. } => values.len(),
+        ObsBlock::Phase { .. } => 2,
+        ObsBlock::JointPos { joints, .. } | ObsBlock::JointVel { joints, .. } => {
+            joints.indices().len()
+        }
+        ObsBlock::LastAction { .. } => JOINTS,
+        ObsBlock::HeightMap { rows, cols, .. } => rows * cols,
+    }
+}

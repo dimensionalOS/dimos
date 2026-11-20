@@ -1,0 +1,32 @@
+[package]
+name = "dimos-m20-controller"
+version = "0.1.0"
+edition = "2021"
+description = "M20 motor controller (rl_deploy replacement): state machine, ONNX policy runners, MuJoCo and ECAN backends"
+license = "Apache-2.0"
+
+[lib]
+name = "m20_controller"
+path = "src/lib.rs"
+
+[[bin]]
+name = "m20_controller"
+path = "src/bin/m20_controller.rs"
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+# pure Rust ONNX inference: no shared library to ship to the aarch64 board, cross-compiles with cargo zigbuild
+tract-onnx = "0.23"
+
+# tests run the policies: optimize dependencies (tract) without paying for release LTO links
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
