@@ -566,6 +566,16 @@ vy 0.3, wz 0.5 (6 s each) -> stop -> lie down. Values are body-frame means over 
 The Rust controller passes the same lie -> stand-up -> walk 0.5 m/s -> lie-down run in real time against the sim
 (`cargo test --test sim_sequence`), and its 15 runners match the Python ones step for step (`--test golden`).
 
+## Building the controller for the robot
+
+    cd dimos/robot/deeprobotics/m20/controller/rust
+    cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.31   # ~19 MB, glibc 2.31 (Ubuntu 20.04 boards)
+    cargo test                                                         # golden + real-time sim tests (need policies)
+
+Policy inference is `tract` (pure Rust): no ONNX Runtime shared library to ship to the board, the same graph on
+macOS and aarch64, and every op these 15 models use is supported; the transformer runners skip tract's graph
+optimizer (it mis-shapes their command Tile) and run the typed graph, at about 0.2-2 ms per step on an M-series Mac.
+
 ## Still unknown [U]
 
 - UserCommand +0x14 / +0x18 semantics beyond the gait-change marker, and which DDS input sets the stand mode bytes.
