@@ -196,6 +196,11 @@ def test_an_rpc_is_called_on_one_instance(client: TestClient, dimos: dict[str, A
     assert client.post("/active/modules/robot0:speaker/rpcs/fly").status_code == 404
     assert client.post("/active/modules/nope/rpcs/speak").status_code == 404
     assert len(app.calls) == 2
+    # a base-class RPC isn't listed on the module, but is still callable
+    assert "start" not in [
+        rpc["name"] for rpc in client.get("/active/modules/robot0:speaker").json()["rpcs"]
+    ]
+    assert client.post("/active/modules/robot0:speaker/rpcs/start").json()["ok"]
 
 
 def test_restart_and_stop_go_by_the_instances_class(

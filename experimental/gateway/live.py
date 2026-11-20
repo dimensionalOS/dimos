@@ -194,8 +194,15 @@ class Live:
         kwargs: dict[str, Any],
     ) -> dict[str, Any]:
         module = self.module(scanned, module_id)
-        if name not in {rpc["name"] for rpc in module["rpcs"]}:
-            listed = ", ".join(rpc["name"] for rpc in module["rpcs"])
+        # every RPC the instance has, including the base-class ones (get_config, ...) that modules() leaves out of its list
+        callable_rpcs = sorted(
+            rpc.name
+            for instance in self.app().list_modules()
+            if instance_id(instance.instance_name) == module_id
+            for rpc in instance.rpcs
+        )
+        if name not in callable_rpcs:
+            listed = ", ".join(callable_rpcs)
             raise ApiError(404, f"{module_id} has no RPC {name} (its RPCs: {listed})")
         # porcelain takes a namespaced instance's key, or an un-namespaced one's class name
         handle = self.app().get_module(
