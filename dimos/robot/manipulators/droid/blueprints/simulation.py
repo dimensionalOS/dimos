@@ -53,6 +53,9 @@ droid_robolab_sim = autoconnect(
         model=make_droid_model_config(),
         planning_timeout=10.0,
         visualization={"backend": "viser"},
+        # Isaac runs slower than the wall clock: execute returns once the arm is there.
+        arrival_tolerance=0.01,
+        arrival_timeout=60.0,
     ),
     ManipulationSkills.blueprint(),
     # Grasps from an object's point cloud, e.g. ManipulationLocalize.get_pointcloud.
