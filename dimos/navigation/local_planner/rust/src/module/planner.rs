@@ -25,6 +25,7 @@ use crate::{clearance, stamps};
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
+use lcm_msgs::std_msgs;
 use tracing::{debug, info, warn};
 use validator::ValidationError;
 
@@ -33,6 +34,9 @@ use crate::module::ground::{self, Plane};
 use crate::module::msg;
 use crate::module::obstacles::{self, FieldPoints, ObstacleModel};
 use crate::module::tf_pose::PoseWatch;
+
+/// Hits this close together are one collision.
+const COLLISION_GAP: Duration = Duration::from_secs(1);
 
 /// Mirrors `LocalPlannerNativeConfig` (native.py), which owns every default.
 #[native_config]
@@ -117,6 +121,10 @@ pub struct LocalPlanner {
     #[output(encode = PointCloud2::encode)]
     ground_support: Output<PointCloud2>,
 
+    /// A note on each collision start, for the recorder to keep a full-rate clip around.
+    #[output(encode = std_msgs::String::encode)]
+    clip_that: Output<std_msgs::String>,
+
     #[config]
     config: Config,
 
@@ -139,6 +147,7 @@ impl LocalPlanner {
             model,
             path: self.path.clone(),
             ground_support: self.ground_support.clone(),
+            clip_that: self.clip_that.clone(),
             tf: self.tf.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
@@ -372,6 +381,7 @@ struct Worker {
     model: Box<dyn ObstacleModel>,
     path: Output<Path>,
     ground_support: Output<PointCloud2>,
+    clip_that: Output<std_msgs::String>,
     tf: Tf,
 }
 
@@ -399,6 +409,7 @@ impl Worker {
         // The published plan; the search keeps it unless a fresh one earns the switch.
         let mut incumbent: Option<Vec<[f64; 3]>> = None;
         let mut published = false;
+        let mut last_hit: Option<Instant> = None;
 
         loop {
             ticker.tick().await;
@@ -490,6 +501,9 @@ impl Worker {
                         let pts = self.points(&cloud, snap.cloud_seq, &mut points)?;
                         let body = body_z.unwrap_or(0.0);
                         let ground = ground::read(&pts, pose.0, pose.1, body, &self.emb);
+                        let hard =
+                            obstacles::field_points(self.model.as_ref(), &pts, &ground.plane).hard;
+                        let hits = obstacles::body_hits(&hard, &self.config.embodiment, pose);
                         let path = plan_once(
                             &self.config,
                             &self.emb,
@@ -501,9 +515,21 @@ impl Worker {
                             &ground.plane,
                             incumbent.as_deref(),
                         );
-                        Some((path, ground.support))
+                        Some((path, ground.support, hits))
                     });
-                    if let Some((produced, support)) = produced {
+                    if let Some((produced, support, hits)) = produced {
+                        let fresh = last_hit.is_none_or(|t| now.duration_since(t) > COLLISION_GAP);
+                        if hits > 0 {
+                            last_hit = Some(now);
+                        }
+                        if hits > 0 && fresh {
+                            let note = format!(
+                                "local_planner collision: {hits} hard voxels in the body at ({:.2}, {:.2})",
+                                pose.0, pose.1
+                            );
+                            warn!("{note}");
+                            msg::publish(&self.clip_that, &std_msgs::String { data: note }).await;
+                        }
                         let floor =
                             msg::build_cloud(&support, &self.config.world_frame, msg::now_secs());
                         msg::publish(&self.ground_support, &floor).await;

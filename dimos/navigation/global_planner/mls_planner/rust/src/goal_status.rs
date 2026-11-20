@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use crate::voxel::Xyz;
 use dimos_module::{error_throttled, Output};
 use lcm_msgs::actionlib_msgs::{GoalID, GoalStatus};
-use lcm_msgs::std_msgs::Time;
+use lcm_msgs::std_msgs::{self, Time};
 
 /// The last status reported. Held across each publish, so a heartbeat can
 /// never send an older goal's status after a newer one.
@@ -217,10 +217,12 @@ fn record(latest: &mut Option<Report>, report: &Report) -> bool {
     transition
 }
 
-/// Publishes goal status on every transition and on the heartbeat.
+/// Publishes goal status on every transition and on the heartbeat, and a note on clip_that
+/// when a goal aborts.
 #[derive(Clone)]
 pub(crate) struct StatusReporter {
     pub(crate) out: Output<GoalStatus>,
+    pub(crate) clip_that: Output<std_msgs::String>,
     pub(crate) latest: LatestStatus,
 }
 
@@ -229,6 +231,23 @@ impl StatusReporter {
         let mut latest = self.latest.lock().await;
         if record(&mut latest, &report) {
             self.publish(&report).await;
+            if report.status == GoalStatus::ABORTED {
+                self.clip(&report).await;
+            }
+        }
+    }
+
+    async fn clip(&self, report: &Report) {
+        let note = std_msgs::String {
+            data: format!("mls_planner aborted the goal: {}", report.reason),
+        };
+        if let Err(e) = self.clip_that.publish(&note).await {
+            error_throttled!(
+                Duration::from_secs(1),
+                error = %e,
+                topic = %self.clip_that.topic,
+                "clip_that failed to publish",
+            );
         }
     }
 

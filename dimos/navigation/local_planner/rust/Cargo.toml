@@ -49,6 +49,7 @@ tf = "tf2_msgs.TFMessage"
 [package.metadata.dimos.module.local_planner.outputs]
 path = "nav_msgs.Path"
 ground_support = "sensor_msgs.PointCloud2"
+clip_that = "std_msgs.String"
 
 [profile.release]
 lto = "thin"

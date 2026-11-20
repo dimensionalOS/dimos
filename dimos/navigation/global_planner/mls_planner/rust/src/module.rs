@@ -36,7 +36,7 @@ use lcm_msgs::actionlib_msgs::GoalStatus;
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
+use lcm_msgs::std_msgs::{self, Header, Time};
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::{debug, info, warn};
@@ -273,6 +273,10 @@ pub struct MlsPlanner {
     #[output(encode = GoalStatus::encode)]
     nav_status: Output<GoalStatus>,
 
+    /// A note when a goal aborts, for the recorder to keep a full-rate clip around.
+    #[output(encode = std_msgs::String::encode)]
+    clip_that: Output<std_msgs::String>,
+
     #[config]
     config: Config,
 
@@ -342,6 +346,7 @@ impl MlsPlanner {
     fn status(&self) -> StatusReporter {
         StatusReporter {
             out: self.nav_status.clone(),
+            clip_that: self.clip_that.clone(),
             latest: Arc::clone(&self.latest_status),
         }
     }

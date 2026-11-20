@@ -26,6 +26,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 
@@ -97,6 +98,8 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     surface_map: Out[PointCloud2]
     nodes: Out[PointCloud2]
     node_edges: Out[LineSegments3D]
+    # A note when a goal aborts, for the recorder to keep a full-rate clip around.
+    clip_that: Out[String]
 
     @rpc
     def stop(self) -> None:

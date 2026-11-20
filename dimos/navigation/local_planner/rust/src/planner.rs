@@ -197,7 +197,7 @@ impl Emb {
 
     /// The standing body: the largest box nested in every envelope row.
     /// `embodiment/base.py::stand_box`.
-    fn stand_box(&self) -> [f64; 4] {
+    pub fn stand_box(&self) -> [f64; 4] {
         if self.envelope.is_empty() {
             return self.union_box();
         }
