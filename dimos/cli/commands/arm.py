@@ -62,6 +62,7 @@ from dimos.cli.commands.arm_run import (
     run_alive,
     stop_run,
 )
+from dimos.control.calibration.procedure import duration_text
 
 arm_app = typer.Typer(
     help="Calibrate an arm (gravity, gains, checks), inspect its calibration, bake it into a URDF.",
@@ -419,9 +420,17 @@ def print_results(step_id: str, data: dict[str, Any]) -> None:
         proposals = data.get("proposals") or {}
         if proposals:
             echo("    proposed gains:")
-            rows = [["joint", "kp", "kd", "why"]]
+            rows = [["joint", "kp", "kd", "friction Nm", "why"]]
             for joint, row in proposals.items():
-                rows.append([joint, _f(row.get("kp"), 1), _f(row.get("kd"), 2), row["reason"]])
+                rows.append(
+                    [
+                        joint,
+                        _f(row.get("kp"), 1),
+                        _f(row.get("kd"), 2),
+                        _f(row.get("friction_nm"), 2),
+                        row["reason"],
+                    ]
+                )
             table(rows)
             for joint, row in proposals.items():
                 for tried, why in (row.get("rejected") or {}).items():
@@ -533,8 +542,14 @@ class Wizard:
         echo(f"\n? {status['prompt']}")
         deadline = status.get("prompt_deadline")
         if deadline:
-            at = time.strftime("%H:%M", time.localtime(deadline))
-            echo(f"  (no answer by {at} aborts the run and parks the arm)")
+            left = deadline - time.time()
+            if left <= 0:
+                echo("  (answer now: the run aborts and parks the arm)")
+            else:
+                whole = -(-left // 60.0) * 60.0 if left >= 60.0 else -(-left // 1.0)
+                echo(
+                    f"  (no answer within {duration_text(whole)} aborts the run and parks the arm)"
+                )
         echo(PROMPT_KEYS, nl=False)
 
     def _keys(self, status: dict[str, Any]) -> None:
