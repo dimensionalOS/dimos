@@ -108,13 +108,19 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
         .remappings([(M20Ecan, "joint_state", "coordinator_joint_state")])
         .hosted(tags=AOS)
     )
-    # the lidars voxelize at the ray tracer's voxel, the only thinning its scans get
+    # the lidars' voxel is the only thinning the ray tracer's scans get: the rear Airy sees ~5x the front's points at
+    # the ray tracer's voxel, so it voxelizes coarser to keep both under m20's one vendor cloud; x, y, z and
+    # offset_time on the wire (nothing past the body cut reads intensity or ring)
+    thinning: dict[str, Any] = {
+        "voxel": VOXEL_SIZE_M,
+        "point_format": "minimal",
+        "per_lidar": {"rear": {"voxel": 0.12}},
+    }
     in_driver = m20_lidars(
-        voxel=VOXEL_SIZE_M,
-        body_filter_joint_source="fixed" if joints == "standing" else "joint_state",
+        body_filter_joint_source="fixed" if joints == "standing" else "joint_state", **thinning
     ).hosted(tags=AOS)
     python = autoconnect(
-        m20_lidars(lidar="lidar_raw", voxel=VOXEL_SIZE_M, body_filter=False).hosted(tags=AOS),
+        m20_lidars(lidar="lidar_raw", body_filter=False, **thinning).hosted(tags=AOS),
         joint_source,
         # a fixed pose republished every period is matched within that period
         _python_body_filter(state_tolerance_s=M20StandingJointStateConfig().publish_period_s)

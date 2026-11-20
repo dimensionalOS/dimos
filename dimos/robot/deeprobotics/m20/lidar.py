@@ -23,6 +23,7 @@ Runs on AOS (eth0 is on the lidars' network) next to the vendor rslidar, which k
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import cache
 from typing import Any, Literal
 
@@ -121,12 +122,13 @@ def m20_lidars(
     joint_state: str = "coordinator_joint_state",
     namespace_suffix: str = "",
     publish_mounts: bool = True,
+    per_lidar: Mapping[str, Mapping[str, Any]] | None = None,
     **overrides: Any,
 ) -> MetaBlueprint:
     """Both M20Lidars, each namespaced (its frame + `namespace_suffix`), onto `lidar` and `imu` (their body filter
     reading `joint_state`); tf stays global. A second pair on the same lidars takes a suffix and
     `publish_mounts=False`, so each mount has one publisher. `overrides` (e.g. voxel=0.1,
-    body_filter_joint_source="joint_state") go to both."""
+    body_filter_joint_source="joint_state") go to both; `per_lidar` ("front"/"rear" -> settings, e.g. its voxel) to one."""
     if overrides.get("body_filter", True):
         # resolved here, where the blueprint is built, so the board running the lidars never loads the model
         urdf, standing = _m20_body()
@@ -144,7 +146,7 @@ def m20_lidars(
                 # the samples are rotated into the lidar's axes, so they share its frame
                 imu_frame_id=frame,
                 mount_parent_frame_id="base_link" if publish_mounts else None,
-                **overrides,
+                **{**overrides, **(per_lidar or {}).get(which, {})},
             )
             .remappings(
                 [
