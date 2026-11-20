@@ -124,7 +124,8 @@ def serve(port: int, once: bool = False) -> None:
     cfg = load_config()
     session = Session(cfg)
     with socket.create_server(("127.0.0.1", port)) as srv:
-        print(f"m20 sim listening on 127.0.0.1:{port}", flush=True)
+        # port 0 takes a free one; the line says which, so parallel clients never collide
+        print(f"m20 sim listening on 127.0.0.1:{srv.getsockname()[1]}", flush=True)
         while True:
             conn, _ = srv.accept()
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -142,7 +143,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="0 picks a free port")
     parser.add_argument(
         "--once", action="store_true", help="exit after the first client disconnects"
     )
