@@ -33,7 +33,7 @@ ls "$RELEASE_TRACE_DIR"
 uv run dimos stop
 ```
 
-Expected result: the Ollama run greets through the speakers with the local model, and the provider run produces complete request/response pairs in the new trace directory. `unitree-go2-agentic-huggingface` is the same check with a local Hugging Face model, which downloads on first start.
+Expected result: the Ollama run greets through the speakers with the local model, and the provider run produces complete request/response pairs in the new trace directory. `unitree-go2-agentic-huggingface` is the same check with a local Hugging Face model, which downloads on first start. Start it only once `ollama ps` lists no model: Ollama keeps its model on the GPU for 5 minutes after the last request, and with both loaded a 12 GB card fails the start with `CUDA out of memory`.
 
 ## 7.2 Tool streams and capability conflicts
 
