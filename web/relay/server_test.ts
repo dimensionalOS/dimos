@@ -1185,6 +1185,12 @@ Deno.test({
   }
 });
 
+Deno.test("startRelay rejects invalid HTTP ports", async () => {
+  for (const port of [-1, 65536, 1.5]) {
+    await assertRejects(() => startRelay({ port }), RangeError, "--port");
+  }
+});
+
 Deno.test("startRelay refuses a non-loopback host without the unsafe override", async () => {
   // Before binding anything: the local trust model (wildcard CORS, no auth,
   // optional user files) must not silently reach a LAN address.

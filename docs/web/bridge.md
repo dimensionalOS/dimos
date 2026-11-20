@@ -28,12 +28,12 @@ The relay flags are `dimos run` options. Most of the rest are fields of the brid
 | `--relay-ca PEM` | none | CA bundle that signed the relay's certificate (mkcert, a private CA). Replaces the default trust store for that relay. |
 | `--relay-key KEY` | none | The robot's key for a relay with an auth file, bound to the robot id there. It shows in the process list. The default bridge can also take it from `RELAYBRIDGEMODULE__RELAY_KEY` in the environment or `.env`. |
 | `--rtc <bool>` | true | Deliver `jpeg.v1` channels as WebRTC tracks when the relay offers it and aiortc is installed. `--rtc false` keeps JPEG frames through the relay. |
-| `--rtc-file PATH` | none | Cloudflare configuration for the local relay (its `--rtc-file`). A relay started elsewhere carries its own. |
+| `--rtc-file PATH` | none | Existing Cloudflare configuration file for the local relay. A relay started elsewhere carries its own. |
 | `--robot-id ID` | the hostname | How the relay and the cockpit name this robot. Two robots on one relay need different ids: `dimos run unitree-go2 --local-relay --robot-id go2-lab`. |
 | `--robot-model NAME` | none | Shown next to the name in the cockpit. Also a global option. |
 | `--robot-name NAME` | the id | Display name in the cockpit. |
-| `--serve-dir DIR` | none | Serve this directory at `/` instead of the cockpit. Local relay only. |
-| `--local-port N` | 7780 | HTTP port of the local relay. |
+| `--serve-dir DIR` | none | Serve an existing directory at `/` instead of the cockpit. Local relay only. |
+| `--local-port N` | 7780 | HTTP port of the local relay (0–65535). Use 0 to let the OS choose a free port. |
 | `--open-browser false` | opens | Do not open the page once the local relay is up. |
 | `--no-web-build` | builds | Do not rebuild the cockpit and SDK bundles when they are stale (checkouts only, wheels ship them prebuilt). |
 | `--jpeg-quality`, `--image-max-hz`, `--odom-max-hz`, `--costmap-max-hz` | 75, 30, 20, 5 | Quality and rates of the built-in channels in the default cockpit. A `cockpit(...)` layout sets them per panel instead. |

@@ -42,6 +42,8 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -152,11 +154,26 @@ def test_manifest_and_robot_info_content() -> None:
         ("costmap_max_hz", -1.0),
         ("jpeg_quality", -1),
         ("jpeg_quality", 101),
+        ("local_port", -1),
+        ("local_port", 65536),
     ],
 )
 def test_config_rejects_out_of_range_values(field: str, value: float) -> None:
     with pytest.raises(ValidationError):
         RelayBridgeConfig(**{field: value})
+
+
+@pytest.mark.parametrize(("port", "endpoint"), [(-1, 0), (65536, 65535)])
+def test_local_port_rejected_from_cli_and_json(tmp_path: Path, port: int, endpoint: int) -> None:
+    parser = BlueprintConfigParser(RelayBridgeModule.blueprint())
+    with pytest.raises(BlueprintConfigError, match=r"relaybridgemodule\.local_port"):
+        parser.parse(["--local-port", str(port)], environ={})
+
+    config = tmp_path / "relay.json"
+    config.write_text(json.dumps({"relaybridgemodule": {"local_port": port}}))
+    with pytest.raises(BlueprintConfigError, match=r"relaybridgemodule\.local_port"):
+        parser.parse(config_path=config, environ={})
+    assert RelayBridgeConfig(local_port=endpoint).local_port == endpoint
 
 
 def test_start_registers_but_subscribes_nothing(bridge) -> None:
@@ -1237,35 +1254,25 @@ def test_close_cancels_in_flight_build() -> None:
     assert cancel.is_set()
 
 
-def test_serve_dir_rejected_with_relay_url(tmp_path: Path) -> None:
-    # serve_dir is a local-relay feature; silently ignoring it against an
-    # external relay would leave the user's page unserved.
-    module = RelayBridgeModule(
-        relay_url="http://127.0.0.1:1", serve_dir=str(tmp_path), open_browser=False
-    )
-    with pytest.raises(RuntimeError, match="serve_dir requires"):
-        module.start()
-    stop_module(module)
+@pytest.mark.parametrize("path", ["missing", "file", ""])
+def test_serve_dir_requires_existing_directory(tmp_path: Path, path: str) -> None:
+    (tmp_path / "file").touch()
+    value = str(tmp_path / path) if path else ""
+    parser = BlueprintConfigParser(RelayBridgeModule.blueprint())
+    with pytest.raises(BlueprintConfigError, match="serve_dir must be an existing directory"):
+        parser.parse(["--serve-dir", value], environ={})
 
 
-def test_missing_serve_dir_fails_before_build_and_spawn(monkeypatch, tmp_path: Path) -> None:
-    # A typo'd directory must produce the labeled error, not a minute-long
-    # build followed by a relay child dying with a stderr dump.
-    builds: list[int] = []
-    monkeypatch.setattr(
-        relay_bridge_module, "ensure_web_dist", lambda *args, **kwargs: builds.append(1)
-    )
-    spawns: list[int] = []
-    monkeypatch.setattr(
-        RelayBridgeModule, "_spawn_relay", lambda self, open_browser, serve_dir: spawns.append(1)
-    )
-    module = RelayBridgeModule(
-        local_port=0, open_browser=False, serve_dir=str(tmp_path / "nope"), robot_id="unit-bot"
-    )
-    with pytest.raises(RuntimeError, match="serve_dir does not exist"):
-        module.start()
-    stop_module(module)
-    assert builds == [] and spawns == []
+@pytest.mark.parametrize("option", ["--serve-dir", "--rtc-file"])
+def test_local_relay_paths_reject_external_relay(tmp_path: Path, option: str) -> None:
+    rtc = tmp_path / "rtc.json"
+    rtc.touch()
+    path = tmp_path if option == "--serve-dir" else rtc
+    parser = BlueprintConfigParser(RelayBridgeModule.blueprint())
+    with pytest.raises(BlueprintConfigError, match="requires the spawned local relay"):
+        parser.parse(
+            [option, str(path)], environ={}, global_overrides={"relay_url": "https://relay.example"}
+        )
 
 
 def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
