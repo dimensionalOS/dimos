@@ -15,7 +15,7 @@ dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", tag = "v0.4.1" }
 # Unused directly, but cargo hands DEP_CUVSLAM_LIB_DIR only to immediate dependents
 # and build.rs needs it for the rpath.
 cu_vslam_rs = "0.2.0"
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "762ef36d6b693d24f2002a01f454f62f38a02412" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"

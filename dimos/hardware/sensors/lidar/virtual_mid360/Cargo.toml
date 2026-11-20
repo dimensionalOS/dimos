@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 livox-wire = { git = "https://github.com/dimensionalOS/livox-wire", rev = "441c4a16dbe2adb0683ece976cc800c6d7fbc790" }
 # Direct dependencies of the copied livox wire/pipeline/pcap modules. See src/main.rs.
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "9ac42e97ac754f026fc418b5534960dba71c2c0f" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "762ef36d6b693d24f2002a01f454f62f38a02412" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
 serde = { version = "1", features = ["derive"] }
 socket2 = "0.6"
