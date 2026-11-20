@@ -200,17 +200,19 @@ def test_the_python_filter_stays_selectable_between_lidar_raw_and_lidar(joints: 
     assert _readers(blueprint, "lidar") == {"raytracingvoxelmap", "premapmodule"}
 
 
-def test_the_only_thinning_is_the_lidars_voxel_at_or_above_the_ray_tracers_voxel() -> None:
-    """The lidars thin their own scans (no finer than the map's voxel) and send only x, y, z and offset_time."""
+def test_the_lidars_thin_at_or_above_the_ray_tracers_voxel_and_it_subsamples_as_m20() -> None:
+    """The lidars thin their own scans (no finer than the map's voxel) and send only x, y, z and offset_time; the ray
+    tracer then subsamples them as m20's does the vendor cloud."""
     atoms = {atom.name: atom for atom in _solid().active_blueprints}
+    m20_atoms = {atom.name: atom for atom in m20.solidify().active_blueprints}
     voxel = atoms["raytracingvoxelmap"].kwargs["voxel_size"]
     for lidar in ("front_lidar/m20lidar", "rear_lidar/m20lidar"):
         assert atoms[lidar].kwargs["voxel"] >= voxel
         assert atoms[lidar].kwargs["point_format"] == "minimal"
-    assert (
-        atoms["raytracingvoxelmap"].kwargs["pre_trace_subsample"],
-        atoms["raytracingvoxelmap"].kwargs["ray_subsample"],
-    ) == (1, 1)
+    for key in ("pre_trace_subsample", "ray_subsample"):
+        assert (
+            atoms["raytracingvoxelmap"].kwargs[key] == m20_atoms["raytracingvoxelmap"].kwargs[key]
+        )
 
 
 def test_dimslams_slices_keep_every_field_at_the_ray_tracers_voxel() -> None:

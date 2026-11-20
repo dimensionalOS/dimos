@@ -108,7 +108,7 @@ def _lidars_and_body_filter(joints: str) -> ChoiceAtom:
         .remappings([(M20Ecan, "joint_state", "coordinator_joint_state")])
         .hosted(tags=AOS)
     )
-    # the lidars' voxel is the only thinning the ray tracer's scans get: the rear Airy sees ~5x the front's points at
+    # the lidars' voxel thins the scans on the wire: the rear Airy sees ~5x the front's points at
     # the ray tracer's voxel, so it voxelizes coarser to keep both under m20's one vendor cloud; x, y, z and
     # offset_time on the wire (nothing past the body cut reads intensity or ring)
     thinning: dict[str, Any] = {
@@ -175,7 +175,8 @@ m20_rust = autoconnect(
             "gos": m20_dim_slam(cpus=GOS_SLAM_CPUS).remappings([(DimSlamLio, "imu", "lidar_imu")]),
         },
     ),
-    m20_nav_stack(lidar="lidar", pre_trace_subsample=1, ray_subsample=1),
+    # m20's 5/5 subsampling on top of the lidars' voxel, as m20 traces the vendor cloud
+    m20_nav_stack(lidar="lidar"),
     m20_relocalization(lidar="lidar"),
 ).global_config(
     n_workers=5,
