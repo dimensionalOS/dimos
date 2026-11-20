@@ -153,9 +153,6 @@ def _start_openarm_mock_planner(
 ) -> None:
     lcm_spy.save_topic(JOINT_STATE_TOPIC)
     start_blueprint(BLUEPRINT)
-    # Joint state flows once ControlCoordinator has started, but ManipulationModule
-    # can still be starting then. RemoteModuleSource gives up after 5 s, and the
-    # Coordinator it attaches to is only served once every module has started.
     wait_for_system_ready()
     lcm_spy.wait_for_saved_topic(JOINT_STATE_TOPIC, timeout=120.0)
 
