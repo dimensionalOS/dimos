@@ -23,7 +23,13 @@ use lcm_msgs::sensor_msgs::CameraInfo;
 use tracing::warn;
 
 use crate::geometry::{camera_info, camera_transforms};
-use crate::relay::{relay, wall_s, Camera, Encode};
+use crate::relay::{relay, wall_s, Camera, Encode, Encoder};
+
+fn valid_encoder(name: &str) -> Result<(), validator::ValidationError> {
+    name.parse::<Encoder>()
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("encoder must be rust or gstreamer"))
+}
 
 #[native_config]
 #[derive(Clone)]
@@ -42,6 +48,9 @@ pub struct Config {
     bitrate_bps: i64,
     #[validate(range(min = 1, max = 600))]
     gop: i64,
+    /// `rust` (in-process, the rockchip-h264 crate) or `gstreamer` (a gst-launch child per camera)
+    #[validate(custom(function = "valid_encoder"))]
+    encoder: String,
     /// Camera centers in base_link, and their turn about z.
     front_camera_xyz: [f64; 3],
     front_camera_yaw_rad: f64,
@@ -93,6 +102,7 @@ impl M20Camera {
             fps: config.fps as u32,
             bitrate_bps: config.bitrate_bps as u32,
             gop: config.gop as u32,
+            encoder: config.encoder.parse().unwrap_or(Encoder::Gstreamer),
         };
         let front = Arc::new(Camera {
             name: "front_camera".into(),

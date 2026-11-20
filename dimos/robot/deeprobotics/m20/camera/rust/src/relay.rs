@@ -16,13 +16,19 @@
 //! `mediamtx`). Encoding H.264 at the source means the Desktop gateway passes it through to every browser instead of
 //! decoding the vendor's H.265 and re-encoding H.264, which freed the robot's big cores for navigation.
 //!
-//! A `gst-launch-1.0` pipeline per camera does the Rockchip hardware work (`mppjpegdec` → `mpph264enc`) and writes an
-//! Annex-B byte stream to its stdout; `h264parse config-interval=-1` puts the SPS/PPS in front of every keyframe so a
-//! subscriber that joins mid-stream starts at the next one. This process splits that byte stream back into access
-//! units (one video slice each) and publishes one message per unit, every frame.
+//! Two ways to do the Rockchip hardware work (JPEG decode → H.264 encode), picked by `Encode::encoder`:
+//! - `Encoder::Rust`: in this process, through the `rockchip-h264` crate (the RK3588's JPEG decoder and VEPU580 driven
+//!   straight through `/dev/mpp_service`), one blocking thread per camera capturing V4L2 MJPEG and producing one
+//!   access unit per frame.
+//! - `Encoder::Gstreamer`: a `gst-launch-1.0` pipeline per camera (`mppjpegdec` → `mpph264enc`) writing an Annex-B
+//!   byte stream to its stdout, split back into access units here. The vendor plugin on AOS leaks a dmabuf fd per
+//!   frame (~510k fds and 2.6 fps after a day), which is why the Rust path exists.
+//!
+//! Either way the SPS/PPS go in front of every keyframe so a subscriber that joins mid-stream starts at the next one,
+//! and each access unit (one video slice) is published as one message, every frame.
 
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -60,6 +66,28 @@ pub struct Encode {
     pub bitrate_bps: u32,
     /// keyframe interval in frames (the pipeline's `gop`)
     pub gop: u32,
+    pub encoder: Encoder,
+}
+
+/// Which implementation of the hardware JPEG decode → H.264 encode a camera runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Encoder {
+    /// in-process, the `rockchip-h264` crate
+    Rust,
+    /// a `gst-launch-1.0` child (the vendor's leaking mpp plugin)
+    Gstreamer,
+}
+
+impl std::str::FromStr for Encoder {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "rust" => Ok(Self::Rust),
+            "gstreamer" => Ok(Self::Gstreamer),
+            other => bail!("unknown encoder {other:?} (rust or gstreamer)"),
+        }
+    }
 }
 
 /// Relay forever: start the pipeline, publish until it fails or stalls, wait `retry`, repeat; log rates every `stats`.
@@ -134,6 +162,89 @@ fn sick(measured_fps: f64, configured_fps: u32) -> bool {
 }
 
 async fn stream(camera: &Camera, encode: &Encode, stall: Duration, stats: Duration) -> Result<()> {
+    match encode.encoder {
+        Encoder::Rust => stream_rust(camera, encode, stall, stats).await,
+        Encoder::Gstreamer => stream_gstreamer(camera, encode, stall, stats).await,
+    }
+}
+
+/// Consecutive frames that fail to transcode before the stream is torn down and reopened (one bad JPEG off a UVC
+/// camera is skipped; a second's worth means something is stuck).
+fn failed_frames_limit(encode: &Encode) -> u32 {
+    encode.fps.max(1)
+}
+
+async fn stream_rust(
+    camera: &Camera,
+    encode: &Encode,
+    stall: Duration,
+    stats: Duration,
+) -> Result<()> {
+    let dropped = Arc::new(AtomicU32::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (units, queued) = mpsc::channel::<Vec<u8>>(QUEUED_FRAMES);
+    // The capture + hardware loop blocks (V4L2 poll, mpp_service poll), so it gets its own thread; like the gst
+    // reader, it never waits on publishing and drops a frame instead.
+    let worker = tokio::task::spawn_blocking({
+        let (device, name, encode) = (camera.device.clone(), camera.name.clone(), encode.clone());
+        let (dropped, stop) = (Arc::clone(&dropped), Arc::clone(&stop));
+        move || -> Result<()> {
+            let config = rockchip_h264::Config {
+                width: encode.width,
+                height: encode.height,
+                fps: encode.fps,
+                bitrate_bps: encode.bitrate_bps,
+                gop: encode.gop,
+                ..rockchip_h264::Config::default()
+            };
+            let mut transcoder = rockchip_h264::Transcoder::new(config)
+                .with_context(|| format!("opening the Rockchip hardware for {name}"))?;
+            let mut capture = rockchip_h264::v4l2::Capture::open(
+                &device,
+                encode.width,
+                encode.height,
+                encode.fps,
+                4,
+            )?;
+            let mut failed = 0;
+            while !stop.load(Ordering::Relaxed) && !units.is_closed() {
+                let mut unit = Vec::new();
+                let result = capture.next(stall, |jpeg| transcoder.transcode(jpeg, &mut unit))?;
+                match result {
+                    Ok(_) => {
+                        failed = 0;
+                        if units.try_send(unit).is_err() {
+                            dropped.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    Err(error) => {
+                        failed += 1;
+                        warn!(camera = %name, error = format!("{error:#}"), "M20 camera frame dropped");
+                        if failed >= failed_frames_limit(&encode) {
+                            bail!("{failed} frames in a row failed to transcode: {error:#}");
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+    });
+    info!(camera = %camera.name, device = %camera.device, "M20 camera encoder started (in-process)");
+    let published = publish(camera, encode, stats, queued, &dropped).await;
+    // publishing ended (failed, or the worker closed the channel): stop the worker and wait, so the camera and the
+    // hardware sessions are closed before a retry opens them again
+    stop.store(true, Ordering::Relaxed);
+    let worked = worker.await.context("the encoder thread")?;
+    published?;
+    worked
+}
+
+async fn stream_gstreamer(
+    camera: &Camera,
+    encode: &Encode,
+    stall: Duration,
+    stats: Duration,
+) -> Result<()> {
     let args = pipeline_args(camera, encode);
     let mut child = Command::new("gst-launch-1.0")
         .args(&args)
@@ -152,7 +263,7 @@ async fn stream(camera: &Camera, encode: &Encode, stall: Duration, stats: Durati
     // to a viewer like no camera at all. Dropping a frame costs the picture until the next keyframe (a GOP, ~1 s);
     // wedging the encoder costs every frame until someone restarts the service.
     let dropped = Arc::new(AtomicU32::new(0));
-    let (units, mut queued) = mpsc::channel::<Vec<u8>>(QUEUED_FRAMES);
+    let (units, queued) = mpsc::channel::<Vec<u8>>(QUEUED_FRAMES);
     let reader = tokio::spawn({
         let dropped = Arc::clone(&dropped);
         async move {
@@ -175,7 +286,20 @@ async fn stream(camera: &Camera, encode: &Encode, stall: Duration, stats: Durati
             }
         }
     });
+    publish(camera, encode, stats, queued, &dropped).await?;
+    // the reader owns the only sender, so the channel closing means it has finished: its result is the stream's
+    reader.await.context("the pipeline reader")?
+}
 
+/// Publishes access units as they arrive until the sender finishes, logging rates every `stats`; fails on a publish
+/// error or a stream that is up but not delivering.
+async fn publish(
+    camera: &Camera,
+    encode: &Encode,
+    stats: Duration,
+    mut queued: mpsc::Receiver<Vec<u8>>,
+    dropped: &AtomicU32,
+) -> Result<()> {
     let (mut frames, mut keyframes, mut bytes, mut window) = (0u32, 0u32, 0usize, Instant::now());
     let mut sick_windows = 0u32;
     while let Some(unit) = queued.recv().await {
@@ -221,8 +345,7 @@ async fn stream(camera: &Camera, encode: &Encode, stall: Duration, stats: Durati
             (frames, keyframes, bytes, window) = (0, 0, 0, Instant::now());
         }
     }
-    // the reader owns the only sender, so the channel closing means it has finished: its result is the stream's
-    reader.await.context("the pipeline reader")?
+    Ok(())
 }
 
 /// Whether an Annex-B access unit holds an IDR slice (NAL unit type 5): a decoder can start here.
@@ -325,6 +448,13 @@ mod tests {
         // a UVC camera drops to 15 fps of 30 on its own in low light: real, and no reason to restart
         assert!(!sick(15.0, 30));
         assert!(!sick(14.0, 30));
+    }
+
+    #[test]
+    fn encoder_names() {
+        assert_eq!("rust".parse::<Encoder>().unwrap(), Encoder::Rust);
+        assert_eq!("gstreamer".parse::<Encoder>().unwrap(), Encoder::Gstreamer);
+        assert!("gst".parse::<Encoder>().is_err());
     }
 
     #[test]

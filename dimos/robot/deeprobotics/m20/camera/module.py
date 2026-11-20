@@ -26,7 +26,7 @@ encoding H.264 here frees the robot's big cores that the old H.265 transcode use
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
@@ -52,6 +52,9 @@ class M20CameraRelayConfig(NativeModuleConfig):
     fps: int = Field(default=30, ge=1, le=120)
     bitrate_bps: int = Field(default=4_000_000, ge=100_000, le=50_000_000)
     gop: int = Field(default=30, ge=1, le=600)
+    # "rust": in-process, the rockchip-h264 crate driving the RK3588's JPEG decoder and H.264 encoder directly.
+    # "gstreamer": a gst-launch child per camera (the vendor mpp plugin, which leaks a dmabuf fd per frame).
+    encoder: Literal["rust", "gstreamer"] = "gstreamer"
     # Camera centers in base_link from the Deep Robotics docs, and their turn about z.
     front_camera_xyz: tuple[float, float, float] = (0.37646, 0.0, 0.03738)
     front_camera_yaw_rad: float = 0.0

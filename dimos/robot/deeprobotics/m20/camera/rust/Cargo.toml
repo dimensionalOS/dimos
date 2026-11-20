@@ -34,3 +34,4 @@ serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
 anyhow = "1"
+rockchip-h264 = { git = "https://github.com/jeff-hykin/rockchip-h264", rev = "7c8f1617b795e939dfcaa8bcc86e72e9ca817929" }

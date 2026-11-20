@@ -562,6 +562,7 @@ dependencies = [
  "anyhow",
  "dimos-module",
  "lcm-msgs",
+ "rockchip-h264",
  "serde",
  "tokio",
  "tracing",
@@ -2242,6 +2243,15 @@ version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7043b63bd0cd1aaa628e476b80e6d4023a3b50eb32789f2728908107bd0c793a"
 dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "rockchip-h264"
+version = "0.1.0"
+source = "git+https://github.com/jeff-hykin/rockchip-h264?rev=7c8f1617b795e939dfcaa8bcc86e72e9ca817929#7c8f1617b795e939dfcaa8bcc86e72e9ca817929"
+dependencies = [
+ "anyhow",
  "libc",
 ]
 
