@@ -163,27 +163,26 @@ print(matrix)
 
 ## Frame IDs in Modules
 
-Modules in dimOS automatically get a `frame_id` property: the `frame_id` config option in [`core/module.py`](/dimos/core/module.py#L78), or the class name when it's unset.
+A [`TfModule`](/dimos/core/tf_module.py) declares its frames in config, by role: `tf_frames_local` for frames that belong to one robot (they go under the module's namespace), `tf_frames_global` for shared ones like `world`. Code reads them as `self.frame.<role>`:
 
 ```python
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.tf_module import TfModule, TfModuleConfig
 
-class MyModuleConfig(ModuleConfig):
-    frame_id: str = "sensor_link"
+class MySensorConfig(TfModuleConfig):
+    tf_frames_local: dict[str, str] = {"link": "sensor_link"}
 
-class MySensorModule(Module):
-    config: MyModuleConfig
+class MySensorModule(TfModule):
+    config: MySensorConfig
 
 sensor = MySensorModule()
-print(f"Default frame_id: {sensor.frame_id}")
+print(f"Sensor frame: {sensor.frame.link}")
 ```
 
 ```results
-00:33:00.665 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
-Default frame_id: sensor_link
+Sensor frame: sensor_link
 ```
 
-Frames that belong to one robot should be declared in a [`TfModule`](/dimos/core/tf_module.py)'s `tf_frames_local`, which `.namespace()` prefixes (`robot0/sensor_link`).
+Under `.namespace("robot0")` the same module's `frame.link` is `robot0/sensor_link`.
 
 ## The tf Topic
 
