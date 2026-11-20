@@ -420,7 +420,7 @@ class ObjectTracking(Module):
             return
 
         # Create detections if tracking succeeded
-        header = Header(self.frame_id)
+        header = Header(self.config.frame_id)
         detection2darray = Detection2DArray(detections_length=0, header=header, detections=[])
         detection3darray = Detection3DArray(detections_length=0, header=header, detections=[])
 
@@ -514,7 +514,7 @@ class ObjectTracking(Module):
                     tracked_object_tf = Transform(
                         translation=robot_pose.position,
                         rotation=robot_pose.orientation,
-                        frame_id=self.frame_id,  # Use configured camera frame
+                        frame_id=self.config.frame_id,  # Use configured camera frame
                         child_frame_id="tracked_object",
                         ts=header.ts,
                     )

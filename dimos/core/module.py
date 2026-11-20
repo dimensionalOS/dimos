@@ -199,10 +199,6 @@ class ModuleBase(Configurable, CompositeResource):
         """The ``Blueprint.namespace`` levels in the instance name: ``fleet/robot0`` for ``fleet/robot0/odom``."""
         return (self.config.instance_name or "").rpartition("/")[0]
 
-    @property
-    def frame_id(self) -> str:
-        return self.config.frame_id or self.__class__.__name__
-
     @rpc
     def build(self) -> None:
         """Optional build step for heavy one-time work (docker builds, LFS downloads, etc.).

@@ -215,7 +215,7 @@ class ObjectTracker3D(ObjectTracker2D):
         size_z = 0.1  # Default depth size
 
         # Create Detection3D
-        header = Header(self.frame_id)
+        header = Header(self.config.frame_id)
         detection_3d = Detection3D()
         detection_3d.id = "0"
         detection_3d.results_length = 1
@@ -242,7 +242,7 @@ class ObjectTracker3D(ObjectTracker2D):
         tracked_object_tf = Transform(
             translation=robot_pose.position,
             rotation=robot_pose.orientation,
-            frame_id=self.frame_id,
+            frame_id=self.config.frame_id,
             child_frame_id="tracked_object",
             ts=header.ts,
         )
