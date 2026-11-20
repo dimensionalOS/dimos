@@ -35,7 +35,7 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module, frame_id_prefix
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -378,7 +378,6 @@ def test_namespace_prefixes_names_streams_and_frames() -> None:
     atom_a = next(a for a in blueprint.blueprints if a.module is ModuleA)
     assert atom_a.name == "robot0/modulea"
     assert atom_a.kwargs["instance_name"] == "robot0/modulea"
-    assert frame_id_prefix(atom_a.name) == "robot0"
     # Every stream is remapped under the prefix.
     assert blueprint.remapping_map[("robot0/modulea", "data1")] == "robot0/data1"
     assert blueprint.remapping_map[("robot0/moduleb", "data3")] == "robot0/data3"
@@ -431,15 +430,17 @@ def test_namespace_nesting_composes() -> None:
 
     atom = blueprint.blueprints[0]
     assert atom.name == "fleet/robot0/modulea"
-    assert frame_id_prefix(atom.name) == "fleet/robot0"
     assert blueprint.remapping_map[("fleet/robot0/modulea", "data1")] == "fleet/robot0/data1"
 
 
 def test_namespace_stacks_user_frame_id_prefix() -> None:
     blueprint = ModuleA.blueprint(frame_id_prefix="custom").namespace("robot0")
 
-    atom = blueprint.blueprints[0]
-    assert frame_id_prefix(atom.name, atom.kwargs["frame_id_prefix"]) == "robot0/custom"
+    module = ModuleA(**blueprint.blueprints[0].kwargs)
+    try:
+        assert (module.namespace, module.frame_id_prefix) == ("robot0", "robot0/custom")
+    finally:
+        module.stop()
 
 
 def test_namespace_allows_duplicate_module_classes() -> None:
