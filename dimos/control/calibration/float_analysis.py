@@ -16,7 +16,7 @@
 
 Shared by a live driver and the offline report (``float_report``). A window is
 the ``float_events`` marker plus the joint samples recorded during it; the drift
-is the fingertip motion between the start and the end of the window, computed
+is the fingertip motion from the first limp sample to the end of the window, computed
 through the arm's model (its spec's tip frame and fingertip offset) so a joint
 error far from the base counts for what it does at the fingers. A window whose
 samples do not span the duration its marker asked for is incomplete and fails.
@@ -37,7 +37,7 @@ from dimos.control.calibration.spec import ArmCalibrationSpec
 
 # Milestone: a floated arm, let go, stays within this at the fingertip over 10 s.
 DRIFT_LIMIT_MM = 2.0
-# The pose at either end of a window is the median over this much of it, so one
+# The pose at the end of a window is the median over this much of it, so one
 # noisy encoder sample does not decide the drift.
 EDGE_WINDOW_S = 0.25
 WINDOW_COMPLETE_TOLERANCE_S = 0.1
@@ -91,8 +91,8 @@ class DriftMetrics:
     duration_s: float  # the window actually covered by samples
     requested_s: float
     samples: int
-    fingertip_drift_mm: float  # start pose to end pose, through the model
-    fingertip_peak_mm: float  # farthest the fingertip got from the start pose
+    fingertip_drift_mm: float  # first limp sample to end pose, through the model
+    fingertip_peak_mm: float  # farthest the fingertip got from the first limp sample
     max_joint_drift_deg: float
     max_joint: str
     joint_drift_deg: dict[str, float]
@@ -146,11 +146,10 @@ class FingertipModel:
 
 
 def edge_pose(t: np.ndarray, q: np.ndarray, *, start: bool) -> np.ndarray:
-    """Median joint vector over the first (or last) ``EDGE_WINDOW_S`` of the samples."""
+    """The first joint vector, or the median over the last ``EDGE_WINDOW_S`` of the samples."""
     if start:
-        mask = t <= t[0] + EDGE_WINDOW_S
-    else:
-        mask = t >= t[-1] - EDGE_WINDOW_S
+        return np.asarray(q[0], dtype=np.float64)
+    mask = t >= t[-1] - EDGE_WINDOW_S
     return np.asarray(np.median(q[mask], axis=0), dtype=np.float64)
 
 
@@ -198,7 +197,7 @@ def analyze_window(
 def fingertip_drift_mm_series(
     model: FingertipModel, t: np.ndarray, q_rad: np.ndarray
 ) -> np.ndarray:
-    """Fingertip distance from the window's start pose at every sample, millimetres."""
+    """Fingertip distance from the window's first sample at every sample, millimetres."""
     tip0 = model.fingertip_m(edge_pose(np.asarray(t), np.asarray(q_rad), start=True))
     return np.asarray(
         [np.linalg.norm(model.fingertip_m(row) - tip0) * 1000.0 for row in np.asarray(q_rad)]
