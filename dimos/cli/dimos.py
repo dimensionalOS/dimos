@@ -43,13 +43,12 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 # `import cv2; cv2.setNumThreads(2)` the worker entrypoint used to do.
 os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
 
-from dotenv import load_dotenv
 import typer
 
-# Load before CLI imports freeze config/state paths, so a daemon re-exec and
-# later status/stop commands resolve the same registry. Keep tests isolated.
-if "PYTEST_VERSION" not in os.environ:
-    load_dotenv()
+from dimos.cli.project_env import load_project_dotenv
+
+# State paths are resolved at import time, including in a re-executed daemon.
+load_project_dotenv()
 
 from dimos.cli.cache import app as cache_app
 from dimos.cli.can import app as can_app

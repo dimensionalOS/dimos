@@ -19,6 +19,7 @@ startup time balloons from <2s to >5s, which is a terrible UX.
 """
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -124,6 +125,66 @@ def _leaked_modules(
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.split()
+
+
+def test_agent_environment_uses_the_same_dotenv_as_the_cli(tmp_path: Path) -> None:
+    installation = tmp_path / "installation"
+    installation.mkdir()
+    (installation / "dimos").symlink_to(
+        Path(__file__).resolve().parents[1], target_is_directory=True
+    )
+    (installation / ".env").write_text(
+        "PROJECT_LABEL=installation\nROBOT_MODEL=checkout-model\nOPENAI_API_KEY=${PROJECT_LABEL}-key\n"
+    )
+    (tmp_path / ".env").write_text(
+        "PROJECT_LABEL='working directory'\nN_WORKERS=5\nhost__name=project\nHOST__TAGS=project\n"
+    )
+    (tmp_path / "machine.env").write_text("HOST__NAME=machine\n")
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import os\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import dimos.cli.dimos\n"
+        "from dimos.cli.commands.agent import _node_environment\n"
+        "from dimos.hosted.config import HostConfig\n"
+        "child = _node_environment()\n"
+        "assert os.environ.get('PROJECT_LABEL') == 'working directory'\n"
+        "assert 'PROJECT_LABEL' not in child\n"
+        "assert child.get('N_WORKERS') == '5'\n"
+        "assert child.get('ROBOT_MODEL') == 'checkout-model'\n"
+        "assert os.environ.get('OPENAI_API_KEY') == 'working directory-key'\n"
+        "assert 'OPENAI_API_KEY' not in child\n"
+        "host = HostConfig(_env_file='machine.env')\n"
+        "assert host.name == 'machine'\n"
+        "assert host.tags == 'shell'\n"
+        "if len(sys.argv) == 1:\n"
+        "    subprocess.run([sys.executable, __file__, 'reexec'], check=True)\n"
+    )
+    env = os.environ.copy()
+    for name in (
+        "PYTEST_VERSION",
+        "PYTHON_DOTENV_DISABLED",
+        "PROJECT_LABEL",
+        "N_WORKERS",
+        "ROBOT_MODEL",
+        "OPENAI_API_KEY",
+    ):
+        env.pop(name, None)
+    env = {name: value for name, value in env.items() if not name.upper().startswith("HOST__")}
+    env["HOST__TAGS"] = "shell"
+    env["PYTHONPATH"] = os.pathsep.join([str(installation), env.get("PYTHONPATH", "")])
+
+    result = subprocess.run(
+        [sys.executable, str(probe)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_entry_module_does_not_import_the_cli() -> None:

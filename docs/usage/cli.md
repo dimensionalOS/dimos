@@ -31,7 +31,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 
 ### Configuration Precedence
 
-Values resolve in this order: schema defaults → blueprint values → JSON config → `.env` → environment → CLI flags. Global environment variables use uppercase field names, such as `ROBOT_IPS` (transport also accepts `DIMOS_TRANSPORT`).
+Run `dimos` from the directory containing your project’s `.env` to use its settings. Missing values fall back to the `.env` found above the installed package. Values resolve in this order: schema defaults → blueprint values → JSON config → `.env` → environment → CLI flags. Global environment variables use uppercase field names, such as `ROBOT_IPS` (transport also accepts `DIMOS_TRANSPORT`).
 
 Module settings go after the blueprint names, for example `dimos run unitree-go2 --go2connection.replay-exit true`. Use `dimos run <blueprint> --help` for that stack's options. See [Configuration](/docs/usage/configuration.md#migrating-former-global-settings) for the migration from global flags.
 
